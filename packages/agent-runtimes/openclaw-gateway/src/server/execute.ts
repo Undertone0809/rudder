@@ -146,10 +146,15 @@ function resolveSessionKey(input: {
   strategy: SessionKeyStrategy;
   configuredSessionKey: string | null;
   configuredAgentId: string | null;
+  conversationId: string | null;
   runId: string;
   issueId: string | null;
 }): string {
-  const fallback = input.configuredSessionKey ?? "rudder";
+  // A chat without an Issue still needs a stable Binding-scoped key. Keep the
+  // historical gateway default only for non-chat runs where no conversation
+  // identity exists; never let two Rudder chats share the "rudder" session.
+  const fallback = input.configuredSessionKey
+    ?? (input.conversationId ? `rudder:conversation:${input.conversationId}` : "rudder");
   const agentId = input.configuredAgentId;
   const namespace = (key: string) => {
     // OpenClaw binds a session key to the agent that first created it. Keep
@@ -1159,10 +1164,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
   const configuredSessionKey = nonEmpty(ctx.config.sessionKey);
   const configuredAgentId = nonEmpty(ctx.config.agentId);
+  const conversationId = nonEmpty(ctx.context.chatConversationId);
   const sessionKey = resolveSessionKey({
     strategy: sessionKeyStrategy,
     configuredSessionKey,
     configuredAgentId,
+    conversationId,
     runId: ctx.runId,
     issueId: wakePayload.issueId,
   });

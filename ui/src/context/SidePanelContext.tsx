@@ -1,6 +1,9 @@
+import { authApi } from "@/api/auth";
+import { useOptionalOrganization } from "@/context/OrganizationContext";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
+import { queryKeys } from "@/lib/queryKeys";
 import {
   sidePanelCanonicalTargetKey,
   sidePanelFullPageHref,
@@ -8,6 +11,7 @@ import {
   sidePanelTargetSupportsSavedView,
   type SidePanelTarget,
 } from "@/lib/side-panel-targets";
+import { useQuery } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 type SidePanelContextState = {
@@ -16,6 +20,14 @@ type SidePanelContextState = {
   open: boolean;
   tabs: SidePanelTarget[];
 };
+
+export type SidePanelContextOwner = {
+  contextKey: string;
+  organizationId: string | null;
+  principalId: string | null;
+};
+
+type SidePanelContextScope = SidePanelContextOwner;
 
 export type SidePanelOpenResult =
   | { admitted: true }
@@ -44,15 +56,17 @@ export type SidePanelDetachResult =
 
 export type SidePanelBrowserResetDecision = "preserve" | "remove";
 export type SidePanelBrowserResetHandler = (
-  contextKey: string,
+  owner: SidePanelContextOwner,
   target: Extract<SidePanelTarget, { kind: "browser" }>,
 ) => SidePanelBrowserResetDecision;
 
 type SidePanelContextValue = {
   activeKey: string | null;
+  principalId: string | null;
   open: boolean;
   tabs: SidePanelTarget[];
   contextKey: string;
+  ownerOrganizationId: string | null;
   displayedContextHold: DisplayedSidePanelContextHold | null;
   clearCurrentContext: () => void;
   clearDisplayedContextHold: () => void;
@@ -60,8 +74,15 @@ type SidePanelContextValue = {
     contextKey: string | null,
     exactKey: string,
     expectedRevision: number,
+    organizationId?: string | null,
+    principalId?: string | null,
   ) => SidePanelDetachResult;
-  getTargetRevisionForContext: (contextKey: string | null, exactKey: string) => number | null;
+  getTargetRevisionForContext: (
+    contextKey: string | null,
+    exactKey: string,
+    organizationId?: string | null,
+    principalId?: string | null,
+  ) => number | null;
   hidePanel: () => void;
   holdDisplayedContext: (organizationId: string, contextKey?: string | null) => boolean;
   openTarget: (target: SidePanelTarget, options?: SidePanelOpenOptions) => SidePanelOpenResult;
@@ -70,9 +91,15 @@ type SidePanelContextValue = {
     contextKey: string | null,
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
+    organizationId?: string | null,
+    principalId?: string | null,
   ) => SidePanelOpenResult;
   showPanel: () => void;
-  showPanelForContext: (contextKey: string | null) => void;
+  showPanelForContext: (
+    contextKey: string | null,
+    organizationId?: string | null,
+    principalId?: string | null,
+  ) => void;
   openEmpty: () => void;
   closePanel: () => void;
   closeTarget: (key: string) => void;
@@ -80,18 +107,190 @@ type SidePanelContextValue = {
   registerBrowserResetHandler: (handler: SidePanelBrowserResetHandler) => () => void;
   registerBeforeOpen: (handler: () => void) => () => void;
   replaceTarget: (key: string, target: SidePanelTarget) => void;
-  replaceTargetForContext: (contextKey: string | null, key: string, target: SidePanelTarget) => boolean;
+  replaceTargetForContext: (
+    contextKey: string | null,
+    key: string,
+    target: SidePanelTarget,
+    organizationId?: string | null,
+    principalId?: string | null,
+  ) => boolean;
   reorderTarget: (key: string, targetKey: string, position: "before" | "after") => void;
   setActiveKey: (key: string | null) => void;
-  setContextKey: (contextKey: string | null) => void;
+  setContextKey: (contextKey: string | null, organizationId?: string | null) => void;
 };
 
 const SidePanelContext = createContext<SidePanelContextValue | null>(null);
 const DEFAULT_SIDE_PANEL_CONTEXT_KEY = "global";
 export const MAX_BROWSER_TABS_PER_CONTEXT = 8;
+const SIDE_CHAT_PANEL_STATE_STORAGE_KEY = "rudder:side-chat-panel-state:v1";
+
+type SideChatPanelStateSnapshot = Pick<SidePanelContextState, "activeKey" | "open" | "tabs">;
+
+function sideChatPanelStateStorageKey(
+  principalId: string | null,
+  organizationId: string | null,
+  contextKey: string,
+) {
+  const principalScope = principalId === null ? "anonymous" : `user-${encodeURIComponent(principalId)}`;
+  const organizationScope = organizationId === null ? "no-organization" : `org-${encodeURIComponent(organizationId)}`;
+  return `${SIDE_CHAT_PANEL_STATE_STORAGE_KEY}:${principalScope}:${organizationScope}:${encodeURIComponent(contextKey)}`;
+}
+
+function sideChatPanelStateStorage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePersistedSideChatTarget(value: unknown): Extract<SidePanelTarget, { kind: "side_chat" }> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<Extract<SidePanelTarget, { kind: "side_chat" }>>;
+  if (
+    candidate.kind !== "side_chat"
+    || typeof candidate.sourceConversationId !== "string"
+    || !candidate.sourceConversationId.trim()
+    || typeof candidate.clientMutationId !== "string"
+    || !candidate.clientMutationId.trim()
+    || (candidate.sourceMessageId !== null && typeof candidate.sourceMessageId !== "string")
+    || (candidate.conversationId !== null && typeof candidate.conversationId !== "string")
+  ) return null;
+  return {
+    kind: "side_chat",
+    sourceConversationId: candidate.sourceConversationId,
+    sourceMessageId: candidate.sourceMessageId,
+    sourcePreview: null,
+    ...(Array.isArray(candidate.inlineAnnotations)
+      ? { inlineAnnotations: candidate.inlineAnnotations }
+      : {}),
+    conversationId: candidate.conversationId,
+    clientMutationId: candidate.clientMutationId,
+    label: typeof candidate.label === "string" ? candidate.label : "Side Chat",
+  };
+}
+
+function readPersistedSideChatPanelState(
+  principalId: string | null,
+  organizationId: string | null,
+  contextKey: string,
+): SidePanelContextState | null {
+  try {
+    const raw = sideChatPanelStateStorage()?.getItem(
+      sideChatPanelStateStorageKey(principalId, organizationId, contextKey),
+    );
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SideChatPanelStateSnapshot> | null;
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.tabs)) return null;
+    const tabs = parsed.tabs
+      .map(parsePersistedSideChatTarget)
+      .filter((target): target is Extract<SidePanelTarget, { kind: "side_chat" }> => target !== null);
+    if (tabs.length === 0) return null;
+    const activeTab = tabs.find((target) => sidePanelTargetKey(target) === parsed.activeKey) ?? tabs[0]!;
+    return {
+      activeKey: sidePanelTargetKey(activeTab),
+      hasPanelState: true,
+      open: parsed.open === true && sidePanelTargetKey(activeTab) === parsed.activeKey,
+      tabs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistSideChatPanelState(
+  principalId: string | null,
+  organizationId: string | null,
+  contextKey: string,
+  state: SidePanelContextState,
+) {
+  const storage = sideChatPanelStateStorage();
+  if (!storage) return;
+  const tabs = state.tabs.filter((target): target is Extract<SidePanelTarget, { kind: "side_chat" }> => (
+    target.kind === "side_chat"
+  )).map((target) => ({ ...target, sourcePreview: null }));
+  const key = sideChatPanelStateStorageKey(principalId, organizationId, contextKey);
+  if (tabs.length === 0) {
+    storage.removeItem(key);
+    return;
+  }
+  const activeSideChat = tabs.find((target) => sidePanelTargetKey(target) === state.activeKey) ?? tabs[0]!;
+  storage.setItem(key, JSON.stringify({
+    activeKey: sidePanelTargetKey(activeSideChat),
+    open: state.open && sidePanelTargetKey(activeSideChat) === state.activeKey,
+    tabs,
+  } satisfies SideChatPanelStateSnapshot));
+}
 
 function normalizeContextKey(contextKey: string | null | undefined): string {
   return contextKey?.trim() || DEFAULT_SIDE_PANEL_CONTEXT_KEY;
+}
+
+function sidePanelContextScopeKey(scope: SidePanelContextScope): string {
+  return JSON.stringify([
+    scope.principalId,
+    scope.organizationId,
+    normalizeContextKey(scope.contextKey),
+  ]);
+}
+
+function sameSidePanelOwner(left: SidePanelContextScope, right: SidePanelContextScope): boolean {
+  return left.principalId === right.principalId
+    && left.organizationId === right.organizationId;
+}
+
+function sidePanelContextScopeFromKey(scopeKey: string): SidePanelContextScope | null {
+  try {
+    const parsed = JSON.parse(scopeKey) as unknown;
+    if (
+      Array.isArray(parsed)
+      && (typeof parsed[0] === "string" || parsed[0] === null)
+      && (typeof parsed[1] === "string" || parsed[1] === null)
+      && typeof parsed[2] === "string"
+    ) {
+      return {
+        principalId: parsed[0],
+        organizationId: parsed[1],
+        contextKey: parsed[2],
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function contextStatesForPrincipalOrganization(
+  states: Record<string, SidePanelContextState>,
+  principalId: string | null,
+  organizationId: string | null,
+): Record<string, SidePanelContextState> {
+  return Object.fromEntries(Object.entries(states).filter(([scopeKey]) => {
+    try {
+      const parsed = JSON.parse(scopeKey) as unknown;
+      return Array.isArray(parsed)
+        && parsed[0] === principalId
+        && parsed[1] === organizationId;
+    } catch {
+      return false;
+    }
+  }));
+}
+
+function readOrCreateContextState(
+  states: Record<string, SidePanelContextState>,
+  scope: SidePanelContextScope,
+): SidePanelContextState {
+  const key = sidePanelContextScopeKey(scope);
+  const existing = states[key];
+  if (existing) return existing;
+  const restored = readPersistedSideChatPanelState(
+    scope.principalId,
+    scope.organizationId,
+    normalizeContextKey(scope.contextKey),
+  ) ?? emptyContextState();
+  states[key] = restored;
+  return restored;
 }
 
 function mobileSidePanelTargetHref(target: SidePanelTarget): string {
@@ -117,7 +316,8 @@ function mobileSidePanelTargetHref(target: SidePanelTarget): string {
 function openSidePanelTargetOnMobile(target: SidePanelTarget): boolean {
   if (typeof window === "undefined" || window.innerWidth >= 768) return false;
   if (
-    target.kind === "goal_chat"
+    target.kind === "side_chat"
+    || target.kind === "goal_chat"
     || target.kind === "run_debug_chat"
     || target.kind === "local_file"
   ) return false;
@@ -251,9 +451,14 @@ function browserViewInstanceId(
 
 function sidePanelBrowserInstances(
   states: Record<string, SidePanelContextState>,
+  principalId?: string | null,
+  organizationId?: string | null,
 ) {
   const instances = new Set<string>();
-  for (const state of Object.values(states)) {
+  const scopedStates = principalId === undefined
+    ? states
+    : contextStatesForPrincipalOrganization(states, principalId, organizationId ?? null);
+  for (const state of Object.values(scopedStates)) {
     for (const target of state.tabs) {
       if (target.kind === "browser") {
         instances.add(browserViewInstanceId(target));
@@ -265,7 +470,7 @@ function sidePanelBrowserInstances(
 
 function withoutBrowserTargets(
   state: SidePanelContextState,
-  contextKey: string,
+  owner: SidePanelContextOwner,
   resetHandler: SidePanelBrowserResetHandler | null,
 ): SidePanelContextState {
   const activeIndex = state.activeKey
@@ -273,7 +478,7 @@ function withoutBrowserTargets(
     : -1;
   const tabs = state.tabs.filter((target) => (
     target.kind !== "browser"
-    || resetHandler?.(contextKey, target) === "preserve"
+    || resetHandler?.(owner, target) === "preserve"
   ));
   if (tabs.length === state.tabs.length) return state;
   const activeStillExists = state.activeKey !== null
@@ -292,32 +497,80 @@ function withoutBrowserTargets(
   };
 }
 
-export function SidePanelProvider({ children }: { children: ReactNode }) {
+function PrincipalScopedSidePanelProvider({
+  children,
+  principalId,
+  organizationId,
+}: {
+  children: ReactNode;
+  principalId: string | null;
+  organizationId: string | null;
+}) {
+  const initialScope = {
+    principalId,
+    organizationId,
+    contextKey: DEFAULT_SIDE_PANEL_CONTEXT_KEY,
+  } satisfies SidePanelContextScope;
   const contextStatesRef = useRef<Record<string, SidePanelContextState>>({
-    [DEFAULT_SIDE_PANEL_CONTEXT_KEY]: emptyContextState(),
+    [sidePanelContextScopeKey(initialScope)]: emptyContextState(),
   });
   const targetRevisionsRef = useRef<Record<string, Record<string, number>>>({
-    [DEFAULT_SIDE_PANEL_CONTEXT_KEY]: {},
+    [sidePanelContextScopeKey(initialScope)]: {},
   });
+  const currentScopeRef = useRef<SidePanelContextScope>(initialScope);
   const currentContextKeyRef = useRef(DEFAULT_SIDE_PANEL_CONTEXT_KEY);
   const [contextKey, setCurrentContextKey] = useState(DEFAULT_SIDE_PANEL_CONTEXT_KEY);
   const [currentContextState, setCurrentContextState] = useState<SidePanelContextState>(() => emptyContextState());
   const [displayedContextHold, setDisplayedContextHold] = useState<DisplayedSidePanelContextHold | null>(null);
   const [open, setOpen] = useState(false);
+  const principalIdRef = useRef(principalId);
+  if (principalIdRef.current !== principalId) {
+    principalIdRef.current = principalId;
+    const nextScope = {
+      principalId,
+      organizationId,
+      contextKey: currentContextKeyRef.current,
+    } satisfies SidePanelContextScope;
+    currentScopeRef.current = nextScope;
+    const nextScopeKey = sidePanelContextScopeKey(nextScope);
+    const nextState = readOrCreateContextState(contextStatesRef.current, nextScope);
+    contextStatesRef.current = {
+      ...contextStatesRef.current,
+      [nextScopeKey]: nextState,
+    };
+    targetRevisionsRef.current = {
+      ...targetRevisionsRef.current,
+      [nextScopeKey]: targetRevisionsRef.current[nextScopeKey] ?? {},
+    };
+    setCurrentContextState(nextState);
+    setDisplayedContextHold(null);
+    setOpen(contextHasPanelState(nextState) && nextState.open);
+  }
+  const activeScope = currentScopeRef.current;
   const openRef = useRef(open);
   openRef.current = open;
   const closeRequestHandlerRef = useRef<((target: SidePanelTarget) => void | Promise<void>) | null>(null);
   const browserResetHandlerRef = useRef<SidePanelBrowserResetHandler | null>(null);
   const beforeOpenHandlersRef = useRef(new Set<() => void>());
 
-  const writeContextState = useCallback((key: string, updater: (state: SidePanelContextState) => SidePanelContextState) => {
-    const current = contextStatesRef.current[key] ?? emptyContextState();
+  const writeContextState = useCallback((
+    key: string,
+    updater: (state: SidePanelContextState) => SidePanelContextState,
+    requestedScope?: SidePanelContextScope,
+  ) => {
+    const normalizedKey = normalizeContextKey(key);
+    const scope = requestedScope ?? {
+      ...activeScope,
+      contextKey: normalizedKey,
+    };
+    const scopedKey = sidePanelContextScopeKey(scope);
+    const current = readOrCreateContextState(contextStatesRef.current, scope);
     const next = updater(current);
     if (next !== current) {
       const currentTargets = new Map(
         current.tabs.map((target) => [sidePanelTargetKey(target), target] as const),
       );
-      const currentRevisions = targetRevisionsRef.current[key] ?? {};
+      const currentRevisions = targetRevisionsRef.current[scopedKey] ?? {};
       const nextRevisions = { ...currentRevisions };
       for (const target of next.tabs) {
         const targetKey = sidePanelTargetKey(target);
@@ -333,16 +586,23 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
       }
       targetRevisionsRef.current = {
         ...targetRevisionsRef.current,
-        [key]: nextRevisions,
+        [scopedKey]: nextRevisions,
       };
     }
     contextStatesRef.current = {
       ...contextStatesRef.current,
-      [key]: next,
+      [scopedKey]: next,
     };
-    if (key === currentContextKeyRef.current) setCurrentContextState(next);
+    try {
+      persistSideChatPanelState(scope.principalId, scope.organizationId, normalizedKey, next);
+    } catch {
+      // Side Chat state still works for this renderer session when storage is unavailable.
+    }
+    if (scopedKey === sidePanelContextScopeKey(currentScopeRef.current)) {
+      setCurrentContextState(next);
+    }
     return next;
-  }, []);
+  }, [activeScope]);
 
   const notifyBeforeOpen = useCallback(() => {
     if (openRef.current) return;
@@ -356,27 +616,43 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const setContextKey = useCallback((nextContextKey: string | null) => {
+  const setContextKey = useCallback((
+    nextContextKey: string | null,
+    requestedOrganizationId?: string | null,
+  ) => {
     const normalizedKey = normalizeContextKey(nextContextKey);
-    if (currentContextKeyRef.current === normalizedKey) return;
-    const nextState = contextStatesRef.current[normalizedKey] ?? emptyContextState();
+    const nextScope: SidePanelContextScope = {
+      principalId,
+      organizationId: requestedOrganizationId === undefined
+        ? organizationId
+        : requestedOrganizationId,
+      contextKey: normalizedKey,
+    };
+    if (sidePanelContextScopeKey(currentScopeRef.current) === sidePanelContextScopeKey(nextScope)) return;
+    const nextState = readOrCreateContextState(contextStatesRef.current, nextScope);
     if (!openRef.current && contextHasPanelState(nextState) && nextState.open) notifyBeforeOpen();
+    currentScopeRef.current = nextScope;
     currentContextKeyRef.current = normalizedKey;
     setCurrentContextState(nextState);
     setOpen(contextHasPanelState(nextState) && nextState.open);
     setCurrentContextKey((previousKey) => (previousKey === normalizedKey ? previousKey : normalizedKey));
-  }, [notifyBeforeOpen]);
+  }, [notifyBeforeOpen, organizationId, principalId]);
 
   const openTarget = useCallback((
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
   ): SidePanelOpenResult => {
     if (openSidePanelTargetOnMobile(target)) return { admitted: true };
-    notifyBeforeOpen();
+    const scope = { ...activeScope, contextKey };
+    const isCurrentScope = sidePanelContextScopeKey(scope)
+      === sidePanelContextScopeKey(currentScopeRef.current);
+    if (isCurrentScope) notifyBeforeOpen();
     let openResult: SidePanelOpenResult = { admitted: true };
     writeContextState(contextKey, (current) => {
       const sideBrowserInstances = sidePanelBrowserInstances(
         contextStatesRef.current,
+        activeScope.principalId,
+        activeScope.organizationId,
       );
       const allowNewBrowserGuest = target.kind !== "browser"
         || sideBrowserInstances.has(browserViewInstanceId(target))
@@ -397,21 +673,26 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
         open: true,
         tabs: result.tabs,
       };
-    });
-    setOpen(true);
+    }, scope);
+    if (isCurrentScope) setOpen(true);
     return openResult;
-  }, [contextKey, notifyBeforeOpen, writeContextState]);
+  }, [activeScope, contextKey, notifyBeforeOpen, writeContextState]);
 
   const openTargetInNewTab = useCallback((
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
   ): SidePanelOpenResult => {
     if (openSidePanelTargetOnMobile(target)) return { admitted: true };
-    notifyBeforeOpen();
+    const scope = { ...activeScope, contextKey };
+    const isCurrentScope = sidePanelContextScopeKey(scope)
+      === sidePanelContextScopeKey(currentScopeRef.current);
+    if (isCurrentScope) notifyBeforeOpen();
     let openResult: SidePanelOpenResult = { admitted: true };
     writeContextState(contextKey, (current) => {
       const sideBrowserInstances = sidePanelBrowserInstances(
         contextStatesRef.current,
+        activeScope.principalId,
+        activeScope.organizationId,
       );
       const allowNewBrowserGuest = target.kind !== "browser"
         || (
@@ -431,23 +712,39 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
         open: true,
         tabs: result.tabs,
       };
-    });
-    setOpen(true);
+    }, scope);
+    if (isCurrentScope) setOpen(true);
     return openResult;
-  }, [contextKey, notifyBeforeOpen, writeContextState]);
+  }, [activeScope, contextKey, notifyBeforeOpen, writeContextState]);
 
   const openTargetForContext = useCallback((
     nextContextKey: string | null,
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
+    requestedOrganizationId?: string | null,
+    requestedPrincipalId?: string | null,
   ): SidePanelOpenResult => {
     if (openSidePanelTargetOnMobile(target)) return { admitted: true };
-    notifyBeforeOpen();
     const normalizedKey = normalizeContextKey(nextContextKey);
+    const scope: SidePanelContextScope = {
+      ...activeScope,
+      principalId: requestedPrincipalId === undefined
+        ? activeScope.principalId
+        : requestedPrincipalId,
+      organizationId: requestedOrganizationId === undefined
+        ? activeScope.organizationId
+        : requestedOrganizationId,
+      contextKey: normalizedKey,
+    };
+    const isCurrentScope = sidePanelContextScopeKey(scope)
+      === sidePanelContextScopeKey(currentScopeRef.current);
+    if (isCurrentScope) notifyBeforeOpen();
     let openResult: SidePanelOpenResult = { admitted: true };
     const nextState = writeContextState(normalizedKey, (current) => {
       const sideBrowserInstances = sidePanelBrowserInstances(
         contextStatesRef.current,
+        scope.principalId,
+        scope.organizationId,
       );
       const allowNewBrowserGuest = target.kind !== "browser"
         || sideBrowserInstances.has(browserViewInstanceId(target))
@@ -468,56 +765,72 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
         open: true,
         tabs: result.tabs,
       };
-    });
-    if (normalizedKey === currentContextKeyRef.current) {
+    }, scope);
+    if (sidePanelContextScopeKey(scope) === sidePanelContextScopeKey(currentScopeRef.current)) {
       setCurrentContextState(nextState);
       setOpen(true);
     }
     return openResult;
-  }, [notifyBeforeOpen, writeContextState]);
+  }, [activeScope, notifyBeforeOpen, writeContextState]);
 
   const showPanel = useCallback(() => {
+    if (sidePanelContextScopeKey(activeScope) !== sidePanelContextScopeKey(currentScopeRef.current)) return;
     notifyBeforeOpen();
-    writeContextState(contextKey, (current) => ({ ...current, hasPanelState: true, open: true }));
+    writeContextState(contextKey, (current) => ({ ...current, hasPanelState: true, open: true }), activeScope);
     setOpen(true);
-  }, [contextKey, notifyBeforeOpen, writeContextState]);
+  }, [activeScope, contextKey, notifyBeforeOpen, writeContextState]);
 
-  const showPanelForContext = useCallback((nextContextKey: string | null) => {
-    notifyBeforeOpen();
+  const showPanelForContext = useCallback((
+    nextContextKey: string | null,
+    requestedOrganizationId?: string | null,
+    requestedPrincipalId?: string | null,
+  ) => {
     const normalizedKey = normalizeContextKey(nextContextKey);
-    const current = contextStatesRef.current[normalizedKey] ?? emptyContextState();
-    const nextState = { ...current, hasPanelState: true, open: true };
-    contextStatesRef.current = {
-      ...contextStatesRef.current,
-      [normalizedKey]: nextState,
+    const scope: SidePanelContextScope = {
+      principalId: requestedPrincipalId === undefined ? activeScope.principalId : requestedPrincipalId,
+      organizationId: requestedOrganizationId === undefined
+        ? activeScope.organizationId
+        : requestedOrganizationId,
+      contextKey: normalizedKey,
     };
+    if (!sameSidePanelOwner(scope, currentScopeRef.current)) return;
+    notifyBeforeOpen();
+    const nextState = writeContextState(
+      normalizedKey,
+      (current) => ({ ...current, hasPanelState: true, open: true }),
+      scope,
+    );
+    currentScopeRef.current = scope;
     currentContextKeyRef.current = normalizedKey;
     setCurrentContextKey(normalizedKey);
     setCurrentContextState(nextState);
     setOpen(true);
-  }, [notifyBeforeOpen]);
+  }, [activeScope, notifyBeforeOpen, writeContextState]);
 
   const openEmpty = useCallback(() => {
+    if (sidePanelContextScopeKey(activeScope) !== sidePanelContextScopeKey(currentScopeRef.current)) return;
     notifyBeforeOpen();
     setOpen(true);
-    writeContextState(contextKey, (current) => ({ ...current, activeKey: null, hasPanelState: true, open: true }));
-  }, [contextKey, notifyBeforeOpen, writeContextState]);
+    writeContextState(contextKey, (current) => ({ ...current, activeKey: null, hasPanelState: true, open: true }), activeScope);
+  }, [activeScope, contextKey, notifyBeforeOpen, writeContextState]);
 
   const hidePanel = useCallback(() => {
+    if (sidePanelContextScopeKey(activeScope) !== sidePanelContextScopeKey(currentScopeRef.current)) return;
     setDisplayedContextHold(null);
     writeContextState(contextKey, (current) => (
       contextHasPanelState(current)
         ? { ...current, open: false }
         : current
-    ));
+    ), activeScope);
     setOpen(false);
-  }, [contextKey, writeContextState]);
+  }, [activeScope, contextKey, writeContextState]);
 
   const clearCurrentContext = useCallback(() => {
+    if (sidePanelContextScopeKey(activeScope) !== sidePanelContextScopeKey(currentScopeRef.current)) return;
     setDisplayedContextHold(null);
-    writeContextState(contextKey, () => emptyContextState());
+    writeContextState(contextKey, () => emptyContextState(), activeScope);
     setOpen(false);
-  }, [contextKey, writeContextState]);
+  }, [activeScope, contextKey, writeContextState]);
 
   const closePanel = hidePanel;
 
@@ -547,26 +860,52 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   const getTargetRevisionForContext = useCallback((
     nextContextKey: string | null,
     exactKey: string,
+    requestedOrganizationId?: string | null,
+    requestedPrincipalId?: string | null,
   ) => {
     const normalizedKey = normalizeContextKey(nextContextKey);
-    const targetExists = (contextStatesRef.current[normalizedKey]?.tabs ?? [])
+    const scope: SidePanelContextScope = {
+      ...activeScope,
+      principalId: requestedPrincipalId === undefined
+        ? activeScope.principalId
+        : requestedPrincipalId,
+      organizationId: requestedOrganizationId === undefined
+        ? activeScope.organizationId
+        : requestedOrganizationId,
+      contextKey: normalizedKey,
+    };
+    const scopedKey = sidePanelContextScopeKey(scope);
+    const targetExists = readOrCreateContextState(contextStatesRef.current, scope).tabs
       .some((target) => sidePanelTargetKey(target) === exactKey);
     if (!targetExists) return null;
-    return targetRevisionsRef.current[normalizedKey]?.[exactKey] ?? 0;
-  }, []);
+    return targetRevisionsRef.current[scopedKey]?.[exactKey] ?? 0;
+  }, [activeScope]);
 
   const detachTargetForContext = useCallback((
     nextContextKey: string | null,
     exactKey: string,
     expectedRevision: number,
+    requestedOrganizationId?: string | null,
+    requestedPrincipalId?: string | null,
   ): SidePanelDetachResult => {
     const normalizedKey = normalizeContextKey(nextContextKey);
-    const current = contextStatesRef.current[normalizedKey] ?? emptyContextState();
+    const scope: SidePanelContextScope = {
+      ...activeScope,
+      principalId: requestedPrincipalId === undefined
+        ? activeScope.principalId
+        : requestedPrincipalId,
+      organizationId: requestedOrganizationId === undefined
+        ? activeScope.organizationId
+        : requestedOrganizationId,
+      contextKey: normalizedKey,
+    };
+    const scopedKey = sidePanelContextScopeKey(scope);
+    const current = readOrCreateContextState(contextStatesRef.current, scope);
     const detachingIndex = current.tabs.findIndex((candidate) => sidePanelTargetKey(candidate) === exactKey);
     if (detachingIndex < 0) {
       return { detached: false, reason: "not_found", revision: null };
     }
-    const revision = targetRevisionsRef.current[normalizedKey]?.[exactKey] ?? 0;
+    const revision = targetRevisionsRef.current[scopedKey]?.[exactKey] ?? 0;
     if (expectedRevision !== revision) {
       return { detached: false, reason: "revision_mismatch", revision };
     }
@@ -584,12 +923,13 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
         open: true,
         tabs: nextTabs,
       };
-    });
-    if (normalizedKey === currentContextKeyRef.current) setOpen(nextState.open);
+    }, scope);
+    if (scopedKey === sidePanelContextScopeKey(currentScopeRef.current)) setOpen(nextState.open);
     return { detached: true, revision, target };
-  }, [writeContextState]);
+  }, [activeScope, writeContextState]);
 
   const closeTarget = useCallback((key: string) => {
+    if (sidePanelContextScopeKey(activeScope) !== sidePanelContextScopeKey(currentScopeRef.current)) return;
     writeContextState(contextKey, (current) => {
       const closingIndex = current.tabs.findIndex((candidate) => sidePanelTargetKey(candidate) === key);
       const nextTabs = current.tabs.filter((candidate) => sidePanelTargetKey(candidate) !== key);
@@ -600,8 +940,8 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
       if (current.activeKey !== key) return { ...current, tabs: nextTabs };
       const fallbackTarget = nextTabs[Math.min(Math.max(closingIndex, 0), nextTabs.length - 1)] ?? nextTabs.at(-1) ?? null;
       return { activeKey: fallbackTarget ? sidePanelTargetKey(fallbackTarget) : null, hasPanelState: true, open: true, tabs: nextTabs };
-    });
-  }, [contextKey, writeContextState]);
+    }, activeScope);
+  }, [activeScope, contextKey, writeContextState]);
 
   const registerCloseRequestHandler = useCallback((handler: (target: SidePanelTarget) => void | Promise<void>) => {
     closeRequestHandlerRef.current = handler;
@@ -622,7 +962,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const requestCloseTarget = useCallback((key: string) => {
-    const current = contextStatesRef.current[currentContextKeyRef.current] ?? emptyContextState();
+    const current = readOrCreateContextState(contextStatesRef.current, activeScope);
     const target = current.tabs.find((candidate) => sidePanelTargetKey(candidate) === key);
     if (!target) return;
     const handler = closeRequestHandlerRef.current;
@@ -631,7 +971,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
       return;
     }
     closeTarget(key);
-  }, [closeTarget]);
+  }, [activeScope, closeTarget]);
 
   const hasActiveClosableTab = open && Boolean(currentContextState.activeKey);
 
@@ -675,17 +1015,21 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     if (!desktopShell?.onBrowserReset) return undefined;
     return desktopShell.onBrowserReset(() => {
       const nextStates = Object.fromEntries(
-        Object.entries(contextStatesRef.current).map(([key, state]) => [
-          key,
-          withoutBrowserTargets(
-            state,
+        Object.entries(contextStatesRef.current).map(([key, state]) => {
+          const scope = sidePanelContextScopeFromKey(key);
+          if (!scope) return [key, state];
+          return [
             key,
-            browserResetHandlerRef.current,
-          ),
-        ]),
+            withoutBrowserTargets(
+              state,
+              scope,
+              browserResetHandlerRef.current,
+            ),
+          ];
+        }),
       );
       contextStatesRef.current = nextStates;
-      const current = nextStates[currentContextKeyRef.current] ?? emptyContextState();
+      const current = nextStates[sidePanelContextScopeKey(currentScopeRef.current)] ?? emptyContextState();
       setCurrentContextState(current);
       setOpen(contextHasPanelState(current) && current.open);
     });
@@ -727,18 +1071,30 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     nextContextKey: string | null,
     key: string,
     target: SidePanelTarget,
+    requestedOrganizationId?: string | null,
+    requestedPrincipalId?: string | null,
   ) => {
     const normalizedKey = normalizeContextKey(nextContextKey);
-    const current = contextStatesRef.current[normalizedKey] ?? emptyContextState();
+    const scope: SidePanelContextScope = {
+      ...activeScope,
+      principalId: requestedPrincipalId === undefined
+        ? activeScope.principalId
+        : requestedPrincipalId,
+      organizationId: requestedOrganizationId === undefined
+        ? activeScope.organizationId
+        : requestedOrganizationId,
+      contextKey: normalizedKey,
+    };
+    const current = readOrCreateContextState(contextStatesRef.current, scope);
     if (!current.tabs.some((candidate) => sidePanelTargetKey(candidate) === key)) return false;
     const nextKey = sidePanelTargetKey(target);
     writeContextState(normalizedKey, (contextState) => ({
       ...contextState,
       activeKey: contextState.activeKey === key ? nextKey : contextState.activeKey,
       tabs: contextState.tabs.map((candidate) => (sidePanelTargetKey(candidate) === key ? target : candidate)),
-    }));
+    }), scope);
     return true;
-  }, [writeContextState]);
+  }, [activeScope, writeContextState]);
 
   const replaceTarget = useCallback((key: string, target: SidePanelTarget) => {
     replaceTargetForContext(contextKey, key, target);
@@ -761,10 +1117,12 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   }, [contextKey, writeContextState]);
 
   const setActiveKey = useCallback((key: string | null) => {
+    if (sidePanelContextScopeKey(activeScope) !== sidePanelContextScopeKey(currentScopeRef.current)) return;
     notifyBeforeOpen();
-    writeContextState(contextKey, (current) => ({ ...current, activeKey: key, hasPanelState: true, open: true }));
-  }, [contextKey, notifyBeforeOpen, writeContextState]);
+    writeContextState(contextKey, (current) => ({ ...current, activeKey: key, hasPanelState: true, open: true }), activeScope);
+  }, [activeScope, contextKey, notifyBeforeOpen, writeContextState]);
 
+  const ownerOrganizationId = activeScope.organizationId;
   const value = useMemo<SidePanelContextValue>(() => ({
     activeKey: currentContextState.activeKey,
     clearCurrentContext,
@@ -772,6 +1130,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     closePanel,
     closeTarget,
     contextKey,
+    ownerOrganizationId,
     detachTargetForContext,
     displayedContextHold,
     getTargetRevisionForContext,
@@ -793,9 +1152,29 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     showPanel,
     showPanelForContext,
     tabs: currentContextState.tabs,
-  }), [clearCurrentContext, clearDisplayedContextHold, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, detachTargetForContext, displayedContextHold, getTargetRevisionForContext, hidePanel, holdDisplayedContext, open, openEmpty, openTarget, openTargetForContext, openTargetInNewTab, registerBeforeOpen, registerBrowserResetHandler, registerCloseRequestHandler, reorderTarget, replaceTarget, replaceTargetForContext, setActiveKey, setContextKey, showPanel, showPanelForContext]);
+    principalId,
+  }), [clearCurrentContext, clearDisplayedContextHold, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, detachTargetForContext, displayedContextHold, getTargetRevisionForContext, hidePanel, holdDisplayedContext, open, openEmpty, openTarget, openTargetForContext, openTargetInNewTab, ownerOrganizationId, principalId, registerBeforeOpen, registerBrowserResetHandler, registerCloseRequestHandler, reorderTarget, replaceTarget, replaceTargetForContext, setActiveKey, setContextKey, showPanel, showPanelForContext]);
 
   return <SidePanelContext.Provider value={value}>{children}</SidePanelContext.Provider>;
+}
+
+export function SidePanelProvider({ children }: { children: ReactNode }) {
+  const sessionQuery = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    enabled: false,
+  });
+  const { selectedOrganizationId } = useOptionalOrganization() ?? {};
+  const principalId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
+  const organizationId = selectedOrganizationId ?? null;
+  return (
+    <PrincipalScopedSidePanelProvider
+      principalId={principalId}
+      organizationId={organizationId}
+    >
+      {children}
+    </PrincipalScopedSidePanelProvider>
+  );
 }
 
 export function useSidePanel() {

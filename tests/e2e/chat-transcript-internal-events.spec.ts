@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
@@ -48,6 +50,7 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
         { kind: "system", ts: "2026-07-19T00:00:00.100Z", text: "Pi agent started" },
         { kind: "stdout", ts: "2026-07-19T00:00:00.150Z", text: JSON.stringify({ type: "session", version: 3, id: "pi-session-1", timestamp: "2026-07-19T00:00:00.150Z", cwd: "/Users/operator/workspace" }) },
         { kind: "stdout", ts: "2026-07-19T00:00:00.175Z", text: JSON.stringify({ type: "auto_retry_start" }) },
+        { kind: "thinking", ts: "2026-07-19T00:00:00.200Z", text: "Reviewing the operator request." },
         {
           kind: "system",
           ts: "2026-07-19T00:00:00.250Z",
@@ -107,7 +110,12 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
   await expect(transcript).toBeVisible();
   await transcript.getByRole("button").click();
 
-  await expect(transcript.getByText("Ran printf done", { exact: true })).toBeVisible();
+  await expect(transcript.getByText("Thinking", { exact: true })).toBeVisible();
+  await expect(transcript.getByText("Reviewing the operator request.", { exact: true })).toBeVisible();
+  const commandActivity = transcript.getByRole("button", { name: "Expand command details: Ran printf done" });
+  await expect(commandActivity).toBeVisible();
+  await commandActivity.click();
+  await expect(transcript.getByText("done", { exact: true })).toBeVisible();
   await expect(transcript.getByText(/reasoning started/i)).toHaveCount(0);
   await expect(transcript.getByText(/reasoning completed/i)).toHaveCount(0);
   await expect(transcript.getByText("UserMessage", { exact: true })).toHaveCount(0);
@@ -376,7 +384,7 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   expect(chatRes.ok()).toBe(true);
   const chat = await chatRes.json() as { id: string };
   const fileLabel = "rudder-transcript-evidence.md";
-  const filePath = `/tmp/${fileLabel}`;
+  const filePath = path.join(tmpdir(), `transcript-${randomUUID()}`, fileLabel);
   const longFileLabel =
     "/Users/operator/.rudder/instances/default/organizations/df008f574532/codex-home/agents/884d42a1-27ef-4aed-9952-46b2655ff696/models_cache.json";
   const longFileDisplayName = "models_cache.json";
@@ -411,7 +419,7 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
           ts: "2026-07-21T01:00:02.000Z",
           name: "read_file",
           toolUseId: "read-1",
-          input: { path: fileLabel, cwd: "/tmp" },
+          input: { path: filePath },
         },
         {
           kind: "tool_result",
@@ -506,6 +514,21 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await page.waitForTimeout(250);
   await page.screenshot({ path: "/tmp/rudder-transcript-activity-expanded.png", fullPage: true });
   const chatUrl = page.url();
+  const workspaceFileReads: string[] = [];
+  const apiRequests: Array<{ url: string; method: string; body: Buffer | null }> = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/")) {
+      apiRequests.push({
+        url: request.url(),
+        method: request.method(),
+        body: request.postDataBuffer(),
+      });
+    }
+    if (
+      request.method() === "GET"
+      && request.url().includes(`/api/orgs/${organization.id}/workspace/file?path=`)
+    ) workspaceFileReads.push(request.url());
+  });
   const skillButton = transcript.getByRole("button", {
     name: "Open skill systematic-debugging",
     exact: true,
@@ -527,7 +550,33 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await page.screenshot({ path: "/tmp/rudder-transcript-skill-side-panel-source.png", fullPage: true });
 
   await fileButton.click();
-  await expect(page.getByTestId("chat-side-panel-local-file-view").or(page.getByRole("alert"))).toContainText("Rudder Desktop");
+  const localFilePreview = page.getByTestId("chat-side-panel-local-file-view");
+  const localFilePicker = page.getByTestId("chat-side-panel-local-file-picker");
+  await expect(localFilePicker).toBeVisible();
+  await expect(localFilePicker).toContainText("not sent to Rudder");
+  const localFileMarker = `BROWSER_LOCAL_FILE_ONLY_${Date.now()}`;
+  const localFileContents = `# Rudder transcript evidence\n\n${localFileMarker}\nRead from the browser-selected local file.\n`;
+  const apiRequestCountBeforeSelection = apiRequests.length;
+  const fileChooserPromise = page.waitForEvent("filechooser");
+  await localFilePicker.getByRole("button", { name: "Choose local file" }).click();
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles({
+    name: fileLabel,
+    mimeType: "text/markdown",
+    buffer: Buffer.from(localFileContents),
+  });
+  await expect(localFilePreview).toBeVisible();
+  await expect(localFilePreview).toContainText("Rudder transcript evidence");
+  await expect(localFilePreview).toContainText(localFileMarker);
+  await expect(localFilePreview).toContainText("Read from the browser-selected local file.");
+  await expect(localFilePreview.getByRole("button", { name: "Choose file" })).toBeVisible();
+  const fileSelectionRequests = apiRequests.slice(apiRequestCountBeforeSelection);
+  expect(fileSelectionRequests.filter((request) => !["GET", "HEAD"].includes(request.method))).toEqual([]);
+  expect(fileSelectionRequests.some((request) => (
+    request.url.includes(localFileMarker)
+    || request.body?.includes(Buffer.from(localFileMarker)) === true
+  ))).toBe(false);
+  expect(workspaceFileReads).toEqual([]);
   await expect(page).toHaveURL(chatUrl);
   await page.screenshot({ path: "/tmp/rudder-transcript-file-side-panel-web.png", fullPage: true });
 });

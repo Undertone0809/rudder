@@ -295,6 +295,20 @@ function isProtectedOrganizationSkillsEntryPath(normalizedPath: string) {
   return normalizedPath.split("/").filter(Boolean)[0]?.toLowerCase() === "skills";
 }
 
+function assertLocalPreviewContentPath(normalizedPath: string) {
+  const segments = normalizedPath.toLowerCase().split("/");
+  // Agent workspaces also contain generated artifacts. Only their managed
+  // instructions/state are excluded from absolute-path Chat previews.
+  if (segments[0] === "skills" || (segments[0] === "agents" && (
+    segments.length < 3
+    || segments[2] === "instructions"
+    || segments[2] === "life"
+    || PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES.has(segments[2]!)
+  ))) {
+    throw notFound("File not found inside the organization Library");
+  }
+}
+
 function isProtectedLibraryResourcePath(normalizedPath: string) {
   const root = normalizedPath.split("/").filter(Boolean)[0] ?? "";
   return PROTECTED_LIBRARY_SYSTEM_ROOTS.has(root);
@@ -606,6 +620,40 @@ export function organizationWorkspaceBrowserService(
   }
 
   return {
+    async resolveLocalWorkspaceFilePath(orgId: string, localPath: string): Promise<string> {
+      const requestedPath = normalizeRequestedPath(localPath);
+      if (!requestedPath || requestedPath.includes("\0") || !path.isAbsolute(requestedPath)) {
+        throw unprocessable("A local workspace file path must be absolute");
+      }
+
+      const root = await resolveWorkspaceRoot(orgId);
+      const resolvedRoot = path.resolve(root.rootPath);
+      const resolvedTarget = path.resolve(requestedPath);
+      const relativePath = path.relative(resolvedRoot, resolvedTarget);
+      if (
+        !relativePath
+        || relativePath === ".."
+        || relativePath.startsWith(".." + path.sep)
+        || path.isAbsolute(relativePath)
+      ) {
+        throw notFound("File not found inside the organization Library");
+      }
+
+      const normalizedPath = toPortableRelativePath(relativePath);
+      assertLocalPreviewContentPath(normalizedPath);
+      const { canonicalRoot, canonicalTarget } = await resolveCanonicalPathWithinRoot(
+        resolvedRoot,
+        resolvedTarget,
+        "File not found inside the organization Library",
+      );
+      assertNoProtectedPathAlias(normalizedPath, canonicalRoot, canonicalTarget);
+      const canonicalPath = toPortableRelativePath(path.relative(canonicalRoot, canonicalTarget));
+      assertLocalPreviewContentPath(canonicalPath);
+      // Pass the checked target onward, not a symlink that can be retargeted
+      // between this lookup and the existing file reader's boundary checks.
+      return canonicalPath;
+    },
+
     async listFiles(
       orgId: string,
       directoryPath = "",
@@ -639,12 +687,16 @@ export function organizationWorkspaceBrowserService(
       assertNoProtectedPathAlias(normalizedPath, canonicalRoot, canonicalTarget);
       signal?.throwIfAborted();
       const canonicalDirectoryPath = toPortableRelativePath(path.relative(canonicalRoot, canonicalTarget));
-      const targetIsAlias = path.resolve(canonicalRoot) !== path.resolve(resolvedRoot)
-        || canonicalDirectoryPath !== normalizedPath;
-      const [initialRootIdentity, initialTargetIdentity] = await Promise.all([
+      const [resolvedRootIdentity, initialRootIdentity, initialTargetIdentity] = await Promise.all([
+        fs.stat(resolvedRoot).then(directoryIdentity),
         fs.stat(canonicalRoot).then(directoryIdentity),
         fs.stat(canonicalTarget).then(directoryIdentity),
       ]);
+      // On macOS `/var` is a symlink to `/private/var`; compare the physical
+      // directory identity so that platform aliases are not confused with a
+      // user-requested alias inside the organization workspace.
+      const targetIsAlias = !sameDirectoryIdentity(resolvedRootIdentity, initialRootIdentity)
+        || canonicalDirectoryPath !== normalizedPath;
 
       const policy = resolveRudderNativeCapability({
         capability: "workspace-files",

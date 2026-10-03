@@ -15,8 +15,13 @@ import { RudderEntityPreview } from "@/components/RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TextDots } from "@/components/TextDots";
-import { RunTranscriptView, type TranscriptAgentDirectoryEntry, type TranscriptAgentInspection, type TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +30,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useMarkdownMentions } from "@/context/MarkdownMentionsContext";
 import { useOptionalSidePanel } from "@/context/SidePanelContext";
@@ -42,14 +46,12 @@ import {
   type ChatAskUserDraft
 } from "@/lib/chat-draft-storage";
 import {
-  formatChatProcessDuration,
-  lastTranscriptAtMs
+  formatChatProcessDuration
 } from "@/lib/chat-process-duration";
 import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
 } from "@/lib/chat-response-annotation-selection";
-import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
 import {
   clearIssueProposalPanelContent,
   publishIssueProposalPanelContent,
@@ -78,6 +80,7 @@ import {
   type Agent,
   type ChatAskUserQuestion,
   type ChatAskUserRequest,
+  type ChatAskUserResponse,
   type ChatConversation,
   type ChatInlineAnnotation,
   type ChatInlineAnnotationInput,
@@ -91,11 +94,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  GitFork,
   Lightbulb,
   Loader2,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
   Paperclip,
   Pencil,
   RefreshCcw,
@@ -106,9 +109,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
 import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName, visibleInterruptedChatMessageBody } from "./Chat.parts";
+import { chatStreamingAssistantBody } from "./Chat.timeline";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
+export { StreamTranscriptItem } from "./Chat.StreamTranscriptItem";
 
 export function ChatAssistantAttributionRow({
   replyingAgentId,
@@ -1197,23 +1202,15 @@ function ChatTurnBranchSelector({ controls }: { controls: ChatTurnBranchControls
 
 function CopyMessageButton({ onClick }: { onClick: () => void }) {
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Copy message"
-            onClick={onClick}
-          >
-            <Copy className="h-4 w-4" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={8}>
-          Copy message
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <button
+      type="button"
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+      aria-label="Copy message"
+      title="Copy message"
+      onClick={onClick}
+    >
+      <Copy className="h-4 w-4" />
+    </button>
   );
 }
 
@@ -1717,6 +1714,9 @@ export function ChatSystemMessageBody({
   const sideChatStartedParts = sideChatStartedSystemMessageParts(message);
 
   if (sideChatStartedParts) {
+    const sourceMessageHref = sideChatStartedParts.sourceMessageId
+      ? `chat://${sideChatStartedParts.sourceConversationId}?messageId=${encodeURIComponent(sideChatStartedParts.sourceMessageId)}`
+      : null;
     return (
       <span className="min-w-0 flex-1 leading-5">
         Side Chat started from{" "}
@@ -1727,6 +1727,19 @@ export function ChatSystemMessageBody({
         >
           {sideChatStartedParts.sourceConversationTitle}
         </Link>
+        {sourceMessageHref ? (
+          <>
+            {" "}at{" "}
+            <a
+              href={sourceMessageHref}
+              className="chat-system-issue-link chat-system-message-link"
+              aria-label="Open source message"
+              onClick={(event) => onMarkdownLinkClick?.({ event, href: sourceMessageHref, label: "message" })}
+            >
+              message
+            </a>
+          </>
+        ) : null}
         .
       </span>
     );
@@ -1984,6 +1997,7 @@ export function AskUserPanel({
   onRemovePendingFile,
   onPasteAttachment,
   onSubmit,
+  onStructuredSubmit,
 }: {
   message: ChatMessage;
   request: ChatAskUserRequest;
@@ -1994,6 +2008,7 @@ export function AskUserPanel({
   onRemovePendingFile: (fileKey: string) => void;
   onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
+  onStructuredSubmit?: (response: ChatAskUserResponse) => void;
 }) {
   const draftScopeKey = `${message.orgId}:${message.id}`;
   const requestDraftShapeKey = askUserRequestDraftShapeKey(request);
@@ -2066,6 +2081,7 @@ export function AskUserPanel({
 
   const questionCount = request.questions.length;
   const hasMultipleQuestions = questionCount > 1;
+  const hasNativeApproval = Boolean(message.approval?.id ?? message.approvalId);
   const boundedQuestionIndex = Math.min(currentQuestionIndex, Math.max(questionCount - 1, 0));
   const currentQuestion = request.questions[boundedQuestionIndex] ?? null;
   const hasPendingAttachments = pendingFiles.length > 0;
@@ -2084,6 +2100,18 @@ export function AskUserPanel({
     }
     return next;
   }, [answerAttachmentsText, answers, hasPendingAttachments, request.questions, selectedByQuestionId]);
+  const structuredResponse = useMemo<ChatAskUserResponse>(() => ({
+    answers: request.questions.map((question) => {
+      const selected = selectedByQuestionId[question.id] ?? [];
+      const freeformText = freeformByQuestionId[question.id]?.trim()
+        || (selected.includes("__other") && hasPendingAttachments ? answerAttachmentsText : undefined);
+      return {
+        questionId: question.id,
+        optionIds: selected.filter((optionId) => optionId !== "__other"),
+        ...(freeformText ? { freeformText } : {}),
+      };
+    }),
+  }), [answerAttachmentsText, freeformByQuestionId, hasPendingAttachments, request.questions, selectedByQuestionId]);
   const currentAnswer = currentQuestion ? answersWithAttachmentFallback[currentQuestion.id] : null;
   const canSubmit = request.questions.every((question) => Boolean(answersWithAttachmentFallback[question.id]));
 
@@ -2378,7 +2406,8 @@ export function AskUserPanel({
             size="sm"
             disabled={disabled || !canSubmit}
             onClick={() => {
-              onSubmit(formatAskUserAnswerMessage(request, answersWithAttachmentFallback));
+              if (onStructuredSubmit && hasNativeApproval) onStructuredSubmit(structuredResponse);
+              else onSubmit(formatAskUserAnswerMessage(request, answersWithAttachmentFallback));
             }}
           >
             Submit answer
@@ -2392,6 +2421,10 @@ export function AskUserPanel({
 export function ChatMessageItem({
   conversation,
   message,
+  streamedAssistantBody,
+  draftPresentation = false,
+  draftState,
+  onEditDraftOnly,
   agents,
   currentUserId,
   currentUserAvatarUrl,
@@ -2407,6 +2440,7 @@ export function ChatMessageItem({
   onConvertToIssue,
   actionPending,
   onCopyMessageText,
+  onOpenSideChat,
   onForkMessage,
   onEditUserMessage,
   onRetryFailedMessage,
@@ -2430,6 +2464,10 @@ export function ChatMessageItem({
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
+  streamedAssistantBody?: string;
+  draftPresentation?: boolean;
+  draftState?: ChatStreamDraftState;
+  onEditDraftOnly?: (body: string) => void;
   agents: Agent[] | undefined;
   currentUserId?: string | null;
   currentUserAvatarUrl?: string | null;
@@ -2445,6 +2483,7 @@ export function ChatMessageItem({
   onConvertToIssue: (message: ChatMessage) => void;
   actionPending: boolean;
   onCopyMessageText: (text: string) => void | Promise<void>;
+  onOpenSideChat?: (message: ChatMessage) => void;
   onForkMessage?: (message: ChatMessage) => void;
   onEditUserMessage?: (message: ChatMessage) => void;
   onRetryFailedMessage?: (message: ChatMessage) => void;
@@ -2553,9 +2592,16 @@ export function ChatMessageItem({
   const inlineAnnotationAttachmentIds = new Set(
     inlineAnnotations.flatMap((annotation) => annotation.attachmentIds),
   );
-  const statusLabel = !isUser && displayedState !== "interrupted"
-    ? localizeText(assistantStateLabel(displayedState) ?? "") || null
-    : null;
+  const liveDraftState = draftState === "streaming"
+    || draftState === "tool_busy"
+    || draftState === "finalizing";
+  const statusLabel = !isUser && draftState !== undefined
+    ? liveDraftState || draftState === "stopping"
+      ? null
+      : localizeText(assistantStateLabel(draftState) ?? "") || null
+    : !isUser && !draftPresentation && displayedState !== "interrupted"
+      ? localizeText(assistantStateLabel(displayedState) ?? "") || null
+      : null;
   const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
     (attachment) => (
@@ -2565,10 +2611,14 @@ export function ChatMessageItem({
   );
   const recoverableFailure = displayedState === "failed" ? recoverableFailureFromMessage(message) : null;
   const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
-  const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
-    ? "Runtime unavailable"
-    : "Response failed";
-  const isEmptyStreamingAssistant = !isUser && displayedState === "streaming" && message.body.trim().length === 0;
+  const failedMessageTitle = recoverableFailure?.phase === "pre_generation"
+    ? "Input saved; reply not started"
+    : recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
+      ? "Runtime unavailable"
+      : "Response failed";
+  const isEmptyStreamingAssistant = !isUser
+    && (draftState !== undefined || displayedState === "streaming")
+    && (streamedAssistantBody ?? message.body).trim().length === 0;
   const canAnnotateAssistantBody = !isUser
     && !isFailedAssistantMessage
     && message.kind === "message"
@@ -2582,21 +2632,43 @@ export function ChatMessageItem({
   const canShowAssistantMessageActions = !isUser
     && !isFailedAssistantMessage
     && message.status !== "stopped";
+  const canOpenSideChat = Boolean(onOpenSideChat)
+    && canShowAssistantMessageActions
+    && message.kind === "message"
+    && message.status === "completed"
+    && (!message.supersededAt || Boolean(turnBranchControls));
+  const canForkMessage = canShowAssistantMessageActions
+    && Boolean(onForkMessage)
+    && message.status !== "streaming";
   const isInlineEditing = isUser && Boolean(inlineEdit);
   const hasVisibleUserMessageContent = message.body.trim().length > 0
     || visibleMessageAttachments.length > 0;
-  const visibleAssistantBody = isUser ? message.body : visibleInterruptedChatMessageBody(message);
+  const visibleAssistantBody = isUser
+    ? message.body
+    : streamedAssistantBody ?? visibleInterruptedChatMessageBody(message);
   const hideInterruptedPlaceholder = !isUser
     && canContinueInterruptedChatMessage(message)
     && visibleAssistantBody.trim().length === 0
     && visibleMessageAttachments.length === 0;
 
+  if (
+    !isUser
+    && draftState !== undefined
+    && !visibleAssistantBody.trim()
+    && !liveDraftState
+    && draftState !== "waiting_for_network"
+  ) return null;
+
   if (hideInterruptedPlaceholder) return null;
 
   if (!isUser) {
     return (
-      <div data-testid="chat-assistant-message" data-message-id={message.id} className="flex justify-start transition-all duration-200">
-        <div data-message-highlight-target="true" className="group w-full max-w-3xl px-1 py-1">
+      <AssistantMessageContextMenu
+        enabled={canOpenSideChat}
+        onOpenSideChat={() => onOpenSideChat?.(message)}
+      >
+        <div data-testid="chat-assistant-message" data-message-id={message.id} className="flex justify-start transition-all duration-200">
+            <div data-message-highlight-target="true" className="group w-full max-w-3xl px-1 py-1">
           <ChatAssistantAttributionRow
             replyingAgentId={message.replyingAgentId ?? null}
             conversation={conversation}
@@ -2604,7 +2676,7 @@ export function ChatMessageItem({
           />
           {statusLabel && !isEmptyStreamingAssistant ? (
             <div className="mb-2 flex items-center gap-2">
-              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(displayedState))}>
+              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(draftState ?? displayedState))}>
                 {statusLabel}
               </span>
             </div>
@@ -2635,10 +2707,12 @@ export function ChatMessageItem({
               />
             </div>
           ) : null}
-          {!isFailedAssistantMessage ? (
+          {!isFailedAssistantMessage || recoverableFailure?.partialBodyUserVisible ? (
             isEmptyStreamingAssistant ? (
               <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-                <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
+                {draftState === "waiting_for_network" ? null : (
+                  <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
+                )}
               </div>
             ) : (
               <div
@@ -2691,40 +2765,48 @@ export function ChatMessageItem({
               {canShowAssistantMessageActions ? (
                 <CopyMessageButton onClick={() => void onCopyMessageText(visibleAssistantBody)} />
               ) : null}
-              {canShowAssistantMessageActions && onRefreshAssistantMessage && canRefreshAssistantMessage ? (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                        aria-label="Refresh answer"
-                        onClick={() => onRefreshAssistantMessage(message)}
-                      >
-                        <RefreshCcw className="h-4 w-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" sideOffset={8}>
-                      Refresh answer
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              ) : null}
-              {canShowAssistantMessageActions && onForkMessage && message.status !== "streaming" ? (
+              {draftPresentation && onEditDraftOnly ? (
                 <button
                   type="button"
                   className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                  aria-label="Fork from here"
-                  title="Fork from here"
-                  onClick={() => onForkMessage(message)}
+                  aria-label="Edit draft"
+                  onClick={() => onEditDraftOnly(visibleAssistantBody)}
                 >
-                  <GitFork className="h-4 w-4" />
+                  <Pencil className="h-4 w-4" />
                 </button>
+              ) : null}
+              {canShowAssistantMessageActions && onRefreshAssistantMessage && canRefreshAssistantMessage ? (
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                  aria-label="Refresh answer"
+                  title="Refresh answer"
+                  onClick={() => onRefreshAssistantMessage(message)}
+                >
+                  <RefreshCcw className="h-4 w-4" />
+                </button>
+              ) : null}
+              {canOpenSideChat || canForkMessage ? (
+                <AssistantMessageMoreMenu
+                  onOpenSideChat={canOpenSideChat ? () => onOpenSideChat?.(message) : undefined}
+                  onForkMessage={canForkMessage ? () => onForkMessage?.(message) : undefined}
+                  className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground md:inline-flex"
+                />
               ) : null}
             </div>
           ) : null}
-        </div>
-      </div>
+          {canOpenSideChat || canForkMessage ? (
+            <div className="mt-1 flex justify-end md:hidden">
+              <AssistantMessageMoreMenu
+                onOpenSideChat={canOpenSideChat ? () => onOpenSideChat?.(message) : undefined}
+                onForkMessage={canForkMessage ? () => onForkMessage?.(message) : undefined}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              />
+            </div>
+          ) : null}
+            </div>
+          </div>
+      </AssistantMessageContextMenu>
     );
   }
 
@@ -2858,6 +2940,70 @@ export function ChatMessageItem({
         </div>
       </div>
     </div>
+  );
+}
+
+function AssistantMessageContextMenu(props: {
+  enabled: boolean;
+  onOpenSideChat: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild disabled={!props.enabled}>
+        {props.children}
+      </ContextMenuTrigger>
+      {props.enabled ? (
+        <ContextMenuContent data-testid="chat-message-context-menu">
+          <ContextMenuItem
+            data-testid="chat-open-side-chat-context-action"
+            onSelect={props.onOpenSideChat}
+          >
+            Open Side Chat
+          </ContextMenuItem>
+        </ContextMenuContent>
+      ) : null}
+    </ContextMenu>
+  );
+}
+
+function AssistantMessageMoreMenu(props: {
+  className: string;
+  onOpenSideChat?: () => void;
+  onForkMessage?: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-testid="chat-message-actions-trigger"
+          className={props.className}
+          aria-label="More message actions"
+          title="More message actions"
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" data-testid="chat-message-actions-menu">
+        {props.onOpenSideChat ? (
+          <DropdownMenuItem
+            data-testid="chat-open-side-chat-more-action"
+            onSelect={props.onOpenSideChat}
+          >
+            Open Side Chat
+          </DropdownMenuItem>
+        ) : null}
+        {props.onForkMessage ? (
+          <DropdownMenuItem
+            data-testid="chat-fork-more-action"
+            onSelect={props.onForkMessage}
+          >
+            Fork from here
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -3049,178 +3195,12 @@ export function LazyStreamTranscriptItem({
   );
 }
 
-export function StreamTranscriptItem({
-  entries,
-  steerMessages = [],
-  state,
-  generationTerminalReason,
-  streamStartedAt,
-  streamEndedAt,
-  assistantMessageBody,
-  showDeveloperDiagnostics,
-  open,
-  defaultOpen = false,
-  onOpenChange,
-  onOpenFile,
-  onOpenSkill,
-  canOpenSkill,
-  onOpenAgent,
-  agentDirectory,
-  annotationSource,
-  sentAnnotationContext,
-  localizeText = (text) => text,
-}: {
-  entries: TranscriptEntry[];
-  steerMessages?: ChatMessage[];
-  state: ChatStreamDraftState | ChatMessage["status"];
-  generationTerminalReason?: string | null;
-  streamStartedAt: Date;
-  streamEndedAt?: Date | null;
-  assistantMessageBody?: string | null;
-  showDeveloperDiagnostics?: boolean;
-  open?: boolean;
-  defaultOpen?: boolean;
-  onOpenChange?: (open: boolean) => void;
-  onOpenFile?: (targetPath: string, label: string) => void;
-  onOpenSkill?: (target: TranscriptSkillTarget) => void;
-  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
-  onOpenAgent?: (agent: TranscriptAgentInspection) => void;
-  agentDirectory?: TranscriptAgentDirectoryEntry[];
-  annotationSource?: {
-    sourceConversationId: string;
-    sourceMessageId: string;
-    annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
-    onActivateAnnotation?: (
-      annotationId: string,
-      anchor: HTMLButtonElement,
-    ) => void;
-  };
-  sentAnnotationContext?: {
-    onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
-    onExpandedChange?: (
-      annotations: ChatInlineAnnotation[],
-      expanded: boolean,
-    ) => void;
-    unlocatableAnnotationId?: string | null;
-  };
-  localizeText?: (text: string) => string;
-}) {
-  const timelineEntries = useMemo(
-    () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
-    [entries, steerMessages],
-  );
-  const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
-  const waitingForNetwork = state === "waiting_for_network";
-  const hasSteerInterjection = steerMessages.length > 0;
-  const [internalProcessOpen, setInternalProcessOpen] = useState(
-    () => streamingActive || defaultOpen || hasSteerInterjection,
-  );
-  const processOpen = open ?? internalProcessOpen;
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    if (!streamingActive) return;
-    const id = window.setInterval(() => setTick((n) => n + 1), 500);
-    return () => clearInterval(id);
-  }, [streamingActive]);
-
-  useEffect(() => {
-    if (defaultOpen || hasSteerInterjection) setInternalProcessOpen(true);
-  }, [defaultOpen, hasSteerInterjection]);
-
-  const durationMs = useMemo(() => {
-    const start = streamStartedAt.getTime();
-    const explicitEnd = streamEndedAt?.getTime() ?? 0;
-    const end = streamingActive ? Date.now() : Math.max(lastTranscriptAtMs(timelineEntries), explicitEnd);
-    return Math.max(0, end - start);
-  }, [streamStartedAt, streamEndedAt, streamingActive, timelineEntries, tick]);
-
-  if (timelineEntries.length === 0) return null;
-
-  const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
-  const statusHint =
-    displayedState === "failed"
-      ? localizeText("Stopped with errors")
-      : displayedState === "stopped"
-        ? localizeText("Stopped")
-        : "";
-
-  const showBody = processOpen || streamingActive;
-
-  return (
-    <div data-testid="chat-transcript-item" className="flex min-w-0 justify-start transition-all duration-200">
-      <div className="w-full min-w-0 py-1">
-        <div className="w-full min-w-0 max-w-3xl px-1">
-          <div className="flex items-center gap-3">
-            <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
-            <button
-              type="button"
-              className={cn(
-                "flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors",
-                streamingActive ? "cursor-default" : "hover:text-foreground",
-              )}
-              disabled={streamingActive}
-              onClick={() => {
-                if (!streamingActive) {
-                  const next = !processOpen;
-                  if (open === undefined) setInternalProcessOpen(next);
-                  onOpenChange?.(next);
-                }
-              }}
-              aria-expanded={showBody}
-            >
-              {streamingActive ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-              ) : null}
-              <span className="whitespace-nowrap">
-                {localizeText(`${streamingActive ? "Working" : waitingForNetwork ? "Waiting" : "Worked"} for ${formatChatProcessDuration(durationMs)}`)}
-              </span>
-              {statusHint ? (
-                <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
-              ) : null}
-              {streamingActive ? (
-                <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-              ) : showBody ? (
-                <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-              ) : (
-                <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-              )}
-            </button>
-            <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
-          </div>
-        </div>
-        <div
-          className={cn("mt-3", !showBody && "hidden")}
-          aria-hidden={!showBody}
-          data-testid="chat-transcript-content"
-        >
-          <RunTranscriptView
-            entries={timelineEntries}
-            mode="nice"
-            streaming={streamingActive}
-            collapseStdout
-            presentation="chat"
-            showDeveloperDiagnostics={showDeveloperDiagnostics}
-            hiddenAssistantMessageText={assistantMessageBody}
-            localizeText={localizeText}
-            onOpenFile={onOpenFile}
-            onOpenSkill={onOpenSkill}
-            canOpenSkill={canOpenSkill}
-            onOpenAgent={onOpenAgent}
-            agentDirectory={agentDirectory}
-            annotationSource={annotationSource}
-            sentAnnotationContext={sentAnnotationContext}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function AssistantDraftItem({
   body,
+  transcript,
   createdAt,
   state,
+  requireFinalAnswerPhase = false,
   replyingAgentId,
   conversation,
   agents,
@@ -3230,8 +3210,10 @@ export function AssistantDraftItem({
   localizeText = (text) => text,
 }: {
   body: string;
+  transcript?: TranscriptEntry[];
   createdAt: Date;
   state: ChatStreamDraftState;
+  requireFinalAnswerPhase?: boolean;
   replyingAgentId: string | null;
   conversation: ChatConversation;
   agents: Agent[] | undefined;
@@ -3240,11 +3222,16 @@ export function AssistantDraftItem({
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   localizeText?: (text: string) => string;
 }) {
+  const displayedBody = chatStreamingAssistantBody(
+    transcript ?? [],
+    body,
+    requireFinalAnswerPhase,
+  );
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const waitingForNetwork = state === "waiting_for_network";
   const statusLabel = streamingActive ? null : assistantStateLabel(state);
 
-  if (!body.trim() && !streamingActive && !waitingForNetwork) {
+  if (!displayedBody.trim() && !streamingActive && !waitingForNetwork) {
     return null;
   }
 
@@ -3264,9 +3251,9 @@ export function AssistantDraftItem({
           </div>
         ) : null}
         <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-          {body.trim() ? (
+          {displayedBody.trim() ? (
             <ChatLongMessageBody
-              body={body}
+              body={displayedBody}
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
             />
@@ -3274,7 +3261,7 @@ export function AssistantDraftItem({
             <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
           )}
         </div>
-        {body.trim() ? (
+        {displayedBody.trim() ? (
           <div
             className={cn(
               "mt-2 flex h-7 items-center gap-1 text-muted-foreground",
@@ -3286,7 +3273,7 @@ export function AssistantDraftItem({
               label={relativeTime(createdAt)}
               className="text-[11px] tracking-normal"
             />
-            <CopyMessageButton onClick={() => void onCopyMessageText(body)} />
+            <CopyMessageButton onClick={() => void onCopyMessageText(displayedBody)} />
           </div>
         ) : null}
       </div>

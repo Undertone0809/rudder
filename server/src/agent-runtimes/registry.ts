@@ -31,10 +31,12 @@ import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
 import {
   agentConfigurationDoc as hermesGatewayAgentConfigurationDoc,
   models as hermesGatewayModels,
+  parseHermesGatewayStdoutLine,
 } from "@rudderhq/agent-runtime-hermes-gateway";
 import {
   execute as hermesGatewayExecute,
   testEnvironment as hermesGatewayTestEnvironment,
+  supportsLocalAgentJwtForContext as hermesSupportsLocalAgentJwtForContext,
   listHermesGatewaySkills,
   syncHermesGatewaySkills,
 } from "@rudderhq/agent-runtime-hermes-gateway/server";
@@ -192,12 +194,14 @@ const openclawGatewayAdapter: ServerAgentRuntimeModule = {
 
 const hermesGatewayAdapter: ServerAgentRuntimeModule = {
   type: "hermes_gateway",
+  parseStdoutLine: parseHermesGatewayStdoutLine,
   execute: hermesGatewayExecute,
   testEnvironment: hermesGatewayTestEnvironment,
   listSkills: listHermesGatewaySkills,
   syncSkills: syncHermesGatewaySkills,
   models: hermesGatewayModels,
   supportsLocalAgentJwt: false,
+  supportsLocalAgentJwtForContext: hermesSupportsLocalAgentJwtForContext,
   agentConfigurationDoc: hermesGatewayAgentConfigurationDoc,
 };
 

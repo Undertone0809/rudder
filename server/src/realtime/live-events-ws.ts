@@ -1,9 +1,10 @@
 import type { Db } from "@rudderhq/db";
-import { agentApiKeys, instanceUserRoles, organizationMemberships } from "@rudderhq/db";
+import { agentApiKeys, heartbeatRuns, instanceUserRoles, organizationMemberships } from "@rudderhq/db";
 import {
   authRequirementForDeploymentMode,
   type AuthRequirement,
   type DeploymentMode,
+  type LiveEvent,
 } from "@rudderhq/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import { createHash } from "node:crypto";
@@ -14,6 +15,7 @@ import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "../middleware/logger.js";
 import { subscribeCompanyLiveEvents } from "../services/live-events.js";
 import type { LocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
+import { assertRunIntelligenceAccess } from "../services/run-intelligence-access.js";
 
 interface WsSocket {
   readyState: number;
@@ -50,6 +52,7 @@ interface UpgradeContext {
   orgId: string;
   actorType: "board" | "agent";
   actorId: string;
+  sideChatOwnerId: string | null;
   sessionRevocationGeneration?: number;
 }
 
@@ -127,6 +130,7 @@ async function authorizeUpgrade(
         orgId,
         actorType: "board",
         actorId: "board",
+        sideChatOwnerId: "local-board",
       };
     }
 
@@ -163,6 +167,7 @@ async function authorizeUpgrade(
       orgId,
       actorType: "board",
       actorId: userId,
+      sideChatOwnerId: userId,
     };
   }
 
@@ -186,7 +191,32 @@ async function authorizeUpgrade(
     orgId,
     actorType: "agent",
     actorId: key.agentId,
+    sideChatOwnerId: null,
   };
+}
+
+async function mayReceiveLiveEvent(db: Db, context: UpgradeContext, event: LiveEvent): Promise<boolean> {
+  if (event.orgId !== context.orgId) return false;
+  const runId = typeof event.payload.runId === "string" ? event.payload.runId : null;
+  if (runId) {
+    const [run] = await db.select({
+      orgId: heartbeatRuns.orgId, chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene, contextSnapshot: heartbeatRuns.contextSnapshot,
+    }).from(heartbeatRuns).where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.orgId, context.orgId))).limit(1);
+    if (!run) return false;
+    await assertRunIntelligenceAccess(db, run, {
+      orgIds: [context.orgId], sideChatOwnerId: context.sideChatOwnerId,
+    });
+  } else if (event.type.startsWith("heartbeat.run.")) {
+    return false;
+  }
+  if (event.type === "activity.logged" && event.payload.entityType === "chat") {
+    if (typeof event.payload.entityId !== "string") return false;
+    await assertRunIntelligenceAccess(db, { orgId: context.orgId, chatConversationId: event.payload.entityId }, {
+      orgIds: [context.orgId], sideChatOwnerId: context.sideChatOwnerId,
+    });
+  }
+  return true;
 }
 
 export function setupLiveEventsWebSocketServer(
@@ -247,6 +277,8 @@ export function setupLiveEventsWebSocketServer(
       return;
     }
 
+    let delivery = Promise.resolve();
+    let pendingEvents = 0;
     const unsubscribe = subscribeCompanyLiveEvents(context.orgId, (event) => {
       if (socket.readyState !== WebSocket.OPEN) return;
       if (event.dedupeKey) {
@@ -259,7 +291,19 @@ export function setupLiveEventsWebSocketServer(
         }
         seenDedupeKeysByClient.set(socket, seen);
       }
-      socket.send(JSON.stringify(event));
+      if (pendingEvents >= 500) {
+        socket.close(1013, "event stream requires resync");
+        return;
+      }
+      pendingEvents += 1;
+      // Keep event order while authorizing private Run/Chat references. Never
+      // forward a payload on lookup failure, and bound the pending work queue.
+      delivery = delivery.then(async () => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        if (await mayReceiveLiveEvent(db, context, event) && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify(event));
+        }
+      }).catch(() => undefined).finally(() => { pendingEvents -= 1; });
     });
 
     cleanupByClient.set(socket, unsubscribe);

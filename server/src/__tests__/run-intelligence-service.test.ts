@@ -104,6 +104,16 @@ describe("agent run references", () => {
     expect(lookup.select).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed run references before UUID queries", async () => {
+    const lookup = mockRunIdLookup([]);
+
+    await expect(resolveHeartbeatRunIdReference(lookup.db as never, "missing-run")).rejects.toMatchObject({
+      status: 404,
+      message: "Agent run not found",
+    });
+    expect(lookup.select).not.toHaveBeenCalled();
+  });
+
   it("rejects unmatched short run ID references before UUID lookups", async () => {
     const lookup = mockRunIdLookup([]);
 

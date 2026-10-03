@@ -9,21 +9,102 @@ import {
   buildModelAttemptSpecs,
   isAgentRuntimeNetworkSuspension,
   isSuccessfulRuntimeResult,
+  type AgentRuntimeNetworkSubmissionPhase,
   type ModelAttemptSpec,
 } from "@rudderhq/agent-runtime-utils";
 import {
   isBrowserSkillSelectionKey,
   isSupportedBrowserRuntimeType,
 } from "../browser-capability.js";
+import type { RuntimeDriver } from "./runtime-driver.js";
 
-interface ModelFallbackExecutionOptions {
+export interface ModelFallbackExecutionOptions {
   resolveAdapter?: (agentRuntimeType: string) => ServerAgentRuntimeModule | null;
-  createAuthToken?: (agentRuntimeType: string) => string | undefined;
+  /** Resolve the production Runtime Driver for native-chat runtimes. */
+  resolveDriver?: (
+    agentRuntimeType: string,
+    adapter: ServerAgentRuntimeModule,
+    context: AgentRuntimeExecutionContext,
+    attempt: ModelAttemptSpec,
+  ) => RuntimeDriver | null;
+  /** Route chat submissions through the driver's explicit input boundary. */
+  submitInputThroughDriver?: boolean;
+  /** Route already-prepared non-Chat execution contexts through the driver. */
+  executeThroughDriver?: boolean;
+  createAuthToken?: (
+    agentRuntimeType: string,
+    adapter: ServerAgentRuntimeModule,
+    context: AgentRuntimeExecutionContext,
+  ) => string | undefined;
   onAttemptStart?: (attempt: ModelAttemptSpec, adapter: ServerAgentRuntimeModule) => Promise<void> | void;
   /** Called only when this attempt failed and the next fallback will run. */
   onAttemptFailure?: (attempt: ModelAttemptSpec, failure: AgentRuntimeExecutionResult | Error) => Promise<void> | void;
   /** Resume a network-suspended fallback at its persisted model cursor. */
   startAttemptIndex?: number;
+  /** Native-bound runs must never execute outside their profile-bound driver. */
+  nativeDriverRequired?: boolean;
+  /**
+   * Called after the executor freezes the actual next-attempt decision.
+   * willFallback promises an owned next attempt, not provider dispatch: driver
+   * admission is resolved only after that attempt starts and may terminalize it.
+   */
+  onAttemptResult?: (
+    attempt: ModelAttemptSpec,
+    result: AgentRuntimeExecutionResult,
+    submissionPhase: AgentRuntimeNetworkSubmissionPhase,
+    lifecycle: { providerDispatched: boolean; willFallback: boolean },
+  ) => Promise<void> | void;
+  /** Persist acceptance uncertainty before the native provider call is dispatched. */
+  onAttemptSubmissionStart?: (attempt: ModelAttemptSpec) => Promise<void> | void;
+  /** Synchronous notification immediately before calling a provider adapter/driver. */
+  onProviderDispatch?: (attempt: ModelAttemptSpec) => void;
+}
+
+function isSubmissionPhase(value: unknown): value is AgentRuntimeNetworkSubmissionPhase {
+  return value === "pre_submission" || value === "accepted" || value === "indeterminate";
+}
+
+/**
+ * Resolve submission state conservatively. Native fallback is only safe when
+ * the provider explicitly proves that no submission was accepted.
+ */
+export function resolveExecutionSubmissionPhase(
+  result: AgentRuntimeExecutionResult,
+): AgentRuntimeNetworkSubmissionPhase {
+  if (isSubmissionPhase(result.submissionPhase)) return result.submissionPhase;
+  const suspension = result.networkSuspension ?? result.suspension;
+  if (isSubmissionPhase(suspension?.submissionPhase)) return suspension.submissionPhase;
+  const resultJson = result.resultJson && typeof result.resultJson === "object"
+    ? result.resultJson as Record<string, unknown>
+    : null;
+  if (isSubmissionPhase(resultJson?.submissionPhase)) return resultJson.submissionPhase;
+  const errorMeta = result.errorMeta && typeof result.errorMeta === "object"
+    ? result.errorMeta
+    : null;
+  if (isSubmissionPhase(errorMeta?.submissionPhase)) return errorMeta.submissionPhase;
+  const providerFailure = resultJson?.providerFailure;
+  if (
+    providerFailure
+    && typeof providerFailure === "object"
+    && !Array.isArray(providerFailure)
+    && (providerFailure as Record<string, unknown>).shortCircuited === true
+  ) {
+    return "pre_submission";
+  }
+  return isSuccessfulRuntimeResult(result) ? "accepted" : "indeterminate";
+}
+
+function runtimeDriverRequiredFailure(runtimeType: string, reason: string): AgentRuntimeExecutionResult {
+  return {
+    exitCode: 1,
+    signal: null,
+    timedOut: false,
+    errorMessage: reason,
+    errorCode: "runtime_driver_required",
+    submissionPhase: "pre_submission",
+    nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+    resultJson: { runtimeType, nativeDriverRequired: true },
+  };
 }
 
 const SHARED_ATTEMPT_CONFIG_KEYS = [
@@ -307,49 +388,135 @@ export async function executeAdapterWithModelFallbacks(
     : 0;
 
   const startIndex = Math.min(requestedStartIndex, Math.max(0, attempts.length - 1));
+  type PreparedAttempt = {
+    adapter: ServerAgentRuntimeModule;
+    context: AgentRuntimeExecutionContext;
+    readinessFingerprint: string | null;
+  };
+  const preparedAttempts = new Map<number, PreparedAttempt>();
+  const skippedAttempts = new Set<number>();
+  let selectedNextIndex: number | null = null;
+  async function prepare(attempt: ModelAttemptSpec, attemptAdapter: ServerAgentRuntimeModule): Promise<PreparedAttempt> {
+    const cached = preparedAttempts.get(attempt.index);
+    if (cached) return cached;
+    const runtimeType = attempt.agentRuntimeType ?? ctx.agent.agentRuntimeType ?? adapter.type;
+    const config = buildAttemptConfig(ctx.config, attempt, ctx.agent.agentRuntimeType ?? adapter.type,
+      runtimeType, browserCapabilitySource);
+    const context: AgentRuntimeExecutionContext = {
+      ...ctx,
+      agent: { ...ctx.agent, agentRuntimeType: runtimeType, agentRuntimeConfig: config },
+      config,
+      context: buildAttemptContext(ctx.context, attempt),
+      runtime: attempt.isFallback ? clearRuntimeSession(ctx.runtime) : ctx.runtime,
+    };
+    context.authToken = options.createAuthToken
+      ? options.createAuthToken(runtimeType, attemptAdapter, context) : ctx.authToken;
+    const readinessFingerprint = await attemptAdapter.getProviderReadinessFingerprint?.(context) ?? null;
+    const prepared = { adapter: attemptAdapter, context, readinessFingerprint };
+    preparedAttempts.set(attempt.index, prepared);
+    return prepared;
+  }
+  function authScopeFailed(runtimeType: string, fingerprint: string | null): boolean {
+    return Boolean(fingerprint
+      ? authFailedReadinessScopes.has(readinessScopeKey(runtimeType, fingerprint))
+      : authFailedRuntimeTypes.has(runtimeType));
+  }
+  // No provider calls or attempt lifecycle hooks occur during this lookahead.
+  // Cache the chosen adapter/config/fingerprint so execution cannot re-probe
+  // it and silently skip an attempt already advertised to the current callback.
+  async function selectNext(current: ModelAttemptSpec): Promise<{
+    attempt: ModelAttemptSpec | null;
+    terminalFailure?: AgentRuntimeExecutionResult;
+    terminalError?: Error;
+  }> {
+    let terminalError: Error | undefined;
+    for (const candidate of attempts.slice(current.index + 1)) {
+      const runtimeType = candidate.agentRuntimeType ?? ctx.agent.agentRuntimeType ?? adapter.type;
+      if (options.nativeDriverRequired && runtimeType !== (ctx.agent.agentRuntimeType ?? adapter.type)) {
+        return { attempt: null, terminalFailure: runtimeDriverRequiredFailure(runtimeType,
+          `Native-bound Run cannot fall back from ${ctx.agent.agentRuntimeType ?? adapter.type} to ${runtimeType}.`) };
+      }
+      const candidateAdapter = runtimeType !== adapter.type ? options.resolveAdapter?.(runtimeType) ?? null : adapter;
+      if (!candidateAdapter) {
+        if (options.nativeDriverRequired) {
+          return { attempt: null, terminalFailure: runtimeDriverRequiredFailure(runtimeType,
+            `No adapter found for fallback runtime ${runtimeType}`) };
+        }
+        skippedAttempts.add(candidate.index);
+        terminalError = new Error(`No adapter found for fallback runtime ${runtimeType}`);
+        continue;
+      }
+      let prepared: PreparedAttempt;
+      try {
+        prepared = await prepare(candidate, candidateAdapter);
+      } catch (error) {
+        skippedAttempts.add(candidate.index);
+        terminalError = error instanceof Error ? error : new Error(String(error));
+        continue;
+      }
+      if (authScopeFailed(runtimeType, prepared.readinessFingerprint)) {
+        skippedAttempts.add(candidate.index);
+        continue;
+      }
+      if (options.nativeDriverRequired && !options.onAttemptSubmissionStart) {
+        return { attempt: null, terminalFailure: runtimeDriverRequiredFailure(runtimeType,
+          `No durable submission checkpoint is available for ${runtimeType}.`) };
+      }
+      return { attempt: candidate };
+    }
+    return { attempt: null, terminalError };
+  }
   for (const attempt of attempts.slice(startIndex)) {
+    if (skippedAttempts.has(attempt.index)) continue;
     const attemptRuntimeType = attempt.agentRuntimeType ?? ctx.agent.agentRuntimeType ?? adapter.type;
-    const attemptAdapter = attempt.isFallback && attemptRuntimeType !== adapter.type
+    if (
+      options.nativeDriverRequired
+      && attempt.isFallback
+      && attemptRuntimeType !== (ctx.agent.agentRuntimeType ?? adapter.type)
+    ) {
+      const failure = runtimeDriverRequiredFailure(
+        attemptRuntimeType,
+        `Native-bound Run cannot fall back from ${ctx.agent.agentRuntimeType ?? adapter.type} to ${attemptRuntimeType}.`,
+      );
+      await options.onAttemptResult?.(attempt, failure, "pre_submission", { providerDispatched: false, willFallback: false });
+      return failure;
+    }
+    const attemptAdapter = preparedAttempts.get(attempt.index)?.adapter ?? (attempt.isFallback && attemptRuntimeType !== adapter.type
       ? options.resolveAdapter?.(attemptRuntimeType) ?? null
-      : adapter;
+      : adapter);
 
     if (!attemptAdapter) {
-      previousFailure = new Error(`No adapter found for fallback runtime ${attemptRuntimeType}`);
+      const failure = runtimeDriverRequiredFailure(
+        attemptRuntimeType,
+        `No adapter found for fallback runtime ${attemptRuntimeType}`,
+      );
+      if (options.nativeDriverRequired) {
+        await options.onAttemptResult?.(attempt, failure, "pre_submission", { providerDispatched: false, willFallback: false });
+        return failure;
+      }
+      previousFailure = new Error(failure.errorMessage ?? `Runtime ${attemptRuntimeType} has no adapter`);
       continue;
     }
 
     let controlAttempt: Awaited<ReturnType<NonNullable<typeof ctx.controlCoordinator>["beginAttempt"]>> | null = null;
     let networkSuspended = false;
+    let nativeSubmissionCheckpointStarted = false;
+    let providerDispatched = false;
+    let resultCallbackStarted = false;
+    const markProviderDispatch = () => {
+      // Internal executor evidence, independent of provider-declared prompt
+      // acceptance. Once set it cannot be cleared by a returned result.
+      providerDispatched = true;
+      options.onProviderDispatch?.(attempt);
+    };
     try {
-      const attemptConfig = buildAttemptConfig(
-        ctx.config,
-        attempt,
-        ctx.agent.agentRuntimeType ?? adapter.type,
-        attemptRuntimeType,
-        browserCapabilitySource,
-      );
-      const attemptContext: AgentRuntimeExecutionContext = {
-        ...ctx,
-        agent: {
-          ...ctx.agent,
-          agentRuntimeType: attemptRuntimeType,
-          agentRuntimeConfig: attemptConfig,
-        },
-        config: attemptConfig,
-        context: buildAttemptContext(ctx.context, attempt),
-        runtime: attempt.isFallback ? clearRuntimeSession(ctx.runtime) : ctx.runtime,
-        authToken: options.createAuthToken?.(attemptRuntimeType) ?? ctx.authToken,
-      };
-      const readinessFingerprint = await attemptAdapter.getProviderReadinessFingerprint?.(
-        attemptContext,
-      ) ?? null;
-      if (
-        (readinessFingerprint
-          && authFailedReadinessScopes.has(readinessScopeKey(attemptRuntimeType, readinessFingerprint)))
-        || (!readinessFingerprint && authFailedRuntimeTypes.has(attemptRuntimeType))
-      ) {
+      const prepared = await prepare(attempt, attemptAdapter);
+      const attemptContext = prepared.context;
+      const readinessFingerprint = prepared.readinessFingerprint;
+      if (selectedNextIndex !== attempt.index && authScopeFailed(attemptRuntimeType, readinessFingerprint)) {
         continue;
       }
+      selectedNextIndex = null;
 
       if (attempt.isFallback) {
         await ctx.onLog(
@@ -364,16 +531,130 @@ export async function executeAdapterWithModelFallbacks(
         isFallback: attempt.isFallback,
       }) ?? null;
       await options.onAttemptStart?.(attempt, attemptAdapter);
-      const result = await attemptAdapter.execute({
-        ...attemptContext,
-        controlAttempt: controlAttempt ?? undefined,
-        onMeta: ctx.onMeta
-          ? async (meta) => {
-            await ctx.onMeta?.(wrapMeta(meta, attempt, previousFailure));
-          }
-          : undefined,
-      });
+      let result: AgentRuntimeExecutionResult;
+      if ((options.submitInputThroughDriver || options.executeThroughDriver) && options.resolveDriver) {
+        // Driver resolution owns mutable Chat ports. Never resolve a future
+        // driver during lookahead, before the current result is reconciled.
+        const driver = options.resolveDriver(attemptRuntimeType, attemptAdapter, attemptContext, attempt);
+        if (!driver && options.nativeDriverRequired) {
+          result = runtimeDriverRequiredFailure(
+            attemptRuntimeType,
+            `No profile-bound Runtime Driver is available for ${attemptRuntimeType}.`,
+          );
+        } else if (!driver) {
+          markProviderDispatch();
+          result = await attemptAdapter.execute({
+            ...attemptContext,
+            controlAttempt: controlAttempt ?? undefined,
+            onMeta: ctx.onMeta
+              ? async (meta) => {
+                await ctx.onMeta?.(wrapMeta(meta, attempt, previousFailure));
+              }
+              : undefined,
+          });
+        } else {
 
+          const sessionInput = attemptContext.runtime.sessionId || attemptContext.runtime.sessionParams
+            ? driver.resume({
+              sessionId: attemptContext.runtime.sessionId,
+              sessionParams: attemptContext.runtime.sessionParams,
+              sessionDisplayId: attemptContext.runtime.sessionDisplayId,
+            })
+            : null;
+          if (sessionInput && sessionInput.status !== "supported") {
+            result = {
+              exitCode: 1,
+              signal: null,
+              timedOut: false,
+              errorMessage: `Runtime Driver cannot resume ${attemptRuntimeType} (${sessionInput.status}): ${sessionInput.reason}`,
+              errorCode: "runtime_session_resume_rejected",
+              submissionPhase: "pre_submission",
+              // Resume validates identity before the execute/input boundary;
+              // no new writer exists, even if this session has prior history.
+              nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+              sessionId: attemptContext.runtime.sessionId ?? null,
+              sessionParams: attemptContext.runtime.sessionParams ?? null,
+              sessionDisplayId: attemptContext.runtime.sessionDisplayId ?? attemptContext.runtime.sessionId ?? null,
+              resultJson: {
+                resumeRejected: true,
+                runtimeType: attemptRuntimeType,
+                status: sessionInput.status,
+                reason: sessionInput.reason,
+              },
+              summary: "",
+              clearSession: false,
+            } satisfies AgentRuntimeExecutionResult;
+          } else {
+            const driverContext: AgentRuntimeExecutionContext = {
+              ...attemptContext,
+              ...(sessionInput?.status === "supported"
+                ? {
+                    runtime: {
+                      ...attemptContext.runtime,
+                      sessionId: sessionInput.value.sessionId,
+                      sessionParams: sessionInput.value.sessionParams,
+                      sessionDisplayId: sessionInput.value.sessionDisplayId,
+                    },
+                  }
+                : {}),
+              controlAttempt: controlAttempt ?? undefined,
+              onMeta: ctx.onMeta
+                ? async (meta) => {
+                  await ctx.onMeta?.(wrapMeta(meta, attempt, previousFailure));
+                }
+                : undefined,
+            };
+            if (options.executeThroughDriver) {
+              if (options.nativeDriverRequired && !options.onAttemptSubmissionStart) {
+                result = runtimeDriverRequiredFailure(
+                  attemptRuntimeType,
+                  `No durable submission checkpoint is available for ${attemptRuntimeType}.`,
+                );
+              } else {
+                nativeSubmissionCheckpointStarted = Boolean(options.onAttemptSubmissionStart);
+                await options.onAttemptSubmissionStart?.(attempt);
+                markProviderDispatch();
+                result = await driver.execute(driverContext);
+              }
+            } else {
+              if (options.nativeDriverRequired && !options.onAttemptSubmissionStart) {
+                result = runtimeDriverRequiredFailure(
+                  attemptRuntimeType,
+                  `No durable submission checkpoint is available for ${attemptRuntimeType}.`,
+                );
+              } else {
+                nativeSubmissionCheckpointStarted = Boolean(options.onAttemptSubmissionStart);
+                await options.onAttemptSubmissionStart?.(attempt);
+                const prompt = typeof attemptContext.context.chatPrompt === "string"
+                  ? attemptContext.context.chatPrompt
+                  : "";
+                markProviderDispatch();
+                result = await driver.submitInput({
+                  context: driverContext,
+                  session: sessionInput?.status === "supported" ? sessionInput.value : null,
+                  input: {
+                    text: prompt,
+                    ...(attemptContext.media ? { media: attemptContext.media } : {}),
+                  },
+                });
+              }
+            }
+          }
+        }
+      } else {
+        markProviderDispatch();
+        result = await attemptAdapter.execute({
+          ...attemptContext,
+          controlAttempt: controlAttempt ?? undefined,
+          onMeta: ctx.onMeta
+            ? async (meta) => {
+                await ctx.onMeta?.(wrapMeta(meta, attempt, previousFailure));
+              }
+            : undefined,
+        });
+      }
+
+      const submissionPhase = resolveExecutionSubmissionPhase(result);
       if (isTerminalProviderAuthFailure(result)) {
         const failureFingerprint = providerAuthFailureFingerprint(result) ?? readinessFingerprint;
         if (failureFingerprint) {
@@ -381,33 +662,30 @@ export async function executeAdapterWithModelFallbacks(
         } else {
           authFailedRuntimeTypes.add(attemptRuntimeType);
         }
-        if (attempt.index === attempts.length - 1) return result;
-        await options.onAttemptFailure?.(attempt, result);
-        previousFailure = result;
-        continue;
       }
-
-      // A provider transport suspension is non-terminal. Keep the current
-      // attempt/fallback cursor pinned so recovery can resume the same model
-      // instead of silently changing providers while the network is down.
-      if (
-        (isAgentRuntimeNetworkSuspension(result.networkSuspension)
-          || isAgentRuntimeNetworkSuspension(result.suspension))
-        || isSuccessfulRuntimeResult(result)
-        || ctx.abortSignal?.aborted
-          || attempt.index === attempts.length - 1
-      ) {
-        networkSuspended = Boolean(
-          isAgentRuntimeNetworkSuspension(result.networkSuspension)
-          || isAgentRuntimeNetworkSuspension(result.suspension),
-        );
-        return result;
+      networkSuspended = Boolean(isAgentRuntimeNetworkSuspension(result.networkSuspension)
+        || isAgentRuntimeNetworkSuspension(result.suspension));
+      const terminal = result.errorCode === "runtime_driver_required"
+        || result.errorCode === "runtime_session_resume_rejected"
+        || networkSuspended || isSuccessfulRuntimeResult(result) || ctx.abortSignal?.aborted
+        || (options.nativeDriverRequired && submissionPhase !== "pre_submission");
+      const next = terminal ? { attempt: null } : await selectNext(attempt);
+      selectedNextIndex = next.attempt?.index ?? null;
+      resultCallbackStarted = true;
+      await options.onAttemptResult?.(attempt, result, submissionPhase, {
+        providerDispatched, willFallback: next.attempt !== null,
+      });
+      if (!next.attempt) {
+        if (next.terminalError) throw next.terminalError;
+        return next.terminalFailure ?? result;
       }
-
       await options.onAttemptFailure?.(attempt, result);
       previousFailure = result;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
+      if (resultCallbackStarted || (options.nativeDriverRequired && nativeSubmissionCheckpointStarted)) {
+        throw err;
+      }
       if (ctx.abortSignal?.aborted || attempt.index === attempts.length - 1) {
         throw err;
       }

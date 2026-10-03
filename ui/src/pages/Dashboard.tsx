@@ -34,7 +34,7 @@ import { AgentIdentity } from "../components/AgentAvatar";
 import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
 import { Identity } from "../components/Identity";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
+import { useAgentRunTranscripts } from "../components/transcript/useAgentRunTranscripts";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents, formatTokens } from "../lib/utils";
 
@@ -390,11 +390,12 @@ export function Dashboard() {
     return map;
   }, [companyLiveRuns]);
 
-  const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
-    runs: companyLiveRuns ?? [],
-    orgId: selectedOrganizationId,
-    maxChunksPerRun: 80,
-  });
+  const { transcriptByRun, hasOutputForRun } = useAgentRunTranscripts(
+    (companyLiveRuns ?? []).map((run) => ({
+      runId: run.id,
+      active: run.status === "queued" || run.status === "running",
+    })),
+  );
 
   const entityNameMap = useMemo(() => {
     const map = new Map<string, string>();

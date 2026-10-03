@@ -4,6 +4,7 @@ import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
 export function parseCodexJsonl(stdout: string) {
   let sessionId: string | null = null;
   const messages: string[] = [];
+  const messageIndexesByItemId = new Map<string, number>();
   let modelOutputObserved = false;
   let toolActivityObserved = false;
   let terminalResult: string | null = null;
@@ -45,9 +46,18 @@ export function parseCodexJsonl(stdout: string) {
       if (type === "item.started") continue;
       if (itemType === "agent_message") {
         const text = asString(item.text, "");
+        const itemId = asString(item.id, "");
+        const messageIndex = itemId ? messageIndexesByItemId.get(itemId) : undefined;
         if (text) {
-          messages.push(text);
+          if (messageIndex !== undefined) {
+            messages[messageIndex] = item.delta === true ? messages[messageIndex]! + text : text;
+          } else {
+            if (itemId) messageIndexesByItemId.set(itemId, messages.length);
+            messages.push(text);
+          }
           modelOutputObserved = true;
+        } else if (messageIndex !== undefined && item.delta !== true) {
+          messages[messageIndex] = "";
         }
       }
       continue;
@@ -74,7 +84,7 @@ export function parseCodexJsonl(stdout: string) {
 
   return {
     sessionId,
-    summary: terminalCompleted ? messages.join("\n\n").trim() || terminalResult?.trim() || "" : "",
+    summary: terminalCompleted ? messages.filter(Boolean).join("\n\n").trim() || terminalResult?.trim() || "" : "",
     modelOutputObserved,
     terminalEventObserved,
     terminalCompleted,

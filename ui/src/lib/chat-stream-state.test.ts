@@ -1,6 +1,7 @@
 import type { ChatMessage } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import {
+  activeChatStreamAssistantMessageId,
   activeChatStreamTimelineInsertionIndex,
   mergeNativeSteerTranscriptEntries,
   nativeSteerTranscriptAnchor,
@@ -139,10 +140,11 @@ describe("chat stream state helpers", () => {
     expect(next).toEqual({ "chat-b": { body: "reply B" } });
   });
 
-  it("hides finalized assistant messages for the active stream turn", () => {
+  it("keeps only the active generation assistant visible during its stream turn", () => {
     const activeStream = {
       userCreatedAt: new Date("2026-04-30T10:00:00.000Z"),
       chatTurnId: "turn-active",
+      generationId: "generation-active",
     };
 
     expect(shouldShowMessageDuringActiveStream({
@@ -154,6 +156,53 @@ describe("chat stream state helpers", () => {
     expect(shouldShowMessageDuringActiveStream({
       role: "assistant",
       chatTurnId: "turn-active",
+      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+    }, activeStream)).toBe(false);
+
+    expect(shouldShowMessageDuringActiveStream({
+      role: "assistant",
+      chatTurnId: "turn-active",
+      createdAt: new Date("2026-04-30T09:59:59.000Z"),
+    }, activeStream)).toBe(true);
+
+    expect(shouldShowMessageDuringActiveStream({
+      role: "assistant",
+      chatTurnId: "turn-active",
+      generationId: "generation-active",
+      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+    }, activeStream)).toBe(true);
+
+    expect(activeChatStreamAssistantMessageId([
+      {
+        id: "assistant-completed",
+        role: "assistant",
+        status: "completed",
+        generationId: "generation-active",
+      },
+      {
+        id: "assistant-active",
+        role: "assistant",
+        status: "streaming",
+        generationId: "generation-active",
+      },
+    ], activeStream)).toBe("assistant-active");
+    expect(shouldShowMessageDuringActiveStream({
+      id: "assistant-active",
+      role: "assistant",
+      chatTurnId: "turn-active",
+      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+    }, { ...activeStream, assistantMessageId: "assistant-active" })).toBe(true);
+    expect(shouldShowMessageDuringActiveStream({
+      id: "assistant-other",
+      role: "assistant",
+      chatTurnId: "turn-active",
+      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+    }, { ...activeStream, assistantMessageId: "assistant-active" })).toBe(false);
+
+    expect(shouldShowMessageDuringActiveStream({
+      role: "assistant",
+      chatTurnId: "turn-active",
+      generationId: "generation-previous",
       createdAt: new Date("2026-04-30T10:00:01.000Z"),
     }, activeStream)).toBe(false);
 

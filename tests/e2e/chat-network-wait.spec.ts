@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Response as PlaywrightResponse } from "@playwright/test";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -96,20 +96,58 @@ async function sendAndWaitForNetwork(page: Page) {
   await expect(page.getByText("Waiting for network", { exact: true }).last()).toBeVisible({ timeout: 20_000 });
 }
 
-test("keeps a Chat waiting across refresh and resumes the same conversation", async ({ page }) => {
+test("projects the recovered assistant reply without refreshing a network-waiting Chat", async ({ page }) => {
   test.setTimeout(120_000);
   const stub = await createNetworkStub();
   const fixture = await createChatFixture(page, stub.commandPath, stub.statePath, "Network wait resume");
+  type ProjectedMessage = { role: string; generationId?: string | null; status?: string; body?: string };
+  const messageReads: Array<Promise<{
+    observedAt: number;
+    status: number;
+    messages: ProjectedMessage[] | null;
+  }>> = [];
+  const recordMessagesResponse = (response: PlaywrightResponse) => {
+    const url = new URL(response.url());
+    if (response.request().method() !== "GET" || url.pathname !== `/api/chats/${fixture.chat.id}/messages`) return;
+    const observedAt = Date.now();
+    messageReads.push(response.json().then(
+      (body: unknown) => ({
+        observedAt,
+        status: response.status(),
+        messages: Array.isArray(body) ? body as ProjectedMessage[] : null,
+      }),
+      () => ({ observedAt, status: response.status(), messages: null }),
+    ));
+  };
+  page.on("response", recordMessagesResponse);
   await page.goto("/");
   await page.evaluate((orgId) => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), fixture.organization.id);
   await openChat(page, fixture.organization, fixture.chat);
 
   await sendAndWaitForNetwork(page);
-  await expect.poll(async () => (await readQueueStatus(page, fixture.chat.id)).activeGenerationStatus, { timeout: 15_000 })
-    .toBe("waiting_for_network");
+  const waitingObservedAt = Date.now();
+  const waitingQueue = await readQueueStatus(page, fixture.chat.id);
+  expect(waitingQueue.activeGenerationStatus).toBe("waiting_for_network");
+  expect(waitingQueue.activeGenerationId).toBeTruthy();
+  const generationId = waitingQueue.activeGenerationId!;
 
-  await page.reload();
-  await expect(page.getByText("Waiting for network", { exact: true }).last()).toBeVisible({ timeout: 15_000 });
+  await expect.poll(async () => {
+    const reads = await Promise.all(messageReads);
+    return reads.filter((read) => read.observedAt >= waitingObservedAt).length;
+  }, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+  const earlyReads = (await Promise.all(messageReads)).filter((read) => read.observedAt >= waitingObservedAt);
+  expect(earlyReads[0]?.status).toBe(200);
+  expect(earlyReads[0]?.messages).not.toBeNull();
+  expect(earlyReads[0]?.messages?.some((message) => (
+    message.role === "assistant" && message.generationId === generationId && message.status !== "streaming"
+  ))).toBe(false);
+  expect(earlyReads.every((read) => read.status === 200 && !read.messages?.some((message) => (
+    message.role === "assistant" && message.generationId === generationId && message.status !== "streaming"
+  )))).toBe(true);
+  expect(await readQueueStatus(page, fixture.chat.id)).toMatchObject({
+    activeGenerationId: generationId,
+    activeGenerationStatus: "waiting_for_network",
+  });
 
   await writeFile(stub.statePath, "online\n", "utf8");
   await e2eDb
@@ -119,8 +157,28 @@ test("keeps a Chat waiting across refresh and resumes the same conversation", as
 
   await expect.poll(async () => (await readQueueStatus(page, fixture.chat.id)).activeGenerationStatus, { timeout: 75_000 })
     .toBe(null);
-  await page.reload();
-  await expect(page.getByText("Recovered after network.", { exact: true }).last()).toBeVisible({ timeout: 15_000 });
+  const [generation] = await e2eDb
+    .select({ status: chatGenerations.status })
+    .from(chatGenerations)
+    .where(eq(chatGenerations.id, generationId));
+  expect(generation?.status).toBe("completed");
+  const runs = await e2eDb
+    .select({ id: heartbeatRuns.id })
+    .from(heartbeatRuns)
+    .where(eq(heartbeatRuns.chatConversationId, fixture.chat.id));
+  expect(runs.length).toBeGreaterThan(0);
+  await expect.poll(async () => {
+    const reads = await Promise.all(messageReads);
+    return reads.some((read) => read.messages?.some((message) => (
+      message.role === "assistant"
+      && message.generationId === generationId
+      && message.status === "completed"
+      && message.body === "Recovered after network."
+    )));
+  }, { timeout: 20_000 }).toBe(true);
+  await expect(page.getByText("Recovered after network.", { exact: true })).toHaveCount(1, { timeout: 20_000 });
+  await expect(page.getByText("Waiting for network", { exact: true })).toHaveCount(0);
+  page.off("response", recordMessagesResponse);
 });
 
 test("Stop terminates a Chat that is waiting for network", async ({ page }) => {

@@ -1,3 +1,4 @@
+import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -5,13 +6,19 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conflict, unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
+import { requestBodyForLogs } from "../middleware/logger.js";
 import { createChatBackgroundRuntime, type ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
+import { waitForChatDeletionQuiescence } from "../routes/chats.deletion.js";
 import { chatRoutes } from "../routes/chats.js";
+import { createChatStreamGenerationOwner, persistChatStreamGenerationTerminal } from "../routes/chats.stream-generation-owner.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, getActiveChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { chatMessageMutationFingerprint } from "../services/chat-message-mutation-fingerprint.js";
+import { chatRuntimeSensitiveInputBroker } from "../services/chat-runtime-sensitive-input.js";
 import { CHAT_TITLE_PROMPT_TOKEN_LIMIT, countChatTitlePromptTokens } from "../services/title-generation.js";
 
 const mockChatService = vi.hoisted(() => ({
   generationProtocol: {
+    withGenerationProjectionFence: vi.fn(),
     getLatestVisibleCheckpoint: vi.fn(),
     appendGenerationEvent: vi.fn(),
     appendVisibleEventAndProject: vi.fn(),
@@ -85,6 +92,8 @@ const mockChatService = vi.hoisted(() => ({
   renewGenerationControlLease: vi.fn(),
   markGenerationControlAttemptCompleted: vi.fn(),
   claimNextServerQueuedMessage: vi.fn(),
+  authorizeQueuedRecovery: vi.fn(),
+  admitQueuedSideChatRuntime: vi.fn(),
   renewServerQueuedMessageClaim: vi.fn(),
   acknowledgeServerQueuedMessageDelivery: vi.fn(),
   completeServerQueuedMessageDelivery: vi.fn(),
@@ -93,6 +102,7 @@ const mockChatService = vi.hoisted(() => ({
   claimNextQueuedMessage: vi.fn(),
   releaseQueuedMessageClaim: vi.fn(),
   createGeneration: vi.fn(),
+  ensureSideChatFirstInputGeneration: vi.fn(),
   markGenerationTerminal: vi.fn(),
   getLatestActiveGeneration: vi.fn(),
   getLatestGeneration: vi.fn(),
@@ -102,12 +112,24 @@ const mockChatService = vi.hoisted(() => ({
 }));
 
 const mockSideChatService = vi.hoisted(() => ({
+  claimFirstInput: vi.fn(),
+  hasAcceptedFirstInputMutation: vi.fn(),
   create: vi.fn(),
+  findExistingForCreate: vi.fn(),
+  listForSource: vi.fn(),
+  requestClose: vi.fn(),
   destroy: vi.fn(),
   keepInMessenger: vi.fn(),
+  releaseFirstInputClaim: vi.fn(),
   assertAccessible: vi.fn(),
   assertMutable: vi.fn(),
   touch: vi.fn(),
+}));
+
+const mockSideChatCloseService = vi.hoisted(() => ({ processIntent: vi.fn() }));
+
+vi.mock("../services/side-chat-close.js", () => ({
+  sideChatCloseService: () => mockSideChatCloseService,
 }));
 
 const mockCompanyService = vi.hoisted(() => ({
@@ -165,6 +187,7 @@ const mockChatAssistantService = vi.hoisted(() => ({
 }));
 
 const mockChatAgentRuns = vi.hoisted(() => ({
+  getSubmissionState: vi.fn(),
   linkAssistantMessage: vi.fn(),
   finalizeRun: vi.fn(),
   releaseOwnedRun: vi.fn(),
@@ -406,18 +429,31 @@ function createApp(
   },
   backgroundRuntime?: ChatBackgroundRuntime,
   registerNetworkWaitingRunHandler?: (handler: (run: any) => Promise<boolean>) => void,
+  captureRequestBodyForLogs?: (body: unknown) => void,
+  db: unknown = {},
 ) {
   const runtime = backgroundRuntime ?? createChatBackgroundRuntime();
   testBackgroundRuntimes.add(runtime);
   const app = express();
   app.use(express.json());
+  if (captureRequestBodyForLogs) {
+    app.use((req, res, next) => {
+      res.once("finish", () => {
+        const errorBody = (res as typeof res & {
+          __errorContext?: { reqBody?: unknown };
+        }).__errorContext?.reqBody;
+        captureRequestBodyForLogs(requestBodyForLogs(req, errorBody ?? req.body));
+      });
+      next();
+    });
+  }
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
   app.use(
     "/api",
-    chatRoutes({} as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler),
+    chatRoutes(db as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler),
   );
   app.use(errorHandler);
   return app;
@@ -438,6 +474,22 @@ async function waitUntil(assertion: () => void, timeoutMs = 1000) {
   throw lastError;
 }
 
+function createChatWriterLookupDb(hasActiveWriter: () => boolean, neverResolve = false) {
+  return {
+    select: vi.fn(() => ({
+      from: () => ({
+        innerJoin: () => ({
+          where: () => ({
+            limit: () => neverResolve
+              ? new Promise<{ id: string }[]>(() => undefined)
+              : Promise.resolve(hasActiveWriter() ? [{ id: "active-writer-span" }] : []),
+          }),
+        }),
+      }),
+    })),
+  };
+}
+
 describe("chat routes", { retry: 2 }, () => {
   afterEach(async () => {
     await Promise.all([...testBackgroundRuntimes].map((runtime) => runtime.close()));
@@ -451,6 +503,7 @@ describe("chat routes", { retry: 2 }, () => {
   beforeEach(() => {
     vi.resetAllMocks();
     clearActiveChatGenerationsForTest();
+    mockChatService.listMessages.mockResolvedValue([]);
     mockCompanyService.getById.mockResolvedValue({
       id: "organization-1",
       defaultChatIssueCreationMode: "manual_approval",
@@ -460,6 +513,7 @@ describe("chat routes", { retry: 2 }, () => {
     ]);
     mockChatAssistantService.enrichConversation.mockImplementation(async (conversation) => conversation);
     mockChatAssistantService.enrichConversations.mockImplementation(async (conversations) => conversations);
+    mockChatAgentRuns.getSubmissionState.mockResolvedValue(null);
     mockChatAgentRuns.linkAssistantMessage.mockResolvedValue(null);
     mockChatAgentRuns.finalizeRun.mockResolvedValue(null);
     mockChatSteerMessages.beginControlAction.mockImplementation((input) => (
@@ -501,6 +555,9 @@ describe("chat routes", { retry: 2 }, () => {
     mockSideChatService.assertAccessible.mockImplementation(async (conversation) => conversation);
     mockSideChatService.assertMutable.mockImplementation(async (conversation) => conversation);
     mockSideChatService.touch.mockImplementation(async (conversation) => conversation);
+    mockSideChatService.claimFirstInput.mockResolvedValue({ kind: "not_first" });
+    mockSideChatService.hasAcceptedFirstInputMutation.mockResolvedValue(false);
+    mockSideChatService.releaseFirstInputClaim.mockResolvedValue(undefined);
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(true);
@@ -741,6 +798,7 @@ describe("chat routes", { retry: 2 }, () => {
     mockChatService.renewGenerationControlLease.mockResolvedValue(true);
     mockChatService.markGenerationControlAttemptCompleted.mockResolvedValue(undefined);
     mockChatService.claimNextServerQueuedMessage.mockResolvedValue(null);
+    mockChatService.admitQueuedSideChatRuntime.mockResolvedValue({ admitted: true });
     mockChatService.renewServerQueuedMessageClaim.mockResolvedValue(true);
     mockChatService.acknowledgeServerQueuedMessageDelivery.mockResolvedValue(null);
     mockChatService.completeServerQueuedMessageDelivery.mockResolvedValue(null);
@@ -749,6 +807,10 @@ describe("chat routes", { retry: 2 }, () => {
     mockChatService.claimNextQueuedMessage.mockResolvedValue(null);
     mockChatService.releaseQueuedMessageClaim.mockResolvedValue(null);
     mockChatService.createGeneration.mockResolvedValue({ id: "generation-1" });
+    mockChatService.ensureSideChatFirstInputGeneration.mockResolvedValue({
+      generation: { id: "generation-1", attemptEpoch: 1 },
+      executionAdmitted: false,
+    });
     mockChatService.markGenerationTerminal.mockResolvedValue(undefined);
     mockChatService.getLatestActiveGeneration.mockResolvedValue(null);
     mockChatService.assertQueuedMessageClaimedForDelivery.mockResolvedValue(undefined);
@@ -773,6 +835,9 @@ describe("chat routes", { retry: 2 }, () => {
       projected: true,
     });
     mockChatService.generationProtocol.getFrozenVisibleProjection.mockResolvedValue(null);
+    mockChatService.generationProtocol.withGenerationProjectionFence.mockImplementation(
+      async (input) => input.project(),
+    );
     mockChatService.generationProtocol.getLatestVisibleCheckpoint.mockResolvedValue({
       generation: { id: "generation-1", attemptEpoch: 1, controlVersion: 0 },
       generationSeq: 0,
@@ -951,6 +1016,128 @@ describe("chat routes", { retry: 2 }, () => {
       expect(legacyInvocation).not.toHaveProperty("effortSnapshot");
       expect(mockChatService.acknowledgeServerQueuedMessageDelivery).not.toHaveBeenCalled();
     } finally {
+      if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+      else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;
+      await backgroundRuntime.close();
+    }
+  });
+
+  it("settles a queued Side Chat after expiry without invoking runtime or admitting an Agent Run", async () => {
+    const previousWorkerFlag = process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+    process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = "true";
+    const backgroundRuntime = createChatBackgroundRuntime();
+    const sideChatExpiresAt = new Date(Date.now() + 60_000);
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt,
+    });
+    const queuedUserMessage = createMessage("queued-side-chat-user", "user", "message", "Run only if still live");
+    const claim = {
+      item: {
+        id: "queued-side-chat-1",
+        conversationId: conversation.id,
+        orgId: conversation.orgId,
+        runtimeSnapshotVersion: 1,
+        payload: { body: queuedUserMessage.body },
+        requestActor: {
+          type: "board",
+          source: "session",
+          userId: "user-1",
+          orgIds: [conversation.orgId],
+          isInstanceAdmin: false,
+        },
+      },
+      generationId: "queued-side-chat-generation",
+      userMessageId: queuedUserMessage.id,
+      leaseToken: "queued-side-chat-lease",
+      leaseEpoch: 1,
+    };
+    let releaseQueuedClaim!: (value: typeof claim) => void;
+    let markClaimRequested!: () => void;
+    const claimRequested = new Promise<void>((resolve) => {
+      markClaimRequested = resolve;
+    });
+    const pendingClaim = new Promise<typeof claim>((resolve) => {
+      releaseQueuedClaim = resolve;
+    });
+    const releaseActiveGeneration = claimChatGeneration(
+      conversation.id,
+      new AbortController(),
+      "active-run-before-expiry",
+    );
+    try {
+      mockChatService.getById.mockResolvedValue(conversation);
+      mockChatService.getMessage.mockResolvedValue(queuedUserMessage);
+      mockChatService.listMessages.mockResolvedValue([queuedUserMessage]);
+      mockChatService.claimNextServerQueuedMessage
+        .mockImplementationOnce(() => {
+          markClaimRequested();
+          return pendingClaim;
+        })
+        .mockResolvedValue(null);
+      mockChatService.admitQueuedSideChatRuntime.mockImplementation(async () => {
+        expect(conversation.sideChatExpiresAt).toBeInstanceOf(Date);
+        expect((conversation.sideChatExpiresAt as Date).getTime()).toBeLessThanOrEqual(Date.now());
+        return { admitted: false, reason: "side_chat_expired" };
+      });
+      mockChatService.completeServerQueuedMessageDelivery.mockResolvedValue({
+        id: claim.item.id,
+        status: "failed_actionable",
+      });
+      mockChatService.getLatestGeneration.mockResolvedValue({
+        id: claim.generationId,
+        attemptEpoch: 0,
+        controlOwnerToken: null,
+      });
+
+      const response = await request(createApp(undefined as any, backgroundRuntime))
+        .post(`/api/chats/${conversation.id}/queue`)
+        .send({
+          clientMutationId: "queued-side-chat-expiry",
+          payload: { body: queuedUserMessage.body },
+        });
+
+      expect(response.status).toBe(201);
+      expect(conversation.sideChatExpiresAt).toEqual(sideChatExpiresAt);
+      expect(mockSideChatService.assertMutable).toHaveBeenCalledWith(conversation, "user-1");
+      expect(hasActiveChatGeneration(conversation.id)).toBe(true);
+      await claimRequested;
+
+      conversation.sideChatExpiresAt = new Date(Date.now() - 1);
+      releaseActiveGeneration?.();
+      releaseQueuedClaim(claim);
+
+      await waitUntil(() => {
+        expect(mockChatService.admitQueuedSideChatRuntime).toHaveBeenCalledWith({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          itemId: claim.item.id,
+          generationId: claim.generationId,
+          leaseToken: claim.leaseToken,
+          leaseEpoch: claim.leaseEpoch,
+        });
+        expect(mockChatService.completeServerQueuedMessageDelivery).toHaveBeenCalledWith({
+          itemId: claim.item.id,
+          generationId: claim.generationId,
+          leaseToken: claim.leaseToken,
+          leaseEpoch: claim.leaseEpoch,
+          status: "failed",
+          reason: "side_chat_expired",
+        });
+        expect(hasActiveChatGeneration(conversation.id)).toBe(false);
+      });
+      expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+      expect(mockChatAgentRuns.finalizeRun).not.toHaveBeenCalled();
+      expect(mockChatService.releaseServerQueuedMessageClaim).not.toHaveBeenCalled();
+      expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenCalledWith(expect.objectContaining({
+        generationId: claim.generationId,
+        finalStatus: "failed",
+        terminalReason: "side_chat_expired",
+      }));
+    } finally {
+      releaseActiveGeneration?.();
       if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
       else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;
       await backgroundRuntime.close();
@@ -1356,6 +1543,121 @@ describe("chat routes", { retry: 2 }, () => {
     }));
   });
 
+  it("returns a cursor page of only the requesting owner's Side Chats for an accessible parent", async () => {
+    const sourceConversation = createConversation({ id: "chat-source", title: "Original topic" });
+    const expiredSideChat = createConversation({
+      id: "chat-side-expired",
+      title: "Side chat from: Original topic",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "expired",
+      sideChatClientMutationId: "side-chat-expired-mutation",
+      forkedFromConversationId: sourceConversation.id,
+      forkedFromMessageId: "source-message",
+    });
+    mockChatService.getById.mockResolvedValue(sourceConversation);
+    mockSideChatService.listForSource.mockResolvedValue({
+      items: [expiredSideChat],
+      nextCursor: "next-side-chat-page",
+    });
+
+    const res = await request(createApp())
+      .get(`/api/chats/${sourceConversation.id}/side-chats?cursor=prior-page&limit=25`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      items: [expect.objectContaining({ id: expiredSideChat.id, sideChatState: "expired" })],
+      nextCursor: "next-side-chat-page",
+    });
+    expect(mockSideChatService.listForSource).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      sourceConversationId: sourceConversation.id,
+      userId: "user-1",
+      cursor: "prior-page",
+      limit: 25,
+    });
+  });
+
+  it("rejects Side Chat history limits outside the supported range", async () => {
+    const sourceConversation = createConversation({ id: "chat-source", title: "Original topic" });
+    mockChatService.getById.mockResolvedValue(sourceConversation);
+
+    const res = await request(createApp())
+      .get(`/api/chats/${sourceConversation.id}/side-chats?limit=101`);
+
+    expect(res.status).toBe(400);
+    expect(mockSideChatService.listForSource).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("recovers a Side Chat retry before checking provider availability (explicit Agent: %s)", async (explicitAgent) => {
+    const sourceMessageId = "10000000-0000-4000-8000-000000000010";
+    const clientMutationId = "side-chat-lost-ack";
+    const preferredAgentId = "20000000-0000-4000-8000-000000000020";
+    const sourceConversation = createConversation({
+      id: "chat-source", title: "Original topic",
+      preferredAgentId: "30000000-0000-4000-8000-000000000030",
+    });
+    const sideConversation = createConversation({
+      id: "chat-side",
+      title: "Side Chat",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatClientMutationId: clientMutationId,
+      forkedFromConversationId: "chat-source",
+      forkedFromMessageId: sourceMessageId,
+      preferredAgentId,
+    });
+    mockChatService.getById.mockResolvedValue(sourceConversation);
+    mockSideChatService.findExistingForCreate.mockResolvedValue(sideConversation);
+    mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValue({
+      available: false,
+      error: "The provider runtime is offline",
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-source/side-chats")
+      .send({ sourceMessageId, clientMutationId, ...(explicitAgent ? { preferredAgentId } : {}) });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: "chat-side", conversationKind: "side_chat" });
+    expect(mockSideChatService.findExistingForCreate).toHaveBeenCalledWith({
+      sourceConversationId: "chat-source",
+      sourceMessageId,
+      clientMutationId,
+      orgId: "organization-1",
+      userId: "user-1",
+      preferredAgentId: explicitAgent ? preferredAgentId : undefined,
+    });
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).not.toHaveBeenCalled();
+    expect(mockSideChatService.create).not.toHaveBeenCalled();
+  });
+
+  it("does not create a new Side Chat while the provider runtime is unavailable", async () => {
+    const sourceMessageId = "10000000-0000-4000-8000-000000000010";
+    const clientMutationId = "side-chat-runtime-offline";
+    const preferredAgentId = "20000000-0000-4000-8000-000000000020";
+    mockChatService.getById.mockResolvedValue(createConversation({ id: "chat-source" }));
+    mockAgentService.getById.mockResolvedValue({
+      id: preferredAgentId,
+      orgId: "organization-1",
+      status: "idle",
+    });
+    mockSideChatService.findExistingForCreate.mockResolvedValue(null);
+    mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValue({
+      available: false,
+      error: "The provider runtime is offline",
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-source/side-chats")
+      .send({ sourceMessageId, clientMutationId, preferredAgentId });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("The provider runtime is offline");
+    expect(mockSideChatService.create).not.toHaveBeenCalled();
+  });
+
   it("destroys an unkept Side Chat when its tab is closed", async () => {
     const sideConversation = createConversation({
       id: "chat-side",
@@ -1364,20 +1666,21 @@ describe("chat routes", { retry: 2 }, () => {
       sideChatState: "active",
     });
     mockChatService.getById.mockResolvedValue(sideConversation);
-    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
-    mockSideChatService.destroy.mockResolvedValue({ id: "chat-side" });
+    mockSideChatService.requestClose.mockResolvedValue({ id: "close-intent-1" });
+    mockSideChatCloseService.processIntent.mockResolvedValue("closed");
 
     const res = await request(createApp())
       .delete("/api/chats/chat-side/side-chat");
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: "chat-side" });
-    expect(mockSideChatService.destroy).toHaveBeenCalledWith({
+    expect(mockSideChatService.requestClose).toHaveBeenCalledWith({
       conversationId: "chat-side",
       userId: "user-1",
     });
+    expect(mockSideChatCloseService.processIntent).toHaveBeenCalledWith("close-intent-1");
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      action: "chat.side_chat_destroyed",
+      action: "chat.side_chat_close_requested",
       entityId: "chat-side",
     }));
 
@@ -1385,6 +1688,58 @@ describe("chat routes", { retry: 2 }, () => {
       .post("/api/chats/chat-side/side-chat/complete")
       .send({});
     expect(legacyComplete.status).toBe(404);
+  });
+
+  it("returns a stable code when closing a Side Chat that was already kept", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation({
+      id: "chat-side",
+      conversationKind: "side_chat",
+      messengerVisible: true,
+      sideChatState: "kept",
+    }));
+
+    const res = await request(createApp()).delete("/api/chats/chat-side/side-chat");
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: "A kept Side Chat is a normal Messenger chat",
+      details: { code: "side_chat_kept" },
+    });
+    expect(mockSideChatService.requestClose).not.toHaveBeenCalled();
+  });
+
+  it("does not label an unrelated Side Chat close conflict as already kept", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation({
+      id: "chat-side",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+    }));
+    mockSideChatService.requestClose.mockRejectedValue(conflict("The active generation is still running"));
+
+    const res = await request(createApp()).delete("/api/chats/chat-side/side-chat");
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("The active generation is still running");
+    expect(res.body.details).toBeUndefined();
+  });
+
+  it("accepts a durable close request while the Side Chat generation is active", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation({
+      id: "chat-side", conversationKind: "side_chat", messengerVisible: false, sideChatState: "active",
+    }));
+    mockChatService.getLatestActiveGeneration.mockResolvedValue({ id: "active-generation" });
+    mockSideChatService.requestClose.mockResolvedValue({ id: "persisted-close-intent" });
+    mockSideChatCloseService.processIntent.mockResolvedValue("pending");
+
+    const res = await request(createApp()).delete("/api/chats/chat-side/side-chat");
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({
+      id: "chat-side", status: "closing", closeIntentId: "persisted-close-intent",
+    });
+    expect(mockSideChatService.requestClose).toHaveBeenCalledTimes(1);
+    expect(mockSideChatCloseService.processIntent).toHaveBeenCalledWith("persisted-close-intent");
   });
 
   it("keeps a Side Chat in Messenger without changing its conversation id", async () => {
@@ -1580,23 +1935,155 @@ describe("chat routes", { retry: 2 }, () => {
   it("cancels and deletes an active chat conversation when explicitly requested", async () => {
     const conversation = createConversation({ title: "Generating chat" });
     const abortController = new AbortController();
+    let activeWriter = true;
+    let activeGeneration: { id: string } | null = { id: "generation-1" };
+    let release: (() => void) | null = null;
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
-    mockChatService.remove.mockResolvedValue(conversation);
-    const release = claimChatGeneration(conversation.id, abortController);
+    mockChatService.getLatestActiveGeneration.mockImplementation(async () => activeGeneration);
+    abortController.signal.addEventListener("abort", () => {
+      setTimeout(() => {
+        activeGeneration = null;
+      }, 25);
+      setTimeout(() => {
+        release?.();
+      }, 75);
+      setTimeout(() => {
+        activeWriter = false;
+      }, 250);
+    }, { once: true });
+    mockChatService.remove.mockImplementation(async () => {
+      expect(activeGeneration).toBeNull();
+      expect(activeWriter).toBe(false);
+      expect(hasActiveChatGeneration(conversation.id)).toBe(false);
+      return conversation;
+    });
+    release = claimChatGeneration(conversation.id, abortController);
+    const db = createChatWriterLookupDb(() => activeWriter);
 
     try {
-      const res = await request(createApp())
+      const res = await request(createApp(undefined, undefined, undefined, undefined, db))
         .delete("/api/chats/chat-1?cancelActive=true");
 
       expect(res.status).toBe(200);
       expect(abortController.signal.aborted).toBe(true);
       expect(hasActiveChatGeneration(conversation.id)).toBe(false);
+      expect(mockChatService.getLatestActiveGeneration).toHaveBeenCalledWith(conversation.id);
       expect(mockChatService.listAttachmentsForConversation).toHaveBeenCalledWith("chat-1");
       expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
     } finally {
       release?.();
     }
+  });
+
+  it("refuses cancel-and-delete while another process still owns a chat writer", async () => {
+    const conversation = createConversation({ title: "Generating chat" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue({ id: "generation-remote" });
+    const db = createChatWriterLookupDb(() => true);
+
+    const res = await request(createApp(undefined, undefined, undefined, undefined, db))
+      .delete("/api/chats/chat-1?cancelActive=true");
+
+    expect(res.status).toBe(409);
+    expect(res.body.details.code).toBe("chat_writer_quiescence_pending");
+    expect(mockChatService.listAttachmentsForConversation).not.toHaveBeenCalled();
+    expect(mockChatService.remove).not.toHaveBeenCalled();
+  });
+
+  it("bounds quiescence proof when a persistence query never resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = waitForChatDeletionQuiescence({
+        db: createChatWriterLookupDb(() => false, true) as any,
+        orgId: "organization-1",
+        conversationId: "chat-deletion-stalled-query",
+        getLatestActiveGeneration: () => new Promise<null>(() => undefined),
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(pending).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns 409 when a generation wins the race with cancel-and-delete", async () => {
+    const conversation = createConversation({ title: "Generating chat" });
+    let generationBecameActive = false;
+    let activeWriter = false;
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockImplementation(async () => (
+      generationBecameActive ? { id: "generation-racing-delete" } : null
+    ));
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
+    mockChatService.remove.mockImplementation(async () => {
+      generationBecameActive = true;
+      activeWriter = true;
+      throw new Error("active native writer prevents chat deletion", {
+        cause: {
+          code: "23514",
+          constraint: "run_runtime_spans_active_writer_delete_check",
+        },
+      });
+    });
+    const db = createChatWriterLookupDb(() => activeWriter);
+
+    const res = await request(createApp(undefined, undefined, undefined, undefined, db))
+      .delete("/api/chats/chat-1?cancelActive=true");
+
+    expect(res.status).toBe(409);
+    expect(res.body.details.code).toBe("chat_writer_quiescence_pending");
+    expect(activeWriter).toBe(true);
+    expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("returns 409 for the active-writer delete constraint after the lease quiesces", async () => {
+    const conversation = createConversation({ title: "Generating chat" });
+    let activeWriter = false;
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue(null);
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
+    mockChatService.remove.mockImplementation(async () => {
+      activeWriter = true;
+      await Promise.resolve();
+      activeWriter = false;
+      throw new Error("Drizzle transaction failed", {
+        cause: {
+          code: "23514",
+          constraint: "run_runtime_spans_active_writer_delete_check",
+        },
+      });
+    });
+    const db = createChatWriterLookupDb(() => activeWriter);
+
+    const res = await request(createApp(undefined, undefined, undefined, undefined, db))
+      .delete("/api/chats/chat-1?cancelActive=true");
+
+    expect(res.status).toBe(409);
+    expect(res.body.details.code).toBe("chat_writer_quiescence_pending");
+    expect(mockChatService.getLatestActiveGeneration).toHaveBeenCalledTimes(1);
+    expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("preserves unrelated delete failures while a native writer remains active", async () => {
+    const conversation = createConversation({ title: "Delete failed" });
+    let activeWriter = false;
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue(null);
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
+    mockChatService.remove.mockImplementation(async () => {
+      activeWriter = true;
+      throw new Error("unrelated delete failure");
+    });
+    const db = createChatWriterLookupDb(() => activeWriter);
+
+    const res = await request(createApp(undefined, undefined, undefined, undefined, db))
+      .delete("/api/chats/chat-1?cancelActive=true");
+
+    expect(activeWriter).toBe(true);
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Internal server error");
   });
 
   it("creates a conversation with the organization default agent and issue creation mode", async () => {
@@ -2067,6 +2554,118 @@ describe("chat routes", { retry: 2 }, () => {
     expect(events[0]).toEqual(expect.objectContaining({ type: "ack", conversation: expect.objectContaining({ id: "chat-1" }), userMessage: expect.objectContaining({ id: "message-user" }) }));
     expect(events[1]).toEqual(expect.objectContaining({ type: "error", messageId: "message-failed" }));
     expect(mockChatService.addMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({ role: "assistant", status: "failed" }));
+  });
+
+  it("persists a retryable, explicitly undispatched failure after the user message commits", async () => {
+    const conversation = createConversation();
+    const userMessage = {
+      ...createMessage("message-user-persisted", "user", "message", "Save before reply"),
+      chatTurnId: "10000000-0000-4000-8000-000000000077",
+      turnVariant: 3,
+    };
+    const failedMessage = {
+      ...createMessage("message-pregeneration-failed", "assistant", "message", "Your input was saved, but the reply did not start."),
+      chatTurnId: userMessage.chatTurnId,
+      turnVariant: userMessage.turnVariant,
+      status: "failed",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_input_persisted_reply_not_started",
+          message: "Your input was saved, but the reply did not start.",
+          phase: "pre_generation",
+          action: "retry",
+          runId: null,
+          dispatchEvidence: {
+            kind: "chat_pre_generation_not_started_v1",
+            originalDispatch: "not_started",
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            userId: "user-1",
+            userMessageId: userMessage.id,
+            chatTurnId: userMessage.chatTurnId,
+            turnVariant: userMessage.turnVariant,
+          },
+        },
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.getMessage.mockResolvedValueOnce(userMessage);
+    const mutationFingerprint = chatMessageMutationFingerprint({
+      body: userMessage.body,
+      editUserMessageId: null,
+      inlineAnnotationsProvided: false,
+      modelOverride: null,
+      effortOverride: null,
+      files: [],
+    });
+    mockChatService.getUserMessageMutationByClientMutationId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ message: userMessage, fingerprint: mutationFingerprint });
+    mockChatService.listMessages.mockResolvedValueOnce([userMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+    mockLogActivity.mockRejectedValueOnce(new Error("post-commit activity write failed"));
+
+    const send = () => request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body, clientMutationId: "persisted-before-generation" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    const firstResponse = await send();
+    expect(firstResponse.status).toBe(201);
+    const firstEvents = String(firstResponse.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(firstEvents).toEqual([
+      expect.objectContaining({ type: "ack", userMessage: expect.objectContaining({ id: userMessage.id }) }),
+      expect.objectContaining({ type: "error", messageId: failedMessage.id, error: failedMessage.body }),
+    ]);
+    expect(mockChatService.getMessage).toHaveBeenCalledWith(conversation.id, userMessage.id);
+    expect(mockChatService.addMessage).toHaveBeenCalledWith(conversation.id, expect.objectContaining({
+      orgId: conversation.orgId,
+      role: "assistant",
+      status: "failed",
+      runId: null,
+      chatTurnId: userMessage.chatTurnId,
+      turnVariant: userMessage.turnVariant,
+      structuredPayload: expect.objectContaining({
+        recoverableFailure: expect.objectContaining({
+          phase: "pre_generation",
+          runId: null,
+          dispatchEvidence: expect.objectContaining({
+            originalDispatch: "not_started",
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            userId: "user-1",
+            userMessageId: userMessage.id,
+            chatTurnId: userMessage.chatTurnId,
+            turnVariant: userMessage.turnVariant,
+          }),
+        }),
+      }),
+    }));
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+
+    mockChatService.getUserMessageMutationByClientMutationId.mockResolvedValueOnce({
+      message: userMessage,
+      fingerprint: mutationFingerprint,
+      failure: failedMessage,
+    });
+    const replayResponse = await send();
+    expect(replayResponse.status).toBe(200);
+    expect(String(replayResponse.body).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ type: "ack", userMessage: expect.objectContaining({ id: userMessage.id }) }),
+      expect.objectContaining({ type: "final", messages: [] }),
+    ]);
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
   });
 
   it("keeps a non-first-turn startup failure visible when the same send mutation is retried", async () => {
@@ -2579,6 +3178,490 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
     expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
     expect(hasActiveChatGeneration("chat-1")).toBe(false);
+  });
+
+  it("acknowledges an accepted Side Chat replay when its Run is already admitted", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage(
+      "message-side-chat-first-input",
+      "user",
+      "message",
+      "Inspect this selected answer",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockSideChatService.hasAcceptedFirstInputMutation.mockResolvedValue(true);
+    mockChatService.ensureSideChatFirstInputGeneration.mockResolvedValue({
+      generation: { id: "generation-side-chat-first", attemptEpoch: 1 },
+      executionAdmitted: true,
+    });
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "pending" })
+      .mockResolvedValueOnce({ kind: "replay", userMessageId: userMessage.id });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body, clientMutationId: "retried-message-mutation" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(200);
+    expect(String(res.body).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({
+        type: "ack",
+        userMessage: expect.objectContaining({ id: userMessage.id, body: userMessage.body }),
+      }),
+      { type: "final", messages: [] },
+    ]);
+    expect(mockSideChatService.claimFirstInput).toHaveBeenCalledTimes(2);
+    expect(mockSideChatService.claimFirstInput).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      userId: "user-1",
+      clientMutationId: "retried-message-mutation",
+    }));
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      userMessageId: userMessage.id,
+    });
+    expect(mockChatService.createQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("releases a failed Side Chat first-input claim, then replays the accepted key without another Run", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage(
+      "message-side-chat-first-input",
+      "user",
+      "message",
+      "Inspect this selected answer",
+    );
+    const assistantMessage = createMessage(
+      "message-side-chat-first-reply",
+      "assistant",
+      "message",
+      "I inspected the selected answer.",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage
+      .mockRejectedValueOnce(new Error("simulated message transaction failure"))
+      .mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.hasAcceptedFirstInputMutation
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "first-claim" })
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "retry-claim" })
+      .mockResolvedValueOnce({ kind: "replay", userMessageId: userMessage.id });
+    mockChatService.ensureSideChatFirstInputGeneration
+      .mockResolvedValueOnce({
+        generation: { id: "generation-side-chat-first", attemptEpoch: 1 },
+        executionAdmitted: false,
+      })
+      .mockResolvedValueOnce({
+        generation: { id: "generation-side-chat-first", attemptEpoch: 1 },
+        executionAdmitted: true,
+      });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: assistantMessage.body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: assistantMessage.body,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const send = () => request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: userMessage.body, clientMutationId: "side-chat-first-send" });
+
+    const failed = await send();
+    expect(failed.status).toBe(502);
+    expect(mockSideChatService.releaseFirstInputClaim).toHaveBeenCalledWith({
+      conversationId: conversation.id,
+      claimToken: "first-claim",
+    });
+
+    const accepted = await send();
+    expect(accepted.status).toBe(201);
+    expect(accepted.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: userMessage.id, role: "user" }),
+      expect.objectContaining({ id: assistantMessage.id, role: "assistant" }),
+    ]));
+
+    const replayed = await send();
+    expect(replayed.status).toBe(200);
+    expect(replayed.body.messages).toEqual([
+      expect.objectContaining({ id: userMessage.id, role: "user" }),
+    ]);
+    expect(mockSideChatService.claimFirstInput).toHaveBeenCalledTimes(3);
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledTimes(2);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
+    const claimInputs = mockSideChatService.claimFirstInput.mock.calls.map(([input]) => input);
+    expect(claimInputs).toEqual([
+      expect.objectContaining({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        userId: "user-1",
+        clientMutationId: "side-chat-first-send",
+      }),
+      expect.objectContaining({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        userId: "user-1",
+        clientMutationId: "side-chat-first-send",
+      }),
+      expect.objectContaining({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        userId: "user-1",
+        clientMutationId: "side-chat-first-send",
+      }),
+    ]);
+    expect(new Set(claimInputs.map((input) => input.requestFingerprint)).size).toBe(1);
+    expect(claimInputs[0]?.requestFingerprint).toEqual(expect.any(String));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledTimes(2);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a second ordinary message after a successful Side Chat first send", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const firstUser = createMessage("message-side-chat-first", "user", "message", "First question");
+    const firstReply = createMessage("message-side-chat-first-reply", "assistant", "message", "First answer");
+    const secondUser = createMessage("message-side-chat-second", "user", "message", "A different follow-up");
+    const secondReply = createMessage("message-side-chat-second-reply", "assistant", "message", "Second answer");
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([firstUser, firstReply, secondUser, secondReply]);
+    mockChatService.addUserChatMessage
+      .mockResolvedValueOnce(firstUser)
+      .mockResolvedValueOnce(secondUser);
+    mockChatService.addMessage
+      .mockResolvedValueOnce(firstReply)
+      .mockResolvedValueOnce(secondReply);
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "first-send-claim" })
+      .mockResolvedValueOnce({ kind: "not_first" });
+    mockChatAssistantService.streamChatAssistantReply
+      .mockResolvedValueOnce({
+        outcome: "completed",
+        partialBody: firstReply.body,
+        replyingAgentId: "agent-1",
+        reply: { kind: "message", body: firstReply.body, structuredPayload: null, replyingAgentId: "agent-1" },
+      })
+      .mockResolvedValueOnce({
+        outcome: "completed",
+        partialBody: secondReply.body,
+        replyingAgentId: "agent-1",
+        reply: { kind: "message", body: secondReply.body, structuredPayload: null, replyingAgentId: "agent-1" },
+      });
+
+    const first = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: firstUser.body, clientMutationId: "ordinary-first-send" });
+    const second = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: secondUser.body, clientMutationId: "ordinary-second-send" });
+
+    expect(first.status).toBe(201);
+    expect(first.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: firstUser.id }),
+      expect.objectContaining({ id: firstReply.id }),
+    ]));
+    expect(second.status).toBe(201);
+    expect(second.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: secondUser.id }),
+      expect.objectContaining({ id: secondReply.id }),
+    ]));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledTimes(2);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledTimes(2);
+    expect(mockSideChatService.claimFirstInput.mock.calls.map(([input]) => input.clientMutationId))
+      .toEqual(["ordinary-first-send", "ordinary-second-send"]);
+  });
+
+  it("passes the Side Chat first-input claim through a no-mutation-id first send", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage("message-side-chat-no-key", "user", "message", "First send without a key");
+    const assistantMessage = createMessage("message-side-chat-no-key-reply", "assistant", "message", "Accepted");
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage, assistantMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.claimFirstInput.mockResolvedValueOnce({
+      kind: "claimed",
+      claimToken: "no-key-first-input-claim",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: assistantMessage.body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: assistantMessage.body,
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: userMessage.body });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      conversation.id,
+      conversation.orgId,
+      userMessage.body,
+      null,
+      expect.objectContaining({
+        sideChatFirstInputClaimToken: "no-key-first-input-claim",
+        sideChatFirstInputFingerprint: expect.any(String),
+      }),
+    );
+  });
+
+  it("admits one Generation and Run when retrying an accepted Side Chat input after a pre-assistant failure", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage(
+      "message-side-chat-audit-retry",
+      "user",
+      "message",
+      "Retry the first send after its audit write failed",
+    );
+    const assistantMessage = createMessage(
+      "message-side-chat-audit-retry-reply",
+      "assistant",
+      "message",
+      "Recovered execution completed.",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.hasAcceptedFirstInputMutation
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "audit-retry-claim" })
+      .mockResolvedValueOnce({
+        kind: "replay",
+        userMessageId: userMessage.id,
+        activityLogged: false,
+      });
+    mockChatService.ensureSideChatFirstInputGeneration.mockResolvedValueOnce({
+      generation: { id: "generation-non-stream-recovery", attemptEpoch: 1 },
+      executionAdmitted: false,
+    });
+    mockLogActivity
+      .mockRejectedValueOnce(new Error("simulated activity store failure"))
+      .mockResolvedValue(undefined);
+    const createdRunIds: string[] = [];
+    mockChatAssistantService.streamChatAssistantReply.mockImplementationOnce(async (input: {
+      onRunCreated?: (runId: string) => void;
+    }) => {
+      input.onRunCreated?.("run-non-stream-recovery");
+      createdRunIds.push("run-non-stream-recovery");
+      return {
+        outcome: "completed",
+        partialBody: assistantMessage.body,
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: assistantMessage.body,
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const send = () => request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: userMessage.body, clientMutationId: "audit-recovery-key" });
+    const failed = await send();
+    const recovered = await send();
+
+    expect(failed.status).toBe(502);
+    expect(recovered.status).toBe(201);
+    expect(recovered.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: userMessage.id, role: "user" }),
+      expect.objectContaining({ role: "assistant", body: "Recovered execution completed." }),
+    ]));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledOnce();
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledOnce();
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      userMessageId: userMessage.id,
+    });
+    expect(createdRunIds).toEqual(["run-non-stream-recovery"]);
+    expect(mockSideChatService.touch).toHaveBeenCalledOnce();
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
+    expect(mockChatAssistantService.streamChatAssistantReply.mock.calls[0]?.[0].runContext).toEqual({
+      chatMode: "non_stream",
+      chatGenerationId: "generation-non-stream-recovery",
+    });
+    const messageActivities = mockLogActivity.mock.calls
+      .map(([, activity]) => activity)
+      .filter((activity) => (
+        activity.action === "chat.message_added"
+        && activity.details?.messageId === userMessage.id
+      ));
+    expect(messageActivities).toHaveLength(2);
+    expect(messageActivities.map((activity) => activity.idempotencyKey)).toEqual([
+      `chat.message_added:${userMessage.id}`,
+      `chat.message_added:${userMessage.id}`,
+    ]);
+  });
+
+  it("recovers and executes an accepted Side Chat input after restart before Generation admission", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage(
+      "message-side-chat-stream-audit-retry",
+      "user",
+      "message",
+      "Recover the stream first-send audit",
+    );
+    const assistantMessage = createMessage(
+      "message-side-chat-stream-recovery-reply",
+      "assistant",
+      "message",
+      "Recovered execution completed.",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage, assistantMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.hasAcceptedFirstInputMutation
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "stream-audit-retry-claim" })
+      .mockResolvedValueOnce({
+        kind: "replay",
+        userMessageId: userMessage.id,
+        activityLogged: false,
+      });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: assistantMessage.body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: assistantMessage.body,
+        replyingAgentId: "agent-1",
+      },
+    });
+    mockLogActivity
+      .mockRejectedValueOnce(new Error("simulated activity store failure"))
+      .mockResolvedValue(undefined);
+
+    const send = () => request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body, clientMutationId: "stream-audit-recovery-key" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+    const failed = await send();
+    clearActiveChatGenerationsForTest();
+    const replayed = await send();
+    const failedEvents = String(failed.body).trim().split("\n").map((line) => JSON.parse(line));
+    const replayedEvents = String(replayed.body).trim().split("\n").map((line) => JSON.parse(line));
+
+    expect(failed.status).toBe(201);
+    expect(failedEvents).toEqual([
+      expect.objectContaining({ type: "error", messageId: userMessage.id }),
+    ]);
+    expect(replayed.status).toBe(201);
+    expect(replayedEvents[0]).toEqual(expect.objectContaining({
+      type: "ack",
+      userMessage: expect.objectContaining({ id: userMessage.id }),
+      generationId: "generation-1",
+    }));
+    expect(replayedEvents.at(-1)).toEqual(expect.objectContaining({
+      type: "final",
+      messages: [expect.objectContaining({ role: "assistant", body: assistantMessage.body })],
+    }));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledOnce();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledOnce();
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
+    const messageActivities = mockLogActivity.mock.calls
+      .map(([, activity]) => activity)
+      .filter((activity) => (
+        activity.action === "chat.message_added"
+        && activity.details?.messageId === userMessage.id
+      ));
+    expect(messageActivities.map((activity) => activity.idempotencyKey)).toEqual([
+      `chat.message_added:${userMessage.id}`,
+      `chat.message_added:${userMessage.id}`,
+    ]);
   });
 
   it("replays the accepted user-message acknowledgement for a repeated send mutation", async () => {
@@ -3134,6 +4217,45 @@ describe("chat routes", { retry: 2 }, () => {
     }));
   });
 
+  it("does not reopen a closing Generation with durable runtime terminal evidence", async () => {
+    let recover: ((run: any) => Promise<boolean>) | undefined;
+    createApp(undefined, undefined, (handler) => { recover = handler; });
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Continue this reply");
+    const generation = {
+      id: "10000000-0000-4000-8000-000000000008",
+      status: "closing",
+      runtimeTerminalAt: new Date("2026-09-24T08:00:00.000Z"),
+      attemptEpoch: 1,
+      terminalReason: "completed",
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.getLatestGeneration.mockResolvedValue(null);
+    mockChatService.generationProtocol.getFrozenVisibleProjection.mockResolvedValue({
+      generation, projection: { body: "Partial reply", assistantMessageId: null, transcript: [] },
+    });
+    const handled = await recover?.({
+      id: "10000000-0000-4000-8000-000000000009",
+      orgId: conversation.orgId,
+      agentId: "agent-1",
+      chatConversationId: conversation.id,
+      executionOwnerToken: "owner-1",
+      contextSnapshot: {
+        conversationId: conversation.id,
+        chatGenerationId: generation.id,
+        userMessageId: userMessage.id,
+        attemptEpoch: 1,
+      },
+    });
+    expect(handled).toBe(true);
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.markNetworkResumed).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      status: "cancelled", errorCode: "chat_generation_already_terminal",
+    }));
+  });
+
   it("requires a board actor to create or replace Queue annotations", async () => {
     const conversation = createConversation({ id: annotationConversationId });
     mockChatService.getById.mockResolvedValue(conversation);
@@ -3550,6 +4672,53 @@ describe("chat routes", { retry: 2 }, () => {
       returnedMessages: 1,
       totalMessages: 3,
     });
+  });
+
+  it("authorizes explicit new queue continuation through the public route", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    const command = { version: 1, expectedFailedGenerationId: "10000000-0000-4000-8000-000000000001",
+      controlActionId: "10000000-0000-4000-8000-000000000002" };
+    mockChatService.authorizeQueuedRecovery.mockResolvedValue({ item: { id: "queued-new", version: 2, status: "queued" },
+      controlActionId: command.controlActionId, idempotent: false });
+    const response = await request(createApp()).post("/api/chats/chat-1/queue/queued-new/continue").send(command);
+    expect(response.status).toBe(200);
+    expect(response.body.item.version).toBe(2);
+    expect(mockChatService.authorizeQueuedRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      ...command, orgId: conversation.orgId, conversationId: conversation.id, itemId: "queued-new",
+    }));
+  });
+
+  it("rejects an unfenced public queue continuation", async () => {
+    mockChatService.authorizeQueuedRecovery.mockClear();
+    const response = await request(createApp()).post("/api/chats/chat-1/queue/queued-new/continue").send({ version: 1 });
+    expect(response.status).toBe(400);
+    expect(mockChatService.authorizeQueuedRecovery).not.toHaveBeenCalled();
+  });
+
+  it("public queue continuation rejects agents and cross-org board access", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation());
+    const command = { version: 1, expectedFailedGenerationId: "10000000-0000-4000-8000-000000000001",
+      controlActionId: "10000000-0000-4000-8000-000000000002" };
+    for (const actor of [
+      { type: "agent", orgId: "organization-1", agentId: "agent-1", source: "agent_key" },
+      { type: "board", userId: "user-1", orgIds: ["another-org"], source: "session", isInstanceAdmin: false },
+    ]) {
+      const response = await request(createApp(actor)).post("/api/chats/chat-1/queue/queued-new/continue").send(command);
+      expect(response.status).toBe(403);
+    }
+    expect(mockChatService.authorizeQueuedRecovery).not.toHaveBeenCalled();
+  });
+
+  it("public queue continuation rejects an active local generation", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation());
+    const release = claimChatGeneration("chat-1", new AbortController(), "10000000-0000-4000-8000-000000000001");
+    try {
+      const response = await request(createApp()).post("/api/chats/chat-1/queue/queued-new/continue").send({ version: 1,
+        expectedFailedGenerationId: "10000000-0000-4000-8000-000000000001", controlActionId: "10000000-0000-4000-8000-000000000002" });
+      expect(response.status).toBe(409);
+      expect(mockChatService.authorizeQueuedRecovery).not.toHaveBeenCalled();
+    } finally { release?.(); }
   });
 
   it("allows a queued message claim after a verified operator Stop", async () => {
@@ -4041,6 +5210,135 @@ describe("chat routes", { retry: 2 }, () => {
     }
   });
 
+  it("keeps an explicit provider rejection actionable without interrupting or scheduling continuation", async () => {
+    const conversation = createConversation();
+    const generationId = "10000000-0000-4000-8000-000000000001";
+    const controlActionId = "20000000-0000-4000-8000-000000000002";
+    const item = {
+      id: "queued-1",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "steer_pending",
+      version: 2,
+      clientMutationId: "provider-rejected-active-steer",
+      payload: { body: "Please focus on the failing tests" },
+      deliveryIntent: "steer",
+      deliveryDisposition: "pending",
+      controlActionId,
+      expectedGenerationId: generationId,
+      activeGenerationId: generationId,
+      attemptEpoch: 1,
+      providerClientMessageId: controlActionId,
+      providerThreadId: null,
+      providerTurnId: null,
+      providerEvidence: null,
+      continuationGenerationId: null,
+      continuationMessageId: null,
+      deliveryLeaseToken: null,
+      deliveryLeaseEpoch: 0,
+      deliveryLeaseOwner: null,
+      deliveryLeaseExpiresAt: null,
+      reconciliationReason: null,
+      deliveryAttempts: 1,
+      lastAttemptAt: new Date(),
+      lastDeliveryReason: null,
+      sourceMessageId: null,
+      deliveredMessageId: null,
+      cancelledAt: null,
+      steeredAt: null,
+      dequeuedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const action = {
+      id: controlActionId,
+      localDisposition: "pending",
+      providerClientMessageId: controlActionId,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValue({
+      activeGenerationId: generationId,
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+      items: [item],
+    });
+    mockChatService.beginSteerControlAction.mockResolvedValue({
+      action,
+      item,
+      generation: { id: generationId, attemptEpoch: 1, controlVersion: 1 },
+      idempotent: false,
+    });
+    mockChatService.claimSteerProviderSend.mockResolvedValue(action);
+    mockChatService.resolveSteerControlAction.mockImplementation(async (input) => ({
+      action: { ...action, localDisposition: input.disposition },
+      item: {
+        ...item,
+        status: input.status,
+        deliveryDisposition: input.disposition,
+        providerThreadId: input.providerThreadId ?? null,
+        providerTurnId: input.providerTurnId ?? null,
+        version: 3,
+      },
+    }));
+
+    const release = claimChatGeneration(conversation.id, new AbortController(), generationId);
+    const attempt = await createChatRuntimeControlCoordinator(conversation.id, generationId).beginAttempt({
+      attemptIndex: 0,
+      runtimeType: "hermes_gateway",
+      model: "hermes-native",
+      isFallback: false,
+    });
+    const interrupt = vi.fn(async () => "acknowledged" as const);
+    const steer = vi.fn(async () => ({
+      disposition: "rejected" as const,
+      providerThreadId: "hermes-session-1",
+      providerTurnId: "hermes-run-1",
+      reason: "Hermes API Server explicitly rejected active-run steer (HTTP 409).",
+    }));
+    await attempt.register({
+      runtimeType: "hermes_gateway",
+      providerThreadId: "hermes-session-1",
+      providerTurnId: "hermes-run-1",
+      capabilities: { steer: "native", interrupt: "remote" },
+      steer,
+      interrupt,
+      dispose: vi.fn(async () => undefined),
+    });
+
+    try {
+      const response = await request(createApp())
+        .post("/api/chats/chat-1/queue/queued-1/steer")
+        .send({
+          expectedActiveGenerationId: generationId,
+          controlActionId,
+          expectedAttemptEpoch: 1,
+          expectedControlVersion: 0,
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        result: "failed_actionable",
+        disposition: "failed_actionable",
+        controlActionId,
+        item: { id: "queued-1", status: "failed_actionable" },
+      });
+      expect(mockChatService.resolveSteerControlAction).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed_actionable",
+        disposition: "failed_actionable",
+        providerDisposition: "rejected",
+        providerThreadId: "hermes-session-1",
+        providerTurnId: "hermes-run-1",
+      }));
+      expect(interrupt).not.toHaveBeenCalled();
+      expect(mockChatSteerMessages.scheduleContinuation).not.toHaveBeenCalled();
+      expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
+  });
+
   it("freezes and interrupts before scheduling feedback for a runtime without native Steer", async () => {
     const conversation = createConversation();
     const generationId = "10000000-0000-4000-8000-000000000001";
@@ -4274,8 +5572,15 @@ describe("chat routes", { retry: 2 }, () => {
       controlOwnerToken: "lease-1",
     });
     mockChatService.acknowledgeServerQueuedMessageDelivery.mockResolvedValue(queuedItem);
+    let persistedAttemptEpoch = 0;
+    mockChatService.beginGenerationControlAttempt.mockImplementation(async ({ attemptEpoch }) => {
+      persistedAttemptEpoch = attemptEpoch;
+    });
     let transcriptAdmissionCount = 0;
     mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => {
+      if (input.expectedAttemptEpoch !== persistedAttemptEpoch) {
+        throw conflict("Chat generation runtime attempt changed");
+      }
       if (input.eventKind === "transcript") {
         transcriptAdmissionCount += 1;
         if (transcriptAdmissionCount === 2) {
@@ -4296,6 +5601,7 @@ describe("chat routes", { retry: 2 }, () => {
       };
     });
     mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onTranscriptEntry?.(transcriptEntries[0]);
       const attempt = await input.controlCoordinator?.beginAttempt({
         attemptIndex: 0,
         runtimeType: "codex_local",
@@ -4309,7 +5615,6 @@ describe("chat routes", { retry: 2 }, () => {
         interrupt: async () => ({ disposition: "interrupted" }),
         dispose: async () => undefined,
       });
-      await input.onTranscriptEntry?.(transcriptEntries[0]);
       await input.onTranscriptEntry?.(transcriptEntries[1]);
       await attempt?.complete();
       return {
@@ -4336,6 +5641,7 @@ describe("chat routes", { retry: 2 }, () => {
       const transcriptCalls = visibleProjectionCalls.filter(([input]) => input.eventKind === "transcript");
       expect(transcriptCalls).toHaveLength(2);
       expect(transcriptCalls.map(([input]) => input.payload.entry)).toEqual(transcriptEntries);
+      expect(transcriptCalls.map(([input]) => input.expectedAttemptEpoch)).toEqual([0, 1]);
       expect(transcriptCalls.every(([input]) => !Object.hasOwn(input, "transcript"))).toBe(true);
       expect(transcriptCalls.every(([input]) => input.replyingAgentId === "agent-1")).toBe(true);
       expect(visibleProjectionCalls.find(([input]) => input.eventKind === "runtime_output")?.[0])
@@ -5841,6 +7147,150 @@ describe("chat routes", { retry: 2 }, () => {
     );
   });
 
+  it("does not persist native transcript snapshots for non-stream replies", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need a proposal");
+    const structuredPayload = {
+      operationProposal: {
+        title: "Keep the final proposal",
+        operation: "review",
+      },
+    };
+    const assistantMessage = {
+      ...createMessage("message-assistant", "assistant", "message", "Final proposal"),
+      structuredPayload,
+    };
+    const nativeEntry = {
+      kind: "thinking" as const,
+      ts: "2026-03-26T08:01:01.000Z",
+      text: "provider-native transcript",
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onTranscriptEntry?.(nativeEntry, {
+        source: "native",
+        persistRaw: false,
+        runId: "chat-run-native-non-stream",
+        spanId: "native-span-non-stream",
+      });
+      return {
+        outcome: "completed",
+        partialBody: "Final proposal",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: "Final proposal",
+          structuredPayload,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need a proposal" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.addMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({
+        role: "assistant",
+        kind: "message",
+        body: "Final proposal",
+        structuredPayload,
+      }),
+    );
+    expect(mockChatService.addMessage.mock.calls.at(-1)?.[1]).not.toHaveProperty("transcript");
+  });
+
+  it("uses the legacy Run ledger instead of a detached snapshot for non-stream replies", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need a proposal");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Final proposal");
+    const legacyEntry = {
+      kind: "thinking" as const,
+      ts: "2026-03-26T08:01:01.000Z",
+      text: "legacy Run ledger transcript",
+    };
+    const runId = "chat-run-legacy-non-stream";
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onRunCreated?.(runId);
+      await input.onTranscriptEntry?.(legacyEntry, {
+        source: "legacy",
+        persistRaw: true,
+        runId,
+        spanId: "legacy-span-non-stream",
+      });
+      return {
+        outcome: "completed",
+        partialBody: "Final proposal",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: "Final proposal",
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need a proposal" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.addMessage.mock.calls.at(-1)?.[1]).not.toHaveProperty("transcript");
+  });
+
+  it("retains legacy message snapshots for non-stream replies without a Run ID", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need a proposal");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Final proposal");
+    const legacyEntry = {
+      kind: "thinking" as const,
+      ts: "2026-03-26T08:01:02.000Z",
+      text: "legacy transcript without a Run ID",
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onTranscriptEntry?.(legacyEntry);
+      return {
+        outcome: "completed",
+        partialBody: "Final proposal",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: "Final proposal",
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need a proposal" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.addMessage.mock.calls.at(-1)?.[1]).toMatchObject({
+      transcript: [expect.objectContaining(legacyEntry)],
+      runId: null,
+    });
+  });
+
   it("persists runtime boot failures as non-retryable chat messages", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
@@ -5961,7 +7411,196 @@ describe("chat routes", { retry: 2 }, () => {
     );
   });
 
-  it("starts a fresh generation when retrying a turn whose prior generation lost control", async () => {
+  it("blocks retry for a runless historical failure without explicit no-dispatch evidence", async () => {
+    const conversation = createConversation();
+    const sourceUserMessage = createMessage(
+      "10000000-0000-4000-8000-000000000211",
+      "user",
+      "message",
+      "Do not infer recovery",
+    );
+    const failedAssistantMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000212",
+        "assistant",
+        "message",
+        "An old failure without dispatch evidence",
+      ),
+      status: "failed",
+      runId: null,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "legacy_failure",
+          message: "An old failure without dispatch evidence",
+          runId: null,
+        },
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([sourceUserMessage, failedAssistantMessage]);
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: sourceUserMessage.body,
+        editUserMessageId: sourceUserMessage.id,
+        clientMutationId: "retry-unverified-legacy-failure",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      details: { code: "chat_retry_dispatch_unverified" },
+    });
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("rejects retry when the source turn has already advanced to a newer variant", async () => {
+    const conversation = createConversation();
+    const sourceUserMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000221", "user", "message", "Older variant"),
+      supersededAt: new Date("2026-10-01T00:00:00.000Z"),
+    };
+    const currentUserMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000222", "user", "message", "Current variant"),
+      turnVariant: 1,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([sourceUserMessage, currentUserMessage]);
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: sourceUserMessage.body,
+        editUserMessageId: sourceUserMessage.id,
+        clientMutationId: "retry-superseded-variant",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      details: { code: "chat_retry_source_not_current" },
+    });
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+  });
+
+  it("blocks a verified no-dispatch retry while a chat generation is active", async () => {
+    const conversation = createConversation();
+    const sourceUserMessage = createMessage(
+      "10000000-0000-4000-8000-000000000231",
+      "user",
+      "message",
+      "Retry only when idle",
+    );
+    const failedAssistantMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000232",
+        "assistant",
+        "message",
+        "Your input was saved, but the reply did not start.",
+      ),
+      status: "failed",
+      runId: null,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_input_persisted_reply_not_started",
+          phase: "pre_generation",
+          action: "retry",
+          runId: null,
+          dispatchEvidence: {
+            kind: "chat_pre_generation_not_started_v1",
+            originalDispatch: "not_started",
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            userId: "user-1",
+            userMessageId: sourceUserMessage.id,
+            chatTurnId: sourceUserMessage.chatTurnId,
+            turnVariant: sourceUserMessage.turnVariant,
+          },
+        },
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([sourceUserMessage, failedAssistantMessage]);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue({ id: "generation-active" });
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: sourceUserMessage.body,
+        editUserMessageId: sourceUserMessage.id,
+        clientMutationId: "retry-while-active",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      details: { code: "chat_retry_generation_active" },
+    });
+    expect(mockChatService.getLatestActiveGeneration).toHaveBeenCalledWith(conversation.id);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+  });
+
+  it("blocks a refreshed retry when the linked Run still has unknown provider acceptance", async () => {
+    const conversation = createConversation();
+    const sourceUserMessage = createMessage(
+      "10000000-0000-4000-8000-000000000201",
+      "user",
+      "message",
+      "Run this once",
+    );
+    const failedAssistantMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000202",
+        "assistant",
+        "message",
+        "Partial provider output",
+      ),
+      status: "failed",
+      runId: "20000000-0000-4000-8000-000000000201",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_adapter_failed",
+          runId: "20000000-0000-4000-8000-000000000201",
+        },
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([sourceUserMessage, failedAssistantMessage]);
+    mockChatAgentRuns.getSubmissionState.mockResolvedValue("acceptance_unknown");
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: sourceUserMessage.body,
+        editUserMessageId: sourceUserMessage.id,
+        clientMutationId: "retry-after-refresh",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      details: {
+        code: "chat_retry_acceptance_unresolved",
+        runId: "20000000-0000-4000-8000-000000000201",
+      },
+    });
+    expect(mockChatAgentRuns.getSubmissionState).toHaveBeenCalledWith(
+      "20000000-0000-4000-8000-000000000201",
+      conversation.orgId,
+    );
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("allows a fresh generation after a known terminal provider rejection", async () => {
     const conversation = createConversation();
     const originalUserMessage = createMessage(
       "10000000-0000-4000-8000-000000000091",
@@ -5978,11 +7617,13 @@ describe("chat routes", { retry: 2 }, () => {
       ),
       status: "failed",
       generationId: "generation-control-lost",
+      runId: "20000000-0000-4000-8000-000000000091",
       structuredPayload: {
         recoverableFailure: {
           recoverable: true,
           code: "control_lost",
           message: "The prior runtime owner was lost.",
+          runId: "20000000-0000-4000-8000-000000000091",
         },
       },
     };
@@ -6006,7 +7647,9 @@ describe("chat routes", { retry: 2 }, () => {
       turnVariant: 1,
     };
     mockChatService.getById.mockResolvedValue(conversation);
+    mockChatAgentRuns.getSubmissionState.mockResolvedValue("rejected");
     mockChatService.addUserChatMessage.mockResolvedValueOnce(retryUserMessage);
+    mockChatService.listMessages.mockResolvedValueOnce([originalUserMessage, priorFailedMessage]);
     mockChatService.listMessages.mockResolvedValue([
       originalUserMessage,
       priorFailedMessage,
@@ -6061,6 +7704,10 @@ describe("chat routes", { retry: 2 }, () => {
       });
 
     expect(res.status).toBe(201);
+    expect(mockChatAgentRuns.getSubmissionState).toHaveBeenCalledWith(
+      "20000000-0000-4000-8000-000000000091",
+      conversation.orgId,
+    );
     expect(mockChatService.createGeneration).toHaveBeenCalledTimes(1);
     expect(mockChatService.beginGenerationControlAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -6078,6 +7725,251 @@ describe("chat routes", { retry: 2 }, () => {
         finalStatus: "completed",
       }),
     );
+  });
+
+  it("rejects stale stream output and terminal evidence when the owner token changes mid-provider", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    let persistedOwner: { attemptEpoch: number; ownerToken: string } | null = null;
+    let capturedOldFence: { attemptEpoch: number; ownerToken: string } | null = null;
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.createGeneration.mockResolvedValueOnce({
+      id: "generation-owner-race",
+      attemptEpoch: 0,
+      controlVersion: 0,
+      controlOwnerToken: null,
+    });
+    mockChatService.beginGenerationControlAttempt.mockImplementationOnce(async (input) => {
+      persistedOwner = { attemptEpoch: input.attemptEpoch, ownerToken: input.ownerToken };
+    });
+    mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => {
+      if (
+        input.expectedAttemptEpoch !== persistedOwner?.attemptEpoch
+        || input.expectedOwnerToken !== persistedOwner?.ownerToken
+      ) {
+        throw Object.assign(new Error("Chat generation control owner changed"), { status: 409 });
+      }
+      return {
+        event: { id: "generation-event-stale", generationSeq: 1, payload: { bodyHash: input.bodyHash } },
+        generation: { id: input.generationId },
+        message: { id: input.messageId ?? "message-assistant" },
+      };
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockImplementationOnce(async (input) => {
+      const attempt = await input.controlCoordinator.beginAttempt({
+        attemptIndex: 0,
+        runtimeType: "codex_local",
+        model: "gpt-5.4",
+        isFallback: false,
+      });
+      capturedOldFence = {
+        attemptEpoch: attempt.attemptEpoch,
+        ownerToken: attempt.ownerToken,
+      };
+      persistedOwner = {
+        attemptEpoch: attempt.attemptEpoch,
+        ownerToken: "new-generation-owner",
+      };
+      await input.onAssistantDelta("stale provider output");
+      return {
+        outcome: "completed",
+        partialBody: "stale provider output",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: "stale provider output",
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(res.status).toBe(201);
+    expect(capturedOldFence).toMatchObject({ attemptEpoch: 1 });
+    expect(mockChatService.generationProtocol.appendVisibleEventAndProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationId: "generation-owner-race",
+        expectedAttemptEpoch: capturedOldFence?.attemptEpoch,
+        expectedOwnerToken: capturedOldFence?.ownerToken,
+        eventKind: "assistant_delta",
+      }),
+    );
+    expect(events.map((event) => event.type)).toEqual(["ack"]);
+    expect(JSON.stringify(events)).not.toContain("stale provider output");
+    expect(mockChatService.addMessage).not.toHaveBeenCalled();
+    expect(mockChatService.updateMessage).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).not.toHaveBeenCalled();
+  });
+
+  for (const outcome of ["completed", "stopped", "failed"] as const) {
+    it(`does not persist a ${outcome} reply when projection ownership is replaced`, async () => {
+      const conversation = createConversation();
+      const userMessage = createMessage("message-user", "user", "message", "Need help");
+      mockChatService.getById.mockResolvedValue(conversation);
+      mockChatService.listMessages.mockResolvedValue([userMessage]);
+      mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+      mockChatService.generationProtocol.withGenerationProjectionFence.mockRejectedValueOnce(
+        Object.assign(new Error("Chat generation control owner changed"), { status: 409 }),
+      );
+      if (outcome === "failed") {
+        mockChatAssistantService.streamChatAssistantReply.mockRejectedValueOnce(
+          new Error("provider failed"),
+        );
+      } else {
+        mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce(outcome === "completed"
+          ? {
+          outcome: "completed",
+          partialBody: "old reply",
+          replyingAgentId: "agent-1",
+          reply: { kind: "issue_proposal", body: "old reply", structuredPayload: null, replyingAgentId: "agent-1" },
+        }
+          : { outcome: "stopped", partialBody: "old partial", replyingAgentId: "agent-1" });
+      }
+
+      const res = await request(createApp())
+        .post("/api/chats/chat-1/messages/stream")
+        .send({ body: userMessage.body })
+        .buffer(true)
+        .parse((response, callback) => {
+          let body = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk) => { body += chunk; });
+          response.on("end", () => callback(null, body));
+        });
+
+      expect(res.status).toBe(201);
+      expect(mockChatService.generationProtocol.withGenerationProjectionFence).toHaveBeenCalledWith(
+        expect.objectContaining({ projection: outcome, expectedOwnerToken: null }),
+      );
+      expect(mockChatService.updateMessage).not.toHaveBeenCalled();
+      expect(mockChatService.addMessage).not.toHaveBeenCalled();
+      expect(mockChatService.createProposalApproval).not.toHaveBeenCalled();
+      expect(mockChatService.generationProtocol.recordRuntimeTerminal).not.toHaveBeenCalled();
+    });
+  }
+
+  it("does not mark queued delivery terminal after the generation terminal rejects the owner", async () => {
+    const release = claimChatGeneration("chat-terminal-owner", null, "generation-terminal-owner");
+    const generationOwner = createChatStreamGenerationOwner({
+      conversationId: "chat-terminal-owner",
+      generation: { id: "generation-terminal-owner", attemptEpoch: 0, controlOwnerToken: null },
+    });
+    const svc = {
+      generationProtocol: {
+        recordRuntimeTerminal: vi.fn().mockRejectedValue(
+          Object.assign(new Error("Chat generation control owner changed"), { status: 409 }),
+        ),
+      },
+      markQueuedMessageDeliveryTerminal: vi.fn(),
+    };
+    try {
+      await persistChatStreamGenerationTerminal({
+        svc,
+        orgId: "organization-1",
+        conversationId: "chat-terminal-owner",
+        generation: { id: "generation-terminal-owner" },
+        generationWaitingForNetwork: false,
+        generationOwner,
+        generationTerminalStatus: "completed",
+        assistantMessageId: "assistant-1",
+        runId: "run-1",
+        queuedMessageId: "queued-1",
+        wakeTerminalProjector: vi.fn(),
+      });
+      expect(generationOwner.stale).toBe(true);
+      expect(svc.markQueuedMessageDeliveryTerminal).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
+  });
+
+  it("does not publish a committed callback after its attempt is replaced while admission is pending", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    let signalAppendStarted!: () => void;
+    let releaseAppend!: () => void;
+    let beginNextAttempt!: () => Promise<unknown>;
+    const appendStarted = new Promise<void>((resolve) => { signalAppendStarted = resolve; });
+    const appendRelease = new Promise<void>((resolve) => { releaseAppend = resolve; });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementationOnce(async (input) => {
+      signalAppendStarted();
+      await appendRelease;
+      return {
+        event: { id: "old-attempt-event", generationSeq: 1, payload: { bodyHash: input.bodyHash } },
+        generation: { id: input.generationId },
+        message: { id: "old-attempt-message" },
+      };
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockImplementationOnce(async (input) => {
+      beginNextAttempt = () => input.controlCoordinator.beginAttempt({
+        attemptIndex: 1,
+        runtimeType: "codex_local",
+        model: "gpt-5.4",
+        isFallback: true,
+      });
+      await input.controlCoordinator.beginAttempt({
+        attemptIndex: 0,
+        runtimeType: "codex_local",
+        model: "gpt-5.4",
+        isFallback: false,
+      });
+      await input.onAssistantDelta("old attempt output");
+      return {
+        outcome: "completed",
+        partialBody: "old attempt output",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: "old attempt output",
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const streamPromise = request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      })
+      .then((response) => response);
+
+    try {
+      await appendStarted;
+      await beginNextAttempt();
+    } finally {
+      releaseAppend();
+    }
+    const response = await streamPromise;
+    const events = String(response.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(response.status).toBe(201);
+    expect(events.map((event) => event.type)).toEqual(["ack"]);
+    expect(mockChatService.generationProtocol.appendVisibleEventAndProject).toHaveBeenCalledTimes(1);
+    expect(mockChatService.addMessage).not.toHaveBeenCalled();
+    expect(mockChatService.updateMessage).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).not.toHaveBeenCalled();
   });
 
   it("records pre-attempt skill preparation failures as actionable failures instead of stale control", async () => {
@@ -6888,6 +8780,147 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatAgentRuns.linkAssistantMessage).toHaveBeenCalledWith("chat-run-stream-1", "chat-1", "message-assistant");
   });
 
+  it("streams native transcript entries live without persisting their raw payload", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Native reply");
+    const nativeEntry = {
+      kind: "tool_call" as const,
+      ts: "2026-03-26T08:01:01.000Z",
+      name: "read_file",
+      toolUseId: "native-tool-1",
+      input: { path: "server/src/routes/chats.ts" },
+    };
+    const delivery = {
+      source: "native" as const,
+      persistRaw: false,
+      runId: "chat-run-native-1",
+      spanId: "native-span-1",
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onRunCreated?.(delivery.runId);
+      await input.onTranscriptEntry?.(nativeEntry, delivery);
+      await input.onAssistantDelta?.("Native reply");
+      return {
+        outcome: "completed",
+        partialBody: "Native reply",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: "Native reply",
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "transcript_entry",
+      entry: expect.objectContaining(nativeEntry),
+    }));
+    const transcriptProjectionCall = mockChatService.generationProtocol.appendVisibleEventAndProject.mock.calls
+      .find(([input]) => input.eventKind === "transcript");
+    expect(transcriptProjectionCall?.[0]).toEqual(expect.objectContaining({
+      payload: {
+        source: "native",
+        runId: delivery.runId,
+        spanId: delivery.spanId,
+      },
+      transcriptSource: "native",
+    }));
+    expect(transcriptProjectionCall?.[0].payload).not.toHaveProperty("entry");
+    expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
+  });
+
+  it("streams a long native transcript through failure without retaining provider payloads in the legacy ledger", async () => {
+    const entryCount = 300;
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const nativeDelivery = {
+      source: "native" as const,
+      persistRaw: false,
+      runId: "chat-run-native-long-1",
+      spanId: "native-span-long-1",
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onRunCreated?.(nativeDelivery.runId);
+      for (let index = 0; index < entryCount; index += 1) {
+        await input.onTranscriptEntry?.({
+          kind: "tool_call",
+          ts: "2026-03-26T08:01:01.000Z",
+          name: "read_file",
+          toolUseId: `native-tool-${index}`,
+          input: { path: `server/file-${index}.ts` },
+        }, nativeDelivery);
+      }
+      const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+      throw new ChatAssistantStreamError("native runtime failed");
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    const streamedEntries = events.filter((event) => event.type === "transcript_entry");
+    expect(streamedEntries).toHaveLength(entryCount);
+    expect(streamedEntries[0].entry.toolUseId).toBe("native-tool-0");
+    expect(streamedEntries.at(-1).entry.toolUseId).toBe(`native-tool-${entryCount - 1}`);
+
+    const transcriptAdmissions = mockChatService.generationProtocol.appendVisibleEventAndProject.mock.calls
+      .filter(([input]) => input.eventKind === "transcript");
+    expect(transcriptAdmissions).toHaveLength(entryCount);
+    expect(transcriptAdmissions[0]?.[0].payload).toEqual({
+      source: "native",
+      runId: nativeDelivery.runId,
+      spanId: nativeDelivery.spanId,
+    });
+    expect(transcriptAdmissions.every(([input]) => !("entry" in (input.payload ?? {})))).toBe(true);
+    expect(events.at(-1)).toMatchObject({ type: "error", errorCode: "chat_runtime_exception" });
+    expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).toMatchObject({
+      status: "failed",
+      body: "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.",
+    });
+    expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
+  });
+
   it("does not persist process transcript text as the failed stream message body", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
@@ -6953,6 +8986,149 @@ describe("chat routes", { retry: 2 }, () => {
       }),
     );
     expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
+  });
+
+  it.each([
+    { label: "with a Run ID", runId: "native-fork-unknown-run", wrapped: true },
+    { label: "without a Run ID", runId: null, wrapped: false },
+  ])("persists unknown native-fork failures as non-retryable $label", async ({ runId, wrapped }) => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Open a Side Chat");
+    const safeCopy = runId
+      ? "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork."
+      : "This Side Chat fork has an unknown outcome. Do not retry this fork. Ask an operator to reconcile the fork status before sending more input.";
+    const failedMessage = {
+      ...createMessage("message-assistant", "assistant", "message", safeCopy),
+      status: "failed",
+      runId,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          code: "native_fork_acceptance_unknown",
+          message: safeCopy,
+          ...(runId ? { action: "inspect_run" } : {}),
+          runId,
+        },
+      },
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      if (runId) await input.onRunCreated?.(runId);
+      if (wrapped) {
+        const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+        throw new ChatAssistantStreamError("provider acknowledgement timed out", "", [], {
+          errorCode: "native_fork_acceptance_unknown",
+          userMessage: "Unsafe retry when ready copy",
+          retryable: true,
+          action: "retry",
+        });
+      }
+      const { NativeForkAcceptanceUnknownError } = await import("../services/runtime-kernel/native-fork-intent.js");
+      throw new NativeForkAcceptanceUnknownError({} as never, "Provider fork acceptance is unknown; automatic retry is disabled.");
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Open a Side Chat" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.messages).toContainEqual(expect.objectContaining({
+      id: failedMessage.id,
+      status: "failed",
+      body: safeCopy,
+      runId,
+      structuredPayload: failedMessage.structuredPayload,
+    }));
+    expect(mockChatService.addMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      status: "failed",
+      body: safeCopy,
+      runId,
+      structuredPayload: failedMessage.structuredPayload,
+    }));
+    const persistedInput = mockChatService.addMessage.mock.calls.at(-1)?.[1];
+    expect(persistedInput).toMatchObject({
+      status: "failed",
+      body: safeCopy,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          code: "native_fork_acceptance_unknown",
+          message: safeCopy,
+          runId,
+        },
+      },
+    });
+    if (runId) {
+      expect(persistedInput?.structuredPayload).toMatchObject({ recoverableFailure: { action: "inspect_run" } });
+    } else {
+      expect(persistedInput?.structuredPayload?.recoverableFailure).not.toHaveProperty("action");
+      expect(safeCopy).not.toContain("Run");
+    }
+  });
+
+  it("overrides legacy retry copy in an unknown native-fork stream error", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Open a Side Chat");
+    const progressMessage = { ...createMessage("message-assistant", "assistant", "message", ""), status: "streaming" };
+    const safeCopy = "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork.";
+    const runId = "native-fork-stream-run";
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(progressMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onAssistantState?.("streaming");
+      await input.onRunCreated?.(runId);
+      const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+      throw new ChatAssistantStreamError("fork acceptance is unknown", "", [], {
+        errorCode: "native_fork_acceptance_unknown",
+        userMessage: "The assistant hit a system-level issue; retry when ready.",
+        retryable: true,
+        action: "retry",
+      });
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Open a Side Chat" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events.at(-1)).toMatchObject({
+      type: "error",
+      error: safeCopy,
+      errorCode: "native_fork_acceptance_unknown",
+      runId,
+    });
+    const persistedFailureInput = mockChatService.addMessage.mock.calls.at(-1)?.[1];
+    expect(persistedFailureInput).toMatchObject({
+      status: "failed",
+      body: safeCopy,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          code: "native_fork_acceptance_unknown",
+          message: safeCopy,
+          runId,
+          action: "inspect_run",
+        },
+      },
+    });
   });
 
   it("does not publish inline-visual backing HTML from a failed stream", async () => {
@@ -8049,6 +10225,266 @@ describe("chat routes", { retry: 2 }, () => {
     }
   });
 
+  it("keeps the Stop cutoff bounded while preserving the full legacy event stream", async () => {
+    const eventPairCount = 1_100;
+    const retainedAssistantCount = 64;
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const progressMessage = {
+      ...createMessage("message-assistant", "assistant", "message", ""),
+      status: "streaming",
+    };
+    let releaseAssistant!: () => void;
+    let releasePendingAdmission!: () => void;
+    let signalPendingAdmission!: () => void;
+    const pendingAdmissionStarted = new Promise<void>((resolve) => {
+      signalPendingAdmission = resolve;
+    });
+    const assistantRelease = new Promise<void>((resolve) => {
+      releaseAssistant = resolve;
+    });
+    const pendingAdmissionRelease = new Promise<void>((resolve) => {
+      releasePendingAdmission = resolve;
+    });
+    const lateTranscript = {
+      kind: "assistant" as const,
+      ts: "2026-03-26T08:02:00.000Z",
+      text: "late-after-stop|",
+      delta: true,
+    };
+    const expectedStoppedBody = Array.from(
+      { length: retainedAssistantCount },
+      (_, offset) => `assistant-${String(eventPairCount - retainedAssistantCount + offset).padStart(3, "0")}|`,
+    ).join("");
+
+    let generationSeq = 0;
+    let frozenProjectionEntryReads = 0;
+    const frozenProjectionEntryIndexes: number[] = [];
+    let frozenProjectionBytes = 0;
+    mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => {
+      if ((input.payload?.entry as { toolUseId?: string } | undefined)?.toolUseId === "legacy-tool-pending") {
+        signalPendingAdmission();
+        await pendingAdmissionRelease;
+      }
+      return {
+        event: {
+          id: `generation-event-${generationSeq + 1}`,
+          generationSeq: ++generationSeq,
+          payload: { ...(input.payload ?? {}), bodyHash: input.bodyHash },
+        },
+        generation: { id: input.generationId },
+        message: { id: input.messageId ?? "message-assistant" },
+      };
+    });
+    mockChatService.generationProtocol.getFrozenVisibleProjection.mockImplementation(async () => {
+      const projectedTranscript = mockChatService.generationProtocol.appendVisibleEventAndProject.mock.calls
+        .flatMap(([input], index) => {
+          const entry = input.eventKind === "transcript" ? input.payload?.entry : null;
+          return entry
+            ? [withChatTranscriptGenerationProvenance(entry, {
+              generationId: "generation-1",
+              generationSeq: index + 1,
+            })]
+            : [];
+        });
+      frozenProjectionBytes = Buffer.byteLength(JSON.stringify(projectedTranscript), "utf8");
+      const observedTranscript = new Proxy(projectedTranscript, {
+        get(target, property, receiver) {
+          if (typeof property === "string" && /^\d+$/.test(property)) {
+            frozenProjectionEntryReads += 1;
+            frozenProjectionEntryIndexes.push(Number(property));
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      return {
+        generation: { acceptedThroughSeq: generationSeq },
+        projection: {
+          body: expectedStoppedBody,
+          transcript: observedTranscript,
+          assistantMessageId: "message-assistant",
+          runId: null,
+        },
+      };
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onAssistantState?.("streaming");
+      for (let index = 0; index < eventPairCount; index += 1) {
+        await input.onTranscriptEntry?.({
+          kind: "assistant",
+          ts: "2026-03-26T08:01:01.000Z",
+          text: `assistant-${String(index).padStart(3, "0")}|`,
+          delta: true,
+        });
+        await input.onTranscriptEntry?.({
+          kind: "tool_call",
+          ts: "2026-03-26T08:01:01.000Z",
+          name: "read_file",
+          toolUseId: `legacy-tool-${index}`,
+          input: { index },
+        });
+      }
+      await input.onTranscriptEntry?.({
+        kind: "tool_call",
+        ts: "2026-03-26T08:01:59.000Z",
+        name: "read_file",
+        toolUseId: "legacy-tool-pending",
+        input: { pending: true },
+      });
+      await assistantRelease;
+      await input.onTranscriptEntry?.(lateTranscript);
+      return { outcome: "stopped", partialBody: "", replyingAgentId: "agent-1" };
+    });
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(progressMessage);
+
+    const streamPromise = request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      })
+      .then((response) => response);
+
+    await pendingAdmissionStarted;
+    const stopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+    expect(stopRes.status).toBe(200);
+    expect(stopRes.body).toMatchObject({ stopped: true, disposition: "stopping" });
+
+    releasePendingAdmission();
+    releaseAssistant();
+    const streamRes = await streamPromise;
+    const events = String(streamRes.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events.filter((event) => event.type === "transcript_entry")).toHaveLength(eventPairCount * 2);
+    expect(JSON.stringify(events)).not.toContain("late-after-stop");
+
+    const transcriptAdmissions = mockChatService.generationProtocol.appendVisibleEventAndProject.mock.calls
+      .filter(([input]) => input.eventKind === "transcript");
+    expect(mockChatService.generationProtocol.getFrozenVisibleProjection).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      generationId: "generation-1",
+    });
+    expect(frozenProjectionBytes).toBeGreaterThan(128 * 1024);
+    expect(frozenProjectionEntryReads).toBe(128);
+    expect(frozenProjectionEntryIndexes).toEqual(
+      Array.from({ length: 128 }, (_, offset) => eventPairCount * 2 - offset),
+    );
+    expect(transcriptAdmissions).toHaveLength(2_201);
+    expect(transcriptAdmissions.every(([input]) => Boolean(input.payload?.entry))).toBe(true);
+    expect(transcriptAdmissions[0]?.[0].payload).toHaveProperty("entry");
+    expect(transcriptAdmissions.at(-2)?.[0].payload).toMatchObject({
+      entry: { kind: "tool_call", toolUseId: `legacy-tool-${eventPairCount - 1}` },
+    });
+    expect(transcriptAdmissions.at(-1)?.[0].payload).toMatchObject({
+      entry: { kind: "tool_call", toolUseId: "legacy-tool-pending" },
+    });
+
+    const stoppedUpdate = mockChatService.updateMessage.mock.calls.at(-1)?.[2];
+    expect(stoppedUpdate).toMatchObject({ status: "stopped", body: expectedStoppedBody });
+    expect(stoppedUpdate).not.toHaveProperty("transcript");
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      messages: [expect.objectContaining({ status: "stopped", body: expectedStoppedBody })],
+    });
+  });
+
+  it("retains the latest native delta when transcript coalescing reaches the byte budget", async () => {
+    const recentText = "recent-after-byte-cap|".repeat(16);
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const nativeDelivery = {
+      source: "native" as const,
+      persistRaw: false,
+      runId: "chat-run-native-byte-cap-1",
+      spanId: "native-span-byte-cap-1",
+    };
+    let releaseAssistant!: () => void;
+    let signalAssistantReady!: () => void;
+    const assistantReady = new Promise<void>((resolve) => {
+      signalAssistantReady = resolve;
+    });
+    const assistantRelease = new Promise<void>((resolve) => {
+      releaseAssistant = resolve;
+    });
+
+    let generationSeq = 0;
+    mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => ({
+      event: {
+        id: `generation-event-${generationSeq + 1}`,
+        generationSeq: ++generationSeq,
+        payload: { ...(input.payload ?? {}), bodyHash: input.bodyHash },
+      },
+      generation: { id: input.generationId },
+      message: { id: input.messageId ?? "message-assistant" },
+    }));
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onTranscriptEntry?.({
+        kind: "assistant",
+        ts: "2026-03-26T08:01:01.000Z",
+        text: "x".repeat(128 * 1024 - 256),
+        delta: true,
+      }, nativeDelivery);
+      await input.onTranscriptEntry?.({
+        kind: "assistant",
+        ts: "2026-03-26T08:01:02.000Z",
+        text: recentText,
+        delta: true,
+      }, nativeDelivery);
+      signalAssistantReady();
+      await assistantRelease;
+      return { outcome: "stopped", partialBody: "", replyingAgentId: "agent-1" };
+    });
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+
+    const streamPromise = request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      })
+      .then((response) => response);
+
+    await assistantReady;
+    const stopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+    expect(stopRes.body).toMatchObject({ stopped: true, disposition: "stopping" });
+
+    releaseAssistant();
+    const streamRes = await streamPromise;
+    const events = String(streamRes.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events.filter((event) => event.type === "transcript_entry")).toHaveLength(2);
+    expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).toMatchObject({
+      status: "stopped",
+      body: recentText,
+    });
+    const transcriptAdmissions = mockChatService.generationProtocol.appendVisibleEventAndProject.mock.calls
+      .filter(([input]) => input.eventKind === "transcript");
+    expect(transcriptAdmissions).toHaveLength(2);
+    expect(transcriptAdmissions.every(([input]) => input.payload?.source === "native")).toBe(true);
+  });
+
   it("aborts the active stream only through the explicit stop endpoint", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
@@ -9104,4 +11540,104 @@ describe("chat routes", { retry: 2 }, () => {
     expect(res.body).toEqual({ error: "Fork this Feishu chat to continue in Rudder" });
     expect(mockChatService.resolve).not.toHaveBeenCalled();
   });
+
+  it.each(["chat", "side_chat"] as const)(
+    "serves one-shot native input only in memory for %s and redacts HTTP request logs",
+    async (conversationKind) => {
+      const conversation = createConversation({ conversationKind });
+      const binding = {
+        principalId: "user:user-1",
+        orgId: conversation.orgId,
+        chatId: conversation.id,
+        runId: `run-${conversationKind}`,
+        attemptId: `attempt-${conversationKind}`,
+      };
+      const submittedSecret = `private-${conversationKind}-sudo-value`;
+      const retrySecret = `private-${conversationKind}-retry-value`;
+      const invalidSecret = `private-${conversationKind}-invalid-value`;
+      const exceptionSecret = `private-${conversationKind}-exception-value`;
+      const loggedBodies: unknown[] = [];
+      const pending = chatRuntimeSensitiveInputBroker.request({ binding, kind: "sudo" });
+      const pendingRequestIds = [pending.requestId];
+      mockChatService.getById.mockResolvedValue(conversation);
+
+      try {
+        const app = createApp(undefined, undefined, undefined, (body) => loggedBodies.push(body));
+        const listed = await request(app).get(`/api/chats/${conversation.id}/runtime-sensitive-inputs`);
+
+        expect(listed.status).toBe(200);
+        expect(listed.body).toEqual({
+          requests: [{ requestId: pending.requestId, kind: "sudo" }],
+        });
+        expect(JSON.stringify(listed.body)).not.toContain(submittedSecret);
+
+        const invalidResponse = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${pending.requestId}/respond`)
+          .send({ value: { nested: invalidSecret } });
+        expect(invalidResponse.status).toBe(422);
+        expect(JSON.stringify(invalidResponse.body)).not.toContain(invalidSecret);
+        expect(JSON.stringify(loggedBodies)).not.toContain(invalidSecret);
+        expect(loggedBodies.at(-1)).toBe("[REDACTED]");
+
+        const response = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${pending.requestId}/respond`)
+          .send({ value: submittedSecret });
+        const retriedResponse = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${pending.requestId}/respond`)
+          .send({ value: retrySecret });
+
+        expect(response.status).toBe(202);
+        expect(response.body).toEqual({ status: "accepted" });
+        expect(retriedResponse.status).toBe(200);
+        expect(retriedResponse.body).toEqual({ status: "already_accepted" });
+        expect(JSON.stringify([response.body, retriedResponse.body])).not.toContain(submittedSecret);
+        await expect(pending.result).resolves.toEqual({ status: "provided", value: submittedSecret });
+        expect(chatRuntimeSensitiveInputBroker.pendingForPrincipal({
+          orgId: binding.orgId,
+          chatId: binding.chatId,
+          principalId: binding.principalId,
+        })).toEqual([]);
+        expect(JSON.stringify(loggedBodies)).not.toContain(submittedSecret);
+        expect(JSON.stringify(loggedBodies)).not.toContain(retrySecret);
+        expect(loggedBodies).toContain("[REDACTED]");
+        expect(mockChatService.addMessage).not.toHaveBeenCalled();
+        expect(mockChatService.updateMessage).not.toHaveBeenCalled();
+        expect(mockChatService.generationProtocol.appendGenerationEvent).not.toHaveBeenCalled();
+
+        const cancelPending = chatRuntimeSensitiveInputBroker.request({ binding, kind: "secret" });
+        pendingRequestIds.push(cancelPending.requestId);
+        const cancel = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${cancelPending.requestId}/cancel`)
+          .send({});
+        const cancelRetry = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${cancelPending.requestId}/cancel`)
+          .send({});
+
+        expect(cancel.status).toBe(200);
+        expect(cancel.body).toEqual({ cancelled: true });
+        expect(cancelRetry.status).toBe(200);
+        await expect(cancelPending.result).resolves.toEqual({ status: "cancelled" });
+
+        const exceptionPending = chatRuntimeSensitiveInputBroker.request({ binding, kind: "secret" });
+        pendingRequestIds.push(exceptionPending.requestId);
+        mockSideChatService.assertMutable.mockRejectedValueOnce(new Error("Synthetic Side Chat mutation failure"));
+        const exceptionResponse = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${exceptionPending.requestId}/respond`)
+          .send({ value: exceptionSecret });
+        expect(exceptionResponse.status).toBe(500);
+        expect(exceptionResponse.body).toEqual({ error: "Internal server error" });
+        expect(JSON.stringify(loggedBodies)).not.toContain(exceptionSecret);
+        expect(loggedBodies.at(-1)).toBe("[REDACTED]");
+      } finally {
+        for (const requestId of pendingRequestIds) {
+          chatRuntimeSensitiveInputBroker.cancelFromPrincipal({
+            requestId,
+            orgId: binding.orgId,
+            chatId: binding.chatId,
+            principalId: binding.principalId,
+          });
+        }
+      }
+    },
+  );
 });

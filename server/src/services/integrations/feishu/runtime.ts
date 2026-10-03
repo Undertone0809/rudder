@@ -4,14 +4,16 @@ import type { Db } from "@rudderhq/db";
 import {
   agentIntegrationOutboundMessages,
   agentIntegrations,
+  agentIntegrationUserBindings,
   chatMessages,
+  organizationMemberships,
 } from "@rudderhq/db";
 import type {
   AgentIntegrationProviderRegion,
   ChatConversation,
   ChatMessage,
 } from "@rudderhq/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { logger } from "../../../middleware/logger.js";
 import type { StorageService } from "../../../storage/types.js";
 import { chatAgentRunService } from "../../chat-agent-runs.js";
@@ -614,6 +616,42 @@ export function feishuIntegrationRuntimeService(
     }
   }
 
+  async function resolveFeishuPrincipalScopeRef(
+    integration: FeishuRuntimeIntegration,
+    event: FeishuInboundMessage,
+  ) {
+    const identityCondition = event.senderUnionId
+      ? or(
+        eq(agentIntegrationUserBindings.externalOpenId, event.senderOpenId),
+        eq(agentIntegrationUserBindings.externalUnionId, event.senderUnionId),
+      )
+      : eq(agentIntegrationUserBindings.externalOpenId, event.senderOpenId);
+    const binding = await db
+      .select({ userId: agentIntegrationUserBindings.userId })
+      .from(agentIntegrationUserBindings)
+      .where(and(
+        eq(agentIntegrationUserBindings.integrationId, integration.id),
+        identityCondition,
+        isNull(agentIntegrationUserBindings.revokedAt),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!binding) return null;
+
+    const membership = await db
+      .select({ id: organizationMemberships.id })
+      .from(organizationMemberships)
+      .where(and(
+        eq(organizationMemberships.orgId, integration.orgId),
+        eq(organizationMemberships.principalType, "user"),
+        eq(organizationMemberships.principalId, binding.userId),
+        eq(organizationMemberships.status, "active"),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    return membership ? `user:${binding.userId}` : null;
+  }
+
   async function completeAcceptedReply(
     integration: FeishuRuntimeIntegration,
     credential: FeishuCredential,
@@ -657,8 +695,13 @@ export function feishuIntegrationRuntimeService(
     let waitingForNetwork = false;
     let assistantMessage: ChatMessage | null = null;
     try {
+      const principalScopeRef = await resolveFeishuPrincipalScopeRef(integration, event);
+      if (!principalScopeRef) {
+        throw new Error("Feishu accepted inbound message no longer has an active user binding");
+      }
       const streamed = await assistant.streamChatAssistantReply({
         conversation,
+        principalScopeRef,
         contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
         messages: [userMessage],
         userMessageId: result.chatMessageId,
@@ -668,6 +711,8 @@ export function feishuIntegrationRuntimeService(
           feishuIntegrationId: integration.id,
           feishuChatId: event.chatId,
           feishuMessageId: event.messageId,
+          feishuSenderOpenId: event.senderOpenId,
+          feishuSenderUnionId: event.senderUnionId,
         },
         ...(resume
           ? { resumeRunId: resume.runId, resumeRunOwnerToken: resume.ownerToken }
@@ -902,8 +947,10 @@ export function feishuIntegrationRuntimeService(
     const generationId = firstString(context.chatGenerationId);
     const chatMessageId = firstString(context.userMessageId) ?? firstString(context.messageId);
     const externalChatId = firstString(context.feishuChatId);
+    const senderOpenId = firstString(context.feishuSenderOpenId);
+    const senderUnionId = firstString(context.feishuSenderUnionId);
     const ownerToken = run.executionOwnerToken;
-    if (!integrationId || !conversationId || !generationId || !chatMessageId || !externalChatId || !ownerToken) {
+    if (!integrationId || !conversationId || !generationId || !chatMessageId || !externalChatId || !senderOpenId || !ownerToken) {
       return false;
     }
 
@@ -949,8 +996,8 @@ export function feishuIntegrationRuntimeService(
       chatId: externalChatId,
       chatType: "p2p" as const,
       messageId: firstString(context.feishuMessageId) ?? chatMessageId,
-      senderOpenId: "rudder-network-recovery",
-      senderUnionId: null,
+      senderOpenId,
+      senderUnionId,
       body: "",
       commandBody: "",
       addressedToBot: true,

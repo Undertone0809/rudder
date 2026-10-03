@@ -204,6 +204,21 @@ function chatMessageIdFromUrl(url: URL) {
   return (url.searchParams.get("messageId") ?? url.searchParams.get("targetMessageId") ?? "").trim() || null;
 }
 
+export function sideChatTargetFromConversation(
+  sourceConversationId: string,
+  conversation: ChatConversation,
+): Extract<SidePanelTarget, { kind: "side_chat" }> {
+  return {
+    kind: "side_chat",
+    sourceConversationId,
+    sourceMessageId: conversation.forkedFromMessageId,
+    sourcePreview: null,
+    conversationId: conversation.id,
+    clientMutationId: conversation.sideChatClientMutationId || conversation.id,
+    label: conversation.title.trim() || "Side Chat",
+  };
+}
+
 function commentIdFromHash(url: URL) {
   const hash = decodeURIComponent(url.hash.replace(/^#/, "")).trim();
   return hash.startsWith("comment-") ? hash.slice("comment-".length).trim() || null : null;
@@ -249,9 +264,15 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
 
 export function sideChatGenerationScopeKey(
   organizationId: string,
-  target: Pick<Extract<SidePanelTarget, { kind: "side_chat" }>, "sourceConversationId" | "clientMutationId">,
+  target: Pick<Extract<SidePanelTarget, { kind: "side_chat" }>, "sourceConversationId" | "clientMutationId">
+    & Partial<Pick<Extract<SidePanelTarget, { kind: "side_chat" }>, "conversationId">>,
 ) {
+  if (target.conversationId && target.clientMutationId === target.conversationId) return target.conversationId;
   return `side-chat:${organizationId}:${target.sourceConversationId}:${target.clientMutationId}`;
+}
+
+export function sideChatGenerationOwnerKey(principalId: string | null) {
+  return JSON.stringify(["side-chat-principal", principalId]);
 }
 
 export function chatGenerationScopeKey(

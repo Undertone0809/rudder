@@ -25,17 +25,20 @@ import {
   redactRudderInlineVisualSources,
 } from "@rudderhq/shared";
 import { and, eq, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import type {
   AgentRuntimeExecutionResult,
   AgentRuntimeInvocationMeta
 } from "../../agent-runtimes/index.js";
 import { appendWithCap, asNumber, MAX_EXCERPT_BYTES, parseObject } from "../../agent-runtimes/utils.js";
 import { summarizeRuntimeSkillsForTrace } from "../runtime-trace-metadata.js";
+import type { HeartbeatTranscriptRetentionPolicy } from "./heartbeat-transcript-retention.js";
 import type { TerminalIssueSemanticAudit } from "./heartbeat.terminal.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
 export const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
+export const MAX_TRANSCRIPT_LINE_BUFFER_BYTES = 64 * 1024;
 export const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = AGENT_RUN_CONCURRENCY_DEFAULT;
 export const HEARTBEAT_MAX_CONCURRENT_RUNS_MIN = AGENT_RUN_CONCURRENCY_MIN;
 export const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = AGENT_RUN_CONCURRENCY_MAX;
@@ -170,35 +173,122 @@ export function isIssueCommentMentionWake(input: {
   return wakeSource === "comment.mention" && Boolean(wakeCommentId);
 }
 
+export type TranscriptChunkBuffer = {
+  pending: string;
+  droppingOverlongLine: boolean;
+};
+
 export function appendTranscriptEntriesFromChunk(input: {
-  buffer: string;
+  buffer: TranscriptChunkBuffer;
   chunk: string;
   transcript: TranscriptEntry[];
   finalize?: boolean;
   parser?: ((line: string, ts: string) => TranscriptEntry[]) | null;
   kind: "stdout" | "stderr";
 }) {
-  const combined = `${input.buffer}${input.chunk}`;
-  const lines = combined.split(/\r?\n/);
-  const trailing = lines.pop() ?? "";
-  const completeLines = input.finalize && trailing ? [...lines, trailing] : lines;
+  const combined = input.buffer.droppingOverlongLine
+    ? input.chunk
+    : `${input.buffer.pending}${input.chunk}`;
+  const lines = combined.split("\n");
+  const hasTrailingNewline = combined.endsWith("\n");
+  const trailing = hasTrailingNewline ? "" : lines.pop() ?? "";
+  if (hasTrailingNewline) lines.pop();
 
-  for (const line of completeLines) {
-    if (!line.trim()) continue;
+  const appendDroppedLineMarker = () => {
+    input.transcript.push({
+      kind: input.kind,
+      ts: new Date().toISOString(),
+      text: `[transcript line dropped: exceeded ${MAX_TRANSCRIPT_LINE_BUFFER_BYTES}-byte limit]`,
+    });
+  };
+  const appendLine = (line: string) => {
+    if (!line.trim()) return;
     const ts = new Date().toISOString();
     const parsed = input.parser ? input.parser(line, ts) : [];
     if (parsed.length > 0) {
       input.transcript.push(...parsed);
-      continue;
+      return;
     }
     input.transcript.push({
       kind: input.kind,
       ts,
       text: line,
     });
+  };
+
+  let droppingOverlongLine = input.buffer.droppingOverlongLine;
+  for (const rawLine of lines) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    // Never parse a truncated provider record as a complete transcript event.
+    if (droppingOverlongLine || Buffer.byteLength(line, "utf8") > MAX_TRANSCRIPT_LINE_BUFFER_BYTES) {
+      appendDroppedLineMarker();
+      droppingOverlongLine = false;
+      continue;
+    }
+    appendLine(line);
   }
 
-  return input.finalize ? "" : trailing;
+  let pending = "";
+  if (trailing) {
+    if (droppingOverlongLine) {
+      if (input.finalize) {
+        appendDroppedLineMarker();
+        droppingOverlongLine = false;
+      }
+    } else if (input.finalize) {
+      if (Buffer.byteLength(trailing, "utf8") > MAX_TRANSCRIPT_LINE_BUFFER_BYTES) {
+        appendDroppedLineMarker();
+      } else {
+        appendLine(trailing);
+      }
+    } else if (Buffer.byteLength(trailing, "utf8") > MAX_TRANSCRIPT_LINE_BUFFER_BYTES) {
+      droppingOverlongLine = true;
+    } else {
+      pending = trailing;
+    }
+  } else if (input.finalize && droppingOverlongLine) {
+    appendDroppedLineMarker();
+    droppingOverlongLine = false;
+  }
+
+  input.buffer.pending = input.finalize ? "" : pending;
+  input.buffer.droppingOverlongLine = input.finalize ? false : droppingOverlongLine;
+  return input.buffer;
+}
+
+export function createHeartbeatTranscriptFinalizer(input: {
+  transcript: TranscriptEntry[];
+  stdoutBuffer: TranscriptChunkBuffer;
+  stderrBuffer: TranscriptChunkBuffer;
+  stdoutParser: () => ((line: string, ts: string) => TranscriptEntry[]) | null;
+  appendFinalizedStdoutEntries?: (entries: readonly TranscriptEntry[]) => Promise<void> | void;
+}) {
+  let finalization: Promise<void> | null = null;
+  return () => {
+    if (!finalization) {
+      finalization = Promise.resolve().then(async () => {
+        const stdoutStart = input.transcript.length;
+        appendTranscriptEntriesFromChunk({
+          buffer: input.stdoutBuffer,
+          chunk: "",
+          transcript: input.transcript,
+          parser: input.stdoutParser(),
+          finalize: true,
+          kind: "stdout",
+        });
+        const stdoutEnd = input.transcript.length;
+        appendTranscriptEntriesFromChunk({
+          buffer: input.stderrBuffer,
+          chunk: "",
+          transcript: input.transcript,
+          finalize: true,
+          kind: "stderr",
+        });
+        await input.appendFinalizedStdoutEntries?.(input.transcript.slice(stdoutStart, stdoutEnd));
+      });
+    }
+    return finalization;
+  };
 }
 
 export function normalizeMaxConcurrentRuns(value: unknown) {
@@ -274,16 +364,22 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     name: string | null;
     description: string | null;
   }>;
+  /** Omission is conservative legacy retention; native compaction requires explicit proof. */
+  transcriptRetention?: Pick<HeartbeatTranscriptRetentionPolicy, "mode" | "persistRawTranscript" | "reason">;
+  /** Only compactors may consume the server-recorded dedup provenance. */
+  preservePersistedInstructionAlias?: boolean;
 }): Record<string, unknown> {
+  const compactForNativeTranscript = input.transcriptRetention?.mode === "native"
+    && input.transcriptRetention.persistRawTranscript === false;
   const producerStartupContextSection = readProducerStartupContextSection(input.meta.context);
   const persistentPrompt = sanitizeStartupContextPromptForPersistence(
     input.meta.prompt,
     producerStartupContextSection,
   );
-  const persistentAgentInstructionStack = sanitizeStartupContextPromptForPersistence(
-    typeof input.meta.agentInstructionStack === "string" ? input.meta.agentInstructionStack : null,
-    producerStartupContextSection,
-  );
+  const persistentAgentInstructionStack = sanitizeAgentInstructionStackForPersistence(input.meta);
+  const sanitizedContext = sanitizeStartupContextContextForPersistence(input.meta.context);
+  const instructionAlias = input.preservePersistedInstructionAlias
+    ? readPersistedInstructionAlias(input.meta) : null;
   const explicitUsedSkills = Array.isArray(input.meta.usedSkills)
     ? input.meta.usedSkills
       .map((entry) => normalizeLoadedSkill(entry))
@@ -327,21 +423,50 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     requestedSkills: promptRequestedSkills,
     loadedSkills: loadedSkillEvidence,
   });
-  const persistentMeta = {
+  const persistentMeta: Record<string, unknown> = {
     ...input.meta,
     prompt: persistentPrompt,
     ...(typeof input.meta.agentInstructionStack === "string"
       ? { agentInstructionStack: persistentAgentInstructionStack }
       : {}),
-    context: sanitizeStartupContextContextForPersistence(input.meta.context),
+    context: sanitizedContext,
     ...((input.meta.prompt && input.meta.prompt !== persistentPrompt)
       || (typeof input.meta.agentInstructionStack === "string"
         && input.meta.agentInstructionStack !== persistentAgentInstructionStack)
       ? { promptSanitizedForPersistence: true }
       : {}),
   };
+  // Runtime metadata cannot manufacture a persisted Instructions alias.
+  delete persistentMeta.agentInstructionStackAlias;
+  if (instructionAlias) persistentMeta.agentInstructionStackAlias = instructionAlias;
 
-  return {
+  if (compactForNativeTranscript) {
+    // Synchronous construction cannot prove an asynchronously stored snapshot.
+    // Native transcript capability is not evidence that invocation text survives.
+    persistentMeta.invocationContent = { ...buildNativeInvocationContentSummary({
+      prompt: input.meta.prompt,
+      sanitizedPrompt: persistentPrompt,
+      agentInstructionStack: input.meta.agentInstructionStack,
+      sanitizedAgentInstructionStack: persistentAgentInstructionStack,
+      context: sanitizedContext,
+      retention: input.transcriptRetention!,
+      instructionAlias,
+    }), textStored: true, textSource: "persisted_invocation_inline" };
+  } else if (typeof persistentPrompt === "string" && persistentPrompt.length > 0
+    && typeof persistentAgentInstructionStack === "string"
+    && persistentAgentInstructionStack === persistentPrompt) {
+    // Keep the full debug input as the canonical text. Instructions consumers
+    // already fall back to prompt; the runtime meta and snapshot are untouched.
+    delete persistentMeta.agentInstructionStack;
+    persistentMeta.agentInstructionStackAlias = {
+      ...summarizeInvocationText(input.meta.agentInstructionStack, persistentAgentInstructionStack),
+      sameAsPrompt: true,
+      textSource: "persisted_prompt",
+      equality: "nonempty_sanitized_exact",
+    };
+  }
+
+  const payload: Record<string, unknown> = {
     ...persistentMeta,
     ...summarizeRuntimeSkillsForTrace(input.runtimeSkills),
     desiredSkillCount: desiredSkills.length,
@@ -370,7 +495,90 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     skillEvidenceCount: skillEvidence.skills.length,
     skillEvidenceKeys: skillEvidence.skills.map((entry) => entry.key),
     skillEvidenceSkills: skillEvidence.skills,
-  } as Record<string, unknown>;
+  };
+  return payload;
+}
+
+function summarizeInvocationText(value: string | null | undefined, sanitizedValue: string | null | undefined) {
+  if (typeof value !== "string") return { present: false };
+  const sanitizedText = typeof sanitizedValue === "string" ? sanitizedValue : "";
+  return {
+    present: true,
+    sourceCharacterLength: value.length,
+    sourceUtf8ByteLength: Buffer.byteLength(value, "utf8"),
+    sanitizedCharacterLength: sanitizedText.length,
+    sanitizedUtf8ByteLength: Buffer.byteLength(sanitizedText, "utf8"),
+    sanitizedSha256: createHash("sha256").update(sanitizedText, "utf8").digest("hex"),
+    sanitizedForPersistence: sanitizedText !== value,
+  };
+}
+
+function readPersistedInstructionAlias(meta: AgentRuntimeInvocationMeta): Record<string, unknown> | null {
+  if (Object.hasOwn(meta, "agentInstructionStack")) return null;
+  const alias = (meta as unknown as Record<string, unknown>).agentInstructionStackAlias;
+  if (!alias || typeof alias !== "object" || Array.isArray(alias)) return null;
+  const value = alias as Record<string, unknown>;
+  if (value.present !== true || value.sameAsPrompt !== true
+    || value.textSource !== "persisted_prompt" || value.equality !== "nonempty_sanitized_exact"
+    || typeof value.sanitizedForPersistence !== "boolean"
+    || typeof value.sanitizedSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.sanitizedSha256)
+    || [value.sourceCharacterLength, value.sourceUtf8ByteLength, value.sanitizedCharacterLength, value.sanitizedUtf8ByteLength]
+      .some((length) => !Number.isSafeInteger(length) || (length as number) <= 0)) return null;
+  // These describe the source at dedup time. Subsequent user/secret redaction
+  // can change the canonical prompt; do not relabel source metrics as current.
+  return { present: true, sameAsPrompt: true, textSource: value.textSource, equality: value.equality,
+    sourceCharacterLength: value.sourceCharacterLength, sourceUtf8ByteLength: value.sourceUtf8ByteLength,
+    sanitizedCharacterLength: value.sanitizedCharacterLength, sanitizedUtf8ByteLength: value.sanitizedUtf8ByteLength,
+    sanitizedSha256: value.sanitizedSha256, sanitizedForPersistence: value.sanitizedForPersistence };
+}
+
+function summarizeInvocationContext(context: Record<string, unknown> | null | undefined) {
+  if (!context) return { present: false };
+  const serializedContext = JSON.stringify(context);
+  const keys = Object.keys(context).sort();
+  return {
+    present: true,
+    keyCount: keys.length,
+    keys: keys.slice(0, 32),
+    keysTruncated: keys.length > 32,
+    sanitizedCharacterLength: serializedContext.length,
+    sanitizedUtf8ByteLength: Buffer.byteLength(serializedContext, "utf8"),
+    sanitizedSha256: createHash("sha256").update(serializedContext, "utf8").digest("hex"),
+  };
+}
+
+function buildNativeInvocationContentSummary(input: {
+  prompt: string | undefined;
+  sanitizedPrompt: string | null | undefined;
+  agentInstructionStack: string | undefined;
+  sanitizedAgentInstructionStack: string | null | undefined;
+  context: Record<string, unknown> | null | undefined;
+  retention: Pick<HeartbeatTranscriptRetentionPolicy, "mode" | "persistRawTranscript" | "reason">;
+  instructionAlias?: Record<string, unknown> | null;
+}) {
+  const sameSanitizedText = typeof input.agentInstructionStack === "string"
+    && typeof input.sanitizedAgentInstructionStack === "string" && input.sanitizedAgentInstructionStack.length > 0
+    && input.sanitizedAgentInstructionStack === input.sanitizedPrompt;
+  const stackSummary = typeof input.agentInstructionStack !== "string"
+    ? input.instructionAlias ?? { present: false }
+    : sameSanitizedText
+      ? {
+        present: true,
+        sameAsPrompt: true,
+        sourceCharacterLength: input.agentInstructionStack.length,
+        sourceUtf8ByteLength: Buffer.byteLength(input.agentInstructionStack, "utf8"),
+      }
+      : summarizeInvocationText(input.agentInstructionStack, input.sanitizedAgentInstructionStack);
+
+  return {
+    textStored: false,
+    textSource: "agent_run_transcript_reader",
+    transcriptRetentionMode: input.retention.mode,
+    transcriptRetentionReason: input.retention.reason,
+    prompt: summarizeInvocationText(input.prompt, input.sanitizedPrompt),
+    agentInstructionStack: stackSummary,
+    context: summarizeInvocationContext(input.context),
+  };
 }
 
 function readProducerStartupContextSection(context: Record<string, unknown> | null | undefined) {
@@ -446,6 +654,16 @@ export function sanitizeStartupContextPromptForPersistence(
   const replacement = replacementLines.join("\n").trimEnd();
   if (nextSection < 0) return `${redactedPrompt.slice(0, start)}${replacement}`;
   return `${redactedPrompt.slice(0, start)}${replacement}${redactedPrompt.slice(nextSection)}`;
+}
+
+export function sanitizeAgentInstructionStackForPersistence(input: {
+  agentInstructionStack?: string | null;
+  context?: Record<string, unknown> | null;
+}) {
+  return sanitizeStartupContextPromptForPersistence(
+    typeof input.agentInstructionStack === "string" ? input.agentInstructionStack : null,
+    readProducerStartupContextSection(input.context),
+  );
 }
 
 function redactResponseAnnotationPromptSection(prompt: string) {

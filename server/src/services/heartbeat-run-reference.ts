@@ -29,8 +29,11 @@ export async function resolveHeartbeatRunIdReference(
   const normalized = typedRef?.kind === "run"
     ? typedRef.prefix
     : runIdRef.trim().toLowerCase();
-  if (!isShortRunIdReference(normalized)) return runIdRef;
   const notFoundMessage = scope.notFoundMessage ?? "Agent run not found";
+  if (!isShortRunIdReference(normalized)) {
+    if (!isUuidLike(normalized)) throw notFound(notFoundMessage);
+    return normalized;
+  }
   if (scope.orgIds?.length === 0) throw notFound(notFoundMessage);
 
   const rows = await db

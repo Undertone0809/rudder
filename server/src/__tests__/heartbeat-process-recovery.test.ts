@@ -15,16 +15,18 @@ import {
   issues,
   organizations,
   organizationSkills,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { runningProcesses } from "../agent-runtimes/index.ts";
 import { agentIssueCreationService } from "../services/agent-issue-creation.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
@@ -123,6 +125,51 @@ function spawnAliveProcess() {
   });
 }
 
+function waitForChildExitEvent(child: ChildProcess, timeoutMs: number) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Child process ${child.pid ?? "unknown"} did not exit within ${timeoutMs}ms`));
+    }, timeoutMs);
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      resolve({ code, signal });
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.off("exit", onExit);
+      child.off("error", onError);
+    };
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
+async function spawnExitedProcessEvidence(childProcesses: Set<ChildProcess>) {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+  childProcesses.add(child);
+  const processPid = child.pid;
+  if (typeof processPid !== "number") throw new Error("Failed to spawn exit-evidence child process");
+  const exit = await waitForChildExitEvent(child, 3_000);
+  childProcesses.delete(child);
+  if (exit.code !== 0 || exit.signal !== null) {
+    throw new Error(`Exit-evidence child ended unexpectedly (code=${exit.code}, signal=${exit.signal})`);
+  }
+  return { processPid, processExitedAt: new Date() };
+}
+
+async function terminateChildAndWait(child: ChildProcess) {
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  await waitForChildExitEvent(child, 5_000);
+}
+
 async function waitForProcessExit(pid: number, timeoutMs = 3_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -139,6 +186,16 @@ async function waitForProcessExit(pid: number, timeoutMs = 3_000) {
   return false;
 }
 
+async function waitForTrackedChild(runId: string, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const child = runningProcesses.get(runId)?.child;
+    if (child && typeof child.pid === "number") return child;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Run ${runId} did not start a tracked child within ${timeoutMs}ms`);
+}
+
 describe("heartbeat orphaned process recovery", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -153,11 +210,85 @@ describe("heartbeat orphaned process recovery", () => {
   }, 20_000);
 
   afterEach(async () => {
-    runningProcesses.clear();
-    for (const child of childProcesses) {
-      child.kill("SIGKILL");
+    const heartbeat = heartbeatService(db);
+    const processEntries = [...runningProcesses.entries()];
+    const ownedRunIds = new Set(processEntries.map(([runId]) => runId));
+    const ownedChildren = new Set([
+      ...childProcesses,
+      ...processEntries.map(([, entry]) => entry.child),
+    ]);
+    const ownedPids = new Set(
+      [...ownedChildren]
+        .map((child) => child.pid)
+        .filter((pid): pid is number => typeof pid === "number"),
+    );
+    const activeWriterSpans = await db
+      .select({ runId: runRuntimeSpans.runId })
+      .from(runRuntimeSpans)
+      .where(isNull(runRuntimeSpans.writerLeaseReleasedAt));
+    for (const span of activeWriterSpans) ownedRunIds.add(span.runId);
+    const activeRuns = await db
+      .select({ id: heartbeatRuns.id, status: heartbeatRuns.status, processPid: heartbeatRuns.processPid })
+      .from(heartbeatRuns)
+      .where(inArray(heartbeatRuns.status, ["queued", "running"]));
+    for (const run of activeRuns) {
+      if (run.processPid !== null && ownedPids.has(run.processPid)) ownedRunIds.add(run.id);
+      if (run.status === "queued" || ownedRunIds.has(run.id)) {
+        await heartbeat.cancelRun(run.id, "Test teardown");
+      }
+    }
+
+    for (const child of ownedChildren) await terminateChildAndWait(child);
+    for (const [runId, entry] of processEntries) {
+      if (ownedChildren.has(entry.child) && (entry.child.exitCode !== null || entry.child.signalCode !== null)) {
+        runningProcesses.delete(runId);
+      }
     }
     childProcesses.clear();
+
+    const ownedRunIdList = [...ownedRunIds];
+    const drainDeadline = Date.now() + 4_000;
+    let stableDrainObservations = 0;
+    let observedDrainState: unknown = null;
+    while (Date.now() < drainDeadline) {
+      const ownedRuns = ownedRunIdList.length > 0
+        ? await db
+          .select({ id: heartbeatRuns.id })
+          .from(heartbeatRuns)
+          .where(inArray(heartbeatRuns.id, ownedRunIdList))
+        : [];
+      const activeOwners = ownedRuns.length > 0
+        ? await db
+          .select({ id: heartbeatRuns.id })
+          .from(heartbeatRuns)
+          .where(and(
+            inArray(heartbeatRuns.id, ownedRunIdList),
+            isNotNull(heartbeatRuns.executionOwnerToken),
+          ))
+        : [];
+      const activeSpans = ownedRunIdList.length > 0
+        ? await db
+          .select({ id: runRuntimeSpans.id })
+          .from(runRuntimeSpans)
+          .where(and(
+            inArray(runRuntimeSpans.runId, ownedRunIdList),
+            isNull(runRuntimeSpans.writerLeaseReleasedAt),
+          ))
+        : [];
+      observedDrainState = {
+        ownedRunIds: ownedRunIdList,
+        activeOwners: activeOwners.map((run) => run.id),
+        activeSpanIds: activeSpans.map((span) => span.id),
+      };
+      if (activeOwners.length === 0 && activeSpans.length === 0) stableDrainObservations += 1;
+      else stableDrainObservations = 0;
+      if (stableDrainObservations >= 3) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (stableDrainObservations < 3) {
+      throw new Error(`Test-owned runtime executions did not drain: ${JSON.stringify(observedDrainState)}`);
+    }
+
     for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
         await db.delete(issues);
@@ -171,6 +302,7 @@ describe("heartbeat orphaned process recovery", () => {
         await db.delete(agentWakeupRequests);
         await db.delete(organizationSkills);
         await db.delete(goals);
+        await db.delete(runtimeBindings);
         await db.delete(agents);
         await db.delete(organizations);
         return;
@@ -182,11 +314,8 @@ describe("heartbeat orphaned process recovery", () => {
   });
 
   afterAll(async () => {
-    for (const child of childProcesses) {
-      child.kill("SIGKILL");
-    }
+    for (const child of childProcesses) await terminateChildAndWait(child);
     childProcesses.clear();
-    runningProcesses.clear();
     await instance?.stop();
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
@@ -198,6 +327,7 @@ describe("heartbeat orphaned process recovery", () => {
     agentStatus?: "active" | "paused" | "idle" | "running" | "error";
     runStatus?: "running" | "queued" | "failed";
     processPid?: number | null;
+    processExitedAt?: Date | null;
     processLossRetryCount?: number;
     includeIssue?: boolean;
     issueStatus?: "todo" | "in_progress" | "in_review" | "done" | "cancelled";
@@ -312,6 +442,11 @@ describe("heartbeat orphaned process recovery", () => {
       contextSnapshot,
       goalId,
       processPid: input?.processPid ?? null,
+      processExitedAt: input?.processExitedAt !== undefined
+        ? input.processExitedAt
+        : input?.runStatus && input.runStatus !== "running"
+          ? now
+          : null,
       processLossRetryCount: input?.processLossRetryCount ?? 0,
       errorCode: input?.runErrorCode ?? null,
       error: input?.runError ?? null,
@@ -340,6 +475,30 @@ describe("heartbeat orphaned process recovery", () => {
     }
 
     return { orgId, agentId, runId, wakeupRequestId, issueId, goalId };
+  }
+
+  function heartbeatForControlledRetry(agentId: string, sourceRunId: string) {
+    return heartbeatService(db, {
+      beforeRunClaim: async (queuedRun) => {
+        if (queuedRun.retryOfRunId !== sourceRunId) return;
+        await db.update(agents).set({
+          agentRuntimeType: "process",
+          agentRuntimeConfig: {
+            command: process.execPath,
+            args: ["-e", "setInterval(() => {}, 1000)"],
+            graceSec: 1,
+          },
+        }).where(eq(agents.id, agentId));
+      },
+    });
+  }
+
+  async function trackControlledRetryChild(runId: string) {
+    const child = await waitForTrackedChild(runId);
+    childProcesses.add(child);
+    expect(child.exitCode).toBeNull();
+    expect(child.signalCode).toBeNull();
+    return child;
   }
 
   it("times out long-running active runs and releases issue execution locks", async () => {
@@ -945,9 +1104,11 @@ describe("heartbeat orphaned process recovery", () => {
 
   it("persists Agent Issue settlement when immediate and first replay settlement both fail", async () => {
     const requestId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence(childProcesses);
     const { orgId, agentId, runId, issueId } = await seedRunFixture({
-      processPid: null,
+      ...exitedWriter,
       includeIssue: false,
+      processLossRetryCount: 1,
       contextSnapshot: {
         agentIssueCreationRequestId: requestId,
         agentIssueCreationRequest: { id: requestId },
@@ -1335,6 +1496,7 @@ describe("heartbeat orphaned process recovery", () => {
     expect(child.pid).toBeTypeOf("number");
 
     const { agentId, runId, wakeupRequestId } = await seedRunFixture({
+      agentStatus: "paused",
       processPid: child.pid ?? null,
       includeIssue: false,
     });
@@ -1364,6 +1526,146 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(agentWakeupRequests.id, wakeupRequestId))
       .then((rows) => rows[0] ?? null);
     expect(wakeup?.status).toBe("failed");
+  });
+
+  it("routes an orphaned Claude Side Chat fork to its owned recovery handler", async () => {
+    const conversationId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence(childProcesses);
+    const { runId } = await seedRunFixture({
+      agentRuntimeType: "claude_local", chatConversationId: conversationId, includeIssue: false,
+      ...exitedWriter,
+      contextSnapshot: { sideChatRuntimeAdmission: { deferredForkDescriptor: { version: 1 } } },
+    });
+    await db.update(heartbeatRuns).set({
+      scene: "side_chat", targetType: "chat_conversation", targetId: conversationId,
+      idempotencyKey: "claude-orphan-test",
+      sessionIntentJson: { kind: "fresh", reuseScope: "none", sourceRunId: null, sessionId: null, sessionParams: null },
+    }).where(eq(heartbeatRuns.id, runId));
+    const onOrphanedClaudeForkRun = vi.fn(async (run: typeof heartbeatRuns.$inferSelect) => {
+      await db.update(heartbeatRuns).set({ status: "failed", errorCode: "claude_fork_completion_unresolved" })
+        .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.executionOwnerToken, run.executionOwnerToken!)));
+      return true;
+    });
+    const result = await heartbeatService(db, { onOrphanedClaudeForkRun }).reapOrphanedRuns();
+    expect(result.runIds).toContain(runId);
+    expect(onOrphanedClaudeForkRun).toHaveBeenCalledTimes(1);
+    expect(onOrphanedClaudeForkRun.mock.calls[0]?.[0].executionOwnerToken).toBeTruthy();
+    const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    expect(persisted?.errorCode).toBe("claude_fork_completion_unresolved");
+  });
+
+  it("does not auto-retry an orphaned Claude fork when its handler cannot take over", async () => {
+    const conversationId = randomUUID();
+    const { agentId, runId } = await seedRunFixture({
+      agentRuntimeType: "claude_local", chatConversationId: conversationId, includeIssue: false,
+      processPid: 999_999_999,
+      contextSnapshot: { sideChatRuntimeAdmission: { deferredForkDescriptor: { version: 1 } } },
+    });
+    await db.update(heartbeatRuns).set({
+      scene: "side_chat", targetType: "chat_conversation", targetId: conversationId,
+      idempotencyKey: "claude-orphan-no-retry",
+      sessionIntentJson: { kind: "fresh", reuseScope: "none", sourceRunId: null, sessionId: null, sessionParams: null },
+    }).where(eq(heartbeatRuns.id, runId));
+    const result = await heartbeatService(db, { onOrphanedClaudeForkRun: async () => false }).reapOrphanedRuns();
+    expect(result.runIds).toContain(runId);
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: runId, status: "failed", errorCode: "process_lost" });
+  });
+
+  it("fails closed when orphan recovery has no provider-writer process identity", async () => {
+    const { agentId, runId } = await seedRunFixture({
+      includeIssue: false,
+      processPid: null,
+      processExitedAt: null,
+    });
+
+    const result = await heartbeatService(db).reapOrphanedRuns();
+    expect(result).toEqual({ reaped: 0, runIds: [] });
+
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      id: runId,
+      status: "running",
+      processExitedAt: null,
+      error: expect.stringContaining("provider writer has no persisted process identity"),
+    });
+  });
+
+  it("terminates a live detached provider writer before admitting a manual retry", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+    const { agentId, runId } = await seedRunFixture({
+      runStatus: "failed",
+      runErrorCode: "provider_error",
+      runError: "Provider transport failed",
+      processPid: child.pid ?? null,
+      processExitedAt: null,
+    });
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
+    const retried = await heartbeat.retryRun(runId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      now: new Date("2026-03-19T00:05:00.000Z"),
+    });
+
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+    const retryChild = await trackControlledRetryChild(retried.id);
+    expect(retryChild.pid).not.toBe(child.pid);
+    const source = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(source?.processExitedAt).not.toBeNull();
+    expect(retried.retryOfRunId).toBe(runId);
+  });
+
+  it("blocks manual retry when the old provider writer cannot be identified", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+    const { agentId, runId } = await seedRunFixture({
+      includeIssue: false,
+      runStatus: "failed",
+      runErrorCode: "provider_error",
+      processPid: child.pid ?? null,
+      processExitedAt: null,
+    });
+
+    await expect(heartbeatService(db).retryRun(runId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      now: new Date("2026-03-19T00:05:00.000Z"),
+    })).rejects.toThrow("ownership of the prior provider writer cannot be proven");
+
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: runId, status: "failed", processExitedAt: null });
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
+  });
+
+  it("does not trust recorded exit evidence while a provider child is still live", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+    const { agentId, runId } = await seedRunFixture({
+      includeIssue: false,
+      runStatus: "failed",
+      processPid: child.pid ?? null,
+      processExitedAt: new Date("2026-03-19T00:00:00.000Z"),
+    });
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    await expect(heartbeatService(db).retryRun(runId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      now: new Date("2026-03-19T00:05:00.000Z"),
+    })).rejects.toThrow("provider writer is still owned by this process");
+
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
   });
 
   it("preserves a live locally tracked child when its execution lease expires", async () => {
@@ -1818,7 +2120,7 @@ describe("heartbeat orphaned process recovery", () => {
         goalId: randomUUID(),
       },
     }).where(eq(heartbeatRuns.id, runId));
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
 
     const result = await heartbeat.reapOrphanedRuns();
     expect(result.reaped).toBe(1);
@@ -1891,6 +2193,10 @@ describe("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBe(retryRun?.id ?? null);
     expect(issue?.checkoutRunId).toBe(runId);
+
+    await heartbeat.resumeQueuedRuns();
+    const retryChild = await trackControlledRetryChild(retryRun!.id);
+    expect(retryChild.pid).toBeTypeOf("number");
   });
 
   it("does not queue an automatic process-loss retry after the Issue is cancelled", async () => {
@@ -2053,7 +2359,7 @@ describe("heartbeat orphaned process recovery", () => {
       runErrorCode: "network_error",
       runError: "Model connection dropped after creating the agent",
     });
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
 
     const retriedRun = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
@@ -2104,6 +2410,7 @@ describe("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBe(retriedRun.id);
     expect(issue?.checkoutRunId).toBe(runId);
+    await trackControlledRetryChild(retriedRun.id);
   });
 
   it("preserves comment mention wake source when retrying a run linked to a closed issue", async () => {
@@ -2134,7 +2441,7 @@ describe("heartbeat orphaned process recovery", () => {
       })
       .where(eq(heartbeatRuns.id, runId));
 
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
     const retriedRun = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
@@ -2153,6 +2460,7 @@ describe("heartbeat orphaned process recovery", () => {
     });
 
     await heartbeat.resumeQueuedRuns();
+    await trackControlledRetryChild(retriedRun.id);
 
     const runs = await db
       .select()
@@ -2170,12 +2478,12 @@ describe("heartbeat orphaned process recovery", () => {
   });
 
   it("allows a cancelled adapter run to be retried manually", async () => {
-    const { runId } = await seedRunFixture({
+    const { agentId, runId } = await seedRunFixture({
       runStatus: "cancelled",
       runErrorCode: "cancelled",
       runError: "Adapter failed",
     });
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
 
     const retriedRun = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
@@ -2196,6 +2504,7 @@ describe("heartbeat orphaned process recovery", () => {
         recoveryMode: "continue_preferred",
       },
     });
+    await trackControlledRetryChild(retriedRun.id);
   });
 
   it("preserves Delegation provenance when retrying a terminal Delegation Run", async () => {
@@ -2237,7 +2546,8 @@ describe("heartbeat orphaned process recovery", () => {
       })
       .where(eq(heartbeatRuns.id, runId));
 
-    const retriedRun = await heartbeatService(db).retryRun(runId, {
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
+    const retriedRun = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
       now: new Date("2026-03-19T00:06:00.000Z"),
@@ -2261,6 +2571,7 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(agentWakeupRequests.id, retriedRun.wakeupRequestId!))
       .then((rows) => rows[0]);
     expect(retryWakeup?.source).toBe("delegation");
+    await trackControlledRetryChild(retriedRun.id);
   });
 
   it("backfills recovery context from the retry chain when the source retry run is lossy", async () => {
@@ -2307,11 +2618,12 @@ describe("heartbeat orphaned process recovery", () => {
       },
       errorCode: "model_error",
       error: "The prior retry failed after partial completion",
+      processExitedAt: new Date("2026-03-19T00:10:00.000Z"),
       startedAt: new Date("2026-03-19T00:10:00.000Z"),
       updatedAt: new Date("2026-03-19T00:10:00.000Z"),
     });
 
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, lossyRetryRunId);
     const retriedRun = await heartbeat.retryRun(lossyRetryRunId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
@@ -2330,6 +2642,7 @@ describe("heartbeat orphaned process recovery", () => {
         recoveryTrigger: "manual",
       },
     });
+    await trackControlledRetryChild(retriedRun.id);
   });
 
   it("does not queue a second retry after the first process-loss retry was already used", async () => {

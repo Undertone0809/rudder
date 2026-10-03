@@ -19,7 +19,7 @@ const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBE
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 export function createHeartbeatWakeupHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, ensureHeartbeatRunAdmission } = context;
 
   async function enqueueWakeup(agentId: string, opts: WakeupOptions = {}) {
     const source = opts.source ?? "on_demand";
@@ -814,6 +814,18 @@ export function createHeartbeatWakeupHandlers(context: any) {
         const existingRun = await findLinkedRun(tx, wakeupRequest);
         if (existingRun) return { kind: "coalesced" as const, run: existingRun };
 
+        const admission = await ensureHeartbeatRunAdmission(tx, {
+          agent,
+          source,
+          requestId: wakeupRequest.id,
+          idempotencyKey: opts.idempotencyKey ?? wakeupRequest.id,
+          contextSnapshot: enrichedContextSnapshot,
+          payload,
+          sourceRunId,
+          sessionReuseScope: admissionSessionSelection.reuseScope,
+          sessionId: sessionBefore,
+          sessionParams: admissionSessionSelection.sessionParams,
+        });
         const newRun = await tx
           .insert(heartbeatRuns)
           .values({
@@ -825,10 +837,15 @@ export function createHeartbeatWakeupHandlers(context: any) {
             status: "queued",
             wakeupRequestId: wakeupRequest.id,
             sourceRunId,
-            contextSnapshot: enrichedContextSnapshot,
+            contextSnapshot: admission.contextSnapshot,
             sessionIdBefore: sessionBefore,
             sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
             sessionReuseScope: admissionSessionSelection.reuseScope,
+            scene: admission.scene,
+            targetType: admission.targetType,
+            targetId: admission.targetId,
+            idempotencyKey: admission.idempotencyKey,
+            sessionIntentJson: admission.sessionIntentJson,
           })
           .returning()
           .then((rows) => rows[0]);
@@ -1014,6 +1031,18 @@ export function createHeartbeatWakeupHandlers(context: any) {
       const existingRun = await findLinkedRun(tx, wakeupRequest);
       if (existingRun) return { run: existingRun, created: false };
 
+      const admission = await ensureHeartbeatRunAdmission(tx, {
+        agent,
+        source,
+        requestId: wakeupRequest.id,
+        idempotencyKey: opts.idempotencyKey ?? wakeupRequest.id,
+        contextSnapshot: enrichedContextSnapshot,
+        payload,
+        sourceRunId,
+        sessionReuseScope: admissionSessionSelection.reuseScope,
+        sessionId: sessionBefore,
+        sessionParams: admissionSessionSelection.sessionParams,
+      });
       const newRun = await tx
         .insert(heartbeatRuns)
         .values({
@@ -1025,10 +1054,15 @@ export function createHeartbeatWakeupHandlers(context: any) {
           status: "queued",
           wakeupRequestId: wakeupRequest.id,
           sourceRunId,
-          contextSnapshot: enrichedContextSnapshot,
+          contextSnapshot: admission.contextSnapshot,
           sessionIdBefore: sessionBefore,
           sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
           sessionReuseScope: admissionSessionSelection.reuseScope,
+          scene: admission.scene,
+          targetType: admission.targetType,
+          targetId: admission.targetId,
+          idempotencyKey: admission.idempotencyKey,
+          sessionIntentJson: admission.sessionIntentJson,
         })
         .returning()
         .then((rows) => rows[0]);
@@ -1271,6 +1305,18 @@ export function createHeartbeatWakeupHandlers(context: any) {
         });
         if (!wakeupRequest) return null;
 
+        const admission = await ensureHeartbeatRunAdmission(tx, {
+          agent,
+          source,
+          requestId: wakeupRequest.id,
+          idempotencyKey: pendingWakeup.idempotencyKey ?? wakeupRequest.id,
+          contextSnapshot: recoveredContext,
+          payload: pendingPayload,
+          sourceRunId: readNonEmptyString(recoveredContext.sourceRunId) ?? sourceRunId,
+          sessionReuseScope: recoveredSessionSelection.reuseScope,
+          sessionId: sessionBefore,
+          sessionParams: recoveredSessionSelection.sessionParams,
+        });
         const newRun = await tx
           .insert(heartbeatRuns)
           .values({
@@ -1282,10 +1328,15 @@ export function createHeartbeatWakeupHandlers(context: any) {
             status: "queued",
             wakeupRequestId: pendingWakeup.id,
             sourceRunId: readNonEmptyString(recoveredContext.sourceRunId) ?? sourceRunId,
-            contextSnapshot: recoveredContext,
+            contextSnapshot: admission.contextSnapshot,
             sessionIdBefore: sessionBefore,
             sessionParamsBeforeJson: recoveredSessionSelection.sessionParams,
             sessionReuseScope: recoveredSessionSelection.reuseScope,
+            scene: admission.scene,
+            targetType: admission.targetType,
+            targetId: admission.targetId,
+            idempotencyKey: admission.idempotencyKey,
+            sessionIntentJson: admission.sessionIntentJson,
             createdAt: now,
             updatedAt: now,
           })

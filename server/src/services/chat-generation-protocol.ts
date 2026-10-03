@@ -20,14 +20,17 @@ import {
   lockGeneration,
   nextGenerationSeq,
   normalizeBodyHash,
+  withGenerationProjectionFence as projectWithGenerationFence,
   SHA256_PATTERN,
   type AppendEventFields,
   type ChatGenerationProtocolTransaction,
 } from "./chat-generation-protocol.helpers.js";
 import {
+  failOrphanedControlLostMessage,
   freezeAssistantMessageProjection,
   visibleGenerationProjectionThrough,
 } from "./chat-generation-provenance.js";
+import { createVisibleEventPayload, type AppendVisibleEventAndProjectInput } from "./chat-generation-visible-event.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
@@ -163,6 +166,9 @@ function terminalStatusFromPayload(payload: Record<string, unknown>): ChatGenera
 export type ChatTerminalProjectionClaim = TerminalOutboxRow;
 
 export function chatGenerationProtocolService(db: Db) {
+  const withGenerationProjectionFence = <T>(input: Parameters<typeof projectWithGenerationFence<T>>[1]) =>
+    projectWithGenerationFence(db, input);
+
   async function getLatestVisibleCheckpoint(input: {
     orgId: string;
     conversationId: string;
@@ -255,22 +261,7 @@ export function chatGenerationProtocolService(db: Db) {
     });
   }
 
-  async function appendVisibleEventAndProject(input: Omit<
-    AppendEventFields,
-    "attemptEpoch" | "assistantMessageId"
-  > & {
-    orgId: string;
-    conversationId: string;
-    generationId: string;
-    expectedAttemptEpoch: number;
-    expectedOwnerToken?: string | null;
-    bodyHash: string;
-    messageId?: string | null;
-    body: string;
-    replyingAgentId?: string | null;
-    chatTurnId: string;
-    turnVariant: number;
-  }) {
+  async function appendVisibleEventAndProject(input: AppendVisibleEventAndProjectInput) {
     const durableBody = await normalizeLocalLibraryPathMarkdown(input.body, input.orgId);
     const bodyHash = normalizeBodyHash(input.bodyHash);
     return db.transaction(async (tx) => {
@@ -290,11 +281,7 @@ export function chatGenerationProtocolService(db: Db) {
       if (!(OUTPUT_ADMITTING_GENERATION_STATUSES as readonly string[]).includes(generation.status)) {
         throw conflict("Chat-visible output admission is closed for this generation");
       }
-      const payload = { ...(input.payload ?? {}) };
-      if (typeof payload.bodyHash === "string" && payload.bodyHash.toLowerCase() !== bodyHash) {
-        throw conflict("Chat generation event body hash disagrees with its payload");
-      }
-      payload.bodyHash = bodyHash;
+      const payload = createVisibleEventPayload(input, bodyHash);
       const existing = input.messageId ? await tx
         .select()
         .from(chatMessages)
@@ -1096,6 +1083,9 @@ export function chatGenerationProtocolService(db: Db) {
       if (generation.status === "stop_requested" || generation.status === "stopping" || generation.stopRequestedAt) {
         return { generation, event: null, stopped: true };
       }
+      if (generation.runtimeTerminalAt) {
+        throw conflict("Chat generation already has runtime terminal evidence");
+      }
       if (!(CONTROL_ACTIVE_GENERATION_STATUSES as readonly string[]).includes(generation.status)) {
         throw conflict("Chat generation is no longer active");
       }
@@ -1142,7 +1132,7 @@ export function chatGenerationProtocolService(db: Db) {
     return db.transaction(async (tx) => {
       const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, input);
-      if (generation.status !== "waiting_for_network") return generation;
+      if (generation.runtimeTerminalAt || generation.status !== "waiting_for_network") return generation;
       const now = input.now ?? new Date();
       const [updated] = await tx
         .update(chatGenerations)
@@ -1483,6 +1473,7 @@ export function chatGenerationProtocolService(db: Db) {
         ?? (typeof claim.payload.terminalReason === "string" ? claim.payload.terminalReason : finalStatus);
 
       await input.project?.(tx, claim);
+      if (finalStatus === "control_lost") await failOrphanedControlLostMessage(tx, generation, now);
       const deliveredSteers = await tx
         .update(chatQueuedMessages)
         .set({
@@ -2017,6 +2008,7 @@ export function chatGenerationProtocolService(db: Db) {
   }
 
   return {
+    withGenerationProjectionFence,
     getLatestVisibleCheckpoint,
     appendGenerationEvent,
     appendVisibleEventAndProject,

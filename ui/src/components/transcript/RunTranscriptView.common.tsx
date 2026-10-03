@@ -1,3 +1,4 @@
+import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import {
   isInternalChatTranscriptLifecycleEntry,
   type AgentRole,
@@ -28,6 +29,7 @@ import { type MarkdownLinkClickHandler } from "../MarkdownBody";
 
 export type TranscriptMode = "nice" | "raw";
 export type TranscriptDensity = "comfortable" | "compact";
+export const UNVERIFIED_RUDDER_AGENT_ME_RESULT = "Rudder agent identity could not be verified. Inspect the original result in Raw.";
 export type TranscriptPresentation = "default" | "chat" | "detail";
 
 export type TranscriptToolCategory =
@@ -119,6 +121,7 @@ export interface TranscriptToolCardEntry {
   isError?: boolean;
   status: "running" | "completed" | "error";
   sourceEntryIds?: string[];
+  cursorAcpEvents?: CursorAcpTranscriptEvent[];
 }
 
 export type TranscriptMemoryScope = "stable_instructions" | "daily_note" | "knowledge_graph";
@@ -133,6 +136,8 @@ export type TranscriptTodoListItem = Extract<TranscriptEntry, { kind: "todo_list
 
 export interface RunTranscriptViewProps {
   entries: TranscriptEntry[];
+  /** Run Detail can show a safe Nice projection while retaining Reader rows in Raw. */
+  detailRawEntries?: TranscriptEntry[];
   mode?: TranscriptMode;
   density?: TranscriptDensity;
   limit?: number;
@@ -143,6 +148,8 @@ export interface RunTranscriptViewProps {
   thinkingClassName?: string;
   /** Chat stream: denser rows, collapsible thinking summaries, tool cards stay expandable. */
   presentation?: TranscriptPresentation;
+  /** Run Detail marks a terminal response only after the successful Run's final Reader page is loaded. */
+  terminalRun?: boolean;
   /** Show Rudder-internal runtime/session/workspace diagnostics that are hidden from the default operator view. */
   showDeveloperDiagnostics?: boolean;
   /** For embedded chat process logs, the final assistant answer is rendered as the message body. */
@@ -247,6 +254,7 @@ export type TranscriptBlock =
   | {
       type: "message";
       role: "assistant" | "user";
+      phase?: "commentary" | "final_answer";
       source?: "steer";
       messageId?: string;
       controlActionId?: string;
@@ -276,6 +284,7 @@ export type TranscriptBlock =
       isError?: boolean;
       status: "running" | "completed" | "error";
       sourceEntryIds?: string[];
+      cursorAcpEvents?: CursorAcpTranscriptEvent[];
     }
   | {
       type: "activity";
@@ -291,6 +300,7 @@ export type TranscriptBlock =
       todoListId?: string;
       items: TranscriptTodoListItem[];
       sourceEntryIds?: string[];
+      cursorAcpEvents?: CursorAcpTranscriptEvent[];
     }
   | {
       type: "command_group";
@@ -327,6 +337,7 @@ export type TranscriptBlock =
       detail?: string;
       collapseByDefault?: boolean;
       sourceEntryIds?: string[];
+      cursorAcpEvent?: CursorAcpTranscriptEvent;
     };
 
 export function transcriptBlockIdentity(block: TranscriptBlock): string {
@@ -612,6 +623,7 @@ export function isInternalAgentInstructionText(text: string): boolean {
   if (firstLine === "<rudder_agent_instruction>") return true;
   if (firstLine === "<rudder_agent_operating_contract>") return true;
   if (firstLine === "rudder agent operating contract") return true;
+  if (firstLine === "conversation input:" && /"currentMessage"\s*:/.test(trimmed)) return true;
   if (normalized.includes("rudder protocol by delivering a progress update")) return true;
   if (
     normalized.includes("your home directory is $agent_home")
@@ -623,7 +635,8 @@ export function isInternalAgentInstructionText(text: string): boolean {
   return false;
 }
 
-export function filterRoutineStdout(value: string, showDeveloperDiagnostics: boolean): string {
+export function filterRoutineStdout(value: string | null | undefined, showDeveloperDiagnostics: boolean): string {
+  if (typeof value !== "string") return "";
   if (showDeveloperDiagnostics) return value.trim();
   const trimmedValue = value.trim();
   if (isProviderProtocolEnvelopeLine(trimmedValue)) return "";

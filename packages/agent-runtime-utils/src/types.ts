@@ -2,6 +2,8 @@
 // Minimal agent-runtime-facing interfaces (no drizzle dependency)
 // ---------------------------------------------------------------------------
 
+import type { ChatAskUserRequest, ChatAskUserResponse } from "@rudderhq/shared";
+
 export interface AgentRuntimeAgent {
   id: string;
   orgId: string;
@@ -69,6 +71,17 @@ export interface AgentRuntimeNetworkSuspension {
   };
 }
 
+/** Evidence that this invocation can no longer append to its native session. */
+export type AgentRuntimeNativeWriterQuiescence =
+  | {
+    status: "confirmed";
+    source: "not_started" | "provider_terminal" | "provider_stop_ack" | "process_exit";
+  }
+  | {
+    status: "unconfirmed";
+    reason: string;
+  };
+
 export type AgentRuntimeBillingType =
   | "api"
   | "subscription"
@@ -104,6 +117,13 @@ export interface AgentRuntimeExecutionResult {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  /** Runtime-owned proof; absence means the native writer must remain fenced. */
+  nativeWriterQuiescence?: AgentRuntimeNativeWriterQuiescence;
+  /** Durable provider submission state for the common Run boundary. */
+  submissionPhase?: AgentRuntimeNetworkSubmissionPhase | null;
+  /** Provider-native identity for the submitted execution, when known. */
+  providerThreadId?: string | null;
+  providerTurnId?: string | null;
   errorMessage?: string | null;
   errorCode?: string | null;
   errorMeta?: Record<string, unknown>;
@@ -291,6 +311,12 @@ export type AgentRuntimeControlSteerResult =
       reason: string;
     }
   | {
+      disposition: "rejected";
+      providerThreadId?: string | null;
+      providerTurnId?: string | null;
+      reason: string;
+    }
+  | {
       disposition: "closing" | "unsupported";
       reason?: string | null;
     };
@@ -336,10 +362,20 @@ export interface AgentRuntimeExecutionContext {
   agent: AgentRuntimeAgent;
   runtime: AgentRuntimeState;
   config: Record<string, unknown>;
-  context: Record<string, unknown>;
+  context: Record<string, unknown> & {
+    rudderCodexChatPrompt?: {
+      version: 1;
+      developerInstructions: string;
+    };
+  };
   media?: AgentRuntimeMediaAttachment[];
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   onMeta?: (meta: AgentRuntimeInvocationMeta) => Promise<void>;
+  /** Host-created, non-secret transport selectors; persist before provider submission.
+   * Never populate this callback from provider output or session metadata. */
+  onNativeTransportProfile?: (profile: Record<string, unknown>) => Promise<void>;
+  /** Called before a native Chat transport falls back to a legacy transcript. */
+  onTranscriptSource?: (source: "legacy") => Promise<void>;
   onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
   authToken?: string;
   abortSignal?: AbortSignal;
@@ -347,11 +383,24 @@ export interface AgentRuntimeExecutionContext {
   controlAttempt?: AgentRuntimeControlAttemptLease;
   requestApproval?: (request: AgentRuntimeApprovalRequest) => Promise<AgentRuntimeApprovalHandle>;
   waitForApproval?: (approvalId: string, timeoutMs: number) => Promise<AgentRuntimeApprovalDecision>;
+  /** One-shot sensitive input returned over a transient, non-persistent host channel. */
+  requestTransientInput?: (request: AgentRuntimeTransientInputRequest) => Promise<AgentRuntimeTransientInputResult>;
 }
+
+export type AgentRuntimeTransientInputKind = "secret" | "sudo";
+
+export type AgentRuntimeTransientInputRequest = Readonly<{
+  kind: AgentRuntimeTransientInputKind;
+}>;
+
+export type AgentRuntimeTransientInputResult =
+  | Readonly<{ status: "provided"; value: string }>
+  | Readonly<{ status: "cancelled" | "timed_out" | "aborted" }>;
 
 export interface AgentRuntimeApprovalRequest {
   type: "agent_runtime";
   payload: Record<string, unknown>;
+  inputRequest?: ChatAskUserRequest;
 }
 
 export interface AgentRuntimeApprovalHandle {
@@ -363,6 +412,7 @@ export interface AgentRuntimeApprovalDecision {
   id: string;
   status: "pending" | "approved" | "rejected" | "cancelled";
   decisionNote?: string | null;
+  inputResponse?: ChatAskUserResponse;
 }
 
 export interface AgentRuntimeMediaAttachment {
@@ -525,6 +575,8 @@ export interface ServerAgentRuntimeModule {
    * execution attempt. Model selection must not affect this fingerprint.
    */
   getProviderReadinessFingerprint?: (ctx: AgentRuntimeExecutionContext) => Promise<string | null>;
+  /** Decide whether this exact execution context may receive a local per-Run JWT. */
+  supportsLocalAgentJwtForContext?: (ctx: AgentRuntimeExecutionContext) => boolean;
   testEnvironment(ctx: AgentRuntimeEnvironmentTestContext): Promise<AgentRuntimeEnvironmentTestResult>;
   parseStdoutLine?: StdoutLineParser;
   listSkills?: (ctx: AgentRuntimeSkillContext) => Promise<AgentRuntimeSkillSnapshot>;
@@ -575,14 +627,24 @@ export type TranscriptEntry =
       controlActionId?: string;
       sourceEntryId?: string;
     }
-  | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string; sourceEntryId?: string }
-  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean; sourceEntryId?: string }
-  | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[]; sourceEntryId?: string }
+  | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string; sourceEntryId?: string; cursorAcpEvent?: CursorAcpTranscriptEvent }
+  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean; sourceEntryId?: string; cursorAcpEvent?: CursorAcpTranscriptEvent }
+  | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[]; sourceEntryId?: string; cursorAcpEvent?: CursorAcpTranscriptEvent }
   | { kind: "init"; ts: string; model: string; sessionId: string; sourceEntryId?: string }
   | { kind: "result"; ts: string; text: string; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number; subtype: string; isError: boolean; errors: string[]; sourceEntryId?: string }
   | { kind: "stderr"; ts: string; text: string; sourceEntryId?: string }
-  | { kind: "system"; ts: string; text: string; sourceEntryId?: string }
+  | { kind: "system"; ts: string; text: string; sourceEntryId?: string; cursorAcpEvent?: CursorAcpTranscriptEvent }
   | { kind: "stdout"; ts: string; text: string; sourceEntryId?: string };
+
+export interface CursorAcpTranscriptEvent {
+  provider: "cursor_agent";
+  transport: "cursor-agent-acp-stdio";
+  method: string;
+  sessionId?: string;
+  updateKind?: string;
+  requestId?: string | number;
+  frame: Record<string, unknown>;
+}
 
 export type TranscriptTodoItemStatus = "pending" | "in_progress" | "completed";
 
@@ -637,6 +699,8 @@ export interface CreateConfigValues {
   /** Optional credentials used by external gateway runtimes. */
   apiKey?: string;
   authToken?: string;
+  /** Hermes-only create path; local reuses the installed profile by default. */
+  hermesConnectionMode?: "local" | "custom";
   bootstrapPrompt: string;
   payloadTemplateJson?: string;
   workspaceStrategyType?: string;

@@ -3,20 +3,33 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { __clearWebsiteMetadataIconCacheForTests } from "@/components/MarkdownBody";
 import type { MentionOption } from "@/components/MarkdownEditor";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { shouldShowMessageDuringActiveStream } from "@/lib/chat-stream-state";
 import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type Agent, type ChatConversation, type ChatMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AssistantDraftItem,
   ChatMessageItem,
   ChatMessagesLoadingState,
   LazyStreamTranscriptItem,
   OptimisticUserDraftItem,
   StreamTranscriptItem,
 } from "./Chat.messages";
+import {
+  buildChatTimelineRows,
+  chatAssistantMessageRowKey,
+  chatAssistantStreamRowKey,
+  chatFinalAnswerFromTranscript,
+  chatProcessTranscriptEntries,
+  chatStreamDraftAssistantMessage,
+  chatStreamingAssistantBody,
+  rememberChatAssistantStreamRowIdentity,
+} from "./Chat.timeline";
 
 const markdownMentionsMock = vi.hoisted(() => ({
   mentions: [] as MentionOption[],
@@ -138,20 +151,27 @@ afterEach(() => {
   }
 });
 
-function render(element: ReactNode) {
+function renderWithRerender(element: ReactNode) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  const rerender = (nextElement: ReactNode) => {
+    act(() => {
+      root.render(<QueryClientProvider client={queryClient}>{nextElement}</QueryClientProvider>);
+    });
+  };
   cleanupFn = () => {
     act(() => {
       root.unmount();
     });
     container.remove();
   };
-  act(() => {
-    root.render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
-  });
-  return container;
+  rerender(element);
+  return { container, rerender };
+}
+
+function render(element: ReactNode) {
+  return renderWithRerender(element).container;
 }
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
@@ -216,16 +236,19 @@ async function waitForIssueStatus(container: HTMLElement, status: string) {
   });
 }
 
-function renderChatMessageItem(
+function chatMessageItemElement(
   messageToRender: ChatMessage,
   agents: Agent[] = [],
   conversationOverrides: Partial<ChatConversation> = {},
   localizeText?: (text: string) => string,
+  onOpenSideChat: (message: ChatMessage) => void = vi.fn(),
+  key?: string,
+  onForkMessage: (message: ChatMessage) => void = vi.fn(),
 ) {
-  const onForkMessage = vi.fn();
-  return render(
+  return (
     <ThemeProvider>
       <ChatMessageItem
+        key={key}
         conversation={{
           id: "chat-1",
           orgId: "org-1",
@@ -286,6 +309,7 @@ function renderChatMessageItem(
         onConvertToIssue={vi.fn()}
         actionPending={false}
         onCopyMessageText={vi.fn()}
+        onOpenSideChat={onOpenSideChat}
         onForkMessage={onForkMessage}
         onEditUserMessage={vi.fn()}
         onRetryFailedMessage={vi.fn()}
@@ -293,8 +317,33 @@ function renderChatMessageItem(
         skillReferences={[]}
         localizeText={localizeText}
       />
-    </ThemeProvider>,
+    </ThemeProvider>
   );
+}
+
+function renderChatMessageItem(
+  messageToRender: ChatMessage,
+  agents: Agent[] = [],
+  conversationOverrides: Partial<ChatConversation> = {},
+  localizeText?: (text: string) => string,
+  onOpenSideChat: (message: ChatMessage) => void = vi.fn(),
+) {
+  return render(chatMessageItemElement(
+    messageToRender,
+    agents,
+    conversationOverrides,
+    localizeText,
+    onOpenSideChat,
+  ));
+}
+
+function expectForkMenuWithoutSideChat(container: HTMLElement) {
+  const trigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-message-actions-trigger"]');
+  expect(trigger).not.toBeNull();
+  act(() => trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
+  expect(document.body.querySelector('[data-testid="chat-open-side-chat-more-action"]')).toBeNull();
+  expect(document.body.querySelector('[data-testid="chat-fork-more-action"]')).not.toBeNull();
+  expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
 }
 
 describe("assistant attribution", () => {
@@ -406,6 +455,443 @@ describe("StreamTranscriptItem controlled disclosure", () => {
       presentation: "chat",
     }));
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).not.toHaveProperty("density");
+  });
+
+  it("keeps streamed final-answer deltas in the same assistant bubble through completion", () => {
+    const createdAt = new Date("2026-07-23T10:00:00.000Z");
+    const partialAnswer = "A partial answer.";
+    const continuationDelta = " More detail.";
+    const longerAnswer = `${partialAnswer}${continuationDelta}`;
+    const completeAnswer = "The complete final answer.";
+    const commentary: TranscriptEntry = {
+      kind: "assistant",
+      ts: createdAt.toISOString(),
+      text: "I am checking the request.",
+      delta: true,
+      phase: "commentary",
+      segmentId: "commentary-1",
+    };
+    const shortEntries: TranscriptEntry[] = [
+      { kind: "user", ts: createdAt.toISOString(), text: "Structured conversation input" },
+      { kind: "system", ts: createdAt.toISOString(), text: "reasoning completed" },
+      commentary,
+      {
+        kind: "assistant",
+        ts: createdAt.toISOString(),
+        text: partialAnswer,
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId: "native-final-1",
+      },
+    ];
+    const longEntries: TranscriptEntry[] = [
+      ...shortEntries,
+      {
+        kind: "assistant",
+        ts: createdAt.toISOString(),
+        text: continuationDelta,
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId: "native-final-1",
+      },
+    ];
+    const finalEntries: TranscriptEntry[] = [
+      ...shortEntries.slice(0, 3),
+      {
+        kind: "assistant",
+        ts: createdAt.toISOString(),
+        text: completeAnswer,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId: "native-final-1",
+      },
+    ];
+    const conversation: ChatConversation = {
+      id: "chat-1",
+      orgId: "org-1",
+      status: "active",
+      conversationKind: "chat",
+      messengerVisible: true,
+      sideChatState: null,
+      sideChatExpiresAt: null,
+      sideChatCompletedAt: null,
+      sideChatKeptAt: null,
+      sideChatClientMutationId: null,
+      mutability: "native_chat",
+      title: "Native final answer",
+      summary: null,
+      preferredAgentId: "agent-1",
+      routedAgentId: null,
+      primaryIssueId: null,
+      forkedFromConversationId: null,
+      forkedFromMessageId: null,
+      forkRootConversationId: null,
+      primaryIssue: null,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: null,
+      lastMessageAt: null,
+      resolvedAt: null,
+      createdAt,
+      updatedAt: createdAt,
+      latestReplyPreview: null,
+      latestUserMessagePreview: null,
+      userMessageCount: 1,
+      contextLinks: [],
+      lastReadAt: null,
+      isPinned: false,
+      unreadCount: 0,
+      isUnread: false,
+      needsAttention: false,
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Chat Agent",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "codex_local",
+        model: "gpt-5",
+        effort: null,
+        available: true,
+        error: null,
+      },
+    };
+    const renderTimeline = (entries: TranscriptEntry[], completed = false) => (
+      <ThemeProvider>
+        <TooltipProvider>
+          <div data-testid="native-answer-timeline">
+            <StreamTranscriptItem
+              entries={entries}
+              state={completed ? "completed" : "streaming"}
+              streamStartedAt={createdAt}
+            />
+            {completed
+              ? chatMessageItemElement(
+                message({ id: "assistant-final-1", status: "completed", body: completeAnswer }),
+                [agent()],
+                { preferredAgentId: "agent-1" },
+              )
+              : (
+                <AssistantDraftItem
+                  body=""
+                  transcript={entries}
+                  createdAt={createdAt}
+                  state="streaming"
+                  replyingAgentId="agent-1"
+                  conversation={conversation}
+                  agents={[agent()]}
+                  onCopyMessageText={vi.fn()}
+                  skillReferences={[]}
+                />
+              )}
+          </div>
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+    const { container, rerender } = renderWithRerender(renderTimeline(shortEntries));
+    const timeline = container.querySelector('[data-testid="native-answer-timeline"]');
+    const bubble = container.querySelector(".group.w-full.max-w-3xl.px-1.py-1");
+    expect(timeline).not.toBeNull();
+    expect(bubble?.textContent).toContain(partialAnswer);
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: shortEntries.slice(1, 3),
+      presentation: "chat",
+    }));
+
+    rerender(renderTimeline(longEntries));
+    expect(container.querySelector(".group.w-full.max-w-3xl.px-1.py-1")).toBe(bubble);
+    expect(container.textContent).toContain(longerAnswer);
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: shortEntries.slice(1, 3),
+      presentation: "chat",
+    }));
+
+    rerender(renderTimeline(finalEntries));
+    expect(container.querySelector(".group.w-full.max-w-3xl.px-1.py-1")).toBe(bubble);
+    expect(container.textContent).toContain(completeAnswer);
+    expect(container.textContent).not.toContain(longerAnswer);
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: shortEntries.slice(1, 3),
+      presentation: "chat",
+    }));
+    const activeBubbleRow = bubble?.parentElement;
+    const activePosition = Array.from(timeline!.children).indexOf(activeBubbleRow!);
+
+    rerender(renderTimeline(finalEntries, true));
+
+    const completedBubble = container.querySelector('[data-testid="chat-assistant-message"]');
+    expect(completedBubble?.textContent).toContain(completeAnswer);
+    expect((completedBubble?.textContent?.match(/The complete final answer\./g) ?? [])).toHaveLength(1);
+    expect(Array.from(timeline!.children).indexOf(completedBubble!)).toBe(activePosition);
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: shortEntries.slice(1, 3),
+      presentation: "chat",
+    }));
+  });
+
+  it("appends true delta chunks and replaces them with a same-source full snapshot", () => {
+    const ts = "2026-07-23T10:00:00.000Z";
+    const sourceEntryId = "native-final-1";
+    expect(chatFinalAnswerFromTranscript([
+      {
+        kind: "assistant",
+        ts,
+        text: "The answer ",
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId,
+      },
+      {
+        kind: "assistant",
+        ts,
+        text: "is now ",
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId,
+      },
+      {
+        kind: "assistant",
+        ts,
+        text: " longer.",
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId,
+      },
+      {
+        kind: "assistant",
+        ts,
+        text: "The answer is now longer and complete.",
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId,
+      },
+    ])).toBe("The answer is now longer and complete.");
+    expect(chatFinalAnswerFromTranscript([
+      {
+        kind: "assistant",
+        ts,
+        text: "ab",
+        delta: true,
+        phase: "final_answer",
+        sourceEntryId,
+      },
+      {
+        kind: "assistant",
+        ts,
+        text: "b",
+        delta: true,
+        phase: "final_answer",
+        sourceEntryId,
+      },
+    ])).toBe("abb");
+  });
+
+  it("uses only an explicit final-answer channel for the streamed response body", () => {
+    const ts = "2026-07-23T10:00:00.000Z";
+    const entries: TranscriptEntry[] = [
+      { kind: "user", ts, text: "Conversation input: {\"currentMessage\":{\"body\":\"Inspect this\"}}" },
+      { kind: "assistant", ts, text: "Commentary stays in Process.", phase: "commentary" },
+      { kind: "assistant", ts, text: "Unphased assistant text stays in Process." },
+      { kind: "assistant", ts, text: "Final answer", delta: true, phase: "final_answer" },
+    ];
+
+    expect(chatStreamingAssistantBody(
+      entries.slice(1),
+      "Commentary stays in Process.Unphased assistant text stays in Process.Final answer",
+    )).toBe("Final answer");
+    expect(chatStreamingAssistantBody(entries.slice(1, 3), "unphased fallback")).toBe("");
+    expect(chatStreamingAssistantBody([entries[2]!], "unphased fallback", true)).toBe("");
+    expect(chatProcessTranscriptEntries(entries)).toEqual(entries.slice(1, 3));
+    expect(chatProcessTranscriptEntries([entries[0]!, entries[3]!])).toEqual([]);
+  });
+
+  it("keeps an active stream attached to its assistant message row through completion", () => {
+    const createdAt = new Date("2026-07-23T10:00:00.000Z");
+    const activeStream = {
+      chatId: "chat-1",
+      streamKey: "stream-1",
+      userBody: "The prompt",
+      userCreatedAt: createdAt,
+      userMessageId: "user-1",
+      chatTurnId: "turn-1",
+      turnVariant: 0,
+      editedFromCreatedAt: null,
+      body: "Partial final answer",
+      generationId: "generation-1",
+      state: "streaming" as const,
+      createdAt,
+      transcript: [],
+      replyingAgentId: "agent-1",
+    };
+    const streamingMessage = message({
+      id: "assistant-1",
+      status: "streaming",
+      body: "",
+      generationId: "generation-1",
+    });
+    const completedMessage = message({
+      id: "assistant-1",
+      status: "completed",
+      body: "The complete final answer.",
+      generationId: "generation-1",
+    });
+    const streamRowKey = chatAssistantStreamRowKey(activeStream);
+    const rowIdentities = new Map<string, string>();
+    rememberChatAssistantStreamRowIdentity(rowIdentities, activeStream);
+    const draftAssistantMessage = chatStreamDraftAssistantMessage(
+      activeStream,
+      { id: "chat-1", orgId: "org-1" },
+      activeStream.body,
+    );
+
+    expect(draftAssistantMessage).toMatchObject({
+      id: "stream-draft:stream-1",
+      conversationId: "chat-1",
+      orgId: "org-1",
+      role: "assistant",
+      status: "streaming",
+      generationId: "generation-1",
+      body: "Partial final answer",
+    });
+    expect(chatAssistantMessageRowKey(draftAssistantMessage, activeStream)).toBe(streamRowKey);
+    expect(chatAssistantMessageRowKey(streamingMessage, activeStream)).toBe(streamRowKey);
+    expect(chatAssistantMessageRowKey(completedMessage, null, null, rowIdentities)).toBe(streamRowKey);
+    expect(chatAssistantMessageRowKey({
+      ...completedMessage,
+      turnVariant: completedMessage.turnVariant + 1,
+    })).not.toBe(streamRowKey);
+
+    expect(buildChatTimelineRows([streamingMessage], activeStream, true)).toEqual([
+      { kind: "message", message: streamingMessage, messageIndex: 0, activeStream },
+    ]);
+    expect(buildChatTimelineRows([completedMessage], activeStream, true)).toEqual([
+      { kind: "message", message: completedMessage, messageIndex: 0 },
+    ]);
+
+    const projectedStreamingMessage = { ...streamingMessage, generationId: null };
+    const projectedCompletedMessage = { ...completedMessage, generationId: null };
+    expect(buildChatTimelineRows([projectedStreamingMessage], activeStream, true, "assistant-1")).toEqual([
+      { kind: "message", message: projectedStreamingMessage, messageIndex: 0, activeStream },
+    ]);
+    expect(buildChatTimelineRows([projectedCompletedMessage], activeStream, true, "assistant-1")).toEqual([
+      { kind: "message", message: projectedCompletedMessage, messageIndex: 0 },
+    ]);
+  });
+
+  it("keeps the assistant row identity from pre-ack through completion and reconstructs it after remount", () => {
+    const preAckStream = {
+      streamKey: "stream-1",
+      generationId: null,
+      chatTurnId: "turn-1",
+      turnVariant: 0,
+    };
+    const rowIdentities = new Map<string, string>();
+    const rowKey = chatAssistantStreamRowKey(preAckStream);
+    const draftMessage = message({
+      id: "stream-draft:stream-1",
+      status: "streaming",
+      body: "The answer prefix",
+      chatTurnId: "turn-1",
+      generationId: null,
+    });
+    const acknowledgedStream = {
+      ...preAckStream,
+      generationId: "generation-1",
+    };
+    const streamingMessage = message({
+      id: "assistant-1",
+      status: "streaming",
+      body: "The answer prefix",
+      chatTurnId: "turn-1",
+      generationId: "generation-1",
+    });
+    const persistedMessage = message({
+      id: "assistant-1",
+      status: "completed",
+      body: "The answer prefix and ending.",
+      chatTurnId: "turn-1",
+      generationId: "generation-1",
+    });
+    const rendered = renderWithRerender(chatMessageItemElement(
+      draftMessage,
+      [],
+      {},
+      undefined,
+      undefined,
+      chatAssistantMessageRowKey(draftMessage, preAckStream, null, rowIdentities),
+    ));
+    const initialNode = rendered.container.querySelector('[data-testid="chat-assistant-message"]');
+
+    expect(initialNode).not.toBeNull();
+    rememberChatAssistantStreamRowIdentity(rowIdentities, acknowledgedStream);
+    expect(chatAssistantStreamRowKey(acknowledgedStream)).toBe(rowKey);
+    rendered.rerender(chatMessageItemElement(
+      streamingMessage,
+      [],
+      {},
+      undefined,
+      undefined,
+      chatAssistantMessageRowKey(streamingMessage, acknowledgedStream, null, rowIdentities),
+    ));
+    expect(rendered.container.querySelector('[data-testid="chat-assistant-message"]')).toBe(initialNode);
+
+    rendered.rerender(chatMessageItemElement(
+      persistedMessage,
+      [],
+      {},
+      undefined,
+      undefined,
+      chatAssistantMessageRowKey(persistedMessage, null, null, rowIdentities),
+    ));
+
+    const completedNode = rendered.container.querySelector('[data-testid="chat-assistant-message"]');
+    expect(chatAssistantMessageRowKey(persistedMessage, null, null, rowIdentities)).toBe(rowKey);
+    expect(chatAssistantMessageRowKey(persistedMessage, null, null, new Map())).toBe(rowKey);
+    expect(completedNode).toBe(initialNode);
+    expect(completedNode?.getAttribute("data-message-id")).toBe("assistant-1");
+  });
+  it("preserves the historical assistant node while the current assistant is acknowledged", () => {
+    const historical = message({
+      id: "assistant-history",
+      role: "assistant",
+      status: "completed",
+      body: "Earlier reply stays visible",
+      chatTurnId: "turn-history",
+      generationId: "generation-history",
+      createdAt: new Date("2026-04-30T09:59:59.000Z"),
+    });
+    const current = message({
+      id: "assistant-current",
+      role: "assistant",
+      status: "streaming",
+      body: "Current reply",
+      chatTurnId: "turn-current",
+      generationId: "generation-current",
+      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+    });
+    const stream = {
+      userCreatedAt: new Date("2026-04-30T10:00:00.000Z"),
+      chatTurnId: "turn-current",
+      generationId: "generation-current",
+      assistantMessageId: "assistant-current",
+    };
+    const rows = (active: typeof stream | null) => (
+      <div>{[historical, current]
+        .filter((item) => !active || shouldShowMessageDuringActiveStream(item, active))
+        .map((item) => <div key={item.id}>{chatMessageItemElement(item)}</div>)}</div>
+    );
+    const rendered = renderWithRerender(rows(null));
+    const node = rendered.container.querySelector('[data-message-id="assistant-history"]');
+    expect(node).not.toBeNull();
+    rendered.rerender(rows(stream));
+    expect(rendered.container.querySelector('[data-message-id="assistant-history"]')).toBe(node);
+    expect(rendered.container.textContent).toContain("Earlier reply stays visible");
+    expect(rendered.container.textContent).toContain("Current reply");
+    rendered.rerender(rows(null));
+    expect(rendered.container.querySelector('[data-message-id="assistant-history"]')).toBe(node);
   });
 
   it("responds to an external open request after the transcript mounts", () => {
@@ -778,6 +1264,29 @@ describe("user chat message rendering", () => {
 });
 
 describe("assistant chat message rendering", () => {
+  it("keeps the streamed assistant copy tooltip stable across content updates", () => {
+    const streamingMessage = message({
+      id: "assistant-streaming-actions",
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      body: "opencode-native-",
+    });
+    const { container, rerender } = renderWithRerender(
+      <StrictMode>{chatMessageItemElement(streamingMessage)}</StrictMode>,
+    );
+
+    const copyButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy message"]',
+    );
+    expect(copyButton?.title).toBe("Copy message");
+    expect(copyButton?.hasAttribute("data-slot")).toBe(false);
+    for (const body of ["opencode-native-four", "opencode-native-four is", "opencode-native-four is streaming"]) {
+      rerender(<StrictMode>{chatMessageItemElement({ ...streamingMessage, body })}</StrictMode>);
+      expect(container.textContent).toContain(body);
+    }
+  });
+
   it("aligns the final assistant body with the process reading column", () => {
     const container = renderChatMessageItem(message({
       role: "assistant",
@@ -821,17 +1330,52 @@ describe("assistant chat message rendering", () => {
     expect(streaming.querySelector("[data-chat-annotation-source]")).toBeNull();
   });
 
-  it("keeps adjacent assistant actions while removing the message-level Side Chat icon", () => {
-    const container = renderChatMessageItem(message({
+  it("opens Side Chat from the completed assistant reply context menu", () => {
+    const sourceMessage = message({
+      id: "assistant-side-chat-source",
       role: "assistant",
       kind: "message",
       status: "completed",
       body: "Fork from this answer",
-    }));
+    });
+    const onOpenSideChat = vi.fn();
+    const container = renderChatMessageItem(sourceMessage, [], {}, undefined, onOpenSideChat);
 
-    expect(container.querySelector('button[aria-label="Fork from here"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Copy message"]')).not.toBeNull();
+    const actionTriggers = Array.from(container.querySelectorAll<HTMLButtonElement>(
+      'button[data-testid="chat-message-actions-trigger"]',
+    ));
+    expect(actionTriggers).toHaveLength(2);
+    expect(actionTriggers.every((trigger) => trigger.getAttribute("aria-label") === "More message actions")).toBe(true);
     expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+
+    act(() => actionTriggers[1]?.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      ctrlKey: false,
+    })));
+    const moreMenuAction = document.body.querySelector<HTMLElement>(
+      '[data-testid="chat-open-side-chat-more-action"]',
+    );
+    expect(moreMenuAction?.textContent).toContain("Open Side Chat");
+    expect(document.body.querySelector('[data-testid="chat-fork-more-action"]')?.textContent).toContain("Fork from here");
+    act(() => moreMenuAction?.click());
+
+    cleanupFn?.();
+    cleanupFn = null;
+    const contextMenuContainer = renderChatMessageItem(sourceMessage, [], {}, undefined, onOpenSideChat);
+    act(() => contextMenuContainer.querySelector('[data-testid="chat-assistant-message"]')?.dispatchEvent(
+      new MouseEvent("contextmenu", { button: 2, bubbles: true, cancelable: true }),
+    ));
+    const contextAction = document.body.querySelector<HTMLElement>(
+      '[data-testid="chat-open-side-chat-context-action"]',
+    );
+    expect(contextAction?.textContent).toContain("Open Side Chat");
+    act(() => contextAction?.click());
+
+    expect(onOpenSideChat).toHaveBeenNthCalledWith(1, sourceMessage);
+    expect(onOpenSideChat).toHaveBeenNthCalledWith(2, sourceMessage);
   });
 
   it("does not expose Side Chat for an incomplete assistant response", () => {
@@ -842,7 +1386,30 @@ describe("assistant chat message rendering", () => {
       body: "Partial answer",
     }));
 
-    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+    expectForkMenuWithoutSideChat(container);
+  });
+
+  it("does not expose Side Chat for superseded assistant replies", () => {
+    const container = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Superseded answer",
+      supersededAt: new Date("2026-08-01T00:00:00.000Z"),
+    }));
+
+    expectForkMenuWithoutSideChat(container);
+  });
+
+  it("preserves the message fork callback in More without a standalone fork icon", () => {
+    const source = message({ role: "assistant", kind: "message", status: "completed", body: "Branch this answer" });
+    const onFork = vi.fn();
+    const container = render(chatMessageItemElement(source, [], {}, undefined, vi.fn(), undefined, onFork));
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-message-actions-trigger"]');
+    expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
+    act(() => trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
+    act(() => document.body.querySelector<HTMLElement>('[data-testid="chat-fork-more-action"]')?.click());
+    expect(onFork).toHaveBeenCalledExactlyOnceWith(source);
   });
 
   it("hides interrupted recovery chrome while preserving partial assistant content", () => {
@@ -1058,6 +1625,23 @@ describe("failed chat transcript rendering", () => {
     expect(container.textContent).toContain("Retry");
   });
 
+  it("keeps an explicitly preserved partial response visible beside a non-retryable failure", () => {
+    const container = renderWithOrganizationPath(message({
+      body: "PARTIAL_RESPONSE",
+      runId: "run-lost-ack",
+      replyingAgentId: "agent-lost-ack",
+      structuredPayload: { recoverableFailure: {
+        code: "chat_submission_acceptance_unknown", retryable: false,
+        action: "inspect_run", partialBodyUserVisible: true,
+      } },
+    }));
+    expect(container.textContent).toContain("PARTIAL_RESPONSE");
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.textContent).toContain("Open run");
+    expect(container.textContent).not.toContain("Retry");
+    expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
+  });
+
   it("shows Open run for a non-retryable failure and hides it without agent identity", () => {
     const nonRetryable = renderWithOrganizationPath(message({
       runId: "run-boot",
@@ -1104,7 +1688,9 @@ describe("failed chat transcript rendering", () => {
       },
     ];
 
-    const failedMessage = message({});
+    const failedMessage = message({
+      runId: "c99b3986-f43d-4877-aa97-dab14d68cbd4",
+    });
     const container = render(
       <ThemeProvider>
         <StreamTranscriptItem
@@ -1198,7 +1784,7 @@ describe("steer fallback chat rendering", () => {
     expect(container.textContent).toContain("Useful partial answer.");
     expect(container.textContent).not.toContain("Stopped");
     expect(container.textContent).not.toContain("Response failed");
-    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+    expectForkMenuWithoutSideChat(container);
   });
 
   it("suppresses a stopped placeholder assistant bubble", () => {

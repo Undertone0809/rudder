@@ -35,6 +35,7 @@ import { requestRoutes } from "../routes/requests.js";
 import { rudderPluginRoutes } from "../routes/rudder-plugins.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { secretRoutes } from "../routes/secrets.js";
+import { sideChatProviderCleanupRoutes } from "../routes/side-chat-provider-cleanup.js";
 import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 import { websiteMetadataRoutes } from "../routes/website-metadata.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
@@ -128,6 +129,7 @@ export function registerApiRoutes(
   api.use(costRoutes(db));
   api.use(activityRoutes(db));
   api.use(runIntelligenceRoutes(db));
+  api.use(sideChatProviderCleanupRoutes(db));
   api.use(dashboardRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(websiteMetadataRoutes());

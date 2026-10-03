@@ -358,12 +358,39 @@ function Harness({
       >
         Mutate B
       </button>
+      <button
+        type="button"
+        onClick={() => sidePanel.setContextKey(
+          contextKey,
+          organizationSelection.getSnapshot(),
+        )}
+      >
+        Bind selected organization
+      </button>
+      <button
+        type="button"
+        onClick={() => sidePanel.openTargetForContext(
+          contextKey,
+          { ...targetB, label: "B in selected organization" },
+          undefined,
+          organizationSelection.getSnapshot(),
+          sidePanel.principalId,
+        )}
+      >
+        Seed selected organization collision
+      </button>
       <output data-testid="outcome">{outcome}</output>
       <output data-testid="moving">
         {String(promotion.isMoving(organizationId, contextKey, targetB))}
       </output>
       <output data-testid="side-order">
         {sidePanel.tabs.map((target) => target.label).join(",")}
+      </output>
+      <output data-testid="collision-revisions">
+        {[
+          sidePanel.getTargetRevisionForContext(contextKey, sidePanelTargetKey(targetB), "org-a", sidePanel.principalId),
+          sidePanel.getTargetRevisionForContext(contextKey, sidePanelTargetKey(targetB), "org-b", sidePanel.principalId),
+        ].join(",")}
       </output>
       <output data-testid="main-order">
         {workbench.tabs.map((tab) => tab.target.label).join(",")}
@@ -575,18 +602,31 @@ describe("SavedViewPromotionProvider", () => {
     await waitForText("moving", "true");
 
     await act(async () => organizationSelection.set("org-b"));
+    await clickButton("Bind selected organization");
+    expect(host?.querySelector('[data-testid="side-order"]')?.textContent)
+      .toBe("");
+    await clickButton("Seed selected organization collision");
+    expect(host?.querySelector('[data-testid="side-order"]')?.textContent)
+      .toBe("B in selected organization");
+    expect(host?.querySelector('[data-testid="collision-revisions"]')?.textContent)
+      .toBe("0,0");
     await act(async () => pending.resolve(result));
     await settlePromotion();
 
     expect(navigate).not.toHaveBeenCalled();
     expect(host?.querySelector('[data-testid="side-order"]')?.textContent)
-      .toBe("A,B,C");
+      .toBe("B in selected organization");
     expect(host?.querySelector('[data-testid="main-order"]')?.textContent)
       .toBe("");
     expect(host?.querySelector('[data-testid="move-status"]')?.textContent)
       .toBe("claim_failed");
     expect(host?.querySelector('[data-testid="runtime-host"]')?.textContent)
       .toBe("side");
+
+    await act(async () => organizationSelection.set("org-a"));
+    await clickButton("Bind selected organization");
+    expect(host?.querySelector('[data-testid="side-order"]')?.textContent)
+      .toBe("A,B,C");
   });
 
   it("rejects the same runtime from another context without unlocking or rehosting the first move", async () => {

@@ -58,6 +58,13 @@ function isLocalAccountCredentialRequest(req: object): boolean {
     || pathname === "/api/auth/local-offline";
 }
 
+function isRuntimeSensitiveInputResponseRequest(req: object): boolean {
+  const method = (req as { method?: unknown }).method;
+  return typeof method === "string"
+    && method.toUpperCase() === "POST"
+    && /^\/api\/chats\/[^/]+\/runtime-sensitive-inputs\/[^/]+\/respond$/u.test(requestPathname(req));
+}
+
 function containsInlineAnnotations(body: unknown): boolean {
   if (!body || typeof body !== "object" || Array.isArray(body)) return false;
   if (Object.hasOwn(body, "inlineAnnotations")) return true;
@@ -158,6 +165,7 @@ export function requestBodyForLogs(req: object, body: unknown): unknown {
   return (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody === true
     || isBrowserRequest(req)
     || isLocalAccountCredentialRequest(req)
+    || isRuntimeSensitiveInputResponseRequest(req)
     || containsInlineAnnotations(body)
     ? REDACTED_REQUEST_BODY
     : body;

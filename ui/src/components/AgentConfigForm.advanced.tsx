@@ -54,59 +54,63 @@ export function RuntimeAdvancedOptions({
       {runtimeType === "claude_local" && (
         <ClaudeLocalAdvancedFields {...fieldProps} />
       )}
-      <Field label="Command" hint={help.localCommand}>
-        <DraftInput
-          value={
-            isCreate
-              ? values!.command
-              : eff("agentRuntimeConfig", "command", String(config.command ?? ""))
-          }
-          onCommit={(value) =>
-            isCreate
-              ? set!({ command: value })
-              : mark("agentRuntimeConfig", "command", value || undefined)
-          }
-          immediate
-          className={inputClass}
-          placeholder={defaultCommandForRuntime(runtimeType)}
-          disabled={disabled}
-        />
-      </Field>
-      <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
-        <DraftInput
-          value={
-            isCreate
-              ? values!.extraArgs
-              : eff("agentRuntimeConfig", "extraArgs", formatArgList(config.extraArgs))
-          }
-          onCommit={(value) =>
-            isCreate
-              ? set!({ extraArgs: value })
-              : mark("agentRuntimeConfig", "extraArgs", value ? parseCommaArgs(value) : undefined)
-          }
-          immediate
-          className={inputClass}
-          placeholder="e.g. --verbose, --foo=bar"
-          disabled={disabled}
-        />
-      </Field>
-      <Field label="Environment variables" hint={help.envVars}>
-        <EnvVarEditor
-          value={
-            isCreate
-              ? ((values!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
-              : eff("agentRuntimeConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>)
-          }
-          secrets={availableSecrets}
-          onCreateSecret={onCreateSecret}
-          onChange={(env) =>
-            isCreate
-              ? set!({ envBindings: env ?? {}, envVars: "" })
-              : mark("agentRuntimeConfig", "env", env)
-          }
-          disabled={disabled}
-        />
-      </Field>
+      {runtimeType !== "hermes_gateway" && (
+        <>
+          <Field label="Command" hint={help.localCommand}>
+            <DraftInput
+              value={
+                isCreate
+                  ? values!.command
+                  : eff("agentRuntimeConfig", "command", String(config.command ?? ""))
+              }
+              onCommit={(value) =>
+                isCreate
+                  ? set!({ command: value })
+                  : mark("agentRuntimeConfig", "command", value || undefined)
+              }
+              immediate
+              className={inputClass}
+              placeholder={defaultCommandForRuntime(runtimeType)}
+              disabled={disabled}
+            />
+          </Field>
+          <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
+            <DraftInput
+              value={
+                isCreate
+                  ? values!.extraArgs
+                  : eff("agentRuntimeConfig", "extraArgs", formatArgList(config.extraArgs))
+              }
+              onCommit={(value) =>
+                isCreate
+                  ? set!({ extraArgs: value })
+                  : mark("agentRuntimeConfig", "extraArgs", value ? parseCommaArgs(value) : undefined)
+              }
+              immediate
+              className={inputClass}
+              placeholder="e.g. --verbose, --foo=bar"
+              disabled={disabled}
+            />
+          </Field>
+          <Field label="Environment variables" hint={help.envVars}>
+            <EnvVarEditor
+              value={
+                isCreate
+                  ? ((values!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
+                  : eff("agentRuntimeConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>)
+              }
+              secrets={availableSecrets}
+              onCreateSecret={onCreateSecret}
+              onChange={(env) =>
+                isCreate
+                  ? set!({ envBindings: env ?? {}, envVars: "" })
+                  : mark("agentRuntimeConfig", "env", env)
+              }
+              disabled={disabled}
+            />
+          </Field>
+        </>
+      )}
       {!isCreate && (
         <>
           <Field label="Timeout (sec)" hint={help.timeoutSec}>
@@ -135,8 +139,8 @@ export function RuntimeAdvancedOptions({
 
 /* ---- Internal sub-components ---- */
 
-export const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
-const HIDDEN_ADAPTER_MENU_TYPES = new Set(["process", "http"]);
+export const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor", "hermes_gateway"]);
+const HIDDEN_ADAPTER_MENU_TYPES = new Set(["process", "http", "hermes_local"]);
 const AVAILABILITY_GROUP_LABELS = {
   available: "Ready on this machine",
   unavailable: "Needs setup",
@@ -202,10 +206,10 @@ export function AdapterTypeDropdown({
                 <button
                   key={item.value}
                   title={entry?.hint ?? entry?.message}
-                  disabled={disabled || item.comingSoon}
+                  disabled={disabled || item.comingSoon || (item.value === "hermes_gateway" && entry?.status !== "available")}
                   className={cn(
                     "flex items-center justify-between gap-2 w-full px-2 py-1.5 text-sm rounded",
-                    disabled || item.comingSoon
+                    disabled || item.comingSoon || (item.value === "hermes_gateway" && entry?.status !== "available")
                       ? "opacity-40 cursor-not-allowed"
                       : "hover:bg-accent/50",
                     item.value === value && !item.comingSoon && "bg-accent",
@@ -219,7 +223,13 @@ export function AdapterTypeDropdown({
                     <RuntimeLogoIcon runtimeType={item.value} />
                     <span className="truncate">{item.label}</span>
                   </span>
-                  {item.comingSoon ? (
+                  {item.value === "hermes_gateway" && unavailable ? (
+                    <span className="shrink-0 text-[10px] text-amber-700 dark:text-amber-300">Install/setup</span>
+                  ) : item.value === "hermes_gateway" && entry?.status === "available" ? (
+                    <span className="shrink-0 text-[10px] text-green-700 dark:text-green-300">
+                      {entry.hermesLocalBackend === "acp" ? "ACP selected" : "RPC prerequisites"}
+                    </span>
+                  ) : item.comingSoon ? (
                     <span className="shrink-0 text-[10px] text-muted-foreground">Coming soon</span>
                   ) : unavailable ? (
                     <span className="shrink-0 text-[10px] text-amber-700 dark:text-amber-300">Default CLI missing</span>

@@ -341,9 +341,10 @@ async function main() {
     const logPayload = await request("GET", `/api/run-intelligence/runs/${run.id}/log`);
     logText = typeof logPayload?.content === "string" ? logPayload.content : "";
   } catch {
+    const rudderHome = process.env.RUDDER_HOME?.trim()
+      || path.join(process.env.HOME || "", ".rudder");
     const logPath = path.join(
-      process.env.HOME || "",
-      ".rudder",
+      rudderHome,
       "instances",
       "dev",
       "data",
@@ -353,6 +354,9 @@ async function main() {
       `${run.id}.ndjson`,
     );
     logText = await fs.readFile(logPath, "utf8").catch(() => "");
+  }
+  if (!logText && typeof current.resultJson?.stdout === "string") {
+    logText = current.resultJson.stdout;
   }
 
   const evidence = collectEvidence(logText);

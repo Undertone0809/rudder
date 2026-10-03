@@ -1,12 +1,11 @@
 // @ts-nocheck
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
-import { parseRemovedGeminiLocalHistoryLine } from "@rudderhq/agent-runtime-utils/gemini-cli-history";
 import {
   agents,
   agentWakeupRequests,
   heartbeatRunEvents,
   heartbeatRuns,
-  issues
+  issues,
 } from "@rudderhq/db";
 import type {
   AgentSkillAnalytics,
@@ -14,7 +13,6 @@ import type {
   AgentSkillTelemetryEvidenceCounts
 } from "@rudderhq/shared";
 import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
-import { getServerAdapter } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { conflict, notFound } from "../../errors.js";
 import { type BudgetEnforcementScope } from "../budgets.js";
@@ -23,8 +21,26 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
+import { createHistoricalTranscriptReader } from "./historical-transcript-reader.js";
+import { createLegacyTranscriptReader, type TranscriptItem, type TranscriptReader } from "./transcript-reader.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
+
+function transcriptEntryFromReaderItem(item: TranscriptItem): TranscriptEntry | null {
+  const payload = parseObject(item.payload);
+  const candidate = item.entry
+    ?? (typeof payload.kind === "string" && typeof payload.ts === "string"
+      ? payload
+      : { ...payload, kind: item.kind, ts: item.ts });
+  const record = parseObject(candidate);
+  if (typeof record.kind !== "string" || typeof record.ts !== "string") return null;
+  return {
+    ...(record as TranscriptEntry),
+    ...(item.sourceEntryId && typeof record.sourceEntryId !== "string"
+      ? { sourceEntryId: item.sourceEntryId }
+      : {}),
+  };
+}
 
 export function createHeartbeatMiscHandlers(context: any) {
   const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, transitionRunToTerminal, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup } = context;
@@ -564,83 +580,47 @@ export function createHeartbeatMiscHandlers(context: any) {
       if (runBucket.skills.size > 0) runEvidence.set(runId, runBucket);
     }
 
-    async function inferUsedSkillsFromStoredRunLog(row: {
-      id: string;
-      agentRuntimeType: string;
-      contextSnapshot: Record<string, unknown> | null;
-      logStore: string | null;
-      logRef: string | null;
-      logBytes: number | null;
-    }) {
-      if (row.logStore !== "local_file" || !row.logRef) return [];
-      const historicalRuntimeType = readNonEmptyString(parseObject(row.contextSnapshot).agentRuntimeType)
-        ?? row.agentRuntimeType;
-      const adapter = (() => {
-        try {
-          return getServerAdapter(historicalRuntimeType);
-        } catch {
-          return null;
+    async function inferUsedSkillsFromStoredRunTranscript(
+      reader: TranscriptReader,
+      orgId: string,
+      runId: string,
+    ) {
+      const skills: Array<{ key: string; label: string }> = [];
+      let nativeHistoryIncomplete = false;
+      let cursor: string | null = null;
+      for (let pageCount = 0; pageCount < 100_000; pageCount += 1) {
+        const page = await reader.readRun({
+          orgId,
+          runId,
+          principal: { type: "board", orgId, authorized: true },
+          cursor,
+          limit: 200,
+        });
+        if (page.source !== "legacy"
+          && (page.availability !== "available"
+            || (!page.nextCursor && page.completeness !== "complete"))) {
+          nativeHistoryIncomplete = true;
         }
-      })();
-      const parser = historicalRuntimeType === "gemini_local"
-        ? parseRemovedGeminiLocalHistoryLine
-        : adapter?.parseStdoutLine ?? null;
-      if (!parser) return [];
-
-      const limitBytes = Math.min(Math.max(row.logBytes ?? 0, 256_000), 2_000_000);
-      const read = await runLogStore
-        .read({ store: "local_file", logRef: row.logRef }, { limitBytes })
-        .catch(() => null);
-      if (!read?.content) return [];
-
-      const transcript: TranscriptEntry[] = [];
-      let stdoutBuffer = "";
-      let stderrBuffer = "";
-      for (const line of read.content.split("\n")) {
-        if (!line.trim()) continue;
-        let raw: unknown;
-        try {
-          raw = JSON.parse(line);
-        } catch {
-          continue;
+        const transcript: TranscriptEntry[] = [];
+        for (const item of page.items) {
+          const entry = transcriptEntryFromReaderItem(item);
+          if (entry) transcript.push(entry);
         }
-        const parsed = parseObject(raw);
-        const stream = parsed.stream === "stderr" ? "stderr" : parsed.stream === "stdout" ? "stdout" : null;
-        const chunk = typeof parsed.chunk === "string" ? parsed.chunk : "";
-        if (!stream || !chunk) continue;
-        if (stream === "stdout") {
-          stdoutBuffer = appendTranscriptEntriesFromChunk({
-            buffer: stdoutBuffer,
-            chunk,
-            transcript,
-            parser,
-            kind: "stdout",
-          });
-        } else {
-          stderrBuffer = appendTranscriptEntriesFromChunk({
-            buffer: stderrBuffer,
-            chunk,
-            transcript,
-            kind: "stderr",
-          });
+        skills.push(...inferUsedSkillsFromTranscript(transcript));
+        if (!page.nextCursor) {
+          const usedSkills = dedupeSkillUses(skills);
+          if (nativeHistoryIncomplete) {
+            throw conflict("Native transcript history is unavailable or incomplete; skill analytics cannot be computed.", {
+              code: "native_transcript_incomplete",
+              runId,
+            });
+          }
+          return usedSkills;
         }
+        if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
+        cursor = page.nextCursor;
       }
-      appendTranscriptEntriesFromChunk({
-        buffer: stdoutBuffer,
-        chunk: "",
-        transcript,
-        parser,
-        kind: "stdout",
-        finalize: true,
-      });
-      appendTranscriptEntriesFromChunk({
-        buffer: stderrBuffer,
-        chunk: "",
-        transcript,
-        kind: "stderr",
-        finalize: true,
-      });
-      return inferUsedSkillsFromTranscript(transcript);
+      throw new Error("Transcript reader exceeded the page limit");
     }
 
     for (const row of rows) {
@@ -670,8 +650,25 @@ export function createHeartbeatMiscHandlers(context: any) {
         ),
       );
 
+    const runtimeTypeByRunId = new Map(runRows.map((row) => [
+      row.id,
+      readNonEmptyString(parseObject(row.contextSnapshot).agentRuntimeType) ?? row.agentRuntimeType,
+    ]));
+    const transcriptReader = createHistoricalTranscriptReader(db, {
+      logStore: runLogStore,
+      legacyReader: {
+        readRun(input) {
+          const maxReadBytes = Math.min(Math.max(input.run.logBytes ?? 0, 256_000), 2_000_000);
+          return createLegacyTranscriptReader({ logStore: runLogStore, maxReadBytes }).readRun({
+            ...input,
+            runtimeType: runtimeTypeByRunId.get(input.run.id) ?? input.runtimeType,
+          });
+        },
+      },
+    });
+
     for (const row of runRows) {
-      const usedSkills = await inferUsedSkillsFromStoredRunLog(row);
+      const usedSkills = await inferUsedSkillsFromStoredRunTranscript(transcriptReader, scope.orgId, row.id);
       if (usedSkills.length === 0) continue;
       addRunSkillEvidence(row.id, dateKeyForTimestamp(row.createdAt), {
         evidence: "used",

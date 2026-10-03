@@ -60,3 +60,7 @@ export interface StorageService {
   headObject(orgId: string, objectKey: string): Promise<HeadObjectResult>;
   deleteObject(orgId: string, objectKey: string): Promise<void>;
 }
+
+export interface ContentAddressedStorageService extends StorageService {
+  putContentAddressedFile(input: PutFileInput): Promise<PutFileResult>;
+}

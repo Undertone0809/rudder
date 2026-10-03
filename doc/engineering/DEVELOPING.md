@@ -321,6 +321,7 @@ GitHub Actions owns `pnpm-lock.yaml`.
 - CI validates dependency resolution when manifests change before running full verification jobs.
 - PR and `main` CI install with `pnpm install --no-frozen-lockfile --lockfile=false`.
 - Pushes to `main` regenerate lockfile via `pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile`.
+- The generated file is retained as the `pnpm-lock-<source-sha>` Actions artifact; this job does not push to protected `main`.
 
 ## Start Dev
 

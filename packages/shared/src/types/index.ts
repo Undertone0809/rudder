@@ -64,16 +64,15 @@ export type {
 export type {
   ChatAskUserOption,
   ChatAskUserQuestion,
-  ChatAskUserRequest, ChatAttachment,
+  ChatAskUserRequest, ChatAskUserResponse, ChatAskUserResponseAnswer, ChatAttachment,
   ChatContextLink, ChatControlAction, ChatControlActionKind, ChatControlDisposition, ChatConversation,
   ChatGeneration, ChatGenerationControlState, ChatGenerationEvent, ChatGenerationEventKind, ChatGenerationStatus,
   ChatGenerationTerminalOutboxEntry, ChatInlineAnnotation, ChatInlineAnnotationAgentRunAnchorKind, ChatInlineAnnotationInput,
   ChatInlineAnnotationSourceEntryId, ChatInlineAnnotationSurface, ChatInlineAnnotationTranscriptKind, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
   ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatProviderControlDisposition, ChatQueueClaimResponse, ChatQueueDeliveryIntent, ChatQueueRequestActor, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference,
   ChatRichReferenceDisplay,
-  ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
-  ChatStreamAssistantDeltaEvent,
-  ChatStreamAssistantStateEvent, ChatStreamErrorEvent, ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
+  ChatRuntimeContinuity, ChatRuntimeDescriptor, ChatRuntimeSensitiveInputRequest, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent, ChatStreamAssistantDeltaEvent,
+  ChatStreamAssistantStateEvent, ChatStreamErrorEvent, ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamSensitiveInputRequestEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
   ChatStreamTranscriptTodoItemStatus, ChatStreamWaitingForNetworkEvent, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType
 } from "./chat.js";
 export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendGranularity, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
@@ -212,6 +211,7 @@ export type {
   CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, OrganizationResource, ProjectResourceAttachment,
   ProjectResourceAttachmentInput, UpdateOrganizationResourceRequest, UpdateProjectResourceAttachmentRequest
 } from "./resource.js";
+export type { AgentRunInvocationInstructions, RecoveredRunDeveloperInstructions } from "./run-instructions.js";
 export type {
   RunEventCursorPage,
   RunInspectionHeader,

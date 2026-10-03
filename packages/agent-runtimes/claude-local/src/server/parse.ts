@@ -6,6 +6,7 @@ const URL_RE = /(https?:\/\/[^\s'"`<>()[\]{};,!?]+[^\s'"`<>()[\]{};,!.?:]+)/gi;
 
 export function parseClaudeStreamJson(stdout: string) {
   let sessionId: string | null = null;
+  let lastUuid: string | null = null;
   let model = "";
   let finalResult: Record<string, unknown> | null = null;
   const assistantTexts: string[] = [];
@@ -19,6 +20,8 @@ export function parseClaudeStreamJson(stdout: string) {
     if (!event) continue;
 
     const type = asString(event.type, "");
+    const eventUuid = asString(event.uuid, "").trim();
+    if (eventUuid) lastUuid = eventUuid;
     if (type === "system" && asString(event.subtype, "") === "init") {
       sessionId = asString(event.session_id, sessionId ?? "") || sessionId;
       model = asString(event.model, model);
@@ -56,6 +59,7 @@ export function parseClaudeStreamJson(stdout: string) {
   if (!finalResult) {
     return {
       sessionId,
+      lastUuid,
       model,
       modelOutputObserved,
       toolActivityObserved,
@@ -80,6 +84,7 @@ export function parseClaudeStreamJson(stdout: string) {
 
   return {
     sessionId,
+    lastUuid,
     model,
     modelOutputObserved,
     toolActivityObserved,

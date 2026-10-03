@@ -37,6 +37,7 @@ export async function publishAutomationRunOutputToChat(
     output?: string | null;
     status?: string | null;
     transcript?: TranscriptEntry[];
+    transcriptSource?: "native" | "legacy";
   },
 ) {
   if (!input.issueId) return null;
@@ -63,6 +64,7 @@ export async function publishAutomationRunOutputToChat(
       .then((rows) => rows[0] ?? null);
 
     if (!row || row.automationOutputMode !== "chat_output") return null;
+    const transcript = input.transcriptSource === "native" ? [] : (input.transcript ?? []);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`automation-chat-output:${row.runId}`}))`);
 
     let conversationId = row.linkedChatConversationId;
@@ -101,7 +103,7 @@ export async function publishAutomationRunOutputToChat(
               issueId: row.issueId,
               status: input.status ?? null,
               links: { automation: `/automations/${row.automationId}`, issue: `/issues/${row.issueId}` },
-              [CHAT_TRANSCRIPT_KEY]: input.transcript ?? [],
+              [CHAT_TRANSCRIPT_KEY]: transcript,
             },
           },
           activity: {
@@ -158,9 +160,9 @@ export async function publishAutomationRunOutputToChat(
         automation: `/automations/${row.automationId}`,
         issue: `/issues/${row.issueId}`,
       },
-      [CHAT_TRANSCRIPT_KEY]: input.transcript ?? [],
+      [CHAT_TRANSCRIPT_KEY]: transcript,
     };
-    const transcript = chatTranscriptFromPayload(structuredPayload);
+    const persistedTranscript = chatTranscriptFromPayload(structuredPayload);
     const [message] = await tx
       .insert(chatMessages)
       .values({
@@ -177,11 +179,11 @@ export async function publishAutomationRunOutputToChat(
       })
       .returning();
     if (!message) return null;
-    if (transcript.length > 0) {
+    if (persistedTranscript.length > 0) {
       await replaceDetachedChatTranscript(tx, {
         orgId: row.orgId,
         messageId: message.id,
-        entries: transcript,
+        entries: persistedTranscript,
       });
     }
 

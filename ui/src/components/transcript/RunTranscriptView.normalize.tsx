@@ -1,5 +1,6 @@
-import type { ChatMessage } from "@rudderhq/shared";
+import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import type { TranscriptEntry } from "../../agent-runtimes";
+import { isNativeSteerTranscriptEntry } from "../../lib/chat-stream-state";
 import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
@@ -13,9 +14,133 @@ type ProvenancedTranscriptTextEntry = Extract<
   generationSeqEnd: number;
 }>;
 
-type NativeSteerTranscriptEntry = Extract<TranscriptEntry, { kind: "user" }> & {
-  steerMessage?: ChatMessage;
-};
+export function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
+  const item = asRecord(entry);
+  if (!item || typeof item.kind !== "string" || !item.kind.startsWith("cursor:acp:")) return null;
+  const kind = item.kind;
+  const payload = asRecord(item.payload);
+  const update = asRecord(payload?.update);
+  const updateKind = kind.slice("cursor:acp:".length);
+  if (
+    payload?.provider !== "cursor_agent"
+    || payload.transport !== "cursor-agent-acp-stdio"
+    || payload.method !== "session/update"
+    || update?.sessionUpdate !== updateKind
+    || typeof item.ts !== "string"
+  ) return null;
+
+  const ts = item.ts;
+  // ACP replay content/window IDs do not identify an occurrence across a
+  // partial replay, so display these entries without annotation anchors.
+  const sourceEntryId = item.origin === "object" && typeof item.sourceEntryId === "string" && item.sourceEntryId.trim()
+    ? item.sourceEntryId : undefined;
+  const source = sourceEntryId ? { sourceEntryId } : {};
+  const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
+  const requestId = typeof payload.requestId === "string" || typeof payload.requestId === "number"
+    ? payload.requestId : undefined;
+  const cursorAcpEvent: CursorAcpTranscriptEvent = {
+    provider: "cursor_agent",
+    transport: "cursor-agent-acp-stdio",
+    method: payload.method,
+    ...(sessionId ? { sessionId } : {}),
+    updateKind,
+    ...(requestId === undefined ? {} : { requestId }),
+    frame: {
+      jsonrpc: "2.0",
+      method: payload.method,
+      params: { ...(sessionId ? { sessionId } : {}), update },
+    },
+  };
+  const content = asRecord(update.content);
+  const text = typeof content?.text === "string"
+    ? content.text : typeof item.text === "string" ? item.text : null;
+  switch (updateKind) {
+    case "agent_message_chunk":
+    case "agent_message":
+    case "agent_thought_chunk":
+    case "agent_thought":
+    case "user_message_chunk":
+    case "user_message": {
+      if (text === null || (content?.type !== undefined && content.type !== "text")) return null;
+      const delta = updateKind.endsWith("_chunk") ? { delta: true } : {};
+      if (updateKind.startsWith("user_message")) {
+        const user = { kind: "user" as const, ts, text, ...delta, ...source };
+        return user;
+      }
+      return updateKind.startsWith("agent_thought")
+        ? { kind: "thinking", ts, text, ...delta, ...source }
+        : { kind: "assistant", ts, text, ...delta, ...source };
+    }
+    case "tool_call":
+    case "tool_call_update": {
+      if (typeof update.toolCallId !== "string" || !update.toolCallId.trim()) return null;
+      const toolName = typeof update.title === "string" && update.title.trim() ? update.title : undefined;
+      if (updateKind === "tool_call" && !toolName) return null;
+      const terminal = update.status === "completed" || update.status === "failed"
+        || update.status === "error" || update.status === "cancelled";
+      if (updateKind === "tool_call" && toolName) {
+        const output = update.rawOutput ?? update.content ?? update;
+        return { kind: "tool_call", ts, name: toolName, toolUseId: update.toolCallId,
+          input: update.rawInput ?? update,
+          ...(terminal ? { status: update.status,
+            result: typeof output === "string" ? output : JSON.stringify(output),
+            isError: update.status !== "completed" } : {}),
+          cursorAcpEvent,
+          ...source };
+      }
+      if (terminal) {
+        const output = update.rawOutput ?? update.content ?? update;
+        return { kind: "tool_result", ts, toolUseId: update.toolCallId,
+          ...(toolName ? { toolName } : {}),
+          content: typeof output === "string" ? output : JSON.stringify(output),
+          isError: update.status !== "completed", cursorAcpEvent, ...source };
+      }
+      return { kind: "system", ts,
+        text: `Tool ${toolName ?? update.toolCallId}: ${typeof update.status === "string" ? update.status : "updated"}`,
+        cursorAcpEvent,
+        ...source };
+    }
+    case "plan": {
+      if (!Array.isArray(update.entries) || update.entries.length === 0) return null;
+      const items: Array<{ text: string; status: "pending" | "in_progress" | "completed" } | null> = update.entries.map((value) => {
+        const planEntry = asRecord(value);
+        if (typeof planEntry?.content !== "string" || !planEntry.content.trim()) return null;
+        const status = planEntry.status;
+        if (status !== "pending" && status !== "in_progress" && status !== "completed") return null;
+        return { text: planEntry.content, status };
+      });
+      if (items.some((value) => value === null)) return null;
+      return { kind: "todo_list", ts,
+        items: items.filter((value): value is NonNullable<typeof value> => value !== null), cursorAcpEvent, ...source };
+    }
+    default:
+      return null;
+  }
+}
+
+function isTerminalTranscriptTailEntry(entry: TranscriptEntry) {
+  if (entry.kind === "init" || entry.kind === "result" || entry.kind === "stderr" || entry.kind === "stdout") {
+    return true;
+  }
+  return entry.kind === "system" && !entry.cursorAcpEvent;
+}
+
+export function terminalAssistantResponseEntryIndexes(entries: readonly TranscriptEntry[]) {
+  const projected = entries.map((entry) => cursorAcpDisplayEntry(entry) ?? entry);
+  let index = projected.length - 1;
+  while (index >= 0 && isTerminalTranscriptTailEntry(projected[index]!)) index -= 1;
+
+  const terminal = projected[index];
+  if (terminal?.kind !== "assistant" || terminal.phase || !terminal.text.trim()) return new Set<number>();
+
+  const indexes = new Set<number>([index]);
+  for (let previous = index - 1; previous >= 0; previous -= 1) {
+    const entry = projected[previous];
+    if (entry?.kind !== "assistant" || entry.phase || !entry.text.trim()) break;
+    indexes.add(previous);
+  }
+  return indexes;
+}
 
 function transcriptEntryProvenance(entry: ProvenancedTranscriptTextEntry) {
   return typeof entry.generationId === "string"
@@ -505,7 +630,7 @@ export function segmentTranscriptEntriesByTurn(entries: TranscriptEntry[]): {
 export function normalizeTranscript(
   entries: TranscriptEntry[],
   streaming: boolean,
-  options?: { showDeveloperDiagnostics?: boolean },
+  options?: { showDeveloperDiagnostics?: boolean; hideUserMessages?: boolean },
 ): TranscriptBlock[] {
   const blocks: TranscriptBlock[] = [];
   const pendingToolBlocks = new Map<string, Extract<TranscriptBlock, { type: "tool" }>>();
@@ -548,7 +673,8 @@ export function normalizeTranscript(
     }
   };
 
-  for (const entry of entries) {
+  for (const rawEntry of entries) {
+    const entry = cursorAcpDisplayEntry(rawEntry) ?? rawEntry;
     const previous = blocks[blocks.length - 1];
 
     if (isInternalTranscriptLifecycleEntry(entry)) {
@@ -557,10 +683,9 @@ export function normalizeTranscript(
     }
 
     if (entry.kind === "assistant" || entry.kind === "user") {
-      const steerMessage = entry.kind === "user"
-        ? (entry as NativeSteerTranscriptEntry).steerMessage
-        : undefined;
-      if (entry.kind === "user") {
+      const isNativeSteerMessage = entry.kind === "user" && isNativeSteerTranscriptEntry(entry);
+      const steerMessage = isNativeSteerMessage ? entry.steerMessage : undefined;
+      if (entry.kind === "user" && !isNativeSteerMessage) {
         if (isInternalAgentInstructionText(entry.text)) {
           if (options?.showDeveloperDiagnostics) {
             blocks.push({
@@ -579,6 +704,8 @@ export function normalizeTranscript(
 
         const skillContext = parseClaudeSkillContext(entry.text);
         if (skillContext) {
+          if (options?.hideUserMessages) continue;
+
           const matchingTool = [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => {
             if (!isSkillToolBlock(block)) return false;
             const toolSkill = normalizeSkillSlug(readSkillToolName(block.input));
@@ -603,18 +730,21 @@ export function normalizeTranscript(
         }
       }
 
+      if (entry.kind === "user" && options?.hideUserMessages && !isNativeSteerMessage) continue;
+
       const provenance = entry.kind === "assistant"
         ? transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry)
         : null;
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
-      const continuesDeltaGroup = entry.kind === "assistant"
-        && entry.delta === true
-        && previousTextEntry?.kind === "assistant"
+      const isDelta = entry.kind === "assistant" ? entry.delta === true : asRecord(entry)?.delta === true;
+      const continuesDeltaGroup = isDelta
+        && previousTextEntry?.kind === entry.kind
         && previousTextEntry.delta
         && !forceTextBoundary;
       if (
         previous?.type === "message"
         && previous.role === entry.kind
+        && previous.phase === (entry.kind === "assistant" ? entry.phase : undefined)
         && previous.source === (entry.kind === "user" ? entry.source : undefined)
         && previous.messageId === (entry.kind === "user" ? entry.messageId : undefined)
         && canMergeTranscriptProvenance(
@@ -650,8 +780,9 @@ export function normalizeTranscript(
         blocks.push({
           type: "message",
           role: entry.kind,
-          ...(entry.kind === "user" && entry.source ? {
-            source: entry.source,
+          ...(entry.kind === "assistant" && entry.phase ? { phase: entry.phase } : {}),
+          ...(entry.kind === "user" && isNativeSteerMessage ? {
+            source: "steer" as const,
             messageId: entry.messageId,
             controlActionId: entry.controlActionId,
             steerMessage,
@@ -664,7 +795,7 @@ export function normalizeTranscript(
           ...provenance,
         });
       }
-      previousTextEntry = { kind: entry.kind, delta: entry.kind === "assistant" && entry.delta === true };
+      previousTextEntry = { kind: entry.kind, delta: isDelta };
       forceTextBoundary = false;
       continue;
     }
@@ -720,17 +851,25 @@ export function normalizeTranscript(
     forceTextBoundary = false;
 
     if (entry.kind === "tool_call") {
+      const terminalStatus = asRecord(entry)?.status;
+      const terminal = terminalStatus === "completed" || terminalStatus === "failed"
+        || terminalStatus === "error" || terminalStatus === "cancelled";
+      const terminalResult = asRecord(entry)?.result;
       const toolBlock: Extract<TranscriptBlock, { type: "tool" }> = {
         type: "tool",
         ts: entry.ts,
         name: entry.name,
         toolUseId: entry.toolUseId ?? extractToolUseId(entry.input),
         input: entry.input,
-        status: "running",
+        status: terminal ? terminalStatus === "completed" ? "completed" : "error" : "running",
+        ...(terminal ? { endTs: entry.ts,
+          result: typeof terminalResult === "string" ? terminalResult : undefined,
+          isError: terminalStatus !== "completed" } : {}),
+        ...(entry.cursorAcpEvent ? { cursorAcpEvents: [entry.cursorAcpEvent] } : {}),
         sourceEntryIds: transcriptEntrySourceIds(entry),
       };
       blocks.push(toolBlock);
-      if (toolBlock.toolUseId) {
+      if (toolBlock.toolUseId && !terminal) {
         pendingToolBlocks.set(toolBlock.toolUseId, toolBlock);
       }
       continue;
@@ -739,6 +878,8 @@ export function normalizeTranscript(
     if (entry.kind === "tool_result") {
       const matched =
         pendingToolBlocks.get(entry.toolUseId)
+        ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> =>
+          block.type === "tool" && block.toolUseId === entry.toolUseId)
         ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => block.type === "tool" && block.status === "running");
 
       if (matched) {
@@ -749,6 +890,7 @@ export function normalizeTranscript(
         matched.isError = entry.isError;
         matched.status = entry.isError ? "error" : "completed";
         matched.endTs = entry.ts;
+        if (entry.cursorAcpEvent) matched.cursorAcpEvents = [...(matched.cursorAcpEvents ?? []), entry.cursorAcpEvent];
         for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(matched, sourceEntryId);
         pendingToolBlocks.delete(entry.toolUseId);
       } else {
@@ -763,6 +905,7 @@ export function normalizeTranscript(
           result: entry.content,
           isError: entry.isError,
           status: entry.isError ? "error" : "completed",
+          ...(entry.cursorAcpEvent ? { cursorAcpEvents: [entry.cursorAcpEvent] } : {}),
           sourceEntryIds: transcriptEntrySourceIds(entry),
         });
       }
@@ -776,6 +919,7 @@ export function normalizeTranscript(
       if (existing) {
         existing.ts = entry.ts;
         existing.items = entry.items;
+        if (entry.cursorAcpEvent) existing.cursorAcpEvents = [...(existing.cursorAcpEvents ?? []), entry.cursorAcpEvent];
         for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(existing, sourceEntryId);
       } else {
         const block: Extract<TranscriptBlock, { type: "todo_list" }> = {
@@ -783,6 +927,7 @@ export function normalizeTranscript(
           ts: entry.ts,
           todoListId: entry.todoListId,
           items: entry.items,
+          ...(entry.cursorAcpEvent ? { cursorAcpEvents: [entry.cursorAcpEvent] } : {}),
           sourceEntryIds: transcriptEntrySourceIds(entry),
         };
         blocks.push(block);
@@ -833,6 +978,20 @@ export function normalizeTranscript(
 
     if (entry.kind === "system") {
       if (compactWhitespace(entry.text).toLowerCase() === "turn started") {
+        continue;
+      }
+      if (entry.cursorAcpEvent) {
+        const eventName = entry.cursorAcpEvent.updateKind ?? entry.cursorAcpEvent.method;
+        blocks.push({
+          type: "event",
+          ts: entry.ts,
+          label: `Cursor ACP · ${eventName}`,
+          tone: "neutral",
+          text: entry.text,
+          collapseByDefault: true,
+          cursorAcpEvent: entry.cursorAcpEvent,
+          sourceEntryIds: transcriptEntrySourceIds(entry),
+        });
         continue;
       }
       const memoryUpdate = parseMemoryUpdateSystemText(entry.text, entry.ts);
@@ -971,7 +1130,7 @@ export function summarizeChatTurn(blocks: TranscriptBlock[]): string | null {
 export function normalizeChatTranscriptTurns(
   entries: TranscriptEntry[],
   streaming: boolean,
-  options?: { showDeveloperDiagnostics?: boolean },
+  options?: { showDeveloperDiagnostics?: boolean; hideUserMessages?: boolean },
 ): {
   preludeBlocks: TranscriptBlock[];
   turns: ChatTranscriptTurn[];

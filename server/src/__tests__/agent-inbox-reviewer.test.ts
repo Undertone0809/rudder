@@ -47,6 +47,7 @@ vi.mock("../agent-runtimes/index.js", () => ({
 }));
 
 vi.mock("@rudderhq/agent-runtime-claude-local/server", () => ({
+  execute: vi.fn(),
   runClaudeLogin: vi.fn(),
 }));
 

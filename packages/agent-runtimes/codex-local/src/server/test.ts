@@ -154,7 +154,7 @@ export async function testEnvironment(
         configuredCodexHome ?? await prepareManagedCodexHome({ ...process.env, ...env }, async () => {}, ctx.orgId);
       env.CODEX_HOME = effectiveCodexHome;
 
-      const args = ["exec", "--json", "--disable", "plugins"];
+      const args = ["exec", "--json"];
       if (search) args.unshift("--search");
       if (bypass) args.push("--dangerously-bypass-approvals-and-sandbox");
       if (model) args.push("--model", model);

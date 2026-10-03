@@ -288,11 +288,10 @@ describe("OnboardingWizard runtime config", () => {
     await vi.waitFor(() => {
       expect(surface.textContent).toContain("Create your first agent");
     });
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(surface.querySelector<HTMLInputElement>("input[placeholder='Agent name']")?.value)
-          .toBe("DeepSeek Agent");
-      });
+    await vi.waitFor(async () => {
+      await act(async () => { await flush(); });
+      expect(surface.querySelector<HTMLInputElement>("input[placeholder='Agent name']")?.value)
+        .toBe("DeepSeek Agent");
     });
 
     await act(async () => {

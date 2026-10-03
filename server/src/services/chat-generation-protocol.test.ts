@@ -164,6 +164,57 @@ describe("chatGenerationProtocolService", () => {
     return generation;
   }
 
+  for (const projection of ["completed", "stopped", "failed"] as const) {
+    it(`serializes ${projection} projection with an owner transfer and rejects the displaced writer`, async () => {
+      const generation = await seedGeneration({ attemptEpoch: 3, ownerToken: "owner-old" });
+      let signalWrite!: () => void;
+      let releaseWrite!: () => void;
+      const writeStarted = new Promise<void>((resolve) => { signalWrite = resolve; });
+      const writeRelease = new Promise<void>((resolve) => { releaseWrite = resolve; });
+      let transferCompleted = false;
+      const input = {
+        orgId: generation.orgId,
+        conversationId: generation.conversationId,
+        generationId: generation.id,
+        expectedAttemptEpoch: 3,
+        expectedOwnerToken: "owner-old",
+        projection,
+      };
+      const writing = protocol.withGenerationProjectionFence({ ...input, project: async () => {
+        signalWrite();
+        await writeRelease;
+        await db.insert(chatMessages).values({
+          orgId: generation.orgId,
+          conversationId: generation.conversationId,
+          role: "assistant",
+          kind: projection === "completed" ? "issue_proposal" : "message",
+          status: projection,
+          body: `old ${projection} projection`,
+        });
+      } });
+      await writeStarted;
+      const transfer = db.update(chatGenerations).set({
+        attemptEpoch: 4,
+        controlOwnerToken: "owner-new",
+      }).where(eq(chatGenerations.id, generation.id)).then(() => { transferCompleted = true; });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(transferCompleted).toBe(false);
+      } finally {
+        releaseWrite();
+      }
+      await writing;
+      await transfer;
+      expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, generation.conversationId)))
+        .toMatchObject([{ body: `old ${projection} projection` }]);
+      let displacedWrite = false;
+      await expect(protocol.withGenerationProjectionFence({ ...input, project: async () => {
+        displacedWrite = true;
+      } })).rejects.toMatchObject({ status: 409 });
+      expect(displacedWrite).toBe(false);
+    });
+  }
+
   it("keeps a new generation ownerless across slow preparation until a runtime attempt begins", async () => {
     const scope = await seedGeneration();
     await db.delete(chatGenerations).where(eq(chatGenerations.id, scope.id));
@@ -210,6 +261,39 @@ describe("chatGenerationProtocolService", () => {
     });
   });
 
+  it("rejects runtime terminal evidence from a replaced attempt owner", async () => {
+    const generation = await seedGeneration();
+    await db.update(chatGenerations)
+      .set({ controlOwnerToken: "owner-2" })
+      .where(eq(chatGenerations.id, generation.id));
+
+    await expect(protocol.recordRuntimeTerminal({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      expectedOwnerToken: generation.controlOwnerToken,
+      finalStatus: "failed",
+      terminalReason: "failed",
+    })).rejects.toMatchObject({ status: 409, message: "Chat generation control owner changed" });
+
+    await db.update(chatGenerations)
+      .set({ attemptEpoch: generation.attemptEpoch + 1, controlOwnerToken: "owner-3" })
+      .where(eq(chatGenerations.id, generation.id));
+    await expect(protocol.recordRuntimeTerminal({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      expectedOwnerToken: "owner-2",
+      finalStatus: "failed",
+      terminalReason: "failed",
+    })).rejects.toMatchObject({ status: 409, message: "Chat generation runtime attempt changed" });
+
+    expect(await db.select().from(chatGenerationEvents)).toEqual([]);
+    expect(await db.select().from(chatGenerationTerminalOutbox)).toEqual([]);
+  });
+
   it("keeps streaming transcript evidence in the ledger without rewriting message JSON", async () => {
     const generation = await seedGeneration();
     const entry = {
@@ -225,6 +309,7 @@ describe("chatGenerationProtocolService", () => {
       expectedAttemptEpoch: generation.attemptEpoch,
       eventKind: "transcript",
       payload: { entry },
+      transcriptSource: "legacy",
       bodyHash: hashChatGenerationBody(""),
       body: "",
       chatTurnId: randomUUID(),
@@ -256,6 +341,57 @@ describe("chatGenerationProtocolService", () => {
     expect(persistedMessage?.structuredPayload).toBeNull();
     expect(persistedEvent?.payload).toEqual(expect.objectContaining({ entry }));
     expect(JSON.stringify(persistedEvent?.payload).length).toBeLessThan(1_024);
+  });
+
+  it("keeps native transcript projection metadata without persisting the raw entry", async () => {
+    const generation = await seedGeneration();
+    const entry = {
+      kind: "thinking" as const,
+      ts: "2026-07-23T08:00:00.000Z",
+      text: `native transcript must stay in the provider source ${"x".repeat(512)}`,
+    };
+
+    const projection = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: {
+        entry,
+        runId: "native-run-1",
+        spanId: "native-span-1",
+      },
+      transcriptSource: "native",
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    const [persistedMessage] = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, projection.message.id));
+    const [persistedEvent] = await db
+      .select()
+      .from(chatGenerationEvents)
+      .where(eq(chatGenerationEvents.id, projection.event.id));
+    const persistedDetachedEntries = await db
+      .select({ payload: chatMessageTranscriptEntries.payload })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.messageId, projection.message.id));
+
+    expect(persistedMessage?.structuredPayload).toBeNull();
+    expect(persistedDetachedEntries).toEqual([]);
+    expect(persistedEvent?.payload).toEqual(expect.objectContaining({
+      source: "native",
+      runId: "native-run-1",
+      spanId: "native-span-1",
+      bodyHash: hashChatGenerationBody(""),
+    }));
+    expect(persistedEvent?.payload).not.toHaveProperty("entry");
+    expect(JSON.stringify(persistedEvent?.payload)).not.toContain(entry.text);
   });
 
   it("persists transcript tool output containing PostgreSQL-incompatible NUL characters", async () => {
@@ -1112,6 +1248,46 @@ describe("chatGenerationProtocolService", () => {
     expect(stoppedProjected?.generation.status).toBe("stopped");
   });
 
+  it("never reopens a Generation after runtime terminal evidence during network recovery", async () => {
+    const terminalFirst = await seedGeneration();
+    const input = {
+      orgId: terminalFirst.orgId,
+      conversationId: terminalFirst.conversationId,
+      generationId: terminalFirst.id,
+      expectedAttemptEpoch: terminalFirst.attemptEpoch,
+      expectedOwnerToken: terminalFirst.controlOwnerToken,
+    };
+    const terminal = await protocol.recordRuntimeTerminal({
+      ...input, finalStatus: "completed", terminalReason: "completed",
+    });
+    expect(terminal.generation.status).toBe("closing");
+    await expect(protocol.markWaitingForNetwork({
+      ...input, suspension: { kind: "network" },
+    })).rejects.toThrow("Chat generation already has runtime terminal evidence");
+    expect((await protocol.markNetworkResumed(input)).status).toBe("closing");
+
+    const waitingFirst = await seedGeneration();
+    const waitingInput = {
+      orgId: waitingFirst.orgId,
+      conversationId: waitingFirst.conversationId,
+      generationId: waitingFirst.id,
+      expectedAttemptEpoch: waitingFirst.attemptEpoch,
+      expectedOwnerToken: waitingFirst.controlOwnerToken,
+    };
+    expect((await protocol.markWaitingForNetwork({
+      ...waitingInput, suspension: { kind: "network" },
+    })).generation.status).toBe("waiting_for_network");
+    const waitingRecoveryInput = { ...waitingInput, expectedOwnerToken: null };
+    await protocol.recordRuntimeTerminal({
+      ...waitingRecoveryInput, finalStatus: "completed", terminalReason: "completed",
+    });
+    expect((await protocol.markNetworkResumed(waitingRecoveryInput)).status).toBe("closing");
+    const [persisted] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, waitingFirst.id));
+    expect(persisted).toMatchObject({ status: "closing", runtimeTerminalAt: expect.any(Date) });
+    const events = await db.select().from(chatGenerationEvents).where(eq(chatGenerationEvents.generationId, waitingFirst.id));
+    expect(events.map((event) => event.eventKind)).toEqual(["network_waiting", "runtime_terminal"]);
+  });
+
   it("never replays Steer when terminal projection cannot prove provider rejection", async () => {
     const generation = await seedGeneration({ controlVersion: 1 });
     const controlActionId = randomUUID();
@@ -1544,5 +1720,46 @@ describe("chatGenerationProtocolService", () => {
       .orderBy(asc(chatGenerationEvents.generationSeq));
     expect(events).toHaveLength(1);
     expect(events[0]?.eventKind).toBe("terminal_projection_requested");
+  });
+
+  it("closes only its orphaned streaming message when stale-owner terminal projection completes", async () => {
+    const generation = await seedGeneration({
+      leaseExpiresAt: new Date("2026-07-15T23:59:00.000Z"),
+    });
+    const visible = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      expectedOwnerToken: generation.controlOwnerToken,
+      eventKind: "assistant_delta",
+      payload: { delta: "" },
+      bodyOffset: 0,
+      bodyLength: 0,
+      body: "",
+      bodyHash: hashChatGenerationBody(""),
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+    expect(visible.message).toMatchObject({ status: "streaming", body: "" });
+    await protocol.recoverStaleControlOwners({ now: new Date("2026-07-16T00:00:00.000Z") });
+    const claim = await protocol.claimTerminalProjection({ workerId: "orphan-projector", leaseMs: 30_000 });
+    expect(claim?.payload).toMatchObject({ finalStatus: "control_lost", runtimeTerminationVerified: false });
+    const projected = await protocol.completeTerminalProjection({
+      outboxId: claim!.id,
+      claimToken: claim!.claimToken!,
+      claimEpoch: claim!.claimEpoch,
+    });
+    expect(projected?.outbox).toMatchObject({ status: "projected" });
+    const [outbox] = await db.select().from(chatGenerationTerminalOutbox)
+      .where(eq(chatGenerationTerminalOutbox.id, claim!.id));
+    expect(outbox).toMatchObject({ status: "projected", payload: { finalStatus: "control_lost" } });
+    const [message] = await db.select().from(chatMessages).where(eq(chatMessages.id, visible.message.id));
+    expect(message).toMatchObject({
+      status: "failed",
+      body: "Chat generation lost its runtime owner before a reply was finalized.",
+    });
+    const [recovered] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generation.id));
+    expect(recovered).toMatchObject({ status: "control_lost", runtimeTerminalAt: null });
   });
 });

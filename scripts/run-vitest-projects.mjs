@@ -14,6 +14,7 @@ const allProjects = [
   "packages/agent-runtimes/claude-local",
   "packages/agent-runtimes/codex-local",
   "packages/agent-runtimes/cursor-local",
+  "packages/agent-runtimes/hermes-gateway",
   "packages/agent-runtimes/opencode-local",
   "packages/agent-runtimes/pi-local",
   "server",

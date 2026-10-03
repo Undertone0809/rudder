@@ -1,26 +1,42 @@
 import type {
   AgentRuntimeControlHandleLease,
   AgentRuntimeExecutionContext,
+  AgentRuntimeNativeWriterQuiescence,
+  AgentRuntimeNetworkSubmissionPhase,
   UsageSummary,
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import {
   CodexAppServerClient,
   CodexAppServerClosedError,
+  CodexAppServerRpcError,
   createCodexAppServerStdioTransport,
   type CodexAppServerNotification,
-  type CodexAppServerServerRequestHandler,
 } from "./app-server-client.js";
+import { createCodexAppServerServerRequestHandlers } from "./app-server-interactions.js";
 import { isCodexProviderAuthFailure } from "./parse.js";
 import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines } from "./stderr-filter.js";
+export { createCodexAppServerServerRequestHandlers } from "./app-server-interactions.js";
 
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 1_000;
 const APP_SERVER_PROCESS_HARD_DEADLINE_MS = 2_000;
+const APP_SERVER_SERVER_REQUEST_TIMEOUT_MS = 31 * 60_000;
 const APP_SERVER_CAPTURE_LIMIT = 8 * 1024 * 1024;
 const APP_SERVER_SUBAGENT_ITEM_LIMIT = 256;
 const APP_SERVER_SUBAGENT_READ_TIMEOUT_MS = 1_500;
+const APP_SERVER_SCHEMA_PROBE_TIMEOUT_MS = 5_000;
+const APP_SERVER_SCHEMA_CACHE_TTL_MS = 60_000;
+
+type DeveloperInstructionsSchemaCacheEntry = {
+  expiresAt: number;
+  result: Promise<boolean>;
+};
+
+const developerInstructionsSchemaCache = new Map<string, DeveloperInstructionsSchemaCacheEntry>();
 
 type PackageJson = { version?: string };
 
@@ -42,12 +58,19 @@ export interface CodexAppServerChatOptions {
   sandboxMode?: "read-only" | null;
   imagePaths: string[];
   sessionId: string | null;
+  chatDeveloperInstructions?: string;
+  chatDeveloperInstructionsRevision?: string | null;
+  persistedChatDeveloperInstructionsRevision?: string | null;
   timeoutSec: number;
   onLog: AgentRuntimeExecutionContext["onLog"];
   onSpawn?: AgentRuntimeExecutionContext["onSpawn"];
   abortSignal?: AbortSignal;
   controlAttempt?: AgentRuntimeExecutionContext["controlAttempt"];
+  requestApproval?: AgentRuntimeExecutionContext["requestApproval"];
+  waitForApproval?: AgentRuntimeExecutionContext["waitForApproval"];
   onProviderAuthFailure?: (message: string) => Promise<void> | void;
+  /** Internal host policy. Missing/unknown values retain legacy capture. */
+  stdoutCapturePolicy?: "capture" | "omit";
 }
 
 export interface CodexAppServerChatResult {
@@ -56,13 +79,20 @@ export interface CodexAppServerChatResult {
   timedOut: boolean;
   errorMessage: string | null;
   stdout: string;
+  /** Bounded sticky diagnostic independent of duplicate stdout retention. */
+  providerAuthFailure: boolean;
   stderr: string;
   summary: string;
   usage: UsageSummary;
   sessionId: string | null;
+  /** Provider-native thread metadata returned by thread/start or thread/resume. */
+  sessionParams: Record<string, unknown> | null;
+  chatDeveloperInstructionsRevision: string | null;
   providerTurnId: string | null;
+  submissionPhase: AgentRuntimeNetworkSubmissionPhase;
   resumed: boolean;
   clearSession: boolean;
+  nativeWriterQuiescence?: AgentRuntimeNativeWriterQuiescence;
 }
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -73,6 +103,144 @@ function asRecord(value: unknown): JsonRecord | null {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function developerInstructionsSchemaCacheKey(command: string, env: Record<string, string>): string {
+  return [command, env.PATH ?? "", env.CODEX_HOME ?? ""].join("\0");
+}
+
+function schemaDeclaresDeveloperInstructions(value: unknown): boolean {
+  const schema = asRecord(value);
+  const properties = asRecord(schema?.properties);
+  return Boolean(properties && Object.hasOwn(properties, "developerInstructions"));
+}
+
+async function detectNativeDeveloperInstructionsSupport(input: {
+  command: string;
+  cwd: string;
+  env: Record<string, string>;
+}): Promise<boolean> {
+  let tempRoot: string | null = null;
+  try {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-schema-"));
+    const outputDir = path.join(tempRoot, "schema");
+    const child = spawn(input.command, [
+      "app-server",
+      "generate-json-schema",
+      "--experimental",
+      "--out",
+      outputDir,
+    ], {
+      cwd: input.cwd,
+      env: input.env,
+      detached: false,
+      shell: false,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    const exitCode = await new Promise<number | null>((resolve) => {
+      let settled = false;
+      let timeout: NodeJS.Timeout | null = null;
+      let hardKillTimeout: NodeJS.Timeout | null = null;
+      const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        if (hardKillTimeout) clearTimeout(hardKillTimeout);
+        resolve(code);
+      };
+      timeout = setTimeout(() => {
+        child.kill("SIGTERM");
+        hardKillTimeout = setTimeout(() => child.kill("SIGKILL"), 500);
+        hardKillTimeout.unref?.();
+      }, APP_SERVER_SCHEMA_PROBE_TIMEOUT_MS);
+      timeout.unref?.();
+      child.once("error", () => finish(null));
+      child.once("close", (code) => finish(code));
+    });
+    if (exitCode !== 0) return false;
+
+    const [threadStart, threadResume] = await Promise.all([
+      fs.readFile(path.join(outputDir, "v2", "ThreadStartParams.json"), "utf8"),
+      fs.readFile(path.join(outputDir, "v2", "ThreadResumeParams.json"), "utf8"),
+    ]);
+    return schemaDeclaresDeveloperInstructions(JSON.parse(threadStart))
+      && schemaDeclaresDeveloperInstructions(JSON.parse(threadResume));
+  } catch {
+    return false;
+  } finally {
+    if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function supportsNativeDeveloperInstructions(input: {
+  command: string;
+  cwd: string;
+  env: Record<string, string>;
+}): Promise<boolean> {
+  const cacheKey = developerInstructionsSchemaCacheKey(input.command, input.env);
+  const now = Date.now();
+  for (const [key, value] of developerInstructionsSchemaCache) {
+    if (value.expiresAt <= now) developerInstructionsSchemaCache.delete(key);
+  }
+  const cached = developerInstructionsSchemaCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.result;
+
+  const result = detectNativeDeveloperInstructionsSupport(input).catch(() => false);
+  developerInstructionsSchemaCache.set(cacheKey, {
+    expiresAt: now + APP_SERVER_SCHEMA_CACHE_TTL_MS,
+    result,
+  });
+  return result;
+}
+
+function rememberNativeDeveloperInstructionsSupport(
+  command: string,
+  env: Record<string, string>,
+  supported: boolean,
+): void {
+  developerInstructionsSchemaCache.set(developerInstructionsSchemaCacheKey(command, env), {
+    expiresAt: Date.now() + APP_SERVER_SCHEMA_CACHE_TTL_MS,
+    result: Promise.resolve(supported),
+  });
+}
+
+function isDeveloperInstructionsFieldRejection(error: unknown): boolean {
+  if (!(error instanceof CodexAppServerRpcError) || error.code !== -32602) return false;
+  const message = error.message;
+  return /developerInstructions/i.test(message)
+    && /(?:unknown|unexpected|unrecognized|unsupported|not allowed|additional).{0,40}(?:field|property|param|argument|key)|(?:field|property|param|argument|key).{0,40}(?:unknown|unexpected|unrecognized|unsupported|not allowed|additional)/i.test(message);
+}
+
+function promptWithDeveloperInstructions(prompt: string, instructions: string): string {
+  const stableInstructions = instructions.trim();
+  if (!stableInstructions) return prompt;
+  return prompt ? `${stableInstructions}\n\n${prompt}` : stableInstructions;
+}
+
+function sessionParamsFromThread(
+  response: JsonRecord,
+  threadId: string,
+  cwd: string,
+): Record<string, unknown> {
+  const thread = asRecord(response.thread) ?? {};
+  const params: Record<string, unknown> = {
+    sessionId: threadId,
+    threadId,
+    cwd,
+  };
+  const stringFields: Array<readonly [string, string]> = [
+    ["sessionId", "rootSessionId"],
+    ["forkedFromId", "forkedFromId"],
+    ["model", "model"],
+    ["modelProvider", "modelProvider"],
+  ];
+  for (const [source, target] of stringFields) {
+    const value = asString(thread[source]).trim();
+    if (value) params[target] = value;
+  }
+  if (typeof thread.ephemeral === "boolean") params.ephemeral = thread.ephemeral;
+  return params;
 }
 
 function messagePhase(value: unknown): "commentary" | "final_answer" | null {
@@ -125,7 +293,7 @@ function withCommandWorkingDirectory(
   return cwd ? { ...normalized, cwd } : normalized;
 }
 
-function normalizeThreadItem(value: unknown): JsonRecord {
+export function normalizeThreadItem(value: unknown): JsonRecord {
   const item = asRecord(value) ?? {};
   const type = asString(item.type);
   if (type === "agentMessage") {
@@ -235,40 +403,6 @@ function usageFromNotification(params: JsonRecord): UsageSummary | null {
   };
 }
 
-function serverRequestHandlers(
-  bypass: boolean,
-): Readonly<Record<string, CodexAppServerServerRequestHandler>> {
-  return {
-    "item/commandExecution/requestApproval": ({ signal }) => ({
-      decision: signal.aborted ? "cancel" : bypass ? "accept" : "decline",
-    }),
-    "item/fileChange/requestApproval": ({ signal }) => ({
-      decision: signal.aborted ? "cancel" : bypass ? "accept" : "decline",
-    }),
-    "item/tool/requestUserInput": () => ({ answers: {} }),
-    "mcpServer/elicitation/request": () => ({ action: "cancel", content: null, _meta: null }),
-    "item/permissions/requestApproval": async () => {
-      throw new Error("Rudder does not grant additional App Server permission profiles during a chat turn");
-    },
-    "item/tool/call": () => ({
-      contentItems: [{ type: "inputText", text: "Dynamic App Server tools are not registered for this Rudder run." }],
-      success: false,
-    }),
-    "account/chatgptAuthTokens/refresh": async () => {
-      throw new Error("Codex App Server must use the isolated CODEX_HOME credentials for this run");
-    },
-    "attestation/generate": async () => {
-      throw new Error("Client attestation is not enabled for Rudder App Server chat runs");
-    },
-    applyPatchApproval: ({ signal }) => ({
-      decision: signal.aborted ? "abort" : bypass ? "approved" : "denied",
-    }),
-    execCommandApproval: ({ signal }) => ({
-      decision: signal.aborted ? "abort" : bypass ? "approved" : "denied",
-    }),
-  };
-}
-
 function signalProcessGroup(child: ChildProcess, force: boolean): void {
   const signal = force ? "SIGKILL" : "SIGTERM";
   if (process.platform !== "win32" && child.pid) {
@@ -312,12 +446,13 @@ async function waitForProcessTreeExit(child: ChildProcess, timeoutMs: number): P
 export async function executeCodexAppServerChat(
   options: CodexAppServerChatOptions,
 ): Promise<CodexAppServerChatResult> {
-  const child = spawn(options.command, [
-    "app-server",
-    "--stdio",
-    "--disable",
-    "plugins",
-  ], {
+  const stableDeveloperInstructions = options.chatDeveloperInstructions?.trim() ?? "";
+  let hasNativeDeveloperInstructions = stableDeveloperInstructions.length > 0
+    && await supportsNativeDeveloperInstructions(options);
+  let turnPrompt = hasNativeDeveloperInstructions
+    ? options.prompt
+    : promptWithDeveloperInstructions(options.prompt, stableDeveloperInstructions);
+  const child = spawn(options.command, ["app-server", "--stdio"], {
     cwd: options.cwd,
     env: options.env,
     detached: process.platform !== "win32",
@@ -353,6 +488,7 @@ export async function executeCodexAppServerChat(
   child.once("close", () => flushStderr(true));
 
   let stdout = "";
+  let providerAuthFailure = false;
   let latestUsage: UsageSummary = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
   let finalAgentText = "";
   const agentDeltaItemIds = new Set<string>();
@@ -363,9 +499,13 @@ export async function executeCodexAppServerChat(
   const commandWorkingDirectoryByItemId = new Map<string, string | null>();
   const fileChangePatchByItemId = new Map<string, unknown[]>();
   let threadId: string | null = null;
+  let sessionParams: Record<string, unknown> | null = null;
+  let chatDeveloperInstructionsRevision: string | null = null;
   let turnId: string | null = null;
+  let submissionPhase: AgentRuntimeNetworkSubmissionPhase = "pre_submission";
   let turnCompleted = false;
   let turnError: Error | null = null;
+  let interruptAcknowledged = false;
   let resolveTurn!: () => void;
   let rejectTurn!: (error: Error) => void;
   const turnDone = new Promise<void>((resolve, reject) => {
@@ -380,10 +520,13 @@ export async function executeCodexAppServerChat(
   let abortCleanup: (() => void) | null = null;
   let controlLease: AgentRuntimeControlHandleLease | null = null;
   let disposed = false;
+  let processTreeTerminated = false;
+  let result!: Omit<CodexAppServerChatResult, "nativeWriterQuiescence">;
 
   const emit = async (event: JsonRecord) => {
     const line = `${JSON.stringify(event)}\n`;
-    stdout = appendBounded(stdout, line);
+    providerAuthFailure ||= isCodexProviderAuthFailure(line);
+    if (options.stdoutCapturePolicy !== "omit") stdout = appendBounded(stdout, line);
     await options.onLog("stdout", line);
   };
 
@@ -401,8 +544,14 @@ export async function executeCodexAppServerChat(
     clientInfo: { name: "rudder", title: "Rudder", version: APP_SERVER_CLIENT_VERSION },
     capabilities: { experimentalApi: true },
     requestTimeoutMs: 30_000,
-    serverRequestTimeoutMs: 30_000,
-    serverRequestHandlers: serverRequestHandlers(options.bypassApprovalsAndSandbox),
+    serverRequestTimeoutMs: APP_SERVER_SERVER_REQUEST_TIMEOUT_MS,
+    serverRequestHandlers: createCodexAppServerServerRequestHandlers({
+      bypassApprovalsAndSandbox: options.bypassApprovalsAndSandbox,
+      getSessionId: () => threadId,
+      getTurnId: () => turnId,
+      requestApproval: options.requestApproval,
+      waitForApproval: options.waitForApproval,
+    }),
     onNotification: async (notification: CodexAppServerNotification, { signal }) => {
       if (signal.aborted) return;
       const params = asRecord(notification.params) ?? {};
@@ -561,13 +710,13 @@ export async function executeCodexAppServerChat(
       }
       if (notification.method === "turn/completed") {
         const turn = asRecord(params.turn) ?? {};
-        const status = asString(turn.status) || "completed";
+        const status = asString(turn.status) || "unknown";
         const error = asRecord(turn.error);
         turnError = error
           ? new Error(asString(error.message) || `Codex turn ${status}`)
-          : status === "failed" || (status === "interrupted" && !options.abortSignal?.aborted)
-            ? new Error(`Codex turn ${status}`)
-            : null;
+          : status === "completed" || (status === "interrupted" && options.abortSignal?.aborted)
+            ? null
+            : new Error(`Codex turn ${status}`);
         await emit({
           type: turnError ? "turn.failed" : "turn.completed",
           result: finalAgentText,
@@ -608,6 +757,7 @@ export async function executeCodexAppServerChat(
       if (!threadId || !turnId || client.state !== "ready") return "unverified" as const;
       try {
         await client.request("turn/interrupt", { threadId, turnId }, APP_SERVER_INTERRUPT_TIMEOUT_MS);
+        interruptAcknowledged = true;
         return "acknowledged" as const;
       } catch {
         return "unverified" as const;
@@ -623,12 +773,17 @@ export async function executeCodexAppServerChat(
     }
   };
 
-  const terminateAndWait = async () => {
-    if (!isProcessTreeAlive(child)) return;
+  const terminateAndWait = async (): Promise<boolean> => {
+    if (!child.pid) return false;
+    if (!isProcessTreeAlive(child)) return process.platform !== "win32";
     signalProcessGroup(child, false);
-    if (await waitForProcessTreeExit(child, APP_SERVER_PROCESS_HARD_DEADLINE_MS)) return;
+    if (await waitForProcessTreeExit(child, APP_SERVER_PROCESS_HARD_DEADLINE_MS)) {
+      return process.platform !== "win32";
+    }
     signalProcessGroup(child, true);
-    await waitForProcessTreeExit(child, 1_000);
+    const exited = await waitForProcessTreeExit(child, 1_000);
+    // On Windows this probe only observes the direct child, not its descendants.
+    return process.platform !== "win32" && exited;
   };
   const scheduleHardKill = () => {
     if (!forceKillTimer) {
@@ -662,8 +817,13 @@ export async function executeCodexAppServerChat(
   let clearSession = false;
   try {
     await client.initialize();
-    let threadResponse: JsonRecord;
-    const threadParams = {
+    const shouldUpdateChatDeveloperInstructions = hasNativeDeveloperInstructions
+      && (
+        !options.sessionId
+        || !options.persistedChatDeveloperInstructionsRevision
+        || options.persistedChatDeveloperInstructionsRevision !== options.chatDeveloperInstructionsRevision
+      );
+    const sharedThreadParams = {
       model: options.model || null,
       cwd: options.cwd,
       approvalPolicy: options.bypassApprovalsAndSandbox ? "never" : null,
@@ -672,37 +832,76 @@ export async function executeCodexAppServerChat(
         : options.sandboxMode ?? null,
       config: {
         web_search: options.search ? "live" : "disabled",
-        skills: { bundled: { enabled: false } },
       },
     };
-    if (options.sessionId) {
+    const requestThread = async (includeDeveloperInstructions: boolean): Promise<JsonRecord> => {
+      const params = {
+        ...(options.sessionId ? { threadId: options.sessionId } : {}),
+        ...sharedThreadParams,
+        ...(includeDeveloperInstructions
+          ? { developerInstructions: stableDeveloperInstructions }
+          : {}),
+        ...(!options.sessionId ? { ephemeral: false } : {}),
+      };
       try {
-        threadResponse = asRecord(await client.request("thread/resume", {
-          threadId: options.sessionId,
-          ...threadParams,
-        })) ?? {};
-        resumed = true;
+        return asRecord(await client.request(
+          options.sessionId ? "thread/resume" : "thread/start",
+          params,
+          !options.sessionId
+            ? { onDispatch: () => { submissionPhase = "indeterminate"; } }
+            : undefined,
+        )) ?? {};
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!/unknown|not found|no rollout|missing rollout/i.test(message)) throw error;
-        clearSession = true;
-        threadResponse = asRecord(await client.request("thread/start", {
-          ...threadParams,
-          ephemeral: false,
-        })) ?? {};
+        if (options.sessionId && error instanceof CodexAppServerRpcError
+          && /no rollout|missing rollout|(?:thread|rollout).*(?:unknown|not found|missing)/i.test(message)) {
+          throw new Error(
+            `Codex App Server could not resume thread "${options.sessionId}": ${message}`,
+          );
+        }
+        throw error;
       }
-    } else {
-      threadResponse = asRecord(await client.request("thread/start", {
-        ...threadParams,
-        ephemeral: false,
-      })) ?? {};
+    };
+    let threadResponse: JsonRecord;
+    try {
+      threadResponse = await requestThread(shouldUpdateChatDeveloperInstructions);
+      resumed = Boolean(options.sessionId);
+    } catch (error) {
+      if (!shouldUpdateChatDeveloperInstructions || !isDeveloperInstructionsFieldRejection(error)) throw error;
+      hasNativeDeveloperInstructions = false;
+      rememberNativeDeveloperInstructionsSupport(options.command, options.env, false);
+      turnPrompt = promptWithDeveloperInstructions(options.prompt, stableDeveloperInstructions);
+      await options.onLog(
+        "stderr",
+        "[rudder] Codex App Server rejected thread developerInstructions; stable chat instructions are included in turn input.\n",
+      );
+      threadResponse = await requestThread(false);
+      resumed = Boolean(options.sessionId);
     }
     threadId = asString(asRecord(threadResponse.thread)?.id);
     if (!threadId) throw new Error("Codex App Server did not return a thread id");
+    if (resumed && threadId !== options.sessionId) {
+      throw new Error(
+        `Codex App Server resumed thread ${threadId}, not the requested thread ${options.sessionId}`,
+      );
+    }
+    // Acknowledged thread creation alone has not submitted this user's turn.
+    // Only turn/start dispatch makes user-input acceptance indeterminate again.
+    submissionPhase = "pre_submission";
+    sessionParams = sessionParamsFromThread(threadResponse, threadId, options.cwd);
+    chatDeveloperInstructionsRevision = hasNativeDeveloperInstructions
+      ? options.chatDeveloperInstructionsRevision ?? null
+      : null;
+    if (stableDeveloperInstructions && !hasNativeDeveloperInstructions && !shouldUpdateChatDeveloperInstructions) {
+      await options.onLog(
+        "stderr",
+        "[rudder] Codex App Server schema does not expose thread developerInstructions; stable chat instructions are included in turn input.\n",
+      );
+    }
     await emit({ type: "thread.started", thread_id: threadId, model: options.model || "codex" });
 
     const input = [
-      { type: "text", text: options.prompt, text_elements: [] },
+      { type: "text", text: turnPrompt, text_elements: [] },
       ...options.imagePaths.map((imagePath) => ({ type: "localImage", path: imagePath })),
     ];
     const turnResponse = asRecord(await client.request("turn/start", {
@@ -717,9 +916,14 @@ export async function executeCodexAppServerChat(
           : null,
       model: options.model || null,
       effort: options.modelReasoningEffort || null,
+    }, {
+      onDispatch: () => {
+        submissionPhase = "indeterminate";
+      },
     })) ?? {};
-    turnId = asString(asRecord(turnResponse.turn)?.id);
+    turnId = asString(asRecord(turnResponse.turn)?.id).trim() || null;
     if (!turnId) throw new Error("Codex App Server did not return a turn id");
+    submissionPhase = "accepted";
     const activeThreadId = threadId;
     const activeTurnId = turnId;
 
@@ -793,32 +997,40 @@ export async function executeCodexAppServerChat(
 
     await turnDone;
     const finalTurnError = turnError as Error | null;
-    return {
+    result = {
       exitCode: finalTurnError ? 1 : 0,
       signal: options.abortSignal?.aborted ? "SIGTERM" : null,
       timedOut: false,
       errorMessage: finalTurnError?.message ?? null,
       stdout,
+      providerAuthFailure,
       stderr,
       summary: finalAgentText,
       usage: latestUsage,
       sessionId: threadId,
+      sessionParams,
+      chatDeveloperInstructionsRevision,
       providerTurnId: turnId,
+      submissionPhase,
       resumed,
       clearSession,
     };
   } catch (error) {
-    return {
+    result = {
       exitCode: 1,
       signal: options.abortSignal?.aborted ? "SIGTERM" : null,
       timedOut: error instanceof Error && /^Timed out after /.test(error.message),
       errorMessage: error instanceof Error ? error.message : String(error),
       stdout,
+      providerAuthFailure,
       stderr,
       summary: finalAgentText,
       usage: latestUsage,
       sessionId: threadId ?? options.sessionId,
+      sessionParams,
+      chatDeveloperInstructionsRevision,
       providerTurnId: turnId,
+      submissionPhase,
       resumed,
       clearSession,
     };
@@ -828,7 +1040,21 @@ export async function executeCodexAppServerChat(
     await controlLease?.release().catch(() => undefined);
     disposed = true;
     client.dispose("Codex App Server chat execution complete");
-    await terminateAndWait();
+    processTreeTerminated = await terminateAndWait();
     if (forceKillTimer) clearTimeout(forceKillTimer);
   }
+
+  return {
+    ...result,
+    nativeWriterQuiescence: turnCompleted
+      ? { status: "confirmed", source: "provider_terminal" }
+      : processTreeTerminated
+        ? { status: "confirmed", source: "process_exit" }
+        : {
+            status: "unconfirmed",
+            reason: interruptAcknowledged
+              ? "Codex App Server acknowledged turn/interrupt, but its process tree exit was not verified."
+              : "Codex App Server returned without an observed terminal event or verified process-tree exit.",
+          },
+  };
 }

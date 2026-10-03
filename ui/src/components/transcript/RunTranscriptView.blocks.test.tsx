@@ -2,13 +2,15 @@
 
 import type { ChatMessage } from "@rudderhq/shared";
 import type { ReactNode } from "react";
-import { act, useState } from "react";
+import { act, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { readChatAnnotationSourceText } from "../../lib/chat-response-annotation-selection";
 import { mergeNativeSteerTranscriptEntries } from "../../lib/chat-stream-state";
+import { usePendingChatResponseAnnotationSelection } from "../../pages/Chat.response-annotation-selection";
+import { RunTranscriptView } from "./RunTranscriptView";
 import {
   CommandTerminalDetail,
   ExpandableTranscriptResponsePre,
@@ -17,7 +19,7 @@ import {
   TranscriptMessageBlock,
   TranscriptRunAnnotationBlock,
 } from "./RunTranscriptView.blocks";
-import { TranscriptChatActionGroup } from "./RunTranscriptView.chat";
+import { TranscriptChatActionGroup, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import type { ChatTranscriptAction, TranscriptBlock } from "./RunTranscriptView.common";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
 
@@ -52,6 +54,60 @@ Object.defineProperty(window, "matchMedia", {
     removeListener: vi.fn(),
     dispatchEvent: vi.fn(),
   })),
+});
+
+describe("native transcript event tolerance", () => {
+  it("skips a textless event instead of crashing the Run transcript", () => {
+    const textless = {
+      kind: "stdout",
+      ts: "2026-07-21T08:00:00.000Z",
+      sourceEntryId: "native-event-1",
+    } as unknown as TranscriptEntry;
+    expect(normalizeTranscript([textless], false)).toEqual([]);
+  });
+});
+
+describe("command activity output", () => {
+  it("shows plain tool result output when command details are expanded", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "tool_call",
+        ts: "2026-09-30T00:00:01.000Z",
+        name: "command_execution",
+        toolUseId: "command-1",
+        input: { command: "printf done" },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-09-30T00:00:02.000Z",
+        toolUseId: "command-1",
+        content: "done",
+        isError: false,
+      },
+    ], false);
+    const commandGroup = blocks.find((block) => block.type === "command_group");
+    if (commandGroup?.type !== "command_group") throw new Error("Expected command activity group");
+
+    expect(commandGroup.items[0]).toMatchObject({
+      toolUseId: "command-1",
+      result: "done",
+      status: "completed",
+    });
+    const container = render(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow block={commandGroup.items[0]!} density="compact" />
+      </ThemeProvider>,
+    );
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[aria-expanded="false"][aria-labelledby]',
+    );
+    expect(disclosure).not.toBeNull();
+    act(() => disclosure?.click());
+
+    const shellPanel = container.querySelector('[data-command-terminal-panel="shell"]');
+    expect(shellPanel?.textContent).toContain("$ printf done");
+    expect(shellPanel?.textContent).toContain("done");
+  });
 });
 
 let cleanupFn: (() => void) | null = null;
@@ -348,6 +404,72 @@ describe("TranscriptRunAnnotationBlock", () => {
     ]);
   });
 
+  it("requires verified transcript completeness and preserves existing source anchors", () => {
+    const onAnnotate = vi.fn();
+    const block: TranscriptBlock = {
+      type: "event",
+      ts: "2026-07-23T12:01:00.000Z",
+      label: "status",
+      tone: "info",
+      text: "Historical event",
+      sourceEntryIds: ["legacy-entry-1"],
+    };
+    function CompletenessGatedBlock() {
+      const [complete, setComplete] = useState(false);
+      return (
+        <>
+          <button type="button" data-testid="toggle-transcript-completeness" onClick={() => setComplete((value) => !value)}>
+            Toggle completeness
+          </button>
+          <TranscriptRunAnnotationBlock
+            block={block}
+            presentation="detail"
+            context={complete ? { sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate } : undefined}
+          >
+            <span>Historical event</span>
+          </TranscriptRunAnnotationBlock>
+        </>
+      );
+    }
+
+    const container = render(<CompletenessGatedBlock />);
+    const toggle = () => act(() => container.querySelector<HTMLButtonElement>("[data-testid='toggle-transcript-completeness']")?.click());
+    expect(container.querySelector("[data-run-transcript-annotation-trigger]")).toBeNull();
+    expect(container.textContent).toContain("Historical event");
+
+    toggle();
+    let trigger = container.querySelector<HTMLButtonElement>("[data-run-transcript-annotation-trigger]");
+    expect(trigger).not.toBeNull();
+    const blockId = container.querySelector<HTMLElement>("[data-run-transcript-block='true']")?.dataset.runTranscriptBlockId;
+    expect(blockId).toBe("legacy-entry-1");
+    trigger!.getBoundingClientRect = () => new DOMRect(20, 20, 28, 28);
+    act(() => trigger?.click());
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).not.toBeNull();
+
+    toggle();
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).toBeNull();
+    expect(container.querySelector("[data-run-transcript-block='true']")).toBeNull();
+    expect(container.textContent).toContain("Historical event");
+
+    toggle();
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).toBeNull();
+    trigger = container.querySelector<HTMLButtonElement>("[data-run-transcript-annotation-trigger]");
+    expect(trigger).not.toBeNull();
+    expect(container.querySelector<HTMLElement>("[data-run-transcript-block='true']")?.dataset.runTranscriptBlockId).toBe(blockId);
+    trigger!.getBoundingClientRect = () => new DOMRect(20, 20, 28, 28);
+    act(() => trigger?.click());
+    act(() => {
+      Array.from(document.querySelectorAll("[data-testid='chat-response-annotation-editor'] button"))
+        .find((button) => button.textContent === "Save")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onAnnotate).toHaveBeenCalledWith(expect.objectContaining({
+      blockId: "legacy-entry-1",
+      sourceMemberIds: ["legacy-entry-1"],
+    }));
+  });
+
   it("closes the previous editor when another transcript item receives focus", () => {
     const onAnnotate = vi.fn();
     function CoordinatedBlocks() {
@@ -480,6 +602,104 @@ describe("TranscriptRunAnnotationBlock", () => {
     expect(container.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(0);
   });
 
+  it.each(["assistant", "thinking"] as const)("selects native-only Chat %s without legacy generation provenance", (kind) => {
+    const onAnnotate = vi.fn();
+    const block: TranscriptBlock = kind === "assistant"
+      ? { type: "message", role: "assistant", ts: "2026-10-03T00:00:00Z", text: "Native evidence", streaming: false, sourceEntryIds: ["native-entry-1"] }
+      : { type: "thinking", ts: "2026-10-03T00:00:00Z", text: "Native evidence", streaming: false, sourceEntryIds: ["native-entry-1"] };
+    const container = render(
+      <TranscriptRunAnnotationBlock block={block} presentation="chat"
+        context={{ sourceRunId: "native-run", sourceAgentId: "native-agent", onAnnotate }}>
+        <span>Native evidence</span>
+      </TranscriptRunAnnotationBlock>,
+    );
+    expect(container.querySelector("[data-run-transcript-annotation-trigger]")).toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(container.querySelector("span")!.firstChild!);
+    Object.defineProperty(range, "getBoundingClientRect", { value: () => new DOMRect(20, 20, 120, 20) });
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    act(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    const addButton = document.querySelector<HTMLButtonElement>("[role='toolbar'] button");
+    expect(addButton?.textContent).toContain("Add to chat");
+    act(() => addButton!.click());
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).not.toBeNull();
+    const file = new File(["proof"], "proof.txt", { type: "text/plain" });
+    const fileInput = document.querySelector<HTMLInputElement>("[data-testid='chat-response-annotation-editor'] input[type='file']")!;
+    Object.defineProperty(fileInput, "files", { value: [file] });
+    act(() => fileInput.dispatchEvent(new Event("change", { bubbles: true })));
+    act(() => Array.from(document.querySelectorAll("[data-testid='chat-response-annotation-editor'] button"))
+      .find(button => button.textContent === "Save")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onAnnotate).toHaveBeenCalledTimes(1);
+    expect(onAnnotate).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRunId: "native-run", sourceAgentId: "native-agent", sourceMemberIds: ["native-entry-1"],
+      blockId: "native-entry-1", anchorKind: "text", text: "Native evidence", pendingFiles: [file], attachmentIds: [],
+    }));
+  });
+
+  it.each(["streaming", "missing IDs", "blank IDs", "missing context"])("fails closed for Chat selection: %s", (reason) => {
+    const onAnnotate = vi.fn();
+    const container = render(<TranscriptRunAnnotationBlock
+      block={{ type: "thinking", ts: "2026-10-03T00:00:00Z", text: "Unsafe evidence",
+        streaming: reason === "streaming", sourceEntryIds: reason === "missing IDs" ? [] : reason === "blank IDs" ? [" "] : ["native-1"] }}
+      presentation="chat" context={reason === "missing context" ? undefined : { sourceRunId: "run", sourceAgentId: "agent", onAnnotate }}>
+      <span>Unsafe evidence</span>
+    </TranscriptRunAnnotationBlock>);
+    const range = document.createRange();
+    range.selectNodeContents(container.querySelector("span")!.firstChild!);
+    Object.defineProperty(range, "getBoundingClientRect", { value: () => new DOMRect(20, 20, 120, 20) });
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    act(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    expect(document.querySelector("[role='toolbar']")).toBeNull();
+    expect(onAnnotate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: "native-only transcript", hasLegacyGenerationMetadata: false },
+    { label: "legacy-compatible transcript", hasLegacyGenerationMetadata: true },
+  ])("uses native IDs through the real Chat timeline without a duplicate page listener ($label)", async ({ hasLegacyGenerationMetadata }) => {
+    const onAnnotate = vi.fn();
+    function ChatSelection() {
+      const draft = useRef("scope");
+      const workspace = useRef<HTMLDivElement>(null);
+      const nativeEntry: TranscriptEntry = { kind: "thinking", ts: "2026-10-03T00:00:00Z", text: "Native timeline evidence", sourceEntryId: "native-thinking" };
+      const entries: TranscriptEntry[] = [hasLegacyGenerationMetadata
+        ? Object.assign(nativeEntry, { generationId: "legacy-generation", generationSeqStart: 1, generationSeqEnd: 1 })
+        : nativeEntry];
+      const message = { id: "message", runId: "native-run", conversationId: "chat", role: "assistant", kind: "message", status: "completed", body: "Final", supersededAt: null } as ChatMessage;
+      const legacy = usePendingChatResponseAnnotationSelection({ rawMessages: [message], loadedTranscriptsByMessageId: {},
+        transcriptByRun: new Map([["native-run", entries]]), selectedConversationId: "chat", draftStorageScopeKey: "scope",
+        activeDraftScopeRef: draft, chatMainWorkspaceRef: workspace });
+      return <div ref={workspace}>
+        <output data-testid="legacy-selection">{legacy.pendingSelection ? "duplicate" : "none"}</output>
+        <RunTranscriptView entries={entries} annotationSource={{ sourceConversationId: "chat", sourceMessageId: "message" }}
+          presentation="chat" runAnnotationContext={{ sourceRunId: "native-run", sourceAgentId: "native-agent", onAnnotate }} />
+      </div>;
+    }
+    const container = render(<ThemeProvider><ChatSelection /></ThemeProvider>);
+    const root = container.querySelector<HTMLElement>('[data-run-transcript-selection-owner="true"]')!;
+    expect(root).not.toBeNull();
+    const text = Array.from(root.querySelectorAll("p")).find(p => p.textContent === "Native timeline evidence")!;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    Object.defineProperty(range, "getBoundingClientRect", { value: () => new DOMRect(20, 20, 120, 20) });
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    act(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    expect(document.querySelectorAll("[role='toolbar']")).toHaveLength(1);
+    expect(container.querySelector('[data-testid="legacy-selection"]')?.textContent).toBe("none");
+    act(() => document.querySelector<HTMLButtonElement>("[role='toolbar'] button")!.click());
+    const cancel = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-testid='chat-response-annotation-editor'] button"))
+      .find(button => button.textContent === "Cancel")!;
+    act(() => cancel.click());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).toBeNull();
+    expect(document.querySelectorAll("[role='toolbar']")).toHaveLength(0);
+    expect(container.querySelector('[data-testid="legacy-selection"]')?.textContent).toBe("none");
+    expect(onAnnotate).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(root);
+  });
+
   it("waits for the selection toolbar action before creating a text annotation", () => {
     const onAnnotate = vi.fn();
     const container = render(
@@ -546,6 +766,71 @@ describe("TranscriptRunAnnotationBlock", () => {
       pendingFiles: [],
       attachmentIds: [],
     }));
+  });
+
+  it("does not save a selected draft after its Run source changes before passive cleanup", () => {
+    const onAnnotate = vi.fn();
+    let attemptedSaveBeforePassiveCleanup = false;
+    function SwitchingTranscriptSource() {
+      const [source, setSource] = useState<"first" | "second">("first");
+      useLayoutEffect(() => {
+        if (source !== "second") return;
+        const saveButton = Array.from(
+          document.querySelectorAll<HTMLButtonElement>("[data-testid='chat-response-annotation-editor'] button"),
+        ).find((button) => button.textContent === "Save");
+        attemptedSaveBeforePassiveCleanup = Boolean(saveButton);
+        saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      }, [source]);
+
+      const sourceMemberId = source === "first" ? "run-1-entry" : "run-2-entry";
+      return (
+        <>
+          <button type="button" data-testid="switch-annotation-source" onClick={() => setSource("second")}>
+            Switch source
+          </button>
+          <TranscriptRunAnnotationBlock
+            block={{
+              type: "thinking",
+              ts: "2026-10-03T00:00:00.000Z",
+              text: "Identical transcript text",
+              streaming: false,
+              sourceEntryIds: [sourceMemberId],
+            }}
+            presentation="detail"
+            context={{
+              sourceRunId: source === "first" ? "run-1" : "run-2",
+              sourceAgentId: source === "first" ? "agent-1" : "agent-2",
+              onAnnotate,
+            }}
+          >
+            <span>Identical transcript text</span>
+          </TranscriptRunAnnotationBlock>
+        </>
+      );
+    }
+
+    const container = render(<SwitchingTranscriptSource />);
+    const textNode = container.querySelector("span")?.firstChild;
+    expect(textNode).not.toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(textNode!);
+    Object.defineProperty(range, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(20, 20, 120, 20),
+    });
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    act(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+
+    const addButton = document.querySelector<HTMLButtonElement>("[role='toolbar'] button");
+    expect(addButton?.textContent).toContain("Add to chat");
+    act(() => addButton?.click());
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).not.toBeNull();
+
+    act(() => container.querySelector<HTMLButtonElement>("[data-testid='switch-annotation-source']")?.click());
+
+    expect(attemptedSaveBeforePassiveCleanup).toBe(true);
+    expect(onAnnotate).not.toHaveBeenCalled();
   });
 
   it("discards a transition annotation when the editor is cancelled", () => {
@@ -736,24 +1021,36 @@ describe("native Steer transcript blocks", () => {
   });
 
   it("keeps adjacent same-anchor Steer messages as separate durable blocks", () => {
-    const entries: TranscriptEntry[] = [
-      {
-        kind: "user",
+    const makeSteerMessage = (id: string, body: string, generationSeq: number): ChatMessage => ({
+      id,
+      orgId: "org-1",
+      conversationId: "chat-1",
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body,
+      structuredPayload: {
         source: "steer",
-        messageId: "steer-message-1",
-        controlActionId: "steer-action-1",
-        ts: "2026-07-21T08:00:00.000Z",
-        text: "First same-anchor direction",
+        targetGenerationId: "generation-1",
+        afterTranscriptEntryCount: 0,
+        generationSeq,
+        controlActionId: `steer-action-${generationSeq}`,
+        deliveryDisposition: "accepted_current",
       },
-      {
-        kind: "user",
-        source: "steer",
-        messageId: "steer-message-2",
-        controlActionId: "steer-action-2",
-        ts: "2026-07-21T08:00:00.000Z",
-        text: "Second same-anchor direction",
-      },
-    ];
+      approvalId: null,
+      approval: null,
+      attachments: [],
+      replyingAgentId: null,
+      chatTurnId: `turn-${id}`,
+      turnVariant: 0,
+      supersededAt: null,
+      createdAt: new Date("2026-07-21T08:00:00.000Z"),
+      updatedAt: new Date("2026-07-21T08:00:00.000Z"),
+    });
+    const entries = mergeNativeSteerTranscriptEntries([], [
+      makeSteerMessage("steer-message-1", "First same-anchor direction", 1),
+      makeSteerMessage("steer-message-2", "Second same-anchor direction", 2),
+    ]);
 
     const blocks = normalizeTranscript(entries, false);
     expect(blocks).toMatchObject([

@@ -1,10 +1,12 @@
-import type { TranscriptEntry } from "@/agent-runtimes";
 import { agentsApi } from "@/api/agents";
+import { approvalsApi } from "@/api/approvals";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
 import type { HealthStatus } from "@/api/health";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
+import { ChatRuntimeSensitiveInput } from "@/components/ChatRuntimeSensitiveInput";
+import type { MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import {
   ChatComposerAddMenu,
@@ -17,15 +19,14 @@ import {
   ChatComposerToolbar,
 } from "@/components/chat/ChatComposer";
 import {
-  DraftResponseAnnotationsPopover,
-  ResponseAnnotationEditor,
-} from "@/components/chat/ResponseAnnotations";
-import {
   ChatGenerationCloseSupersededError,
+  chatGenerationOwnerStateKey,
   useChatGenerationActions,
   useChatGenerations,
 } from "@/context/ChatGenerationContext";
+import { useOptionalSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
+import { useChatRuntimeSensitiveInput } from "@/hooks/useChatRuntimeSensitiveInput";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
 import { blockStaleAnnotationSubmission } from "@/lib/chat-annotation-runtime";
@@ -35,12 +36,20 @@ import {
   createChatResponseAnnotationState,
   responseAnnotationReducer,
   serializeChatResponseAnnotations,
-  validateChatResponseAnnotationReplacement,
 } from "@/lib/chat-response-annotations";
-import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
+import { preparePendingChatSendMutation } from "@/lib/chat-send-mutation-storage";
+import {
+  buildChatSkillOptions,
+  buildChatSkillReferenceOptions,
+  filterChatSkillOptions,
+} from "@/lib/chat-skill-options";
+import { activeChatStreamAssistantMessageId } from "@/lib/chat-stream-state";
+import { resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { appendSkillReferencesToDraft } from "@/lib/organization-skill-picker";
 import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
+import { isKeptSideChatConflict } from "@/lib/side-chat-close";
+import { invalidateSideChatHistory } from "@/lib/side-chat-history-cache";
 import {
   sideChatGenerationScopeKey,
   sidePanelTargetKey,
@@ -53,10 +62,7 @@ import {
   useChatComposerPasteAttachments,
 } from "@/pages/Chat.file-drop";
 import {
-  AssistantDraftItem,
-  ChatMessageItem,
-  OptimisticUserDraftItem,
-  StreamTranscriptItem,
+  AskUserPanel,
 } from "@/pages/Chat.messages";
 import {
   ChatAgentMenuContent,
@@ -66,18 +72,26 @@ import {
   useChatRuntimeSelection,
   type ChatRuntimeOverrides,
 } from "@/pages/Chat.model-selector";
+import type { ApprovalAction } from "@/pages/Chat.parts";
 import {
-  composerMenuPositionForAnchor,
+  askUserRequestFromMessage,
+  chatSidePanelTargetFromHref,
+  findLatestUnansweredAskUserMessage,
   materializePendingAttachment,
   mergeChatMessages,
   pendingAttachmentKey,
+  shouldHandlePlainChatLinkClick
 } from "@/pages/Chat.parts";
+import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "@/pages/Chat.plan-mode-controls";
+import { chatAgentUsesCodexAppServer, rememberChatAssistantStreamRowIdentity } from "@/pages/Chat.timeline";
 import { EMPTY_CHAT_BODY_SHA256, applyChatStreamProgressEvent } from "@/pages/Chat.workspace-helpers";
 import type {
   Agent,
+  ChatAskUserResponse,
   ChatConversation,
   ChatInlineAnnotation,
   ChatMessage,
+  ChatOperationProposalDecisionAction,
 } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3 } from "lucide-react";
@@ -91,49 +105,108 @@ import {
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
+import { SideChatPanelMessages } from "./SideChatPanelMessages";
+import { expiryLabel } from "./SideChatPanelView.expiry";
+import { SideChatResponseAnnotations } from "./SideChatResponseAnnotations";
+import { useSideChatComposerMenus } from "./useSideChatComposerMenus";
+import { useSideChatGenerationOwner } from "./useSideChatGenerationOwner";
+import { useSideChatSendDraft } from "./useSideChatSendDraft";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
 
-const EMPTY_SKILL_REFERENCES: MarkdownSkillReferencePreview[] = [];
-
-function expiryLabel(expiresAt: Date | string | null | undefined, now: Date) {
-  if (!expiresAt) return null;
-  const remaining = new Date(expiresAt).getTime() - now.getTime();
-  if (remaining <= 0) return "Expired · read-only";
-  const minutes = Math.max(1, Math.ceil(remaining / 60_000));
-  if (minutes < 60) return `${minutes}m left`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m left`;
-}
-
-function transcriptEntries(message: ChatMessage) {
-  return (message.transcript ?? []) as TranscriptEntry[];
-}
-
 function noop() {}
 
-export function SideChatPanelView({
-  organizationId,
-  target,
-  active = true,
-  onRegisterCloseHandler,
-  onReplaceTarget,
-  onSelectResponseAnnotation,
-}: {
+function isCopiedSideChatSourceMessage(message: ChatMessage) {
+  const source = message.structuredPayload?.sideChatSource;
+  return Boolean(source && typeof source === "object" && !Array.isArray(source));
+}
+
+async function waitForSideChatGenerationTerminal(
+  organizationId: string,
+  conversationId: string,
+  generationId: string | null,
+) {
+  if (!generationId) return true;
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    const queue = await chatsApi.listQueue(conversationId);
+    if (queue.activeGenerationId !== generationId && queue.activeGenerationId === null) {
+      // Confirm the projected message is no longer streaming before allowing a
+      // close to remove the conversation row.
+      const messages = await chatsApi.listMessages(organizationId, conversationId, { includeTranscript: false });
+      const generationMessage = messages.find((message) => message.generationId === generationId);
+      if (!generationMessage || generationMessage.status !== "streaming") return true;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+  }
+  return false;
+}
+
+type SideChatPanelViewProps = {
   organizationId: string;
   target: SideChatTarget;
   active?: boolean;
   onRegisterCloseHandler: (clientMutationId: string, handler: (() => Promise<string | null>) | null) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
   onSelectResponseAnnotation: (annotation: ChatInlineAnnotation, ordinal: number) => void;
-}) {
+};
+
+export function SideChatPanelView(props: SideChatPanelViewProps) {
+  const { principalId, ownerKey, isCurrent } = useSideChatGenerationOwner();
+  const scopeKey = JSON.stringify([
+    principalId,
+    props.organizationId,
+    props.target.sourceConversationId,
+    props.target.clientMutationId,
+  ]);
+
+  return <SideChatPanelViewInstance
+    key={scopeKey}
+    {...props}
+    principalId={principalId}
+    generationOwnerKey={ownerKey}
+    isGenerationOwnerCurrent={isCurrent}
+  />;
+}
+
+type SideChatPanelViewInstanceProps = SideChatPanelViewProps & {
+  principalId: string | null;
+  generationOwnerKey: string;
+  isGenerationOwnerCurrent: (ownerKey: string, ownerSignal?: AbortSignal) => boolean;
+};
+
+function SideChatPanelViewInstance({
+  organizationId,
+  target,
+  principalId,
+  generationOwnerKey,
+  isGenerationOwnerCurrent,
+  active = true,
+  onRegisterCloseHandler,
+  onReplaceTarget,
+  onSelectResponseAnnotation,
+}: SideChatPanelViewInstanceProps) {
   const queryClient = useQueryClient();
+  const assistantRowIdentitiesRef = useRef(new Map<string, string>());
   const { pushToast } = useToast();
-  const { sendInFlightByChatId, streamDrafts } = useChatGenerations();
+  const sidePanel = useOptionalSidePanel();
+  const sidePanelContextKey = sidePanel?.contextKey ?? null;
+  const openTargetForContext = sidePanel?.openTargetForContext;
   const {
-    abortChatStream,
+    sendInFlightByChatId,
+    streamDrafts,
+  } = useChatGenerations();
+  const {
+    request: runtimeSensitiveInputRequest,
+    setRequest: setRuntimeSensitiveInputRequest,
+    respond: respondToRuntimeSensitiveInput,
+    cancel: cancelRuntimeSensitiveInput,
+  } = useChatRuntimeSensitiveInput(target.conversationId);
+  const {
+    completeChatGenerationOwner,
     clearChatGenerationConversation,
+    clearChatGenerationProviderState,
     destroyChatGenerationConversation,
+    getChatGenerationEpoch,
     isChatGenerationClosePending,
     isChatGenerationCurrent,
     rememberChatGenerationConversation,
@@ -147,10 +220,32 @@ export function SideChatPanelView({
     tryBeginChatGeneration,
   } = useChatGenerationActions();
   const streamScopeKey = sideChatGenerationScopeKey(organizationId, target);
-  const stream = streamDrafts[streamScopeKey] ?? null;
-  const sending = Boolean(sendInFlightByChatId[streamScopeKey]);
-  const [draft, setDraft] = useState("");
+  const sendStateKey = chatGenerationOwnerStateKey(streamScopeKey, generationOwnerKey);
+  const storedStream = streamDrafts[streamScopeKey] ?? null;
+  const stream = storedStream?.generationOwnerKey
+    && storedStream.generationOwnerKey !== generationOwnerKey
+    ? null
+    : storedStream;
+  const sending = Boolean(sendInFlightByChatId[sendStateKey]
+    || (!storedStream?.generationOwnerKey && sendInFlightByChatId[streamScopeKey]));
+  const {
+    draft,
+    setDraft,
+    retryUserMessageIdRef,
+    submissionInFlightRef,
+    saveDraft,
+    clearDraft,
+  } = useSideChatSendDraft({
+    principalId,
+    organizationId,
+    sourceConversationId: target.sourceConversationId,
+    clientMutationId: target.clientMutationId,
+  });
+  const [draftPlanMode, setDraftPlanMode] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [stopPending, setStopPending] = useState(false);
+  const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({});
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string | null>(null);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
@@ -176,7 +271,13 @@ export function SideChatPanelView({
   const draftAgentInitializedRef = useRef(false);
   const conversationIdRef = useRef(target.conversationId);
   const conversationScopeKeyRef = useRef(streamScopeKey);
-  const retryUserMessageIdRef = useRef<string | null>(null);
+  const stopRequestedStreamKeyRef = useRef<string | null>(null);
+  const stopRequestTokenRef = useRef(0);
+  const planModeMutationTokenRef = useRef(0);
+  const activeStopRequestRef = useRef<{
+    token: number;
+    streamKey: string | null;
+  } | null>(null);
   if (conversationScopeKeyRef.current !== streamScopeKey) {
     conversationScopeKeyRef.current = streamScopeKey;
     conversationIdRef.current = target.conversationId;
@@ -185,14 +286,113 @@ export function SideChatPanelView({
     conversationIdRef.current = target.conversationId ?? conversationIdRef.current;
   }
 
-  const clearProviderOwnedGeneration = useCallback(() => {
-    retryUserMessageIdRef.current = null;
-    setStreamAbortController(streamScopeKey, null);
-    setChatSendInFlight(streamScopeKey, false);
-    setStreamDraftForChat(streamScopeKey, null);
+  const invalidateParentHistory = useCallback(() => invalidateSideChatHistory(
+    queryClient,
+    organizationId,
+    target.sourceConversationId,
+    principalId,
+  ), [organizationId, principalId, queryClient, target.sourceConversationId]);
+
+  const clearProviderOwnedGeneration = useCallback((
+    epoch: number,
+    streamKey?: string | null,
+  ) => {
+    const cleared = clearChatGenerationProviderState(streamScopeKey, epoch, streamKey);
+    if (cleared) retryUserMessageIdRef.current = null;
+    return cleared;
   }, [
-    setChatSendInFlight,
-    setStreamAbortController,
+    clearChatGenerationProviderState,
+    streamScopeKey,
+  ]);
+
+  const stopSideChatGeneration = useCallback(async ({
+    conversationId,
+    draft: draftToStop,
+    clearLocalState = true,
+    generationEpoch: generationEpochOverride,
+  }: {
+    conversationId: string | null | undefined;
+    draft: typeof stream;
+    clearLocalState?: boolean;
+    generationEpoch?: number | null;
+  }) => {
+    if (!conversationId) return true;
+    const streamKey = draftToStop?.streamKey ?? null;
+    const generationEpoch = generationEpochOverride
+      ?? draftToStop?.generationEpoch
+      ?? getChatGenerationEpoch(streamScopeKey);
+    const stopToken = ++stopRequestTokenRef.current;
+    activeStopRequestRef.current = { token: stopToken, streamKey };
+    if (streamKey) {
+      stopRequestedStreamKeyRef.current = streamKey;
+      setStreamDraftForChat(streamScopeKey, (current) => (
+        current?.streamKey === streamKey ? { ...current, state: "stopping" } : current
+      ));
+    }
+    setStopPending(true);
+    try {
+      const queue = await chatsApi.listQueue(conversationId);
+      const generationFence = queue.activeGenerationId
+        && queue.activeAttemptEpoch !== null
+        && queue.activeAttemptEpoch !== undefined
+        && queue.activeControlVersion !== null
+        && queue.activeControlVersion !== undefined
+        ? {
+            expectedGenerationId: queue.activeGenerationId,
+            expectedAttemptEpoch: queue.activeAttemptEpoch,
+            expectedControlVersion: queue.activeControlVersion,
+          }
+        : null;
+      const result = await chatsApi.stopMessageStream(conversationId, {
+        controlActionId: globalThis.crypto.randomUUID(),
+        ...(generationFence ?? {}),
+        ...(draftToStop ? {
+          lastCommittedRenderSeq: draftToStop.lastCommittedRenderSeq ?? 0,
+          renderedBodyHash: draftToStop.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
+        } : {}),
+      });
+      const terminal = await waitForSideChatGenerationTerminal(
+        organizationId,
+        conversationId,
+        result.generationId ?? draftToStop?.generationId ?? null,
+      );
+      if (!terminal) throw new Error("Side Chat runtime did not reach a terminal state before timeout.");
+      if (clearLocalState && generationEpoch !== null && generationEpoch !== undefined) {
+        const cleared = clearProviderOwnedGeneration(generationEpoch, streamKey);
+        if (cleared) {
+          releaseChatGenerationScope(streamScopeKey, generationEpoch);
+          await Promise.allSettled([
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, conversationId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, conversationId) }),
+          ]);
+        }
+      }
+      return true;
+    } catch (error) {
+      const ownsStopRequest = activeStopRequestRef.current?.token === stopToken;
+      if (ownsStopRequest && streamKey) {
+        setStreamDraftForChat(streamScopeKey, (current) => (
+          current?.streamKey === streamKey && current.state === "stopping"
+            ? { ...current, state: "streaming" }
+            : current
+        ));
+      }
+      throw error;
+    } finally {
+      if (activeStopRequestRef.current?.token === stopToken) {
+        activeStopRequestRef.current = null;
+        if (stopRequestedStreamKeyRef.current === streamKey) {
+          stopRequestedStreamKeyRef.current = null;
+        }
+        setStopPending(false);
+      }
+    }
+  }, [
+    clearProviderOwnedGeneration,
+    getChatGenerationEpoch,
+    organizationId,
+    queryClient,
+    releaseChatGenerationScope,
     setStreamDraftForChat,
     streamScopeKey,
   ]);
@@ -204,18 +404,32 @@ export function SideChatPanelView({
   }, [rememberChatGenerationConversation, streamScopeKey, target.conversationId]);
 
   const destroyForClose = useCallback(async () => {
+    const activeGenerationEpoch = getChatGenerationEpoch(streamScopeKey);
+    const activeStreamKey = stream?.streamKey ?? null;
     const close = requestChatGenerationClose(streamScopeKey, conversationIdRef.current);
-    abortChatStream(streamScopeKey);
     const conversationId = close.conversationId;
     if (!conversationId) {
       if (!isChatGenerationClosePending(streamScopeKey, close.epoch)) {
         throw new ChatGenerationCloseSupersededError();
       }
-      clearProviderOwnedGeneration();
+      clearProviderOwnedGeneration(close.epoch, activeStreamKey);
       releaseChatGenerationScope(streamScopeKey, close.epoch);
+      clearDraft();
       return null;
     }
     try {
+      if (stream || sending) {
+        const terminal = await stopSideChatGeneration({
+          conversationId,
+          draft: stream,
+          clearLocalState: false,
+          generationEpoch: activeGenerationEpoch,
+        });
+        if (!terminal) throw new Error("Side Chat could not confirm runtime termination before close.");
+      }
+      if (!isChatGenerationClosePending(streamScopeKey, close.epoch)) {
+        throw new ChatGenerationCloseSupersededError();
+      }
       await destroyChatGenerationConversation(
         streamScopeKey,
         conversationId,
@@ -227,13 +441,27 @@ export function SideChatPanelView({
       if (!isChatGenerationClosePending(streamScopeKey, close.epoch)) {
         throw new ChatGenerationCloseSupersededError();
       }
-      clearProviderOwnedGeneration();
-      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 410)) {
+        clearProviderOwnedGeneration(close.epoch, activeStreamKey);
         clearChatGenerationConversation(streamScopeKey, conversationId);
         releaseChatGenerationScope(streamScopeKey, close.epoch);
-        // Let the parent reconcile the tab and query cache using its existing 404/409 path.
+        clearDraft();
+        void invalidateParentHistory();
+        // Let the parent reconcile the tab and its conversation cache.
         throw error;
       }
+      if (error instanceof ApiError && error.status === 409) {
+        if (isKeptSideChatConflict(error)) {
+          clearProviderOwnedGeneration(close.epoch, activeStreamKey);
+          clearChatGenerationConversation(streamScopeKey, conversationId);
+          releaseChatGenerationScope(streamScopeKey, close.epoch);
+          void invalidateParentHistory();
+          throw error;
+        }
+        // Keep the panel target when a runtime close conflicts with active work.
+        throw new Error(error.message, { cause: error });
+      }
+      clearProviderOwnedGeneration(close.epoch, activeStreamKey);
       resetChatGenerationClose(streamScopeKey, close.epoch);
       throw error;
     }
@@ -241,19 +469,28 @@ export function SideChatPanelView({
       throw new ChatGenerationCloseSupersededError();
     }
     clearChatGenerationConversation(streamScopeKey, conversationId);
-    clearProviderOwnedGeneration();
+    if (!clearProviderOwnedGeneration(close.epoch, activeStreamKey)) {
+      throw new ChatGenerationCloseSupersededError();
+    }
     releaseChatGenerationScope(streamScopeKey, close.epoch);
+    clearDraft();
+    void invalidateParentHistory();
     return conversationId;
   }, [
-    abortChatStream,
     clearChatGenerationConversation,
     clearProviderOwnedGeneration,
     destroyChatGenerationConversation,
+    getChatGenerationEpoch,
     isChatGenerationClosePending,
+    clearDraft,
+    invalidateParentHistory,
     releaseChatGenerationScope,
     requestChatGenerationClose,
     resetChatGenerationClose,
     streamScopeKey,
+    stopSideChatGeneration,
+    stream,
+    sending,
   ]);
 
   useEffect(() => {
@@ -298,7 +535,7 @@ export function SideChatPanelView({
     queryFn: () => chatsApi.listMessages(
       organizationId,
       target.conversationId!,
-      { includeTranscript: true },
+      { includeTranscript: false },
     ),
     enabled: Boolean(target.conversationId),
   });
@@ -354,6 +591,29 @@ export function SideChatPanelView({
       selectedAgent,
     ],
   );
+  const chatSkillReferences = useMemo<MarkdownSkillReferencePreview[]>(
+    () => buildChatSkillReferenceOptions({
+      agent: selectedAgent,
+      orgUrlKey: organizationQuery.data?.urlKey ?? "organization",
+      organizationSkills: organizationSkillsQuery.data,
+      skillSnapshot: agentSkillsQuery.data,
+    }).map((skill) => ({
+      href: skill.skillMarkdownTarget,
+      label: skill.skillRefLabel,
+      displayName: skill.skillDisplayName,
+      description: skill.skillDescription,
+      categoryLabel: skill.skillCategoryLabel,
+      locationLabel: skill.skillLocationLabel,
+      detailsHref: skill.skillDetailsHref,
+      openHref: skill.skillOpenHref,
+    })),
+    [
+      agentSkillsQuery.data,
+      organizationQuery.data?.urlKey,
+      organizationSkillsQuery.data,
+      selectedAgent,
+    ],
+  );
   const filteredChatSkills = useMemo(
     () => filterChatSkillOptions(availableChatSkills, skillSearchQuery),
     [availableChatSkills, skillSearchQuery],
@@ -380,10 +640,12 @@ export function SideChatPanelView({
       )) ?? null
     : null;
   const displayedStream = authoritativeTerminalMessage ? null : stream;
+  const activeAssistantMessageId = activeChatStreamAssistantMessageId(messages, displayedStream);
   const visibleMessages = displayedStream?.generationId
     ? messages.filter((message) => (
         message.role !== "assistant"
         || message.generationId !== displayedStream.generationId
+        || message.id === activeAssistantMessageId
       ))
     : messages;
   const showOptimisticUserMessage = Boolean(
@@ -396,9 +658,74 @@ export function SideChatPanelView({
   const stateLabel = readOnly
     ? "Expired · read-only"
     : expiryLabel(conversation?.sideChatExpiresAt, now);
+  const isMessageMutationAllowed = useCallback((messageId: string) => {
+    if (readOnly) return false;
+    const message = visibleMessages.find((candidate) => candidate.id === messageId);
+    return !message || !isCopiedSideChatSourceMessage(message);
+  }, [readOnly, visibleMessages]);
   const setConversationCache = (updated: ChatConversation) => {
     queryClient.setQueryData(queryKeys.chats.detail(organizationId, updated.id), updated);
   };
+  const activePlanMode = conversation?.planMode ?? draftPlanMode;
+  const applyPlanMode = (value: boolean) => {
+    const conversationId = conversation?.id ?? target.conversationId;
+    if (value === activePlanMode) return;
+    const previousConversation = conversation;
+    const previousPlanMode = activePlanMode;
+    const mutationToken = ++planModeMutationTokenRef.current;
+    setDraftPlanMode(value);
+    if (!conversationId) return;
+    if (previousConversation) {
+      setConversationCache({ ...previousConversation, planMode: value });
+    }
+    void chatsApi.update(conversationId, { planMode: value }).then((updated) => {
+      if (planModeMutationTokenRef.current !== mutationToken) return;
+      setConversationCache(updated);
+      setDraftPlanMode(updated.planMode);
+    }).catch((error: unknown) => {
+      if (planModeMutationTokenRef.current !== mutationToken) return;
+      setDraftPlanMode(previousPlanMode);
+      if (previousConversation) setConversationCache(previousConversation);
+      setSendError(error instanceof Error ? error.message : "Failed to update Plan Mode.");
+    });
+  };
+  const openSideChatFile = useCallback((targetPath: string, label: string) => {
+    openTargetForContext?.(sidePanelContextKey, {
+      kind: "local_file",
+      filePath: targetPath,
+      label,
+    });
+  }, [openTargetForContext, sidePanelContextKey]);
+  const handleMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({
+    event,
+    href,
+    label,
+    sourceHref,
+  }) => {
+    if (!shouldHandlePlainChatLinkClick(event) || !openTargetForContext) return;
+    const organizationSkills = organizationSkillsQuery.data;
+    const sidePanelTarget = (sourceHref
+      ? chatSidePanelTargetFromHref(sourceHref, label, organizationSkills)
+      : null)
+      ?? chatSidePanelTargetFromHref(href, label, organizationSkills);
+    const localFilePath = sidePanelTarget ? null : resolveLocalFileTarget(href, label);
+    const targetToOpen = sidePanelTarget ?? (localFilePath
+      ? {
+          kind: "local_file" as const,
+          filePath: localFilePath,
+          label: label.trim() || localFilePath.split(/[\\/]/u).at(-1) || localFilePath,
+        }
+      : null);
+    if (!targetToOpen) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openTargetForContext(sidePanelContextKey, targetToOpen);
+    return true;
+  }, [
+    openTargetForContext,
+    organizationSkillsQuery.data,
+    sidePanelContextKey,
+  ]);
   const applyRuntimeOverrides = (overrides: ChatRuntimeOverrides) => {
     if (!selectedAgent) return;
     setDraftRuntimeOverrides(overrides);
@@ -449,16 +776,109 @@ export function SideChatPanelView({
     );
   };
 
-  const handleSend = async () => {
-    const body = draft.trim();
+  const pendingAskUserMessage = useMemo(
+    () => findLatestUnansweredAskUserMessage(visibleMessages),
+    [visibleMessages],
+  );
+  const pendingAskUserRequest = pendingAskUserMessage
+    ? askUserRequestFromMessage(pendingAskUserMessage)
+    : null;
+
+  const refreshSideChat = useCallback(async (conversationId: string) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, conversationId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, conversationId) }),
+    ]);
+  }, [organizationId, queryClient]);
+
+  const handleApprovalAction = useCallback(async (
+    approvalId: string,
+    action: ApprovalAction,
+    messageId: string,
+    payloadOverride?: Record<string, unknown>,
+  ) => {
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || !isMessageMutationAllowed(messageId)) return;
+    const actionKey = `approval:${messageId}:${action}`;
+    if (pendingActionKey) return;
+    setPendingActionKey(actionKey);
+    const note = decisionNotesByMessageId[messageId]?.trim() || undefined;
+    try {
+      if (action === "approve") await approvalsApi.approve(approvalId, note, payloadOverride);
+      else if (action === "reject") await approvalsApi.reject(approvalId, note);
+      else await approvalsApi.requestRevision(approvalId, note);
+      setDecisionNotesByMessageId((current) => {
+        if (!(messageId in current)) return current;
+        const { [messageId]: _removed, ...rest } = current;
+        return rest;
+      });
+      await refreshSideChat(conversationId);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Failed to apply approval action.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }, [
+    decisionNotesByMessageId,
+    isMessageMutationAllowed,
+    pendingActionKey,
+    refreshSideChat,
+  ]);
+
+  const handleOperationProposal = useCallback(async (
+    messageId: string,
+    action: ChatOperationProposalDecisionAction,
+    decisionNote: string,
+  ) => {
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || pendingActionKey || !isMessageMutationAllowed(messageId)) return;
+    setPendingActionKey(`operation:${messageId}:${action}`);
+    try {
+      await chatsApi.resolveOperationProposal(conversationId, messageId, {
+        action,
+        decisionNote: decisionNote.trim() || undefined,
+      });
+      await refreshSideChat(conversationId);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Failed to resolve operation proposal.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }, [isMessageMutationAllowed, pendingActionKey, refreshSideChat]);
+
+  const handleConvertToIssue = useCallback(async (message: ChatMessage) => {
+    const conversationId = conversationIdRef.current;
     if (
-      (pendingFiles.length === 0 && !canSubmitChatResponseAnnotations(body, annotationState))
+      !conversationId
+      || pendingActionKey
+      || readOnly
+      || isCopiedSideChatSourceMessage(message)
+    ) return;
+    setPendingActionKey(`convert:${message.id}`);
+    try {
+      await chatsApi.convertToIssue(conversationId, { messageId: message.id });
+      await refreshSideChat(conversationId);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Failed to create issue.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }, [pendingActionKey, readOnly, refreshSideChat]);
+
+  const handleSend = async (
+    bodyOverride?: string,
+    filesOverride?: File[],
+  ) => {
+    const body = (bodyOverride ?? draft).trim();
+    const filesForSend = filesOverride ?? pendingFiles;
+    if (
+      (filesForSend.length === 0 && !canSubmitChatResponseAnnotations(body, annotationState))
       || sending
       || isChatGenerationClosePending(streamScopeKey)
       || readOnly
       || !sourceMessageId
     ) return;
-    const regularFiles = [...pendingFiles];
+    const regularFiles = [...filesForSend];
     const serializedAnnotations = serializeChatResponseAnnotations(annotationState, {
       fileIndexOffset: regularFiles.length,
     });
@@ -471,7 +891,12 @@ export function SideChatPanelView({
     const createdAt = new Date();
     const retryUserMessageId = retryUserMessageIdRef.current;
     const retrySourceDraft = stream?.state === "failed" ? stream : null;
-    const generation = tryBeginChatGeneration(streamScopeKey, target.conversationId);
+    if (!isGenerationOwnerCurrent(generationOwnerKey)) return;
+    const generation = tryBeginChatGeneration(
+      streamScopeKey,
+      target.conversationId,
+      generationOwnerKey,
+    );
     if (!generation) return;
     retryUserMessageIdRef.current = null;
     const generationEpoch = generation.epoch;
@@ -480,12 +905,18 @@ export function SideChatPanelView({
     let receivedAckEvent = false;
     let acknowledgedUserMessageId: string | null = retryUserMessageId;
     let receivedFinal = false;
-    setChatSendInFlight(streamScopeKey, true);
+    let settleClientMutation = () => {};
+    submissionInFlightRef.current = true;
+    saveDraft(body, retryUserMessageId);
+    setChatSendInFlight(sendStateKey, true);
     setSendError(null);
     setDraft("");
     setStreamDraftForChat(streamScopeKey, {
       chatId: generation.conversationId,
       streamKey,
+      generationEpoch,
+      generationOwnerKey,
+      clientMutationId: null,
       userBody: body,
       userFiles: regularFiles,
       userCreatedAt: createdAt,
@@ -505,6 +936,7 @@ export function SideChatPanelView({
     });
     let conversationId = generation.conversationId;
     const destroyCreatedConversation = async (createdConversationId: string) => {
+      if (!isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)) return;
       await destroyChatGenerationConversation(
         streamScopeKey,
         createdConversationId,
@@ -512,15 +944,36 @@ export function SideChatPanelView({
           await chatsApi.destroySideChat(createdConversationId);
         },
       );
+      if (!isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)) return;
       clearChatGenerationConversation(streamScopeKey, createdConversationId);
+      void invalidateParentHistory();
     };
     try {
       if (!conversationId) {
-        const created = await chatsApi.createSideChat(target.sourceConversationId, {
+        let created = await chatsApi.createSideChat(target.sourceConversationId, {
           sourceMessageId,
           clientMutationId: target.clientMutationId,
           preferredAgentId: selectedAgentId ?? undefined,
         });
+        if (!isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)) return;
+        void invalidateParentHistory();
+        if (created.planMode !== draftPlanMode) {
+          try {
+            created = await chatsApi.update(created.id, { planMode: draftPlanMode });
+          } catch (error) {
+            if (!isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)) return;
+            try {
+              await chatsApi.destroySideChat(created.id);
+              if (isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)) {
+                void invalidateParentHistory();
+              }
+            } catch {
+              // Preserve the original update failure.
+            }
+            throw error;
+          }
+          if (!isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)) return;
+        }
         if (
           !setChatGenerationConversation(streamScopeKey, generationEpoch, created.id)
           || !isChatGenerationCurrent(streamScopeKey, generationEpoch)
@@ -539,27 +992,67 @@ export function SideChatPanelView({
           conversationId: created.id,
         });
       }
-      if (!conversationId || !isChatGenerationCurrent(streamScopeKey, generationEpoch)) {
+      if (
+        !isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)
+        || !conversationId
+        || !isChatGenerationCurrent(streamScopeKey, generationEpoch)
+      ) {
         if (conversationId) await destroyCreatedConversation(conversationId);
         return;
       }
+      const preparedMutation = preparePendingChatSendMutation({
+        orgId: organizationId,
+        conversationId,
+        editUserMessageId: retryUserMessageId,
+        body,
+        files: [...regularFiles, ...serializedAnnotations.files],
+        inlineAnnotations: serializedAnnotations.inlineAnnotations,
+        modelOverride: activeRuntimeOverrides.modelOverride,
+        effortOverride: activeRuntimeOverrides.effortOverride,
+      });
+      settleClientMutation = preparedMutation.settle;
+      const clientMutationId = preparedMutation.clientMutationId;
+      setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey
+        ? { ...current, clientMutationId }
+        : current);
       const abortController = new AbortController();
       setStreamAbortController(streamScopeKey, abortController);
       await chatsApi.sendMessageStream(conversationId, body, {
         signal: abortController.signal,
+        clientMutationId,
         editUserMessageId: retryUserMessageId,
         modelOverride: activeRuntimeOverrides.modelOverride,
         effortOverride: activeRuntimeOverrides.effortOverride,
         files: [...regularFiles, ...serializedAnnotations.files],
         inlineAnnotations: serializedAnnotations.inlineAnnotations,
         onEvent: async (event) => {
-          if (!isChatGenerationCurrent(streamScopeKey, generationEpoch)) return;
+          if (
+            !isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)
+            || !isChatGenerationCurrent(streamScopeKey, generationEpoch)
+          ) return;
+          if (event.type === "sensitive_input_request") {
+            const chatId = conversationIdRef.current;
+            if (chatId) {
+              setRuntimeSensitiveInputRequest({
+                requestId: event.requestId,
+                kind: event.kind,
+              });
+            }
+            return;
+          }
           if (event.type === "ack") {
             acknowledged = true;
+            settleClientMutation();
             setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
             receivedAckEvent = true;
             acknowledgedUserMessageId = event.userMessage.id;
             retryUserMessageIdRef.current = null;
+            rememberChatAssistantStreamRowIdentity(assistantRowIdentitiesRef.current, {
+              streamKey,
+              generationId: event.generationId ?? null,
+              turnVariant: event.userMessage.turnVariant ?? 0,
+            });
+            saveDraft(body, event.userMessage.id);
             upsertMessage(conversationId!, event.userMessage);
             setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? {
               ...current,
@@ -598,6 +1091,7 @@ export function SideChatPanelView({
           if (event.type === "final") {
             receivedFinal = true;
             retryUserMessageIdRef.current = null;
+            clearDraft();
             for (const message of event.messages) upsertMessage(conversationId!, message);
             setStreamDraftForChat(
               streamScopeKey,
@@ -608,6 +1102,7 @@ export function SideChatPanelView({
             if (!acknowledged && event.messageId) {
               acknowledged = true;
               acknowledgedUserMessageId = event.messageId;
+              saveDraft(body, event.messageId);
               dispatchAnnotation({ type: "clear" });
               setPendingFiles([]);
               setAnnotationsExpanded(false);
@@ -627,6 +1122,12 @@ export function SideChatPanelView({
           }
         },
       });
+      if (
+        !isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)
+        || !isChatGenerationCurrent(streamScopeKey, generationEpoch)
+      ) {
+        return;
+      }
       if (!receivedFinal) {
         throw new Error("Side Chat stream ended before a final response.");
       }
@@ -635,15 +1136,34 @@ export function SideChatPanelView({
         queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, conversationId) }),
       ]);
     } catch (error) {
-      if (!isChatGenerationCurrent(streamScopeKey, generationEpoch)) return;
+      if (
+        !isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)
+        || !isChatGenerationCurrent(streamScopeKey, generationEpoch)
+      ) return;
+      if (stopRequestedStreamKeyRef.current === streamKey) {
+        if (acknowledged) {
+          clearDraft();
+        } else {
+          saveDraft(body, null);
+          setDraft((current) => current || body);
+        }
+        setStreamDraftForChat(
+          streamScopeKey,
+          (current) => current?.streamKey === streamKey ? null : current,
+        );
+        return;
+      }
       if (!acknowledged) {
         retryUserMessageIdRef.current = retryUserMessageId;
+        saveDraft(body, retryUserMessageId);
         setDraft((current) => current || body);
       } else if (receivedAckEvent && conversationId) {
         retryUserMessageIdRef.current = acknowledgedUserMessageId;
+        saveDraft(body, acknowledgedUserMessageId);
         setDraft((current) => current || body);
       } else {
         retryUserMessageIdRef.current = acknowledgedUserMessageId;
+        saveDraft(body, acknowledgedUserMessageId);
       }
       if (acknowledged && conversationId) {
         await Promise.all([
@@ -654,6 +1174,10 @@ export function SideChatPanelView({
             queryKey: queryKeys.chats.messages(organizationId, conversationId),
           }),
         ]).catch(() => undefined);
+        if (
+          !isGenerationOwnerCurrent(generationOwnerKey, generation.ownerSignal)
+          || !isChatGenerationCurrent(streamScopeKey, generationEpoch)
+        ) return;
       }
       setStreamDraftForChat(
         streamScopeKey,
@@ -663,9 +1187,14 @@ export function SideChatPanelView({
     } finally {
       if (isChatGenerationCurrent(streamScopeKey, generationEpoch)) {
         setStreamAbortController(streamScopeKey, null);
-        setChatSendInFlight(streamScopeKey, false);
+        setChatSendInFlight(sendStateKey, false);
         releaseChatGenerationScope(streamScopeKey, generationEpoch);
       }
+      completeChatGenerationOwner(generationOwnerKey, generation.ownerSignal);
+      if (stopRequestedStreamKeyRef.current === streamKey) {
+        stopRequestedStreamKeyRef.current = null;
+      }
+      submissionInFlightRef.current = false;
     }
   };
 
@@ -683,94 +1212,11 @@ export function SideChatPanelView({
     : agentsQuery.isPending
       ? "Loading agents"
       : "No agent";
-  const composerContextMenuOpen = agentMenuOpen || skillMenuOpen;
-  const closeComposerContextMenus = useCallback(() => {
-    setAgentMenuOpen(false);
-    setSkillMenuOpen(false);
-    setSkillSearchQuery("");
-  }, []);
-  useEffect(() => {
-    if (active) return;
-    closeComposerContextMenus();
-    setComposerMenuPosition(null);
-  }, [active, closeComposerContextMenus]);
-  const openComposerContextMenu = useCallback((kind: "agent" | "skill") => {
-    const anchor = kind === "agent"
-      ? runtimeSelectorRef.current ?? composerSurfaceRef.current
-      : composerSurfaceRef.current;
-    if (anchor) setComposerMenuPosition(composerMenuPositionForAnchor(anchor));
-    setAgentMenuOpen(kind === "agent");
-    setSkillMenuOpen(kind === "skill");
-    if (kind !== "skill") setSkillSearchQuery("");
-  }, [runtimeSelectorRef]);
-
-  useEffect(() => {
-    if (!composerContextMenuOpen) {
-      setComposerMenuPosition(null);
-      return;
-    }
-    const updatePosition = () => {
-      const anchor = agentMenuOpen
-        ? runtimeSelectorRef.current ?? composerSurfaceRef.current
-        : composerSurfaceRef.current;
-      if (!anchor) return;
-      setComposerMenuPosition(composerMenuPositionForAnchor(anchor));
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [agentMenuOpen, composerContextMenuOpen, runtimeSelectorRef]);
-
-  useEffect(() => {
-    if (!composerContextMenuOpen) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const node = event.target;
-      if (!(node instanceof Node)) return;
-      if (node instanceof Element && node.closest("[data-chat-runtime-submenu]")) return;
-      if (composerContextMenuRef.current?.contains(node)) return;
-      if (runtimeSelectorRef.current?.contains(node)) return;
-      closeComposerContextMenus();
-    };
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      const restoreRuntimeFocus = agentMenuOpen;
-      const restoreSkillsFocus = skillMenuOpen;
-      closeComposerContextMenus();
-      if (restoreRuntimeFocus) {
-        requestAnimationFrame(() => runtimeSelectorRef.current?.focus());
-      } else if (restoreSkillsFocus) {
-        requestAnimationFrame(() => skillButtonRef.current?.focus());
-      }
-    };
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [
-    agentMenuOpen,
-    closeComposerContextMenus,
-    composerContextMenuOpen,
-    runtimeSelectorRef,
-    skillMenuOpen,
-  ]);
-  useEffect(() => {
-    if (!agentMenuOpen) return;
-    requestAnimationFrame(() => {
-      composerContextMenuRef.current
-        ?.querySelector<HTMLButtonElement>("[data-chat-composer-menu-item]")
-        ?.focus();
-    });
-  }, [agentMenuOpen]);
-  useEffect(() => {
-    if (!skillMenuOpen) return;
-    requestAnimationFrame(() => skillSearchInputRef.current?.focus());
-  }, [skillMenuOpen]);
+  const { composerContextMenuOpen, closeComposerContextMenus, openComposerContextMenu } = useSideChatComposerMenus({
+    active, agentMenuOpen, skillMenuOpen, setAgentMenuOpen, setSkillMenuOpen,
+    setSkillSearchQuery, setComposerMenuPosition, runtimeSelectorRef,
+    composerSurfaceRef, composerContextMenuRef, skillButtonRef, skillSearchInputRef,
+  });
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="side-chat-panel-view">
@@ -784,80 +1230,41 @@ export function SideChatPanelView({
               </span>
             </div>
           ) : null}
+          {conversation?.runtimeContinuity === "context_handoff" ? (
+            <p className="text-xs text-muted-foreground" data-testid="side-chat-context-handoff">
+              Context was handed off from the source conversation; this Side Chat now continues independently.
+            </p>
+          ) : null}
           {noAnchor ? (
             <p className="text-sm text-destructive">The main chat needs a completed assistant response first.</p>
           ) : null}
 
-          <div className="flex min-h-[12rem] flex-col gap-5" data-testid="side-chat-messages">
-            {displayConversation ? visibleMessages.map((message) => {
-              const transcript = transcriptEntries(message);
-              return (
-                <div key={message.id}>
-                  {message.role === "assistant" && transcript.length > 0 ? (
-                    <StreamTranscriptItem
-                      entries={transcript}
-                      state={message.status}
-                      generationTerminalReason={message.generationTerminalReason}
-                      streamStartedAt={new Date(message.createdAt)}
-                      streamEndedAt={new Date(message.updatedAt)}
-                      assistantMessageBody={message.body}
-                      showDeveloperDiagnostics={false}
-                    />
-                  ) : null}
-                  <ChatMessageItem
-                    conversation={displayConversation}
-                    message={message}
-                    agents={agents}
-                    decisionNote=""
-                    onDecisionNoteChange={noop}
-                    decisionNoteMentions={[]}
-                    onDecisionNoteMentionQueryChange={noop}
-                    onDecisionNoteInlineTokenClick={noop}
-                    onApprovalAction={noop}
-                    onIssueProposalChange={noop}
-                    onResolveOperationProposal={noop}
-                    onConvertToIssue={noop}
-                    actionPending={false}
-                    onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
-                    onOpenFile={noop}
-                    onSelectResponseAnnotation={onSelectResponseAnnotation}
-                    skillReferences={EMPTY_SKILL_REFERENCES}
-                  />
-                </div>
-              );
-            }) : null}
-            {displayedStream && displayConversation ? (
-              <div className="flex flex-col gap-5" data-testid="side-chat-streaming-reply">
-                {showOptimisticUserMessage ? (
-                  <OptimisticUserDraftItem
-                    body={displayedStream.userBody}
-                    files={displayedStream.userFiles}
-                    createdAt={displayedStream.userCreatedAt}
-                    onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
-                    onEditDraftOnly={setDraft}
-                    skillReferences={EMPTY_SKILL_REFERENCES}
-                  />
-                ) : null}
-                <StreamTranscriptItem
-                  entries={displayedStream.transcript}
-                  state={displayedStream.state}
-                  streamStartedAt={displayedStream.createdAt}
-                  assistantMessageBody={displayedStream.body}
-                  showDeveloperDiagnostics={false}
-                />
-                <AssistantDraftItem
-                  body={displayedStream.body}
-                  createdAt={displayedStream.createdAt}
-                  state={displayedStream.state}
-                  replyingAgentId={displayedStream.replyingAgentId}
-                  conversation={displayConversation}
-                  agents={agents}
-                  onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
-                  skillReferences={EMPTY_SKILL_REFERENCES}
-                />
-              </div>
-            ) : null}
-          </div>
+          <SideChatPanelMessages
+            conversation={displayConversation}
+            transcriptConversationId={target.conversationId}
+            messages={visibleMessages}
+            stream={displayedStream}
+            assistantRowIdentities={assistantRowIdentitiesRef.current}
+            activeAssistantMessageId={activeAssistantMessageId}
+            showOptimisticUserMessage={showOptimisticUserMessage}
+            requireFinalAnswerPhase={chatAgentUsesCodexAppServer(selectedAgent)}
+            agents={agents}
+            decisionNotesByMessageId={decisionNotesByMessageId}
+            isMessageMutationAllowed={isMessageMutationAllowed}
+            actionPending={Boolean(pendingActionKey)}
+            onDecisionNoteChange={(messageId, value) => {
+              setDecisionNotesByMessageId((current) => ({ ...current, [messageId]: value }));
+            }}
+            onApprovalAction={handleApprovalAction}
+            onResolveOperationProposal={handleOperationProposal}
+            onConvertToIssue={handleConvertToIssue}
+            onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
+            onEditDraftOnly={setDraft}
+            onOpenFile={openSideChatFile}
+            onMarkdownLinkClick={handleMarkdownLinkClick}
+            onSelectResponseAnnotation={onSelectResponseAnnotation}
+            skillReferences={chatSkillReferences}
+          />
         </div>
       </div>
 
@@ -865,7 +1272,42 @@ export function SideChatPanelView({
 
       {!readOnly ? (
         <div className="shrink-0 px-4 pb-4" data-testid="side-chat-composer">
-          <ChatComposerSurface
+          {runtimeSensitiveInputRequest ? (
+            <ChatRuntimeSensitiveInput
+              request={runtimeSensitiveInputRequest}
+              onRespond={respondToRuntimeSensitiveInput}
+              onCancel={cancelRuntimeSensitiveInput}
+            />
+          ) : null}
+          {runtimeSensitiveInputRequest ? null : pendingAskUserMessage && pendingAskUserRequest ? (
+            <AskUserPanel
+              message={pendingAskUserMessage}
+              request={pendingAskUserRequest}
+              disabled={sending || stopPending || pendingActionKey !== null}
+              pendingFiles={pendingFiles}
+              onAddAttachment={() => fileInputRef.current?.click()}
+              onDropAttachments={appendPendingFiles}
+              onRemovePendingFile={(fileKey) => setPendingFiles((current) => (
+                current.filter((file) => pendingAttachmentKey(file) !== fileKey)
+              ))}
+              onPasteAttachment={handlePendingAttachmentPasteCapture}
+              onSubmit={(body) => void handleSend(body, pendingFiles)}
+              onStructuredSubmit={(inputResponse: ChatAskUserResponse) => {
+                const approvalId = pendingAskUserMessage.approval?.id ?? pendingAskUserMessage.approvalId;
+                if (!approvalId) {
+                  setSendError("This input request is no longer available.");
+                  return;
+                }
+                void handleApprovalAction(
+                  approvalId,
+                  "approve",
+                  pendingAskUserMessage.id,
+                  { inputResponse },
+                );
+              }}
+            />
+          ) : null}
+          {runtimeSensitiveInputRequest || (pendingAskUserMessage && pendingAskUserRequest) ? null : <ChatComposerSurface
             ref={composerSurfaceRef}
             fileDragActive={composerFileDragActive}
             fileDropTargetProps={composerFileDropTargetProps}
@@ -873,91 +1315,16 @@ export function SideChatPanelView({
             testId="side-chat-composer-file-drop-target"
           >
             {composerFileDragActive ? <ChatComposerFileDropOverlay /> : null}
-            {annotationState.annotations.length > 0 ? (
-              <div
-                className="mb-3 flex flex-col items-start gap-2"
-              >
-                <DraftResponseAnnotationsPopover
-                  annotations={annotationState.annotations}
-                  pendingFilesByAnnotationId={annotationState.pendingFilesByAnnotationId}
-                  open={annotationsExpanded}
-                  buttonRef={annotationDetailsChipRef}
-                  onOpenChange={(open) => {
-                    setAnnotationsExpanded(open);
-                    if (open) setEditingAnnotationId(null);
-                  }}
-                  onClear={() => {
-                    dispatchAnnotation({ type: "clear" });
-                    setAnnotationsExpanded(false);
-                    setEditingAnnotationId(null);
-                  }}
-                  onEdit={(annotation) => {
-                    editingAnnotationAnchorRef.current = annotationDetailsChipRef.current;
-                    setEditingAnnotationId(annotation.id);
-                  }}
-                  onDelete={(annotationId) => {
-                    dispatchAnnotation({ type: "delete", id: annotationId });
-                    if (annotationState.annotations.length === 1) {
-                      setAnnotationsExpanded(false);
-                    }
-                    setEditingAnnotationId((current) => (
-                      current === annotationId ? null : current
-                    ));
-                  }}
-                />
-                {editingAnnotationId ? (() => {
-                  const annotation = annotationState.annotations.find(
-                    (candidate) => candidate.id === editingAnnotationId,
-                  );
-                  if (!annotation) return null;
-                  const editorAnchor = editingAnnotationAnchorRef.current;
-                  const editorBoundary = editorAnchor?.closest<HTMLElement>(
-                    '[data-testid="side-chat-panel-view"]',
-                  ) ?? null;
-                  return (
-                    <ResponseAnnotationEditor
-                      annotation={annotation}
-                      ordinal={annotation.ordinal}
-                      pendingFiles={annotationState.pendingFilesByAnnotationId[annotation.id] ?? []}
-                      showSelectedTextContext
-                      anchorRect={editorAnchor?.getBoundingClientRect() ?? null}
-                      getAnchorRect={() => (
-                        editorAnchor?.isConnected ? editorAnchor.getBoundingClientRect() : null
-                      )}
-                      boundaryRect={editorBoundary?.getBoundingClientRect() ?? null}
-                      getBoundaryRect={() => (
-                        editorBoundary?.isConnected ? editorBoundary.getBoundingClientRect() : null
-                      )}
-                      returnFocusRef={editingAnnotationAnchorRef}
-                      validateSave={(changes) => validateChatResponseAnnotationReplacement(
-                        annotationState,
-                        annotation.id,
-                        {
-                          comment: changes.comment,
-                          attachmentIds: changes.attachmentIds,
-                          files: changes.pendingFiles,
-                        },
-                      )}
-                      onSave={({ comment, pendingFiles, attachmentIds }) => {
-                        dispatchAnnotation({
-                          type: "replaceDraft",
-                          id: annotation.id,
-                          comment,
-                          attachmentIds,
-                          files: pendingFiles,
-                        });
-                        setEditingAnnotationId(null);
-                      }}
-                      onCancel={() => setEditingAnnotationId(null)}
-                      onDelete={() => {
-                        dispatchAnnotation({ type: "delete", id: annotation.id });
-                        setEditingAnnotationId(null);
-                      }}
-                    />
-                  );
-                })() : null}
-              </div>
-            ) : null}
+            <SideChatResponseAnnotations
+              annotationState={annotationState}
+              dispatchAnnotation={dispatchAnnotation}
+              annotationsExpanded={annotationsExpanded}
+              setAnnotationsExpanded={setAnnotationsExpanded}
+              editingAnnotationId={editingAnnotationId}
+              setEditingAnnotationId={setEditingAnnotationId}
+              editingAnnotationAnchorRef={editingAnnotationAnchorRef}
+              annotationDetailsChipRef={annotationDetailsChipRef}
+            />
             {pendingFiles.length > 0 ? (
               <div data-testid="side-chat-pending-attachments" className="mb-2.5 flex flex-wrap gap-2 px-3">
                 {pendingFiles.map((file) => {
@@ -975,28 +1342,51 @@ export function SideChatPanelView({
                 })}
               </div>
             ) : null}
-            <ChatComposerEditor
+                  <ChatComposerEditor
               value={draft}
               onChange={setDraft}
               onPasteCapture={handlePendingAttachmentPasteCapture}
               scrollTestId="side-chat-composer-editor-scroll"
-              placeholder="Ask a focused follow-up…"
+              placeholder={activePlanMode ? "Plan a focused follow-up…" : "Ask a focused follow-up…"}
               onSubmit={() => void handleSend()}
             />
             <ChatComposerToolbar
               testId="side-chat-composer-toolbar"
               actions={(
                 <ChatComposerSendButton
-                  mode={sending ? "sending" : "send"}
-                  ariaLabel={sending ? "Sending Side Chat message" : "Send Side Chat message"}
+                  mode={stopPending
+                    ? "stopping"
+                    : sending && conversationIdRef.current
+                      ? "stop"
+                      : sending
+                        ? "sending"
+                        : "send"}
+                  ariaLabel={stopPending
+                    ? "Stopping Side Chat response"
+                    : sending && conversationIdRef.current
+                      ? "Stop Side Chat response"
+                      : sending
+                        ? "Sending Side Chat message"
+                        : "Send Side Chat message"}
                   disabled={
-                    (pendingFiles.length === 0
-                      && !canSubmitChatResponseAnnotations(draft, annotationState))
-                    || sending
+                    (!sending && (pendingFiles.length === 0
+                      && !canSubmitChatResponseAnnotations(draft, annotationState)))
+                    || stopPending
                     || !selectedAgentId
                     || noAnchor
                   }
-                  onClick={() => void handleSend()}
+                  onClick={() => {
+                    if (sending && conversationIdRef.current) {
+                      void stopSideChatGeneration({
+                        conversationId: conversationIdRef.current,
+                        draft: stream,
+                      }).catch((error) => {
+                        setSendError(error instanceof Error ? error.message : "Failed to stop Side Chat response.");
+                      });
+                      return;
+                    }
+                    void handleSend();
+                  }}
                 />
               )}
             >
@@ -1004,7 +1394,15 @@ export function SideChatPanelView({
                   open={plusMenuOpen}
                   onOpenChange={setPlusMenuOpen}
                   onAddFiles={() => fileInputRef.current?.click()}
-                />
+                >
+                  <ChatPlanModeMenuToggle
+                    active={activePlanMode}
+                    onChange={applyPlanMode}
+                  />
+                </ChatComposerAddMenu>
+                {activePlanMode ? (
+                  <ChatPlanModeChip onDisable={() => applyPlanMode(false)} />
+                ) : null}
                 <ChatAgentSelectorButton
                   buttonRef={runtimeSelectorRef}
                   agent={selectedAgent}
@@ -1031,7 +1429,7 @@ export function SideChatPanelView({
                   }}
                 />
             </ChatComposerToolbar>
-          </ChatComposerSurface>
+          </ChatComposerSurface>}
           {composerContextMenuOpen && composerMenuPosition && typeof document !== "undefined" ? createPortal(
             <ChatComposerContextMenu
               menuRef={composerContextMenuRef}

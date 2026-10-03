@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -39,12 +40,12 @@ function render(element: ReactNode) {
 }
 
 function sha256ForPublicAsset(src: string) {
-  const filePath = path.join(process.cwd(), "ui/public", src.replace(/^\//, ""));
+  const filePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../public", src.replace(/^\//, ""));
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }
 
 describe("RuntimeLogoIcon", () => {
-  it("renders original brand assets for every enabled local runtime shown in the adapter menu", () => {
+  it("covers every enabled runtime and preserves original CLI brand assets", () => {
     const expectedSources = {
       claude_local: "/brands/claude-logo.svg",
       codex_local: "/brands/openai-logo.svg",
@@ -52,7 +53,7 @@ describe("RuntimeLogoIcon", () => {
       cursor: "/brands/cursor-logo.svg",
     };
 
-    expect([...Object.keys(runtimeLogoSources), "opencode_local"].sort()).toEqual([...ENABLED_ADAPTER_TYPES].sort());
+    expect([...Object.keys(runtimeLogoSources), "opencode_local", "hermes_gateway"].sort()).toEqual([...ENABLED_ADAPTER_TYPES].sort());
 
     for (const [runtimeType, expectedSrc] of Object.entries(expectedSources)) {
       const container = render(<RuntimeLogoIcon runtimeType={runtimeType} />);
@@ -71,6 +72,12 @@ describe("RuntimeLogoIcon", () => {
       "/brands/opencode-logo-light-square.svg",
       "/brands/opencode-logo-dark-square.svg",
     ]);
+  });
+
+  it("renders a neutral Hermes icon for local and custom backends", () => {
+    const container = render(<RuntimeLogoIcon runtimeType="hermes_gateway" />);
+    expect(container.querySelector("svg.lucide-bot")).not.toBeNull();
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("uses a display label for pi_local instead of the raw key", () => {

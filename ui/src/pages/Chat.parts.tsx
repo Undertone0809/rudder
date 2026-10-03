@@ -1366,14 +1366,7 @@ export function latestContinuableInterruptedChatMessage(messages: ChatMessage[])
   return null;
 }
 
-export function canRetryFailedChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId" | "structuredPayload" | "runId">) {
-  const failure = recoverableFailureFromMessage(message);
-  return failure?.retryable !== false
-    && message.role === "assistant"
-    && message.kind === "message"
-    && message.status === "failed"
-    && Boolean(message.chatTurnId);
-}
+export { canRetryFailedChatMessage } from "./Chat.failure.js";
 
 export function canRefreshAssistantChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId">) {
   return message.role === "assistant"
@@ -1396,37 +1389,7 @@ export function canRefreshDisplayedAssistantChatMessage({
   return branchControls.current === branchControls.total;
 }
 
-export function recoverableFailureFromMessage(
-  message: Pick<ChatMessage, "structuredPayload" | "runId">,
-) {
-  const payload = message.structuredPayload;
-  const failure = payload && typeof payload === "object" && !Array.isArray(payload)
-    ? payload.recoverableFailure
-    : null;
-  if (!failure || typeof failure !== "object" || Array.isArray(failure)) return null;
-  const candidate = failure as Record<string, unknown>;
-  const code = typeof candidate.code === "string" && candidate.code.trim()
-    ? candidate.code.trim()
-    : "chat_runtime_exception";
-  const detailMessage = typeof candidate.message === "string" && candidate.message.trim()
-    ? candidate.message.trim()
-    : "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
-  const runId = typeof candidate.runId === "string" && candidate.runId.trim()
-    ? candidate.runId.trim()
-    : message.runId ?? null;
-  const retryable = typeof candidate.retryable === "boolean"
-    ? candidate.retryable
-    : typeof candidate.recoverable === "boolean"
-      ? candidate.recoverable
-      : true;
-  const phase = typeof candidate.phase === "string" && candidate.phase.trim()
-    ? candidate.phase.trim()
-    : null;
-  const action = typeof candidate.action === "string" && candidate.action.trim()
-    ? candidate.action.trim()
-    : null;
-  return { code, message: detailMessage, runId, retryable, phase, action };
-}
+export { recoverableFailureFromMessage } from "./Chat.failure.js";
 
 export function findRetrySourceUserMessage(
   messages: ChatMessage[],

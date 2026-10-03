@@ -351,6 +351,21 @@ test.describe("Chat message layout", () => {
     expect(resultBox).not.toBeNull();
     expect(Math.abs(reasoningBox!.x - resultBox!.x)).toBeLessThanOrEqual(1);
 
+    await expect(assistantMessage.getByRole("button", { name: "Fork from here", exact: true })).toHaveCount(0);
+    await expect(assistantMessage.getByRole("button", { name: "Open Side Chat", exact: true })).toHaveCount(0);
+    await assistantMessage.getByRole("button", { name: "More message actions", exact: true }).filter({ visible: true }).click();
+    await expect(page.getByTestId("chat-open-side-chat-more-action")).toBeVisible();
+    await expect(page.getByTestId("chat-fork-more-action")).toBeVisible();
+    await page.keyboard.press("Escape");
+
     await page.screenshot({ path: "/tmp/rudder-chat-result-reasoning-alignment.png", fullPage: true });
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(assistantMessage.getByRole("button", { name: "Fork from here", exact: true })).toHaveCount(0);
+    await expect(assistantMessage.getByRole("button", { name: "Open Side Chat", exact: true })).toHaveCount(0);
+    await assistantMessage.getByRole("button", { name: "More message actions", exact: true }).filter({ visible: true }).click();
+    await expect(page.getByTestId("chat-open-side-chat-more-action")).toBeVisible();
+    await expect(page.getByTestId("chat-fork-more-action")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.screenshot({ path: "/tmp/rudder-chat-result-reasoning-alignment-narrow.png", fullPage: true });
   });
 });

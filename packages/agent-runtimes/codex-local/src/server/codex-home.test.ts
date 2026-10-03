@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   prepareManagedCodexHome,
   realizeManagedCodexSkillEntries,
+  resolveManagedCodexHomeDir,
 } from "./codex-home.js";
 
 describe("managed Codex home config sync", () => {
@@ -52,7 +53,7 @@ describe("managed Codex home config sync", () => {
     };
   }
 
-  it("materializes selected skills into managed CODEX_HOME without Windows symlink privileges", async () => {
+  it("materializes selected skills while retaining provider-native entries", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-skill-link-"));
     tempRoots.push(root);
     const sharedCodexHome = path.join(root, "shared-codex-home");
@@ -84,7 +85,7 @@ describe("managed Codex home config sync", () => {
 
     await syncSkills();
     await expect(readFile(path.join(materializedSkill, "SKILL.md"), "utf8")).resolves.toBe("# Browser\n");
-    await expect(fs.access(path.join(managedSkillsHome, "unselected-skill"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(path.join(managedSkillsHome, "unselected-skill"))).resolves.toBeUndefined();
     expect((await fs.lstat(materializedSkill)).isSymbolicLink()).toBe(true);
     expect(await fs.realpath(materializedSkill)).toBe(await fs.realpath(skillSource));
 
@@ -155,6 +156,49 @@ describe("managed Codex home config sync", () => {
     ].join("\n"));
 
     expect(config).toContain('service_tier = "fast"');
+  });
+
+  it("retains authorized native plugin and bundled-skill configuration and managed provider state", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-home-native-surface-"));
+    tempRoots.push(root);
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const rudderHome = path.join(root, "rudder-home");
+    const env = {
+      CODEX_HOME: sharedCodexHome,
+      RUDDER_HOME: rudderHome,
+      RUDDER_INSTANCE_ID: "prod-local-test",
+    };
+    const managedCodexHome = resolveManagedCodexHomeDir(env, "org-1", "agent-1");
+    await mkdir(path.join(sharedCodexHome, "skills"), { recursive: true });
+    await mkdir(path.join(managedCodexHome, "plugins", "native-plugin"), { recursive: true });
+    await mkdir(path.join(managedCodexHome, "skills", ".system", "native-system"), { recursive: true });
+    await writeFile(path.join(managedCodexHome, "plugins", "native-plugin", "marker"), "keep", "utf8");
+    await writeFile(path.join(managedCodexHome, "skills", ".system", "native-system", "SKILL.md"), "keep", "utf8");
+    await writeFile(path.join(sharedCodexHome, "config.toml"), [
+      'model = "gpt-5.5"',
+      "",
+      "[features]",
+      "plugins = true",
+      "",
+      "[skills.bundled]",
+      "enabled = true",
+      "",
+      "[plugins.native]",
+      'source = "authorized-profile"',
+      "",
+    ].join("\n"), "utf8");
+
+    await prepareManagedCodexHome(env, async () => {}, "org-1", "agent-1");
+
+    const config = await readFile(path.join(managedCodexHome, "config.toml"), "utf8");
+    expect(config).toContain("plugins = true");
+    expect(config).toContain("enabled = true");
+    expect(config).toContain("[plugins.native]");
+    expect(config).toContain('source = "authorized-profile"');
+    await expect(readFile(path.join(managedCodexHome, "plugins", "native-plugin", "marker"), "utf8"))
+      .resolves.toBe("keep");
+    await expect(readFile(path.join(managedCodexHome, "skills", ".system", "native-system", "SKILL.md"), "utf8"))
+      .resolves.toBe("keep");
   });
 
   it("refreshes managed config from the shared Codex config instead of keeping stale provider settings", async () => {

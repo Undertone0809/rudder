@@ -14,6 +14,8 @@ const mockState = vi.hoisted(() => ({
   invalidateQueries: vi.fn().mockResolvedValue(undefined),
   setQueryData: vi.fn(),
   pushToast: vi.fn(),
+  activeRun: null as Record<string, unknown> | null,
+  capturedLiveRuns: vi.fn(),
 }));
 
 vi.mock("../api/agent-runs", async (importOriginal) => {
@@ -51,7 +53,7 @@ vi.mock("@tanstack/react-query", () => ({
     }
 
     if (queryKey[0] === "issues" && queryKey[1] === "active-run") {
-      return { data: null };
+      return { data: mockState.activeRun };
     }
 
     if (queryKey[0] === "agents") {
@@ -72,11 +74,14 @@ vi.mock("@/lib/router", () => ({
   ),
 }));
 
-vi.mock("./transcript/useLiveRunTranscripts", () => ({
-  useLiveRunTranscripts: () => ({
-    transcriptByRun: new Map([["run-1", []]]),
-    hasOutputForRun: () => false,
-  }),
+vi.mock("./transcript/useAgentRunTranscripts", () => ({
+  useAgentRunTranscripts: (targets: unknown[]) => {
+    mockState.capturedLiveRuns(targets);
+    return {
+      transcriptByRun: new Map([["run-1", []]]),
+      hasOutputForRun: () => false,
+    };
+  },
 }));
 
 vi.mock("./transcript/RunTranscriptView", () => ({
@@ -95,9 +100,44 @@ afterEach(() => {
   mockState.invalidateQueries.mockClear();
   mockState.setQueryData.mockClear();
   mockState.pushToast.mockClear();
+  mockState.activeRun = null;
+  mockState.capturedLiveRuns.mockClear();
 });
 
 describe("LiveRunWidget", () => {
+  it("preserves native Run context when projecting the active Run", () => {
+    mockState.activeRun = {
+      id: "run-1",
+      status: "running",
+      invocationSource: "manual",
+      triggerDetail: null,
+      startedAt: "2026-06-17T09:00:00.000Z",
+      finishedAt: null,
+      createdAt: "2026-06-17T09:00:00.000Z",
+      agentId: "agent-1",
+      agentName: "Ada",
+      agentRuntimeType: "process",
+      executionPhase: null,
+      contextSnapshot: { runtimeBindingId: "binding-1" },
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<LiveRunWidget issueId="issue-1" orgId="org-1" />);
+    });
+
+    expect(mockState.capturedLiveRuns.mock.calls.at(-1)?.[0]).toEqual([
+      { runId: "run-1", active: true },
+    ]);
+  });
+
   it("highlights the whole live runs card while a run is active", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

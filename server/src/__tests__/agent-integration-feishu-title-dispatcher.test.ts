@@ -17,39 +17,47 @@ const mockChatSvc = vi.hoisted(() => ({
 
 const mockStartAutomaticGeneration = vi.hoisted(() => vi.fn());
 
-vi.mock("@rudderhq/db", () => ({
-  agentIntegrationBindingTokens: {},
-  agentIntegrationChatBindings: {
-    conversationId: "conversation_id",
-    externalChatId: "external_chat_id",
-    externalChatType: "external_chat_type",
-    integrationId: "integration_id",
-    orgId: "org_id",
-  },
-  agentIntegrationInboundAudit: {},
-  agentIntegrationInboundDedup: {},
-  agentIntegrationOutboundMessages: {},
-  agentIntegrationUserBindings: {},
-  agentIntegrations: {},
-  chatConversations: {
-    createdAt: "created_at",
-    id: "id",
-  },
-  chatGenerations: {
-    conversationId: "conversation_id",
-    id: "id",
-    status: "status",
-  },
-  organizationMemberships: {},
-}));
+vi.mock("@rudderhq/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@rudderhq/db")>();
+  return {
+    ...actual,
+    agentIntegrationBindingTokens: {},
+    agentIntegrationChatBindings: {
+      conversationId: "conversation_id",
+      externalChatId: "external_chat_id",
+      externalChatType: "external_chat_type",
+      integrationId: "integration_id",
+      orgId: "org_id",
+    },
+    agentIntegrationInboundAudit: {},
+    agentIntegrationInboundDedup: {},
+    agentIntegrationOutboundMessages: {},
+    agentIntegrationUserBindings: {},
+    agentIntegrations: {},
+    chatConversations: {
+      createdAt: "created_at",
+      id: "id",
+    },
+    chatGenerations: {
+      conversationId: "conversation_id",
+      id: "id",
+      status: "status",
+    },
+    organizationMemberships: {},
+  };
+});
 
-vi.mock("drizzle-orm", () => ({
-  and: vi.fn(() => ({})),
-  eq: vi.fn(() => ({})),
-  inArray: vi.fn(() => ({})),
-  isNull: vi.fn(() => ({})),
-  or: vi.fn(() => ({})),
-}));
+vi.mock("drizzle-orm", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("drizzle-orm")>();
+  return {
+    ...actual,
+    and: vi.fn(() => ({})),
+    eq: vi.fn(() => ({})),
+    inArray: vi.fn(() => ({})),
+    isNull: vi.fn(() => ({})),
+    or: vi.fn(() => ({})),
+  };
+});
 
 vi.mock("../services/chats.js", () => ({
   chatService: vi.fn(() => mockChatSvc),

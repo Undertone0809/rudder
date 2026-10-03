@@ -219,7 +219,7 @@ function createLegacyChatRuntimeControlsMigrationsFolder() {
   return { historicalHash, migrationsFolder };
 }
 
-function createCurrentMigrationsFolderThrough(maxIdx: number) {
+function createCurrentMigrationsFolderThrough(maxIdx: number, excludedTags: readonly string[] = []) {
   const migrationsFolder = fs.mkdtempSync(path.join(os.tmpdir(), `rudder-migrations-through-${maxIdx}-`));
   tempPaths.push(migrationsFolder);
   fs.mkdirSync(path.join(migrationsFolder, "meta"));
@@ -228,7 +228,9 @@ function createCurrentMigrationsFolderThrough(maxIdx: number) {
   const currentJournal = JSON.parse(
     fs.readFileSync(new URL("meta/_journal.json", currentMigrationsUrl), "utf8"),
   ) as { version: string; dialect: string; entries: MigrationJournalEntry[] };
-  const entries = currentJournal.entries.filter((entry) => entry.idx <= maxIdx);
+  const entries = currentJournal.entries
+    .filter((entry) => entry.idx <= maxIdx && !excludedTags.includes(entry.tag))
+    .map((entry, idx) => ({ ...entry, idx }));
   for (const entry of entries) {
     fs.copyFileSync(
       new URL(`${entry.tag}.sql`, currentMigrationsUrl),
@@ -269,6 +271,62 @@ afterEach(async () => {
 }, migrationTestTimeout(30_000));
 
 describe("applyPendingMigrations", () => {
+  it.each(["main-prefix", "pr-checkpoint", "empty"])(
+    "upgrades the merged migration history from %s without rewriting existing history",
+    async (source) => {
+      const connectionString = await createTempDatabase();
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        if (source !== "empty") {
+          // Exact journal shapes of main 89859a26b and PR eb7e6b270. SQL
+          // filenames, bytes, and timestamps are preserved in the merge.
+          const migrationsFolder = source === "main-prefix"
+            ? createCurrentMigrationsFolderThrough(175)
+            : createCurrentMigrationsFolderThrough(182, ["0175_project_delete_receipt_kind"]);
+          await migratePg(drizzlePg(sql), { migrationsFolder });
+          await sql`INSERT INTO organizations (name, url_key, issue_prefix)
+            VALUES ('Preserved merge fixture', 'preserved-merge-fixture', 'MRG')`;
+        }
+        const before = source === "empty" ? [] : await sql`
+          SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id
+        `;
+        if (source !== "empty") {
+          const pending = await inspectMigrations(connectionString);
+          expect(pending.status).toBe("needsMigrations");
+          if (pending.status !== "needsMigrations") throw new Error("Expected pending merge migrations");
+          expect(pending.pendingMigrations).toContain(source === "main-prefix"
+            ? "0175_span_supplement_retention.sql" : "0175_project_delete_receipt_kind.sql");
+        }
+        await applyPendingMigrations(connectionString);
+        expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+        expect(await validatePostMigrationInvariants(connectionString)).toMatchObject({
+          valid: true, issues: [], expectedMigrationCount: 185,
+          manifestFingerprint: "1061b688ac7cae7a688723b39ea4113cc91edd1f26ca494f8ed6daac8cbbc72e",
+        });
+        const after = await sql`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`;
+        expect(after.slice(0, before.length)).toEqual(before);
+        for (const file of ["0175_project_delete_receipt_kind.sql", "0175_span_supplement_retention.sql", "0181_side_chat_first_input_generation.sql"]) {
+          const hash = await migrationHash(file);
+          expect(after.filter(row => row.hash === hash)).toHaveLength(1);
+        }
+        expect(await sql`SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'side_chat_first_inputs' AND column_name = 'generation_id'`).toHaveLength(1);
+        const [constraint] = await sql`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+          WHERE conname = 'organization_mutation_receipts_kind_ck'`;
+        expect(constraint?.definition).toContain("project_delete");
+        if (source !== "empty") {
+          expect(await sql`SELECT name FROM organizations WHERE url_key = 'preserved-merge-fixture'`)
+            .toEqual([{ name: "Preserved merge fixture" }]);
+        }
+        await applyPendingMigrations(connectionString);
+        expect(await sql`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`).toEqual(after);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(120_000),
+  );
+
   it(
     "serializes migration attempts with a database advisory lock",
     async () => {
@@ -967,6 +1025,13 @@ describe("applyPendingMigrations", () => {
           "0173_organization_branding_mutation_authority.sql",
           "0174_project_goal_mutation_authority.sql",
           "0175_project_delete_receipt_kind.sql",
+          "0175_span_supplement_retention.sql",
+          "0176_side_chat_provider_cleanup_intents.sql",
+          "0177_side_chat_close_intents.sql",
+          "0178_side_chat_provider_cleanup_protection_refs.sql",
+          "0179_side_chat_first_inputs.sql",
+          "0180_native_resource_writer_fencing.sql",
+          "0181_side_chat_first_input_generation.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1163,6 +1228,13 @@ describe("applyPendingMigrations", () => {
           "0173_organization_branding_mutation_authority.sql",
           "0174_project_goal_mutation_authority.sql",
           "0175_project_delete_receipt_kind.sql",
+          "0175_span_supplement_retention.sql",
+          "0176_side_chat_provider_cleanup_intents.sql",
+          "0177_side_chat_close_intents.sql",
+          "0178_side_chat_provider_cleanup_protection_refs.sql",
+          "0179_side_chat_first_inputs.sql",
+          "0180_native_resource_writer_fencing.sql",
+          "0181_side_chat_first_input_generation.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1229,11 +1301,12 @@ describe("applyPendingMigrations", () => {
           )
         `);
         await sql.unsafe(`
-          INSERT INTO "heartbeat_runs" ("id", "org_id", "agent_id")
+          INSERT INTO "heartbeat_runs" ("id", "org_id", "agent_id", "result_json")
           VALUES (
             '00000000-0000-0000-0000-000000000105',
             '00000000-0000-0000-0000-000000000103',
-            '00000000-0000-0000-0000-000000000104'
+            '00000000-0000-0000-0000-000000000104',
+            '{"__chatTranscript":[{"kind":"assistant","text":"legacy answer"}]}'::jsonb
           )
         `);
       } finally {
@@ -1249,8 +1322,12 @@ describe("applyPendingMigrations", () => {
           session_params_before_json: Record<string, unknown> | null;
           session_params_after_json: Record<string, unknown> | null;
           session_reuse_scope: string;
+          result_json: Record<string, unknown> | null;
+          scene: string | null;
+          idempotency_key: string | null;
         }[]>(`
-          SELECT session_params_before_json, session_params_after_json, session_reuse_scope
+          SELECT session_params_before_json, session_params_after_json, session_reuse_scope,
+            result_json, scene, idempotency_key
           FROM "heartbeat_runs"
           WHERE "id" = '00000000-0000-0000-0000-000000000105'
         `);
@@ -1258,7 +1335,16 @@ describe("applyPendingMigrations", () => {
           session_params_before_json: null,
           session_params_after_json: null,
           session_reuse_scope: "unknown",
+          result_json: { __chatTranscript: [{ kind: "assistant", text: "legacy answer" }] },
+          scene: null,
+          idempotency_key: null,
         });
+        const [nativeRefs] = await verifySql.unsafe<{ bindings: number; spans: number }[]>(`
+          SELECT
+            (SELECT count(*)::int FROM runtime_bindings WHERE org_id = '00000000-0000-0000-0000-000000000103') AS bindings,
+            (SELECT count(*)::int FROM run_runtime_spans WHERE run_id = '00000000-0000-0000-0000-000000000105') AS spans
+        `);
+        expect(nativeRefs).toEqual({ bindings: 0, spans: 0 });
 
         for (const scope of ["explicit", "task", "none", "unknown"]) {
           await expect(verifySql.unsafe(`
@@ -2038,6 +2124,411 @@ describe("applyPendingMigrations", () => {
         await sql`DELETE FROM runtime_retention_claims WHERE org_id = ${org!.id}`;
         await sql`DELETE FROM chat_conversations WHERE id = ${chat!.id}`;
         expect(await sql`SELECT id FROM runtime_bindings WHERE org_id = ${org!.id}`).toHaveLength(0);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
+    "keeps an incomplete binding target migration pending for manual recovery",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const hash = await migrationHash("0166_runtime_binding_targets.sql");
+        await sql.unsafe(`DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${hash}'`);
+        await sql`DROP INDEX runtime_bindings_org_target_idx`;
+
+        const pending = await inspectMigrations(connectionString);
+        expect(pending).toMatchObject({ status: "needsMigrations", reason: "pending-migrations" });
+        const repair = await reconcilePendingMigrationHistory(connectionString);
+        expect(repair.repairedMigrations).not.toContain("0166_runtime_binding_targets.sql");
+        expect(repair.remainingMigrations).toContain("0166_runtime_binding_targets.sql");
+        expect((await inspectMigrations(connectionString)).status).toBe("needsMigrations");
+        expect(await sql`
+          SELECT indexname FROM pg_indexes
+          WHERE tablename = 'runtime_bindings' AND indexname = 'runtime_bindings_org_target_idx'
+        `).toHaveLength(0);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
+    "adds supplement retention state to an existing span without changing its object reference",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Supplement migration', 'supplement-migration', 'SUPP') RETURNING id
+        `;
+        const [agent] = await sql`INSERT INTO agents (org_id, name) VALUES (${org!.id}, 'Supplement agent') RETURNING id`;
+        const [chat] = await sql`INSERT INTO chat_conversations (org_id) VALUES (${org!.id}) RETURNING id`;
+        const [binding] = await sql`
+          INSERT INTO runtime_bindings (org_id, conversation_id, principal_scope_ref, agent_id, runtime_type, instructions_revision, capability_revision)
+          VALUES (${org!.id}, ${chat!.id}, 'user:owner', ${agent!.id}, 'cursor', 'instructions-1', 'capability-1') RETURNING id
+        `;
+        const [segment] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type)
+          VALUES (${org!.id}, ${binding!.id}, 'cursor') RETURNING id
+        `;
+        const [run] = await sql`INSERT INTO heartbeat_runs (org_id, agent_id, status) VALUES (${org!.id}, ${agent!.id}, 'completed') RETURNING id`;
+        const [span] = await sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, supplemental_object_ref)
+          VALUES (${org!.id}, ${run!.id}, ${binding!.id}, ${segment!.id}, 'attempt-1', 'owner-1', 'tobj_v1_11111111-1111-1111-1111-111111111111') RETURNING id
+        `;
+        const hash = await migrationHash("0175_span_supplement_retention.sql");
+        await sql.unsafe(`DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${hash}'`);
+        await sql`ALTER TABLE run_runtime_spans DROP COLUMN supplemental_retention_expired_at`;
+
+        expect(await inspectMigrations(connectionString)).toMatchObject({ status: "needsMigrations" });
+        await applyPendingMigrations(connectionString);
+        expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+        expect(await sql`
+          SELECT supplemental_object_ref, supplemental_retention_expired_at
+          FROM run_runtime_spans WHERE id = ${span!.id}
+        `).toEqual([{
+          supplemental_object_ref: "tobj_v1_11111111-1111-1111-1111-111111111111",
+          supplemental_retention_expired_at: null,
+        }]);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
+    "preserves legacy spans and fences concurrent writers by binding and physical session",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const migrationsThrough0172 = createCurrentMigrationsFolderThrough(172);
+      const sql = postgres(connectionString, { max: 4, onnotice: () => {} });
+      try {
+        await migratePg(drizzlePg(sql), { migrationsFolder: migrationsThrough0172 });
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Native writer migration', 'native-writer-migration', 'NWM') RETURNING id
+        `;
+        const [agent] = await sql`INSERT INTO agents (org_id, name) VALUES (${org!.id}, 'Writer agent') RETURNING id`;
+        const [runA] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status, process_exited_at)
+          VALUES (${org!.id}, ${agent!.id}, 'timed_out', now()) RETURNING id
+        `;
+        const [runB] = await sql`INSERT INTO heartbeat_runs (org_id, agent_id, status) VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id`;
+        const [runC] = await sql`INSERT INTO heartbeat_runs (org_id, agent_id, status) VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id`;
+        const [runD] = await sql`INSERT INTO heartbeat_runs (org_id, agent_id, status) VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id`;
+        const [duplicateBindingRun] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status, process_exited_at)
+          VALUES (${org!.id}, ${agent!.id}, 'timed_out', now()) RETURNING id
+        `;
+        const [bindingRetryRun] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status)
+          VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id
+        `;
+        const [legacyAliasRun] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status, process_exited_at)
+          VALUES (${org!.id}, ${agent!.id}, 'cancelled', now()) RETURNING id
+        `;
+        const [bindingA] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, profile_id, workspace_binding_id, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'pi_local', 'default', 'workspace-a', 'manual', 'writer-a')
+          RETURNING id
+        `;
+        const [bindingB] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, profile_id, workspace_binding_id, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'pi_local', 'default', 'workspace-a', 'manual', 'writer-b')
+          RETURNING id
+        `;
+        const [bindingC] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, profile_id, workspace_binding_id, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'pi_local', 'default', 'workspace-a', 'manual', 'writer-c')
+          RETURNING id
+        `;
+        const [segmentA] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, native_session_id, leaf_id)
+          VALUES (${org!.id}, ${bindingA!.id}, 'pi_local', '/tmp/shared-session.jsonl', 'assistant-a') RETURNING id
+        `;
+        const [segmentB] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, native_session_id, leaf_id)
+          VALUES (${org!.id}, ${bindingB!.id}, 'pi_local', '/tmp/shared-session.jsonl', 'assistant-b') RETURNING id
+        `;
+        const [segmentB2] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, segment_ordinal, native_session_id, leaf_id)
+          VALUES (${org!.id}, ${bindingB!.id}, 'pi_local', 1, '/tmp/other-binding-session.jsonl', 'assistant-b2') RETURNING id
+        `;
+        const [segmentC] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, native_session_id, leaf_id)
+          VALUES (${org!.id}, ${bindingC!.id}, 'pi_local', '/tmp/shared-session.jsonl', 'assistant-c') RETURNING id
+        `;
+        const [legacySpan] = await sql`
+          INSERT INTO run_runtime_spans
+            (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, state, completeness, closed_at)
+          VALUES (${org!.id}, ${runA!.id}, ${bindingA!.id}, ${segmentA!.id},
+            'legacy-timeout-attempt', 'legacy-timeout-owner', 'sealed', 'unknown', now()) RETURNING id
+        `;
+        const [legacyDuplicateBindingSpan] = await sql`
+          INSERT INTO run_runtime_spans
+            (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, state, completeness, closed_at)
+          VALUES (${org!.id}, ${duplicateBindingRun!.id}, ${bindingA!.id}, ${segmentA!.id},
+            'legacy-duplicate-binding-attempt', 'legacy-duplicate-binding-owner', 'sealed', 'unknown', now()) RETURNING id
+        `;
+        const [legacyAliasSpan] = await sql`
+          INSERT INTO run_runtime_spans
+            (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, state, completeness, closed_at)
+          VALUES (${org!.id}, ${legacyAliasRun!.id}, ${bindingB!.id}, ${segmentB!.id},
+            'legacy-cancel-attempt', 'legacy-cancel-owner', 'sealed', 'unknown', now()) RETURNING id
+        `;
+
+        await applyPendingMigrations(connectionString);
+        expect((await inspectMigrations(connectionString)).status).toBe('upToDate');
+        const [upgradedSpan] = await sql`
+          SELECT writer_binding_ref, writer_resource_ref, writer_lease_released_at
+          FROM run_runtime_spans WHERE id = ${legacySpan!.id}
+        `;
+        expect(upgradedSpan).toMatchObject({
+          writer_binding_ref: null,
+          writer_resource_ref: null,
+          writer_lease_released_at: null,
+        });
+        const [upgradedDuplicateBindingSpan] = await sql`
+          SELECT writer_binding_ref, writer_resource_ref, writer_lease_released_at
+          FROM run_runtime_spans WHERE id = ${legacyDuplicateBindingSpan!.id}
+        `;
+        expect(upgradedDuplicateBindingSpan).toEqual({
+          writer_binding_ref: null,
+          writer_resource_ref: null,
+          writer_lease_released_at: null,
+        });
+        const [upgradedAliasSpan] = await sql`
+          SELECT writer_binding_ref, writer_resource_ref, writer_lease_released_at
+          FROM run_runtime_spans WHERE id = ${legacyAliasSpan!.id}
+        `;
+        expect(upgradedAliasSpan).toMatchObject({
+          writer_binding_ref: expect.any(String),
+          writer_resource_ref: null,
+          writer_lease_released_at: null,
+        });
+
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runB!.id}, ${bindingB!.id}, ${segmentB!.id}, 'alias-attempt', 'alias-owner')
+        `).rejects.toMatchObject({ code: '23505' });
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runD!.id}, ${bindingA!.id}, ${segmentA!.id}, 'duplicate-binding-retry', 'retry-owner')
+        `).rejects.toMatchObject({ code: '23505' });
+        await expect(sql`DELETE FROM heartbeat_runs WHERE id = ${runA!.id}`).rejects.toMatchObject({ code: '23514' });
+        expect(await sql`SELECT id FROM run_runtime_spans WHERE id IN (${legacySpan!.id}, ${legacyDuplicateBindingSpan!.id}, ${legacyAliasSpan!.id})`).toHaveLength(3);
+
+        await sql`UPDATE run_runtime_spans SET writer_lease_released_at = now() WHERE id = ${legacySpan!.id}`;
+        await sql`UPDATE run_runtime_spans SET writer_lease_released_at = now() WHERE id = ${legacyDuplicateBindingSpan!.id}`;
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runB!.id}, ${bindingC!.id}, ${segmentC!.id}, 'still-fenced', 'owner-c')
+        `).rejects.toMatchObject({ code: '23505' });
+        await sql`UPDATE run_runtime_spans SET writer_lease_released_at = now() WHERE id = ${legacyAliasSpan!.id}`;
+
+        const [recoveredBindingRetry] = await sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${bindingRetryRun!.id}, ${bindingA!.id}, ${segmentA!.id}, 'duplicate-binding-recovered', 'retry-owner')
+          RETURNING id
+        `;
+        expect(recoveredBindingRetry).toBeDefined();
+        await sql`
+          UPDATE run_runtime_spans
+          SET state = 'sealed', closed_at = now(), writer_lease_released_at = now()
+          WHERE id = ${recoveredBindingRetry!.id}
+        `;
+
+        const [capturedBinding] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, profile_id, workspace_binding_id, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'pi_local', 'default', 'workspace-a', 'manual', 'writer-d-captured')
+          RETURNING id
+        `;
+        const [capturedSegment] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, leaf_id)
+          VALUES (${org!.id}, ${capturedBinding!.id}, 'pi_local', 'assistant-d') RETURNING id
+        `;
+        const [capturedRun] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status)
+          VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id
+        `;
+        const [capturedSpan] = await sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${capturedRun!.id}, ${capturedBinding!.id}, ${capturedSegment!.id},
+            'captured-session-attempt', 'captured-session-owner') RETURNING id
+        `;
+        expect(await sql`
+          SELECT writer_resource_ref FROM run_runtime_spans WHERE id = ${capturedSpan!.id}
+        `).toEqual([{ writer_resource_ref: null }]);
+        await sql`UPDATE native_segments SET native_session_id = '/tmp/shared-session.jsonl' WHERE id = ${capturedSegment!.id}`;
+        await sql`UPDATE run_runtime_spans SET segment_id = ${capturedSegment!.id} WHERE id = ${capturedSpan!.id}`;
+        const [capturedWriterKeys] = await sql`
+          SELECT writer_binding_ref, writer_resource_ref FROM run_runtime_spans WHERE id = ${capturedSpan!.id}
+        `;
+        expect(capturedWriterKeys).toMatchObject({
+          writer_binding_ref: expect.any(String),
+          writer_resource_ref: expect.any(String),
+        });
+        await sql`
+          UPDATE run_runtime_spans
+          SET writer_binding_ref = 'forged-binding-ref', writer_resource_ref = 'forged-resource-ref'
+          WHERE id = ${capturedSpan!.id}
+        `;
+        expect(await sql`
+          SELECT writer_binding_ref, writer_resource_ref FROM run_runtime_spans WHERE id = ${capturedSpan!.id}
+        `).toEqual([capturedWriterKeys]);
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runC!.id}, ${bindingC!.id}, ${segmentC!.id}, 'captured-session-alias', 'owner-c')
+        `).rejects.toMatchObject({ code: '23505' });
+        await expect(sql`
+          UPDATE run_runtime_spans SET writer_lease_released_at = now() WHERE id = ${capturedSpan!.id}
+        `).rejects.toMatchObject({ code: '23514' });
+        await sql`
+          UPDATE run_runtime_spans
+          SET state = 'unresolved', closed_at = now(), writer_lease_released_at = now()
+          WHERE id = ${capturedSpan!.id}
+        `;
+
+        let releaseFirstTransaction!: () => void;
+        let firstInsertReady!: () => void;
+        const firstReady = new Promise<void>((resolve) => { firstInsertReady = resolve; });
+        const firstTransactionGate = new Promise<void>((resolve) => { releaseFirstTransaction = resolve; });
+        const firstWriter = sql.begin(async (tx) => {
+          await tx.unsafe(
+            `INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [org!.id, runB!.id, bindingB!.id, segmentB!.id, 'concurrent-b', 'owner-b'],
+          );
+          firstInsertReady();
+          await firstTransactionGate;
+        });
+        await firstReady;
+        const secondWriter = sql.begin((tx) => tx.unsafe(
+          `INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [org!.id, runC!.id, bindingC!.id, segmentC!.id, 'concurrent-c', 'owner-c'],
+        )).then(
+          () => ({ status: 'inserted' as const }),
+          (error: unknown) => ({ status: 'rejected' as const, error }),
+        );
+        let secondWriterWaitingOnLock = false;
+        const lockWaitDeadline = Date.now() + 5_000;
+        while (!secondWriterWaitingOnLock && Date.now() < lockWaitDeadline) {
+          const [waitState] = await sql`
+            SELECT EXISTS (
+              SELECT 1
+              FROM pg_stat_activity
+              WHERE pid <> pg_backend_pid()
+                AND wait_event_type = 'Lock'
+                AND query LIKE 'INSERT INTO run_runtime_spans%'
+            ) AS waiting
+          `;
+          secondWriterWaitingOnLock = waitState?.waiting === true;
+          if (!secondWriterWaitingOnLock) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(secondWriterWaitingOnLock).toBe(true);
+        releaseFirstTransaction();
+        await expect(firstWriter).resolves.toBeUndefined();
+        const competingResult = await secondWriter;
+        expect(competingResult.status).toBe('rejected');
+        if (competingResult.status === 'rejected') {
+          expect(competingResult.error).toMatchObject({ code: '23505' });
+        }
+
+        const [activeBindingSpan] = await sql`
+          SELECT id FROM run_runtime_spans WHERE run_id = ${runB!.id} AND writer_lease_released_at IS NULL
+        `;
+        const [activeBindingWriterKey] = await sql`
+          SELECT writer_binding_ref FROM run_runtime_spans WHERE id = ${activeBindingSpan!.id}
+        `;
+        await sql`UPDATE run_runtime_spans SET writer_binding_ref = 'forged-binding-ref' WHERE id = ${activeBindingSpan!.id}`;
+        expect(await sql`
+          SELECT writer_binding_ref FROM run_runtime_spans WHERE id = ${activeBindingSpan!.id}
+        `).toEqual([activeBindingWriterKey]);
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runD!.id}, ${bindingB!.id}, ${segmentB2!.id}, 'same-binding', 'owner-d')
+        `).rejects.toMatchObject({ code: '23505' });
+
+        await sql`
+          UPDATE run_runtime_spans
+          SET state = 'unresolved', closed_at = now(), writer_lease_released_at = now()
+          WHERE id = ${activeBindingSpan!.id}
+        `;
+        const [retrySpan] = await sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runC!.id}, ${bindingC!.id}, ${segmentC!.id}, 'released-retry', 'owner-c')
+          RETURNING id
+        `;
+        expect(retrySpan).toBeDefined();
+        await expect(sql`
+          UPDATE run_runtime_spans SET writer_lease_released_at = NULL WHERE id = ${capturedSpan!.id}
+        `).rejects.toMatchObject({ code: '23505' });
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(120_000),
+  );
+
+  it(
+    "adds durable close intents without changing existing Side Chat data",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const migrationsThrough0170 = createCurrentMigrationsFolderThrough(170);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await migratePg(drizzlePg(sql), { migrationsFolder: migrationsThrough0170 });
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Side close migration', 'side-close-migration', 'SCM') RETURNING id
+        `;
+        const [parent] = await sql`
+          INSERT INTO chat_conversations (org_id, title)
+          VALUES (${org!.id}, 'Parent chat') RETURNING id
+        `;
+        const [side] = await sql`
+          INSERT INTO chat_conversations
+            (org_id, title, conversation_kind, side_chat_state, created_by_user_id, forked_from_conversation_id)
+          VALUES (${org!.id}, 'Existing Side Chat', 'side_chat', 'active', 'owner', ${parent!.id}) RETURNING id
+        `;
+
+        expect(await inspectMigrations(connectionString)).toMatchObject({
+          status: "needsMigrations",
+          pendingMigrations: expect.arrayContaining(["0177_side_chat_close_intents.sql"]),
+        });
+        await applyPendingMigrations(connectionString);
+        expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+        expect(await sql`
+          SELECT title, side_chat_state, forked_from_conversation_id
+          FROM chat_conversations WHERE id = ${side!.id}
+        `).toEqual([{
+          title: "Existing Side Chat",
+          side_chat_state: "active",
+          forked_from_conversation_id: parent!.id,
+        }]);
+
+        const [intent] = await sql`
+          INSERT INTO side_chat_close_intents (org_id, conversation_id, owner_user_id)
+          VALUES (${org!.id}, ${side!.id}, 'owner') RETURNING id
+        `;
+        await expect(sql`DELETE FROM organizations WHERE id = ${org!.id}`).rejects.toMatchObject({ code: "23001" });
+        expect(await sql`SELECT id FROM side_chat_close_intents WHERE id = ${intent!.id}`).toHaveLength(1);
       } finally {
         await sql.end();
       }

@@ -93,6 +93,64 @@ console.log(JSON.stringify({
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeFakeCursorAcpCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
+const requests = [];
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }
+if (process.argv[2] !== "acp") {
+  if (capturePath) fs.writeFileSync(capturePath, JSON.stringify({ legacyArgs: process.argv.slice(2) }), "utf8");
+  process.exit(47);
+}
+function handle(request) {
+  requests.push(request);
+  if (capturePath) fs.writeFileSync(capturePath, JSON.stringify({ requests }), "utf8");
+  if (request.method === "initialized") return;
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [{ id: "cursor_login", name: "Cursor Login" }],
+    } });
+    return;
+  }
+  if (request.method === "session/new") {
+    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: "native-chat-session" } });
+    return;
+  }
+  if (request.method === "session/load") {
+    if (process.env.RUDDER_TEST_MISSING_SESSION === "1") {
+      send({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: "Session not found" } });
+      return;
+    }
+    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: request.params.sessionId, modes: {} } });
+    return;
+  }
+  if (request.method === "session/prompt") {
+    const prompt = (request.params.prompt || []).map((part) => part.text || "").join("\\n");
+    if (capturePath) fs.writeFileSync(capturePath, JSON.stringify({ requests, prompt }), "utf8");
+    send({ jsonrpc: "2.0", method: "session/update", params: {
+      sessionId: request.params.sessionId,
+      update: { sessionUpdate: "agent_message_chunk", executionRef: "native-chat-execution", content: { type: "text", text: "done" } },
+    } });
+    send({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } });
+    return;
+  }
+  send({ jsonrpc: "2.0", id: request.id, result: {} });
+}
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  const lines = buffer.split(/\\r?\\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) if (line.trim()) handle(JSON.parse(line));
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 type CapturePayload = {
   argv: string[];
   home: string;
@@ -279,6 +337,182 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       expect(invocationPrompt).toContain("Rudder runtime note:");
       expect(invocationPrompt).toContain("# Tacit Memory");
       expect(invocationPrompt).toContain("RUDDER_API_URL");
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("routes chat mode through ACP and preserves the assembled Rudder prompt", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-acp-chat-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    const capturePath = path.join(root, "capture.json");
+    const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Cursor System Instructions\n", "utf8");
+    await writeFakeCursorAcpCommand(commandPath);
+
+    const restoreEnv = setManagedCursorEnv(root);
+    try {
+      const result = await execute({
+        runId: "run-cursor-acp-chat",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Cursor Coder",
+          agentRuntimeType: "cursor",
+          agentRuntimeConfig: {},
+        },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          instructionsFilePath: instructionsPath,
+          promptTemplate: "Respond to the current chat request.",
+          env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+        },
+        context: { chatMode: true },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result).toMatchObject({ exitCode: 0, sessionId: "native-chat-session" });
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        requests: Array<{ method: string }>;
+        prompt: string;
+      };
+      expect(capture.requests.map((request) => request.method)).toEqual([
+        "initialize",
+        "initialized",
+        "authenticate",
+        "session/new",
+        "session/set_model",
+        "session/prompt",
+      ]);
+      expect(capture.requests.find((request) => request.method === "authenticate")?.params).toMatchObject({ methodId: "cursor_login" });
+      expect(capture.prompt).toContain("# Cursor System Instructions");
+      expect(capture.prompt).toContain("Rudder runtime note:");
+      expect(capture.prompt).toContain("Respond to the current chat request.");
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("loads a saved ACP session before continuing without creating a replacement", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-acp-resume-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    const capturePath = path.join(root, "capture.json");
+    const sessionId = "saved-native-session";
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCursorAcpCommand(commandPath);
+
+    const restoreEnv = setManagedCursorEnv(root);
+    try {
+      const result = await execute({
+        runId: "run-cursor-acp-resume",
+        agent: { id: "agent-1", orgId: "organization-1", name: "Cursor Coder", agentRuntimeType: "cursor", agentRuntimeConfig: {} },
+        runtime: {
+          sessionId,
+          sessionParams: {
+            sessionId,
+            cwd: workspace,
+            profileHostId: "local",
+            profileId: "default",
+            cursorAcpTransport: "cursor-agent-acp-stdio",
+            cursorAcpCommand: commandPath,
+            cursorAcpProtocolVersion: 1,
+            cursorAcpAuthMethodId: "cursor_login",
+          },
+          sessionDisplayId: sessionId,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+        },
+        context: { chatMode: true },
+        onLog: async () => {},
+      });
+
+      expect(result).toMatchObject({ exitCode: 0, sessionId });
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        requests: Array<{ method: string; params?: Record<string, unknown> }>;
+        legacyArgs?: string[];
+      };
+      expect(capture.requests.map((request) => request.method)).toEqual([
+        "initialize",
+        "initialized",
+        "authenticate",
+        "session/load",
+        "session/set_model",
+        "session/prompt",
+      ]);
+      expect(capture.requests.find((request) => request.method === "session/load")?.params).toMatchObject({ sessionId });
+      expect(capture.legacyArgs).toBeUndefined();
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when a saved ACP session is missing instead of starting a fresh chat", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-acp-missing-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    const capturePath = path.join(root, "capture.json");
+    const sessionId = "missing-native-session";
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCursorAcpCommand(commandPath);
+
+    const restoreEnv = setManagedCursorEnv(root);
+    try {
+      const result = await execute({
+        runId: "run-cursor-acp-missing",
+        agent: { id: "agent-1", orgId: "organization-1", name: "Cursor Coder", agentRuntimeType: "cursor", agentRuntimeConfig: {} },
+        runtime: {
+          sessionId,
+          sessionParams: {
+            sessionId,
+            cwd: workspace,
+            profileHostId: "local",
+            profileId: "default",
+            cursorAcpTransport: "cursor-agent-acp-stdio",
+            cursorAcpCommand: commandPath,
+            cursorAcpProtocolVersion: 1,
+            cursorAcpAuthMethodId: "cursor_login",
+          },
+          sessionDisplayId: sessionId,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          env: { RUDDER_TEST_CAPTURE_PATH: capturePath, RUDDER_TEST_MISSING_SESSION: "1" },
+        },
+        context: { chatMode: true },
+        onLog: async () => {},
+      });
+
+      expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_missing-session", sessionId });
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        requests: Array<{ method: string }>;
+        legacyArgs?: string[];
+      };
+      expect(capture.requests.map((request) => request.method)).toEqual([
+        "initialize",
+        "initialized",
+        "authenticate",
+        "session/load",
+      ]);
+      expect(capture.legacyArgs).toBeUndefined();
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
@@ -848,6 +1082,7 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       });
       expect(capture.prompt ?? "").toContain("<rudder_agent_instruction>");
       expect(capture.prompt ?? "").toContain("<enabled_rudder_skills>");
+      expect(capture.prompt ?? "").toContain("# Enabled Rudder Skills");
       expect(capture.prompt ?? "").toContain("## Skill: ascii-heart");
       expect(capture.prompt ?? "").not.toContain("operator-skill");
       expect(loadedSkills).toEqual([

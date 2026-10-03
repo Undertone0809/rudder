@@ -48,9 +48,11 @@ const managedClaudeJsonPath = process.env.RUDDER_CLAUDE_HOME
   ? path.join(process.env.RUDDER_CLAUDE_HOME, ".claude.json")
   : null;
 const runtimeTmpDir = process.env.RUDDER_RUNTIME_TMPDIR ?? null;
+const streamJsonIndex = process.argv.indexOf("--input-format");
+const streamJsonMode = streamJsonIndex >= 0 && process.argv[streamJsonIndex + 1] === "stream-json";
 const payload = {
   argv: process.argv.slice(2),
-  prompt: fs.readFileSync(0, "utf8"),
+  prompt: "",
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
     .sort(),
@@ -95,37 +97,73 @@ const payload = {
   runtimeTmpExists: runtimeTmpDir ? fs.existsSync(runtimeTmpDir) : false,
   gitIdentity: captureGitIdentityEnv(),
 };
-if (capturePath) {
-  fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
-}
+const writeCapture = () => {
+  if (capturePath) fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
+};
+writeCapture();
 if (process.env.RUDDER_TEST_PROVIDER_FAILURE === "1") {
   console.error("forced Claude provider failure");
   process.exit(7);
 }
-console.log(JSON.stringify({
+if (!streamJsonMode) {
+  process.exit(0);
+}
+
+const writeJson = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+writeJson({
   type: "system",
   subtype: "init",
   session_id: "claude-session-1",
   model: "claude-test",
-}));
-console.log(JSON.stringify({
-  type: "assistant",
-  session_id: "claude-session-1",
-  message: {
-    content: [{ type: "text", text: "hello" }],
-  },
-}));
-console.log(JSON.stringify({
-  type: "result",
-  subtype: "success",
-  session_id: "claude-session-1",
-  result: "ok",
-  usage: {
-    input_tokens: 1,
-    cache_read_input_tokens: 0,
-    output_tokens: 1,
-  },
-}));
+});
+
+const readline = require("node:readline");
+const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+let handledUserMessage = false;
+input.on("line", (line) => {
+  let message;
+  try {
+    message = JSON.parse(line);
+  } catch {
+    process.stderr.write("invalid fake Claude stream-json request\\n");
+    return;
+  }
+  if (message?.type !== "user" || handledUserMessage) return;
+  handledUserMessage = true;
+  const content = Array.isArray(message.message?.content) ? message.message.content : [];
+  payload.prompt = content
+    .filter((item) => item && item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\\n");
+  writeCapture();
+  writeJson({
+    type: "user",
+    isReplay: true,
+    uuid: message.uuid,
+    session_id: "claude-session-1",
+    message: message.message,
+  });
+  writeJson({
+    type: "assistant",
+    uuid: "claude-assistant-1",
+    session_id: "claude-session-1",
+    message: {
+      content: [{ type: "text", text: "hello" }],
+    },
+  });
+  writeJson({
+    type: "result",
+    uuid: "claude-result-1",
+    subtype: "success",
+    session_id: "claude-session-1",
+    result: "ok",
+    usage: {
+      input_tokens: 1,
+      cache_read_input_tokens: 0,
+      output_tokens: 1,
+    },
+  });
+});
 `;
   await fs.writeFile(commandPath, script, "utf8");
   await fs.chmod(commandPath, 0o755);

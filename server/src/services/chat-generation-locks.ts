@@ -115,6 +115,7 @@ export function getActiveChatGeneration(conversationId: string): {
   generationId: string | null;
   clientMutationId: string | null;
   attemptEpoch: number;
+  attemptOwnerToken: string | null;
   lifecycle: ActiveChatGeneration["lifecycle"];
   runtimeType: string | null;
 } | null {
@@ -124,6 +125,7 @@ export function getActiveChatGeneration(conversationId: string): {
     generationId: active.generationId,
     clientMutationId: active.clientMutationId,
     attemptEpoch: active.attemptEpoch,
+    attemptOwnerToken: active.attemptOwnerToken,
     lifecycle: active.lifecycle,
     runtimeType: active.control?.handle.runtimeType ?? null,
   };
@@ -302,6 +304,14 @@ export type ActiveChatGenerationSteerResult =
       { disposition: "accepted_current" }
     >)
   | { status: "acceptance_unknown"; attemptEpoch: number; reason: string; ownerChangedAfterSend?: true }
+  | {
+      status: "provider_rejected";
+      attemptEpoch: number;
+      reason: string;
+      providerThreadId?: string | null;
+      providerTurnId?: string | null;
+      ownerChangedAfterSend?: true;
+    }
   | { status: "provider_send_in_flight"; attemptEpoch: number }
   | {
       status: "continuation_required";
@@ -494,6 +504,16 @@ export async function steerActiveChatGeneration(input: {
         status: "acceptance_unknown",
         attemptEpoch: control.attemptEpoch,
         reason: result.reason,
+        ...(ownerChangedAfterSend ? { ownerChangedAfterSend: true as const } : {}),
+      };
+    }
+    if (result.disposition === "rejected") {
+      return {
+        status: "provider_rejected",
+        attemptEpoch: control.attemptEpoch,
+        reason: result.reason,
+        providerThreadId: result.providerThreadId,
+        providerTurnId: result.providerTurnId,
         ...(ownerChangedAfterSend ? { ownerChangedAfterSend: true as const } : {}),
       };
     }

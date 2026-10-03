@@ -11,16 +11,22 @@ function parseObject(value: string): Record<string, unknown> | null {
 }
 
 export function buildHermesGatewayConfig(values: CreateConfigValues): Record<string, unknown> {
-  const config: Record<string, unknown> = { timeoutSec: 120, sessionKeyStrategy: "issue" };
-  if (values.url) config.url = values.url;
+  const customConnection = values.hermesConnectionMode === "custom";
+  const config: Record<string, unknown> = {
+    timeoutSec: 120,
+    sessionKeyStrategy: "issue",
+    hermesConnectionMode: customConnection ? "custom" : "local",
+    ...(customConnection ? { hermesChatBackend: "native_runs_http" } : {}),
+  };
+  if (customConnection && values.url) config.url = values.url;
   if (values.model) config.model = values.model;
   const modelFallbacks = normalizeModelFallbacks(values.modelFallbacks, {
     agentRuntimeType: "hermes_gateway",
     model: values.model,
   });
   if (modelFallbacks.length > 0) config.modelFallbacks = modelFallbacks;
-  if (values.apiKey) config.apiKey = values.apiKey;
-  const payload = parseObject(values.payloadTemplateJson ?? "");
+  if (customConnection && values.apiKey) config.apiKey = values.apiKey;
+  const payload = customConnection ? parseObject(values.payloadTemplateJson ?? "") : null;
   if (payload) config.payloadTemplate = payload;
   return config;
 }

@@ -4,22 +4,67 @@ import {
   chatAttachments,
   chatConversations,
   chatMessages,
+  sideChatFirstInputs,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   chatInlineAnnotationsSchema,
   sanitizeChatStructuredPayload,
   type ChatMessage,
+  type ChatStreamTranscriptEntry,
 } from "@rudderhq/shared";
 import { and, desc, eq, gt, gte, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
-import { listDetachedChatTranscripts, replaceDetachedChatTranscript, selectChatTranscript } from "./chat-transcript-persistence.js";
+import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js";
+import { chatTranscriptEntryFromReaderItem } from "./chat-transcript-reader-item.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
+import { assertChatWriteAdmitted } from "./chats.side-chat-write-admission.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
+import type { TranscriptItem } from "./runtime-kernel/transcript-reader.js";
 
 type MessageRow = typeof chatMessages.$inferSelect;
+
+async function readMessageTranscriptFromConversation(
+  database: Pick<Db, "select">,
+  message: Pick<MessageRow, "id" | "orgId" | "conversationId" | "role" | "body" | "createdAt">,
+) {
+  const reader = createHistoricalTranscriptReader(database);
+  const transcript: Array<{ ordinal: number; entry: ChatStreamTranscriptEntry; item: TranscriptItem }> = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const page = await reader.readConversation({
+      orgId: message.orgId,
+      conversationId: message.conversationId,
+      principal: { type: "board", orgId: message.orgId, authorized: true },
+      cursor,
+      limit: 200,
+    });
+    for (const item of page.items) {
+      const belongsToMessage = [item.id, item.sourceEntryId]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => new RegExp(`^message:${message.id}:\\d+(?::\\d+)?$`, "u").test(value));
+      if (!belongsToMessage) continue;
+      const entry = chatTranscriptEntryFromReaderItem(item);
+      if (entry) transcript.push({ ordinal: item.ordinal, entry, item });
+    }
+    if (!page.nextCursor) break;
+    if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
+    cursor = page.nextCursor;
+  }
+  transcript.sort((left, right) => left.ordinal - right.ordinal);
+  const only = transcript[0];
+  const bodyKind = message.role === "user" ? "user" : message.role === "system" ? "system" : "assistant";
+  const isBodyFallback = transcript.length === 1
+    && only?.item.sourceEntryId === `message:${message.id}:0`
+    && only.entry.kind === bodyKind
+    && "text" in only.entry
+    && only.entry.text === message.body
+    && Date.parse(only.item.ts) === message.createdAt.getTime();
+  return isBodyFallback ? [] : transcript.map(({ entry }) => entry);
+}
 
 function postgresErrorCode(error: unknown) {
   if (!error || typeof error !== "object") return null;
@@ -48,6 +93,8 @@ export type AddUserChatMessageOptions = {
   attachmentFileIndexesByAnnotationId?: Map<string, number[]>;
   clientMutationId?: string | null;
   clientMutationFingerprint?: string | null;
+  sideChatFirstInputClaimToken?: string | null;
+  sideChatFirstInputFingerprint?: string | null;
   onIdempotentReplay?: (messageId: string) => void;
   onTransactionCommitted?: (messageId: string) => void;
 };
@@ -163,7 +210,40 @@ export function createChatAnnotationMessagePersistence(
     options: AddUserChatMessageOptions = {},
   ) {
     const persist = () => db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, orgId);
+      await lockNodeMutationAuthority(tx, orgId, "shared");
+      const isSideChat = await assertChatWriteAdmitted(tx, orgId, conversationId);
+      const firstInputIntent = isSideChat
+        ? await tx.select().from(sideChatFirstInputs).where(and(
+          eq(sideChatFirstInputs.orgId, orgId),
+          eq(sideChatFirstInputs.conversationId, conversationId),
+        )).for("update").then((rows) => rows[0] ?? null)
+        : null;
+      if (isSideChat && !firstInputIntent) {
+        throw conflict("Side Chat creation intent is missing", {
+          code: "side_chat_first_input_intent_missing",
+        });
+      }
+      let acceptSideChatFirstInput = false;
+      if (options.sideChatFirstInputClaimToken) {
+        if (
+          !firstInputIntent
+          || firstInputIntent.status !== "pending"
+          || firstInputIntent.claimToken !== options.sideChatFirstInputClaimToken
+          || firstInputIntent.requestClientMutationId !== (options.clientMutationId ?? null)
+          || firstInputIntent.requestFingerprint !== options.sideChatFirstInputFingerprint
+        ) {
+          throw conflict("Side Chat first-input claim is no longer current", {
+            code: "side_chat_first_input_claim_lost",
+          });
+        }
+        acceptSideChatFirstInput = true;
+      } else if (firstInputIntent?.status === "pending") {
+        throw conflict("Side Chat first input is being accepted by another request", {
+          code: "side_chat_first_input_in_progress",
+        });
+      } else if (firstInputIntent?.status === "awaiting") {
+        acceptSideChatFirstInput = true;
+      }
       const now = new Date();
       let target: MessageRow | null = null;
       let turnId: string = randomUUID();
@@ -260,12 +340,7 @@ export function createChatAnnotationMessagePersistence(
           messageStructuredPayload = options.structuredPayload ?? null;
           messageTranscript = chatTranscriptFromPayload(messageStructuredPayload);
         } else {
-          const detached = await listDetachedChatTranscripts(tx, [target]);
-          messageTranscript = selectChatTranscript({
-            ledger: undefined,
-            detached: detached.get(target.id),
-            legacyPayload: target.structuredPayload,
-          });
+          messageTranscript = await readMessageTranscriptFromConversation(tx, target);
           messageStructuredPayload = stripChatMetadataFromPayload(target.structuredPayload);
         }
       }
@@ -403,38 +478,66 @@ export function createChatAnnotationMessagePersistence(
           eq(chatConversations.id, conversationId),
           eq(chatConversations.orgId, orgId),
         ));
+      if (acceptSideChatFirstInput && firstInputIntent) {
+        const [acceptedIntent] = await tx.update(sideChatFirstInputs).set({
+          status: "accepted",
+          requestClientMutationId: options.clientMutationId ?? null,
+          requestFingerprint: options.sideChatFirstInputFingerprint
+            ?? options.clientMutationFingerprint
+            ?? firstInputIntent.requestFingerprint,
+          claimToken: null,
+          claimExpiresAt: null,
+          userMessageId: message.id,
+          updatedAt: now,
+        }).where(and(
+          eq(sideChatFirstInputs.conversationId, conversationId),
+          eq(sideChatFirstInputs.status, firstInputIntent.status),
+          firstInputIntent.status === "pending"
+            ? eq(sideChatFirstInputs.claimToken, options.sideChatFirstInputClaimToken!)
+            : undefined,
+        )).returning({ conversationId: sideChatFirstInputs.conversationId });
+        if (!acceptedIntent) {
+          throw conflict("Side Chat first-input claim changed before message acceptance", {
+            code: "side_chat_first_input_claim_lost",
+          });
+        }
+      }
       return { messageId: message.id, replayed: false };
     });
-    let persisted: { messageId: string; replayed: boolean };
-    try {
-      persisted = await persist();
-    } catch (error) {
-      if (!options.clientMutationId || postgresErrorCode(error) !== "23505") throw error;
-      const existing = await db
-        .select({
-          id: chatMessages.id,
-          body: chatMessages.body,
-          fingerprint: chatMessages.clientMutationFingerprint,
-        })
-        .from(chatMessages)
-        .where(and(
-          eq(chatMessages.orgId, orgId),
-          eq(chatMessages.conversationId, conversationId),
-          eq(chatMessages.clientMutationId, options.clientMutationId),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (!existing) throw error;
-      if (
-        existing.body !== body
-        || (
-          existing.fingerprint !== null
-          && existing.fingerprint !== (options.clientMutationFingerprint ?? null)
-        )
-      ) {
-        throw conflict("Chat mutation key was already used for different content");
+    let persisted: { messageId: string; replayed: boolean } | null = null;
+    for (let attempt = 0; persisted === null; attempt += 1) {
+      try {
+        persisted = await persist();
+      } catch (error) {
+        const code = postgresErrorCode(error);
+        if (options.clientMutationId && code === "40P01" && attempt < 2) continue;
+        if (!options.clientMutationId || code !== "23505") throw error;
+        const existing = await db
+          .select({
+            id: chatMessages.id,
+            body: chatMessages.body,
+            fingerprint: chatMessages.clientMutationFingerprint,
+          })
+          .from(chatMessages)
+          .where(and(
+            eq(chatMessages.orgId, orgId),
+            eq(chatMessages.conversationId, conversationId),
+            eq(chatMessages.clientMutationId, options.clientMutationId),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (!existing) throw error;
+        if (
+          existing.body !== body
+          || (
+            existing.fingerprint !== null
+            && existing.fingerprint !== (options.clientMutationFingerprint ?? null)
+          )
+        ) {
+          throw conflict("Chat mutation key was already used for different content");
+        }
+        persisted = { messageId: existing.id, replayed: true };
       }
-      persisted = { messageId: existing.id, replayed: true };
     }
     if (persisted.replayed) options.onIdempotentReplay?.(persisted.messageId);
     else options.onTransactionCommitted?.(persisted.messageId);

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
+import { FirstChatTurnStore } from "@/lib/chat-first-turn-store";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FirstChatTurnProvider, preserveFirstChatTurnOwnerState, useFirstChatTurnStore } from "./FirstChatTurnContext";
-import { FirstChatTurnStore } from "@/lib/chat-first-turn-store";
 
 const organizationState = vi.hoisted(() => ({ selectedOrganizationId: "org-a" }));
 

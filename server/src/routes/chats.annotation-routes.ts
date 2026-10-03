@@ -18,6 +18,8 @@ type ActorInfo = ReturnType<typeof getActorInfo>;
 export type ChatAnnotationRouteInput = {
   clientMutationId?: string | null;
   clientMutationFingerprint?: string | null;
+  sideChatFirstInputClaimToken?: string | null;
+  sideChatFirstInputFingerprint?: string | null;
   provided: boolean;
   prepared: PreparedChatInlineAnnotations | null;
   storedAttachments?: Array<{
@@ -53,6 +55,60 @@ export function createChatAnnotationRouteHelpers(input: {
   logActivity: typeof logActivity;
   assertLocalMutationAllowed: (conversation: ChatConversation) => void;
 }) {
+  async function logUserMessageAddedActivity(
+    conversation: ChatConversation,
+    userMessage: ChatMessage,
+    actor: ActorInfo,
+    editUserMessageId: string | null,
+    sideChatFirstInput: boolean,
+  ) {
+    const persistedAnnotations = chatInlineAnnotationsFromStructuredPayload(
+      userMessage.structuredPayload,
+    );
+    await input.logActivity(input.db, {
+      orgId: conversation.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.message_added",
+      entityType: "chat",
+      entityId: conversation.id,
+      details: {
+        messageId: userMessage.id,
+        role: "user",
+        kind: "message",
+        editUserMessageId,
+        annotationCount: persistedAnnotations.length,
+        annotationSourceMessageIds: [
+          ...new Set(
+            persistedAnnotations
+              .filter((annotation) => annotation.surface !== "agent_run_transcript")
+              .map((annotation) => annotation.sourceMessageId)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ],
+        annotationSourceRunIds: [
+          ...new Set(
+            persistedAnnotations
+              .filter((annotation) => annotation.surface === "agent_run_transcript")
+              .map((annotation) => annotation.sourceRunId)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ],
+      },
+      ...(sideChatFirstInput ? { idempotencyKey: `chat.message_added:${userMessage.id}` } : {}),
+    });
+  }
+
+  async function recoverSideChatFirstInputActivity(
+    conversation: ChatConversation,
+    userMessage: ChatMessage,
+    actor: ActorInfo,
+  ) {
+    await logUserMessageAddedActivity(conversation, userMessage, actor, null, true);
+  }
+
   async function addUserMessage(
     conversation: ChatConversation,
     body: string,
@@ -74,6 +130,12 @@ export function createChatAnnotationRouteHelpers(input: {
     const transactionCommitOptions = annotationInput?.onPersisted
       ? { onTransactionCommitted: reportTransactionCommit }
       : {};
+    const sideChatFirstInputOptions = annotationInput?.sideChatFirstInputClaimToken
+      ? {
+        sideChatFirstInputClaimToken: annotationInput.sideChatFirstInputClaimToken,
+        sideChatFirstInputFingerprint: annotationInput.sideChatFirstInputFingerprint ?? null,
+      }
+      : {};
     const messageOptions = annotationInput?.provided
       ? {
         structuredPayload: {
@@ -92,6 +154,7 @@ export function createChatAnnotationRouteHelpers(input: {
           }
           : {}),
         ...transactionCommitOptions,
+        ...sideChatFirstInputOptions,
         ...(annotationInput.clientMutationId
           ? {
             clientMutationId: annotationInput.clientMutationId,
@@ -108,6 +171,7 @@ export function createChatAnnotationRouteHelpers(input: {
             createdByUserId: actor.actorType === "user" ? actor.actorId : null,
           })),
           ...transactionCommitOptions,
+          ...sideChatFirstInputOptions,
           ...(annotationInput.clientMutationId
             ? {
               clientMutationId: annotationInput.clientMutationId,
@@ -116,9 +180,12 @@ export function createChatAnnotationRouteHelpers(input: {
             }
             : {}),
         }
-        : annotationInput?.onPersisted || annotationInput?.clientMutationId
+        : annotationInput?.onPersisted
+          || annotationInput?.clientMutationId
+          || annotationInput?.sideChatFirstInputClaimToken
           ? {
             ...transactionCommitOptions,
+            ...sideChatFirstInputOptions,
             ...(annotationInput.clientMutationId
               ? {
                 clientMutationId: annotationInput.clientMutationId,
@@ -147,43 +214,13 @@ export function createChatAnnotationRouteHelpers(input: {
     if (!accepted) {
       return { message: userMessage as ChatMessage, accepted: false };
     }
-    const persistedAnnotations = chatInlineAnnotationsFromStructuredPayload(
-      userMessage.structuredPayload,
+    await logUserMessageAddedActivity(
+      conversation,
+      userMessage as ChatMessage,
+      actor,
+      editUserMessageId ?? null,
+      Boolean(annotationInput?.sideChatFirstInputClaimToken),
     );
-
-    await input.logActivity(input.db, {
-      orgId: conversation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.message_added",
-      entityType: "chat",
-      entityId: conversation.id,
-      details: {
-        messageId: userMessage.id,
-        role: "user",
-        kind: "message",
-        editUserMessageId: editUserMessageId ?? null,
-        annotationCount: persistedAnnotations.length,
-        annotationSourceMessageIds: [
-          ...new Set(
-            persistedAnnotations
-              .filter((annotation) => annotation.surface !== "agent_run_transcript")
-              .map((annotation) => annotation.sourceMessageId)
-              .filter((value): value is string => Boolean(value)),
-          ),
-        ],
-        annotationSourceRunIds: [
-          ...new Set(
-            persistedAnnotations
-              .filter((annotation) => annotation.surface === "agent_run_transcript")
-              .map((annotation) => annotation.sourceRunId)
-              .filter((value): value is string => Boolean(value)),
-          ),
-        ],
-      },
-    });
 
     const storedObjectKeys = new Set(
       annotationInput?.storedAttachments?.map((attachment) => attachment.objectKey) ?? [],
@@ -297,6 +334,7 @@ export function createChatAnnotationRouteHelpers(input: {
     addAgentAuthoredMessage,
     addUserMessage,
     cleanupStoredUserMessageFiles,
+    recoverSideChatFirstInputActivity,
     storeUserMessageFiles,
   };
 }

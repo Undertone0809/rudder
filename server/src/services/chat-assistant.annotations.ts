@@ -154,3 +154,45 @@ export function buildCurrentUserAttachmentPromptSection(
 
   return null;
 }
+
+export function buildHistoricalUserImagePromptSection(
+  messages: ChatMessage[],
+  attachmentReferences: Map<string, ChatAnnotationAttachmentPromptReference> = new Map(),
+) {
+  const latestUserIndex = messages.findLastIndex((message) => message.role === "user");
+  if (latestUserIndex <= 0) return null;
+
+  const images = messages
+    .slice(0, latestUserIndex)
+    .filter((message) => message.role === "user")
+    .flatMap((message) => {
+      const annotationAttachmentIds = new Set(
+        chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
+          .flatMap((annotation) => annotation.attachmentIds),
+      );
+      return message.attachments
+        .filter((attachment) => !annotationAttachmentIds.has(attachment.id))
+        .filter((attachment) => attachment.contentType.toLowerCase().startsWith("image/"))
+        .map((attachment) => {
+          const reference = attachmentReferences.get(attachment.id);
+          return {
+            id: attachment.id,
+            assetId: attachment.assetId,
+            name: attachment.originalFilename ?? attachment.assetId,
+            contentType: attachment.contentType,
+            byteSize: attachment.byteSize,
+            contentPath: attachment.contentPath,
+            ...(reference?.localPath ? { localPath: reference.localPath } : {}),
+            ...(reference?.localPathError ? { localPathError: reference.localPathError } : {}),
+          };
+        });
+    });
+  if (images.length === 0) return null;
+
+  return [
+    "Relevant historical user image attachments:",
+    "- These bounded references are available for the current request when revising or comparing prior user-provided evidence. Use only directly relevant images and canonical contentPath values in user-visible output.",
+    "- localPath is temporary runtime-only inspection context. Never expose it, internal retrieval instructions, or authentication material.",
+    JSON.stringify(images.slice(-24), null, 2),
+  ].join("\n");
+}

@@ -1,3 +1,13 @@
+export {
+  chatAskUserRequestSchema,
+  chatAskUserResponseAnswerSchema,
+  chatAskUserResponseSchema
+} from "@rudderhq/shared";
+export type {
+  ChatAskUserRequest,
+  ChatAskUserResponse,
+  ChatAskUserResponseAnswer
+} from "@rudderhq/shared";
 export { inferOpenAiCompatibleBiller } from "./billing.js";
 export {
   REDACTED_HOME_PATH_USER,
@@ -21,6 +31,12 @@ export {
   type ModelAttemptSpec
 } from "./model-fallbacks.js";
 export { resolveNativeCommand, type NativeCommand } from "./native-command.js";
+export {
+  diagnoseOpenCodeNativeFailure,
+  parseOpenCodeNativeFailureDiagnostic,
+  type OpenCodeNativeFailureDiagnostic
+} from "./native-failure-diagnostic.js";
+export { hasConfirmedNativeWriterQuiescence } from "./native-writer-quiescence.js";
 export {
   classifyAgentRuntimeNetworkFailure,
   isAgentRuntimeNetworkSuspension,
@@ -91,8 +107,9 @@ export type {
   SessionCompactionPolicy
 } from "./session-compaction.js";
 export type {
-  AgentRuntimeAgent,
-  AgentRuntimeBillingType,
+  AgentRuntimeAgent, AgentRuntimeApprovalDecision,
+  AgentRuntimeApprovalHandle,
+  AgentRuntimeApprovalRequest, AgentRuntimeBillingType,
   AgentRuntimeControlAttempt,
   AgentRuntimeControlAttemptLease,
   AgentRuntimeControlCoordinator,
@@ -106,13 +123,10 @@ export type {
   AgentRuntimeEnvironmentCheckLevel,
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
-  AgentRuntimeEnvironmentTestStatus,
-  AgentRuntimeExecutionContext,
-  AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta,
-  AgentRuntimeLoadedMcpServerMeta,
+  AgentRuntimeEnvironmentTestStatus, AgentRuntimeExecutionContext, AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta, AgentRuntimeLoadedMcpServerMeta,
   AgentRuntimeLoadedSkillMeta,
   AgentRuntimeMediaAttachment,
-  AgentRuntimeModel, AgentRuntimeNetworkContinuation,
+  AgentRuntimeModel, AgentRuntimeNativeWriterQuiescence, AgentRuntimeNetworkContinuation,
   AgentRuntimeNetworkSubmissionPhase,
   AgentRuntimeNetworkSuspension,
   AgentRuntimeNetworkTransport, AgentRuntimeServiceReport,
@@ -123,17 +137,14 @@ export type {
   AgentRuntimeSkillSnapshot,
   AgentRuntimeSkillState,
   AgentRuntimeSkillSyncMode,
-  AgentRuntimeState,
-  CLIAgentRuntimeModule,
-  CreateConfigValues,
-  HireApprovedHookResult,
+  AgentRuntimeState, AgentRuntimeTransientInputKind, AgentRuntimeTransientInputRequest, AgentRuntimeTransientInputResult, CLIAgentRuntimeModule,
+  CreateConfigValues, CursorAcpTranscriptEvent, HireApprovedHookResult,
   HireApprovedPayload,
   ModelFallbackConfig,
   ProviderQuotaResult,
   QuotaWindow,
   ServerAgentRuntimeModule,
-  StdoutLineParser,
-  TranscriptEntry,
+  StdoutLineParser, TranscriptEntry,
   TranscriptTodoItem,
   TranscriptTodoItemStatus,
   UsageSummary

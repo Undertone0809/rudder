@@ -23,11 +23,14 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  nativeSegments,
   organizationIntelligenceProfiles,
   organizationMemberships,
   organizationSecretVersions,
   organizationSecrets,
   organizations,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq, sql } from "drizzle-orm";
@@ -63,6 +66,7 @@ import {
   type FeishuOutboundSender,
 } from "../services/integrations/feishu/runtime.js";
 import { feishuIntegrationUserBindingService } from "../services/integrations/feishu/user-bindings.js";
+import { releaseTerminalRunRuntimeSpanWriters } from "../services/runtime-kernel/native-session.js";
 
 const mockFeishuSessionSummaryExecute = vi.hoisted(() => vi.fn());
 
@@ -232,6 +236,24 @@ describe("Feishu inbound dispatcher DB deps", () => {
   afterEach(async () => {
     mockFeishuSessionSummaryExecute.mockReset();
     clearActiveChatGenerationsForTest();
+    // These dispatcher fixtures admit Runs but never launch a native writer.
+    // Close each admitted lease explicitly before removing its history.
+    for (const span of await db.select().from(runRuntimeSpans)) {
+      if (span.writerLeaseReleasedAt) continue;
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, span.runId));
+      expect(run?.processPid).toBeNull();
+      await db.update(heartbeatRuns).set({
+        status: "cancelled", processExitedAt: new Date(),
+      }).where(eq(heartbeatRuns.id, span.runId));
+      const released = await releaseTerminalRunRuntimeSpanWriters(db, {
+        orgId: span.orgId, runId: span.runId, spanId: span.id,
+        proof: {
+          exitCode: null, signal: null, timedOut: false,
+          nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+        },
+      });
+      expect(released).toContain(span.id);
+    }
     await db.delete(agentIntegrationOutboundMessages);
     await db.delete(agentIntegrationInboundAudit);
     await db.delete(agentIntegrationInboundDedup);
@@ -242,8 +264,11 @@ describe("Feishu inbound dispatcher DB deps", () => {
     await db.delete(chatMessages);
     await db.delete(chatGenerations);
     await db.delete(heartbeatRunEvents);
+    await db.delete(runRuntimeSpans);
     await db.delete(activityLog);
     await db.delete(heartbeatRuns);
+    await db.delete(nativeSegments);
+    await db.delete(runtimeBindings);
     await db.delete(chatConversations);
     await db.delete(issues);
     await db.delete(agentIntegrations);
@@ -610,6 +635,15 @@ describe("Feishu inbound dispatcher DB deps", () => {
       externalChatType: event.chatType,
       externalMessageId: event.messageId,
     });
+    const [binding] = await db.select().from(runtimeBindings).where(eq(runtimeBindings.conversationId, result.conversationId));
+    expect(binding).toMatchObject({
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      runtimeType: "codex_local",
+      principalScopeRef: `user:${seeded.userId}`,
+      continuity: "native",
+    });
+    await expect(db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, result.runId))).resolves.toHaveLength(1);
     const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
     expect(outbound).toMatchObject({
       orgId: seeded.orgId,
@@ -1529,8 +1563,11 @@ describe("Feishu inbound dispatcher DB deps", () => {
       integrationId: seeded.integrationId,
       userId: seeded.userId,
       externalOpenId: "ou_installer",
+      externalUnionId: "on_installer",
     });
     const sent: Array<{ chatId: string; text: string }> = [];
+    let observedPrincipalScopeRef: string | null | undefined;
+    let observedRunContext: Record<string, unknown> | null | undefined;
     let onEvent: ((payload: Record<string, unknown>) => Promise<void>) | null = null;
     const sender: FeishuOutboundSender = {
       sendText: async (input) => {
@@ -1549,6 +1586,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
           chatId: "oc_sdk_chat",
           chatType: "p2p",
           senderOpenId: "ou_installer",
+          senderUnionId: "on_installer",
           body: "hello from sdk channel",
           commandBody: "hello from sdk channel",
           addressedToBot: true,
@@ -1562,17 +1600,21 @@ describe("Feishu inbound dispatcher DB deps", () => {
       sender,
       client,
       assistant: {
-        streamChatAssistantReply: async () => ({
-          outcome: "completed",
-          partialBody: "Rudder Feishu reply",
-          replyingAgentId: seeded.agentId,
-          reply: {
-            kind: "message",
-            body: "Rudder Feishu reply",
-            structuredPayload: null,
+        streamChatAssistantReply: async (input) => {
+          observedPrincipalScopeRef = input.principalScopeRef;
+          observedRunContext = input.runContext;
+          return {
+            outcome: "completed",
+            partialBody: "Rudder Feishu reply",
             replyingAgentId: seeded.agentId,
-          },
-        }),
+            reply: {
+              kind: "message",
+              body: "Rudder Feishu reply",
+              structuredPayload: null,
+              replyingAgentId: seeded.agentId,
+            },
+          };
+        },
       },
     });
 
@@ -1581,6 +1623,12 @@ describe("Feishu inbound dispatcher DB deps", () => {
     await waitUntil(() => {
       expect(sent).toEqual([{ chatId: "oc_sdk_chat", text: "Rudder Feishu reply" }]);
     });
+    expect(observedPrincipalScopeRef).toBe(`user:${seeded.userId}`);
+    expect(observedRunContext).toMatchObject({
+      feishuSenderOpenId: "ou_installer",
+      feishuSenderUnionId: "on_installer",
+    });
+    expect(observedRunContext).not.toHaveProperty("principalScopeRef");
     const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, body: message.body }))).toEqual([
       { role: "user", body: "hello from sdk channel" },
@@ -2474,6 +2522,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     );
 
     expect(result.status).toBe("accepted");
+    expect(result).not.toHaveProperty("principalScopeRef");
     await waitUntil(() => {
       expect(reactions).toEqual([
         { action: "add", messageId: "om_accepted_reply", emojiType: "OnIt" },

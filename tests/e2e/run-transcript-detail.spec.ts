@@ -1,10 +1,86 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
-import { randomUUID } from "node:crypto";
+import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
-import { chatConversations, createDb, heartbeatRunEvents, heartbeatRuns } from "../../packages/db/src/index.ts";
-import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
+import { chatConversations, createDb, heartbeatRunAttempts, heartbeatRunEvents, heartbeatRuns, runRuntimeSpans } from "../../packages/db/src/index.ts";
+import { E2E_CODEX_STUB, E2E_CONFIG_PATH, E2E_DATABASE_URL, E2E_INSTANCE_ROOT } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
+
+type InstructionsReaderObservation = {
+  id: number;
+  loadEpoch: number;
+  method: string;
+  url: string;
+  error?: string;
+  status?: number;
+  bodyHash?: string;
+  bodyBytes?: number;
+};
+
+function completeInstructionsReaderHash(body: unknown, runId: string, orgId: string): string | undefined {
+  const value = body as { run?: { id?: string; orgId?: string }; availability?: string; completeness?: string; page?: { hasMore?: boolean; nextCursor?: unknown } } | null;
+  if (!value || value.run?.id !== runId || value.run.orgId !== orgId
+    || value.availability !== "available" || value.completeness !== "complete"
+    || value.page?.hasMore !== false || value.page.nextCursor !== null) return undefined;
+  // Hash the entire parsed public Reader response, not only a status/summary.
+  return createHash("sha256").update(JSON.stringify(body)).digest("hex");
+}
+
+function matchInstructionsReaderAborts(
+  failures: InstructionsReaderObservation[],
+  completed: InstructionsReaderObservation[],
+  expectedHashes: ReadonlyMap<string, string>,
+) {
+  const used = new Set<number>();
+  const matches: { abortedId: number; completedId: number; loadEpoch: number; bodyHash: string }[] = [];
+  const unmatched: InstructionsReaderObservation[] = [];
+  for (const failed of failures) {
+    const expectedHash = expectedHashes.get(failed.url);
+    const counterpart = failed.error === "net::ERR_ABORTED" && failed.method === "GET" && expectedHash
+      ? completed.find(candidate => !used.has(candidate.id) && candidate.method === "GET"
+        && candidate.url === failed.url && candidate.loadEpoch === failed.loadEpoch
+        && candidate.status === 200 && candidate.bodyHash === expectedHash)
+      : undefined;
+    if (!counterpart) unmatched.push(failed);
+    else {
+      used.add(counterpart.id);
+      matches.push({ abortedId: failed.id, completedId: counterpart.id, loadEpoch: failed.loadEpoch, bodyHash: expectedHash! });
+    }
+  }
+  return { matches, unmatched };
+}
+
+test("strict Instructions Reader abort matching stays per-load and one-to-one", () => {
+  const url = "http://127.0.0.1:37958/api/run-intelligence/runs/own-run/transcript?output=full&order=oldest&turnLimit=50&includeOutput=false&maxChars=4000";
+  const body = { run: { id: "own-run", orgId: "own-org" }, availability: "available", completeness: "complete",
+    page: { hasMore: false, nextCursor: null }, entries: [{ text: "exact🙂" }] };
+  const hash = completeInstructionsReaderHash(body, "own-run", "own-org")!;
+  expect(hash).toMatch(/^[a-f0-9]{64}$/);
+  const expected = new Map([[url, hash]]);
+  const abort: InstructionsReaderObservation = { id: 1, method: "GET", url, loadEpoch: 1, error: "net::ERR_ABORTED" };
+  const success: InstructionsReaderObservation = { id: 2, method: "GET", url, loadEpoch: 1, status: 200, bodyHash: hash };
+  expect(matchInstructionsReaderAborts([abort], [success], expected).unmatched).toEqual([]);
+  expect(matchInstructionsReaderAborts([abort, { ...abort, id: 3 }], [success], expected).unmatched).toEqual([{ ...abort, id: 3 }]);
+  for (const delta of [
+    { url: url.replace("127.0.0.1", "localhost") }, { url: url.replace("own-run", "foreign-run") },
+    { url: `${url}&cursor=old` }, { url: url.replace("maxChars=4000", "maxChars=4001") },
+    { method: "POST" }, { loadEpoch: 2 }, { status: 500 }, { bodyHash: undefined }, { bodyHash: "wrong" },
+  ]) expect(matchInstructionsReaderAborts([abort], [{ ...success, ...delta }], expected).unmatched).toEqual([abort]);
+  expect(matchInstructionsReaderAborts([abort], [], expected).unmatched).toEqual([abort]);
+  expect(matchInstructionsReaderAborts([{ ...abort, error: "net::ERR_FAILED" }], [success], expected).unmatched).toHaveLength(1);
+  expect(matchInstructionsReaderAborts([{ ...abort, method: "POST" }], [success], expected).unmatched).toHaveLength(1);
+  expect(matchInstructionsReaderAborts([abort], [success], new Map()).unmatched).toEqual([abort]);
+  for (const invalid of [
+    { ...body, run: { id: "foreign-run", orgId: "own-org" } },
+    { ...body, run: { id: "own-run", orgId: "foreign-org" } },
+    { ...body, availability: "unavailable" }, { ...body, completeness: "partial" },
+    { ...body, page: { hasMore: true, nextCursor: "next" } },
+  ]) expect(completeInstructionsReaderHash(invalid, "own-run", "own-org")).toBeUndefined();
+  expect(completeInstructionsReaderHash({ ...body, entries: [{ text: "drift🙂" }] }, "own-run", "own-org")).not.toBe(hash);
+});
 
 test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
@@ -29,6 +105,35 @@ async function openVisibleRunList(page: Page): Promise<Locator> {
   const historyList = page.getByTestId("agent-runs-history-list");
   await expect(historyList).toBeVisible();
   return historyList;
+}
+
+function isolatedE2EScreenshotPath(name: string) {
+  const runId = process.env.RUDDER_E2E_RUN_ID?.replace(/[^a-z0-9._-]/gi, "-") ?? "local";
+  return join(tmpdir(), `${name}-${runId}-${process.pid}.png`);
+}
+
+function captureUnexpectedRequestFailures(page: Page) {
+  const failures: string[] = [];
+  const navigationSequenceByRequest = new WeakMap<Request, number>();
+  let mainFrameNavigationSequence = 0;
+
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+      mainFrameNavigationSequence += 1;
+    }
+    navigationSequenceByRequest.set(request, mainFrameNavigationSequence);
+  });
+  page.on("requestfailed", (request) => {
+    const error = request.failure()?.errorText ?? "unknown";
+    const requestNavigationSequence = navigationSequenceByRequest.get(request);
+    const abortedByLaterNavigation = error === "net::ERR_ABORTED"
+      && requestNavigationSequence !== undefined
+      && requestNavigationSequence < mainFrameNavigationSequence;
+    if (abortedByLaterNavigation) return;
+    failures.push(`${request.method()} ${request.url()} :: ${error}`);
+  });
+
+  return failures;
 }
 
 async function installRunTranscriptFilePreviewStub(page: Page, expectedPaths: string[]) {
@@ -99,14 +204,11 @@ test.describe("Run transcript detail", () => {
   test("renders detail transcripts as readable progress chunks with collapsed grouped tool activity", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
+    const requestFailures = captureUnexpectedRequestFailures(page);
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
-    page.on("requestfailed", (request) => {
-      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
-    });
     await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
@@ -157,7 +259,7 @@ test.describe("Run transcript detail", () => {
 
     await shellView.click();
     await commandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-143-terminal-ui-desktop.png",
+      path: isolatedE2EScreenshotPath("rudder-r6z-143-terminal-ui-desktop"),
     });
     await page.setViewportSize({ width: 390, height: 844 });
     const mobileCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
@@ -179,7 +281,7 @@ test.describe("Run transcript detail", () => {
       );
     }
     await mobileCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-143-terminal-ui-mobile.png",
+      path: isolatedE2EScreenshotPath("rudder-r6z-143-terminal-ui-mobile"),
     });
 
     const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 3 tools" });
@@ -249,12 +351,12 @@ test.describe("Run transcript detail", () => {
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
     await page.screenshot({
-      path: "/tmp/rudder-run-transcript-mcp-idle.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-mcp-idle"),
       fullPage: true,
     });
     await rudderMcpRow.hover();
     await page.screenshot({
-      path: "/tmp/rudder-run-transcript-mcp-hover.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-mcp-hover"),
       fullPage: true,
     });
 
@@ -293,7 +395,7 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("memory update failed:", { exact: false })).toHaveCount(0);
 
     await page.screenshot({
-      path: "/tmp/rudder-run-transcript-detail-expanded.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-detail-expanded"),
       fullPage: true,
     });
 
@@ -312,7 +414,7 @@ test.describe("Run transcript detail", () => {
     const lightCommandTerminal = page.getByTestId("command-terminal-detail").first();
     await expect(lightCommandTerminal).toBeVisible();
     await lightCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-143-terminal-ui-light-desktop.png",
+      path: isolatedE2EScreenshotPath("rudder-r6z-143-terminal-ui-light-desktop"),
     });
     await page.setViewportSize({ width: 390, height: 844 });
     const lightMobileCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
@@ -323,7 +425,7 @@ test.describe("Run transcript detail", () => {
     const lightTerminalOverflow = await lightMobileCommandTerminal.evaluate((element) => element.scrollWidth - element.clientWidth);
     expect(lightTerminalOverflow).toBeLessThanOrEqual(1);
     await lightMobileCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-143-terminal-ui-light-mobile.png",
+      path: isolatedE2EScreenshotPath("rudder-r6z-143-terminal-ui-light-mobile"),
     });
 
     expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
@@ -359,8 +461,35 @@ test.describe("Run transcript detail", () => {
     const transcriptEntries = [
       { kind: "system", text: "reasoning started" },
       { kind: "assistant", text: "Progress update." },
+      {
+        kind: "user",
+        text: [
+          "<rudder_agent_instruction>",
+          "<rudder_agent_operating_contract>",
+          "",
+          "Your home directory is $AGENT_HOME. Everything personal to you lives there.",
+          "",
+          "Use these paths consistently:",
+          "- Personal instructions live under $AGENT_HOME/instructions.",
+          "</rudder_agent_operating_contract>",
+          "</rudder_agent_instruction>",
+        ].join("\n"),
+      },
       { kind: "system", text: "reasoning completed" },
       { kind: "system", text: "reasoning started" },
+      {
+        kind: "tool_call",
+        name: "shell",
+        input: { command: "printf transcript-fixture-tool" },
+        toolUseId: "transcript-fixture-tool",
+      },
+      {
+        kind: "tool_result",
+        toolUseId: "transcript-fixture-tool",
+        toolName: "shell",
+        content: "Transcript fixture tool completed.",
+        isError: false,
+      },
       { kind: "assistant", text: "I", delta: true },
       { kind: "assistant", text: " read", delta: true },
       { kind: "assistant", text: " AG", delta: true },
@@ -381,22 +510,6 @@ test.describe("Run transcript detail", () => {
         text: "memory update failed: update /Users/zeeland/.rudder/instances/e2e/organizations/org/workspaces/agents/transcript-tester--e2e/life/preferences.yml permission denied",
       },
     ];
-    await e2eDb.insert(heartbeatRunEvents).values(transcriptEntries.map((entry, index) => ({
-      orgId: organization.id,
-      runId: run.id,
-      agentId: agent.id,
-      seq: 10_000 + index,
-      eventType: "transcript.entry",
-      stream: "system",
-      level: "info",
-      message: "chat transcript entry",
-      payload: {
-        ...entry,
-        ts: new Date(transcriptStartedAt + index).toISOString(),
-      },
-      createdAt: new Date(transcriptStartedAt + index),
-    })));
-
     await expect.poll(async () => {
       const runDetailRes = await page.request.get(`/api/agent-runs/${run.id}`);
       if (!runDetailRes.ok()) return null;
@@ -412,6 +525,7 @@ test.describe("Run transcript detail", () => {
       ));
     expect(firstInvocation).toBeTruthy();
     expect(firstInvocation?.payload).toMatchObject({
+      invocationInstructionSnapshot: { status: "available" },
       loadedMcpServers: expect.arrayContaining([
         { serverName: "rudder-tools", source: "built_in" },
       ]),
@@ -424,39 +538,124 @@ test.describe("Run transcript detail", () => {
     }, organization.id);
     await page.goto(`/agents/${agent.id}/runs/${run.id}`);
     const nativeDetailPane = page.getByTestId("agent-runs-detail-pane");
-    await page.getByRole("tab", { name: "Metadata" }).click();
+    // Snapshot-backed invocation details are labelled Instructions. Read this
+    // real Run's own endpoint, not the later seeded legacy Run's inline text.
+    const nativeInstructionsPath = `/api/agent-runs/${run.id}/events/${firstInvocation!.id}/invocation-instructions`;
+    const nativeInstructionsRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).pathname === nativeInstructionsPath);
+    await nativeDetailPane.getByRole("tab", { name: "Instructions", exact: true }).click();
+    const nativeInstructionsResponse = await nativeInstructionsRead;
+    expect(nativeInstructionsResponse.status()).toBe(200);
+    expect(nativeInstructionsResponse.headers()["cache-control"]).toContain("no-store");
+    const nativeInstructions = await nativeInstructionsResponse.json() as {
+      source: string; completeness: string; agentInstructionStack: string; sha256: string; byteSize: number;
+    };
+    expect(nativeInstructions.source).toBe("stored_snapshot");
+    expect(nativeInstructions.completeness).toBe("complete");
+    expect(nativeInstructions.agentInstructionStack.trim()).toBeTruthy();
+    expect(nativeInstructions.sha256).toBe(createHash("sha256").update(nativeInstructions.agentInstructionStack).digest("hex"));
+    expect(nativeInstructions.byteSize).toBe(Buffer.byteLength(nativeInstructions.agentInstructionStack));
+    await expect.poll(() => nativeDetailPane.getByTestId("invocation-prompt").textContent())
+      .toBe(nativeInstructions.agentInstructionStack);
+    if (baseURL) {
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
+    }
+    await nativeDetailPane.getByRole("button", { name: "Copy agent instruction stack", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(nativeInstructions.agentInstructionStack);
     await expect(nativeDetailPane.getByTestId("invocation-mcp-evidence").getByText("rudder-tools", { exact: true })).toBeVisible();
     await expect(nativeDetailPane.getByText("adapter invocation", { exact: true })).toHaveCount(1);
 
-    await e2eDb
-      .update(heartbeatRunEvents)
-      .set({
-        payload: {
-          ...(firstInvocation?.payload as Record<string, unknown>),
-          loadedMcpServers: [
-            { serverName: "rudder-tools", source: "built_in" },
-            { serverName: "rudder-browser", source: "built_in" },
-            { serverName: "rudder-computer", source: "built_in" },
-            { serverName: "external.supabase-production-with-a-long-name", source: "managed_external" },
-          ],
-        },
-      })
-      .where(eq(heartbeatRunEvents.id, firstInvocation!.id));
-    await e2eDb.insert(heartbeatRunEvents).values({
+    const transcriptRunId = randomUUID();
+    const transcriptRunStartedAt = new Date(transcriptStartedAt - 1_000);
+    const transcriptRunFinishedAt = new Date(transcriptRunStartedAt.getTime() + 60_000);
+    const legacyFixtureInstructionStack = [
+      "Legacy Run Detail fixture instructions",
+      "Preserve the recorded transcript and report the final result exactly once.",
+      "These inline instructions belong only to this seeded legacy Run.",
+    ].join("\n");
+    const legacyInvocationMetadata = { ...(firstInvocation!.payload as Record<string, unknown>) };
+    // A copied event must not borrow the real Run's snapshot or execution identity.
+    for (const field of [
+      "invocationInstructionSnapshot",
+      "invocationInstructionTextReference",
+      "invocationPromptReference",
+      "invocationContent",
+      "agentInstructionStackAlias",
+      "invocationAttemptId",
+      "invocationSpanId",
+      "context",
+      "promptMetrics",
+      "promptSanitizedForPersistence",
+    ]) delete legacyInvocationMetadata[field];
+    const firstInvocationPayload = {
+      ...legacyInvocationMetadata,
+      agentInstructionStack: legacyFixtureInstructionStack,
+      prompt: legacyFixtureInstructionStack,
+      loadedMcpServers: [
+        { serverName: "rudder-tools", source: "built_in" },
+        { serverName: "rudder-browser", source: "built_in" },
+        { serverName: "rudder-computer", source: "built_in" },
+        { serverName: "external.supabase-production-with-a-long-name", source: "managed_external" },
+      ],
+    };
+    await e2eDb.insert(heartbeatRuns).values({
+      id: transcriptRunId,
       orgId: organization.id,
-      runId: run.id,
       agentId: agent.id,
-      seq: 9_000,
-      eventType: "adapter.invoke",
-      stream: "system",
-      level: "info",
-      message: "adapter invocation",
-      payload: {
-        ...(firstInvocation?.payload as Record<string, unknown>),
-        loadedMcpServers: [],
-      },
-      createdAt: new Date(transcriptStartedAt - 1),
+      invocationSource: "scheduled",
+      triggerDetail: "Run transcript fixture",
+      status: "succeeded",
+      startedAt: transcriptRunStartedAt,
+      finishedAt: transcriptRunFinishedAt,
+      resultJson: { retention: { transcriptSource: "legacy" } },
+      createdAt: transcriptRunStartedAt,
+      updatedAt: transcriptRunFinishedAt,
     });
+    await e2eDb.insert(heartbeatRunEvents).values([
+      {
+        orgId: organization.id,
+        runId: transcriptRunId,
+        agentId: agent.id,
+        seq: 9_000,
+        eventType: "adapter.invoke",
+        stream: "system",
+        level: "info",
+        message: "adapter invocation",
+        payload: firstInvocationPayload,
+        createdAt: new Date(transcriptRunStartedAt.getTime() + 1),
+      },
+      {
+        orgId: organization.id,
+        runId: transcriptRunId,
+        agentId: agent.id,
+        seq: 9_001,
+        eventType: "adapter.invoke",
+        stream: "system",
+        level: "info",
+        message: "adapter invocation",
+        payload: {
+          ...firstInvocationPayload,
+          loadedMcpServers: [],
+        },
+        createdAt: new Date(transcriptRunStartedAt.getTime() + 2),
+      },
+      ...transcriptEntries.map((entry, index) => ({
+        orgId: organization.id,
+        runId: transcriptRunId,
+        agentId: agent.id,
+        seq: 10_000 + index,
+        eventType: "transcript.entry",
+        stream: "system" as const,
+        level: "info" as const,
+        message: "chat transcript entry",
+        payload: {
+          ...entry,
+          ts: new Date(transcriptStartedAt + index).toISOString(),
+        },
+        createdAt: new Date(transcriptStartedAt + index),
+      })),
+    ]);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -464,7 +663,7 @@ test.describe("Run transcript detail", () => {
       window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
 
-    await page.goto(`/agents/${agent.id}/runs/${run.id}`);
+    await page.goto(`/agents/${agent.id}/runs/${transcriptRunId}`);
 
     const mainContent = page.locator("#main-content");
     const agentRunsTab = mainContent.getByRole("tab", { name: "Runs" });
@@ -472,7 +671,14 @@ test.describe("Run transcript detail", () => {
     await expect(mainContent.getByRole("tab", { name: "Configuration" })).toBeVisible();
     await expect(mainContent.getByRole("tab", { name: "Instructions" })).toBeVisible();
     await expect(mainContent.getByRole("tab", { name: "Skills" })).toBeVisible();
-    await expect(mainContent.getByRole("tab", { name: "Integrations" })).toBeVisible();
+    await expect(mainContent.getByRole("tablist").first().getByRole("tab")).toHaveText([
+      "Dashboard",
+      "Configuration",
+      "Instructions",
+      "Skills",
+      "Runs",
+      "Issues",
+    ]);
     await expect(agentRunsTab).toBeVisible();
     await expect(mainContent.getByRole("tab", { name: "Issues" })).toBeVisible();
     await expect(agentRunsTab).toHaveAttribute("data-state", "active");
@@ -496,9 +702,19 @@ test.describe("Run transcript detail", () => {
     }
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
-    await expect(detailPane.getByText(/Progress update\.\s+I read AGENTS\.md and added E2E coverage\./)).toBeVisible();
+    await expect(detailPane).toContainText("Progress update.");
+    await expect(detailPane).toContainText("I read AGENTS.md and added E2E coverage.");
+    await expect(detailPane.getByText(/I read AGENTS\.md and added E2E coverage\./)).toHaveCount(1);
+    await expect(detailPane).not.toContainText("<rudder_agent_instruction>");
+    await expect(detailPane).not.toContainText("Your home directory is $AGENT_HOME");
     await expect(detailPane.getByText(/reasoning started/i)).toHaveCount(0);
     await expect(detailPane.getByText(/reasoning completed/i)).toHaveCount(0);
+    const transcriptToolDisclosure = detailPane.getByRole("button", {
+      name: /Expand command details: Ran printf transcript-fixture-tool/,
+    });
+    await expect(transcriptToolDisclosure).toBeVisible();
+    await transcriptToolDisclosure.click();
+    await expect(detailPane.getByTestId("command-terminal-detail")).toContainText("printf transcript-fixture-tool");
     await expect(detailPane.getByText("Agent memory updated", { exact: false })).toBeVisible();
     await detailPane.getByRole("button", { name: "Expand memory update details" }).click();
     await expect(
@@ -516,18 +732,20 @@ test.describe("Run transcript detail", () => {
     await expect(detailPane.getByText("Raw event", { exact: true })).toHaveCount(0);
     await expect(detailPane.getByText("memory update failed:", { exact: false })).toHaveCount(0);
     await page.screenshot({
-      path: "/tmp/rudder-run-transcript-detail-real-dark.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-detail-real-dark"),
       fullPage: true,
     });
 
     await page.getByRole("button", { name: "raw" }).click();
-    await expect(detailPane.getByText(/reasoning started/i)).toHaveCount(0);
-    await expect(detailPane.getByText(/reasoning completed/i)).toHaveCount(0);
+    await expect(detailPane).toContainText("<rudder_agent_instruction>");
+    await expect(detailPane).toContainText("Your home directory is $AGENT_HOME");
+    await expect(detailPane).toContainText("reasoning started");
+    await expect(detailPane).toContainText("reasoning completed");
     const coalescedRawMessage = detailPane.locator("pre").filter({ hasText: "I read AGENTS.md and added E2E coverage." });
     await expect(coalescedRawMessage).toHaveCount(1);
     await expect(detailPane.getByText("I read AG", { exact: true })).toHaveCount(0);
     await coalescedRawMessage.locator("..").screenshot({
-      path: "/tmp/rudder-run-transcript-raw-coalesced.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-raw-coalesced"),
     });
     await page.getByRole("button", { name: "nice" }).click();
 
@@ -551,14 +769,15 @@ test.describe("Run transcript detail", () => {
     expect(transcriptDialogBox!.y).toBeGreaterThanOrEqual(0);
     expect(transcriptDialogBox!.x + transcriptDialogBox!.width).toBeLessThanOrEqual(viewport!.width);
     expect(transcriptDialogBox!.y + transcriptDialogBox!.height).toBeLessThanOrEqual(viewport!.height);
-    await expect(transcriptDialog.getByText(/Progress update\.\s+I read AGENTS\.md and added E2E coverage\./)).toBeVisible();
+    await expect(transcriptDialog).toContainText("Progress update.");
+    await expect(transcriptDialog).toContainText("I read AGENTS.md and added E2E coverage.");
     await expect(transcriptDialog.getByRole("button", { name: "raw" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(transcriptDialog).toBeHidden();
 
     await invocationTab.click();
     await expect(invocationTab).toHaveAttribute("data-state", "active");
-    await expect(page.getByText("Runtime metadata and Agent Instruction stack")).toHaveClass(/invisible/);
+    await expect(page.getByText("Runtime metadata and any available instruction details for this Run")).toHaveClass(/invisible/);
     await expect(page.getByText("Runtime:", { exact: false })).toBeVisible();
     await expect(page.getByText("Command:", { exact: false })).toBeVisible();
     await expect(page.getByText(/^Events \(\d+\)$/)).toBeVisible();
@@ -589,7 +808,7 @@ test.describe("Run transcript detail", () => {
     expect(await narrowMcpEvidence.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/rudder-run-invocation-mcp-narrow-dark.png", fullPage: true });
+    await page.screenshot({ path: isolatedE2EScreenshotPath("rudder-run-invocation-mcp-narrow-dark"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 1050 });
     await page.getByRole("tab", { name: "Metadata" }).click();
 
@@ -597,6 +816,11 @@ test.describe("Run transcript detail", () => {
     await expect(promptBlock).toBeVisible();
     const promptText = await promptBlock.textContent();
     expect(promptText?.trim()).toBeTruthy();
+    expect(promptText).toBe(legacyFixtureInstructionStack);
+    const actualInstructionStack = String(firstInvocationPayload.agentInstructionStack ?? "");
+    const actualInstructionHeading = actualInstructionStack.split(/\r?\n/, 1)[0]?.trim();
+    expect(actualInstructionHeading).toBeTruthy();
+    expect(promptText).toContain(actualInstructionHeading);
 
     if (baseURL) {
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
@@ -607,16 +831,205 @@ test.describe("Run transcript detail", () => {
       .toBe(promptText);
 
     await invocationTab.hover();
-    await expect(page.getByText("Runtime metadata and Agent Instruction stack")).toBeVisible();
+    await expect(page.getByText("Runtime metadata and any available instruction details for this Run")).toBeVisible();
 
     await transcriptTab.click();
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
 
     await page.screenshot({
-      path: "tests/e2e/test-results/agent-run-detail-tabs.png",
+      path: isolatedE2EScreenshotPath("agent-run-detail-tabs"),
       fullPage: true,
     });
+  });
+
+  test("restores own historical alias and stored Unicode range through public Instructions, Metadata, Copy and narrow reload", async ({ page, baseURL }, testInfo) => {
+    test.setTimeout(120_000);
+    // Seed only this disposable database. Admission is the existing public stub
+    // workflow; each recorded event keeps its OWN Run/Attempt/Span, not a copy
+    // of another Run's locator. This is fixture UI proof, not provider proof.
+    const { buildHeartbeatAdapterInvokePayload } = await import("../../server/src/services/runtime-kernel/heartbeat.core.ts");
+    const { storeRunInstructionSnapshot } = await import("../../server/src/services/run-instruction-snapshots.ts");
+    const { compactReadableInstructionSnapshot } = await import("../../server/src/services/run-instruction-snapshots.compaction.ts");
+    const { createStorageService } = await import("../../server/src/storage/service.ts");
+    const { createLocalDiskStorageProvider } = await import("../../server/src/storage/local-disk-provider.ts");
+    const config = JSON.parse(await readFile(E2E_CONFIG_PATH, "utf8"));
+    expect(config.storage.provider).toBe("local_disk");
+    expect(config.storage.localDisk.baseDir).toBe(join(E2E_INSTANCE_ROOT, "data/storage"));
+    const storage = createStorageService(createLocalDiskStorageProvider(config.storage.localDisk.baseDir));
+    const organization = await createOrganization(page, `Instructions-Restore-${Date.now()}`);
+    const agentResponse = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: { name: "Instructions Restore Tester", role: "engineer", agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4", command: E2E_CODEX_STUB } },
+    });
+    expect(agentResponse.ok()).toBe(true);
+    const agent = await agentResponse.json();
+    expect(baseURL).toBeTruthy();
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL! });
+    await page.goto("/");
+    await page.evaluate(orgId => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
+    const pageErrors: string[] = [];
+    page.on("pageerror", error => pageErrors.push(error.message));
+    // Case-local evidence: do not infer an abort's initiator or discard it.
+    // Only an independently hashed, complete same-epoch Reader response may
+    // account for one abort. Other cases/shared capture semantics stay intact.
+    let loadEpoch = 0;
+    let requestId = 0;
+    const started = new WeakMap<Request, InstructionsReaderObservation>();
+    const requestFailures: InstructionsReaderObservation[] = [];
+    const completedReads: InstructionsReaderObservation[] = [];
+    const expectedReaderHashes = new Map<string, string>();
+    const ownReaderRuns = new Map<string, string>();
+    const pendingReads = new Set<Promise<void>>();
+    const readerObservationErrors: string[] = [];
+    page.on("request", request => {
+      started.set(request, { id: ++requestId, loadEpoch, method: request.method(), url: request.url() });
+    });
+    page.on("requestfailed", request => {
+      const observation = started.get(request);
+      requestFailures.push({ ...(observation ?? { id: ++requestId, loadEpoch: -1, method: request.method(), url: request.url() }),
+        error: request.failure()?.errorText ?? "unknown" });
+    });
+    page.on("requestfinished", request => {
+      const observation = started.get(request);
+      const ownRunId = ownReaderRuns.get(request.url());
+      if (!observation || !ownRunId || request.method() !== "GET") return;
+      const read = (async () => {
+        const response = await request.response();
+        if (!response) throw new Error(`Reader response missing: ${observation.id}`);
+        const bytes = await response.body(); // requestfinished + full read, not HTTP headers alone
+        completedReads.push({ ...observation, status: response.status(), bodyBytes: bytes.length,
+          bodyHash: completeInstructionsReaderHash(JSON.parse(bytes.toString("utf8")), ownRunId, organization.id) });
+      })().catch(error => { readerObservationErrors.push(String(error)); });
+      pendingReads.add(read);
+      void read.finally(() => pendingReads.delete(read));
+    });
+
+    for (const mode of ["historical_alias", "stored_range"] as const) {
+      await test.step(mode, async () => {
+        const runResponse = await page.request.post(`/api/agents/${agent.id}/heartbeat/invoke?orgId=${organization.id}`);
+        expect(runResponse.ok()).toBe(true);
+        const run = await runResponse.json();
+        await expect.poll(async () => {
+          const response = await page.request.get(`/api/agent-runs/${run.id}`);
+          return response.ok() ? (await response.json()).status : null;
+        }, { timeout: 30_000 }).toBe("succeeded");
+        const invokes = await e2eDb.select().from(heartbeatRunEvents).where(and(
+          eq(heartbeatRunEvents.orgId, organization.id), eq(heartbeatRunEvents.runId, run.id),
+          eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+        ));
+        expect(invokes).toHaveLength(1);
+        const event = invokes[0]!;
+        const admitted = event.payload as Record<string, unknown>;
+        expect(typeof admitted.invocationAttemptId).toBe("string");
+        expect(typeof admitted.invocationSpanId).toBe("string");
+        const attemptId = admitted.invocationAttemptId as string;
+        const spanId = admitted.invocationSpanId as string;
+        const [attempt] = await e2eDb.select().from(heartbeatRunAttempts).where(eq(heartbeatRunAttempts.id, attemptId));
+        const [span] = await e2eDb.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, spanId));
+        expect(attempt).toMatchObject({ orgId: organization.id, runId: run.id, agentId: agent.id });
+        expect(span).toMatchObject({ orgId: organization.id, runId: run.id, attemptId });
+
+        const prompt = `Debug input 原文🙂e\u0301\n${"精确范围🧭 café\n".repeat(4_000)}末尾END`;
+        expect(Buffer.byteLength(prompt)).toBeGreaterThan(82_000);
+        const instructions = mode === "historical_alias" ? prompt : `Actual Instructions 系统前文\n${prompt}\n系统后文 — END`;
+        // Use the actual producer for full digest/length/sanitization provenance.
+        // The historical variant intentionally has no snapshot or stack field.
+        const inline = { ...buildHeartbeatAdapterInvokePayload({ runtimeSkills: [], meta: {
+          agentRuntimeType: "codex_local", command: E2E_CODEX_STUB, prompt, agentInstructionStack: instructions,
+        } }), invocationAttemptId: attemptId, invocationSpanId: spanId };
+        let payload: Record<string, unknown> = inline;
+        if (mode === "historical_alias") {
+          expect(payload).not.toHaveProperty("agentInstructionStack");
+          expect(payload).not.toHaveProperty("invocationInstructionSnapshot");
+          expect(payload.agentInstructionStackAlias).toMatchObject({ present: true, sameAsPrompt: true,
+            textSource: "persisted_prompt", equality: "nonempty_sanitized_exact", sanitizedForPersistence: false,
+            sanitizedSha256: createHash("sha256").update(instructions).digest("hex"),
+            sanitizedCharacterLength: instructions.length, sanitizedUtf8ByteLength: Buffer.byteLength(instructions),
+            sourceCharacterLength: instructions.length, sourceUtf8ByteLength: Buffer.byteLength(instructions) });
+        } else {
+          const locator = await storeRunInstructionSnapshot({ storage, orgId: organization.id, text: instructions });
+          payload = await compactReadableInstructionSnapshot({ db: e2eDb, storage, orgId: organization.id,
+            runId: run.id, attemptId, spanId, payload: { ...inline, invocationInstructionSnapshot: { ...locator, status: "available" } } });
+          expect(payload).not.toHaveProperty("agentInstructionStack");
+          expect(payload).not.toHaveProperty("prompt");
+          expect(payload).toMatchObject({ invocationInstructionSnapshot: { status: "available" },
+            invocationContent: { textSource: "stored_snapshot", textStored: false },
+            invocationPromptReference: { field: "prompt", byteStart: Buffer.byteLength("Actual Instructions 系统前文\n"),
+              byteLength: Buffer.byteLength(prompt), rangeSha256: createHash("sha256").update(prompt).digest("hex") } });
+        }
+        const updated = await e2eDb.update(heartbeatRunEvents).set({ payload }).where(and(
+          eq(heartbeatRunEvents.id, event.id), eq(heartbeatRunEvents.orgId, organization.id), eq(heartbeatRunEvents.runId, run.id),
+        )).returning({ id: heartbeatRunEvents.id });
+        expect(updated).toEqual([{ id: event.id }]);
+        const instructionsPath = `/api/agent-runs/${run.id}/events/${event.id}/invocation-instructions`;
+        const expected = { source: mode === "historical_alias" ? "persisted_invocation_inline" : "stored_snapshot",
+          completeness: "complete", agentInstructionStack: instructions, prompt,
+          sha256: createHash("sha256").update(instructions).digest("hex"), byteSize: Buffer.byteLength(instructions) };
+        const publicResponse = await page.request.get(instructionsPath);
+        expect(publicResponse.status()).toBe(200);
+        expect(publicResponse.headers()["cache-control"]).toContain("no-store");
+        expect(await publicResponse.json()).toMatchObject(expected);
+        const readerUrl = new URL(`/api/run-intelligence/runs/${run.id}/transcript?output=full&order=oldest&turnLimit=50&includeOutput=false&maxChars=4000`, baseURL!).href;
+        // Separate authorized API read fixes the expected hash BEFORE any
+        // browser counterpart; no response can vouch for itself.
+        const expectedReaderResponse = await page.request.get(readerUrl);
+        expect(expectedReaderResponse.status()).toBe(200);
+        const expectedReaderHash = completeInstructionsReaderHash(await expectedReaderResponse.json(), run.id, organization.id);
+        expect(expectedReaderHash).toMatch(/^[a-f0-9]{64}$/);
+        expectedReaderHashes.set(readerUrl, expectedReaderHash!);
+        ownReaderRuns.set(readerUrl, run.id);
+        await testInfo.attach(`${mode}-provenance`, { contentType: "application/json", body: Buffer.from(JSON.stringify({
+          orgId: organization.id, runId: run.id, eventId: event.id, attemptId, spanId, payload, expected,
+        }, null, 2)) });
+
+        for (const state of ["desktop", "reload", "narrow-reload"] as const) {
+          await page.setViewportSize(state === "narrow-reload" ? { width: 390, height: 844 } : { width: 1440, height: 1050 });
+          // Observe the browser's actual authorized route; no interception or
+          // fabricated response. Reload must still read this event's own text.
+          const browserRead = page.waitForResponse(response => response.request().method() === "GET"
+            && new URL(response.url()).pathname === instructionsPath);
+          loadEpoch += 1; // captured at request start; never reassigned after reload
+          if (state === "desktop") await page.goto(`/agents/${agent.id}/runs/${run.id}`);
+          else await page.reload({ waitUntil: "domcontentloaded" });
+          const detail = page.getByTestId("agent-runs-detail-pane");
+          await expect(detail).toBeVisible();
+          const tabLabel = mode === "historical_alias" ? "Metadata" : "Instructions";
+          if (state === "narrow-reload") await detail.locator("select").selectOption({ label: tabLabel });
+          else await detail.getByRole("tab", { name: tabLabel, exact: true }).click();
+          const renderedRead = await browserRead;
+          expect(renderedRead.status()).toBe(200);
+          expect(await renderedRead.json()).toMatchObject(expected);
+          await expect(detail.getByTestId("invocation-prompt")).toBeVisible();
+          await expect.poll(() => detail.getByTestId("invocation-prompt").textContent()).toBe(instructions);
+          await expect(detail.getByTestId("invocation-content-summary")).toHaveCount(0);
+          if (mode === "stored_range") {
+            await expect(detail.getByTestId("invocation-debug-input")).toBeVisible();
+            expect(await detail.getByTestId("invocation-debug-input").textContent()).toBe(prompt);
+          } else await expect(detail.getByTestId("invocation-debug-input")).toHaveCount(0);
+          await detail.getByRole("button", { name: "Copy agent instruction stack", exact: true }).click();
+          await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(instructions);
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+          await testInfo.attach(`${mode}-${state}`, { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+          await Promise.all([...pendingReads]);
+        }
+        const [retained] = await e2eDb.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.id, event.id));
+        expect(retained!.payload).toEqual(payload);
+      });
+    }
+    await Promise.all([...pendingReads]);
+    const readerAbortEvidence = matchInstructionsReaderAborts(requestFailures, completedReads, expectedReaderHashes);
+    const otherRequestFailures = requestFailures.filter(failure => failure.error !== "net::ERR_ABORTED"
+      || failure.method !== "GET" || !expectedReaderHashes.has(failure.url));
+    await testInfo.attach("case-local-reader-abort-evidence", { contentType: "application/json", body: Buffer.from(JSON.stringify({
+      classification: "strict positive counterpart only; abort initiator unproven",
+      expectedReaderHashes: Object.fromEntries(expectedReaderHashes), originalFailures: requestFailures,
+      completedReads, readerObservationErrors, otherRequestFailures, ...readerAbortEvidence,
+    }, null, 2)) });
+    expect(pageErrors).toEqual([]);
+    expect(readerObservationErrors).toEqual([]);
+    expect(otherRequestFailures).toEqual([]);
+    expect(readerAbortEvidence.unmatched).toEqual([]);
   });
 
   test("adds annotation-only feedback across runs while preserving the side panel and project lock", async ({ page }) => {
@@ -1066,14 +1479,11 @@ test.describe("Run transcript detail", () => {
   test("annotates a failed tool result block with its own source identity", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
+    const requestFailures = captureUnexpectedRequestFailures(page);
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
-    page.on("requestfailed", (request) => {
-      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
-    });
 
     await page.setViewportSize({ width: 1440, height: 1050 });
     const organization = await createOrganization(page, `Run-Annotation-Items-${Date.now()}`);
@@ -1371,7 +1781,7 @@ test.describe("Run transcript detail", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/rudder-r6z-100-failed-tool-annotation-mobile.png", fullPage: true });
+    await page.screenshot({ path: isolatedE2EScreenshotPath("rudder-r6z-100-failed-tool-annotation-mobile"), fullPage: true });
     expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
     expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
     expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
@@ -1380,14 +1790,11 @@ test.describe("Run transcript detail", () => {
   test("exposes item-scoped annotation affordances across transcript types and action rows", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
+    const requestFailures = captureUnexpectedRequestFailures(page);
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
-    page.on("requestfailed", (request) => {
-      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
-    });
 
     await page.setViewportSize({ width: 1440, height: 1050 });
     const organization = await createOrganization(page, `Run-Annotation-Items-${Date.now()}`);
@@ -1677,7 +2084,7 @@ test.describe("Run transcript detail", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/rudder-r6z-106-transcript-annotation-items-mobile.png", fullPage: true });
+    await page.screenshot({ path: isolatedE2EScreenshotPath("rudder-r6z-106-transcript-annotation-items-mobile"), fullPage: true });
     expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
     expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
     expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
@@ -1759,14 +2166,63 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
-    await expect(detailPane.getByText("2 entries", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByText("50 entries", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(detailPane).toContainText("Conversation transcript marker 1");
-    await expect(detailPane).toContainText("Conversation transcript marker 1205");
+    await expect(detailPane).not.toContainText("Conversation transcript marker 1205");
+
+    const continuation = detailPane.getByTestId("transcript-continuation");
+    const nextPage = continuation.getByRole("button", { name: "Next transcript page" });
+    await expect(continuation).toContainText("Page 1");
+    await expect(nextPage).toBeEnabled();
+    for (let pageNumber = 2; pageNumber <= 25; pageNumber += 1) {
+      await expect(nextPage).toBeEnabled();
+      const transcriptPageResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.pathname === `/api/run-intelligence/runs/${runId}/transcript`
+          && url.searchParams.has("cursor");
+      });
+      await nextPage.click();
+      const response = await transcriptPageResponse;
+      expect(response.ok(), `Transcript page ${pageNumber} returned ${response.status()}: ${await response.text()}`).toBe(true);
+      await expect(continuation).toContainText(`Page ${pageNumber}`);
+      if (await detailPane.getByText("Conversation transcript marker 1205", { exact: true }).count()) break;
+    }
+    await expect(detailPane.getByText("Conversation transcript marker 1205", { exact: true })).toBeVisible();
+    await expect(nextPage).toBeDisabled();
 
     await page.screenshot({
-      path: "/tmp/rudder-agent-run-complete-conversation-transcript.png",
+      path: isolatedE2EScreenshotPath("rudder-agent-run-complete-conversation-transcript"),
       fullPage: true,
     });
+
+    // Explicit operator reset is a fresh read, not resumption/migration of the
+    // discarded cursor. Exercise the actual RunDetail control and public Reader.
+    const resetRequests: string[] = [];
+    const captureResetRead = (request: Request) => {
+      const url = new URL(request.url());
+      if (url.pathname === `/api/run-intelligence/runs/${runId}/transcript`) resetRequests.push(url.search);
+    };
+    page.on("request", captureResetRead);
+    const firstPageResponse = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === `/api/run-intelligence/runs/${runId}/transcript`
+        && !url.searchParams.has("cursor");
+    });
+    await continuation.getByRole("button", { name: "Refresh transcript" }).click();
+    expect((await firstPageResponse).ok()).toBe(true);
+    await expect(continuation).toContainText("Page 1");
+    await expect(detailPane).toContainText("Conversation transcript marker 1");
+    await expect(detailPane).not.toContainText("Conversation transcript marker 1205");
+    await expect(continuation.getByRole("button", { name: "Previous transcript page" })).toBeDisabled();
+    await expect(continuation.getByRole("button", { name: "Refresh transcript" })).toBeEnabled();
+    expect(resetRequests).toHaveLength(1);
+    expect(new URLSearchParams(resetRequests[0]).has("cursor")).toBe(false);
+    // A normal navigation after reset must advance, not cause another reset.
+    await nextPage.click();
+    await expect(continuation).toContainText("Page 2");
+    expect(resetRequests).toHaveLength(2);
+    expect(resetRequests.filter(query => !new URLSearchParams(query).has("cursor"))).toHaveLength(1);
+    page.off("request", captureResetRead);
   });
 
   test("does not promote long stderr excerpts into the run detail summary", async ({ page }) => {
@@ -2037,7 +2493,8 @@ test.describe("Run transcript detail", () => {
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
     await expect(detailPane.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(detailPane.getByText("No persisted transcript for this run.", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("0 entries", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("No transcript for this run.", { exact: true })).toBeVisible();
     await expect(detailPane.getByRole("button", { name: "Expand transcript" })).toBeVisible();
   });
 
@@ -2144,7 +2601,8 @@ test.describe("Run transcript detail", () => {
     const urlBeforeCopy = new URL(page.url());
 
     const runList = await openVisibleRunList(page);
-    const copyButton = runList.getByRole("button", { name: `Copy run ID ${run.id.slice(0, 8)}` });
+    const runLabel = `run_${run.id.slice(0, 8)}`;
+    const copyButton = runList.getByRole("button", { name: `Copy run ID ${runLabel}` });
     await expect(copyButton).toBeVisible({ timeout: 15_000 });
 
     await copyButton.click();
@@ -2159,7 +2617,7 @@ test.describe("Run transcript detail", () => {
       .toBe(run.id);
 
     await page.screenshot({
-      path: "tests/e2e/test-results/agent-run-id-copied.png",
+      path: isolatedE2EScreenshotPath("agent-run-id-copied"),
       fullPage: true,
     });
   });
@@ -2231,11 +2689,13 @@ test.describe("Run transcript detail", () => {
 
     const expectedTodayLabel = formatRunOccurrenceForTest(todayStartedAt, now);
     const expectedOlderLabel = formatRunOccurrenceForTest(olderStartedAt, now);
+    const todayRunLabel = `run_${todayRunId.slice(0, 8)}`;
+    const olderRunLabel = `run_${olderRunId.slice(0, 8)}`;
     const todayRow = listPane.getByRole("link", {
-      name: new RegExp(`Open run ${todayRunId.slice(0, 8)} from ${escapeRegExp(expectedTodayLabel)}`),
+      name: new RegExp(`Open run ${todayRunLabel} from ${escapeRegExp(expectedTodayLabel)}`),
     });
     const olderRow = listPane.getByRole("link", {
-      name: new RegExp(`Open run ${olderRunId.slice(0, 8)} from ${escapeRegExp(expectedOlderLabel)}`),
+      name: new RegExp(`Open run ${olderRunLabel} from ${escapeRegExp(expectedOlderLabel)}`),
     });
 
     await expect(todayRow).toBeVisible();
@@ -2256,7 +2716,7 @@ test.describe("Run transcript detail", () => {
     expect(olderTimingBox!.x + olderTimingBox!.width).toBeLessThanOrEqual(listBox!.x + listBox!.width + 1);
 
     await page.screenshot({
-      path: "/tmp/rudder-agent-run-list-occurrence-times.png",
+      path: isolatedE2EScreenshotPath("rudder-agent-run-list-occurrence-times"),
       fullPage: true,
     });
 
@@ -2274,10 +2734,10 @@ test.describe("Run transcript detail", () => {
     const mobileHistoryList = page.getByTestId("agent-runs-history-list");
     await expect(mobileHistoryList).toBeVisible();
     const mobileTodayRow = mobileHistoryList.getByRole("link", {
-      name: new RegExp(`Open run ${todayRunId.slice(0, 8)} from ${escapeRegExp(expectedTodayLabel)}`),
+      name: new RegExp(`Open run ${todayRunLabel} from ${escapeRegExp(expectedTodayLabel)}`),
     });
     const mobileOlderRow = mobileHistoryList.getByRole("link", {
-      name: new RegExp(`Open run ${olderRunId.slice(0, 8)} from ${escapeRegExp(expectedOlderLabel)}`),
+      name: new RegExp(`Open run ${olderRunLabel} from ${escapeRegExp(expectedOlderLabel)}`),
     });
     await expect(mobileTodayRow).toBeVisible();
     await expect(mobileOlderRow).toBeVisible();
@@ -2287,7 +2747,7 @@ test.describe("Run transcript detail", () => {
     expect(mobileOlderTimingBox).not.toBeNull();
     expect(mobileOlderTimingBox!.x + mobileOlderTimingBox!.width).toBeLessThanOrEqual(mobileListBox!.x + mobileListBox!.width + 1);
     await page.screenshot({
-      path: "/tmp/rudder-agent-run-list-occurrence-times-mobile.png",
+      path: isolatedE2EScreenshotPath("rudder-agent-run-list-occurrence-times-mobile"),
       fullPage: true,
     });
   });

@@ -1,5 +1,13 @@
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { agentConfigRevisions, agents, heartbeatRunEvents, heartbeatRuns, issues, organizations } from "@rudderhq/db";
+import {
+  agentConfigRevisions,
+  agents,
+  heartbeatRunEvents,
+  heartbeatRuns,
+  issues,
+  organizations,
+} from "@rudderhq/db";
 import {
   diagnoseRun,
   observedRunFromFilesystem,
@@ -11,7 +19,6 @@ import {
   type RunSkillEvidenceType,
 } from "@rudderhq/run-intelligence-core";
 import {
-  isUuidLike,
   shortRefFor,
   summarizeTokenUsage,
   toAgentRunOrigin,
@@ -24,14 +31,55 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { badRequest, forbidden, notFound } from "../errors.js";
+import path from "node:path";
+import { createProfileBoundRuntimeProviderCapabilityResolverFromConfig } from "../agent-runtimes/index.js";
+import {
+  runtimeConfigFromProviderProfileSnapshot,
+  sanitizeRuntimeProviderProfileSnapshot,
+} from "../agent-runtimes/runtime-provider-profile-snapshot.js";
+import { createHistoricalCodexTranscriptReaderHook } from "../agent-runtimes/verify-codex-transcript-profile.js";
+import { notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { redactEventPayload } from "../redaction.js";
-import { resolveHeartbeatRunIdReference } from "./heartbeat-run-reference.js";
 import { heartbeatService } from "./heartbeat.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { ISSUE_EXECUTION_RELEASED_EVENT_TYPE } from "./operator-event-visibility.js";
+import {
+  assertRunIntelligenceAccess,
+  resolveRunIdReferenceForScope,
+  sideChatVisibilityCondition,
+  type RunIntelligenceAccessScope
+} from "./run-intelligence-access.js";
+import { decodeRunEventCursor, decodeRunSummaryCursor, encodeRunEventCursor, encodeRunSummaryCursor } from "./run-intelligence-cursors.js";
+import {
+  MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
+  MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
+  readBoundedRunDiagnosticTranscript,
+  type RunDiagnosticEntryPosition,
+  type RunDiagnosticProjection,
+  type RunDiagnosticReaderPosition,
+} from "./run-intelligence-diagnostic-reader.js";
+import { historicalHermesManagedCwd } from "./run-intelligence-hermes-workspace.js";
 import { getRunLogStore } from "./run-log-store.js";
+import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
+import {
+  type RuntimeProviderCapabilityResolver,
+} from "./runtime-kernel/provider-capabilities.js";
+import { createTranscriptObjectReader } from "./runtime-kernel/transcript-object-store.js";
+import {
+  createLegacyTranscriptReader,
+  createTranscriptReader,
+  type TranscriptItem,
+  type TranscriptPage,
+  type TranscriptRange,
+} from "./runtime-kernel/transcript-reader.js";
+
+export {
+  assertRunIntelligenceAccess,
+  filterRunsByRunIntelligenceAccess,
+  resolveRunIdReferenceForScope
+} from "./run-intelligence-access.js";
+export type { RunIntelligenceAccessScope } from "./run-intelligence-access.js";
 
 function hashValue(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
@@ -176,15 +224,20 @@ function buildSkillExistsCondition(evidenceType: RunSkillEvidenceType, skillQuer
 
 type RunRow = typeof heartbeatRuns.$inferSelect & {
   agentName: string | null;
+  agentWorkspaceKey?: string | null;
   agentRuntimeType: string;
   agentRuntimeConfig: Record<string, unknown>;
   runtimeConfig: Record<string, unknown>;
   orgName: string | null;
   issueId: string | null;
+  diagnosticResultJsonOmitted?: boolean;
+  diagnosticContextTranscriptOmitted?: boolean;
+  diagnosticErrorOriginalLength?: number | null;
 };
 
 export interface ListObservedRunsInput {
   orgId: string;
+  sideChatOwnerId?: string | null;
   updatedAfter?: Date | null;
   runIdPrefix?: string | null;
   agentId?: string | null;
@@ -202,16 +255,6 @@ export interface ListRunSummariesInput extends ListObservedRunsInput {
   cursor?: string | null;
 }
 
-interface RunSummaryCursor {
-  createdAt: string;
-  id: string;
-}
-
-interface RunEventCursor {
-  seq: number;
-  id: number;
-}
-
 type SummaryRunRow = {
   id: string;
   orgId: string;
@@ -227,6 +270,7 @@ type SummaryRunRow = {
   logStore: string | null;
   logRef: string | null;
   chatConversationId: string | null;
+  scene: string | null;
   sourceRunId: string | null;
   contextSnapshot: Record<string, unknown> | null;
   createdAt: Date;
@@ -247,53 +291,6 @@ type SummaryRunRow = {
   usageModel: string | null;
 };
 
-function encodeRunSummaryCursor(row: Pick<SummaryRunRow, "createdAt" | "id">) {
-  return Buffer.from(JSON.stringify({
-    createdAt: row.createdAt.toISOString(),
-    id: row.id,
-  } satisfies RunSummaryCursor), "utf8").toString("base64url");
-}
-
-function decodeRunSummaryCursor(value: string): { createdAt: Date; id: string } {
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<RunSummaryCursor>;
-    const createdAt = typeof parsed.createdAt === "string" ? new Date(parsed.createdAt) : null;
-    if (
-      !createdAt
-      || Number.isNaN(createdAt.getTime())
-      || typeof parsed.id !== "string"
-      || !isUuidLike(parsed.id)
-    ) {
-      throw new Error("invalid cursor payload");
-    }
-    return { createdAt, id: parsed.id };
-  } catch {
-    throw badRequest("Invalid run summary cursor.");
-  }
-}
-
-function encodeRunEventCursor(row: Pick<HeartbeatRunEvent, "seq" | "id">) {
-  return Buffer.from(JSON.stringify({ seq: row.seq, id: row.id } satisfies RunEventCursor), "utf8").toString("base64url");
-}
-
-function decodeRunEventCursor(value: string): RunEventCursor {
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<RunEventCursor>;
-    if (
-      typeof parsed.seq !== "number"
-      || !Number.isSafeInteger(parsed.seq)
-      || parsed.seq < 0
-      || typeof parsed.id !== "number"
-      || !Number.isSafeInteger(parsed.id)
-      || parsed.id < 0
-    ) {
-      throw new Error("invalid cursor payload");
-    }
-    return { seq: parsed.seq, id: parsed.id };
-  } catch {
-    throw badRequest("Invalid run event cursor.");
-  }
-}
 
 function clipSummaryText(value: string | null, maxLength = 500) {
   if (!value) return null;
@@ -306,6 +303,208 @@ function finiteNonNegativeNumber(value: string | null) {
   if (value === null || value.trim() === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export type HistoricalRunProfileRun = Pick<
+  RunRow,
+  "id" | "orgId" | "agentId" | "agentWorkspaceKey" | "agentRuntimeType" | "agentRuntimeConfig" | "runtimeConfig" | "contextSnapshot" | "createdAt"
+> & {
+  sessionParamsBeforeJson?: Record<string, unknown> | null;
+  sessionParamsAfterJson?: Record<string, unknown> | null;
+};
+
+export type HistoricalRunConfigRevision = Pick<
+  typeof agentConfigRevisions.$inferSelect,
+  "id" | "createdAt" | "beforeConfig" | "afterConfig"
+>;
+
+export interface HistoricalRunRuntimeProfile {
+  agentRuntimeType: string;
+  runtimeConfig: Record<string, unknown>;
+  cwd: string | null;
+  agentConfigRevisionId: string | null;
+  agentConfigRevisionCreatedAt: string | null;
+}
+
+function revisionTime(revision: HistoricalRunConfigRevision) {
+  const time = new Date(revision.createdAt).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function dynamicNativeRuntimeConfig(runtimeType: string, profile: Record<string, unknown>): Record<string, unknown> {
+  if (runtimeType !== "opencode_local" && runtimeType !== "pi_local") return {};
+  try {
+    const filtered = filterNativeTransportProfile({ ...profile, runtimeType });
+    if (runtimeType === "opencode_local") {
+      return typeof filtered.serverUrl === "string" ? { serverUrl: filtered.serverUrl } : {};
+    }
+    return Array.isArray(filtered.rpcArgs) ? { rpcArgs: [...filtered.rpcArgs] } : {};
+  } catch {
+    return {};
+  }
+}
+
+function hermesManagedAgentWorkspaceCwd(
+  run: HistoricalRunProfileRun,
+  workspace: Record<string, unknown>,
+): string | null {
+  const cwd = readString(workspace.executionWorkspaceCwd);
+  if (readString(workspace.source) !== "agent_home"
+    || readString(workspace.executionWorkspaceSource) !== "agent_home"
+    || !cwd
+    || !path.isAbsolute(cwd)
+    || path.resolve(cwd) !== cwd
+    || readString(workspace.cwd) !== cwd
+    || readString(workspace.agentHome) !== cwd) return null;
+
+  // Session state may corroborate the server-created workspace, but cannot
+  // introduce a transport path of its own or override a different workspace.
+  const persistedCwd = readString(asRecord(run.sessionParamsAfterJson).cwd)
+    ?? readString(asRecord(run.sessionParamsBeforeJson).cwd);
+  return persistedCwd === cwd ? cwd : null;
+}
+
+export function resolveHistoricalRunRuntimeProfile(
+  run: HistoricalRunProfileRun,
+  revisions: readonly HistoricalRunConfigRevision[],
+): HistoricalRunRuntimeProfile {
+  const orderedRevisions = revisions
+    .map((revision) => ({ revision, time: revisionTime(revision) }))
+    .filter((entry): entry is { revision: HistoricalRunConfigRevision; time: number } => entry.time !== null)
+    .sort((left, right) => right.time - left.time)
+    .map((entry) => entry.revision);
+  const runTime = new Date(run.createdAt).getTime();
+  const revisionAtRun = Number.isFinite(runTime)
+    ? orderedRevisions.find((revision) => (revisionTime(revision) ?? Number.POSITIVE_INFINITY) <= runTime) ?? null
+    : null;
+  const selectedRevision = revisionAtRun ?? orderedRevisions.at(-1) ?? null;
+  const snapshot = revisionAtRun?.afterConfig ?? selectedRevision?.beforeConfig ?? null;
+  const snapshotRecord = asRecord(snapshot);
+  const agentRuntimeConfig = recordOrNull(snapshotRecord.agentRuntimeConfig)
+    ?? asRecord(run.agentRuntimeConfig);
+  const runtimeConfig = recordOrNull(snapshotRecord.runtimeConfig)
+    ?? asRecord(run.runtimeConfig);
+  const mergedRuntimeConfig = { ...runtimeConfig, ...agentRuntimeConfig };
+  const runContext = asRecord(run.contextSnapshot);
+  const rawPreparedProfile = asRecord(runContext.runtimeProviderProfile);
+  const preparedProfile = sanitizeRuntimeProviderProfileSnapshot(rawPreparedProfile);
+  const runtimeType = readString(snapshotRecord.agentRuntimeType)
+    ?? readString(run.agentRuntimeType)
+    ?? "process";
+  // Only the server-authored, bounded profile projection is authoritative.
+  // Session payloads never supply commands, environment, or transport paths.
+  if (runtimeType === "opencode_local") {
+    delete mergedRuntimeConfig.serverUrl;
+    delete mergedRuntimeConfig.opencodeServerUrl;
+  }
+  if (runtimeType === "pi_local") {
+    delete mergedRuntimeConfig.rpcArgs;
+  }
+  if (preparedProfile?.runtimeType === runtimeType) {
+    Object.assign(mergedRuntimeConfig, runtimeConfigFromProviderProfileSnapshot(preparedProfile));
+    Object.assign(mergedRuntimeConfig, dynamicNativeRuntimeConfig(runtimeType, rawPreparedProfile ?? {}));
+  }
+  const workspace = asRecord(runContext.rudderWorkspace);
+  const hermesWorkspaceCwd = runtimeType === "hermes_gateway"
+    ? hermesManagedAgentWorkspaceCwd(run, workspace)
+    : null;
+  const cwd = [
+    hermesWorkspaceCwd,
+    preparedProfile?.runtimeType === runtimeType ? preparedProfile.cwd : null,
+    workspace.executionWorkspaceCwd,
+    workspace.cwd,
+    workspace.worktreePath,
+    runContext.executionWorkspaceCwd,
+    runContext.cwd,
+    runContext.worktreePath,
+    mergedRuntimeConfig.cwd,
+  ].map(readString).find((value): value is string => Boolean(value)) ?? null;
+
+  return {
+    agentRuntimeType: runtimeType,
+    runtimeConfig: mergedRuntimeConfig,
+    cwd,
+    agentConfigRevisionId: selectedRevision?.id ?? null,
+    agentConfigRevisionCreatedAt: selectedRevision?.createdAt
+      ? new Date(selectedRevision.createdAt).toISOString()
+      : null,
+  };
+}
+
+export function createHistoricalRunRuntimeProviderCapabilityResolver(
+  run: HistoricalRunProfileRun,
+  revisions: readonly HistoricalRunConfigRevision[],
+): RuntimeProviderCapabilityResolver {
+  const profile = resolveHistoricalRunRuntimeProfile(run, revisions);
+  const resolveProfile = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+    runtimeType: profile.agentRuntimeType,
+    runtimeConfig: profile.runtimeConfig,
+    cwd: profile.cwd,
+    resolutionMode: "historical",
+  });
+
+  return (runtimeType, binding, context) => {
+    if (runtimeType.trim() !== profile.agentRuntimeType) return null;
+    const readerInput = context?.readerInput;
+    if (readerInput && (
+      readerInput.orgId !== run.orgId
+      || readerInput.run.id !== run.id
+      || readerInput.run.orgId !== run.orgId
+    )) return null;
+    let effectiveResolver = resolveProfile;
+    if (readerInput && profile.agentRuntimeType === "hermes_gateway"
+      && !asRecord(run.contextSnapshot).rudderWorkspace
+      && readerInput.binding?.workspaceBindingId) {
+      const managedCwd = historicalHermesManagedCwd({
+        runId: run.id, orgId: run.orgId, agentId: run.agentId,
+        agentWorkspaceKey: run.agentWorkspaceKey,
+        runtimeBindingId: readString(asRecord(run.contextSnapshot).runtimeBindingId),
+        persistedRunCwd: readString(asRecord(run.sessionParamsAfterJson).cwd),
+        binding, readerInput,
+      });
+      if (!managedCwd) return null;
+      effectiveResolver = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+        runtimeType: profile.agentRuntimeType,
+        runtimeConfig: profile.runtimeConfig,
+        cwd: managedCwd,
+        resolutionMode: "historical",
+      });
+    }
+    const persistedSessionParams = {
+      ...asRecord(readerInput?.run.sessionParamsBeforeJson),
+      ...asRecord(readerInput?.run.sessionParamsAfterJson),
+    };
+    const session = context?.session;
+    const enrichedContext = session && Object.keys(persistedSessionParams).length > 0
+      ? {
+        ...context,
+        session: {
+          ...session,
+          sessionParams: {
+            ...session.sessionParams,
+            ...persistedSessionParams,
+          },
+        },
+      }
+      : context;
+    return effectiveResolver(runtimeType, binding, enrichedContext);
+  };
+}
+
+export function createHistoricalRunNativeTranscriptReader(
+  run: HistoricalRunProfileRun,
+  revisions: readonly HistoricalRunConfigRevision[],
+) {
+  const profile = resolveHistoricalRunRuntimeProfile(run, revisions);
+  return createHistoricalCodexTranscriptReaderHook({
+    runtimeType: profile.agentRuntimeType, runtimeConfig: profile.runtimeConfig,
+    cwd: profile.cwd, resolutionMode: "historical",
+  }, createHistoricalRunRuntimeProviderCapabilityResolver(run, revisions));
 }
 
 function resolveBundleForRun(
@@ -423,6 +622,9 @@ async function serializeRunRow(
 
 async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow[]> {
   const conditions = [eq(heartbeatRuns.orgId, input.orgId)];
+  if (input.sideChatOwnerId !== undefined) {
+    conditions.push(sideChatVisibilityCondition(input.sideChatOwnerId));
+  }
   if (input.updatedAfter) conditions.push(gt(heartbeatRuns.updatedAt, input.updatedAfter));
   if (input.createdBefore) conditions.push(lt(heartbeatRuns.createdAt, input.createdBefore));
   if (input.agentId) conditions.push(eq(heartbeatRuns.agentId, input.agentId));
@@ -466,6 +668,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
       chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene,
       goalId: heartbeatRuns.goalId,
       sourceRunId: heartbeatRuns.sourceRunId,
       processPid: heartbeatRuns.processPid,
@@ -476,6 +679,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       createdAt: heartbeatRuns.createdAt,
       updatedAt: heartbeatRuns.updatedAt,
       agentName: agents.name,
+      agentWorkspaceKey: agents.workspaceKey,
       agentRuntimeType: agents.agentRuntimeType,
       agentRuntimeConfig: agents.agentRuntimeConfig,
       runtimeConfig: agents.runtimeConfig,
@@ -492,6 +696,9 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
 
 async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise<SummaryRunRow[]> {
   const conditions = [eq(heartbeatRuns.orgId, input.orgId)];
+  if (input.sideChatOwnerId !== undefined) {
+    conditions.push(sideChatVisibilityCondition(input.sideChatOwnerId));
+  }
   if (input.updatedAfter) conditions.push(gt(heartbeatRuns.updatedAt, input.updatedAfter));
   if (input.createdBefore) conditions.push(lt(heartbeatRuns.createdAt, input.createdBefore));
   if (input.agentId) conditions.push(eq(heartbeatRuns.agentId, input.agentId));
@@ -532,6 +739,7 @@ async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise
       logStore: heartbeatRuns.logStore,
       logRef: heartbeatRuns.logRef,
       chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene,
       sourceRunId: heartbeatRuns.sourceRunId,
       contextSnapshot: heartbeatRuns.contextSnapshot,
       createdAt: heartbeatRuns.createdAt,
@@ -629,7 +837,40 @@ async function loadSkillEvidenceForRuns(
   return evidenceByRunId;
 }
 
-async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
+async function loadRunRowById(
+  db: Db,
+  runId: string,
+  options: { diagnosticProjection?: boolean } = {},
+): Promise<RunRow | null> {
+  const diagnosticContextSnapshot = sql<Record<string, unknown> | null>`jsonb_strip_nulls(jsonb_build_object(
+    'agentRuntimeType', ${heartbeatRuns.contextSnapshot}->'agentRuntimeType',
+    'agent_runtime_type', ${heartbeatRuns.contextSnapshot}->'agent_runtime_type',
+    'scene', ${heartbeatRuns.contextSnapshot}->'scene',
+    'rudderScene', ${heartbeatRuns.contextSnapshot}->'rudderScene',
+    'unifiedAgentRun', case
+      when jsonb_typeof(${heartbeatRuns.contextSnapshot}->'unifiedAgentRun') = 'object'
+        then jsonb_strip_nulls(jsonb_build_object('scene', ${heartbeatRuns.contextSnapshot}->'unifiedAgentRun'->'scene'))
+      else null
+    end,
+    'issueId', ${heartbeatRuns.contextSnapshot}->'issueId',
+    'targetType', ${heartbeatRuns.contextSnapshot}->'targetType',
+    'targetId', ${heartbeatRuns.contextSnapshot}->'targetId'
+  ))`.as("contextSnapshot");
+  const contextTranscriptArrayOmitted = (key: string) => sql`case
+    when jsonb_typeof(${heartbeatRuns.contextSnapshot}->${key}) = 'array'
+      then jsonb_array_length(${heartbeatRuns.contextSnapshot}->${key}) > 0
+    else false
+  end`;
+  const diagnosticContextTranscriptOmitted = sql<boolean>`(
+    ${contextTranscriptArrayOmitted("__chatTranscript")}
+    or ${contextTranscriptArrayOmitted("transcript")}
+    or ${contextTranscriptArrayOmitted("entries")}
+    or ${contextTranscriptArrayOmitted("items")}
+  )`.as("diagnosticContextTranscriptOmitted");
+  const diagnosticResultJson = sql<Record<string, unknown> | null>`null::jsonb`.as("resultJson");
+  const diagnosticOmitted = sql<boolean>`coalesce(${heartbeatRuns.resultJson} <> '{}'::jsonb, false)`.as("diagnosticResultJsonOmitted");
+  const diagnosticError = sql<string | null>`left(${heartbeatRuns.error}, 8_192)`.as("error");
+  const diagnosticErrorLength = sql<number | null>`char_length(${heartbeatRuns.error})`.as("diagnosticErrorOriginalLength");
   const rows = await db
     .select({
       id: heartbeatRuns.id,
@@ -640,34 +881,47 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       status: heartbeatRuns.status,
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
-      error: heartbeatRuns.error,
+      error: options.diagnosticProjection ? diagnosticError : heartbeatRuns.error,
       wakeupRequestId: heartbeatRuns.wakeupRequestId,
       exitCode: heartbeatRuns.exitCode,
       signal: heartbeatRuns.signal,
-      usageJson: heartbeatRuns.usageJson,
-      resultJson: heartbeatRuns.resultJson,
+      usageJson: options.diagnosticProjection ? sql`null::jsonb`.as("usageJson") : heartbeatRuns.usageJson,
+      resultJson: options.diagnosticProjection ? diagnosticResultJson : heartbeatRuns.resultJson,
       sessionIdBefore: heartbeatRuns.sessionIdBefore,
       sessionIdAfter: heartbeatRuns.sessionIdAfter,
+      sessionParamsBeforeJson: heartbeatRuns.sessionParamsBeforeJson,
+      sessionParamsAfterJson: heartbeatRuns.sessionParamsAfterJson,
       sessionReuseScope: heartbeatRuns.sessionReuseScope,
       logStore: heartbeatRuns.logStore,
       logRef: heartbeatRuns.logRef,
       logBytes: heartbeatRuns.logBytes,
       logSha256: heartbeatRuns.logSha256,
       logCompressed: heartbeatRuns.logCompressed,
-      stdoutExcerpt: heartbeatRuns.stdoutExcerpt,
-      stderrExcerpt: heartbeatRuns.stderrExcerpt,
+      stdoutExcerpt: options.diagnosticProjection
+        ? sql<string | null>`left(${heartbeatRuns.stdoutExcerpt}, 8_192)`.as("stdoutExcerpt")
+        : heartbeatRuns.stdoutExcerpt,
+      stderrExcerpt: options.diagnosticProjection
+        ? sql<string | null>`left(${heartbeatRuns.stderrExcerpt}, 8_192)`.as("stderrExcerpt")
+        : heartbeatRuns.stderrExcerpt,
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
       chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene,
       sourceRunId: heartbeatRuns.sourceRunId,
       processPid: heartbeatRuns.processPid,
       processStartedAt: heartbeatRuns.processStartedAt,
       retryOfRunId: heartbeatRuns.retryOfRunId,
       processLossRetryCount: heartbeatRuns.processLossRetryCount,
-      contextSnapshot: heartbeatRuns.contextSnapshot,
+      contextSnapshot: options.diagnosticProjection ? diagnosticContextSnapshot : heartbeatRuns.contextSnapshot,
+      ...(options.diagnosticProjection ? {
+        diagnosticResultJsonOmitted: diagnosticOmitted,
+        diagnosticContextTranscriptOmitted,
+        diagnosticErrorOriginalLength: diagnosticErrorLength,
+      } : {}),
       createdAt: heartbeatRuns.createdAt,
       updatedAt: heartbeatRuns.updatedAt,
       agentName: agents.name,
+      agentWorkspaceKey: agents.workspaceKey,
       agentRuntimeType: agents.agentRuntimeType,
       agentRuntimeConfig: agents.agentRuntimeConfig,
       runtimeConfig: agents.runtimeConfig,
@@ -699,22 +953,180 @@ async function loadRunEvents(db: Db, runId: string): Promise<HeartbeatRunEvent[]
   }));
 }
 
-async function loadRunLogContent(
-  run: Pick<typeof heartbeatRuns.$inferSelect, "logStore" | "logRef" | "logBytes">,
+const TRANSCRIPT_ENTRY_FIELDS: Record<string, readonly string[]> = {
+  assistant: ["text", "delta", "phase", "segmentId"],
+  thinking: ["text", "delta", "segmentId"],
+  user: ["text", "source", "messageId", "controlActionId"],
+  tool_call: ["name", "input", "toolUseId"],
+  tool_result: ["toolUseId", "toolName", "content", "isError"],
+  todo_list: ["todoListId", "items"],
+  init: ["model", "sessionId"],
+  result: ["text", "inputTokens", "outputTokens", "cachedTokens", "costUsd", "subtype", "isError", "errors"],
+  stderr: ["text"],
+  system: ["text"],
+  stdout: ["text"],
+};
+
+const TRANSCRIPT_TEXT_KINDS = new Set(["assistant", "thinking", "user", "result", "stderr", "system", "stdout"]);
+
+function transcriptEntryFromReaderItem(item: TranscriptItem): TranscriptEntry | null {
+  const entry = item.entry && typeof item.entry === "object" && !Array.isArray(item.entry)
+    ? item.entry as Record<string, unknown>
+    : null;
+  const payload = asRecord(item.payload);
+  const source = entry ?? payload;
+  const projected: Record<string, unknown> = { kind: item.kind, ts: item.ts };
+  const fields = TRANSCRIPT_ENTRY_FIELDS[item.kind] ?? ["text"];
+
+  for (const field of fields) {
+    const value = field === "text" && typeof item.text === "string"
+      ? item.text
+      : source?.[field];
+    if (value !== undefined) projected[field] = value;
+  }
+
+  const sourceEntryId = typeof item.sourceEntryId === "string" && item.sourceEntryId.length > 0
+    ? item.sourceEntryId
+    : source?.sourceEntryId;
+  if (typeof sourceEntryId === "string") projected.sourceEntryId = sourceEntryId;
+  const originalLengths = asRecord(source?.__rudderOriginalLengths);
+  if (originalLengths) {
+    const validLengths = Object.fromEntries(
+      Object.entries(originalLengths)
+        .filter(([, length]) => typeof length === "number" && Number.isFinite(length) && length > 0),
+    );
+    if (Object.keys(validLengths).length > 0) projected.__rudderOriginalLengths = validLengths;
+  }
+  const truncatedFields = source?.__rudderTruncatedFields;
+  if (Array.isArray(truncatedFields)) {
+    const validFields = truncatedFields
+      .filter((field): field is string => typeof field === "string" && field.length > 0)
+      .slice(0, 32)
+      .map((field) => field.slice(0, 128));
+    if (validFields.length > 0) projected.__rudderTruncatedFields = validFields;
+  }
+
+  // Native items carry useful structured data outside the legacy entry shape.
+  // Keep it nested, without promoting unrelated reader metadata into the entry.
+  if (!entry && item.payload !== undefined) projected.payload = item.payload;
+  if (TRANSCRIPT_TEXT_KINDS.has(item.kind) && typeof projected.text !== "string") return null;
+
+  return projected as unknown as TranscriptEntry;
+}
+
+async function createHistoricalRunTranscriptReader(
+  db: Db,
+  run: RunRow,
+  options: {
+    diagnosticProjection?: boolean;
+    maxLegacyReadBytes?: number;
+    maxLegacyItemBytes?: number;
+  } = {},
 ) {
-  if (!run.logStore || !run.logRef) return "";
+  const revisionsByAgentId = await loadRevisionsForRuns(db, [run]);
   const logStore = getRunLogStore();
-  const result = await logStore.read(
-    {
-      store: run.logStore as "local_file",
-      logRef: run.logRef,
+  const legacyReader = createLegacyTranscriptReader({
+    logStore,
+    ...(options.diagnosticProjection ? {
+      maxReadBytes: MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
+      maxTotalBytes: MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
+      maxItemBytes: MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
+    } : {
+      ...(options.maxLegacyReadBytes === undefined ? {} : { maxReadBytes: options.maxLegacyReadBytes }),
+      ...(options.maxLegacyItemBytes === undefined ? {} : { maxItemBytes: options.maxLegacyItemBytes }),
+    }),
+  });
+  return createTranscriptReader(db, {
+    nativeReader: createHistoricalRunNativeTranscriptReader(run, revisionsByAgentId.get(run.agentId) ?? []),
+    objectReader: createTranscriptObjectReader(),
+    logStore,
+    legacyReader: {
+      readRun(input) {
+        return legacyReader.readRun({ ...input, runtimeType: run.agentRuntimeType });
+      },
     },
-    {
-      offset: 0,
-      limitBytes: Math.max(256_000, Number(run.logBytes ?? 0) || 256_000),
-    },
-  );
-  return result.content;
+    ...(options.diagnosticProjection ? {
+      diagnosticProjection: true,
+      maxLegacyReadBytes: MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
+      maxLegacyTotalBytes: MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
+      maxLegacyItemBytes: MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
+    } : {
+      ...(options.maxLegacyReadBytes === undefined ? {} : { maxLegacyReadBytes: options.maxLegacyReadBytes }),
+      ...(options.maxLegacyItemBytes === undefined ? {} : { maxLegacyItemBytes: options.maxLegacyItemBytes }),
+    }),
+  });
+}
+
+type RunTranscriptRead = { entries: TranscriptEntry[] };
+
+async function loadRunTranscriptFromReader(db: Db, orgId: string, runId: string): Promise<RunTranscriptRead> {
+  const run = await loadRunRowById(db, runId);
+  if (!run || run.orgId !== orgId) return { entries: [] };
+  const reader = await createHistoricalRunTranscriptReader(db, run);
+  const entries: TranscriptEntry[] = [];
+  let cursor: string | null = null;
+  for (let pageCount = 0; pageCount < 100_000; pageCount += 1) {
+    const page = await reader.readRun({
+      orgId,
+      runId,
+      principal: { type: "board", orgId, authorized: true },
+      cursor,
+      limit: 200,
+    });
+    for (const item of page.items) {
+      const entry = transcriptEntryFromReaderItem(item);
+      if (entry) entries.push(entry);
+    }
+    if (!page.nextCursor) return { entries };
+    if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
+    cursor = page.nextCursor;
+  }
+  throw new Error("Transcript reader exceeded the page limit");
+}
+
+export interface ObservedRunTranscriptPageInput {
+  cursor?: string | null;
+  limit?: number;
+  maxLegacyReadBytes?: number;
+  maxLegacyItemBytes?: number;
+  spanId?: string | null;
+  range?: TranscriptRange | null;
+  visibilityCutoffRef?: string | null;
+}
+
+export async function getObservedRunTranscript(
+  db: Db,
+  runId: string,
+  scope: RunIdResolutionScope = {},
+  input: ObservedRunTranscriptPageInput = {},
+): Promise<{ orgId: string; run: RunExportRow; page: TranscriptPage }> {
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) throw notFound("Agent run not found");
+  await assertRunIntelligenceAccess(db, runAccess, scope);
+  const orgId = runAccess.orgId;
+
+  const [run, observedRun] = await Promise.all([
+    loadRunRowById(db, resolvedRunId),
+    getObservedRun(db, resolvedRunId, scope),
+  ]);
+  if (!run || !observedRun) throw notFound("Agent run not found");
+
+  const reader = await createHistoricalRunTranscriptReader(db, run, {
+    maxLegacyReadBytes: input.maxLegacyReadBytes,
+    maxLegacyItemBytes: input.maxLegacyItemBytes,
+  });
+  const page = await reader.readRun({
+    orgId,
+    runId: resolvedRunId,
+    principal: { type: "board", orgId, authorized: true },
+    cursor: input.cursor ?? null,
+    limit: input.limit,
+    spanId: input.spanId ?? null,
+    range: input.range ?? null,
+    visibilityCutoffRef: input.visibilityCutoffRef ?? null,
+  });
+  return { orgId, run: observedRun, page };
 }
 
 export async function listObservedRuns(db: Db, input: ListObservedRunsInput): Promise<RunExportRow[]> {
@@ -814,44 +1226,59 @@ export async function getRunSummary(
   runId: string,
   scope: RunIdResolutionScope = {},
 ): Promise<RunSummary | null> {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const orgId = await loadRunOrgId(db, resolvedRunId);
-  if (!orgId) return null;
-  assertRunOrgScope(orgId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) return null;
+  await assertRunIntelligenceAccess(db, runAccess, scope);
   const page = await listRunSummaries(db, {
-    orgId,
+    orgId: runAccess.orgId,
     runIdPrefix: resolvedRunId,
+    sideChatOwnerId: scope.sideChatOwnerId,
     limit: 1,
   });
   return page.items.find((row) => row.id === resolvedRunId) ?? null;
 }
 
-type RunIdResolutionScope = { orgIds?: string[] };
+type RunIdResolutionScope = RunIntelligenceAccessScope;
 
-function assertRunOrgScope(orgId: string, scope: RunIdResolutionScope) {
-  if (scope.orgIds && !scope.orgIds.includes(orgId)) {
-    throw forbidden("User does not have access to this organization");
-  }
-}
+type RunAccessRow = {
+  orgId: string;
+  chatConversationId: string | null;
+  scene: string | null;
+  contextSnapshot: Record<string, unknown> | null;
+};
 
-async function loadRunOrgId(db: Db, runId: string) {
+async function loadRunAccess(db: Db, runId: string): Promise<RunAccessRow | null> {
   return db
-    .select({ orgId: heartbeatRuns.orgId })
+    .select({
+      orgId: heartbeatRuns.orgId,
+      chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene,
+      contextSnapshot: sql<Record<string, unknown> | null>`jsonb_strip_nulls(jsonb_build_object(
+        'scene', ${heartbeatRuns.contextSnapshot}->'scene',
+        'rudderScene', ${heartbeatRuns.contextSnapshot}->'rudderScene',
+        'unifiedAgentRun', case
+          when jsonb_typeof(${heartbeatRuns.contextSnapshot}->'unifiedAgentRun') = 'object'
+            then jsonb_strip_nulls(jsonb_build_object('scene', ${heartbeatRuns.contextSnapshot}->'unifiedAgentRun'->'scene'))
+          else null
+        end
+      ))`.as("contextSnapshot"),
+    })
     .from(heartbeatRuns)
     .where(eq(heartbeatRuns.id, runId))
     .limit(1)
-    .then((rows) => rows[0]?.orgId ?? null);
+    .then((rows) => rows[0] ?? null);
 }
 
 export async function getObservedRun(db: Db, runId: string, scope: RunIdResolutionScope = {}): Promise<RunExportRow | null> {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const orgId = await loadRunOrgId(db, resolvedRunId);
-  if (!orgId) return null;
-  assertRunOrgScope(orgId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) return null;
+  await assertRunIntelligenceAccess(db, runAccess, scope);
   const row = await loadRunRowById(db, resolvedRunId);
   if (!row) return null;
   const [issueMap, revisionsByAgentId] = await Promise.all([
-    loadIssuesForRuns(db, orgId, [row]),
+    loadIssuesForRuns(db, runAccess.orgId, [row]),
     loadRevisionsForRuns(db, [row]),
   ]);
   return serializeRunRow(row, issueMap, revisionsByAgentId);
@@ -869,10 +1296,11 @@ export async function getObservedRunEvents(
     maxPayloadChars?: number;
   } = {},
 ) {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const orgId = await loadRunOrgId(db, resolvedRunId);
-  if (!orgId) throw notFound("Agent run not found");
-  assertRunOrgScope(orgId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) throw notFound("Agent run not found");
+  await assertRunIntelligenceAccess(db, runAccess, scope);
+  const orgId = runAccess.orgId;
   const afterSeq = Math.max(0, Math.floor(input.afterSeq ?? 0));
   const cursor = input.cursor ? decodeRunEventCursor(input.cursor) : null;
   const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 200)));
@@ -949,10 +1377,11 @@ export async function getObservedRunLog(
   scope: RunIdResolutionScope = {},
   input: { offset?: number; limitBytes?: number; signal?: AbortSignal } = {},
 ) {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const orgId = await loadRunOrgId(db, resolvedRunId);
-  if (!orgId) throw notFound("Agent run not found");
-  assertRunOrgScope(orgId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) throw notFound("Agent run not found");
+  await assertRunIntelligenceAccess(db, runAccess, scope);
+  const orgId = runAccess.orgId;
   const heartbeat = heartbeatService(db);
   const offset = Math.max(0, Math.floor(input.offset ?? 0));
   const limitBytes = Math.max(4, Math.min(1_000_000, Math.floor(input.limitBytes ?? 256_000)));
@@ -973,22 +1402,86 @@ export async function getObservedRunLog(
 }
 
 export async function getObservedRunDetail(db: Db, runId: string, scope: RunIdResolutionScope = {}): Promise<ObservedRunDetail | null> {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
   const observedRun = await getObservedRun(db, resolvedRunId, scope);
   if (!observedRun) return null;
-  const events = await loadRunEvents(db, resolvedRunId);
+  const [events, readerTranscript] = await Promise.all([
+    loadRunEvents(db, resolvedRunId),
+    loadRunTranscriptFromReader(db, observedRun.run.orgId, resolvedRunId)
+      .catch((): RunTranscriptRead => ({ entries: [] })),
+  ]);
 
   const run = { ...observedRun.run, chatConversationId: observedRun.run.chatConversationId ?? null };
-  const logContent = await loadRunLogContent(run).catch(() => "");
-  return observedRunFromFilesystem({
+  const detail = observedRunFromFilesystem({
     run,
     agentName: observedRun.agentName,
     orgName: observedRun.orgName,
     issue: observedRun.issue,
     bundle: observedRun.bundle,
     events,
-    logContent,
+    logContent: null,
+    transcript: readerTranscript.entries.length > 0 ? readerTranscript.entries : undefined,
   });
+  return detail;
+}
+
+export async function getObservedRunDiagnosticDetail(
+  db: Db,
+  runId: string,
+  scope: RunIdResolutionScope = {},
+  options: { position?: RunDiagnosticReaderPosition } = {},
+): Promise<{
+  detail: ObservedRunDetail;
+  projection: RunDiagnosticProjection;
+  entryPositions: RunDiagnosticEntryPosition[];
+  nextPosition: RunDiagnosticReaderPosition | null;
+  revision: string | null;
+} | null> {
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) return null;
+  await assertRunIntelligenceAccess(db, runAccess, scope);
+
+  const row = await loadRunRowById(db, resolvedRunId, { diagnosticProjection: true });
+  if (!row || row.orgId !== runAccess.orgId) return null;
+  const revisionsByAgentId = new Map<string, Array<typeof agentConfigRevisions.$inferSelect>>([[row.agentId, []]]);
+  const observedRun = await serializeRunRow(row, new Map(), revisionsByAgentId);
+  const reader = await createHistoricalRunTranscriptReader(db, row, { diagnosticProjection: true });
+  const omittedSources = [
+    ...(row.diagnosticResultJsonOmitted ? ["resultJson"] : []),
+    ...(row.diagnosticContextTranscriptOmitted ? ["contextSnapshot.transcriptCandidates"] : []),
+  ];
+  const transcript = await readBoundedRunDiagnosticTranscript({
+    readPage: (cursor, limit) => reader.readRun({
+      orgId: runAccess.orgId,
+      runId: resolvedRunId,
+      principal: { type: "board", orgId: runAccess.orgId, authorized: true },
+      cursor,
+      limit,
+    }),
+    toEntry: transcriptEntryFromReaderItem,
+    position: options.position,
+    omittedSources,
+  });
+  if (row.diagnosticErrorOriginalLength && row.diagnosticErrorOriginalLength > (row.error?.length ?? 0)) {
+    (observedRun.run as HeartbeatRun & { __rudderOriginalLengths?: Record<string, number> })
+      .__rudderOriginalLengths = { error: row.diagnosticErrorOriginalLength };
+  }
+
+  return {
+    detail: observedRunFromFilesystem({
+      run: observedRun.run,
+      agentName: observedRun.agentName,
+      orgName: observedRun.orgName,
+      issue: observedRun.issue,
+      bundle: observedRun.bundle,
+      transcript: transcript.entries,
+    }),
+    projection: transcript.projection,
+    entryPositions: transcript.entryPositions,
+    nextPosition: transcript.nextPosition,
+    revision: transcript.revision,
+  };
 }
 
 export async function diagnoseObservedRun(

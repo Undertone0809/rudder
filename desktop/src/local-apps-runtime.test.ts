@@ -483,10 +483,20 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
     { timeout: 240_000 },
     async () => {
       const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 30_000 });
+      const spawnWatchdogWithCaptureDiagnostics = ((command: string, args: readonly string[], options: SpawnOptions) => (
+        spawn(command, [...args], {
+          ...options,
+          env: {
+            ...options.env,
+            RUDDER_WINDOWS_PROCESS_HELPER_CAPTURE_DIAGNOSTICS: "1",
+          },
+        })
+      )) as typeof spawn;
       const manager = new LocalAppRuntimeManager({
         registry,
         platform: "win32",
         useNativeProcessHost: false,
+        spawnWatchdog: spawnWatchdogWithCaptureDiagnostics,
         watchdogStartTimeoutMs: 120_000,
         listenerOwnershipRetryTimeoutMs: 60_000,
         cleanupTimeoutMs: 60_000,

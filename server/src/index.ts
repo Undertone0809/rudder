@@ -43,7 +43,6 @@ import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { createRudderApp, createRudderAppStartupOptions, ownRudderAppAndOutbox } from "./app.js";
-import { shouldStartAutomaticBackupSchedulers } from "./backup-scheduler-policy.js";
 import { getBoardClaimWarningUrl } from "./board-claim.js";
 import {
   createAuthRuntime,
@@ -73,8 +72,7 @@ import {
 import { logger } from "./middleware/logger.js";
 import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
-import { createHttpServerShutdown } from "./runtime/http-server-shutdown.js";
-import { RuntimeSupervisor, supervisedStart } from "./runtime/runtime-supervisor.js";
+import * as runtime from "./runtime/index.js";
 import {
   automationService,
   heartbeatService,
@@ -376,17 +374,17 @@ export async function startManagedLocalServer(
 }
 
 export async function startServer(options: StartServerOptions = {}): Promise<StartedServer> {
-  const supervisor = new RuntimeSupervisor({
+  const supervisor = new runtime.RuntimeSupervisor({
     onDisposeError: ({ name, error }) => {
       logger.warn({ err: error, resource: name }, "Runtime resource cleanup failed");
     },
   });
-  return supervisedStart(supervisor, () => startServerRuntime(options, supervisor));
+  return runtime.supervisedStart(supervisor, () => startServerRuntime(options, supervisor));
 }
 
 async function startServerRuntime(
   options: StartServerOptions,
-  supervisor: RuntimeSupervisor,
+  supervisor: runtime.RuntimeSupervisor,
 ): Promise<StartedServer> {
   options.onEvent?.({ stage: "config", message: "Loading Rudder configuration" });
   const instanceId = resolveRudderInstanceId();
@@ -1102,7 +1100,7 @@ async function startServerRuntime(
   });
   ownRudderAppAndOutbox(supervisor, db as any, appHandle);
   const server = createServer(appHandle.app as unknown as Parameters<typeof createServer>[0]);
-  const beginHttpClose = createHttpServerShutdown(server, {
+  const beginHttpClose = runtime.createHttpServerShutdown(server, {
     onCloseError: (err) => {
       logger.warn({ err }, "HTTP server close reported an error during shutdown");
     },
@@ -1149,6 +1147,8 @@ async function startServerRuntime(
   const ownInterval = (name: string, handle: ReturnType<typeof setInterval>) => {
     supervisor.own(name, () => clearInterval(handle));
   };
+  runtime.startSideChatProviderCleanupRuntime({ db: db as Db, logger, supervisor });
+  runtime.startSideChatCloseRuntime({ db: db as Db, storage: storageService, logger, supervisor });
   const managedMcpOAuthSessionGc = startManagedMcpOAuthSessionGc(
     managedMcpOAuthService(db as any, {
       deploymentMode: config.deploymentMode,
@@ -1256,7 +1256,7 @@ async function startServerRuntime(
       });
   }
   
-  const automaticBackupSchedulersEnabled = shouldStartAutomaticBackupSchedulers(localEnv);
+  const automaticBackupSchedulersEnabled = runtime.startBackupSchedulersWithRuntimeRetention({ localEnv, db: db as Db, intervalMs: WORKSPACE_BACKUP_SCHEDULER_TICK_MS, logger, supervisor });
 
   if (config.databaseBackupEnabled && automaticBackupSchedulersEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;

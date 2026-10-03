@@ -1,6 +1,8 @@
 import {
   agents,
   applyPendingMigrations,
+  chatConversations,
+  chatMessages,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunEvents,
@@ -8,7 +10,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -23,6 +25,7 @@ import { errorHandler } from "../middleware/index.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { appendHeartbeatRunEvent } from "../services/run-events.js";
 import { getRunLogStore } from "../services/run-log-store.js";
+import { selectConversationSourceWindow } from "../services/runtime-kernel/transcript-reader.sources.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -169,6 +172,56 @@ describe("run intelligence real route workflow", () => {
     else process.env.RUN_LOG_BASE_PATH = previousLogBasePath;
   });
 
+  it("pages conversation sources once when PostgreSQL timestamps contain microseconds", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    const firstRunId = "00000000-0000-4000-8000-000000000001";
+    const secondRunId = "00000000-0000-4000-8000-000000000002";
+    const messageId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Transcript precision",
+      urlKey: deriveOrganizationUrlKey(`Transcript precision ${orgId}`),
+      issuePrefix: "TRP",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Transcript Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(chatConversations).values({ id: conversationId, orgId });
+    await db.insert(heartbeatRuns).values([firstRunId, secondRunId].map((id) => ({
+      id,
+      orgId,
+      agentId,
+      chatConversationId: conversationId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "succeeded",
+    })));
+    await db.insert(chatMessages).values({ id: messageId, orgId, conversationId, role: "user", body: "Follow-up" });
+    await db.execute(sql`update ${heartbeatRuns} set created_at = '2026-09-23T12:00:00.123900Z' where id = ${firstRunId}::uuid`);
+    await db.execute(sql`update ${heartbeatRuns} set created_at = '2026-09-23T12:00:00.123100Z' where id = ${secondRunId}::uuid`);
+    await db.execute(sql`update ${chatMessages} set created_at = '2026-09-23T12:00:00.124789Z' where id = ${messageId}::uuid`);
+
+    const seen: string[] = [];
+    let after = null;
+    for (let page = 0; page < 3; page += 1) {
+      const window = await selectConversationSourceWindow(db, orgId, conversationId, after, 1);
+      expect(window.rows).toHaveLength(1);
+      seen.push(window.rows[0]!.descriptor.id);
+      after = window.rows[0]!.descriptor;
+    }
+    expect(seen).toEqual([firstRunId, secondRunId, messageId]);
+    expect((await selectConversationSourceWindow(db, orgId, conversationId, after, 1)).rows).toEqual([]);
+  });
+
   it("walks summary, errors, bounded evidence, and detail without crossing org boundaries", async () => {
     const orgId = randomUUID();
     const otherOrgId = randomUUID();
@@ -216,6 +269,16 @@ describe("run intelligence real route workflow", () => {
 
     const startedAt = new Date("2026-07-14T10:00:00.000Z");
     const finishedAt = new Date("2026-07-14T10:00:07.000Z");
+    const nativeFailure = {
+      runtime: "opencode_local",
+      event: "session.error",
+      source: "provider",
+      errorName: "UnknownError",
+      statusCode: 503,
+      responseErrorType: "ProviderUnavailableError",
+      messageClassification: "rejected",
+      message: null,
+    };
     await db.insert(heartbeatRuns).values([
       {
         id: runId,
@@ -229,7 +292,7 @@ describe("run intelligence real route workflow", () => {
         error: "command failed",
         errorCode: "command_error",
         usageJson: { inputTokens: 200, cachedInputTokens: 50, outputTokens: 30, costUsd: 0.02 },
-        resultJson: { summary: "Fix failed", stdout: `raw-result-marker:${"R".repeat(5 * 1024 * 1024)}` },
+        resultJson: { summary: "Fix failed", nativeFailure, stdout: `raw-result-marker:${"R".repeat(5 * 1024 * 1024)}` },
         resultSummaryJson: { summary: "Fix failed", costUsd: 0.02 },
         contextSnapshot: { targetType: "issue", targetId: "RIE-1" },
         createdAt: startedAt,
@@ -283,14 +346,14 @@ describe("run intelligence real route workflow", () => {
       {
         kind: "result",
         ts: "2026-07-14T10:00:06.000Z",
-        text: "Second turn ended",
+        text: "Second turn failed",
         inputTokens: 100,
         outputTokens: 20,
         cachedTokens: 50,
         costUsd: 0.01,
-        subtype: "success",
-        isError: false,
-        errors: [],
+        subtype: "error",
+        isError: true,
+        errors: ["second command failed"],
       },
     ];
     await db.insert(heartbeatRunEvents).values(entries.map((payload, index) => transcriptEvent({
@@ -399,6 +462,18 @@ describe("run intelligence real route workflow", () => {
       id: "step-3",
       output: { clipped: true, originalLength: (5 * 1024 * 1024) + 15 },
     });
+    expect(errors.body.errors.map((error: { id: string }) => error.id)).toContain("step-4");
+    expect(errors.body.projection).toMatchObject({
+      completeness: "partial",
+      source: "legacy",
+      truncatedItems: 2,
+      omittedSources: ["resultJson"],
+      limitReached: null,
+      readFailure: false,
+    });
+    expect(Buffer.byteLength(JSON.stringify(errors.body), "utf8")).toBeLessThan(400_000);
+    expect(JSON.stringify(errors.body)).not.toContain("E".repeat(10_000));
+    expect(JSON.stringify(errors.body)).not.toContain("R".repeat(10_000));
 
     const compactTranscript = await request(app)
       .get(`/api/run-intelligence/runs/${runId}/transcript`)
@@ -414,17 +489,17 @@ describe("run intelligence real route workflow", () => {
       .get(`/api/run-intelligence/runs/${runId}/transcript`)
       .query({
         aroundError: transcriptError.id,
-        contextTurns: "1",
-        output: "full",
-        order: "oldest",
-        turnLimit: "1",
-      });
+      contextTurns: "1",
+      output: "full",
+      order: "oldest",
+      turnLimit: "1",
+    });
     expect(transcript.status).toBe(200);
     expect(transcript.body.page).toMatchObject({
       order: "oldest",
       turnLimit: 1,
-      hasMore: true,
-      nextCursor: "step-4",
+      hasMore: false,
+      nextCursor: null,
       returnedSteps: 4,
     });
     expect(transcript.body.entries.map((entry: { id: string }) => entry.id)).toEqual([
@@ -436,6 +511,46 @@ describe("run intelligence real route workflow", () => {
     expect(transcript.body.entries[2].entry.content).toHaveLength((5 * 1024 * 1024) + 15);
     expect(transcript.body.transcript).toBeUndefined();
     expect(JSON.stringify(transcript.body)).not.toContain("second-turn-marker");
+
+    const transcriptErrorPages: string[] = [];
+    const transcriptCursors = new Set<string>();
+    let transcriptCursor: string | null = null;
+    for (let pageCount = 0; pageCount < 5; pageCount += 1) {
+      const page = await request(app)
+        .get(`/api/run-intelligence/runs/${runId}/transcript`)
+        .query({
+          ...(transcriptCursor ? { cursor: transcriptCursor } : {}),
+          errorsOnly: "true",
+          maxChars: "80",
+          order: "oldest",
+          turnLimit: "1",
+        });
+      expect(page.status, JSON.stringify(page.body)).toBe(200);
+      expect(Buffer.byteLength(JSON.stringify(page.body), "utf8")).toBeLessThan(400_000);
+      transcriptErrorPages.push(...page.body.rows.map((row: { id: string }) => row.id));
+      if (!page.body.page.hasMore) {
+        expect(page.body.page.nextCursor).toBeNull();
+        break;
+      }
+      transcriptCursor = page.body.page.nextCursor;
+      expect(transcriptCursor).toEqual(expect.any(String));
+      expect(transcriptCursor).not.toMatch(/^step-\d+$/);
+      expect(transcriptCursors.has(transcriptCursor!)).toBe(false);
+      transcriptCursors.add(transcriptCursor!);
+      const decodedCursor = JSON.parse(Buffer.from(transcriptCursor!, "base64url").toString("utf8"));
+      expect(decodedCursor).toMatchObject({
+        kind: "run_transcript_projection",
+        runId,
+        orgId,
+        errorsOnly: true,
+        order: "oldest",
+      });
+    }
+    expect(transcriptErrorPages).toEqual(["step-3", "step-4", "step-6"]);
+    expect(new Set(transcriptErrorPages).size).toBe(transcriptErrorPages.length);
+    expect(errors.body.errors
+      .filter((error: { id: string }) => error.id.startsWith("step-"))
+      .map((error: { id: string }) => error.id)).toEqual(transcriptErrorPages);
 
     let offset = 0;
     let reconstructedLog = "";
@@ -468,6 +583,7 @@ describe("run intelligence real route workflow", () => {
     expect(fullDetail.status).toBe(200);
     expect(fullDetail.body.run).toMatchObject({ id: runId, orgId, status: "failed" });
     expect(fullDetail.body.run.resultJson.stdout).toContain("raw-result-marker");
+    expect(fullDetail.body.run.resultJson.nativeFailure).toEqual(nativeFailure);
 
     const otherOrgList = await request(app)
       .get(`/api/run-intelligence/orgs/${otherOrgId}/runs`)
@@ -482,6 +598,262 @@ describe("run intelligence real route workflow", () => {
     const otherOrgLog = await request(app).get(`/api/run-intelligence/runs/${otherRunId}/log`);
     expect(otherOrgLog.status).toBe(403);
     expect(otherOrgLog.body.error).toContain("does not have access");
+
+    const otherOrgTranscript = await request(app).get(`/api/run-intelligence/runs/${otherRunId}/transcript`);
+    expect(otherOrgTranscript.status).toBe(403);
+    expect(otherOrgTranscript.body.error).toContain("does not have access");
+  });
+
+  it("reports original detail length and partial status for one clipped errors[] member", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const runError = "run-error-😀:" + "R".repeat(20_000);
+    const originalError = "single-error-😀-marker:" + "E".repeat(20_000);
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Single Error Projection",
+      urlKey: deriveOrganizationUrlKey(`Single Error Projection ${orgId}`),
+      issuePrefix: "SEP",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Projection Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+      error: runError,
+    });
+    await db.insert(heartbeatRunEvents).values([
+      transcriptEvent({
+        orgId,
+        runId,
+        agentId,
+        seq: 1,
+        payload: {
+          kind: "result",
+          ts: "2026-09-29T10:00:01.000Z",
+          text: "",
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          costUsd: 0,
+          isError: true,
+          subtype: "error",
+          errors: [originalError],
+        },
+      }),
+      transcriptEvent({
+        orgId,
+        runId,
+        agentId,
+        seq: 2,
+        payload: {
+          kind: "result",
+          ts: "2026-09-29T10:00:02.000Z",
+          text: "",
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          costUsd: 0,
+          isError: true,
+          subtype: "error",
+          errors: ["short-error"],
+          futureDiagnosticField: "not returned by bounded projection",
+        },
+      }),
+    ]);
+
+    const app = await createApp(db, orgId);
+    const response = await request(app)
+      .get(`/api/run-intelligence/runs/${runId}/errors`)
+      .query({ maxChars: "80" });
+    expect(response.status).toBe(200);
+    expect(response.body.errors).toHaveLength(3);
+    expect(response.body.errors[0]).toMatchObject({
+      id: "run-error",
+      output: { clipped: true, originalLength: Array.from(runError).length },
+    });
+    expect(response.body.errors[1]).toMatchObject({
+      id: "step-1",
+      output: { clipped: true, originalLength: Array.from("Errors:\n").length + Array.from(originalError).length },
+    });
+    expect(response.body.errors[2]).toMatchObject({
+      id: "step-2",
+    });
+    expect(response.body.projection).toMatchObject({
+      completeness: "partial",
+      truncatedItems: 2,
+      readFailure: false,
+    });
+    expect(JSON.stringify(response.body)).not.toContain("E".repeat(10_000));
+    expect(JSON.stringify(response.body)).not.toContain("R".repeat(10_000));
+    expect(JSON.stringify(response.body)).not.toContain("not returned by bounded projection");
+  });
+
+  it("marks omitted context snapshot transcript candidates as partial", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Context Transcript Omission",
+      urlKey: deriveOrganizationUrlKey(`Context Transcript Omission ${orgId}`),
+      issuePrefix: "CTO",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Context Omission Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+      contextSnapshot: {
+        transcript: [{
+          kind: "result",
+          ts: "2026-09-29T10:00:01.000Z",
+          isError: true,
+          errors: ["hidden-context-error"],
+        }],
+      },
+    });
+
+    const app = await createApp(db, orgId);
+    const response = await request(app).get(`/api/run-intelligence/runs/${runId}/errors`);
+    expect(response.status).toBe(200);
+    expect(response.body.errors).toEqual([]);
+    expect(response.body.projection).toMatchObject({
+      completeness: "partial",
+      omittedSources: ["contextSnapshot.transcriptCandidates"],
+    });
+    expect(JSON.stringify(response.body)).not.toContain("hidden-context-error");
+  });
+
+  it("continues errors past the 2 MiB diagnostic chunk without duplicates", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const itemCount = 280;
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Diagnostic Continuation",
+      urlKey: deriveOrganizationUrlKey(`Diagnostic Continuation ${orgId}`),
+      issuePrefix: "DCO",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Continuation Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "succeeded",
+    });
+    const startMs = Date.parse("2026-09-29T10:00:00.000Z");
+    await db.insert(heartbeatRunEvents).values(Array.from({ length: itemCount }, (_, index) => {
+      const marker = `continuation-error-${String(index + 1).padStart(3, "0")}:`;
+      return {
+        ...transcriptEvent({
+          orgId,
+          runId,
+          agentId,
+          seq: index + 1,
+          payload: {
+            kind: "tool_result",
+            ts: new Date(startMs + (index + 1) * 1_000).toISOString(),
+            toolUseId: `tool-${index + 1}`,
+            toolName: "exec_command",
+            isError: true,
+            content: marker + "x".repeat(8_192 - marker.length),
+            ...(index === 0 ? { errors: Array.from({ length: 16 }, () => "😀".repeat(8_192)) } : {}),
+          },
+        }),
+        createdAt: new Date(startMs + (index + 1) * 1_000),
+      };
+    }));
+
+    const app = await createApp(db, orgId);
+    const seen: string[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | null = null;
+    let pageCount = 0;
+    do {
+      const response = await request(app)
+        .get(`/api/run-intelligence/runs/${runId}/errors`)
+        .query({ ...(cursor ? { cursor } : {}), maxChars: "80" });
+      expect(response.status).toBe(200);
+      if (pageCount === 0) {
+        expect(response.body.page.hasMore).toBe(true);
+        expect(response.body.projection.completeness).toBe("partial");
+      }
+      seen.push(...response.body.errors.map((error: { id: string }) => error.id));
+      cursor = response.body.page.nextCursor;
+      pageCount += 1;
+      if (cursor) {
+        expect(cursors.has(cursor)).toBe(false);
+        cursors.add(cursor);
+        if (pageCount === 1) {
+          expect(cursor).not.toMatch(/^step-\d+$/);
+          const encoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+          expect(encoded).toMatchObject({
+            kind: "run_errors",
+            runId,
+            orgId,
+            source: "legacy",
+            revision: expect.any(String),
+          });
+          const wrongOrgCursor = Buffer.from(JSON.stringify({ ...encoded, orgId: randomUUID() }), "utf8")
+            .toString("base64url");
+          const wrongOrg = await request(app)
+            .get(`/api/run-intelligence/runs/${runId}/errors`)
+            .query({ cursor: wrongOrgCursor });
+          expect(wrongOrg.status).toBe(400);
+          const wrongRunCursor = Buffer.from(JSON.stringify({ ...encoded, runId: randomUUID() }), "utf8")
+            .toString("base64url");
+          const wrongRun = await request(app)
+            .get(`/api/run-intelligence/runs/${runId}/errors`)
+            .query({ cursor: wrongRunCursor });
+          expect(wrongRun.status).toBe(400);
+        }
+      }
+      expect(pageCount).toBeLessThanOrEqual(10);
+    } while (cursor);
+
+    expect(pageCount).toBeGreaterThan(1);
+    expect(seen).toHaveLength(itemCount);
+    expect(new Set(seen).size).toBe(itemCount);
+    expect(seen.slice(0, 2)).toEqual(["step-1", "step-2"]);
+    expect(seen.at(-1)).toBe(`step-${itemCount}`);
   });
 
   it("allocates unique event sequences under concurrent writers", async () => {

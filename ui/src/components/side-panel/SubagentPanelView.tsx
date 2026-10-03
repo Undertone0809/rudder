@@ -3,6 +3,10 @@ import { chatsApi } from "@/api/chats";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
 import { getTranscriptAgentAvatarImageSrc } from "@/components/transcript/TranscriptAgentAvatarIcon";
+import {
+  readLegacyChatTranscript,
+  useAgentRunTranscripts,
+} from "@/components/transcript/useAgentRunTranscripts";
 import { Button } from "@/components/ui/button";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link } from "@/lib/router";
@@ -124,7 +128,16 @@ export function SubagentPanelView({ target }: { target: SubagentTarget }) {
   ].find((candidate) => candidate.threadId === target.threadId);
   const liveSourceMessageId = liveSummary?.sourceMessageId ?? target.sourceMessageId;
   const linkedRunId = liveSummary?.runId ?? target.runId ?? null;
-  const transcriptQuery = useQuery({
+  const { transcriptByRun, transcriptStateByRun, refetchRun } = useAgentRunTranscripts(
+    linkedRunId
+      ? [{
+          runId: linkedRunId,
+          active: liveSummary?.state === "active"
+            || ["running", "in_progress", "pending", "queued", "started"].includes(statusKey(liveSummary?.status ?? target.status)),
+        }]
+      : [],
+  );
+  const legacyTranscriptQuery = useQuery({
     queryKey: [
       "chat-subagent-live-transcript",
       target.conversationId,
@@ -133,8 +146,12 @@ export function SubagentPanelView({ target }: { target: SubagentTarget }) {
       liveSummary?.status,
       liveSummary?.updatedAt,
     ],
-    queryFn: () => chatsApi.getMessageTranscript(target.conversationId!, liveSourceMessageId!),
-    enabled: Boolean(target.conversationId && liveSourceMessageId),
+    queryFn: () => readLegacyChatTranscript(
+      target.conversationId!,
+      liveSourceMessageId!,
+      linkedRunId ?? target.runId,
+    ),
+    enabled: Boolean(target.conversationId && liveSourceMessageId && !linkedRunId),
     refetchInterval: liveSummary?.state === "active" ? 2_000 : false,
   });
   const linkedRunQuery = useQuery({
@@ -142,31 +159,36 @@ export function SubagentPanelView({ target }: { target: SubagentTarget }) {
     queryFn: () => agentRunsApi.get(linkedRunId!),
     enabled: Boolean(linkedRunId),
   });
-  const liveInspection = transcriptQuery.data
-    ? collectChatSubagentInspections(transcriptQuery.data.transcript, {
-      sourceMessageId: transcriptQuery.data.messageId,
-      runId: liveSummary?.runId ?? null,
+  const liveInspection = legacyTranscriptQuery.data && liveSourceMessageId
+    ? collectChatSubagentInspections(legacyTranscriptQuery.data, {
+      sourceMessageId: liveSourceMessageId,
+      runId: liveSummary?.runId ?? target.runId ?? null,
       sourceActive: liveSummary?.state === "active",
       senderLabel: liveSummary?.senderLabel,
     }).find((candidate) => candidate.threadId === target.threadId)
     : null;
+  const readerEntries = linkedRunId ? transcriptByRun.get(linkedRunId) : undefined;
+  const readerState = linkedRunId ? transcriptStateByRun.get(linkedRunId) : null;
   const displayTarget: SubagentTarget = {
     ...target,
     senderLabel: liveSummary?.senderLabel ?? target.senderLabel,
     status: liveSummary?.status ?? liveInspection?.status ?? target.status,
     response: liveInspection?.response ?? target.response,
-    entries: liveInspection?.entries ?? target.entries,
+    entries: linkedRunId ? readerEntries ?? [] : liveInspection?.entries ?? target.entries,
     sourceMessageId: liveSummary?.sourceMessageId ?? target.sourceMessageId,
     runId: linkedRunId,
   };
-  const response = displayTarget.response
-    ?? [...displayTarget.entries].reverse().find((entry) => entry.kind === "assistant")?.text
+  const response = [...displayTarget.entries].reverse().find((entry) => entry.kind === "assistant")?.text
+    ?? displayTarget.response
     ?? null;
   const running = liveSummary?.state === "active"
     || ["running", "in_progress", "pending", "queued", "started"].includes(statusKey(displayTarget.status));
-  const transcriptLoading = Boolean(target.conversationId && liveSourceMessageId)
-    && transcriptQuery.isPending
-    && displayTarget.entries.length === 0;
+  const transcriptLoading = linkedRunId
+    ? Boolean(readerState?.loading && displayTarget.entries.length === 0)
+    : Boolean(target.conversationId && liveSourceMessageId)
+      && legacyTranscriptQuery.isPending
+      && displayTarget.entries.length === 0;
+  const transcriptError = linkedRunId ? Boolean(readerState?.error) : legacyTranscriptQuery.isError;
   const linkedRunHref = linkedRunQuery.data
     ? `/agents/${linkedRunQuery.data.agentId}/runs/${linkedRunQuery.data.id}`
     : null;
@@ -239,8 +261,8 @@ export function SubagentPanelView({ target }: { target: SubagentTarget }) {
             response={response}
             running={running}
             loading={transcriptLoading}
-            error={transcriptQuery.isError}
-            onRetry={() => void transcriptQuery.refetch()}
+            error={transcriptError}
+            onRetry={() => void (linkedRunId ? refetchRun(linkedRunId) : legacyTranscriptQuery.refetch())}
           />
           {linkedRunId && linkedRunQuery.isError ? (
             <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-destructive">

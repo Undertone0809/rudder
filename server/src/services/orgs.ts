@@ -49,6 +49,7 @@ import {
   projects,
   projectWorkspaces,
   requests,
+  sideChatProviderCleanupIntents,
   workspaceOperations,
   workspaceRuntimeServices,
 } from "@rudderhq/db";
@@ -57,7 +58,7 @@ import {
   deriveOrganizationUrlKey,
   normalizeOrganizationIssueKey,
 } from "@rudderhq/shared";
-import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
@@ -495,6 +496,45 @@ export function organizationService(db: Db) {
       db.transaction(async (tx) => {
         await lockOrganizationBrandingAuthorityForDeletion(tx, id);
         await lockProjectGoalMutationAuthoritiesForOrganizationDeletion(tx, id);
+        // Serialize deletion with new cleanup-intent inserts through their organization FK.
+        await tx
+          .select({ id: organizations.id })
+          .from(organizations)
+          .where(eq(organizations.id, id))
+          .for("update");
+
+        const activeSideChats = await tx
+          .select({ id: chatConversations.id })
+          .from(chatConversations)
+          .where(and(
+            eq(chatConversations.orgId, id),
+            eq(chatConversations.conversationKind, "side_chat"),
+            eq(chatConversations.messengerVisible, false),
+            or(isNull(chatConversations.sideChatState), ne(chatConversations.sideChatState, "kept")),
+          ));
+        if (activeSideChats.length > 0) {
+          const activeCount = activeSideChats.length;
+          throw conflict(
+            `Organization cannot be deleted while hidden Side Chats remain. Destroy each Side Chat so its provider cleanup can be recorded, then retry deletion (${activeCount} Side Chat${activeCount === 1 ? "" : "s"} remaining).`,
+            { activeSideChatCount: activeCount },
+          );
+        }
+
+        const unfinishedCleanupIntents = await tx
+          .select({ id: sideChatProviderCleanupIntents.id })
+          .from(sideChatProviderCleanupIntents)
+          .where(and(
+            eq(sideChatProviderCleanupIntents.orgId, id),
+            ne(sideChatProviderCleanupIntents.state, "completed"),
+          ))
+          .for("update");
+        if (unfinishedCleanupIntents.length > 0) {
+          const unfinishedCount = unfinishedCleanupIntents.length;
+          throw conflict(
+            `Organization cannot be deleted until all Side Chat provider cleanup intents are completed. Resolve the outstanding cleanup and retry deletion (${unfinishedCount} intent${unfinishedCount === 1 ? "" : "s"} remaining).`,
+            { unfinishedCleanupIntentCount: unfinishedCount },
+          );
+        }
         // Delete from child tables in dependency order
         await tx.delete(issueBlockAuditAttempts).where(eq(issueBlockAuditAttempts.orgId, id));
         await tx.delete(requests).where(eq(requests.orgId, id));

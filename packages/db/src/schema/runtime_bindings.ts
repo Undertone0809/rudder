@@ -258,6 +258,10 @@ export const runRuntimeSpans = pgTable(
     attemptRef: text("attempt_ref").notNull(),
     attemptEpoch: integer("attempt_epoch").notNull().default(1),
     ownerToken: text("owner_token").notNull(),
+    /** Internal writer-fence keys. Physical keys omit branch leaf so writes to one native resource serialize. */
+    writerBindingRef: text("writer_binding_ref"),
+    writerResourceRef: text("writer_resource_ref"),
+    writerLeaseReleasedAt: timestamp("writer_lease_released_at", { withTimezone: true }),
     ordinal: integer("ordinal").notNull().default(0),
     relation: text("relation").$type<"primary" | "continuation" | "native_subagent">().notNull().default("primary"),
     nativeExecutionRef: text("native_execution_ref"),
@@ -268,6 +272,7 @@ export const runRuntimeSpans = pgTable(
     completeness: text("completeness").$type<"complete" | "partial" | "terminal_only" | "unknown">().notNull().default("unknown"),
     visibilityCutoffRef: text("visibility_cutoff_ref"),
     supplementalObjectRef: text("supplemental_object_ref"),
+    supplementalRetentionExpiredAt: timestamp("supplemental_retention_expired_at", { withTimezone: true }),
     openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -277,6 +282,12 @@ export const runRuntimeSpans = pgTable(
     orgRunIdx: index("run_runtime_spans_org_run_idx").on(table.orgId, table.runId, table.openedAt),
     bindingSegmentIdx: index("run_runtime_spans_binding_segment_idx").on(table.bindingId, table.segmentId, table.openedAt),
     openSpanIdx: index("run_runtime_spans_open_idx").on(table.state, table.updatedAt),
+    activeWriterBindingUnique: uniqueIndex("run_runtime_spans_active_writer_binding_uq")
+      .on(table.writerBindingRef)
+      .where(sql`${table.writerLeaseReleasedAt} is null and ${table.writerBindingRef} is not null`),
+    activeWriterResourceUnique: uniqueIndex("run_runtime_spans_active_writer_resource_uq")
+      .on(table.writerResourceRef)
+      .where(sql`${table.writerLeaseReleasedAt} is null and ${table.writerResourceRef} is not null`),
     attemptEpochCheck: check(
       "run_runtime_spans_attempt_epoch_check",
       sql`${table.attemptEpoch} > 0`,

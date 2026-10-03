@@ -3,9 +3,13 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRunAttempts,
   heartbeatRunEvents,
   heartbeatRuns,
+  nativeSegments,
   organizations,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -14,8 +18,16 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { createHistoricalTranscriptReader } from "../services/runtime-kernel/historical-transcript-reader.js";
+import { proveSealedNativeRunTranscript } from "../services/runtime-kernel/native-transcript-retention.js";
+
+const nativeRangeRead = vi.hoisted(() => vi.fn());
+vi.mock("../agent-runtimes/verify-codex-transcript-profile.js", async (importOriginal) => ({
+  ...await importOriginal<object>(),
+  createHistoricalCodexTranscriptReaderHook: () => ({ readRange: nativeRangeRead }),
+}));
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -108,10 +120,105 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
   }, 20_000);
 
   afterEach(async () => {
+    nativeRangeRead.mockReset();
+    await db.delete(runRuntimeSpans);
+    await db.delete(heartbeatRunAttempts);
+    await db.delete(nativeSegments);
+    await db.delete(runtimeBindings);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(organizations);
+  });
+
+  it("counts native Skill use without legacy logs or usage events through the stored Run span", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const bindingId = randomUUID();
+    const segmentId = randomUUID();
+    const spanId = randomUUID();
+    const attemptId = randomUUID();
+    const turnId = "skill-native-turn";
+    const ownerToken = "skill-native-owner";
+    const createdAt = new Date("2026-04-21T10:00:00.000Z");
+    const closedAt = new Date("2026-04-21T10:05:00.000Z");
+    await db.insert(organizations).values({
+      id: orgId, name: "Native Skill Analytics", urlKey: deriveOrganizationUrlKey(`Native Skill ${orgId}`),
+      issuePrefix: "NSA", requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId, orgId, name: "Native Skill Agent", role: "engineer", status: "idle",
+      agentRuntimeType: "codex_local", agentRuntimeConfig: {}, runtimeConfig: {}, permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId, orgId, agentId, invocationSource: "on_demand", status: "succeeded", createdAt,
+      finishedAt: closedAt, processExitedAt: closedAt, executionOwnerToken: null, terminalEffectsPending: false,
+      contextSnapshot: { agentRuntimeType: "codex_local", transcriptSource: "native" }, logStore: null, logRef: null,
+    });
+    await db.insert(runtimeBindings).values({
+      id: bindingId, orgId, agentId, targetType: "manual", targetId: runId,
+      principalScopeRef: "user:skill-analytics-test", runtimeType: "codex_local", continuity: "native",
+      sourceBoundaryRef: turnId, capabilityRevision: "skill-native-cap-v1",
+    });
+    await db.insert(nativeSegments).values({
+      id: segmentId, orgId, bindingId, runtimeType: "codex_local", nativeSessionId: "skill-native-thread",
+      createdAt, state: "sealed", sealedAt: closedAt, sourceBoundaryRef: turnId,
+    });
+    await db.insert(heartbeatRunAttempts).values({
+      id: attemptId, orgId, runId, agentId, attemptIndex: 0, runtimeType: "codex_local", status: "succeeded",
+      ownerToken, attemptEpoch: 1, providerThreadId: "skill-native-thread", providerTurnId: turnId, finishedAt: closedAt,
+    });
+    await db.insert(runRuntimeSpans).values({
+      id: spanId, orgId, runId, bindingId, segmentId, attemptId, attemptRef: "skill-native-attempt", attemptEpoch: 1,
+      ownerToken, nativeExecutionRef: turnId, sourceRevision: "skill-native-source-r1",
+      selectorJson: { kind: "codex_turn", runId, threadId: "skill-native-thread", turnId },
+      state: "sealed", completeness: "complete", openedAt: createdAt,
+      closedAt, writerLeaseReleasedAt: closedAt,
+    });
+    nativeRangeRead.mockImplementation(async (input) => {
+      expect(input.orgId).toBe(orgId);
+      expect(input.run.id).toBe(runId);
+      expect(input.span.id).toBe(spanId);
+      expect(input.binding.sourceBoundaryRef).toBe(turnId);
+      expect(input.segment).toMatchObject({ id: segmentId, state: "sealed", sourceBoundaryRef: turnId });
+      expect(input.span).toMatchObject({
+        attemptId, attemptEpoch: 1, ownerToken, nativeExecutionRef: turnId,
+        writerLeaseReleasedAt: closedAt, state: "sealed", completeness: "complete",
+      });
+      expect(input.selector).toMatchObject({ runId, threadId: "skill-native-thread", turnId });
+      return {
+        items: [{ kind: "tool_call", ts: createdAt.toISOString(), name: "Skill", input: { skill: "native-only" } }],
+        revision: "skill-native-r1", availability: "available", completeness: "complete", nextCursor: null,
+      };
+    });
+
+    const reader = createHistoricalTranscriptReader(db, { includeObjects: false });
+    const page = await reader.readRun({
+      orgId, runId, principal: { type: "board", orgId, authorized: true }, cursor: null, limit: 200,
+    });
+    expect(page).toMatchObject({
+      source: "native", availability: "available", completeness: "complete", revision: expect.any(String),
+      items: [expect.objectContaining({ runId, spanId, origin: "native" })],
+    });
+    const sealedProof = await proveSealedNativeRunTranscript({ db, reader, orgId, runId });
+    expect(sealedProof).toMatchObject({
+      ok: true,
+      proof: {
+        orgId, runId, itemCount: 1,
+        spans: [{ spanId, attemptId, ownerToken, attemptEpoch: 1, sourceRevision: page.revision, itemCount: 1 }],
+      },
+    });
+
+    const analytics = await svc.getAgentSkillAnalytics(agentId, { startDate: "2026-04-21", endDate: "2026-04-21" });
+    expect(analytics.totalCount).toBe(1);
+    expect(analytics.totalRunsWithSkills).toBe(1);
+    expect(analytics.skills).toEqual([{
+      key: "native-only", label: "native-only", count: 1, evidence: "used",
+      evidenceCounts: { used: 1, requested: 0, loaded: 0 },
+    }]);
+    expect(nativeRangeRead).toHaveBeenCalled();
+    expect(await db.select().from(heartbeatRunEvents)).toEqual([]);
   });
 
   afterAll(async () => {
@@ -748,6 +855,76 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
     ]);
   });
 
+  it.each([
+    ["runtime binding marker", { runtimeBindingId: "binding-native" }],
+    ["native transcript source marker", { transcriptSource: "native" }],
+  ])("rejects a stale local log when native history is incomplete (%s)", async (_label, contextSnapshot) => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const logRef = path.join(orgId, agentId, `${runId}.ndjson`);
+    const chunk = `${JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "native_item_1",
+        type: "command_execution",
+        command: "cat native-only/SKILL.md",
+        status: "in_progress",
+      },
+    })}\n`;
+    const logContent = `${JSON.stringify({
+      ts: "2026-04-21T10:00:05.000Z",
+      stream: "stdout",
+      chunk,
+    })}\n`;
+
+    fs.mkdirSync(path.dirname(path.join(runLogDir, logRef)), { recursive: true });
+    fs.writeFileSync(path.join(runLogDir, logRef), logContent, "utf8");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder Native Analytics",
+      urlKey: deriveOrganizationUrlKey(`Rudder Native Analytics ${orgId}`),
+      issuePrefix: "RNA",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Native Agent",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      createdAt: new Date("2026-04-21T10:00:00.000Z"),
+      updatedAt: new Date("2026-04-21T10:05:00.000Z"),
+      contextSnapshot,
+      logStore: "local_file",
+      logRef,
+      logBytes: Buffer.byteLength(logContent, "utf8"),
+    });
+
+    await expect(svc.getAgentSkillAnalytics(agentId, {
+      startDate: "2026-04-21",
+      endDate: "2026-04-21",
+    })).rejects.toMatchObject({
+      status: 409,
+      message: "Native transcript history is unavailable or incomplete; skill analytics cannot be computed.",
+      details: { code: "native_transcript_incomplete", runId },
+    });
+  });
+
   it("infers used skills from provider Skill tool calls in stored local runtime logs", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -823,7 +1000,6 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
       { key: "rudder-create-agent", label: "rudder-create-agent", count: 1, evidence: "used", evidenceCounts: { used: 1, requested: 0, loaded: 0 } },
     ]);
   });
-
 
   it("infers used skills from Gemini activate_skill tool calls in stored local runtime logs", async () => {
     const orgId = randomUUID();

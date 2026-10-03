@@ -1,16 +1,23 @@
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { and, eq, sql } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   chatConversations,
+  chatGenerations,
   chatMessages,
   createDb,
+  heartbeatRuns,
   messengerCustomGroupEntries,
   messengerCustomGroups,
+  sideChatFirstInputs,
 } from "../../packages/db/src/index.ts";
 import { MESSENGER_FORK_GROUP_DEFAULT_ICON } from "../../packages/shared/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
+import { restartE2eServer, stopRestartedE2eServer } from "./support/restart-e2e-server";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
@@ -37,13 +44,13 @@ function threadTestId(threadKey: string) {
   return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
-async function seedSideChatSource(page: Page, name: string) {
+async function seedSideChatSource(page: Page, name: string, options: { command?: string } = {}) {
   const orgRes = await page.request.post("/api/orgs", { data: { name } });
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
   const agent = await createE2EChatAgent(page.request, organization.id, {
     name: "Sidekick",
-    command: E2E_CODEX_STUB,
+    command: options.command ?? E2E_CODEX_STUB,
   }) as { id: string };
   const alternateAgent = await createE2EChatAgent(page.request, organization.id, {
     name: "Analyst",
@@ -102,10 +109,56 @@ async function seedSideChatSource(page: Page, name: string) {
   return { organization, agent, alternateAgent, conversationId, assistantMessageId, secondAssistantMessageId };
 }
 
-async function openSideChatFromPanelTarget(page: Page, assistantMessageId: string) {
-  const assistant = page.locator(`[data-testid="chat-assistant-message"][data-message-id="${assistantMessageId}"]`);
-  await assistant.hover();
-  await expect(assistant.getByRole("button", { name: "Open Side Chat" })).toHaveCount(0);
+async function createSideChatFinalAnswerDeltaStub(finalBody: string, deltas: string[]) {
+  // This is a Codex CLI-shaped JSONL stub for UI regression, not provider parity evidence.
+  const stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-side-chat-final-answer-delta-"));
+  const stubPath = path.join(stubDir, "codex");
+  const script = `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli 0.155.0\\n");
+  process.exit(0);
+}
+if (process.argv.includes("generate-json-schema")) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const outputDir = process.argv[process.argv.indexOf("--out") + 1];
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(path.join(outputDir, "ClientRequest.json"), JSON.stringify({ oneOf: [] }));
+  process.exit(0);
+}
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", async () => {
+  const sentinel = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+  const finalBody = ${JSON.stringify(finalBody)};
+  const deltas = ${JSON.stringify(deltas)};
+  const send = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  send({ type: "thread.started", thread_id: "side-chat-final-answer-delta-e2e", model: "gpt-5.4" });
+  send({ type: "item.completed", item: { id: "reason-1", type: "reasoning", text: "Checking the final response." } });
+  for (const text of deltas) {
+    send({ type: "item.completed", item: { id: "final-answer-1", type: "agent_message", phase: "final_answer", text, delta: true } });
+    await pause(500);
+  }
+  await pause(10_000);
+  send({ type: "item.completed", item: { id: "final-answer-1", type: "agent_message", phase: "final_answer", text: finalBody } });
+  await pause(3_000);
+  const finalText = finalBody + "\\n" + sentinel + JSON.stringify({ kind: "message", body: finalBody, structuredPayload: null });
+  send({ type: "turn.completed", result: finalText, usage: { input_tokens: 2, cached_input_tokens: 0, output_tokens: 8 } });
+});
+`;
+  await fs.writeFile(stubPath, script, "utf8");
+  await fs.chmod(stubPath, 0o755);
+  return stubPath;
+}
+
+function isolatedSideChatFinalAnswerScreenshotPath() {
+  const runId = process.env.RUDDER_E2E_RUN_ID?.replace(/[^a-z0-9._-]/gi, "-") ?? "local";
+  return path.join(os.tmpdir(), `rudder-side-chat-final-answer-${runId}-${Date.now()}.png`);
+}
+
+async function openSideChatFromPanelTarget(page: Page) {
   await page.getByTestId("chat-side-panel-trigger").click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
@@ -116,12 +169,104 @@ async function openSideChatFromPanelTarget(page: Page, assistantMessageId: strin
   return panel;
 }
 
+async function openFromAssistantAction(page: Page, assistantMessageId: string) {
+  const assistant = page.locator(`[data-testid="chat-assistant-message"][data-message-id="${assistantMessageId}"]`);
+  await assistant.hover();
+  const moreActions = assistant.locator('[data-testid="chat-message-actions-trigger"]:visible');
+  await expect(moreActions).toBeVisible();
+  await moreActions.click();
+  const menu = page.getByTestId("chat-message-actions-menu");
+  const openSideChat = menu.getByRole("menuitem", { name: "Open Side Chat", exact: true });
+  await expect(openSideChat).toBeVisible();
+  await openSideChat.click();
+  const panel = page.getByTestId("chat-side-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('[data-testid="side-chat-panel-view"]:visible')).toBeVisible();
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
+  return panel;
+}
+
+test("opens Side Chat from More, keyboard context-menu, and pointer context-menu", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Context-Menu-${Date.now()}`);
+  const assistant = page.locator(
+    `[data-testid="chat-assistant-message"][data-message-id="${source.assistantMessageId}"]`,
+  );
+  const moreActions = assistant.locator('[data-testid="chat-message-actions-trigger"]:visible');
+  await moreActions.focus();
+  await moreActions.press("Shift+F10");
+  const menu = page.getByTestId("chat-message-context-menu");
+  await expect(menu.getByRole("menuitem", { name: "Open Side Chat", exact: true })).toBeVisible();
+  await menu.getByRole("menuitem", { name: "Open Side Chat", exact: true }).click();
+  const panel = page.getByTestId("chat-side-panel");
+  await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
+  await panel.getByTestId("chat-side-panel-collapse").click();
+  await expect(panel).toBeHidden();
+
+  await assistant.click({ button: "right" });
+  await expect(menu.getByRole("menuitem", { name: "Open Side Chat", exact: true })).toBeVisible();
+  await menu.getByRole("menuitem", { name: "Open Side Chat", exact: true }).click();
+  await expect(page.getByTestId("chat-side-panel").getByTestId("side-chat-panel-view")).toBeVisible();
+
+  await page.getByTestId("chat-side-panel-collapse").click();
+  await expect(page.getByTestId("chat-side-panel")).toBeHidden();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await assistant.locator('[data-testid="chat-message-actions-trigger"]:visible').click();
+  const moreMenu = page.getByTestId("chat-message-actions-menu");
+  await expect(moreMenu.getByRole("menuitem", { name: "Open Side Chat", exact: true })).toBeVisible();
+  await moreMenu.getByRole("menuitem", { name: "Open Side Chat", exact: true }).click();
+  await expect(page.getByTestId("chat-side-panel").getByTestId("side-chat-panel-view")).toBeVisible();
+});
+
 function sideComposerEditor(panel: Locator) {
   return panel.locator('[data-testid="side-chat-composer"]:visible .rudder-mdxeditor-content').first();
 }
 
 function sideComposerSendButton(panel: Locator) {
   return panel.locator('[data-testid="side-chat-composer"]:visible button[aria-label="Send Side Chat message"]');
+}
+
+async function waitForSideChatAssistantReplyToComplete(sideChatId: string) {
+  await expect.poll(async () => {
+    const messages = await e2eDb.select({ status: chatMessages.status })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.conversationId, sideChatId),
+        eq(chatMessages.role, "assistant"),
+        eq(chatMessages.body, "Streaming reply for chat."),
+      ));
+    return messages.some((message) => message.status === "completed");
+  }, { timeout: 30_000 }).toBe(true);
+}
+
+function parseChatStreamEvents(body: string) {
+  return body.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as { type: string });
+}
+
+async function failSideChatGenerationAdmission(conversationId: string) {
+  const suffix = conversationId.replaceAll("-", "");
+  const functionName = `e2e_fail_side_chat_generation_${suffix}`;
+  const triggerName = `e2e_fail_side_chat_generation_${suffix}`;
+  await e2eDb.execute(sql.raw(`
+    CREATE FUNCTION ${functionName}() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.conversation_id = '${conversationId}'::uuid THEN
+        RAISE EXCEPTION 'E2E first-input Generation admission failure';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+  `));
+  await e2eDb.execute(sql.raw(`
+    CREATE TRIGGER ${triggerName}
+    BEFORE INSERT ON chat_generations
+    FOR EACH ROW EXECUTE FUNCTION ${functionName}();
+  `));
+  return async () => {
+    await e2eDb.execute(sql.raw(`DROP TRIGGER IF EXISTS ${triggerName} ON chat_generations`));
+    await e2eDb.execute(sql.raw(`DROP FUNCTION IF EXISTS ${functionName}()`));
+  };
 }
 
 async function openSideChatTabContextMenu(page: Page, panel: Locator) {
@@ -144,24 +289,23 @@ async function sendFirstSideChatMessage(
   ));
   const messageResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
-    && response.url().includes("/messages/stream")
+    && new URL(response.url()).pathname.endsWith("/messages/stream")
   ));
   await sideComposerEditor(panel).fill("What is the rollback trigger?");
   await sideComposerSendButton(panel).click();
   const userMessage = panel.getByTestId("chat-user-message-bubble").filter({
     hasText: "What is the rollback trigger?",
-  });
+  }).last();
   await expect(userMessage).toBeVisible();
   const streamingReply = panel.getByTestId("side-chat-streaming-reply");
   await expect(streamingReply).toBeVisible();
   await expect(streamingReply).toContainText("Streaming reply", { timeout: 15_000 });
-  const assistantElement = await streamingReply.locator(":scope > div.flex.justify-start").last().elementHandle();
-  expect(assistantElement).not.toBeNull();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
   const sideChat = await createResponse.json() as { id: string };
   const creationPayload = createResponse.request().postDataJSON() as {
     preferredAgentId?: string;
+    sourceMessageId?: string;
   };
   const messageResponse = await messageResponsePromise;
   expect(messageResponse.ok(), await messageResponse.text()).toBe(true);
@@ -170,20 +314,460 @@ async function sendFirstSideChatMessage(
     effortOverride?: string | null;
   };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?", { timeout: 15_000 });
-  expect(await userMessage.evaluate((element, assistant) => (
-    Boolean(element.compareDocumentPosition(assistant) & Node.DOCUMENT_POSITION_FOLLOWING)
-  ), assistantElement!)).toBe(true);
+  const assistantMessage = panel.getByTestId("chat-assistant-message").filter({
+    hasText: "Streaming reply for chat.",
+  }).last();
+  await expect(assistantMessage).toBeVisible({ timeout: 20_000 });
+  const [userMessageTop, assistantMessageTop] = await Promise.all([
+    userMessage.evaluate((element) => element.getBoundingClientRect().top),
+    assistantMessage.evaluate((element) => element.getBoundingClientRect().top),
+  ]);
+  expect(userMessageTop).toBeLessThan(assistantMessageTop);
   if (testInfo) {
     await page.screenshot({
       path: testInfo.outputPath("side-chat-user-before-assistant.png"),
       fullPage: true,
     });
   }
-  await expect(panel.getByTestId("side-chat-messages").getByTestId("chat-transcript-item")).toHaveCount(1);
-  await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByTestId("side-chat-messages").getByTestId("chat-transcript-item")).toHaveCount(1, {
+    timeout: 20_000,
+  });
   await expect(panel.getByRole("button", { name: "Done & return" })).toHaveCount(0);
   return { ...sideChat, creationPayload, messagePayload };
 }
+
+test("opens and reopens a usable Side Chat on a narrow viewport without leaving the parent", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Mobile-${Date.now()}`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const parentUrl = page.url();
+  let sideChatCreateCount = 0;
+  let sideChatMessageCount = 0;
+  page.on("request", (request) => {
+    if (request.method() !== "POST") return;
+    if (request.url().includes(`/api/chats/${source.conversationId}/side-chats`)) sideChatCreateCount += 1;
+    if (new URL(request.url()).pathname.endsWith("/messages/stream")) sideChatMessageCount += 1;
+  });
+
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  expect(page.url()).toBe(parentUrl);
+  expect(sideChatCreateCount).toBe(0);
+  expect(sideChatMessageCount).toBe(0);
+  await expect(panel.getByTestId("side-chat-composer")).toBeVisible();
+
+  const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
+  expect(sideChatCreateCount).toBe(1);
+  expect(sideChatMessageCount).toBe(1);
+  expect(page.url()).toBe(parentUrl);
+
+  await panel.getByTestId("chat-side-panel-collapse").click();
+  await expect(panel).toBeHidden();
+  const reopen = page.getByRole("button", { name: "Reopen Side Chat" });
+  await expect(reopen).toBeVisible();
+  await reopen.click();
+  await expect(page.getByTestId("chat-side-panel")).toBeVisible();
+  await expect(page.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?");
+});
+
+test("recovers a first-send draft after Side Chat creation fails and the page reloads", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-First-Send-Recovery-${Date.now()}`);
+  let rejectNextCreate = true;
+  const mutationIds: string[] = [];
+  await page.route(`**/api/chats/${source.conversationId}/side-chats`, async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      mutationIds.push((request.postDataJSON() as { clientMutationId: string }).clientMutationId);
+      if (rejectNextCreate) {
+        rejectNextCreate = false;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary Side Chat creation failure" }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  let panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const createFailurePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
+  ));
+  await sideComposerEditor(panel).fill("Keep this first Side Chat message through a reload.");
+  await sideComposerSendButton(panel).click();
+  expect((await createFailurePromise).status()).toBe(503);
+  await expect(sideComposerEditor(panel)).toContainText("Keep this first Side Chat message through a reload.");
+
+  await page.reload();
+  panel = page.getByTestId("chat-side-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
+  await expect(sideComposerEditor(panel)).toContainText("Keep this first Side Chat message through a reload.");
+
+  await sideComposerSendButton(panel).click();
+  await expect(panel.getByTestId("chat-user-message-bubble").filter({
+    hasText: "Keep this first Side Chat message through a reload.",
+  }).last()).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByTestId("chat-assistant-message").filter({
+    hasText: "Streaming reply for chat.",
+  })).toBeVisible({ timeout: 30_000 });
+  expect(mutationIds).toHaveLength(2);
+  expect(mutationIds[0]).toBe(mutationIds[1]);
+  const createdSideChat = await e2eDb.select({ id: chatConversations.id })
+    .from(chatConversations)
+    .where(eq(chatConversations.sideChatClientMutationId, mutationIds[0]!));
+  expect(createdSideChat).toHaveLength(1);
+});
+
+test("recovers the first message after Side Chat creation succeeds but sending fails and the page reloads", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Send-Recovery-${Date.now()}`);
+  let sideChatCreateCount = 0;
+  let streamAttempts = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes(`/api/chats/${source.conversationId}/side-chats`)) {
+      sideChatCreateCount += 1;
+    }
+  });
+  await page.route("**/api/chats/*/messages/stream", async (route) => {
+    if (route.request().method() === "POST" && streamAttempts++ === 0) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Temporary first-message send failure." }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  let panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const firstSendResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && new URL(response.url()).pathname.endsWith("/messages/stream")
+  ));
+  await sideComposerEditor(panel).fill("Preserve this message after the created Side Chat send fails.");
+  await sideComposerSendButton(panel).click();
+  expect((await firstSendResponsePromise).status()).toBe(503);
+  await expect(panel.getByRole("alert")).toContainText("Rudder could not process the request");
+  await expect(sideComposerEditor(panel)).toContainText("Preserve this message after the created Side Chat send fails.");
+  expect(sideChatCreateCount).toBe(1);
+
+  const createdSideChats = await e2eDb.select({ id: chatConversations.id })
+    .from(chatConversations)
+    .where(eq(chatConversations.forkedFromConversationId, source.conversationId));
+  expect(createdSideChats).toHaveLength(1);
+  const sideChatId = createdSideChats[0]!.id;
+
+  await page.reload();
+  panel = page.getByTestId("chat-side-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(`[data-side-panel-tab-key="side-chat:${sideChatId}"]`)).toBeVisible();
+  await expect(sideComposerEditor(panel)).toContainText("Preserve this message after the created Side Chat send fails.");
+
+  const retryResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && new URL(response.url()).pathname.endsWith("/messages/stream")
+  ));
+  await sideComposerSendButton(panel).click();
+  expect((await retryResponsePromise).ok()).toBe(true);
+  await expect(panel.getByTestId("chat-user-message-bubble").filter({
+    hasText: "Preserve this message after the created Side Chat send fails.",
+  })).toHaveCount(1);
+  await waitForSideChatAssistantReplyToComplete(sideChatId);
+  expect(sideChatCreateCount).toBe(1);
+  expect(streamAttempts).toBe(2);
+  const persistedUserMessages = await e2eDb.select({ id: chatMessages.id })
+    .from(chatMessages)
+    .where(and(
+      eq(chatMessages.conversationId, sideChatId),
+      eq(chatMessages.role, "user"),
+      eq(chatMessages.body, "Preserve this message after the created Side Chat send fails."),
+    ));
+  expect(persistedUserMessages).toHaveLength(1);
+});
+
+test("recovers an accepted first Side Chat input after the HTTP server restarts", async ({ page }) => {
+  test.setTimeout(180_000);
+  const source = await seedSideChatSource(page, `Side-Chat-Server-Restart-Recovery-${Date.now()}`);
+  const body = "Recover this accepted first Side Chat input after a server restart.";
+  let continueFirstStream!: () => void;
+  const firstStreamGate = new Promise<void>((resolve) => { continueFirstStream = resolve; });
+  let firstStreamRequestBody: Record<string, unknown> | null = null;
+  let heldFirstStream = false;
+  let removeAdmissionFailure: (() => Promise<void>) | null = null;
+
+  try {
+    await page.route("**/api/chats/*/messages/stream", async (route) => {
+      if (route.request().method() === "POST" && !heldFirstStream) {
+        heldFirstStream = true;
+        firstStreamRequestBody = route.request().postDataJSON() as Record<string, unknown>;
+        await firstStreamGate;
+      }
+      await route.continue();
+    });
+
+    const panel = await openFromAssistantAction(page, source.assistantMessageId);
+    const createResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
+    ));
+    const firstStreamResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && new URL(response.url()).pathname.endsWith("/messages/stream")
+    ));
+    await sideComposerEditor(panel).fill(body);
+    await sideComposerSendButton(panel).click();
+
+    const createResponse = await createResponsePromise;
+    expect(createResponse.ok(), await createResponse.text()).toBe(true);
+    const sideChat = await createResponse.json() as { id: string };
+    await expect.poll(() => heldFirstStream).toBe(true);
+    removeAdmissionFailure = await failSideChatGenerationAdmission(sideChat.id);
+    continueFirstStream();
+
+    const firstStreamResponse = await firstStreamResponsePromise;
+    expect(firstStreamResponse.status()).toBe(201);
+    const firstStreamEvents = parseChatStreamEvents(await firstStreamResponse.text());
+    expect(firstStreamEvents.map((event) => event.type)).toEqual(expect.arrayContaining(["ack", "error"]));
+    expect(firstStreamRequestBody).toMatchObject({ body, clientMutationId: expect.any(String) });
+    const mutationId = firstStreamRequestBody!.clientMutationId as string;
+
+    const acceptedInputs = await e2eDb.select().from(sideChatFirstInputs)
+      .where(eq(sideChatFirstInputs.conversationId, sideChat.id));
+    expect(acceptedInputs).toHaveLength(1);
+    expect(acceptedInputs[0]).toMatchObject({
+      status: "accepted",
+      requestClientMutationId: mutationId,
+      generationId: null,
+    });
+    const acceptedMessages = await e2eDb.select({ id: chatMessages.id })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.conversationId, sideChat.id),
+        eq(chatMessages.clientMutationId, mutationId),
+        eq(chatMessages.body, body),
+      ));
+    expect(acceptedMessages).toHaveLength(1);
+    expect(await e2eDb.select().from(chatGenerations)
+      .where(eq(chatGenerations.conversationId, sideChat.id))).toHaveLength(0);
+
+    await restartE2eServer();
+    const healthAfterRestart = await page.request.get("/api/health");
+    expect(healthAfterRestart.ok(), await healthAfterRestart.text()).toBe(true);
+    await removeAdmissionFailure();
+    removeAdmissionFailure = null;
+
+    const retryResponse = await page.request.post(`/api/chats/${sideChat.id}/messages/stream`, {
+      data: firstStreamRequestBody,
+    });
+    expect(retryResponse.ok(), await retryResponse.text()).toBe(true);
+    const retryEvents = parseChatStreamEvents(await retryResponse.text());
+    expect(retryEvents.map((event) => event.type)).toContain("final");
+
+    await waitForSideChatAssistantReplyToComplete(sideChat.id);
+    const recoveredInputs = await e2eDb.select({ id: chatMessages.id })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.conversationId, sideChat.id),
+        eq(chatMessages.clientMutationId, mutationId),
+        eq(chatMessages.body, body),
+      ));
+    expect(recoveredInputs).toHaveLength(1);
+    const generations = await e2eDb.select().from(chatGenerations)
+      .where(eq(chatGenerations.conversationId, sideChat.id));
+    expect(generations).toHaveLength(1);
+    expect(acceptedInputs[0]?.generationId).toBeNull();
+    const recoveredIntent = await e2eDb.select().from(sideChatFirstInputs)
+      .where(eq(sideChatFirstInputs.conversationId, sideChat.id));
+    expect(recoveredIntent[0]?.generationId).toBe(generations[0]?.id);
+    const runs = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.chatConversationId, sideChat.id));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("succeeded");
+  } finally {
+    continueFirstStream();
+    await removeAdmissionFailure?.();
+    await page.unrouteAll({ behavior: "wait" });
+    await stopRestartedE2eServer();
+  }
+});
+
+test("discarding an unsent Side Chat draft is local-only and does not reappear after reload", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Discard-Draft-${Date.now()}`);
+  const draftBody = "This provisional Side Chat must stay local.";
+  let sideChatCreateCount = 0;
+  let sideChatMessageCount = 0;
+  page.on("request", (request) => {
+    if (request.method() !== "POST") return;
+    if (request.url().includes(`/api/chats/${source.conversationId}/side-chats`)) sideChatCreateCount += 1;
+    if (new URL(request.url()).pathname.endsWith("/messages/stream")) sideChatMessageCount += 1;
+  });
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  await sideComposerEditor(panel).fill(draftBody);
+  const readPersistedDrafts = () => page.evaluate(() => (
+    localStorage.getItem("rudder:side-chat-send-drafts:v1") ?? ""
+  ));
+  await expect.poll(readPersistedDrafts).toContain(draftBody);
+  const { menu } = await openSideChatTabContextMenu(page, panel);
+  await menu.getByRole("menuitem", { name: "Discard Side Chat Draft" }).click();
+
+  await expect(panel).toBeHidden();
+  await expect.poll(readPersistedDrafts).not.toContain(draftBody);
+  expect(sideChatCreateCount).toBe(0);
+  expect(sideChatMessageCount).toBe(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Reopen Side Chat" })).toHaveCount(0);
+});
+
+test("discovers and resumes the same Side Chat after local panel state is lost", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-History-Resume-${Date.now()}`);
+  let sideChatCreateCount = 0;
+  let sideChatMessageCount = 0;
+  page.on("request", (request) => {
+    if (request.method() !== "POST") return;
+    if (request.url().includes(`/api/chats/${source.conversationId}/side-chats`)) sideChatCreateCount += 1;
+    if (new URL(request.url()).pathname.endsWith("/messages/stream")) sideChatMessageCount += 1;
+  });
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
+
+  await page.evaluate(({ contextKey, organizationId }) => {
+    const panelPrefix = "rudder:side-chat-panel-state:v1:";
+    const organizationSuffix = `:org-${encodeURIComponent(organizationId)}:${encodeURIComponent(contextKey)}`;
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(panelPrefix) && key.endsWith(organizationSuffix)) {
+        localStorage.removeItem(key);
+      }
+    }
+  }, {
+    contextKey: `chat:${source.conversationId}`,
+    organizationId: source.organization.id,
+  });
+  await page.reload();
+  const historyTrigger = page.getByTestId("side-chat-history-trigger");
+  await expect(historyTrigger).toBeVisible();
+  await historyTrigger.click();
+  const historyItem = page.getByTestId("side-chat-history-item").filter({
+    hasText: "Side chat from: Main strategy chat",
+  });
+  await expect(historyItem).toContainText("Active");
+  await historyItem.click();
+
+  const restoredPanel = page.getByTestId("chat-side-panel");
+  await expect(restoredPanel).toBeVisible();
+  await expect(restoredPanel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?");
+  const sendResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && new URL(response.url()).pathname.endsWith("/messages/stream")
+  ));
+  await sideComposerEditor(restoredPanel).fill("Continue from the recovered Side Chat session.");
+  await sideComposerSendButton(restoredPanel).click();
+  expect((await sendResponsePromise).ok()).toBe(true);
+  await expect(restoredPanel.getByTestId("chat-user-message-bubble").filter({
+    hasText: "Continue from the recovered Side Chat session.",
+  })).toBeVisible({ timeout: 20_000 });
+  await expect(restoredPanel.getByTestId("chat-assistant-message").filter({
+    hasText: "Streaming reply for chat.",
+  }).last()).toBeVisible({ timeout: 30_000 });
+  expect(sideChatCreateCount).toBe(1);
+  expect(sideChatMessageCount).toBe(2);
+  await expect(restoredPanel.locator(`[data-side-panel-tab-key="side-chat:${sideChat.id}"]`)).toBeVisible();
+});
+
+test("loads and restores Side Chat history beyond the first page", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-History-Pagination-${Date.now()}`);
+  const createdAt = new Date("2026-08-01T00:00:00.000Z");
+  const historyRows = Array.from({ length: 55 }, (_, index) => ({
+    id: randomUUID(),
+    orgId: source.organization.id,
+    title: `Historical Side Chat ${String(index).padStart(2, "0")}`,
+    preferredAgentId: source.agent.id,
+    conversationKind: "side_chat",
+    messengerVisible: false,
+    sideChatState: "active",
+    forkedFromConversationId: source.conversationId,
+    forkedFromMessageId: source.assistantMessageId,
+    createdByUserId: "local-board",
+    createdAt: new Date(createdAt.getTime() + index * 1_000),
+    updatedAt: new Date(createdAt.getTime() + index * 1_000),
+  }));
+  await e2eDb.insert(chatConversations).values(historyRows);
+  await page.reload();
+
+  await page.getByTestId("side-chat-history-trigger").click();
+  const historyItems = page.getByTestId("side-chat-history-item");
+  await expect(historyItems).toHaveCount(50);
+  const firstPageTitles = await historyItems.allTextContents();
+  expect(new Set(firstPageTitles.map((title) => title.trim().split("\n")[0])).size).toBe(50);
+
+  await page.getByTestId("side-chat-history-load-more").click();
+  await expect(historyItems).toHaveCount(55);
+  const allTitles = await historyItems.allTextContents();
+  expect(new Set(allTitles.map((title) => title.trim().split("\n")[0])).size).toBe(55);
+  await historyItems.filter({ hasText: "Historical Side Chat 00" }).click();
+
+  const panel = page.getByTestId("chat-side-panel");
+  await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
+  await expect(panel.locator(`[data-side-panel-tab-key="side-chat:${historyRows[0]!.id}"]`)).toBeVisible();
+});
+
+test("anchors Side Chat to the selected completed assistant reply", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Selected-Reply-${Date.now()}`);
+  const mainComposer = page.getByTestId("chat-composer-editor-scroll").locator(".rudder-mdxeditor-content").first();
+  await mainComposer.click();
+  await page.keyboard.insertText("Keep this main-chat draft while opening a reply branch.");
+
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  await expect(mainComposer).toContainText("Keep this main-chat draft while opening a reply branch.");
+  await page.screenshot({
+    path: testInfo.outputPath("selected-assistant-side-chat.png"),
+    fullPage: true,
+  });
+  const createResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
+  ));
+  await sideComposerEditor(panel).fill("Branch from this exact assistant reply.");
+  await sideComposerSendButton(panel).click();
+  const createResponse = await createResponsePromise;
+  const sideChat = await createResponse.json() as { id: string };
+  expect(createResponse.ok(), JSON.stringify(sideChat)).toBe(true);
+  const creationPayload = createResponse.request().postDataJSON() as {
+    sourceMessageId?: string;
+  };
+  expect(creationPayload.sourceMessageId).toBe(source.assistantMessageId);
+  await expect(panel.getByTestId("chat-user-message-bubble").filter({
+    hasText: "Branch from this exact assistant reply.",
+  }).last()).toBeVisible();
+
+  const stopResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${sideChat.id}/messages/stream/stop`)
+  ));
+  const destroyResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "DELETE"
+    && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
+  ));
+  const { menu } = await openSideChatTabContextMenu(page, panel);
+  await menu.getByRole("menuitem", { name: "Close Side Chat" }).click();
+  const stopResponse = await stopResponsePromise;
+  const stopRequest = stopResponse.request().postDataJSON() as Record<string, unknown>;
+  const stopResponseBody = await stopResponse.json() as unknown;
+  expect(stopResponse.ok(), JSON.stringify({ request: stopRequest, response: stopResponseBody })).toBe(true);
+  expect(stopRequest).toEqual(expect.objectContaining({
+    expectedGenerationId: expect.any(String),
+    expectedAttemptEpoch: expect.any(Number),
+    expectedControlVersion: expect.any(Number),
+  }));
+  expect(stopResponseBody).toEqual(expect.objectContaining({
+    controlActionId: stopRequest.controlActionId,
+    generationId: stopRequest.expectedGenerationId,
+  }));
+  const destroyResponse = await destroyResponsePromise;
+  expect(destroyResponse.ok(), await destroyResponse.text()).toBe(true);
+  await expect(panel).toBeHidden();
+});
 
 test("Side Chat preserves the main draft, streams like Chat, and is destroyed when closed", async ({ page }, testInfo) => {
   const source = await seedSideChatSource(page, `Side-Chat-Close-${Date.now()}`);
@@ -191,7 +775,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await mainComposer.click();
   await page.keyboard.insertText("Keep this unfinished main-chat draft");
 
-  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page);
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
   await page.screenshot({ path: testInfo.outputPath("01-side-panel-entry-draft.png"), fullPage: true });
   await expect(panel.locator(".chat-composer")).toBeVisible();
@@ -362,7 +946,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
     && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
   ));
   const { menu } = await openSideChatTabContextMenu(page, panel);
-  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await menu.getByRole("menuitem", { name: "Close Side Chat" }).click();
   const destroyResponse = await destroyResponsePromise;
   expect(destroyResponse.ok(), await destroyResponse.text()).toBe(true);
   await expect(panel).toBeHidden();
@@ -396,7 +980,7 @@ test("keeps an in-flight Side Chat stream visible after the panel is collapsed a
   await page.screenshot({ path: testInfo.outputPath("side-chat-stream-survives-reopen.png"), fullPage: true });
 
   const { menu } = await openSideChatTabContextMenu(page, reopenedPanel);
-  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await menu.getByRole("menuitem", { name: "Close Side Chat" }).click();
   await expect(reopenedPanel).toBeHidden();
 });
 
@@ -431,8 +1015,101 @@ test("keeps an in-flight Side Chat stream visible after navigating away and back
   await page.screenshot({ path: testInfo.outputPath("side-chat-stream-survives-navigation.png"), fullPage: true });
 
   const { menu } = await openSideChatTabContextMenu(page, returnedPanel);
-  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await menu.getByRole("menuitem", { name: "Close Side Chat" }).click();
   await expect(returnedPanel).toBeHidden();
+});
+
+test("keeps streamed final-answer deltas from a Codex-shaped stub in one stable Side Chat bubble", async ({ page }) => {
+  test.setTimeout(90_000);
+  const finalBody = "The Side Chat final answer stays in one stable assistant bubble.";
+  const deltas = ["The Side Chat final ", "answer stays"];
+  const visiblePrefix = deltas.join("");
+  const stubPath = await createSideChatFinalAnswerDeltaStub(finalBody, deltas);
+  const source = await seedSideChatSource(
+    page,
+    `Side-Chat-Final-Delta-${Date.now()}`,
+    { command: stubPath },
+  );
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const userPrompt = "Stream this Side Chat final response in multiple chunks.";
+  const createResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
+  ));
+
+  await sideComposerEditor(panel).fill(userPrompt);
+  await sideComposerSendButton(panel).click();
+  const createResponse = await createResponsePromise;
+  expect(createResponse.ok(), await createResponse.text()).toBe(true);
+  const sideChat = await createResponse.json() as { id: string };
+
+  const sideChatMessages = panel.getByTestId("side-chat-messages");
+  const userMessage = sideChatMessages.getByTestId("chat-user-message-bubble").filter({ hasText: userPrompt });
+  await expect(userMessage).toHaveCount(1);
+  const streamingTranscript = sideChatMessages.getByTestId("chat-transcript-item").last();
+  const streamingBubble = sideChatMessages.getByTestId("chat-assistant-message").filter({ hasText: visiblePrefix });
+  await expect(streamingBubble).toHaveCount(1, { timeout: 20_000 });
+  await expect(streamingTranscript).not.toContainText(visiblePrefix);
+  await expect(streamingTranscript).not.toContainText(finalBody);
+  const streamingTranscriptTop = (await streamingTranscript.boundingBox())?.y;
+  expect(streamingTranscriptTop).not.toBeNull();
+  const userMessageTop = (await userMessage.boundingBox())?.y;
+  expect(userMessageTop).not.toBeNull();
+  expect(userMessageTop!).toBeLessThan(streamingTranscriptTop!);
+  const streamingBubbleTop = (await streamingBubble.locator(".group.w-full.max-w-3xl").boundingBox())?.y;
+  expect(streamingBubbleTop).not.toBeNull();
+  const streamingBubbleGap = streamingBubbleTop! - userMessageTop!;
+
+  const countVisibleText = (text: string) => sideChatMessages.evaluate(
+    (element, value) => (element.innerText.split(value).length ?? 1) - 1,
+    text,
+  );
+  const readAssistantStatus = async () => {
+    const response = await page.request.get(`/api/chats/${sideChat.id}/messages`);
+    if (!response.ok()) return null;
+    const messages = await response.json() as Array<{ role: string; status: string }>;
+    return [...messages].reverse().find((message) => message.role === "assistant")?.status ?? null;
+  };
+  await expect.poll(readAssistantStatus, { timeout: 10_000 }).toBe("streaming");
+  await expect(streamingBubble).toContainText(visiblePrefix);
+  expect(await countVisibleText(visiblePrefix)).toBe(1);
+  await page.screenshot({ path: isolatedSideChatFinalAnswerScreenshotPath(), fullPage: true });
+
+  await expect.poll(readAssistantStatus, { timeout: 20_000 }).toBe("completed");
+  await page.waitForTimeout(250);
+
+  const completedBubble = sideChatMessages.getByTestId("chat-assistant-message").filter({ hasText: finalBody });
+  await expect(completedBubble).toHaveCount(1);
+  await expect(completedBubble).toContainText("Sidekick");
+  expect(await countVisibleText(finalBody)).toBe(1);
+  await expect(streamingTranscript).not.toContainText(finalBody);
+  const completedBubbleTop = (await completedBubble.locator(".group.w-full.max-w-3xl").boundingBox())?.y;
+  expect(completedBubbleTop).not.toBeNull();
+  expect(streamingTranscriptTop!).toBeLessThan(completedBubbleTop!);
+  const completedUserTop = (await userMessage.boundingBox())?.y;
+  expect(completedUserTop).not.toBeNull();
+  expect(Math.abs(completedBubbleTop! - completedUserTop! - streamingBubbleGap)).toBeLessThanOrEqual(2);
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await expect(panel.locator(`[data-side-panel-tab-key="side-chat:${sideChat.id}"]`)).toBeVisible();
+  const refreshedMessages = panel.getByTestId("side-chat-messages");
+  const refreshedUserMessage = refreshedMessages.getByTestId("chat-user-message-bubble").filter({ hasText: userPrompt });
+  const refreshedAssistantMessage = refreshedMessages.getByTestId("chat-assistant-message").filter({ hasText: finalBody });
+  await expect(refreshedUserMessage).toHaveCount(1);
+  await expect(refreshedAssistantMessage).toHaveCount(1);
+  expect(await refreshedMessages.evaluate((element, value) => element.innerText.split(value).length - 1, finalBody)).toBe(1);
+  await expect(refreshedMessages.getByTestId("chat-transcript-item").last()).not.toContainText(finalBody);
+  const refreshedUserTop = (await refreshedUserMessage.boundingBox())?.y;
+  const refreshedAssistantTop = (await refreshedAssistantMessage.boundingBox())?.y;
+  expect(refreshedUserTop).not.toBeNull();
+  expect(refreshedAssistantTop).not.toBeNull();
+  expect(refreshedUserTop!).toBeLessThan(refreshedAssistantTop!);
+  await page.screenshot({ path: isolatedSideChatFinalAnswerScreenshotPath(), fullPage: true });
+
+  const { menu } = await openSideChatTabContextMenu(page, panel);
+  await menu.getByRole("menuitem", { name: "Close Side Chat" }).click();
+  await expect(panel).toBeHidden();
 });
 
 test("completes a Side Chat after para-memory-files tool activity without duplicate sends", async ({ page }, testInfo) => {
@@ -484,7 +1161,7 @@ test("completes a Side Chat after para-memory-files tool activity without duplic
   await page.screenshot({ path: testInfo.outputPath("side-chat-para-memory-tool-completes.png"), fullPage: true });
 
   const { menu } = await openSideChatTabContextMenu(page, panel);
-  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await menu.getByRole("menuitem", { name: "Close Side Chat" }).click();
   await expect(panel).toBeHidden();
 });
 
@@ -509,6 +1186,20 @@ test("keeps concurrent Side Chat streams isolated when switching tabs", async ({
   await openFromAssistantAction(page, source.secondAssistantMessageId);
   await expect(panel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
   const sideChatTabs = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
+  await expect(sideChatTabs.nth(1).getByRole("tab")).toHaveAttribute("aria-selected", "true");
+  const firstSideChatTab = sideChatTabs.first().getByRole("tab");
+  await firstSideChatTab.focus();
+  await expect(firstSideChatTab).toBeFocused();
+  await expect(firstSideChatTab).toHaveAttribute("aria-selected", "false");
+  await page.keyboard.press("Shift+F10");
+  const tabMenu = page.getByTestId("chat-side-panel-tab-context-menu");
+  await expect(tabMenu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(tabMenu).toBeHidden();
+  await expect(firstSideChatTab).toBeFocused();
+  await expect(firstSideChatTab).toHaveAttribute("aria-selected", "false");
   await expect(sideChatTabs.nth(1).getByRole("tab")).toHaveAttribute("aria-selected", "true");
   await panel.locator('[data-testid="side-chat-composer"]:visible [data-testid="chat-agent-selector"]').click();
   await expect(page.getByTestId("side-chat-agent-menu")).toBeVisible();
@@ -561,7 +1252,7 @@ test("aborts and destroys a Side Chat when its tab closes during streaming", asy
     && response.url().includes("/side-chat")
   ));
   const { menu } = await openSideChatTabContextMenu(page, panel);
-  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await menu.getByRole("menuitem", { name: "Close Side Chat" }).click();
   const destroyResponse = await destroyResponsePromise;
   expect(destroyResponse.ok(), await destroyResponse.text()).toBe(true);
   await expect(panel).toBeHidden();
@@ -661,8 +1352,12 @@ test("starts Side Chat from a completed historical turn variant after its replac
   }, organization.id);
   await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
   await expect(page.getByText("2/2")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(`[data-testid="chat-assistant-message"][data-message-id="${sourceAssistantId}"]`)
+    .locator('[data-testid="chat-message-actions-trigger"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Previous branch" }).click();
   await expect(page.getByText("1/2")).toBeVisible();
+  await expect(page.locator(`[data-testid="chat-assistant-message"][data-message-id="${sourceAssistantId}"]`)
+    .locator('[data-testid="chat-message-actions-trigger"]:visible')).toBeVisible();
 
   const panel = await openFromAssistantAction(page, sourceAssistantId);
   const createResponsePromise = page.waitForResponse((response) => (
@@ -674,7 +1369,7 @@ test("starts Side Chat from a completed historical turn variant after its replac
   await expect(
     panel.getByTestId("chat-user-message-bubble").filter({
       hasText: "Use the completed historical answer.",
-    }),
+    }).last(),
   ).toBeVisible();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
@@ -727,7 +1422,10 @@ test("the /side menu matches composer popovers and can move the same Side Chat t
   await expect(keyboardMenu.getByRole("menuitem", { name: "Move to Messenger" })).toBeFocused();
   await expect(page.getByRole("tooltip")).toContainText("Send a message first to create this Side Chat.");
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toBeHidden();
   await page.keyboard.press("Escape");
+  await expect(keyboardMenu).toBeHidden();
+  await expect(draftTab.getByRole("tab")).toBeFocused();
   await page.keyboard.press("ContextMenu");
   await expect(page.getByTestId("chat-side-panel-tab-context-menu")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -858,7 +1556,7 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
 test("the Side Chat tab menu and disabled explanation fit a narrow viewport", async ({ page }, testInfo) => {
   const source = await seedSideChatSource(page, `Side-Chat-Narrow-${Date.now()}`);
   await page.setViewportSize({ width: 390, height: 844 });
-  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
   const { menu } = await openSideChatTabContextMenu(page, panel);
   const moveItem = menu.getByRole("menuitem", { name: "Move to Messenger" });
   await expect(moveItem).toHaveAttribute("aria-disabled", "true");
@@ -877,7 +1575,7 @@ test("the Side Chat tab menu and disabled explanation fit a narrow viewport", as
 
 test("a failed Move to Messenger keeps the Side Chat tab and can be retried", async ({ page }) => {
   const source = await seedSideChatSource(page, `Side-Chat-Move-Retry-${Date.now()}`);
-  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page);
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
   let moveAttempts = 0;
   await page.route(`**/api/chats/${sideChat.id}/side-chat/keep`, async (route) => {
@@ -916,7 +1614,7 @@ test("a failed Move to Messenger keeps the Side Chat tab and can be retried", as
 
 test("a Side Chat expiring after its menu opens stays in place and disables Move on refresh", async ({ page }) => {
   const source = await seedSideChatSource(page, `Side-Chat-Move-Race-${Date.now()}`);
-  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page);
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
   const firstMenu = (await openSideChatTabContextMenu(page, panel)).menu;
   const firstMove = firstMenu.getByRole("menuitem", { name: "Move to Messenger" });
@@ -924,9 +1622,8 @@ test("a Side Chat expiring after its menu opens stays in place and disables Move
 
   await e2eDb
     .update(chatConversations)
-    // This test database is isolated to the Playwright run; preceding Side
-    // Chats are already kept, expired, or destroyed before this active row.
-    .set({ sideChatExpiresAt: new Date(Date.now() - 1_000) });
+    .set({ sideChatExpiresAt: new Date(Date.now() - 1_000) })
+    .where(eq(chatConversations.id, sideChat.id));
   const raceResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${sideChat.id}/side-chat/keep`)
@@ -950,7 +1647,7 @@ test("a Side Chat expiring after its menu opens stays in place and disables Move
 
 test("an elapsed Side Chat becomes non-editable and can still be destroyed", async ({ page }, testInfo) => {
   const source = await seedSideChatSource(page, `Side-Chat-Expiry-${Date.now()}`);
-  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page);
   const createResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
@@ -961,17 +1658,51 @@ test("an elapsed Side Chat becomes non-editable and can still be destroyed", asy
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
   const sideChat = await createResponse.json() as { id: string };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("Expire this focused exploration.");
+  await expect(panel.getByTestId("chat-assistant-message").filter({
+    hasText: "Streaming reply for chat.",
+  })).toBeVisible({ timeout: 20_000 });
+  await waitForSideChatAssistantReplyToComplete(sideChat.id);
   await e2eDb
     .update(chatConversations)
-    // This Playwright database is isolated to this run. Normal/kept rows ignore
-    // this field, while the active Side Chat under test observes the deadline.
-    .set({ sideChatExpiresAt: new Date(Date.now() + 1_000) });
-  await expect(panel.getByTestId("side-chat-read-only")).toBeVisible({ timeout: 20_000 });
-  await expect(panel.getByTestId("side-chat-state")).toContainText("Expired · read-only");
-  await expect(panel.getByTestId("side-chat-composer")).toHaveCount(0);
+    // This Playwright database is isolated to the run; reload makes the client
+    // read the changed server deadline instead of a cached conversation.
+    .set({ sideChatExpiresAt: new Date(Date.now() - 1_000) })
+    .where(eq(chatConversations.id, sideChat.id));
+  await page.evaluate((contextKey) => {
+    localStorage.removeItem(`rudder:side-chat-panel-state:v1:${encodeURIComponent(contextKey)}`);
+  }, `chat:${source.conversationId}`);
+  await page.reload();
+  const historyTrigger = page.getByTestId("side-chat-history-trigger");
+  await expect(historyTrigger).toBeVisible();
+  await historyTrigger.click();
+  const historyItem = page.getByTestId("side-chat-history-item").filter({
+    hasText: "Side chat from: Main strategy chat",
+  });
+  await expect(historyItem).toContainText("Expired · read-only");
+  await historyItem.click();
+  const expiredPanel = page.getByTestId("chat-side-panel");
+  await expect(expiredPanel.getByTestId("side-chat-read-only")).toBeVisible({ timeout: 20_000 });
+  await expect(expiredPanel.getByTestId("side-chat-state")).toContainText("Expired · read-only");
+  await expect(expiredPanel.getByTestId("side-chat-composer")).toHaveCount(0);
+  await expect(expiredPanel.getByTestId("side-chat-messages")).toContainText("Expire this focused exploration.");
   await page.screenshot({ path: testInfo.outputPath("10-side-chat-expired-read-only.png"), fullPage: true });
 
-  const { menu } = await openSideChatTabContextMenu(page, panel);
+  await expiredPanel.getByTestId("chat-side-panel-collapse").click();
+  await expect(expiredPanel).toBeHidden();
+  await page.reload();
+  const reopen = page.getByRole("button", { name: "Reopen Side Chat" });
+  await expect(reopen).toBeVisible();
+  await reopen.click();
+  const restoredPanel = page.getByTestId("chat-side-panel");
+  await expect(restoredPanel).toBeVisible();
+  await expect(restoredPanel.getByTestId("side-chat-state")).toContainText("Expired · read-only");
+  await expect(restoredPanel.getByTestId("side-chat-messages")).toContainText("Expire this focused exploration.");
+  await expect(restoredPanel.getByTestId("chat-assistant-message").filter({
+    hasText: "Streaming reply for chat.",
+  })).toBeVisible();
+  await expect(restoredPanel.getByTestId("side-chat-composer")).toHaveCount(0);
+
+  const { menu } = await openSideChatTabContextMenu(page, restoredPanel);
   const expiredMove = menu.getByRole("menuitem", { name: "Move to Messenger" });
   await expect(expiredMove).toHaveAttribute("aria-disabled", "true");
   await expiredMove.hover();
@@ -982,7 +1713,7 @@ test("an elapsed Side Chat becomes non-editable and can still be destroyed", asy
     response.request().method() === "DELETE"
     && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
   ));
-  await menu.getByRole("menuitem", { name: "Close" }).click();
+  await menu.getByRole("menuitem", { name: "Close Side Chat" }).click();
   expect((await destroyResponsePromise).ok()).toBe(true);
   expect((await page.request.get(`/api/chats/${sideChat.id}`)).status()).toBe(404);
 });

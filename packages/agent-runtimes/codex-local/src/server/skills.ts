@@ -31,9 +31,8 @@ async function buildCodexSkillSnapshot(
     "skills",
   );
   const installed = await readInstalledSkillTargets(skillsHome);
-  installed.delete(".system");
   installed.delete("skills.json");
-  return buildPersistentSkillSnapshot({
+  const snapshot = buildPersistentSkillSnapshot({
     agentRuntimeType: "codex_local",
     availableEntries,
     desiredSkills,
@@ -45,6 +44,13 @@ async function buildCodexSkillSnapshot(
     externalConflictDetail: "Skill name is occupied by a non-Rudder entry inside the managed Codex skills home.",
     externalDetail: "Installed outside Rudder management.",
   });
+  for (const entry of snapshot.entries) {
+    if (entry.managed || entry.state !== "external") continue;
+    entry.originLabel = "Provider-native Codex";
+    entry.locationLabel = "authorized provider CODEX_HOME/skills";
+    entry.detail = "Retained from the authorized Codex profile; outside Rudder skill enablement.";
+  }
+  return snapshot;
 }
 
 export async function listCodexSkills(ctx: AgentRuntimeSkillContext): Promise<AgentRuntimeSkillSnapshot> {
@@ -78,11 +84,13 @@ export async function syncCodexSkills(
     ...process.env,
     RUDDER_SHARED_CODEX_HOME: sharedCodexHome,
   };
+  const providerNativeSkillsHome = path.join(sharedCodexHome, "skills");
   const externalCodexSkillPaths = await discoverExternalCodexSkillDisablePaths([
     path.join(operatorHome, ".agents", "skills"),
     path.join(sharedCodexHome, "skills"),
     path.join(configuredCwd, ".agents", "skills"),
-  ]);
+  ], [providerNativeSkillsHome]);
+  const managedSkillSources = availableEntries.map((entry) => entry.source);
   await realizeManagedCodexSkillEntries(
     sourceEnv,
     resolveManagedCodexHomeDir(process.env, ctx.orgId, ctx.agentId),
@@ -90,7 +98,18 @@ export async function syncCodexSkills(
       .filter((entry) => desiredSkills.includes(entry.key))
       .map((entry) => entry.source),
     async () => {},
-    { disabledSkillPaths: externalCodexSkillPaths },
+    {
+      disabledSkillPaths: externalCodexSkillPaths,
+      preservedSkillPaths: [providerNativeSkillsHome],
+    },
+    __moduleDir,
+    {},
+    undefined,
+    undefined,
+    {},
+    true,
+    undefined,
+    managedSkillSources,
   ).catch(() => {});
   return buildCodexSkillSnapshot(ctx.orgId, ctx.agentId, ctx.config);
 }

@@ -28,6 +28,26 @@ test("plans affected and merge-boundary qualification from one Test workflow", (
   assert.doesNotMatch(workflow, /test "\$DISPATCH_REF_SHA" = "\$SOURCE_SHA"/);
 });
 
+test("validates manifest changes without requiring PR-owned lockfile edits", () => {
+  const installs = workflow.split("\n").filter((line) => /(?:run:|if)\s+pnpm install/.test(line));
+  assert.ok(installs.length > 0);
+  for (const install of installs) {
+    if (install.includes("--lockfile-only")) continue;
+    assert.match(install, /--no-frozen-lockfile --lockfile=false/);
+    assert.doesNotMatch(install, /(?:^|\s)--frozen-lockfile(?:\s|$)/);
+  }
+});
+
+test("regenerates a source-bound lockfile only on main pushes without publishing from PRs", () => {
+  const regeneration = workflowJob("regenerate-lockfile");
+  assert.match(regeneration, /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
+  assert.match(regeneration, /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(regeneration, /pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile/);
+  assert.match(regeneration, /name: pnpm-lock-\$\{\{ github\.sha \}\}/);
+  assert.match(regeneration, /path: pnpm-lock\.yaml/);
+  assert.doesNotMatch(regeneration, /git push|contents: write|pull_request_target/);
+});
+
 test("keeps the full graph behind planner outputs and affected checks separate", () => {
   const affected = workflowJob("affected");
   const architecture = workflowJob("architecture");

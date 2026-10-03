@@ -111,6 +111,31 @@ describe("chat stream timeouts", () => {
   });
 });
 
+describe("chat runtime sensitive input API", () => {
+  it("lists, responds to, and cancels opaque request IDs without adding values to URLs", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("{}", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.listRuntimeSensitiveInputs("chat-1");
+    await chatsApi.respondToRuntimeSensitiveInput("chat-1", "request/one", "synthetic-secret");
+    await chatsApi.cancelRuntimeSensitiveInput("chat-1", "request/one");
+
+    const calls = fetchMock.mock.calls;
+    expect(calls.map(([url]) => url)).toEqual([
+      "/api/chats/chat-1/runtime-sensitive-inputs",
+      "/api/chats/chat-1/runtime-sensitive-inputs/request%2Fone/respond",
+      "/api/chats/chat-1/runtime-sensitive-inputs/request%2Fone/cancel",
+    ]);
+    expect(JSON.parse(String(calls[1]?.[1]?.body))).toEqual({ value: "synthetic-secret" });
+    expect(JSON.parse(String(calls[2]?.[1]?.body))).toEqual({});
+    expect(calls[1]?.[0]).not.toContain("synthetic-secret");
+    expect(calls[2]?.[0]).not.toContain("synthetic-secret");
+  });
+});
+
 describe("chat stream mutation identity", () => {
   it("includes the mutation identity in JSON requests", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(
@@ -163,6 +188,36 @@ describe("chat message history API", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/chats/chat-1/messages?orgId=org-1&includeTranscript=false",
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("requests Side Chat history through its parent conversation", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ items: [], nextCursor: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(chatsApi.listSideChats("chat-parent")).resolves.toEqual({ items: [], nextCursor: null });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/chats/chat-parent/side-chats",
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("requests the next Side Chat history page with its cursor", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ items: [], nextCursor: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.listSideChats("chat-parent", { cursor: "cursor/next", limit: 25 });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/chats/chat-parent/side-chats?cursor=cursor%2Fnext&limit=25",
       expect.objectContaining({ credentials: "include" }),
     );
   });
@@ -510,5 +565,30 @@ describe("atomic chat draft API", () => {
       skillRefs: [],
     });
     expect(form.getAll("files")).toEqual([annotationFile]);
+  });
+
+  it("continues a queued message with its version, failed-generation fence, and action id", async () => {
+    const response = {
+      item: { id: "queue-1", version: 2, status: "queued" },
+      controlActionId: "00000000-0000-4000-8000-000000000003",
+      idempotent: false,
+    };
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify(response),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const request = {
+      version: 1,
+      expectedFailedGenerationId: "00000000-0000-4000-8000-000000000002",
+      controlActionId: "00000000-0000-4000-8000-000000000003",
+    };
+
+    await expect(chatsApi.continueQueuedMessage("chat-1", "queue-1", request)).resolves.toEqual(response);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/chats/chat-1/queue/queue-1/continue");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual(request);
   });
 });

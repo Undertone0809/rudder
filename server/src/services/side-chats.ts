@@ -1,28 +1,157 @@
 import type { Db } from "@rudderhq/db";
 import {
+  activityLog,
+  assets,
   chatAttachments,
   chatContextLinks,
   chatConversations,
+  chatGenerations,
   chatMessages,
+  chatQueuedMessages,
+  heartbeatRuns,
+  runtimeBindings,
+  sideChatCloseIntents,
+  sideChatFirstInputs,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   type ChatConversation,
 } from "@rudderhq/shared";
-import { and, asc, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
+import { hasActiveChatGeneration } from "./chat-generation-locks.js";
 import { selectedChatMessageBranchCondition } from "./chat-message-branch.js";
+import { QUEUED_ANNOTATION_ASSETS_KEY, queuedAnnotationAssetState } from "./chat-queued-message-materialization.js";
+import { ACTIVE_CHAT_GENERATION_STATUSES } from "./chats.constants.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { recordProductAnalyticsChatCreated } from "./product-analytics.js";
+import {
+  deleteReleasedRuntimeRetentionClaimsInTransaction,
+  ensureRuntimeRetentionClaimsInTransaction,
+  expireRuntimeRetentionClaimsInTransaction,
+  lockRuntimeRetentionScope,
+  promoteRuntimeRetentionClaimsInTransaction,
+  releaseRuntimeRetentionClaimsInTransaction,
+  renewRuntimeRetentionClaimsInTransaction,
+  type RuntimeRetentionDb,
+} from "./runtime-kernel/runtime-retention.js";
+import { persistSideChatProviderCleanupIntents } from "./side-chat-provider-cleanup.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
+export const SIDE_CHAT_FIRST_INPUT_CLAIM_TTL_MS = 60 * 1000;
+export const SIDE_CHAT_HISTORY_DEFAULT_LIMIT = 50;
+export const SIDE_CHAT_HISTORY_MAX_LIMIT = 100;
+export const SIDE_CHAT_KEPT_ERROR_CODE = "side_chat_kept";
 const SIDE_CHAT_TITLE_PREFIX = "Side chat from: ";
 const CHAT_TITLE_MAX_LENGTH = 200;
 
+type SideChatHistoryCursor = {
+  version: 1;
+  orgId: string;
+  sourceConversationId: string;
+  userId: string;
+  createdAt: string;
+  id: string;
+};
+
+type SideChatHistoryScope = Pick<SideChatHistoryCursor, "orgId" | "sourceConversationId" | "userId">;
+
+function isCanonicalSideChatHistoryTimestamp(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value)) return false;
+  const millisecondPrefix = `${value.slice(0, 23)}Z`;
+  const date = new Date(millisecondPrefix);
+  return Number.isFinite(date.getTime()) && date.toISOString() === millisecondPrefix;
+}
+
+function normalizeSideChatHistoryLimit(value: number | undefined) {
+  if (value === undefined) return SIDE_CHAT_HISTORY_DEFAULT_LIMIT;
+  if (!Number.isSafeInteger(value) || value < 1 || value > SIDE_CHAT_HISTORY_MAX_LIMIT) {
+    throw badRequest(`'limit' must be between 1 and ${SIDE_CHAT_HISTORY_MAX_LIMIT}`);
+  }
+  return value;
+}
+
+function encodeSideChatHistoryCursor(cursor: SideChatHistoryCursor) {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeSideChatHistoryCursor(
+  value: string | null | undefined,
+  scope: SideChatHistoryScope,
+): SideChatHistoryCursor | null {
+  if (value === undefined || value === null) return null;
+  try {
+    if (value.length === 0 || value.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+      throw new Error("invalid cursor encoding");
+    }
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    if (Buffer.from(decoded, "utf8").toString("base64url") !== value) {
+      throw new Error("non-canonical cursor encoding");
+    }
+    const parsed = JSON.parse(decoded) as Partial<SideChatHistoryCursor>;
+    if (
+      !parsed
+      || typeof parsed !== "object"
+      || parsed.version !== 1
+      || parsed.orgId !== scope.orgId
+      || parsed.sourceConversationId !== scope.sourceConversationId
+      || parsed.userId !== scope.userId
+      || typeof parsed.createdAt !== "string"
+      || typeof parsed.id !== "string"
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.id)
+      || !isCanonicalSideChatHistoryTimestamp(parsed.createdAt)
+    ) {
+      throw new Error("invalid cursor payload");
+    }
+    return {
+      version: 1,
+      orgId: parsed.orgId,
+      sourceConversationId: parsed.sourceConversationId,
+      userId: parsed.userId,
+      createdAt: parsed.createdAt,
+      id: parsed.id,
+    };
+  } catch {
+    throw badRequest("Invalid Side Chat history cursor.");
+  }
+}
+
+export function sideChatRetentionPurpose(conversationId: string) {
+  return `side_chat:${conversationId}`;
+}
+
+export function sideChatRetentionResource(conversationId: string) {
+  return `chat:${conversationId}`;
+}
+
+export function sideChatRunReference(conversationId: string) {
+  return or(
+    eq(heartbeatRuns.chatConversationId, conversationId),
+    and(
+      eq(heartbeatRuns.scene, "side_chat"),
+      eq(heartbeatRuns.targetType, "chat_conversation"),
+      eq(heartbeatRuns.targetId, conversationId),
+    ),
+  );
+}
+
+function sideChatRetentionPrincipal(userId: string) {
+  return `user:${userId}`;
+}
+
 type ConversationRow = typeof chatConversations.$inferSelect;
+
+type SideChatCreateInput = {
+  sourceConversationId: string;
+  sourceMessageId: string;
+  clientMutationId: string;
+  orgId: string;
+  userId: string;
+  preferredAgentId?: string;
+};
 
 function expiresAtFrom(at: Date) {
   return new Date(at.getTime() + SIDE_CHAT_TTL_MS);
@@ -98,16 +227,44 @@ export function sideChatService(db: Db) {
     return conversation;
   }
 
-  async function markExpired(conversationId: string, now: Date) {
+  async function ensureSideChatRetentionClaim(
+    tx: RuntimeRetentionDb,
+    conversation: Pick<ConversationRow, "id" | "orgId" | "sideChatState" | "sideChatExpiresAt">,
+    userId: string,
+  ) {
+    if (conversation.sideChatState === "expired") return;
+    if (conversation.sideChatState === "active" && !conversation.sideChatExpiresAt) return;
+    await ensureRuntimeRetentionClaimsInTransaction(tx, {
+      orgId: conversation.orgId,
+      claims: [{
+        resourceRef: sideChatRetentionResource(conversation.id),
+        purpose: sideChatRetentionPurpose(conversation.id),
+        principalScopeRef: sideChatRetentionPrincipal(userId),
+        expiresAt: conversation.sideChatState === "kept" ? null : conversation.sideChatExpiresAt,
+      }],
+    });
+  }
+
+  async function markExpired(conversationId: string, now: Date, userId: string) {
     await db.transaction(async (tx) => {
-      const conversation = await tx
-        .select({ orgId: chatConversations.orgId })
-        .from(chatConversations)
+      const txRetention = tx as unknown as RuntimeRetentionDb;
+      const seed = await tx.select({ orgId: chatConversations.orgId }).from(chatConversations)
         .where(eq(chatConversations.id, conversationId))
+        .limit(1)
         .then((rows) => rows[0] ?? null);
-      if (!conversation) return;
-      await lockNodeMutationAuthority(tx, conversation.orgId);
-      await tx
+      if (!seed) return;
+      await lockNodeMutationAuthority(tx, seed.orgId, "shared");
+      await lockRuntimeRetentionScope(txRetention, seed.orgId);
+      const existing = await tx.select().from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, conversationId),
+          eq(chatConversations.orgId, seed.orgId),
+        ))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!existing || existing.conversationKind !== "side_chat") return;
+      assertOwner(existing, userId);
+      const [expired] = await tx
         .update(chatConversations)
         .set({
           sideChatState: "expired",
@@ -118,20 +275,32 @@ export function sideChatService(db: Db) {
           eq(chatConversations.id, conversationId),
           eq(chatConversations.conversationKind, "side_chat"),
           eq(chatConversations.sideChatState, "active"),
-        ));
+        ))
+        .returning({ id: chatConversations.id });
+      if (!expired) return;
+      await expireRuntimeRetentionClaimsInTransaction(txRetention, {
+        orgId: existing.orgId,
+        purpose: sideChatRetentionPurpose(existing.id),
+        principalScopeRef: sideChatRetentionPrincipal(userId),
+        now,
+        force: true,
+      });
     });
   }
 
   async function assertMutable(conversation: ChatConversation, userId: string | null, now = new Date()) {
     if (conversation.conversationKind !== "side_chat") return conversation;
     assertOwner(conversation as ConversationRow, userId);
-    if (conversation.sideChatState === "kept") return conversation;
-    if (conversation.sideChatState !== "active") {
+    const latest = await getRaw(conversation.id);
+    if (!latest || latest.orgId !== conversation.orgId) throw notFound("Side Chat not found");
+    assertOwner(latest, userId);
+    if (latest.sideChatState === "kept" && latest.messengerVisible) return conversation;
+    if (latest.sideChatState !== "active") {
       throw conflict("Side Chat is read-only");
     }
-    const expiresAt = conversation.sideChatExpiresAt ? new Date(conversation.sideChatExpiresAt) : null;
+    const expiresAt = latest.sideChatExpiresAt;
     if (!expiresAt || expiresAt.getTime() <= now.getTime()) {
-      await markExpired(conversation.id, now);
+      await markExpired(conversation.id, now, userId!);
       throw conflict("Side Chat expired");
     }
     return conversation;
@@ -143,52 +312,351 @@ export function sideChatService(db: Db) {
     }
     assertOwner(conversation as ConversationRow, userId);
     await db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, conversation.orgId);
-      await tx
+      const txRetention = tx as unknown as RuntimeRetentionDb;
+      await lockNodeMutationAuthority(tx, conversation.orgId, "shared");
+      await lockRuntimeRetentionScope(txRetention, conversation.orgId);
+      const latest = await tx.select().from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.orgId, conversation.orgId),
+          eq(chatConversations.conversationKind, "side_chat"),
+        ))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!latest || latest.sideChatState !== "active") return;
+      const nextExpiresAt = expiresAtFrom(at);
+      const [touched] = await tx
         .update(chatConversations)
         .set({
-          sideChatExpiresAt: expiresAtFrom(at),
+          sideChatExpiresAt: nextExpiresAt,
           updatedAt: at,
         })
         .where(and(
-          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.id, latest.id),
           eq(chatConversations.sideChatState, "active"),
-        ));
+        ))
+        .returning({ id: chatConversations.id });
+      if (!touched) return;
+      const renewed = await renewRuntimeRetentionClaimsInTransaction(txRetention, {
+        orgId: latest.orgId,
+        purpose: sideChatRetentionPurpose(latest.id),
+        principalScopeRef: sideChatRetentionPrincipal(userId!),
+        expiresAt: nextExpiresAt,
+      });
+      if (renewed.length === 0) {
+        await ensureSideChatRetentionClaim(txRetention, {
+          id: latest.id,
+          orgId: latest.orgId,
+          sideChatState: latest.sideChatState,
+          sideChatExpiresAt: nextExpiresAt,
+        }, userId!);
+      }
     });
     return hydrated(conversation.id, userId!);
   }
 
-  async function create(input: {
-    sourceConversationId: string;
-    sourceMessageId: string;
-    clientMutationId: string;
+  function assertIdempotentCreateMatches(existing: ConversationRow, input: SideChatCreateInput) {
+    if (
+      existing.conversationKind !== "side_chat"
+      || existing.createdByUserId !== input.userId
+      || existing.forkedFromConversationId !== input.sourceConversationId
+      || existing.forkedFromMessageId !== input.sourceMessageId
+      || (
+        input.preferredAgentId !== undefined
+        && existing.preferredAgentId !== input.preferredAgentId
+      )
+    ) {
+      throw conflict("Side Chat creation id was already used for different source context");
+    }
+  }
+
+  async function findExistingForCreate(input: SideChatCreateInput) {
+    const existing = await db
+      .select()
+      .from(chatConversations)
+      .where(and(
+        eq(chatConversations.orgId, input.orgId),
+        eq(chatConversations.sideChatClientMutationId, input.clientMutationId),
+      ));
+    if (existing.length === 0) return null;
+    if (existing.length !== 1) {
+      throw conflict("Side Chat creation id is ambiguous within this organization");
+    }
+    assertIdempotentCreateMatches(existing[0]!, input);
+    return hydrated(existing[0]!.id, input.userId);
+  }
+
+  function assertFirstInputIntentMatches(
+    intent: typeof sideChatFirstInputs.$inferSelect,
+    conversation: ConversationRow,
+  ) {
+    const creationMutationId = conversation.sideChatClientMutationId
+      ?? `legacy:${conversation.id}`;
+    if (
+      intent.orgId !== conversation.orgId
+      || intent.conversationId !== conversation.id
+      || intent.ownerUserId !== conversation.createdByUserId
+      || intent.creationMutationId !== creationMutationId
+      || intent.sourceConversationId !== conversation.forkedFromConversationId
+      || intent.sourceMessageId !== conversation.forkedFromMessageId
+      || intent.preferredAgentId !== conversation.preferredAgentId
+    ) {
+      throw conflict("Side Chat creation intent no longer matches its conversation");
+    }
+  }
+
+  async function claimFirstInput(input: {
     orgId: string;
+    conversationId: string;
     userId: string;
-    preferredAgentId?: string;
+    clientMutationId: string | null;
+    requestFingerprint: string;
   }) {
+    return db.transaction(async (tx) => {
+      const conversation = await tx.select().from(chatConversations).where(and(
+        eq(chatConversations.id, input.conversationId),
+        eq(chatConversations.orgId, input.orgId),
+      )).for("update").then((rows) => rows[0] ?? null);
+      if (!conversation || conversation.conversationKind !== "side_chat") {
+        throw notFound("Side Chat not found");
+      }
+      assertOwner(conversation, input.userId);
+
+      const intent = await tx.select().from(sideChatFirstInputs).where(and(
+        eq(sideChatFirstInputs.orgId, input.orgId),
+        eq(sideChatFirstInputs.conversationId, input.conversationId),
+      )).for("update").then((rows) => rows[0] ?? null);
+      if (!intent) throw notFound("Side Chat creation intent not found");
+      assertFirstInputIntentMatches(intent, conversation);
+
+      const now = new Date();
+      if (intent.status === "awaiting") {
+        const claimToken = randomUUID();
+        await tx.update(sideChatFirstInputs).set({
+          status: "pending",
+          requestClientMutationId: input.clientMutationId,
+          requestFingerprint: input.requestFingerprint,
+          claimToken,
+          claimExpiresAt: new Date(now.getTime() + SIDE_CHAT_FIRST_INPUT_CLAIM_TTL_MS),
+          updatedAt: now,
+        }).where(eq(sideChatFirstInputs.conversationId, input.conversationId));
+        return { kind: "claimed" as const, claimToken };
+      }
+
+      if (intent.status === "pending") {
+        if (
+          intent.requestClientMutationId !== input.clientMutationId
+          || intent.requestFingerprint !== input.requestFingerprint
+        ) {
+          throw conflict("Side Chat first input is already claimed by a different request", {
+            code: "side_chat_first_input_conflict",
+          });
+        }
+        if (intent.claimExpiresAt && intent.claimExpiresAt.getTime() <= now.getTime()) {
+          const claimToken = randomUUID();
+          await tx.update(sideChatFirstInputs).set({
+            claimToken,
+            claimExpiresAt: new Date(now.getTime() + SIDE_CHAT_FIRST_INPUT_CLAIM_TTL_MS),
+            updatedAt: now,
+          }).where(eq(sideChatFirstInputs.conversationId, input.conversationId));
+          return { kind: "claimed" as const, claimToken };
+        }
+        return { kind: "pending" as const };
+      }
+
+      if (
+        input.clientMutationId !== null
+        && intent.requestClientMutationId === input.clientMutationId
+      ) {
+        if (
+          intent.requestFingerprint !== null
+          && intent.requestFingerprint !== input.requestFingerprint
+        ) {
+          throw conflict("Side Chat first-input mutation key was used for different content", {
+            code: "chat_mutation_conflict",
+          });
+        }
+        if (!intent.userMessageId) throw new Error("Accepted Side Chat first input has no user message");
+        const activity = await tx.select({ id: activityLog.id })
+          .from(activityLog)
+          .where(and(
+            eq(activityLog.orgId, input.orgId),
+            eq(activityLog.action, "chat.message_added"),
+            eq(activityLog.entityType, "chat"),
+            eq(activityLog.entityId, input.conversationId),
+            sql`${activityLog.details}->>'messageId' = ${intent.userMessageId}`,
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        return {
+          kind: "replay" as const,
+          userMessageId: intent.userMessageId,
+          activityLogged: Boolean(activity),
+        };
+      }
+
+      if (intent.status === "accepted" && !intent.generationId) {
+        const sameUnkeyedRequest = input.clientMutationId === null
+          && intent.requestClientMutationId === null
+          && intent.requestFingerprint === input.requestFingerprint;
+        if (!sameUnkeyedRequest) {
+          throw conflict("Side Chat first-input Generation admission is pending; retry the accepted first input first", {
+            code: "side_chat_first_input_generation_pending",
+          });
+        }
+      }
+
+      if (intent.requestClientMutationId !== input.clientMutationId) {
+        return { kind: "not_first" as const };
+      }
+
+      const latestGeneration = await tx.select({ status: chatGenerations.status })
+        .from(chatGenerations)
+        .where(and(
+          eq(chatGenerations.orgId, input.orgId),
+          eq(chatGenerations.conversationId, input.conversationId),
+        ))
+        .orderBy(desc(chatGenerations.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const firstInputIsUnfinished = !latestGeneration
+        || ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status);
+      const isUnkeyedRetry = input.clientMutationId === null
+        && intent.requestClientMutationId === null
+        && intent.requestFingerprint === input.requestFingerprint;
+      if (firstInputIsUnfinished && isUnkeyedRetry) {
+        if (!intent.userMessageId) throw new Error("Accepted Side Chat first input has no user message");
+        const activity = await tx.select({ id: activityLog.id })
+          .from(activityLog)
+          .where(and(
+            eq(activityLog.orgId, input.orgId),
+            eq(activityLog.action, "chat.message_added"),
+            eq(activityLog.entityType, "chat"),
+            eq(activityLog.entityId, input.conversationId),
+            sql`${activityLog.details}->>'messageId' = ${intent.userMessageId}`,
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        return {
+          kind: "replay" as const,
+          userMessageId: intent.userMessageId,
+          activityLogged: Boolean(activity),
+        };
+      }
+      return { kind: "not_first" as const };
+    });
+  }
+
+  async function hasAcceptedFirstInputMutation(input: {
+    orgId: string;
+    conversationId: string;
+    clientMutationId: string | null;
+  }) {
+    if (!input.clientMutationId) return false;
+    const intent = await db.select({
+      requestClientMutationId: sideChatFirstInputs.requestClientMutationId,
+      status: sideChatFirstInputs.status,
+    }).from(sideChatFirstInputs).where(and(
+      eq(sideChatFirstInputs.orgId, input.orgId),
+      eq(sideChatFirstInputs.conversationId, input.conversationId),
+    )).limit(1).then((rows) => rows[0] ?? null);
+    return intent?.status === "accepted"
+      && intent.requestClientMutationId === input.clientMutationId;
+  }
+
+  async function releaseFirstInputClaim(input: {
+    conversationId: string;
+    claimToken: string;
+  }) {
+    await db.update(sideChatFirstInputs).set({
+      status: "awaiting",
+      requestClientMutationId: null,
+      requestFingerprint: null,
+      claimToken: null,
+      claimExpiresAt: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(sideChatFirstInputs.conversationId, input.conversationId),
+      eq(sideChatFirstInputs.status, "pending"),
+      eq(sideChatFirstInputs.claimToken, input.claimToken),
+    ));
+  }
+
+  async function listForSource(input: {
+    orgId: string;
+    sourceConversationId: string;
+    userId: string;
+    cursor?: string | null;
+    limit?: number;
+  }) {
+    const limit = normalizeSideChatHistoryLimit(input.limit);
+    const cursor = decodeSideChatHistoryCursor(input.cursor, input);
+    const predicates = [
+      eq(chatConversations.orgId, input.orgId),
+      eq(chatConversations.forkedFromConversationId, input.sourceConversationId),
+      eq(chatConversations.conversationKind, "side_chat"),
+      eq(chatConversations.createdByUserId, input.userId),
+      eq(chatConversations.messengerVisible, false),
+      inArray(chatConversations.sideChatState, ["active", "expired"]),
+    ];
+    if (cursor) {
+      predicates.push(or(
+        sql`${chatConversations.createdAt} < ${cursor.createdAt}::timestamptz`,
+        and(
+          sql`${chatConversations.createdAt} = ${cursor.createdAt}::timestamptz`,
+          gt(chatConversations.id, cursor.id),
+        ),
+      )!);
+    }
+
+    // Use immutable creation time plus ID so activity updates cannot move rows across page boundaries.
+    const rows = await db
+      .select({
+        id: chatConversations.id,
+        createdAt: sql<string>`to_char(${chatConversations.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      })
+      .from(chatConversations)
+      .where(and(...predicates))
+      .orderBy(desc(chatConversations.createdAt), asc(chatConversations.id))
+      .limit(limit + 1);
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const items = await Promise.all(pageRows.map(({ id }) => hydrated(id, input.userId)));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      nextCursor: hasMore && last
+        ? encodeSideChatHistoryCursor({
+            version: 1,
+            orgId: input.orgId,
+            sourceConversationId: input.sourceConversationId,
+            userId: input.userId,
+            createdAt: last.createdAt,
+            id: last.id,
+          })
+        : null,
+    };
+  }
+
+  async function create(input: SideChatCreateInput) {
     const createdId = await db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, input.orgId);
-      const existing = await tx
+      await lockNodeMutationAuthority(tx, input.orgId, "shared");
+      const mutationScope = `${input.orgId}:${input.clientMutationId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${mutationScope}, 0))`);
+      const existingRows = await tx
         .select()
         .from(chatConversations)
         .where(and(
           eq(chatConversations.orgId, input.orgId),
-          eq(chatConversations.createdByUserId, input.userId),
           eq(chatConversations.sideChatClientMutationId, input.clientMutationId),
-        ))
-        .then((rows) => rows[0] ?? null);
+        ));
+      if (existingRows.length > 1) {
+        throw conflict("Side Chat creation id is ambiguous within this organization");
+      }
+      const existing = existingRows[0] ?? null;
       if (existing) {
-        if (
-          existing.conversationKind !== "side_chat"
-          || existing.forkedFromConversationId !== input.sourceConversationId
-          || existing.forkedFromMessageId !== input.sourceMessageId
-          || (
-            input.preferredAgentId !== undefined
-            && existing.preferredAgentId !== input.preferredAgentId
-          )
-        ) {
-          throw conflict("Side Chat creation id was already used for different source context");
-        }
+        assertIdempotentCreateMatches(existing, input);
+        await ensureSideChatRetentionClaim(tx as unknown as RuntimeRetentionDb, existing, input.userId);
         return existing.id;
       }
 
@@ -263,24 +731,26 @@ export function sideChatService(db: Db) {
           .from(chatConversations)
           .where(and(
             eq(chatConversations.orgId, input.orgId),
-            eq(chatConversations.createdByUserId, input.userId),
             eq(chatConversations.sideChatClientMutationId, input.clientMutationId),
           ))
           .then((rows) => rows[0] ?? null);
         if (!raced) throw new Error("Failed to create Side Chat");
-        if (
-          raced.conversationKind !== "side_chat"
-          || raced.forkedFromConversationId !== input.sourceConversationId
-          || raced.forkedFromMessageId !== input.sourceMessageId
-          || (
-            input.preferredAgentId !== undefined
-            && raced.preferredAgentId !== input.preferredAgentId
-          )
-        ) {
-          throw conflict("Side Chat creation id was already used for different source context");
-        }
+        assertIdempotentCreateMatches(raced, input);
+        await ensureSideChatRetentionClaim(tx as unknown as RuntimeRetentionDb, raced, input.userId);
         return raced.id;
       }
+
+      await tx.insert(sideChatFirstInputs).values({
+        orgId: input.orgId,
+        conversationId: child.id,
+        ownerUserId: input.userId,
+        creationMutationId: input.clientMutationId,
+        sourceConversationId: source.id,
+        sourceMessageId: anchor.id,
+        preferredAgentId: child.preferredAgentId,
+        status: "awaiting",
+      });
+      await ensureSideChatRetentionClaim(tx as unknown as RuntimeRetentionDb, child, input.userId);
 
       await recordProductAnalyticsChatCreated(tx as unknown as Db, {
         orgId: input.orgId,
@@ -380,6 +850,18 @@ export function sideChatService(db: Db) {
             attachmentIds: copiedAnnotationAttachments,
           };
         });
+        const sourceLineage = {
+          conversationId: source.id,
+          messageId: message.id,
+          runId: message.runId,
+          approvalId: message.approvalId,
+          chatTurnId: message.chatTurnId,
+          turnVariant: message.turnVariant,
+        };
+        const copiedStructuredPayload = {
+          sideChatSource: sourceLineage,
+          ...(copiedAnnotations.length > 0 ? { inlineAnnotations: copiedAnnotations } : {}),
+        };
         await tx.insert(chatMessages).values({
           id: copiedMessageIds.get(message.id)!,
           orgId: input.orgId,
@@ -388,14 +870,14 @@ export function sideChatService(db: Db) {
           kind: message.kind,
           status: message.status === "streaming" ? "interrupted" : message.status,
           body: message.body,
-          structuredPayload: copiedAnnotations.length > 0
-            ? { inlineAnnotations: copiedAnnotations }
-            : null,
+          structuredPayload: copiedStructuredPayload,
           approvalId: null,
+          // Source identity is lineage only, never an execution/control alias.
+          // Readers must authorize the source separately before resolving it.
           runId: null,
           replyingAgentId: message.replyingAgentId,
           chatTurnId: null,
-          turnVariant: 0,
+          turnVariant: message.turnVariant,
           createdAt: message.createdAt,
           updatedAt: message.updatedAt,
         });
@@ -445,14 +927,246 @@ export function sideChatService(db: Db) {
     return hydrated(createdId, input.userId);
   }
 
-  async function destroy(input: { conversationId: string; userId: string }) {
-    const conversation = await getOwnedSideChat(input.conversationId, input.userId);
-    if (conversation.sideChatState === "kept" || conversation.messengerVisible) {
-      throw conflict("A kept Side Chat is a normal Messenger chat");
-    }
-    const deleted = await db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, conversation.orgId);
-      return tx
+  async function requestClose(input: { conversationId: string; userId: string }) {
+    return db.transaction(async (tx) => {
+      const [seed] = await tx.select({ orgId: chatConversations.orgId }).from(chatConversations)
+        .where(eq(chatConversations.id, input.conversationId)).limit(1);
+      if (!seed) throw notFound("Side Chat not found");
+      const txRetention = tx as unknown as RuntimeRetentionDb;
+      await lockNodeMutationAuthority(tx, seed.orgId, "shared");
+      await lockRuntimeRetentionScope(txRetention, seed.orgId);
+      const [conversation] = await tx.select().from(chatConversations)
+        .where(and(eq(chatConversations.id, input.conversationId), eq(chatConversations.orgId, seed.orgId)))
+        .for("update");
+      if (!conversation || conversation.conversationKind !== "side_chat") throw notFound("Side Chat not found");
+      assertOwner(conversation, input.userId);
+      if (conversation.sideChatState === "kept" || conversation.messengerVisible) {
+        throw conflict("A kept Side Chat is a normal Messenger chat", { code: SIDE_CHAT_KEPT_ERROR_CODE });
+      }
+      const [existing] = await tx.select().from(sideChatCloseIntents).where(and(
+        eq(sideChatCloseIntents.orgId, conversation.orgId),
+        eq(sideChatCloseIntents.conversationId, conversation.id),
+      )).limit(1);
+      if (existing) return existing;
+
+      const bindings = await tx.select({ id: runtimeBindings.id }).from(runtimeBindings)
+        .where(and(eq(runtimeBindings.orgId, conversation.orgId), eq(runtimeBindings.conversationId, conversation.id)))
+        .for("update");
+      if (bindings.length > 0) {
+        const [descendant] = await tx.select({ id: runtimeBindings.id }).from(runtimeBindings)
+          .where(and(
+            eq(runtimeBindings.orgId, conversation.orgId),
+            inArray(runtimeBindings.parentBindingId, bindings.map(({ id }) => id)),
+          )).limit(1);
+        if (descendant) {
+          throw conflict("Side Chat has native runtime descendants; keep it or resolve the descendant references first");
+        }
+      }
+
+      const now = new Date();
+      const [intent] = await tx.insert(sideChatCloseIntents).values({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        ownerUserId: input.userId,
+        sourceConversationId: conversation.forkedFromConversationId,
+        sourceMessageId: conversation.forkedFromMessageId,
+        nextAttemptAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }).returning();
+      if (!intent) throw new Error("Failed to persist Side Chat close intent");
+      await tx.update(chatConversations).set({
+        sideChatState: "completed",
+        sideChatCompletedAt: now,
+        sideChatExpiresAt: null,
+        updatedAt: now,
+      }).where(eq(chatConversations.id, conversation.id));
+      await ensureSideChatRetentionClaim(txRetention, {
+        id: conversation.id,
+        orgId: conversation.orgId,
+        sideChatState: "completed",
+        sideChatExpiresAt: null,
+      }, input.userId);
+      await promoteRuntimeRetentionClaimsInTransaction(txRetention, {
+        orgId: conversation.orgId,
+        purpose: sideChatRetentionPurpose(conversation.id),
+        principalScopeRef: sideChatRetentionPrincipal(input.userId),
+      });
+      return intent;
+    });
+  }
+
+  async function destroy(input: {
+    conversationId: string;
+    userId: string;
+    closeClaim?: { id: string; owner: string; epoch: number };
+  }) {
+    return db.transaction(async (tx) => {
+      const [seed] = await tx
+        .select({ orgId: chatConversations.orgId })
+        .from(chatConversations)
+        .where(eq(chatConversations.id, input.conversationId))
+        .limit(1);
+      if (!seed) throw notFound("Side Chat not found");
+      const txRetention = tx as unknown as RuntimeRetentionDb;
+      await lockNodeMutationAuthority(tx, seed.orgId, "shared");
+      await lockRuntimeRetentionScope(txRetention, seed.orgId);
+      // Serialize deletion with new generation/run FK references. Checking only
+      // in the route allows a send to be admitted between the check and delete.
+      const conversation = await tx.select().from(chatConversations)
+        .where(eq(chatConversations.id, input.conversationId))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!conversation || conversation.conversationKind !== "side_chat") throw notFound("Side Chat not found");
+      assertOwner(conversation, input.userId);
+      if (conversation.sideChatState === "kept" || conversation.messengerVisible) {
+        throw conflict("A kept Side Chat is a normal Messenger chat", { code: SIDE_CHAT_KEPT_ERROR_CODE });
+      }
+      if (hasActiveChatGeneration(conversation.id)) {
+        throw conflict("Side Chat has an active response; stop it before closing");
+      }
+      const [generation] = await tx.select({ id: chatGenerations.id }).from(chatGenerations)
+        .where(and(
+          eq(chatGenerations.conversationId, conversation.id),
+          inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
+        )).limit(1);
+      const [run] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
+        .where(and(
+          eq(heartbeatRuns.orgId, conversation.orgId),
+          sideChatRunReference(conversation.id),
+          or(inArray(heartbeatRuns.status, ["queued", "running"]),
+            eq(heartbeatRuns.terminalEffectsPending, true)),
+      )).limit(1);
+      if (generation || run) throw conflict("Side Chat has an active response; stop it before closing");
+      const [unverified] = await tx.select({ id: chatGenerations.id }).from(chatGenerations)
+        .where(and(
+          eq(chatGenerations.conversationId, conversation.id),
+          or(
+            isNull(chatGenerations.runtimeTerminalAt),
+            inArray(chatGenerations.status, ["interrupted_unverified", "control_lost"]),
+            eq(chatGenerations.controlState, "control_lost"),
+          ),
+        )).limit(1);
+      if (unverified) throw conflict("Side Chat runtime termination is not verified");
+      const [pendingClose] = await tx.select({ id: sideChatCloseIntents.id })
+        .from(sideChatCloseIntents).where(and(
+          eq(sideChatCloseIntents.orgId, conversation.orgId),
+          eq(sideChatCloseIntents.conversationId, conversation.id),
+        )).limit(1);
+      if (pendingClose && pendingClose.id !== input.closeClaim?.id) {
+        throw conflict("Side Chat has a pending close intent");
+      }
+      if (input.closeClaim) {
+        const [intent] = await tx.select().from(sideChatCloseIntents).where(and(
+          eq(sideChatCloseIntents.id, input.closeClaim.id),
+          eq(sideChatCloseIntents.orgId, conversation.orgId),
+          eq(sideChatCloseIntents.conversationId, conversation.id),
+          eq(sideChatCloseIntents.ownerUserId, input.userId),
+          eq(sideChatCloseIntents.state, "claimed"),
+          eq(sideChatCloseIntents.leaseOwner, input.closeClaim.owner),
+          eq(sideChatCloseIntents.leaseEpoch, input.closeClaim.epoch),
+          gt(sideChatCloseIntents.leaseExpiresAt, new Date()),
+        )).for("update").limit(1);
+        if (!intent) throw conflict("Side Chat close claim is no longer current");
+        const attachmentRows = await tx.select({
+          orgId: chatAttachments.orgId,
+          assetId: chatAttachments.assetId,
+          assetOrgId: assets.orgId,
+          objectKey: assets.objectKey,
+          provider: assets.provider,
+        }).from(chatAttachments).leftJoin(assets, and(
+          eq(chatAttachments.assetId, assets.id),
+          eq(assets.orgId, conversation.orgId),
+        ))
+          .where(eq(chatAttachments.conversationId, conversation.id));
+        const attachmentsByAssetId = new Map<string, {
+          orgId: string; assetId: string; objectKey: string; provider: string;
+        }>();
+        for (const row of attachmentRows) {
+          if (row.orgId !== conversation.orgId || row.assetOrgId !== conversation.orgId
+            || !row.objectKey || !row.provider) {
+            throw conflict("Side Chat attachment identity is missing or outside its organization");
+          }
+          attachmentsByAssetId.set(row.assetId, {
+            orgId: conversation.orgId,
+            assetId: row.assetId,
+            objectKey: row.objectKey,
+            provider: row.provider,
+          });
+        }
+        const queuedRows = await tx.select({ orgId: chatQueuedMessages.orgId, payload: chatQueuedMessages.payload })
+          .from(chatQueuedMessages).where(eq(chatQueuedMessages.conversationId, conversation.id));
+        const queuedAssetIds = new Set<string>();
+        for (const row of queuedRows) {
+          if (row.orgId !== conversation.orgId) {
+            throw conflict("Side Chat queued attachment is outside its organization");
+          }
+          const state = queuedAnnotationAssetState(row.payload);
+          if (Object.hasOwn(row.payload, QUEUED_ANNOTATION_ASSETS_KEY) && !state) {
+            throw conflict("Side Chat queued attachment metadata is invalid");
+          }
+          for (const attachment of state?.attachments ?? []) queuedAssetIds.add(attachment.assetId);
+        }
+        if (queuedAssetIds.size > 0) {
+          const queuedAssets = await tx.select({
+            id: assets.id, orgId: assets.orgId, objectKey: assets.objectKey, provider: assets.provider,
+          }).from(assets).where(inArray(assets.id, [...queuedAssetIds]));
+          const queuedAssetById = new Map(queuedAssets.map((asset) => [asset.id, asset]));
+          for (const assetId of queuedAssetIds) {
+            const asset = queuedAssetById.get(assetId);
+            if (!asset || asset.orgId !== conversation.orgId) {
+              throw conflict("Side Chat queued attachment asset is missing or outside its organization");
+            }
+            attachmentsByAssetId.set(assetId, {
+              orgId: conversation.orgId,
+              assetId,
+              objectKey: asset.objectKey,
+              provider: asset.provider,
+            });
+          }
+        }
+        const attachments = [...attachmentsByAssetId.values()];
+        await tx.update(sideChatCloseIntents).set({ attachmentsJson: attachments, updatedAt: new Date() })
+          .where(eq(sideChatCloseIntents.id, intent.id));
+      }
+      const sideChatBindings = await tx.select({ id: runtimeBindings.id })
+        .from(runtimeBindings)
+        .where(and(
+          eq(runtimeBindings.orgId, conversation.orgId),
+          eq(runtimeBindings.conversationId, conversation.id),
+        ))
+        .for("update");
+      const bindingIds = sideChatBindings.map(({ id }) => id);
+      if (bindingIds.length > 0) {
+        const [descendantBinding] = await tx.select({ id: runtimeBindings.id })
+          .from(runtimeBindings)
+          .where(and(
+            eq(runtimeBindings.orgId, conversation.orgId),
+            inArray(runtimeBindings.parentBindingId, bindingIds),
+          ))
+          .limit(1);
+        if (descendantBinding) {
+          throw conflict("Side Chat has native runtime descendants; keep it or resolve the descendant references first");
+        }
+      }
+      await persistSideChatProviderCleanupIntents(tx as unknown as Db, {
+        id: conversation.id,
+        orgId: conversation.orgId,
+        createdByUserId: conversation.createdByUserId,
+        sideChatState: conversation.sideChatState,
+        messengerVisible: conversation.messengerVisible,
+      }, new Date());
+      await releaseRuntimeRetentionClaimsInTransaction(txRetention, {
+        orgId: conversation.orgId,
+        purpose: sideChatRetentionPurpose(conversation.id),
+        principalScopeRef: sideChatRetentionPrincipal(input.userId),
+      });
+      await deleteReleasedRuntimeRetentionClaimsInTransaction(txRetention, {
+        orgId: conversation.orgId,
+        purpose: sideChatRetentionPurpose(conversation.id),
+        principalScopeRef: sideChatRetentionPrincipal(input.userId),
+      });
+      const deleted = await tx
         .delete(chatConversations)
         .where(and(
           eq(chatConversations.id, conversation.id),
@@ -462,20 +1176,34 @@ export function sideChatService(db: Db) {
           ne(chatConversations.sideChatState, "kept"),
         ))
         .returning({ id: chatConversations.id });
+      if (!deleted[0]) throw conflict("Side Chat could not be destroyed");
+      return deleted[0];
     });
-    if (!deleted[0]) throw conflict("Side Chat could not be destroyed");
-    return deleted[0];
   }
 
   async function keepInMessenger(input: { conversationId: string; userId: string }) {
     const conversation = await getOwnedSideChat(input.conversationId, input.userId);
-    if (conversation.sideChatState === "kept" && conversation.messengerVisible) {
-      return hydrated(conversation.id, input.userId);
-    }
-    if (conversation.sideChatState !== "active") throw conflict("Only an active Side Chat can be kept in Messenger");
 
     const outcome = await db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, conversation.orgId);
+      const txRetention = tx as unknown as RuntimeRetentionDb;
+      await lockNodeMutationAuthority(tx, conversation.orgId, "shared");
+      await lockRuntimeRetentionScope(txRetention, conversation.orgId);
+      const current = await tx
+        .select()
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.orgId, conversation.orgId),
+          eq(chatConversations.conversationKind, "side_chat"),
+          eq(chatConversations.createdByUserId, input.userId),
+        ))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!current) throw notFound("Side Chat not found");
+      if (current.sideChatState === "kept" && current.messengerVisible) return "kept" as const;
+      if (current.sideChatState !== "active") {
+        throw conflict("Only an active Side Chat can be kept in Messenger");
+      }
       const now = new Date();
       const expired = await tx
         .update(chatConversations)
@@ -485,7 +1213,7 @@ export function sideChatService(db: Db) {
           updatedAt: now,
         })
         .where(and(
-          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.id, current.id),
           eq(chatConversations.sideChatState, "active"),
           eq(chatConversations.messengerVisible, false),
           or(
@@ -494,7 +1222,18 @@ export function sideChatService(db: Db) {
           ),
         ))
         .returning({ id: chatConversations.id });
-      if (expired.length > 0) return "expired" as const;
+      if (expired.length > 0) {
+        await expireRuntimeRetentionClaimsInTransaction(txRetention, {
+          orgId: current.orgId,
+          purpose: sideChatRetentionPurpose(current.id),
+          principalScopeRef: sideChatRetentionPrincipal(input.userId),
+          now,
+          force: true,
+        });
+        return "expired" as const;
+      }
+
+      await ensureSideChatRetentionClaim(txRetention, current, input.userId);
 
       const transitioned = await tx
         .update(chatConversations)
@@ -508,7 +1247,7 @@ export function sideChatService(db: Db) {
           updatedAt: now,
         })
         .where(and(
-          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.id, current.id),
           eq(chatConversations.sideChatState, "active"),
           eq(chatConversations.messengerVisible, false),
           gt(chatConversations.sideChatExpiresAt, now),
@@ -518,13 +1257,13 @@ export function sideChatService(db: Db) {
         const latest = await tx
           .select({ sideChatState: chatConversations.sideChatState, messengerVisible: chatConversations.messengerVisible })
           .from(chatConversations)
-          .where(eq(chatConversations.id, conversation.id))
+          .where(eq(chatConversations.id, current.id))
           .then((rows) => rows[0] ?? null);
         if (latest?.sideChatState === "kept" && latest.messengerVisible) return "kept" as const;
         throw conflict("Only an active Side Chat can be kept in Messenger");
       }
 
-      const sourceConversationId = conversation.forkedFromConversationId;
+      const sourceConversationId = current.forkedFromConversationId;
       if (!sourceConversationId) {
         throw conflict("Side Chat source is no longer available");
       }
@@ -547,8 +1286,13 @@ export function sideChatService(db: Db) {
         userId: input.userId,
         rootConversationId: conversation.forkRootConversationId ?? source.forkRootConversationId ?? source.id,
         sourceConversationId: source.id,
-        childConversationId: conversation.id,
+        childConversationId: current.id,
         groupName: source.title,
+      });
+      await promoteRuntimeRetentionClaimsInTransaction(txRetention, {
+        orgId: current.orgId,
+        purpose: sideChatRetentionPurpose(current.id),
+        principalScopeRef: sideChatRetentionPrincipal(input.userId),
       });
       return "kept" as const;
     });
@@ -559,7 +1303,13 @@ export function sideChatService(db: Db) {
   }
 
   return {
+    claimFirstInput,
     create,
+    findExistingForCreate,
+    hasAcceptedFirstInputMutation,
+    listForSource,
+    releaseFirstInputClaim,
+    requestClose,
     destroy,
     keepInMessenger,
     assertAccessible,

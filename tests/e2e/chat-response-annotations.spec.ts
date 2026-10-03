@@ -1,21 +1,29 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import { and, eq, sql } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   chatConversations,
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
+  chatMessageTranscriptEntries,
   createDb,
+  heartbeatRunEvents,
+  heartbeatRuns,
+  nativeSegments,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "../../packages/db/src/index.ts";
+import type { ChatMessage } from "../../packages/shared/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import {
   E2E_CODEX_APP_SERVER_STUB,
   E2E_CODEX_STUB,
   E2E_DATABASE_URL,
+  E2E_ROOT,
 } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -50,7 +58,7 @@ const ORDERED_LIST_BODY = [
 ].join("\n");
 const FIRST_PROCESS_TEXT = "可见 Thinking 过程：先核对数据与用户约束。";
 const SECOND_PROCESS_TEXT = "第二个 Thinking 区块：再比较稳定证据。";
-
+const NATIVE_REASONING_TEXT = "Native reasoning fixture: stable visible thinking source.";
 type SeededAnnotationChat = {
   organization: {
     id: string;
@@ -63,14 +71,176 @@ type SeededAnnotationChat = {
   generationId: string;
 };
 
+type SeededNativeAnnotationChat = {
+  organization: SeededAnnotationChat["organization"];
+  agent: { id: string };
+  conversationId: string;
+  assistantMessageId: string;
+  runId: string;
+};
+
 function sourceHash(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+async function createBlockingCountingChatRuntime(outputDir: string) {
+  const directory = join(outputDir, "pre-generation-retry-runtime");
+  await mkdir(directory, { recursive: true });
+  const scriptPath = join(directory, "codex-retry-gated.sh");
+  const invocationPath = join(directory, "invocations");
+  const releasePath = join(directory, "release-provider");
+  await writeFile(invocationPath, "", "utf8");
+  await writeFile(scriptPath, `#!/bin/sh
+set -eu
+case " $* " in
+  *" --version "*|*" generate-json-schema "*) exec "${E2E_CODEX_APP_SERVER_STUB}" "$@" ;;
+esac
+printf '%s\\n' "$*" >> "${invocationPath}"
+while [ ! -f "${releasePath}" ]; do sleep 0.05; done
+exec "${E2E_CODEX_APP_SERVER_STUB}" "$@"
+`, "utf8");
+  await chmod(scriptPath, 0o755);
+  return { scriptPath, invocationPath, releasePath };
+}
+
+type CapturedChatMutationPart =
+  | { kind: "field"; name: string; value: string }
+  | { kind: "file"; name: string; fileName: string; mimeType: string; lastModified: number; bytes: number[] };
+
+type CapturedChatMutation =
+  | { kind: "json"; body: string }
+  | { kind: "multipart"; parts: CapturedChatMutationPart[] };
+
+async function installChatMutationCapture(page: Page, mutationPath: string) {
+  await page.evaluate((path) => {
+    type Part =
+      | { kind: "field"; name: string; value: string }
+      | { kind: "file"; name: string; fileName: string; mimeType: string; lastModified: number; bytes: number[] };
+    type Mutation = { kind: "json"; body: string } | { kind: "multipart"; parts: Part[] };
+    const target = window as Window & { __rudderCapturedChatMutations?: Mutation[] };
+    target.__rudderCapturedChatMutations = [];
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const requestUrl = input instanceof Request ? input.url : String(input);
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      if (method === "POST" && new URL(requestUrl, window.location.href).pathname === path) {
+        if (init?.body instanceof FormData) {
+          const parts = await Promise.all(Array.from(init.body.entries()).map(async ([name, value]) => {
+            if (value instanceof File) {
+              return {
+                kind: "file" as const,
+                name,
+                fileName: value.name,
+                mimeType: value.type,
+                lastModified: value.lastModified,
+                bytes: Array.from(new Uint8Array(await value.arrayBuffer())),
+              };
+            }
+            return { kind: "field" as const, name, value };
+          }));
+          target.__rudderCapturedChatMutations?.push({ kind: "multipart", parts });
+        } else if (typeof init?.body === "string") {
+          target.__rudderCapturedChatMutations?.push({ kind: "json", body: init.body });
+        }
+      }
+      return originalFetch(input, init);
+    };
+  }, mutationPath);
+}
+
+async function readChatMutationCaptures(page: Page): Promise<CapturedChatMutation[]> {
+  return page.evaluate(() => {
+    const target = window as Window & { __rudderCapturedChatMutations?: CapturedChatMutation[] };
+    return target.__rudderCapturedChatMutations ?? [];
+  });
+}
+
+async function replayCapturedChatMutation(
+  page: Page,
+  mutationPath: string,
+  mutation: CapturedChatMutation,
+) {
+  return page.evaluate(async ({ path, captured }) => {
+    let body: BodyInit;
+    const headers: Record<string, string> = {};
+    if (captured.kind === "json") {
+      body = captured.body;
+      headers["content-type"] = "application/json";
+    } else {
+      const form = new FormData();
+      for (const part of captured.parts) {
+        if (part.kind === "field") {
+          form.append(part.name, part.value);
+        } else {
+          const file = new File(
+            [new Uint8Array(part.bytes)],
+            part.fileName,
+            { type: part.mimeType, lastModified: part.lastModified },
+          );
+          form.append(part.name, file, part.fileName);
+        }
+      }
+      body = form;
+    }
+    const response = await fetch(path, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body,
+    });
+    return {
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      body: await response.text(),
+    };
+  }, { path: mutationPath, captured: mutation });
+}
+
+async function failFirstChatUserActivityWrite(orgId: string, conversationId: string) {
+  const suffix = conversationId.replaceAll("-", "").slice(0, 20);
+  const functionName = `e2e_fail_first_chat_user_activity_${suffix}`;
+  const triggerName = `e2e_fail_first_chat_user_activity_${suffix}`;
+  const sequenceName = `e2e_chat_user_activity_attempt_${suffix}`;
+  await e2eDb.execute(sql.raw(`CREATE SEQUENCE ${sequenceName} START WITH 1`));
+  await e2eDb.execute(sql.raw(`
+    CREATE FUNCTION ${functionName}() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.org_id = '${orgId}'::uuid
+        AND NEW.entity_type = 'chat'
+        AND NEW.entity_id = '${conversationId}'
+        AND NEW.action = 'chat.message_added'
+        AND NEW.details->>'role' = 'user' THEN
+        IF nextval('${sequenceName}') = 1 THEN
+          RAISE EXCEPTION 'E2E one-shot post-commit user activity failure';
+        END IF;
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+  `));
+  await e2eDb.execute(sql.raw(`
+    CREATE TRIGGER ${triggerName}
+    BEFORE INSERT ON activity_log
+    FOR EACH ROW EXECUTE FUNCTION ${functionName}();
+  `));
+  return async () => {
+    await e2eDb.execute(sql.raw(`DROP TRIGGER IF EXISTS ${triggerName} ON activity_log`));
+    await e2eDb.execute(sql.raw(`DROP FUNCTION IF EXISTS ${functionName}()`));
+    await e2eDb.execute(sql.raw(`DROP SEQUENCE IF EXISTS ${sequenceName}`));
+  };
 }
 
 async function seedAnnotationChat(
   page: Page,
   name: string,
-  options: { nativeSteerRuntime?: boolean; finalBody?: string; readyText?: string } = {},
+  options: {
+    nativeSteerRuntime?: boolean;
+    runtimeCommand?: string;
+    runtimeReplyBody?: string;
+    finalBody?: string;
+    readyText?: string;
+  } = {},
 ): Promise<SeededAnnotationChat> {
   const orgRes = await page.request.post("/api/orgs", { data: { name } });
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
@@ -78,12 +248,24 @@ async function seedAnnotationChat(
   const agent = await createE2EChatAgent(
     page.request,
     organization.id,
-    options.nativeSteerRuntime
+    options.runtimeCommand
       ? {
         name: "Annotation Agent",
         agentRuntimeConfig: {
           model: "gpt-5.4",
-          command: E2E_CODEX_APP_SERVER_STUB,
+          command: options.runtimeCommand,
+          chatAppServerEnabled: true,
+          ...(options.runtimeReplyBody ? {
+            env: { RUDDER_E2E_CODEX_REPLY_BODY: options.runtimeReplyBody },
+          } : {}),
+        },
+      }
+      : options.nativeSteerRuntime
+      ? {
+        name: "Annotation Agent",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: join(E2E_ROOT, "fixtures", "codex-native-session.mjs"),
           chatAppServerEnabled: true,
         },
       }
@@ -662,6 +844,235 @@ test.afterAll(async () => {
 });
 
 test.describe("Chat response annotations", () => {
+  test("annotates a native Chat thinking entry through Reader validation", async ({ page }) => {
+    const orgResponse = await page.request.post("/api/orgs", {
+      data: { name: `Response-Annotation-Native-Only-${Date.now()}` },
+    });
+    expect(orgResponse.ok(), await orgResponse.text()).toBe(true);
+    const organization = await orgResponse.json() as SeededNativeAnnotationChat["organization"];
+    const agent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Native Annotation Agent",
+      command: join(E2E_ROOT, "fixtures", "codex-native-session.mjs"),
+    }) as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agent.id}`);
+    await composer(page).fill("Native annotation reasoning fixture marker. Create a stable native reply.");
+    const nativeStream = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().endsWith("/messages/stream")
+    ));
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await (await nativeStream).finished();
+    const sourceAssistant = page.getByTestId("chat-assistant-message").last();
+    await expect(sourceAssistant).toContainText("Native reply 1", { timeout: 30_000 });
+    const conversationId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const assistantMessageId = await sourceAssistant.getAttribute("data-message-id");
+    expect(assistantMessageId).toBeTruthy();
+
+    const sourceRuns = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.chatConversationId, conversationId));
+    expect(sourceRuns).toHaveLength(1);
+    const run = sourceRuns[0]!;
+    expect(run.agentId).toBe(agent.id);
+    expect(run.status).toBe("succeeded");
+    expect(run.resultJson).toMatchObject({ retention: { transcriptSource: "native" } });
+    const seeded: SeededNativeAnnotationChat = {
+      organization,
+      agent,
+      conversationId,
+      assistantMessageId: assistantMessageId!,
+      runId: run.id,
+    };
+
+    const [assistantRow] = await e2eDb.select().from(chatMessages)
+      .where(eq(chatMessages.id, seeded.assistantMessageId));
+    expect(assistantRow?.runId).toBe(seeded.runId);
+    const sourceSpans = await e2eDb.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.runId, seeded.runId));
+    expect(sourceSpans.length).toBeGreaterThan(0);
+    const span = sourceSpans[0];
+    if (!span) throw new Error("Expected the native Chat Run to have a bound runtime span");
+    expect(span).toMatchObject({ orgId: organization.id, runId: seeded.runId });
+    const [binding] = await e2eDb.select().from(runtimeBindings)
+      .where(eq(runtimeBindings.id, span.bindingId));
+    if (!binding) throw new Error("Expected the native Run span to reference its Chat binding");
+    expect(binding).toMatchObject({
+      id: span.bindingId,
+      orgId: organization.id,
+      conversationId: seeded.conversationId,
+    });
+    const [segment] = await e2eDb.select().from(nativeSegments)
+      .where(eq(nativeSegments.id, span.segmentId));
+    expect(segment).toMatchObject({ id: span.segmentId, bindingId: binding.id, orgId: organization.id });
+
+    const readerResponse = await page.request.get(
+      `/api/run-intelligence/runs/${seeded.runId}/transcript?output=full&order=oldest&turnLimit=50&includeOutput=false&maxChars=4000`,
+    );
+    expect(readerResponse.ok(), await readerResponse.text()).toBe(true);
+    const readerPage = await readerResponse.json() as {
+      source?: string;
+      availability?: string;
+      completeness?: string;
+      entries?: Array<{
+        sourceEntryId?: string;
+        entry?: {
+          kind?: string;
+          text?: string;
+          sourceEntryId?: string;
+          generationId?: string;
+          generationSeqStart?: number;
+          generationSeqEnd?: number;
+        };
+      }>;
+    };
+    expect(readerPage.source).toBe("native");
+    expect(readerPage.availability).toBe("available");
+    expect(readerPage.completeness).toBe("complete");
+    // Use the real Reader projection, not an intercepted or reconstructed entry.
+    const readerEntry = readerPage.entries?.find((candidate) => (
+      candidate.entry?.kind === "thinking"
+      && candidate.entry.text === NATIVE_REASONING_TEXT
+    ));
+    expect(readerEntry?.sourceEntryId).toEqual(expect.any(String));
+    const sourceEntryId = readerEntry!.sourceEntryId!;
+    expect(readerEntry?.entry?.sourceEntryId).toBe(sourceEntryId);
+    expect(readerEntry?.entry).not.toHaveProperty("generationId");
+    expect(readerEntry?.entry).not.toHaveProperty("generationSeqStart");
+    expect(readerEntry?.entry).not.toHaveProperty("generationSeqEnd");
+
+    const runEvents = await e2eDb.select({ eventType: heartbeatRunEvents.eventType })
+      .from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, seeded.runId));
+    expect(runEvents.some((event) => event.eventType === "transcript.entry")).toBe(false);
+    const sourceGenerations = await e2eDb.select({ id: chatGenerations.id })
+      .from(chatGenerations).where(eq(chatGenerations.conversationId, seeded.conversationId));
+    expect(sourceGenerations.length).toBeGreaterThan(0);
+    const generationEvents = (await Promise.all(sourceGenerations.map(({ id }) => (
+      e2eDb.select({ eventKind: chatGenerationEvents.eventKind })
+        .from(chatGenerationEvents).where(eq(chatGenerationEvents.generationId, id))
+    )))).flat();
+    expect(generationEvents.some((event) => event.eventKind === "transcript")).toBe(false);
+    const legacyTranscriptRows = await e2eDb.select({ entrySeq: chatMessageTranscriptEntries.entrySeq })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, organization.id));
+    expect(legacyTranscriptRows).toEqual([]);
+
+    const processItem = sourceAssistant.locator(
+      "xpath=preceding-sibling::*[@data-testid='chat-transcript-item'][1]",
+    );
+    const processToggle = processItem
+      .getByRole("button", { name: /Worked for|Show process|Hide process/ })
+      .first();
+    if (await processToggle.getAttribute("aria-expanded") !== "true") {
+      await processToggle.click();
+    }
+    const assistantBlock = processItem.locator(
+      `[data-run-transcript-block="true"][data-run-transcript-block-id="${sourceEntryId}"]`,
+    );
+    await expect(sourceAssistant).toContainText("Native reply 1");
+    await expect(assistantBlock).toHaveCount(1);
+    await expect(assistantBlock).toHaveAttribute("data-run-transcript-block-stable", "true");
+    await expect(assistantBlock).toHaveAttribute("data-run-transcript-block-type", "thinking");
+    await expect(assistantBlock).toContainText(NATIVE_REASONING_TEXT);
+    await expect(assistantBlock).not.toContainText("Native reply 1");
+    await selectVisibleText(page, assistantBlock, NATIVE_REASONING_TEXT);
+    await addSelectionToChat(page);
+    await editAnnotation(page, 1, {
+      comment: "Keep this thinking evidence tied to the native Reader source.",
+    });
+
+    const submittedBody = "Review the cited native thinking evidence.";
+    const messagesPath = `/api/chats/${seeded.conversationId}/messages/stream`;
+    await installChatMutationCapture(page, messagesPath);
+    await composer(page).fill(submittedBody);
+    await page.getByRole("button", { name: "Send" }).click();
+    const sentTurn = page
+      .getByTestId("chat-user-message-turn")
+      .filter({ hasText: submittedBody });
+    await expect(sentTurn.getByRole("button", { name: "Show 1 annotation" }))
+      .toBeVisible({ timeout: 15_000 });
+
+    const mutationCaptures = await readChatMutationCaptures(page);
+    const mutation = mutationCaptures[0];
+    if (mutationCaptures.length !== 1 || mutation?.kind !== "json") {
+      throw new Error("Expected one captured native annotation JSON chat mutation");
+    }
+    const submittedMutation = JSON.parse(mutation.body) as {
+      clientMutationId?: string;
+      inlineAnnotations?: Array<Record<string, unknown>>;
+    };
+    expect(submittedMutation.inlineAnnotations).toEqual([
+      expect.objectContaining({
+        selectedText: NATIVE_REASONING_TEXT,
+        comment: "Keep this thinking evidence tied to the native Reader source.",
+        surface: "agent_run_transcript",
+        sourceRunId: seeded.runId,
+        sourceAgentId: seeded.agent.id,
+        sourceMemberIds: [sourceEntryId],
+        sourceEntryId,
+      }),
+    ]);
+
+    const messagesResponse = await page.request.get(
+      `/api/chats/${seeded.conversationId}/messages?includeTranscript=true`,
+    );
+    expect(messagesResponse.ok(), await messagesResponse.text()).toBe(true);
+    const messages = await messagesResponse.json() as Array<{
+      id: string;
+      role: string;
+      body: string;
+      structuredPayload: {
+        inlineAnnotations?: Array<Record<string, unknown>>;
+        __chatTranscript?: unknown;
+      } | null;
+    }>;
+    const sourceMessage = messages.find((message) => message.id === seeded.assistantMessageId);
+    expect(sourceMessage?.structuredPayload ?? {}).not.toHaveProperty("__chatTranscript");
+    const submittedMessage = messages.find((message) => (
+      message.role === "user" && message.body === submittedBody
+    ));
+    expect(submittedMessage?.structuredPayload?.inlineAnnotations).toEqual([
+      expect.objectContaining({
+        surface: "agent_run_transcript",
+        sourceRunId: seeded.runId,
+        sourceAgentId: seeded.agent.id,
+        sourceEntryId,
+        sourceMemberIds: [sourceEntryId],
+        selectedText: NATIVE_REASONING_TEXT,
+        comment: "Keep this thinking evidence tied to the native Reader source.",
+      }),
+    ]);
+
+    const unavailableSourceEntryId = randomUUID();
+    const invalidMutation = {
+      kind: "json" as const,
+      body: JSON.stringify({
+        ...submittedMutation,
+        clientMutationId: randomUUID(),
+        inlineAnnotations: submittedMutation.inlineAnnotations!.map((annotation) => ({
+          ...annotation,
+          sourceEntryId: unavailableSourceEntryId,
+          sourceMemberIds: [unavailableSourceEntryId],
+        })),
+      }),
+    };
+    const rejectedReplay = await replayCapturedChatMutation(page, messagesPath, invalidMutation);
+    expect(rejectedReplay.status, rejectedReplay.body).toBe(422);
+
+    const messagesAfterRejectResponse = await page.request.get(
+      `/api/chats/${seeded.conversationId}/messages?includeTranscript=true`,
+    );
+    expect(messagesAfterRejectResponse.ok(), await messagesAfterRejectResponse.text()).toBe(true);
+    const messagesAfterReject = await messagesAfterRejectResponse.json() as typeof messages;
+    expect(messagesAfterReject.filter((message) => (
+      message.role === "user" && message.body === submittedBody
+    ))).toHaveLength(1);
+  });
+
   test("keeps a real pointer selection visibly active after async anchor recovery", async ({ page }, testInfo) => {
     const seeded = await seedAnnotationChat(page, `Response-Selection-Stability-${Date.now()}`);
     const finalSource = annotationSource(page, {
@@ -1312,7 +1723,7 @@ test.describe("Chat response annotations", () => {
     await secondMarker.click();
     const editor = page.getByTestId("chat-response-annotation-editor");
     await expect(editor).toBeVisible();
-    await expect(editor).not.toContainText("Selected text:");
+    await expect(editor).not.toContainText("Selected excerpt");
     await expect(editor).not.toContainText("skill-creato");
     await expect(editor).not.toContainText("Rudder docs");
     await expect(page.getByTestId("chat-response-annotation-card")).toHaveCount(0);
@@ -1760,9 +2171,409 @@ test.describe("Chat response annotations", () => {
     await expect(page.getByTestId("chat-response-annotation-pending-attachment")).toHaveCount(0);
   });
 
+  test("persists a proven pre-generation failure and retries its annotated input exactly once", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    const runtime = await createBlockingCountingChatRuntime(testInfo.outputDir);
+    const savedInput = "Keep this saved input and its evidence through one retry";
+    const annotationComment = "Preserve this source note and attached evidence.";
+    const seeded = await seedAnnotationChat(page, `Pre-Generation-Retry-${Date.now()}`, {
+      runtimeCommand: runtime.scriptPath,
+    });
+    let removeFailureTrigger: (() => Promise<void>) | null = null;
+    let syntheticActiveGenerationId: string | null = null;
+    try {
+      const finalSource = annotationSource(page, {
+        messageId: seeded.assistantMessageId,
+        surface: "assistant_body",
+      });
+      await selectVisibleText(page, finalSource, "Rudder docs");
+      await addSelectionToChat(page);
+      await editAnnotation(page, 1, {
+        comment: annotationComment,
+        files: [{
+          name: "pre-generation-retry-evidence.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("Keep this exact attached evidence."),
+        }],
+      });
+      await composer(page).fill(savedInput);
+      removeFailureTrigger = await failFirstChatUserActivityWrite(
+        seeded.organization.id,
+        seeded.conversationId,
+      );
+
+      const initialGenerations = await e2eDb
+        .select({ id: chatGenerations.id })
+        .from(chatGenerations)
+        .where(eq(chatGenerations.conversationId, seeded.conversationId));
+      expect(initialGenerations.map(({ id }) => id)).toEqual([seeded.generationId]);
+
+      const messagesPath = `/api/chats/${seeded.conversationId}/messages/stream`;
+      await installChatMutationCapture(page, messagesPath);
+      const originalRequestPromise = page.waitForRequest((request) => (
+        request.method() === "POST" && new URL(request.url()).pathname === messagesPath
+      ));
+      await page.getByRole("button", { name: "Send" }).click();
+      const originalRequest = await originalRequestPromise;
+      const initialFailure = page.getByTestId("chat-assistant-message").filter({
+        hasText: "Your input was saved, but the reply did not start.",
+      });
+      await expect(initialFailure).toBeVisible({ timeout: 20_000 });
+      const originalResponse = await originalRequest.response();
+      expect(originalResponse?.status()).toBe(201);
+      const originalContentType = (await originalRequest.allHeaders())["content-type"];
+      const originalMutationCaptures = await readChatMutationCaptures(page);
+      const originalMutation = originalMutationCaptures[0];
+      if (originalMutationCaptures.length !== 1 || originalMutation?.kind !== "multipart") {
+        throw new Error("Expected one captured original multipart chat mutation for replay");
+      }
+      expect(originalContentType).toContain("multipart/form-data");
+
+      const firstMessagesResponse = await page.request.get(
+        `/api/chats/${seeded.conversationId}/messages?includeTranscript=true`,
+      );
+      expect(firstMessagesResponse.ok(), await firstMessagesResponse.text()).toBe(true);
+      const firstMessages = await firstMessagesResponse.json() as Array<{
+        id: string;
+        role: string;
+        status: string;
+        body: string;
+        chatTurnId: string | null;
+        turnVariant: number;
+        runId: string | null;
+        supersededAt: string | null;
+        structuredPayload: {
+          inlineAnnotations?: Array<{
+            id: string;
+            sourceMessageId: string;
+            attachmentIds: string[];
+            comment: string | null;
+          }>;
+          recoverableFailure?: {
+            code?: string;
+            phase?: string;
+            runId?: string | null;
+            dispatchEvidence?: Record<string, unknown>;
+          };
+        } | null;
+        attachments: Array<{ id: string; originalFilename: string | null }>;
+      }>;
+      const originalUser = firstMessages.find((message) => (
+        message.role === "user" && message.body === savedInput
+      ));
+      const preGenerationFailure = firstMessages.find((message) => (
+        message.role === "assistant"
+        && message.status === "failed"
+        && message.body === "Your input was saved, but the reply did not start."
+      ));
+      expect(originalUser).toBeTruthy();
+      expect(preGenerationFailure).toMatchObject({
+        runId: null,
+        chatTurnId: originalUser!.chatTurnId,
+        turnVariant: originalUser!.turnVariant,
+        structuredPayload: {
+          recoverableFailure: {
+            code: "chat_input_persisted_reply_not_started",
+            phase: "pre_generation",
+            runId: null,
+            dispatchEvidence: {
+              originalDispatch: "not_started",
+              orgId: seeded.organization.id,
+              conversationId: seeded.conversationId,
+              userMessageId: originalUser!.id,
+              chatTurnId: originalUser!.chatTurnId,
+              turnVariant: originalUser!.turnVariant,
+            },
+          },
+        },
+      });
+      const originalAnnotation = originalUser?.structuredPayload?.inlineAnnotations?.[0];
+      expect(originalAnnotation).toMatchObject({
+        sourceMessageId: seeded.assistantMessageId,
+        comment: annotationComment,
+        attachmentIds: [expect.any(String)],
+      });
+      expect(originalUser?.attachments.map(({ originalFilename }) => originalFilename))
+        .toContain("pre-generation-retry-evidence.txt");
+
+      const [originalUserRow] = await e2eDb
+        .select({
+          id: chatMessages.id,
+          chatTurnId: chatMessages.chatTurnId,
+          turnVariant: chatMessages.turnVariant,
+          clientMutationId: chatMessages.clientMutationId,
+        })
+        .from(chatMessages)
+        .where(eq(chatMessages.id, originalUser!.id));
+      expect(originalUserRow?.clientMutationId).toBeTruthy();
+      expect(await readFile(runtime.invocationPath, "utf8")).toBe("");
+      const afterPreGenerationFailure = await e2eDb
+        .select({ id: chatGenerations.id })
+        .from(chatGenerations)
+        .where(eq(chatGenerations.conversationId, seeded.conversationId));
+      expect(afterPreGenerationFailure.map(({ id }) => id)).toEqual([seeded.generationId]);
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      const persistedFailure = page.getByTestId("chat-assistant-message").filter({
+        hasText: "Your input was saved, but the reply did not start.",
+      });
+      await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: savedInput }))
+        .toHaveCount(1);
+      await expect(persistedFailure.getByRole("button", { name: "Retry" })).toBeVisible();
+      const persistedTurn = page
+        .getByTestId("chat-user-message-turn")
+        .filter({ hasText: savedInput })
+        .last();
+      await expect(persistedTurn.getByRole("button", { name: "Show 1 annotation" }))
+        .toBeVisible();
+      const persistedAnnotationCard = await expandSentAnnotations(page, persistedTurn, 1);
+      await expect(persistedAnnotationCard).toContainText(annotationComment);
+      await expect(persistedAnnotationCard.getByText("pre-generation-retry-evidence.txt"))
+        .toBeVisible();
+      await page.keyboard.press("Escape");
+
+      syntheticActiveGenerationId = randomUUID();
+      await e2eDb.insert(chatGenerations).values({
+        id: syntheticActiveGenerationId,
+        orgId: seeded.organization.id,
+        conversationId: seeded.conversationId,
+        status: "running",
+      });
+      const activeRetry = await page.request.post(messagesPath, {
+        data: {
+          body: savedInput,
+          editUserMessageId: originalUser!.id,
+          clientMutationId: randomUUID(),
+          modelOverride: null,
+          effortOverride: null,
+        },
+      });
+      expect(activeRetry.status()).toBe(409);
+      expect(await activeRetry.json()).toMatchObject({
+        details: { code: "chat_retry_generation_active" },
+      });
+      await e2eDb.delete(chatGenerations)
+        .where(eq(chatGenerations.id, syntheticActiveGenerationId));
+      syntheticActiveGenerationId = null;
+
+      const originalMutationReplay = await replayCapturedChatMutation(page, messagesPath, originalMutation);
+      expect(originalMutationReplay.status).toBe(200);
+      const replayEvents = originalMutationReplay.body
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line) as { type: string; messages?: unknown[] });
+      expect(replayEvents.map(({ type }) => type)).toEqual(["ack", "final"]);
+      expect(replayEvents[1]).toMatchObject({ type: "final", messages: [] });
+      expect(await readFile(runtime.invocationPath, "utf8")).toBe("");
+
+      await installChatMutationCapture(page, messagesPath);
+      const retryRequestPromise = page.waitForRequest((request) => (
+        request.method() === "POST" && new URL(request.url()).pathname === messagesPath
+      ));
+      await persistedFailure.getByRole("button", { name: "Retry" }).click();
+      const retryRequest = await retryRequestPromise;
+      const retryContentType = (await retryRequest.allHeaders())["content-type"];
+      const retryMutationCaptures = await readChatMutationCaptures(page);
+      const retryMutation = retryMutationCaptures[0];
+      if (retryMutationCaptures.length !== 1 || !retryMutation || !retryContentType) {
+        throw new Error("Expected one captured intentional Retry mutation for at-most-once replay");
+      }
+      await expect.poll(async () => (
+        (await readFile(runtime.invocationPath, "utf8")).trim().split(/\r?\n/).filter(Boolean)
+      ), { timeout: 20_000 }).toHaveLength(1);
+
+      const variantsWhileRetryRuns = await e2eDb
+        .select({
+          id: chatMessages.id,
+          body: chatMessages.body,
+          chatTurnId: chatMessages.chatTurnId,
+          turnVariant: chatMessages.turnVariant,
+          clientMutationId: chatMessages.clientMutationId,
+          supersededAt: chatMessages.supersededAt,
+        })
+        .from(chatMessages)
+        .where(and(
+          eq(chatMessages.orgId, seeded.organization.id),
+          eq(chatMessages.conversationId, seeded.conversationId),
+          eq(chatMessages.role, "user"),
+          eq(chatMessages.chatTurnId, originalUser!.chatTurnId!),
+        ));
+      expect(variantsWhileRetryRuns).toHaveLength(2);
+      const retryVariant = variantsWhileRetryRuns.find(({ id }) => id !== originalUser!.id);
+      expect(retryVariant).toMatchObject({
+        body: savedInput,
+        chatTurnId: originalUser!.chatTurnId,
+        turnVariant: originalUser!.turnVariant + 1,
+        clientMutationId: expect.any(String),
+        supersededAt: null,
+      });
+      expect(retryVariant?.clientMutationId).not.toBe(originalUserRow!.clientMutationId);
+      expect(variantsWhileRetryRuns.find(({ id }) => id === originalUser!.id)?.supersededAt)
+        .toBeTruthy();
+
+      const generationsWhileRetryRuns = await e2eDb
+        .select({ id: chatGenerations.id })
+        .from(chatGenerations)
+        .where(eq(chatGenerations.conversationId, seeded.conversationId));
+      expect(generationsWhileRetryRuns).toHaveLength(2);
+      expect(generationsWhileRetryRuns.map(({ id }) => id)).toContain(seeded.generationId);
+
+      const concurrentRetry = await page.request.post(messagesPath, {
+        data: {
+          body: savedInput,
+          editUserMessageId: retryVariant!.id,
+          clientMutationId: randomUUID(),
+          modelOverride: null,
+          effortOverride: null,
+        },
+      });
+      expect(concurrentRetry.status()).toBe(409);
+      const afterConcurrentRetry = await e2eDb
+        .select({ id: chatGenerations.id })
+        .from(chatGenerations)
+        .where(eq(chatGenerations.conversationId, seeded.conversationId));
+      expect(afterConcurrentRetry).toHaveLength(2);
+      expect((await readFile(runtime.invocationPath, "utf8")).trim().split(/\r?\n/).filter(Boolean))
+        .toHaveLength(1);
+
+      await writeFile(runtime.releasePath, "release provider\n", "utf8");
+      await expect(
+        page.getByTestId("chat-assistant-message").filter({
+          hasText: "Initial App Server reply (marker-false)",
+        }).last(),
+      ).toBeVisible({ timeout: 60_000 });
+      const retriedTurn = page
+        .getByTestId("chat-user-message-turn")
+        .filter({ hasText: savedInput })
+        .last();
+      await expect(retriedTurn.getByRole("button", { name: "Show 1 annotation" }))
+        .toBeVisible();
+      const retriedAnnotationCard = await expandSentAnnotations(page, retriedTurn, 1);
+      await expect(retriedAnnotationCard).toContainText(annotationComment);
+      await expect(retriedAnnotationCard.getByText("pre-generation-retry-evidence.txt"))
+        .toBeVisible();
+      await page.keyboard.press("Escape");
+
+      const retryMutationReplay = await replayCapturedChatMutation(page, messagesPath, retryMutation);
+      expect(retryMutationReplay.status).toBe(200);
+      const retryReplayEvents = retryMutationReplay.body
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line) as { type: string; messages?: unknown[] });
+      expect(retryReplayEvents.map(({ type }) => type)).toEqual(["ack", "final"]);
+      expect(retryReplayEvents[1]).toMatchObject({ type: "final", messages: [] });
+
+      const staleRetry = await page.request.post(messagesPath, {
+        data: {
+          body: savedInput,
+          editUserMessageId: originalUser!.id,
+          clientMutationId: randomUUID(),
+          modelOverride: null,
+          effortOverride: null,
+        },
+      });
+      expect(staleRetry.status()).toBe(409);
+      expect(await staleRetry.json()).toMatchObject({
+        details: { code: "chat_retry_source_not_current" },
+      });
+
+      const finalMessagesResponse = await page.request.get(
+        `/api/chats/${seeded.conversationId}/messages?includeTranscript=true`,
+      );
+      expect(finalMessagesResponse.ok(), await finalMessagesResponse.text()).toBe(true);
+      const finalMessages = await finalMessagesResponse.json() as typeof firstMessages;
+      const finalVariants = finalMessages.filter((message) => (
+        message.role === "user"
+        && message.chatTurnId === originalUser!.chatTurnId
+        && message.body === savedInput
+      ));
+      expect(finalVariants).toHaveLength(2);
+      const finalRetryVariant = finalVariants.find(({ id }) => id !== originalUser!.id);
+      expect(finalRetryVariant?.structuredPayload?.inlineAnnotations?.[0]).toMatchObject({
+        sourceMessageId: seeded.assistantMessageId,
+        comment: annotationComment,
+        attachmentIds: [expect.any(String)],
+      });
+      expect(finalRetryVariant?.attachments.map(({ originalFilename }) => originalFilename))
+        .toContain("pre-generation-retry-evidence.txt");
+      const finalGenerations = await e2eDb
+        .select({ id: chatGenerations.id })
+        .from(chatGenerations)
+        .where(eq(chatGenerations.conversationId, seeded.conversationId));
+      expect(finalGenerations).toHaveLength(2);
+      expect((await readFile(runtime.invocationPath, "utf8")).trim().split(/\r?\n/).filter(Boolean))
+        .toHaveLength(1);
+    } finally {
+      await writeFile(runtime.releasePath, "release provider\n", "utf8");
+      if (syntheticActiveGenerationId) {
+        await e2eDb.delete(chatGenerations)
+          .where(eq(chatGenerations.id, syntheticActiveGenerationId));
+      }
+      await removeFailureTrigger?.();
+    }
+  });
+
   test("keeps immutable annotations through message edit and remaps their source and files in a UI Fork", async ({ page }) => {
     test.setTimeout(120_000);
-    const seeded = await seedAnnotationChat(page, `Response-Annotation-Edit-Fork-${Date.now()}`);
+    const seeded = await seedAnnotationChat(page, `Response-Annotation-Edit-Fork-${Date.now()}`, {
+      runtimeCommand: join(E2E_ROOT, "fixtures", "codex-native-session.mjs"),
+      runtimeReplyBody: "Streaming reply for chat.",
+    });
+    const streamPath = `/api/chats/${seeded.conversationId}/messages/stream`;
+    const waitForTurnResponse = (body: string, editUserMessageId: string) => page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && new URL(response.url()).pathname === streamPath
+      && response.request().postDataJSON()?.body === body
+      && response.request().postDataJSON()?.editUserMessageId === editUserMessageId
+    ));
+    async function completedPublicTurn(response: Response, body: string): Promise<{ user: ChatMessage; assistant: ChatMessage }> {
+      expect(response.status()).toBe(201);
+      const events = (await response.text()).trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+        type: string; generationId?: string; userMessage?: ChatMessage;
+      }>;
+      expect(events.filter((event) => event.type === "error")).toEqual([]);
+      expect(events.filter((event) => event.type === "ack")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "final")).toHaveLength(1);
+      const ack = events.find((event) => event.type === "ack")!;
+      expect(ack.generationId).toEqual(expect.any(String));
+      expect(ack.userMessage).toMatchObject({
+        orgId: seeded.organization.id, conversationId: seeded.conversationId, role: "user", body,
+      });
+      let completed: { user: ChatMessage; assistant: ChatMessage } | null = null;
+      await expect.poll(async () => {
+        const messagesResponse = await page.request.get(`/api/chats/${seeded.conversationId}/messages`);
+        expect(messagesResponse.ok(), await messagesResponse.text()).toBe(true);
+        const messages = await messagesResponse.json() as ChatMessage[];
+        const user = messages.find((message) => message.id === ack.userMessage!.id && message.body === body);
+        const assistant = user && messages.find((message) => (
+          message.role === "assistant" && message.status === "completed"
+          && message.body === "Streaming reply for chat."
+          && message.chatTurnId === user.chatTurnId && message.turnVariant === user.turnVariant
+          && message.generationId === ack.generationId && message.runId
+        ));
+        if (!user || !assistant) return false;
+        const [generation] = await e2eDb.select().from(chatGenerations).where(and(
+          eq(chatGenerations.orgId, seeded.organization.id),
+          eq(chatGenerations.conversationId, seeded.conversationId),
+          eq(chatGenerations.id, ack.generationId!),
+        ));
+        const [run] = await e2eDb.select().from(heartbeatRuns).where(and(
+          eq(heartbeatRuns.orgId, seeded.organization.id),
+          eq(heartbeatRuns.chatConversationId, seeded.conversationId),
+          eq(heartbeatRuns.id, assistant.runId!),
+        ));
+        const queueResponse = await page.request.get(`/api/chats/${seeded.conversationId}/queue`);
+        expect(queueResponse.ok(), await queueResponse.text()).toBe(true);
+        const queue = await queueResponse.json() as { activeGenerationId: string | null };
+        if (generation?.status !== "completed" || !generation.runtimeTerminalAt || !generation.completedAt
+          || run?.status !== "succeeded" || !run.finishedAt || run.terminalEffectsPending
+          || queue.activeGenerationId !== null) return false;
+        completed = { user, assistant };
+        return true;
+      }, { timeout: 20_000 }).toBe(true);
+      await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0);
+      return completed!;
+    }
     const finalSource = annotationSource(page, {
       messageId: seeded.assistantMessageId,
       surface: "assistant_body",
@@ -1834,7 +2645,9 @@ test.describe("Chat response annotations", () => {
     );
     await expect(failedReply.getByRole("button", { name: "Retry" }))
       .toBeVisible({ timeout: 15_000 });
+    const retryResponse = waitForTurnResponse("Original annotated edit body", originalAnnotatedMessage!.id);
     await failedReply.getByRole("button", { name: "Retry" }).click();
+    const retry = await completedPublicTurn(await retryResponse, "Original annotated edit body");
 
     const retriedTurn = page
       .getByTestId("chat-user-message-turn")
@@ -1858,7 +2671,15 @@ test.describe("Chat response annotations", () => {
     await inlineEditor
       .locator(".rudder-mdxeditor-content")
       .fill("Edited annotated edit body");
+    const editResponse = waitForTurnResponse("Edited annotated edit body", retry.user.id);
     await inlineEditor.getByRole("button", { name: "Send" }).click();
+    const edited = await completedPublicTurn(await editResponse, "Edited annotated edit body");
+    expect(edited.user.id).not.toBe(retry.user.id);
+    expect(edited.user.chatTurnId).toBe(retry.user.chatTurnId);
+    expect(edited.user.turnVariant).toBe(retry.user.turnVariant + 1);
+    expect(edited.assistant.id).not.toBe(retry.assistant.id);
+    expect(edited.assistant.generationId).not.toBe(retry.assistant.generationId);
+    await expect(inlineEditor).toHaveCount(0);
 
     const editedTurn = page
       .getByTestId("chat-user-message-turn")
@@ -1873,18 +2694,21 @@ test.describe("Chat response annotations", () => {
     await expect(editedCard.getByText("edit-fork-annotation.txt")).toBeVisible();
     await page.keyboard.press("Escape");
 
-    const branchAssistant = page
-      .getByTestId("chat-assistant-message")
-      .filter({ hasText: "Streaming reply for chat." })
-      .last();
+    const branchAssistant = page.locator(
+      `[data-testid="chat-assistant-message"][data-message-id="${edited.assistant.id}"]`,
+    );
+    await expect(branchAssistant).toContainText("Streaming reply for chat.");
     await expect(branchAssistant).toBeVisible({ timeout: 20_000 });
     await branchAssistant.hover();
     const forkResponsePromise = page.waitForResponse((response) => (
       response.request().method() === "POST"
       && response.url().includes(`/api/chats/${seeded.conversationId}/fork`)
     ));
-    await branchAssistant.getByRole("button", { name: "Fork from here" }).click();
+    await expect(branchAssistant.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
+    await branchAssistant.getByRole("button", { name: "More message actions" }).filter({ visible: true }).click();
+    await page.getByTestId("chat-fork-more-action").click();
     const forkResponse = await forkResponsePromise;
+    expect(forkResponse.request().postDataJSON()).toMatchObject({ sourceMessageId: edited.assistant.id });
     expect(forkResponse.ok(), await forkResponse.text()).toBe(true);
     const forkedConversation = await forkResponse.json() as { id: string };
     await expect(page).toHaveURL(
@@ -2049,14 +2873,18 @@ test.describe("Chat response annotations", () => {
       .getByTestId("chat-transcript-steer-message")
       .filter({ hasText: "Edited Queue body keeps its annotation" });
     await expect(deliveredTurn).toBeVisible({ timeout: 30_000 });
-    // The native Steer bubble first appears in the live transcript and is then
-    // remounted from persisted history. Assert the immutable card only after
-    // that handoff so the test exercises the stable, refreshable UI.
-    await expect(page.getByRole("button", { name: "Stop streaming" }))
-      .toHaveCount(0, { timeout: 30_000 });
-    const steeredAssistant = page.getByTestId("chat-assistant-message").last();
+    // Native Steer continues the active turn; it need not create a second
+    // assistant bubble. The reply itself must still reach Chat from history.
+    const steeredAssistant = page.getByTestId("chat-assistant-message").filter({
+      hasText: "Native steer applied: Edited Queue body keeps its annotation",
+    });
     await expect(steeredAssistant).toContainText(
-      "User-provided response annotations",
+      "Native steer applied: Edited Queue body keeps its annotation",
+      { timeout: 30_000 },
+    );
+    await expect(steeredAssistant).toContainText(
+      "User-provided annotations:",
+      { timeout: 30_000 },
     );
     await expect(steeredAssistant).toContainText("第一段包含");
     await expect(steeredAssistant).toContainText(
@@ -2065,6 +2893,8 @@ test.describe("Chat response annotations", () => {
     await expect(steeredAssistant).toContainText(
       "Native steer image received: true",
     );
+    await expect(page.getByRole("button", { name: "Stop streaming" }))
+      .toHaveCount(0, { timeout: 30_000 });
     await expect(deliveredTurn).toBeVisible({ timeout: 30_000 });
     await expect(deliveredTurn.getByRole("button", { name: "Show 1 annotation" }))
       .toBeVisible();
@@ -2080,10 +2910,27 @@ test.describe("Chat response annotations", () => {
       .toHaveCount(0);
     await expect(page.getByTestId("chat-running-queue")).toHaveCount(0, { timeout: 30_000 });
 
+    const nativeRuns = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.chatConversationId, seeded.conversationId));
+    expect(nativeRuns).toHaveLength(1);
+    expect(nativeRuns[0]!.status).toBe("succeeded");
+    const transcriptRes = await page.request.get(`/api/run-intelligence/runs/${nativeRuns[0]!.id}/transcript`);
+    expect(transcriptRes.ok(), await transcriptRes.text()).toBe(true);
+    const nativeTranscript = await transcriptRes.json() as {
+      source: string;
+      availability: string;
+      completeness: string;
+      rows: Array<{ kind: string; preview?: string }>;
+    };
+    expect(nativeTranscript).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    expect(nativeTranscript.rows.some((row) => row.kind === "user"
+      && row.preview?.includes("Edited Queue body keeps its annotation"))).toBe(true);
+
     const messagesRes = await page.request.get(`/api/chats/${seeded.conversationId}/messages`);
     expect(messagesRes.ok(), await messagesRes.text()).toBe(true);
     const messages = await messagesRes.json() as Array<{
       role: string;
+      status: string;
       body: string;
       structuredPayload: {
         inlineAnnotations?: Array<{
@@ -2093,6 +2940,9 @@ test.describe("Chat response annotations", () => {
       } | null;
       attachments: Array<{ id: string; originalFilename: string | null }>;
     }>;
+    expect(messages.some((message) => message.role === "assistant"
+      && message.status === "completed"
+      && message.body.includes("Native steer applied: Edited Queue body keeps its annotation"))).toBe(true);
     const deliveredMessage = messages.find((message) => (
       message.role === "user"
       && message.body === "Edited Queue body keeps its annotation"
@@ -2139,7 +2989,7 @@ test.describe("Chat response annotations", () => {
     await provisionalCard.getByRole("button", { name: "Edit annotation 1" }).click();
     const provisionalEditor = page.getByTestId("chat-response-annotation-editor");
     await expect(provisionalEditor).toBeVisible();
-    await expect(provisionalEditor).toContainText("Selected text:");
+    await expect(provisionalEditor).toContainText("Selected excerpt");
     await expect(provisionalEditor).toContainText("Rudder docs");
     await provisionalEditor
       .getByPlaceholder("Add an optional comment…")

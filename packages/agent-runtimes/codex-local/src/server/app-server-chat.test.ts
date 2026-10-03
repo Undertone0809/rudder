@@ -2,6 +2,7 @@ import type {
   AgentRuntimeControlHandle,
   AgentRuntimeControlHandleLease,
 } from "@rudderhq/agent-runtime-utils";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -33,13 +34,32 @@ async function readProtocolRequests(capturePath: string): Promise<Array<Record<s
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-chat-"));
   fakeCodex = path.join(root, "fake-codex.mjs");
-  await fs.writeFile(fakeCodex, `#!/usr/bin/env node
+await fs.writeFile(fakeCodex, `#!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
 import readline from "node:readline";
 
-const threadId = "thread-app-1";
+const threadId = process.env.RUDDER_TEST_THREAD_ID || "thread-app-1";
 const turnId = "turn-app-1";
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+if (process.argv[2] === "app-server" && process.argv[3] === "generate-json-schema") {
+  const outputIndex = process.argv.indexOf("--out");
+  const outputDirectory = outputIndex >= 0 ? process.argv[outputIndex + 1] : null;
+  if (!outputDirectory) process.exit(2);
+  const supportsDeveloperInstructions = process.env.RUDDER_TEST_SCHEMA_SUPPORTS_DEVELOPER_INSTRUCTIONS !== "0";
+  const properties = supportsDeveloperInstructions
+    ? { developerInstructions: { type: ["string", "null"] } }
+    : {};
+  fs.mkdirSync(path.join(outputDirectory, "v2"), { recursive: true });
+  for (const name of ["ThreadStartParams", "ThreadResumeParams"]) {
+    fs.writeFileSync(
+      path.join(outputDirectory, "v2", name + ".json"),
+      JSON.stringify({ properties }),
+      "utf8",
+    );
+  }
+  process.exit(0);
+}
 const commandDirectory = process.env.RUDDER_TEST_COMMAND_WORKDIR
   ? { workdir: process.env.RUDDER_TEST_COMMAND_WORKDIR }
   : process.env.RUDDER_TEST_COMMAND_CWD
@@ -69,10 +89,19 @@ const finish = (status = "completed") => {
     completedAtMs: Date.now(),
     item: { type: "agentMessage", id: "agent-1", text: "Steered reply", phase: null, memoryCitation: null },
   } });
-  send({ method: "turn/completed", params: {
-    threadId,
-    turn: { id: turnId, items: [], itemsView: { type: "full" }, status, error: null, startedAt: 1, completedAt: 2, durationMs: 1 },
-  } });
+  const completedTurn = {
+    id: turnId,
+    items: [],
+    itemsView: { type: "full" },
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1,
+  };
+  if (process.env.RUDDER_TEST_TURN_STATUS_MISSING !== "1") {
+    completedTurn.status = process.env.RUDDER_TEST_TURN_STATUS || status;
+  }
+  send({ method: "turn/completed", params: { threadId, turn: completedTurn } });
 };
 
 if (process.env.RUDDER_TEST_APP_SERVER_STDERR) {
@@ -90,8 +119,18 @@ if (process.env.RUDDER_TEST_APP_SERVER_MIXED_STDERR) {
 }
 
 const rl = readline.createInterface({ input: process.stdin });
+if (process.env.RUDDER_TEST_ARGV_CAPTURE_PATH) {
+  fs.writeFileSync(process.env.RUDDER_TEST_ARGV_CAPTURE_PATH, JSON.stringify(process.argv.slice(2)), "utf8");
+}
 rl.on("line", (line) => {
   const message = JSON.parse(line);
+  if (message.id === "user-input-request-1") {
+    if (process.env.RUDDER_TEST_SERVER_RESPONSE_CAPTURE_PATH) {
+      fs.writeFileSync(process.env.RUDDER_TEST_SERVER_RESPONSE_CAPTURE_PATH, JSON.stringify(message), "utf8");
+    }
+    finish("completed");
+    return;
+  }
   if (
     process.env.RUDDER_TEST_PROTOCOL_CAPTURE_PATH
     && ["thread/start", "thread/resume", "turn/start"].includes(message.method)
@@ -102,13 +141,47 @@ rl.on("line", (line) => {
       "utf8",
     );
   }
+  if (process.env.RUDDER_TEST_EXIT_AFTER_REQUEST === message.method) process.exit(0);
   if (message.method === "initialized") return;
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake", platformFamily: "unix", platformOs: "macos" } });
     return;
   }
   if (message.method === "thread/start" || message.method === "thread/resume") {
-    send({ id: message.id, result: { thread: { id: threadId } } });
+    if (
+      process.env.RUDDER_TEST_MALFORMED_DEVELOPER_INSTRUCTIONS_ERROR === "1"
+      && Object.hasOwn(message.params || {}, "developerInstructions")
+    ) {
+      send({ id: message.id, error: {
+        code: "-32602",
+        message: "Invalid params: unknown field \`developerInstructions\`",
+      } });
+      return;
+    }
+    if (
+      process.env.RUDDER_TEST_REJECT_DEVELOPER_INSTRUCTIONS === "1"
+      && Object.hasOwn(message.params || {}, "developerInstructions")
+    ) {
+      send({ id: message.id, error: {
+        code: -32602,
+        message: "Invalid params: unknown field \`developerInstructions\`",
+      } });
+      return;
+    }
+    if (message.method === "thread/resume" && process.env.RUDDER_TEST_RESUME_MISSING_ROLLOUT === "1") {
+      send({ id: message.id, error: { code: -32000, message: "thread/resume failed: no rollout found for thread id missing-thread" } });
+      return;
+    }
+    send({ id: message.id, result: {
+      thread: {
+        id: threadId,
+        sessionId: "root-session-app-1",
+        forkedFromId: null,
+        model: "gpt-test",
+        modelProvider: "openai",
+        ephemeral: false,
+      },
+    } });
     return;
   }
   if (message.method === "thread/read") {
@@ -145,8 +218,62 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "turn/start") {
+    if (process.env.RUDDER_TEST_TURN_START_NO_ID === "1") {
+      send({ id: message.id, result: { turn: {} } });
+      return;
+    }
+    if (process.env.RUDDER_TEST_TURN_START_BLANK_ID === "1") {
+      send({ id: message.id, result: { turn: { id: " \t " } } });
+      return;
+    }
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_TEST_STALL_TURN === "1") return;
+    if (process.env.RUDDER_TEST_UNICODE_LOAD === "1") {
+      const large = process.env.RUDDER_TEST_UNICODE_LARGE === "1";
+      const output = "汉🙂é".repeat(large ? 16384 : 256);
+      for (let index = 0; index < (large ? 192 : 4); index++) {
+        send({ method: "item/completed", params: { threadId, turnId, item: {
+          type: "commandExecution", id: "unicode-" + index,
+          command: "fixture", cwd: "/fixture/workspace", status: "completed", aggregatedOutput: output, exitCode: 0,
+        } } });
+      }
+      finish("completed");
+      return;
+    }
+    if (process.env.RUDDER_TEST_AUTH_TOOL_OUTPUT === "1") {
+      send({ method: "item/completed", params: { threadId, turnId, item: {
+        type: "commandExecution", id: "auth-output", command: "fixture", status: "completed",
+        aggregatedOutput: "unexpected status 401 Unauthorized API_KEY_REQUIRED", exitCode: 1,
+      } } });
+      finish("completed");
+      return;
+    }
+    if (process.env.RUDDER_TEST_USER_INPUT_REQUEST === "1") {
+      send({
+        id: "user-input-request-1",
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId,
+          turnId,
+          itemId: "question-item-1",
+          questions: [{
+            id: "provider-question-1",
+            header: "Choice",
+            question: "Which option?",
+            isOther: false,
+            isSecret: false,
+            options: [
+              { label: "Alpha", description: "First" },
+              { label: "Beta", description: "Second" },
+            ],
+          }],
+          isBlocking: true,
+          autoResolutionMs: null,
+        },
+      });
+      return;
+    }
     if (process.env.RUDDER_TEST_AUTH_FAILURE === "1") {
       send({ method: "error", params: {
         threadId,
@@ -378,8 +505,9 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "turn/interrupt") {
+    if (process.env.RUDDER_TEST_UNCONFIRMED_INTERRUPT === "1") return;
     send({ id: message.id, result: {} });
-    finish("interrupted");
+    if (process.env.RUDDER_TEST_STALL_TURN !== "1") finish("interrupted");
   }
 });
 process.on("SIGTERM", () => {
@@ -394,7 +522,9 @@ afterEach(async () => {
 });
 
 describe("executeCodexAppServerChat", () => {
-  it("stops an App Server turn when its first provider auth error says it will retry", async () => {
+  it.each(["capture", "omit"] as const)("stops an App Server turn when its first provider auth error says it will retry: %s", async (stdoutCapturePolicy) => {
+    const onProviderAuthFailure = vi.fn();
+    const logs: string[] = [];
     const result = await executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
@@ -402,6 +532,78 @@ describe("executeCodexAppServerChat", () => {
         ...process.env,
         PATH: process.env.PATH ?? "",
         RUDDER_TEST_AUTH_FAILURE: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      stdoutCapturePolicy,
+      onProviderAuthFailure,
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: async (_stream, line) => { logs.push(line); },
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: false,
+      errorMessage: expect.stringContaining("401 Unauthorized"),
+    });
+    expect(logs.join("")).toContain('"type":"error"');
+    expect(logs.join("")).not.toContain('"type":"turn.completed"');
+    expect(result.providerAuthFailure).toBe(true);
+    expect(onProviderAuthFailure).toHaveBeenCalledTimes(1);
+    expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
+  });
+
+  it.each(([
+    ["failed", { RUDDER_TEST_TURN_STATUS: "failed" }, "failed", "accepted"],
+    ["missing", { RUDDER_TEST_TURN_STATUS_MISSING: "1" }, "unknown", "accepted"],
+    ["unrecognized", { RUDDER_TEST_TURN_STATUS: "cancelled" }, "cancelled", "accepted"],
+  ] as const).flatMap(row => (["capture", "omit"] as const).map(policy => [...row, policy] as const)))("fails closed when Codex reports a %s terminal Turn status", async (_kind, statusEnv, status, submissionPhase, stdoutCapturePolicy) => {
+    const logs: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        ...statusEnv,
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      stdoutCapturePolicy,
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: async (_stream, line) => { logs.push(line); },
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: false,
+      errorMessage: `Codex turn ${status}`,
+      submissionPhase,
+    });
+    expect(logs.join("")).toContain('"type":"turn.failed"');
+    expect(logs.join("")).not.toContain('"type":"turn.completed"');
+    expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
+  });
+
+  it("keeps turn/start acceptance indeterminate when its response has no turn id", async () => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_TURN_START_NO_ID: "1",
       } as Record<string, string>,
       prompt: "Inspect the timeline",
       model: "gpt-test",
@@ -416,15 +618,113 @@ describe("executeCodexAppServerChat", () => {
 
     expect(result).toMatchObject({
       exitCode: 1,
-      timedOut: false,
-      errorMessage: expect.stringContaining("401 Unauthorized"),
+      errorMessage: "Codex App Server did not return a turn id",
+      submissionPhase: "indeterminate",
+      providerTurnId: null,
     });
-    expect(result.stdout).toContain('"type":"error"');
-    expect(result.stdout).not.toContain('"type":"turn.completed"');
+  });
+
+  it.each(["thread/start", "turn/start"] as const)(
+    "keeps %s indeterminate when the request was received but the response was lost",
+    async (method) => {
+      const capturePath = path.join(root, "protocol.ndjson");
+      const result = await executeCodexAppServerChat({
+        command: fakeCodex,
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: process.env.PATH ?? "",
+          RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+          RUDDER_TEST_EXIT_AFTER_REQUEST: method,
+        } as Record<string, string>,
+        prompt: "Inspect the timeline",
+        model: "gpt-test",
+        modelReasoningEffort: "high",
+        search: false,
+        bypassApprovalsAndSandbox: true,
+        imagePaths: [],
+        sessionId: null,
+        timeoutSec: 5,
+        onLog: vi.fn(async () => undefined),
+      });
+
+      const requests = await readProtocolRequests(capturePath);
+      expect(requests.map((request) => request.method)).toEqual(
+        method === "thread/start" ? ["thread/start"] : ["thread/start", "turn/start"],
+      );
+      expect(result).toMatchObject({
+        exitCode: 1,
+        submissionPhase: "indeterminate",
+        providerTurnId: null,
+      });
+    },
+  );
+
+  it("keeps a thread/start acknowledgement pre-submission until turn/start dispatch", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stdout" && chunk.includes('"type":"thread.started"')) {
+          throw new Error("local transcript writer failed before turn/start");
+        }
+      }),
+    });
+
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests.map((request) => request.method)).toEqual(["thread/start"]);
+    expect(result).toMatchObject({
+      exitCode: 1,
+      submissionPhase: "pre_submission",
+      providerTurnId: null,
+    });
+  });
+
+  it("does not accept a whitespace-only turn id", async () => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_TURN_START_BLANK_ID: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorMessage: "Codex App Server did not return a turn id",
+      submissionPhase: "indeterminate",
+      providerTurnId: null,
+    });
   });
 
   it("propagates a read-only sandbox to new and resumed threads and their turns", async () => {
     const capturePath = path.join(root, "protocol.ndjson");
+    const argvCapturePath = path.join(root, "argv.json");
     const executeWithSession = (sessionId: string | null) => executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
@@ -433,6 +733,7 @@ describe("executeCodexAppServerChat", () => {
         PATH: process.env.PATH ?? "",
         RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
         RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+        RUDDER_TEST_ARGV_CAPTURE_PATH: argvCapturePath,
       } as Record<string, string>,
       prompt: "Inspect and plan",
       model: "gpt-test",
@@ -446,14 +747,31 @@ describe("executeCodexAppServerChat", () => {
       onLog: vi.fn(async () => undefined),
     });
 
-    await expect(executeWithSession(null)).resolves.toMatchObject({ exitCode: 0, resumed: false });
-    await expect(executeWithSession("thread-app-1")).resolves.toMatchObject({ exitCode: 0, resumed: true });
+    await expect(executeWithSession(null)).resolves.toMatchObject({
+      exitCode: 0,
+      resumed: false,
+      sessionParams: {
+        sessionId: "thread-app-1",
+        threadId: "thread-app-1",
+        rootSessionId: "root-session-app-1",
+        modelProvider: "openai",
+      },
+    });
+    await expect(executeWithSession("thread-app-1")).resolves.toMatchObject({
+      exitCode: 0,
+      resumed: true,
+      sessionParams: { rootSessionId: "root-session-app-1" },
+    });
 
     const requests = await readProtocolRequests(capturePath);
+    expect(JSON.parse(await fs.readFile(argvCapturePath, "utf8"))).toEqual(["app-server", "--stdio"]);
     expect(requests).toEqual([
       expect.objectContaining({
         method: "thread/start",
-        params: expect.objectContaining({ sandbox: "read-only" }),
+        params: expect.objectContaining({
+          sandbox: "read-only",
+          config: { web_search: "disabled" },
+        }),
       }),
       expect.objectContaining({
         method: "turn/start",
@@ -461,13 +779,360 @@ describe("executeCodexAppServerChat", () => {
       }),
       expect.objectContaining({
         method: "thread/resume",
-        params: expect.objectContaining({ sandbox: "read-only" }),
+        params: expect.objectContaining({
+          sandbox: "read-only",
+          config: { web_search: "disabled" },
+        }),
       }),
       expect.objectContaining({
         method: "turn/start",
         params: expect.objectContaining({ sandboxPolicy: { type: "readOnly" } }),
       }),
     ]);
+    expect(requests.filter((request) => request.method === "turn/start").map((request) => (
+      (request.params as Record<string, unknown>).input
+    ))).toEqual([
+      [{ type: "text", text: "Inspect and plan", text_elements: [] }],
+      [{ type: "text", text: "Inspect and plan", text_elements: [] }],
+    ]);
+  });
+
+  it("sends stable instructions through thread settings and only new input through each turn", async () => {
+    const capturePath = path.join(root, "native-chat-prompts.ndjson");
+    const executeTurn = (input: {
+      prompt: string;
+      sessionId: string | null;
+      instructions: string;
+      revision: string;
+      persistedRevision?: string | null;
+      threadId?: string;
+    }) => executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+        RUDDER_TEST_PHASED_AGENT_MESSAGES: "1",
+        ...(input.threadId ? { RUDDER_TEST_THREAD_ID: input.threadId } : {}),
+      } as Record<string, string>,
+      prompt: input.prompt,
+      chatDeveloperInstructions: input.instructions,
+      chatDeveloperInstructionsRevision: input.revision,
+      persistedChatDeveloperInstructionsRevision: input.persistedRevision ?? null,
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: input.sessionId,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    await expect(executeTurn({
+      prompt: "First turn input only",
+      sessionId: null,
+      instructions: "Stable Rudder instructions for source A",
+      revision: "revision-a",
+    })).resolves.toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      resumed: false,
+      chatDeveloperInstructionsRevision: "revision-a",
+    });
+    await expect(executeTurn({
+      prompt: "Second turn input only",
+      sessionId: "thread-app-1",
+      instructions: "Stable Rudder instructions for source A",
+      revision: "revision-a",
+      persistedRevision: "revision-a",
+    })).resolves.toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      resumed: true,
+      chatDeveloperInstructionsRevision: "revision-a",
+    });
+    await expect(executeTurn({
+      prompt: "Recovered turn input only",
+      sessionId: "thread-app-1",
+      instructions: "Stable Rudder instructions for source A",
+      revision: "revision-a",
+    })).resolves.toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      resumed: true,
+      chatDeveloperInstructionsRevision: "revision-a",
+    });
+    await expect(executeTurn({
+      prompt: "New source input only",
+      sessionId: null,
+      instructions: "Stable Rudder instructions for source B",
+      revision: "revision-b",
+      threadId: "thread-app-2",
+    })).resolves.toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      resumed: false,
+      sessionId: "thread-app-2",
+      chatDeveloperInstructionsRevision: "revision-b",
+    });
+
+    const requests = await readProtocolRequests(capturePath);
+    const threadRequests = requests.filter((request) =>
+      request.method === "thread/start" || request.method === "thread/resume",
+    );
+    const turnRequests = requests.filter((request) => request.method === "turn/start");
+    expect(threadRequests.map((request) => request.method)).toEqual([
+      "thread/start",
+      "thread/resume",
+      "thread/resume",
+      "thread/start",
+    ]);
+    expect(threadRequests[0]?.params).toMatchObject({
+      developerInstructions: "Stable Rudder instructions for source A",
+    });
+    expect(threadRequests[1]?.params).not.toHaveProperty("developerInstructions");
+    expect(threadRequests[2]?.params).toMatchObject({
+      developerInstructions: "Stable Rudder instructions for source A",
+    });
+    expect(threadRequests[3]?.params).toMatchObject({
+      developerInstructions: "Stable Rudder instructions for source B",
+    });
+    expect(threadRequests[3]?.params).not.toHaveProperty("threadId");
+    expect(turnRequests.map((request) => (request.params as Record<string, unknown>).input)).toEqual([
+      [{ type: "text", text: "First turn input only", text_elements: [] }],
+      [{ type: "text", text: "Second turn input only", text_elements: [] }],
+      [{ type: "text", text: "Recovered turn input only", text_elements: [] }],
+      [{ type: "text", text: "New source input only", text_elements: [] }],
+    ]);
+    expect(turnRequests.every((request) => (
+      !Object.hasOwn(request.params as Record<string, unknown>, "developerInstructions")
+    ))).toBe(true);
+  });
+
+  it("falls back to stable turn instructions when the installed schema lacks thread developerInstructions", async () => {
+    const capturePath = path.join(root, "legacy-native-chat-prompts.ndjson");
+    const executeTurn = (sessionId: string | null, persistedRevision?: string | null) => executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_SCHEMA_SUPPORTS_DEVELOPER_INSTRUCTIONS: "0",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: sessionId ? "Recovered new input only" : "First new input only",
+      chatDeveloperInstructions: "Stable Rudder instructions for a legacy thread",
+      chatDeveloperInstructionsRevision: "legacy-revision",
+      persistedChatDeveloperInstructionsRevision: persistedRevision ?? null,
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    await expect(executeTurn(null)).resolves.toMatchObject({
+      exitCode: 0,
+      chatDeveloperInstructionsRevision: null,
+    });
+    await expect(executeTurn("thread-app-1", "legacy-revision")).resolves.toMatchObject({
+      exitCode: 0,
+      resumed: true,
+      chatDeveloperInstructionsRevision: null,
+    });
+
+    const requests = await readProtocolRequests(capturePath);
+    const threadRequests = requests.filter((request) =>
+      request.method === "thread/start" || request.method === "thread/resume",
+    );
+    const turnRequests = requests.filter((request) => request.method === "turn/start");
+    expect(threadRequests.map((request) => request.method)).toEqual(["thread/start", "thread/resume"]);
+    expect(threadRequests.every((request) => (
+      !Object.hasOwn(request.params as Record<string, unknown>, "developerInstructions")
+    ))).toBe(true);
+    expect(turnRequests.map((request) => (request.params as Record<string, unknown>).input)).toEqual([
+      [{
+        type: "text",
+        text: "Stable Rudder instructions for a legacy thread\n\nFirst new input only",
+        text_elements: [],
+      }],
+      [{
+        type: "text",
+        text: "Stable Rudder instructions for a legacy thread\n\nRecovered new input only",
+        text_elements: [],
+      }],
+    ]);
+  });
+
+  it("retries an explicitly rejected resume field with instructions in turn input", async () => {
+    const capturePath = path.join(root, "rejected-native-chat-prompts.ndjson");
+    const onLog = vi.fn(async () => undefined);
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_REJECT_DEVELOPER_INSTRUCTIONS: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Resume with new input only",
+      chatDeveloperInstructions: "Stable Rudder instructions for rejected resume",
+      chatDeveloperInstructionsRevision: "resume-revision",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: "thread-app-1",
+      timeoutSec: 5,
+      onLog,
+    });
+
+    expect(result.errorMessage).toBeNull();
+    expect(result).toMatchObject({
+      exitCode: 0,
+      resumed: true,
+      chatDeveloperInstructionsRevision: null,
+    });
+    const requests = await readProtocolRequests(capturePath);
+    const threadRequests = requests.filter((request) => request.method === "thread/resume");
+    const turnRequest = requests.find((request) => request.method === "turn/start");
+    expect(threadRequests).toHaveLength(2);
+    expect(threadRequests[0]?.params).toMatchObject({
+      developerInstructions: "Stable Rudder instructions for rejected resume",
+    });
+    expect(threadRequests[1]?.params).not.toHaveProperty("developerInstructions");
+    expect(turnRequest?.params).toMatchObject({
+      input: [{
+        type: "text",
+        text: "Stable Rudder instructions for rejected resume\n\nResume with new input only",
+        text_elements: [],
+      }],
+    });
+    expect(onLog).toHaveBeenCalledWith(
+      "stderr",
+      expect.stringContaining("stable chat instructions are included in turn input"),
+    );
+  });
+
+  it("does not resend thread/start after a malformed field-error response", async () => {
+    const capturePath = path.join(root, "malformed-thread-start.ndjson");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_MALFORMED_DEVELOPER_INSTRUCTIONS_ERROR: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Do not duplicate this turn",
+      chatDeveloperInstructions: "Stable Rudder instructions",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect((await readProtocolRequests(capturePath)).map((request) => request.method)).toEqual(["thread/start"]);
+    expect(result).toMatchObject({ exitCode: 1, submissionPhase: "indeterminate", providerTurnId: null });
+  });
+
+  it.each(["capture", "omit"] as const)("does not silently start a new thread when resume reports a missing rollout: %s", async (stdoutCapturePolicy) => {
+    const capturePath = path.join(root, "missing-rollout.ndjson");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_RESUME_MISSING_ROLLOUT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Continue the existing conversation",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: "missing-thread",
+      stdoutCapturePolicy,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorMessage: expect.stringContaining("no rollout found"),
+      sessionId: "missing-thread",
+      resumed: false,
+      clearSession: false,
+    });
+    expect(await readProtocolRequests(capturePath)).toEqual([
+      expect.objectContaining({ method: "thread/resume" }),
+    ]);
+  });
+
+  it("round-trips native user input over the App Server client", async () => {
+    const responsePath = path.join(root, "user-input-response.json");
+    const requestApproval = vi.fn(async () => ({ id: "rudder-approval-1", status: "pending" as const }));
+    const waitForApproval = vi.fn(async () => ({
+      id: "rudder-approval-1",
+      status: "approved" as const,
+      inputResponse: {
+        answers: [{ questionId: "codex_q1", optionIds: ["codex_q1_o2"] }],
+      },
+    }));
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_USER_INPUT_REQUEST: "1",
+        RUDDER_TEST_SERVER_RESPONSE_CAPTURE_PATH: responsePath,
+      } as Record<string, string>,
+      prompt: "Choose an option",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+      requestApproval,
+      waitForApproval,
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, sessionId: "thread-app-1", providerTurnId: "turn-app-1" });
+    expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
+    expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+      inputRequest: expect.objectContaining({ questions: [expect.objectContaining({ id: "codex_q1" })] }),
+      payload: expect.objectContaining({ sessionId: "thread-app-1", turnId: "turn-app-1" }),
+    }));
+    expect(JSON.parse(await fs.readFile(responsePath, "utf8"))).toEqual({
+      id: "user-input-request-1",
+      result: { answers: { "provider-question-1": { answers: ["Beta"] } } },
+    });
+    expect(waitForApproval).toHaveBeenCalledWith("rudder-approval-1", 30 * 60_000);
   });
 
   it("keeps danger-full-access precedence over a structured read-only sandbox", async () => {
@@ -1329,14 +1994,107 @@ describe("executeCodexAppServerChat", () => {
     expect(thinkingText).toBe("Inspect the state.\nApply the fix.");
   });
 
-  it("uses native interrupt before process termination when Stop aborts the turn", async () => {
+  it.each([undefined, "capture", "omit"] as const)("preserves auth signal and full onLog with policy %s", async (stdoutCapturePolicy) => {
+    const logs: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex, cwd: root,
+      env: { ...process.env, PATH: process.env.PATH ?? "", RUDDER_TEST_AUTH_TOOL_OUTPUT: "1" } as Record<string, string>,
+      prompt: "Fixture", model: "gpt-test", modelReasoningEffort: "high", search: false,
+      bypassApprovalsAndSandbox: true, imagePaths: [], sessionId: null, timeoutSec: 5,
+      stdoutCapturePolicy, onLog: async (_stream, line) => { logs.push(line); },
+    });
+    expect(result.providerAuthFailure).toBe(true);
+    expect(logs.join("")).toContain("API_KEY_REQUIRED");
+    expect(result.summary).toBe("Steered reply");
+    expect(result.providerTurnId).toBe("turn-app-1");
+    expect(result.sessionId).toBe("thread-app-1");
+    expect(result.usage).toEqual({ inputTokens: 4, cachedInputTokens: 1, outputTokens: 5 });
+    expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
+  });
+
+  it("preserves bounded Unicode onLog and results with capture versus omit", async () => {
+    const run = async (stdoutCapturePolicy: "capture" | "omit") => {
+      const logs: string[] = [];
+      const result = await executeCodexAppServerChat({
+        command: fakeCodex, cwd: root,
+        env: { ...process.env, PATH: process.env.PATH ?? "",
+          RUDDER_TEST_UNICODE_LOAD: "1", RUDDER_TEST_UNICODE_LARGE: "0" } as Record<string, string>,
+        prompt: "Fixture", model: "gpt-test", modelReasoningEffort: "high", search: false,
+        bypassApprovalsAndSandbox: true, imagePaths: [], sessionId: "thread-app-1", timeoutSec: 5,
+        stdoutCapturePolicy,
+        onLog: async (stream, line) => { if (stream === "stdout") logs.push(line); },
+      });
+      return { result, logs };
+    };
+    const captured = await run("capture");
+    const omitted = await run("omit");
+    expect(omitted.logs).toEqual(captured.logs);
+    expect(captured.logs.filter(line => line.includes('"command_execution"'))).toHaveLength(4);
+    expect(captured.result.stdout).toBe(captured.logs.join(""));
+    expect(Buffer.byteLength(captured.result.stdout)).toBeGreaterThan(captured.result.stdout.length);
+    expect(Buffer.byteLength(captured.result.stdout)).toBeLessThan(32 * 1024);
+    expect(omitted.result.stdout).toBe("");
+    expect({ ...omitted.result, stdout: "" }).toEqual({ ...captured.result, stdout: "" });
+    expect(omitted.result).toMatchObject({
+      exitCode: 0, summary: "Steered reply", sessionId: "thread-app-1", providerTurnId: "turn-app-1",
+      submissionPhase: "accepted", resumed: true, providerAuthFailure: false,
+      usage: { inputTokens: 4, cachedInputTokens: 1, outputTokens: 5 },
+    });
+  });
+
+  it.skipIf(process.env.RUDDER_STDOUT_BENCH_LARGE !== "1")("compares fixed Unicode stdout workload", async () => {
+    const policy = process.env.RUDDER_STDOUT_BENCH_POLICY === "omit" ? "omit" : "capture";
+    const logHash = createHash("sha256");
+    let logBytes = 0;
+    const initial = process.memoryUsage();
+    let peakHeap = initial.heapUsed;
+    let peakRSS = initial.rss;
+    const started = performance.now();
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex, cwd: root,
+      env: { ...process.env, PATH: process.env.PATH ?? "",
+        RUDDER_TEST_UNICODE_LOAD: "1", RUDDER_TEST_UNICODE_LARGE: "1" } as Record<string, string>,
+      prompt: "Fixture", model: "gpt-test", modelReasoningEffort: "high", search: false,
+      bypassApprovalsAndSandbox: true, imagePaths: [], sessionId: "thread-app-1", timeoutSec: 20,
+      stdoutCapturePolicy: policy,
+      onLog: async (stream, line) => {
+        if (stream !== "stdout") return;
+        logHash.update(line); logBytes += Buffer.byteLength(line);
+        const memory = process.memoryUsage();
+        peakHeap = Math.max(peakHeap, memory.heapUsed); peakRSS = Math.max(peakRSS, memory.rss);
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toBe("Steered reply");
+    expect(result.usage).toEqual({ inputTokens: 4, cachedInputTokens: 1, outputTokens: 5 });
+    expect(result.resumed).toBe(true);
+    expect(result.sessionId).toBe("thread-app-1");
+    expect(result.providerTurnId).toBe("turn-app-1");
+    expect(result.submissionPhase).toBe("accepted");
+    const correctnessSha256 = createHash("sha256").update(JSON.stringify({
+      exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut,
+      errorMessage: result.errorMessage, summary: result.summary, usage: result.usage,
+      sessionId: result.sessionId, providerTurnId: result.providerTurnId,
+      submissionPhase: result.submissionPhase, resumed: result.resumed, clearSession: result.clearSession,
+      chatDeveloperInstructionsRevision: result.chatDeveloperInstructionsRevision,
+      nativeWriterQuiescence: result.nativeWriterQuiescence,
+    })).digest("hex");
+    console.log("STDOUT_UNICODE_METRICS", JSON.stringify({ policy, logBytes, logSha256: logHash.digest("hex"),
+      correctnessSha256,
+      stdoutUTF8Bytes: Buffer.byteLength(result.stdout), initialHeap: initial.heapUsed, initialRSS: initial.rss,
+      peakHeap, peakRSS, elapsedMs: performance.now() - started }));
+  }, 30_000);
+
+  it.each(["capture", "omit"] as const)("uses native interrupt before process termination when Stop aborts the turn: %s", async (stdoutCapturePolicy) => {
     const controller = new AbortController();
+    const logs: string[] = [];
     let handle: AgentRuntimeControlHandle | null = null;
     const execution = executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
       env: { ...process.env, PATH: process.env.PATH ?? "" } as Record<string, string>,
       prompt: "Long request",
+      stdoutCapturePolicy,
       model: "gpt-test",
       modelReasoningEffort: "high",
       search: false,
@@ -1345,7 +2103,7 @@ describe("executeCodexAppServerChat", () => {
       sessionId: null,
       timeoutSec: 5,
       abortSignal: controller.signal,
-      onLog: vi.fn(async () => undefined),
+      onLog: async (_stream, line) => { logs.push(line); },
       controlAttempt: {
         attemptEpoch: 1,
         ownerToken: "owner-1",
@@ -1366,10 +2124,82 @@ describe("executeCodexAppServerChat", () => {
 
     expect(result.signal).toBe("SIGTERM");
     expect(result.timedOut).toBe(false);
-    expect(result.stdout).toContain('"subtype":"interrupted"');
-    expect(result.stdout).not.toContain('"text":"Steered reply"');
+    expect(logs.join("")).toContain('"subtype":"interrupted"');
+    expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
+    expect(logs.join("")).not.toContain('"text":"Steered reply"');
+    expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
     expect(result.summary).toBe("");
   });
+
+  it("requires process-tree exit to confirm Stop even when App Server acknowledges the interrupt", async () => {
+    const run = async (unconfirmedInterrupt: boolean) => {
+      const controller = new AbortController();
+      let handle: AgentRuntimeControlHandle | null = null;
+      let childPid: number | null = null;
+      const execution = executeCodexAppServerChat({
+        command: fakeCodex,
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: process.env.PATH ?? "",
+          RUDDER_TEST_STALL_TURN: "1",
+          RUDDER_TEST_IGNORE_SIGTERM: "1",
+          ...(unconfirmedInterrupt ? { RUDDER_TEST_UNCONFIRMED_INTERRUPT: "1" } : {}),
+        } as Record<string, string>,
+        prompt: "Long request",
+        model: "gpt-test",
+        modelReasoningEffort: "high",
+        search: false,
+        bypassApprovalsAndSandbox: true,
+        imagePaths: [],
+        sessionId: null,
+        timeoutSec: 1,
+        abortSignal: controller.signal,
+        onLog: vi.fn(async () => undefined),
+        onSpawn: async ({ pid }) => {
+          childPid = pid;
+        },
+        controlAttempt: {
+          attemptEpoch: 1,
+          ownerToken: "owner-1",
+          register: vi.fn(async (published) => {
+            handle = published;
+            return { isCurrent: () => true, release: vi.fn(async () => undefined) };
+          }),
+          complete: vi.fn(async () => undefined),
+        },
+      });
+      const activeHandle = await waitFor(() => handle?.providerTurnId ? handle : null);
+      if (!unconfirmedInterrupt) {
+        await expect(activeHandle.interrupt("operator_stop")).resolves.toBe("acknowledged");
+        expect(childPid).not.toBeNull();
+        expect(() => process.kill(childPid!, 0)).not.toThrow();
+      }
+      controller.abort();
+      return { result: await execution, childPid };
+    };
+
+    const acknowledged = await run(false);
+    expect(acknowledged.result).toMatchObject({
+      timedOut: true,
+      nativeWriterQuiescence: process.platform === "win32"
+        ? { status: "unconfirmed" }
+        : { status: "confirmed", source: "process_exit" },
+    });
+    expect(acknowledged.childPid).not.toBeNull();
+    expect(() => process.kill(acknowledged.childPid!, 0)).toThrow();
+    if (process.platform !== "win32") {
+      expect(() => process.kill(-acknowledged.childPid!, 0)).toThrow();
+    }
+
+    const unacknowledged = await run(true);
+    expect(unacknowledged.result).toMatchObject({
+      timedOut: true,
+      nativeWriterQuiescence: process.platform === "win32"
+        ? { status: "unconfirmed" }
+        : { status: "confirmed", source: "process_exit" },
+    });
+  }, 10_000);
 
   it("force-kills an App Server process that ignores graceful shutdown", async () => {
     let handle: AgentRuntimeControlHandle | null = null;
@@ -1417,5 +2247,8 @@ describe("executeCodexAppServerChat", () => {
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_800);
     expect(childPid).not.toBeNull();
     expect(() => process.kill(childPid!, 0)).toThrow();
+    if (process.platform !== "win32") {
+      expect(() => process.kill(-childPid!, 0)).toThrow();
+    }
   }, 10_000);
 });

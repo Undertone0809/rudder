@@ -1,3 +1,4 @@
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import {
   agents,
   applyPendingMigrations,
@@ -7,13 +8,17 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
+  chatMessageTranscriptEntries,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
-  organizationSkills,
+  nativeSegments,
   organizations,
+  organizationSkills,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import {
   buildIssueMentionHref,
@@ -37,6 +42,8 @@ import {
 } from "./chat-inline-annotations.js";
 import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
 import { chatService } from "./chats.js";
+import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
+import { createTranscriptObjectStore } from "./runtime-kernel/transcript-object-store.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -112,6 +119,8 @@ describe("chatInlineAnnotationService", () => {
   let dataDir = "";
   let workspaceHome = "";
   let originalWorkspaceHome: string | undefined;
+  let transcriptObjectDir = "";
+  let previousTranscriptObjectBasePath: string | undefined;
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -122,6 +131,9 @@ describe("chatInlineAnnotationService", () => {
     );
     fs.mkdirSync(workspaceHome, { recursive: true });
     process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+    transcriptObjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-annotation-transcripts-"));
+    previousTranscriptObjectBasePath = process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH;
+    process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = transcriptObjectDir;
     db = createDb(started.connectionString);
     service = chatInlineAnnotationService(db);
     instance = started.instance;
@@ -129,10 +141,14 @@ describe("chatInlineAnnotationService", () => {
   }, 30_000);
 
   afterEach(async () => {
+    await db.delete(runRuntimeSpans);
+    await db.delete(nativeSegments);
+    await db.delete(runtimeBindings);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(chatGenerationEvents);
     await db.delete(chatGenerations);
+    await db.delete(chatMessageTranscriptEntries);
     await db.delete(chatAttachments);
     await db.delete(assets);
     await db.delete(chatMessages);
@@ -156,6 +172,9 @@ describe("chatInlineAnnotationService", () => {
         process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
       }
     }
+    if (previousTranscriptObjectBasePath === undefined) delete process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH;
+    else process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = previousTranscriptObjectBasePath;
+    if (transcriptObjectDir) fs.rmSync(transcriptObjectDir, { recursive: true, force: true });
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -191,6 +210,88 @@ describe("chatInlineAnnotationService", () => {
       supersededAt: input.supersededAt ?? null,
     });
     return { orgId, conversationId, sourceMessageId };
+  }
+
+  async function seedRunReaderTranscript(
+    source: Awaited<ReturnType<typeof seedSource>>,
+    entries: readonly TranscriptEntry[],
+  ) {
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(agents).values({
+      id: agentId,
+      orgId: source.orgId,
+      name: "Reader-backed annotation agent",
+      agentRuntimeType: "process",
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: source.orgId,
+      agentId,
+      status: "succeeded",
+      finishedAt: new Date(),
+      chatConversationId: source.conversationId,
+    });
+
+    const bindingId = randomUUID();
+    const segmentId = randomUUID();
+    const spanId = randomUUID();
+    const ownerToken = randomUUID();
+    const openedAt = new Date("2026-07-23T09:00:00.000Z");
+    const closedAt = new Date("2026-07-23T09:01:00.000Z");
+    await db.insert(runtimeBindings).values({
+      id: bindingId,
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      principalScopeRef: `board:annotation-reader:${runId}`,
+      agentId,
+      runtimeType: "process",
+      continuity: "native",
+      status: "active",
+    });
+    await db.insert(nativeSegments).values({
+      id: segmentId,
+      orgId: source.orgId,
+      bindingId,
+      runtimeType: "process",
+      segmentOrdinal: 0,
+      nativeSessionId: `annotation-reader-${runId}`,
+      rootSessionId: `annotation-reader-${runId}`,
+      state: "sealed",
+      createdAt: openedAt,
+      sealedAt: closedAt,
+      updatedAt: closedAt,
+    });
+    await db.insert(runRuntimeSpans).values({
+      id: spanId,
+      orgId: source.orgId,
+      runId,
+      bindingId,
+      segmentId,
+      attemptRef: `annotation-reader-attempt-${runId}`,
+      attemptEpoch: 1,
+      ownerToken,
+      ordinal: 0,
+      relation: "primary",
+      selectorJson: { kind: "native_execution", runtimeType: "process", runId },
+      state: "sealed",
+      completeness: "complete",
+      openedAt,
+      closedAt,
+      writerLeaseReleasedAt: closedAt,
+      updatedAt: closedAt,
+    });
+    const objectRef = await createTranscriptObjectStore(transcriptObjectDir).write({
+      orgId: source.orgId,
+      runId,
+      spanId,
+      ownerToken,
+      entries,
+    });
+    await db.update(runRuntimeSpans)
+      .set({ supplementalObjectRef: objectRef })
+      .where(eq(runRuntimeSpans.id, spanId));
+    return { agentId, runId };
   }
 
   function assistantAnnotation(
@@ -475,6 +576,121 @@ describe("chatInlineAnnotationService", () => {
     });
   });
 
+  it("enforces Run Intelligence Side Chat ownership for transcript annotations", async () => {
+    const target = await seedSource();
+    const ownerId = "side-chat-annotation-owner";
+    const sideChatId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: sideChatId,
+      orgId: target.orgId,
+      conversationKind: "side_chat",
+      createdByUserId: ownerId,
+      title: "Private source Side Chat",
+    });
+    const run = await seedAgentRunEvidence(target);
+    await db.update(heartbeatRuns).set({
+      chatConversationId: sideChatId,
+      scene: "side_chat",
+      targetType: "chat_conversation",
+      targetId: sideChatId,
+      idempotencyKey: `annotation-test:${run.runId}`,
+      sessionIntentJson: {
+        kind: "fresh",
+        reuseScope: "none",
+        sourceRunId: null,
+        sessionId: null,
+        sessionParams: null,
+      },
+    }).where(eq(heartbeatRuns.id, run.runId));
+    const [firstEvent, secondEvent] = run.events;
+    const annotation: ChatInlineAnnotationInput = {
+      id: randomUUID(),
+      surface: "agent_run_transcript",
+      selectedText: "the docs before shipping.",
+      comment: null,
+      sourceRunId: run.runId,
+      sourceAgentId: run.agentId,
+      anchorKind: "text",
+      sourceEntryId: firstEvent!.id,
+      sourceMemberIds: [firstEvent!.id, secondEvent!.id],
+      sourceHash: sha256("Review the docs before shipping."),
+      attachmentIds: [],
+    };
+
+    await expect(service.prepare({
+      orgId: target.orgId,
+      conversationId: target.conversationId,
+      requesterUserId: ownerId,
+      uploadedFileCount: 0,
+      annotations: [annotation],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({ sourceRunId: run.runId })],
+    });
+
+    await db.update(chatConversations).set({ createdByUserId: "different-owner" })
+      .where(eq(chatConversations.id, sideChatId));
+    await expect(service.prepare({
+      orgId: target.orgId,
+      conversationId: target.conversationId,
+      requesterUserId: ownerId,
+      uploadedFileCount: 0,
+      annotations: [{ ...annotation, id: randomUUID(), sourceAgentId: randomUUID() }],
+    })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("validates Cursor ACP delta text from a persisted object transcript without legacy rows", async () => {
+    const source = await seedSource();
+    const chunks = ["Hello ", "world"].map((text, index) => ({
+      kind: "cursor:acp:agent_message_chunk",
+      ts: "2026-07-23T09:00:00.000Z",
+      text: text.trim(),
+      sourceEntryId: `acp:update:chunk-${index}`,
+      payload: {
+        provider: "cursor_agent", transport: "cursor-agent-acp-stdio",
+        method: "session/update", sessionId: "cursor-annotation-session",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      },
+    }));
+    // The object store accepts the legacy union, while native Reader entries retain provider kinds.
+    const run = await seedRunReaderTranscript(source, chunks as unknown as TranscriptEntry[]);
+    expect(await db.select().from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, source.orgId))).toEqual([]);
+    expect(await db.select().from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, run.runId))).toEqual([]);
+    const annotation: ChatInlineAnnotationInput = {
+      id: randomUUID(), surface: "agent_run_transcript", anchorKind: "text",
+      selectedText: "Hello world", comment: null,
+      sourceRunId: run.runId, sourceAgentId: run.agentId,
+      sourceEntryId: chunks[0]!.sourceEntryId,
+      sourceMemberIds: chunks.map((chunk) => chunk.sourceEntryId),
+      sourceHash: sha256("Hello world"), attachmentIds: [],
+    };
+    await expect(service.prepare({
+      orgId: source.orgId, conversationId: source.conversationId,
+      uploadedFileCount: 0, annotations: [annotation],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({ sourceEntryId: chunks[0]!.sourceEntryId })],
+    });
+    await expect(service.prepare({
+      orgId: source.orgId, conversationId: source.conversationId,
+      uploadedFileCount: 0, annotations: [{ ...annotation, id: randomUUID(), sourceEntryId: "99" }],
+    })).rejects.toThrow("source entry");
+    await expect(service.prepare({
+      orgId: source.orgId, conversationId: source.conversationId,
+      uploadedFileCount: 0, annotations: [{ ...annotation, id: randomUUID(), selectedText: "Hello\nworld" }],
+    })).rejects.toThrow("selected text");
+
+    const nativeSource = await seedSource();
+    const nativeRun = await seedRunReaderTranscript(nativeSource,
+      chunks.map((chunk) => ({ ...chunk, origin: "native" })) as unknown as TranscriptEntry[]);
+    await expect(service.prepare({
+      orgId: nativeSource.orgId, conversationId: nativeSource.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{ ...annotation, id: randomUUID(), sourceRunId: nativeRun.runId,
+        sourceAgentId: nativeRun.agentId }],
+    })).rejects.toThrow("visible Nice Transcript evidence");
+  });
+
   it("rejects a transition whose source entry is hidden even when another member is visible", async () => {
     const source = await seedSource();
     const run = await seedAgentRunEvidence(source);
@@ -592,6 +808,81 @@ describe("chatInlineAnnotationService", () => {
     expect(onTransactionCommitted).toHaveBeenCalledWith(committedUserMessage?.id);
   });
 
+  it("carries top-level Reader transcript items across an edit without a legacy transcript row", async () => {
+    const source = await seedSource({ role: "user", body: "Original question" });
+    const readerEntry = {
+      kind: "user",
+      ts: "2026-07-23T09:00:00.000Z",
+      text: "Reader-backed user event",
+      sourceEntryId: `message:${source.sourceMessageId}:1`,
+      payload: {
+        kind: "assistant",
+        ts: "2026-07-23T08:59:00.000Z",
+        text: "Payload text must not replace Reader text",
+        messageId: "reader-message-id",
+      },
+    } satisfies Extract<TranscriptEntry, { kind: "user" }> & { payload: Record<string, unknown> };
+    const run = await seedRunReaderTranscript(source, [readerEntry]);
+    await db.update(chatMessages).set({ runId: run.runId })
+      .where(eq(chatMessages.id, source.sourceMessageId));
+    expect(await db.select().from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.messageId, source.sourceMessageId))).toEqual([]);
+    expect(await db.select().from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, run.runId))).toEqual([]);
+    const readerPage = await createHistoricalTranscriptReader(db).readConversation({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      principal: { type: "board", orgId: source.orgId, authorized: true },
+    });
+    expect(readerPage.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: readerEntry.kind,
+        ts: readerEntry.ts,
+        text: readerEntry.text,
+        payload: readerEntry.payload,
+        sourceEntryId: readerEntry.sourceEntryId,
+      }),
+    ]));
+
+    const persist = createChatAnnotationMessagePersistence(db, chatService(db).getMessage);
+    const edited = await persist(
+      source.conversationId,
+      source.orgId,
+      "Edited question",
+      source.sourceMessageId,
+    );
+    const detachedEntries = await db.select().from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.messageId, edited.id));
+
+    expect(detachedEntries).toMatchObject([
+      { entrySeq: 0, payload: expect.objectContaining({
+        kind: "user",
+        ts: readerEntry.ts,
+        text: readerEntry.text,
+        messageId: "reader-message-id",
+        sourceEntryId: readerEntry.sourceEntryId,
+      }) },
+      { entrySeq: 1, payload: expect.objectContaining({
+        kind: "user",
+        text: "Original question",
+      }) },
+    ]);
+    expect(edited.transcript).toEqual([
+      {
+        kind: "user",
+        ts: readerEntry.ts,
+        text: readerEntry.text,
+        messageId: "reader-message-id",
+        sourceEntryId: `message:${edited.id}:0`,
+      },
+      expect.objectContaining({
+        kind: "user",
+        text: "Original question",
+        sourceEntryId: `message:${edited.id}:1`,
+      }),
+    ]);
+  });
+
   it("converges concurrent user-message retries on one client mutation", async () => {
     const source = await seedSource({ body: "Assistant source" });
     const chats = chatService(db);
@@ -632,6 +923,45 @@ describe("chatInlineAnnotationService", () => {
       null,
       { clientMutationId, clientMutationFingerprint: "b".repeat(64) },
     )).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("retries deadlocked idempotent sends and preserves the error after exhaustion", async () => {
+    const source = await seedSource({ body: "Assistant source" });
+    const chats = chatService(db);
+    const persist = createChatAnnotationMessagePersistence(db, chats.getMessage);
+    const transaction = vi.spyOn(db, "transaction");
+    const accepted = vi.fn();
+    const replayed = vi.fn();
+    const deadlock = Object.assign(new Error("deadlock detected"), { code: "40P01" });
+    const wrappedDeadlock = new Error("transaction failed", { cause: deadlock });
+
+    try {
+      transaction.mockRejectedValueOnce(deadlock).mockRejectedValueOnce(wrappedDeadlock);
+      const message = await persist(source.conversationId, source.orgId, "Retried send", null, {
+        clientMutationId: `send:${randomUUID()}`,
+        onTransactionCommitted: accepted,
+        onIdempotentReplay: replayed,
+      });
+      expect(message.body).toBe("Retried send");
+      expect(transaction).toHaveBeenCalledTimes(3);
+      expect(accepted).toHaveBeenCalledTimes(1);
+      expect(replayed).not.toHaveBeenCalled();
+
+      transaction.mockClear();
+      transaction.mockRejectedValueOnce(deadlock).mockRejectedValueOnce(wrappedDeadlock).mockRejectedValueOnce(deadlock);
+      const failedAccepted = vi.fn();
+      const failedReplay = vi.fn();
+      await expect(persist(source.conversationId, source.orgId, "Exhausted send", null, {
+        clientMutationId: `send:${randomUUID()}`,
+        onTransactionCommitted: failedAccepted,
+        onIdempotentReplay: failedReplay,
+      })).rejects.toBe(deadlock);
+      expect(transaction).toHaveBeenCalledTimes(3);
+      expect(failedAccepted).not.toHaveBeenCalled();
+      expect(failedReplay).not.toHaveBeenCalled();
+    } finally {
+      transaction.mockRestore();
+    }
   });
 
   it("accepts rendered assistant selections across links, inline code, CJK, entities, whitespace, and blocks", async () => {
@@ -1297,6 +1627,65 @@ describe("chatInlineAnnotationService", () => {
         sourceConversationId: source.conversationId,
         sourceMessageId: source.sourceMessageId,
         generationId: evidence.generationId,
+      })],
+    });
+  });
+
+  it("validates Process annotations from top-level Run Reader fields without legacy transcript rows", async () => {
+    const source = await seedSource({ body: "Final answer" });
+    const evidence = await seedProcessEvidence({
+      source,
+      text: "Reader-backed process evidence",
+    });
+    const readerEntry = {
+      kind: "thinking",
+      ts: "2026-07-23T10:00:00.000Z",
+      text: evidence.text,
+      delta: true,
+      sourceEntryId: `message:${source.sourceMessageId}:0`,
+      payload: {
+        kind: "assistant",
+        ts: "2026-07-23T09:59:00.000Z",
+        text: "Payload text must not replace Reader text",
+        generationId: evidence.generationId,
+        generationSeqStart: 1,
+        generationSeqEnd: 1,
+      },
+    } satisfies Extract<TranscriptEntry, { kind: "thinking" }> & { payload: Record<string, unknown> };
+    const run = await seedRunReaderTranscript(source, [readerEntry]);
+    await db.update(chatMessages).set({ runId: run.runId })
+      .where(eq(chatMessages.id, source.sourceMessageId));
+    expect(await db.select().from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, source.orgId))).toEqual([]);
+    expect(await db.select().from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, run.runId))).toEqual([]);
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "process_transcript",
+        transcriptKind: "thinking",
+        selectedText: evidence.text,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(evidence.text),
+        generationId: evidence.generationId,
+        generationSeqStart: 1,
+        generationSeqEnd: 1,
+        start: 0,
+        end: evidence.text.length,
+        prefix: "",
+        suffix: "",
+        attachmentIds: [],
+      }],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        sourceMessageId: source.sourceMessageId,
+        generationId: evidence.generationId,
+        selectedText: evidence.text,
       })],
     });
   });

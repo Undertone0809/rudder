@@ -47,6 +47,8 @@ import { logger } from "../middleware/logger.js";
 import { getStorageService } from "../storage/index.js";
 import type { StorageService } from "../storage/types.js";
 import { logActivity } from "./activity-log.js";
+import { createAutomationChatProgress } from "./automation-chat-progress.js";
+import { automationRuntimeConfig, nonEmptyString, toAutomation } from "./automations.helpers.js";
 import {
   assertTimeZone,
   LIVE_HEARTBEAT_RUN_STATUSES,
@@ -79,27 +81,6 @@ type AutomationServiceDeps = {
 };
 
 const CHAT_OUTPUT_STALE_RUN_MS = 30 * 60 * 1000;
-
-function toAutomation(row: AutomationRow): Automation {
-  return {
-    ...row,
-    outputMode: row.outputMode as Automation["outputMode"],
-  };
-}
-
-function automationRuntimeConfig(automation: AutomationRow): Record<string, unknown> {
-  const overrides = automation.assigneeAgentRuntimeOverrides;
-  const value = overrides && typeof overrides === "object" && !Array.isArray(overrides)
-    ? (overrides as Record<string, unknown>).agentRuntimeConfig
-    : null;
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
 
 export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
   const storageSvc = deps.storage ?? (deps.chatAssistant ? null : getStorageService());
@@ -624,10 +605,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       return;
     }
 
-    const transcript: TranscriptEntry[] = [];
-    let assistantDraftBody = "";
-    let assistantProgressMessage: ChatMessage | null = null;
-    let assistantProgressMessageId: string | null = null;
     let userMessage: ChatMessage | null = run.startedChatMessageId
       ? await chatSvc.getMessage(conversation.id, run.startedChatMessageId)
       : null;
@@ -646,61 +623,13 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         .where(eq(automationRuns.id, run.id));
     };
 
-    const persistProgress = async (
-      progressConversation: ChatConversation,
-      status: "streaming" | "completed" | "failed" | "stopped" = "streaming",
-      body = assistantDraftBody,
-      replyingAgentId = progressConversation.chatRuntime?.runtimeAgentId ?? progressConversation.preferredAgentId ?? null,
-      structuredPayload: Record<string, unknown> | null = null,
-      kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal" = "message",
-      approvalId: string | null = null,
-    ) => {
-      if (!userMessage?.chatTurnId) return null;
-      const input = {
-        kind,
-        status,
-        body,
-        transcript,
-        structuredPayload,
-        approvalId,
-        replyingAgentId,
-      };
-      if (assistantProgressMessage) {
-        const updated = await chatSvc.updateMessage(progressConversation.id, assistantProgressMessage.id, input);
-        if (updated) {
-          assistantProgressMessage = updated as ChatMessage;
-          assistantProgressMessageId = assistantProgressMessage.id;
-          notifyChatChanged(progressConversation.orgId, progressConversation.id, {
-            messageId: assistantProgressMessage.id,
-            status,
-          });
-          await touchRunChatProgress(assistantProgressMessage.id);
-          return assistantProgressMessage;
-        }
-      }
-      assistantProgressMessage = await chatSvc.addMessage(progressConversation.id, {
-        orgId: progressConversation.orgId,
-        role: "assistant",
-        kind,
-        status,
-        body,
-        transcript,
-        structuredPayload,
-        approvalId,
-        replyingAgentId,
-        chatTurnId: userMessage.chatTurnId,
-        turnVariant: userMessage.turnVariant,
-      }) as ChatMessage;
-      assistantProgressMessageId = assistantProgressMessage.id;
-      await logChatMessageAdded({
-        orgId: progressConversation.orgId,
-        conversationId: progressConversation.id,
-        message: assistantProgressMessage,
-        agentId: replyingAgentId,
-      });
-      await touchRunChatProgress(assistantProgressMessage.id);
-      return assistantProgressMessage;
-    };
+    const progress = createAutomationChatProgress({
+      chatSvc,
+      getUserMessage: () => userMessage,
+      notifyChatChanged,
+      logChatMessageAdded,
+      touchRunChatProgress,
+    });
 
     try {
       const source = run.source as "schedule" | "manual" | "api" | "webhook";
@@ -732,16 +661,17 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           source,
         },
         abortSignal: abortController.signal,
+        onRunCreated: async (runId: string) => {
+          await progress.onRunCreated(assistantInput.conversation, runId);
+        },
         onAssistantDelta: async (delta: string) => {
-          assistantDraftBody = `${assistantDraftBody}${delta}`;
-          await persistProgress(assistantInput.conversation);
+          await progress.appendAssistantDelta(assistantInput.conversation, delta);
         },
         onAssistantState: async () => {
-          await persistProgress(assistantInput.conversation);
+          await progress.persistProgress(assistantInput.conversation);
         },
         onTranscriptEntry: async (entry: TranscriptEntry) => {
-          transcript.push(entry);
-          await persistProgress(assistantInput.conversation);
+          await progress.onTranscriptEntry(assistantInput.conversation, entry);
         },
       });
 
@@ -763,20 +693,23 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           approvalId: null,
           structuredPayload: null,
         };
-      const finalMessage = await persistProgress(
+      const finalMessage = await progress.persistProgress(
         assistantInput.conversation,
-        finalStatus,
-        finalBody,
-        streamed.replyingAgentId,
         {
-          ...(finalReplyPersistence.structuredPayload ?? {}),
-          automationChatRun: {
-            ...automationChatRunMetadata(automation, run, conversation.id),
-            status: streamed.outcome,
+          status: finalStatus,
+          body: finalBody,
+          replyingAgentId: streamed.replyingAgentId,
+          structuredPayload: {
+            ...(finalReplyPersistence.structuredPayload ?? {}),
+            automationChatRun: {
+              ...automationChatRunMetadata(automation, run, conversation.id),
+              status: streamed.outcome,
+            },
           },
+          kind: finalReplyPersistence.kind,
+          approvalId: finalReplyPersistence.approvalId,
+          includeLegacyTranscript: true,
         },
-        finalReplyPersistence.kind,
-        finalReplyPersistence.approvalId,
       );
       const finalMessageWithAttachments = streamed.outcome === "completed"
         ? await attachGeneratedFiles({
@@ -788,8 +721,8 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         : finalMessage;
       await finalizeRun(run.id, {
         status: finalStatus === "completed" ? "completed" : "failed",
-        terminalChatMessageId: finalMessageWithAttachments?.id ?? assistantProgressMessageId,
-        lastChatMessageId: finalMessageWithAttachments?.id ?? assistantProgressMessageId ?? userMessage.id,
+        terminalChatMessageId: finalMessageWithAttachments?.id ?? progress.getProgressMessageId(),
+        lastChatMessageId: finalMessageWithAttachments?.id ?? progress.getProgressMessageId() ?? userMessage.id,
         completedAt: new Date(),
       });
     } catch (error) {
@@ -797,29 +730,32 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       const failureReason = error instanceof Error ? error.message : String(error);
       const fallbackBody = partialBody.trim() || "Automation chat run failed before it produced a final response.";
       const latestConversation = await chatSvc.getById(conversation.id);
-      const failedMessage = await persistProgress(
+      const failedMessage = await progress.persistProgress(
         (latestConversation ?? conversation) as ChatConversation,
-        "failed",
-        fallbackBody,
-        automation.assigneeAgentId,
         {
-          eventType: "automation_chat_run_result",
-          automationId: automation.id,
-          automationTitle: automation.title,
-          runId: run.id,
           status: "failed",
-          failureReason,
-          links: {
-            automation: `/automations/${automation.id}`,
-            chat: `/messenger/chat/${conversation.id}`,
+          body: fallbackBody,
+          replyingAgentId: automation.assigneeAgentId,
+          structuredPayload: {
+            eventType: "automation_chat_run_result",
+            automationId: automation.id,
+            automationTitle: automation.title,
+            runId: run.id,
+            status: "failed",
+            failureReason,
+            links: {
+              automation: `/automations/${automation.id}`,
+              chat: `/messenger/chat/${conversation.id}`,
+            },
           },
+          includeLegacyTranscript: true,
         },
       );
       await finalizeRun(run.id, {
         status: "failed",
         failureReason,
-        terminalChatMessageId: failedMessage?.id ?? assistantProgressMessageId,
-        lastChatMessageId: failedMessage?.id ?? assistantProgressMessageId ?? userMessage?.id ?? null,
+        terminalChatMessageId: failedMessage?.id ?? progress.getProgressMessageId(),
+        lastChatMessageId: failedMessage?.id ?? progress.getProgressMessageId() ?? userMessage?.id ?? null,
         completedAt: new Date(),
       });
       logger.warn({ err: error, automationId: automation.id, runId: run.id }, "automation chat output run failed");
@@ -1461,6 +1397,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         await queueIssueAssignmentWakeup({
           heartbeat,
           issue: createdIssue,
+          automationRunId: createdRun.id,
           reason: "issue_assigned",
           mutation: "create",
           contextSource: "automation.dispatch",

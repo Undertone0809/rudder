@@ -1,5 +1,4 @@
 import {
-  RUDDER_MCP_MANAGED_ENV_KEYS,
   applyRudderBrowserCapabilityEnv,
   classifyAgentRuntimeNetworkFailure,
   inferOpenAiCompatibleBiller,
@@ -50,6 +49,7 @@ import {
   wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { COMPUTER_USE_AGENT_INSTRUCTION } from "@rudderhq/shared";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +71,7 @@ import {
   isCodexUnknownSessionError,
   parseCodexJsonl,
 } from "./parse.js";
+import { codexConfiguredEnvironment } from "./profile-env.js";
 import {
   buildCodexReadinessFingerprint,
   claimCodexAuthProbe,
@@ -86,17 +87,6 @@ import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompl
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const CODEX_AUTH_FAILURE_HARD_DEADLINE_MS = 2_000;
 const CODEX_AUTH_PROBE_RENEW_INTERVAL_MS = 30_000;
-const CODEX_PROTECTED_ENV_KEYS = new Set([
-  "AGENT_HOME",
-  "CODEX_HOME",
-  "HOME",
-  ...RUDDER_MCP_MANAGED_ENV_KEYS,
-  "RUDDER_DESKTOP_CLI_ENTRY",
-  "RUDDER_COMPUTER_ENABLED",
-  "RUDDER_AGENT_ROOT",
-  "RUDDER_OPERATOR_HOME",
-  "USERPROFILE",
-]);
 
 
 function firstNonEmptyLine(text: string): string {
@@ -123,6 +113,145 @@ function firstMeaningfulErrorLine(text: string): string {
   });
 
   return informative ?? lines[0] ?? "";
+}
+
+const CODEX_NATIVE_SESSION_PARAM_FIELDS = [
+  "threadId",
+  "rootSessionId",
+  "forkedFromId",
+  "model",
+  "modelProvider",
+  "ephemeral",
+  "transport",
+] as const;
+
+function providerProfileSessionParams(config: Record<string, unknown>, orgId: string): Record<string, unknown> {
+  const profileHostId = asString(config.providerHostId ?? config.hostId, "local").trim() || "local";
+  const profileId = asString(config.providerProfileId ?? config.profileId, "default").trim() || "default";
+  const capabilityRevision = asString(config.capabilityRevision, "").trim();
+  const profileBindingId = asString(config.providerBindingId ?? config.bindingId, "").trim();
+  const profileOrgId = asString(config.providerOrgId ?? config.orgId ?? orgId, "").trim() || orgId;
+  const workspaceBindingId = asString(
+    config.providerWorkspaceBindingId ?? config.workspaceBindingId,
+    "",
+  ).trim();
+  return {
+    profileHostId,
+    profileId,
+    ...(profileBindingId ? { profileBindingId } : {}),
+    ...(profileOrgId ? { profileOrgId } : {}),
+    ...(workspaceBindingId ? { workspaceBindingId } : {}),
+    ...(capabilityRevision ? { capabilityRevision } : {}),
+  };
+}
+
+/** Only a server-qualified, unchanged primary Chat may omit duplicate stdout. */
+export function codexChatStdoutCapturePolicy(ctx: AgentRuntimeExecutionContext): "capture" | "omit" {
+  const policy = parseObject(ctx.context.rudderCodexStdoutPolicy);
+  if (ctx.context.chatMode !== true || ctx.context.rudderModelFallback
+    || ctx.agent.agentRuntimeType !== "codex_local"
+    || policy.mode !== "native_retained" || policy.runtimeType !== "codex_local"
+    || !ctx.runId || policy.runId !== ctx.runId || policy.orgId !== ctx.agent.orgId
+    || policy.configSha256 !== createHash("sha256").update(JSON.stringify(ctx.config)).digest("hex")) {
+    return "capture";
+  }
+  return "omit";
+}
+
+function storedString(params: Record<string, unknown>, keys: readonly string[]): string {
+  for (const key of keys) {
+    const value = asString(params[key], "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+export function validateCodexResumeSession(input: {
+  sessionId: string;
+  sessionParams: Record<string, unknown>;
+  cwd: string;
+  expectedTransport: "codex_app_server" | "codex_cli";
+  workspaceId?: string;
+  repoUrl?: string;
+  repoRef?: string;
+  profile: Record<string, unknown>;
+}): string | null {
+  const params = input.sessionParams;
+  const storedSessionId = storedString(params, ["sessionId", "threadId"]);
+  if (storedSessionId && storedSessionId !== input.sessionId) {
+    return "Codex persisted session identity does not match the requested session.";
+  }
+  const storedCwd = storedString(params, ["cwd", "workdir", "folder"]);
+  if (storedCwd && path.resolve(storedCwd) !== path.resolve(input.cwd)) {
+    return `Codex session cwd "${storedCwd}" does not match the requested workspace cwd "${input.cwd}".`;
+  }
+  const identityFields: Array<[string, readonly string[], string]> = [
+    ["host", ["profileHostId", "providerHostId", "hostId"], asString(input.profile.profileHostId, "").trim()],
+    ["profile", ["profileId", "providerProfileId"], asString(input.profile.profileId, "").trim()],
+    ["binding", ["profileBindingId", "providerBindingId", "bindingId"], asString(input.profile.profileBindingId, "").trim()],
+    ["organization", ["profileOrgId", "providerOrgId", "orgId"], asString(input.profile.profileOrgId, "").trim()],
+    ["workspace binding", ["workspaceBindingId", "providerWorkspaceBindingId"], asString(input.profile.workspaceBindingId, "").trim()],
+    ["capability revision", ["capabilityRevision"], asString(input.profile.capabilityRevision, "").trim()],
+  ];
+  for (const [label, keys, expected] of identityFields) {
+    const stored = storedString(params, keys);
+    if (stored && stored !== expected) {
+      return `Codex session ${label} identity does not match the requested provider binding.`;
+    }
+  }
+  const storedTransport = storedString(params, ["transport", "codexTransport"]);
+  if (storedTransport && storedTransport !== input.expectedTransport) {
+    return `Codex session transport ${storedTransport} does not match ${input.expectedTransport}.`;
+  }
+  const workspaceFields: Array<[string, readonly string[], string]> = [
+    ["workspace", ["workspaceId", "workspace_id"], input.workspaceId ?? ""],
+    ["repository URL", ["repoUrl", "repo_url"], input.repoUrl ?? ""],
+    ["repository ref", ["repoRef", "repo_ref"], input.repoRef ?? ""],
+  ];
+  for (const [label, keys, expected] of workspaceFields) {
+    const stored = storedString(params, keys);
+    if (stored && stored !== expected) {
+      return `Codex session ${label} identity does not match the requested workspace.`;
+    }
+  }
+  return null;
+}
+
+/** Keep only provider-native metadata that the App Server actually returned. */
+export function buildCodexSessionParams(input: {
+  sessionId: string | null | undefined;
+  cwd: string;
+  native?: Record<string, unknown> | null;
+  workspaceId?: string;
+  repoUrl?: string;
+  repoRef?: string;
+  profile?: Record<string, unknown> | null;
+  transport?: "codex_app_server" | "codex_cli";
+  chatDeveloperInstructionsRevision?: string | null;
+}): Record<string, unknown> | null {
+  const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+  if (!sessionId) return null;
+  const native = input.native ?? {};
+  const nativeEntries: Array<readonly [string, string | boolean]> = [];
+  for (const key of CODEX_NATIVE_SESSION_PARAM_FIELDS) {
+    const value = native[key];
+    if (typeof value === "string" && value.trim()) nativeEntries.push([key, value.trim()]);
+    else if (typeof value === "boolean") nativeEntries.push([key, value]);
+  }
+  const nativeParams = Object.fromEntries(nativeEntries);
+  return {
+    ...nativeParams,
+    sessionId,
+    cwd: input.cwd,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    ...(input.repoUrl ? { repoUrl: input.repoUrl } : {}),
+    ...(input.repoRef ? { repoRef: input.repoRef } : {}),
+    ...(input.transport ? { transport: input.transport } : {}),
+    ...(input.chatDeveloperInstructionsRevision
+      ? { rudderChatDeveloperInstructionsRevision: input.chatDeveloperInstructionsRevision }
+      : {}),
+    ...(input.profile ?? {}),
+  };
 }
 
 function hasCliArg(args: string[], flag: string): boolean {
@@ -208,32 +337,6 @@ function envStrings(envConfig: Record<string, unknown>): Record<string, string> 
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-}
-
-async function pruneProviderManagedMemoryState(codexHome: string, onLog: AgentRuntimeExecutionContext["onLog"]): Promise<void> {
-  const candidateHomes = new Set([codexHome]);
-  const parentDir = path.dirname(codexHome);
-  if (path.basename(parentDir) === "agents") {
-    candidateHomes.add(path.dirname(parentDir));
-  }
-
-  for (const home of candidateHomes) {
-    const memoriesDir = path.join(home, "memories");
-    if (!(await fs.access(memoriesDir).then(() => true).catch(() => false))) continue;
-
-    try {
-      await fs.rm(memoriesDir, { recursive: true, force: true });
-      await onLog(
-        "stdout",
-        `[rudder] Pruned provider-managed Codex memory state from ${memoriesDir}; Rudder controls agent memory separately.\n`,
-      );
-    } catch (err) {
-      await onLog(
-        "stderr",
-        `[rudder] Failed to prune provider-managed Codex memory state from ${memoriesDir}: ${err instanceof Error ? err.message : String(err)}\n`,
-      ).catch(() => {});
-    }
-  }
 }
 
 function resolveFallbackAgentHome(effectiveCodexHome: string, agentId: string): string {
@@ -369,17 +472,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ...process.env,
     RUDDER_SHARED_CODEX_HOME: sharedCodexHome,
   };
+  const providerNativeSkillsHome = path.join(sharedCodexHome, "skills");
   const externalCodexSkillPaths = await discoverExternalCodexSkillDisablePaths([
     path.join(operatorHome, ".agents", "skills"),
     path.join(sharedCodexHome, "skills"),
     path.join(cwd, ".agents", "skills"),
-  ]);
+  ], [providerNativeSkillsHome]);
   const preparedManagedCodexHome = await prepareManagedCodexHome(
     codexTargetEnv,
     onLog,
     agent.orgId,
     agent.id,
-    { disabledSkillPaths: externalCodexSkillPaths },
+    {
+      disabledSkillPaths: externalCodexSkillPaths,
+      preservedSkillPaths: [providerNativeSkillsHome],
+    },
     __moduleDir,
   );
   const defaultCodexHome = resolveManagedCodexHomeDir(codexTargetEnv, agent.orgId, agent.id);
@@ -513,9 +620,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (runtimePrimaryUrl) {
     env.RUDDER_RUNTIME_PRIMARY_URL = runtimePrimaryUrl;
   }
-  for (const [k, v] of Object.entries(envConfig)) {
-    if (typeof v === "string" && !CODEX_PROTECTED_ENV_KEYS.has(k)) env[k] = v;
-  }
+  Object.assign(env, codexConfiguredEnvironment(envConfig));
   let browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
   let computerEnabled = asBoolean(config.rudderComputerEnabled, false);
   env.RUDDER_COMPUTER_ENABLED = computerEnabled ? "true" : "false";
@@ -612,7 +717,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     effectiveCodexHome,
     selectedCodexSkillEntries.map((entry) => entry.source),
     onLog,
-    { disabledSkillPaths: externalCodexSkillPaths },
+    {
+      disabledSkillPaths: externalCodexSkillPaths,
+      preservedSkillPaths: [providerNativeSkillsHome],
+    },
     __moduleDir,
     pickRudderMcpManagedEnv(env),
     rudderMcpCommand,
@@ -620,6 +728,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     config,
     rudderMcpPreflight.available,
     computerMcpCommand ?? undefined,
+    codexSkillEntries.map((entry) => entry.source),
   );
   const loadedMcpServers = buildCodexLoadedMcpServers({
     coreEnabled: rudderMcpPreflight.available,
@@ -644,20 +753,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (fromExtraArgs.length > 0) return fromExtraArgs;
     return asStringArray(config.args);
   })();
+  const profileSessionParams = providerProfileSessionParams(config, agent.orgId);
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
-  const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
-  const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
-  const canResumeSession =
-    runtimeSessionId.length > 0 &&
-    (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
-  const sessionId = canResumeSession ? runtimeSessionId : null;
-  if (runtimeSessionId && !canResumeSession) {
-    await onLog(
-      "stdout",
-      `[rudder] Codex session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
-    );
-  }
+  const persistedSessionId = asString(
+    runtimeSessionParams.sessionId ?? runtimeSessionParams.threadId,
+    "",
+  ).trim();
+  const runtimeSessionId = persistedSessionId || asString(runtime.sessionId, "").trim();
+  const sessionId = runtimeSessionId;
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const instructionRuntimeContext = prepareAgentInstructionRuntimeContext(context as Record<string, unknown>);
   const loadedInstructions = await loadAgentInstructionsPrefix({
@@ -757,8 +861,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       computerEnabled ? COMPUTER_USE_AGENT_INSTRUCTION : "",
     ]),
   );
+  const rawCodexChatPrompt = context.rudderCodexChatPrompt;
+  const codexChatPrompt = rawCodexChatPrompt && typeof rawCodexChatPrompt === "object" && !Array.isArray(rawCodexChatPrompt)
+    ? rawCodexChatPrompt as Record<string, unknown>
+    : null;
+  if (rawCodexChatPrompt !== undefined && (
+    codexChatPrompt?.version !== 1 || typeof codexChatPrompt.developerInstructions !== "string"
+  )) {
+    throw new Error("Unsupported Rudder native Codex Chat prompt contract");
+  }
+  const codexChatDeveloperInstructions = codexChatPrompt
+    ? asString(codexChatPrompt.developerInstructions, "").trim()
+    : "";
   const prompt = joinPromptSections([
     instructionFrame,
+    codexChatDeveloperInstructions,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,
@@ -782,6 +899,44 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     && context.rudderChatResultRepair !== true
     && asBoolean(config.chatAppServerEnabled, command === "codex")
     && appServerExtraArgs.unsupportedArgs.length === 0;
+  const expectedSessionTransport = useAppServerChat ? "codex_app_server" : "codex_cli";
+  if (runtimeSessionId) {
+    const resumeRejection = validateCodexResumeSession({
+      sessionId: runtimeSessionId,
+      sessionParams: runtimeSessionParams,
+      cwd,
+      expectedTransport: expectedSessionTransport,
+      workspaceId,
+      repoUrl: workspaceRepoUrl,
+      repoRef: workspaceRepoRef,
+      profile: profileSessionParams,
+    });
+    if (resumeRejection) {
+      await onLog("stderr", `[rudder] Codex resume rejected: ${resumeRejection}\n`);
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        errorMessage: `Codex resume rejected: ${resumeRejection}`,
+        errorCode: "codex_resume_rejected",
+        sessionId: runtimeSessionId,
+        sessionParams: runtimeSessionParams,
+        sessionDisplayId: runtimeSessionId,
+        provider: "openai",
+        biller: resolveCodexBiller(effectiveEnv, billingType),
+        model,
+        billingType,
+        resultJson: {
+          resume: {
+            status: "rejected",
+            reason: resumeRejection,
+            transport: expectedSessionTransport,
+          },
+        },
+        clearSession: false,
+      };
+    }
+  }
 
   // Claim only after the managed home has its final staged auth/config snapshot
   // and all prompt/metadata preparation has completed. The lease makes expiry
@@ -904,7 +1059,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
 
   if (useAppServerChat) {
-    const appServerArgs = ["app-server", "--stdio", "--disable", "plugins"];
+    const appServerArgs = ["app-server", "--stdio"];
+    const appServerPrompt = codexChatPrompt
+      ? joinPromptSections([renderedBootstrapPrompt, sessionHandoffNote, renderedPrompt])
+      : prompt;
+    const appServerDeveloperInstructions = codexChatPrompt
+      ? joinPromptSections([instructionFrame, codexChatDeveloperInstructions])
+      : null;
+    const appServerDeveloperInstructionsRevision = appServerDeveloperInstructions
+      ? createHash("sha256").update(appServerDeveloperInstructions).digest("hex")
+      : null;
+    const persistedDeveloperInstructionsRevision = storedString(runtimeSessionParams, [
+      "rudderChatDeveloperInstructionsRevision",
+    ]) || null;
     try {
       if (onMeta) {
         await onMeta({
@@ -917,9 +1084,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           ],
           commandArgs: appServerArgs,
           env: redactEnvForLogs(env),
-          prompt,
-          agentInstructionStack: prompt,
-          promptMetrics,
+          prompt: appServerPrompt,
+          agentInstructionStack: appServerDeveloperInstructions
+            ? joinPromptSections([appServerDeveloperInstructions, appServerPrompt])
+            : appServerPrompt,
+          promptMetrics: {
+            ...promptMetrics,
+            promptChars: appServerPrompt.length,
+            codexDeveloperInstructionsChars: appServerDeveloperInstructions?.length ?? 0,
+          },
           loadedMcpServers,
           loadedSkills,
           realizedSkills: loadedSkills,
@@ -933,6 +1106,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       }
       const appStartedAt = new Date();
       const appResult = await executeCodexAppServerChat({
+        stdoutCapturePolicy: codexChatStdoutCapturePolicy(ctx),
         command: executableCommand,
         cwd,
         env: Object.fromEntries(
@@ -940,7 +1114,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
             (entry): entry is [string, string] => typeof entry[1] === "string",
           ),
         ),
-        prompt,
+        prompt: appServerPrompt,
+        ...(appServerDeveloperInstructions ? {
+          chatDeveloperInstructions: appServerDeveloperInstructions,
+          chatDeveloperInstructionsRevision: appServerDeveloperInstructionsRevision,
+          persistedChatDeveloperInstructionsRevision: persistedDeveloperInstructionsRevision,
+        } : {}),
         model,
         modelReasoningEffort,
         search,
@@ -951,6 +1130,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         timeoutSec,
         onLog,
         onSpawn,
+        requestApproval: ctx.requestApproval,
+        waitForApproval: ctx.waitForApproval,
         abortSignal: ctx.abortSignal
           ? AbortSignal.any([ctx.abortSignal, readinessLeaseAbortController.signal])
           : readinessLeaseAbortController.signal,
@@ -958,7 +1139,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         onProviderAuthFailure: persistAuthFailureGate,
       });
       const appEndedAt = new Date();
-      const providerAuthFailure = isCodexProviderAuthFailure(
+      const providerAuthFailure = appResult.providerAuthFailure === true || isCodexProviderAuthFailure(
         appResult.errorMessage,
         appResult.stdout,
         appResult.stderr,
@@ -989,19 +1170,24 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         billingType === "subscription" && countSubscriptionUsageAsCost
           ? estimateCodexCostUsd(model, appResult.usage)
           : null;
-      const resolvedSessionParams = appResult.sessionId
-        ? ({
-          sessionId: appResult.sessionId,
-          cwd,
-          ...(workspaceId ? { workspaceId } : {}),
-          ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
-          ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
-        } as Record<string, unknown>)
-        : null;
+      const resolvedSessionParams = buildCodexSessionParams({
+        sessionId: appResult.sessionId,
+        native: appResult.sessionParams,
+        chatDeveloperInstructionsRevision: appResult.chatDeveloperInstructionsRevision
+          ?? persistedDeveloperInstructionsRevision,
+        cwd,
+        workspaceId,
+        repoUrl: workspaceRepoUrl,
+        repoRef: workspaceRepoRef,
+        profile: profileSessionParams,
+        transport: "codex_app_server",
+      });
       return {
         exitCode: appResult.exitCode,
         signal: appResult.signal,
         timedOut: appResult.timedOut,
+        nativeWriterQuiescence: appResult.nativeWriterQuiescence,
+        submissionPhase: appResult.submissionPhase,
         errorMessage: appResult.errorMessage,
         ...(providerAuthFailure ? { errorCode: "codex_provider_auth_required" } : {}),
         usage: appResult.usage,
@@ -1044,12 +1230,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     } finally {
       await stopReadinessLeaseRenewal();
       await clearAuthFailureGate();
-      await pruneProviderManagedMemoryState(effectiveCodexHome, onLog);
     }
   }
 
   const buildArgs = (resumeSessionId: string | null) => {
-    const args = ["exec", "--json", "--disable", "plugins"];
+    const args = ["exec", "--json"];
     if (search) args.unshift("--search");
     if (bypass) args.push("--dangerously-bypass-approvals-and-sandbox");
     if (model) args.push("--model", model);
@@ -1061,7 +1246,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       args.push("--skip-git-repo-check");
     }
     if (extraArgs.length > 0) args.push(...extraArgs);
-    args.push("-c", "skills.bundled.enabled=false");
     if (resumeSessionId) args.push("resume", resumeSessionId, "-");
     else args.push("-");
     return args;
@@ -1193,7 +1377,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
 
   const toResult = async (
-    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl>; providerAuthFailure: string | null; startedAt: Date; endedAt: Date },
+    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string; pid?: number | null; startedAt?: string | null }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl>; providerAuthFailure: string | null; startedAt: Date; endedAt: Date },
     clearSessionOnMissingSession = false,
     transportRecovery?: {
       kind: "codex_transport_disconnect";
@@ -1215,6 +1399,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: attempt.proc.exitCode,
         signal: attempt.proc.signal,
         timedOut: true,
+        nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "Codex timed out before child-process exit was observed." },
         errorMessage: `Timed out after ${timeoutSec}s`,
         ...(transportRecovery ? { errorCode: "codex_transport_continuation_failed" } : {}),
         ...(transportRecovery ? { resultJson: { transportRecovery } } : {}),
@@ -1223,15 +1410,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
 
     const resolvedSessionId = attempt.parsed.sessionId ?? runtimeSessionId ?? runtime.sessionId ?? null;
-    const resolvedSessionParams = resolvedSessionId
-      ? ({
-        sessionId: resolvedSessionId,
-        cwd,
-        ...(workspaceId ? { workspaceId } : {}),
-        ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
-        ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
-      } as Record<string, unknown>)
-      : null;
+    const resolvedSessionParams = buildCodexSessionParams({
+      sessionId: resolvedSessionId,
+      cwd,
+      workspaceId,
+      repoUrl: workspaceRepoUrl,
+      repoRef: workspaceRepoRef,
+      profile: profileSessionParams,
+      transport: "codex_cli",
+    });
     const parsedError = typeof attempt.parsed.errorMessage === "string" ? attempt.parsed.errorMessage.trim() : "";
     const stderrLine = firstMeaningfulErrorLine(attempt.proc.stderr);
     const fallbackErrorMessage =
@@ -1301,6 +1488,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       exitCode: attempt.proc.exitCode,
       signal: attempt.proc.signal,
       timedOut: false,
+      nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+        ? { status: "confirmed", source: "process_exit" }
+        : { status: "unconfirmed", reason: "Codex child-process exit was not observed." },
       errorMessage:
         attempt.proc.exitCode === 0 && attempt.proc.signal === null && !attempt.providerAuthFailure
           ? null
@@ -1390,11 +1580,20 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       isCodexUnknownSessionError(initial.proc.stdout, initial.rawStderr)
     ) {
       await onLog(
-        "stdout",
-        `[rudder] Codex resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
+        "stderr",
+        `[rudder] Codex resume session "${sessionId}" was rejected; a fresh session is not allowed.\n`,
       );
-      const retry = await runAttempt(null);
-      return await toResult(retry, true);
+      const rejected = await toResult(initial);
+      return {
+        ...rejected,
+        errorCode: "codex_resume_rejected",
+        errorMessage: rejected.errorMessage || `Codex resume session "${sessionId}" was rejected.`,
+        clearSession: false,
+        resultJson: {
+          ...(rejected.resultJson ?? {}),
+          resume: { status: "rejected", reason: "provider_unknown_session" },
+        },
+      };
     }
 
     return await toResult(initial);
@@ -1402,6 +1601,5 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     await cliControlLease?.release().catch(() => undefined);
     await stopReadinessLeaseRenewal();
     await clearAuthFailureGate();
-    await pruneProviderManagedMemoryState(effectiveCodexHome, onLog);
   }
 }

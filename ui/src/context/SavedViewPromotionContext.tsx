@@ -279,6 +279,7 @@ type RetainedPromotionAttempt = {
   exactKey: string;
   key: string;
   mainOwnerId: string;
+  principalId: string | null;
   promotionId: string;
   request: SavedViewPromotionRequest;
   result: MessengerSavedViewKeepResult | null;
@@ -314,6 +315,8 @@ export function SavedViewPromotionProvider({
     organization?.selectedOrganizationId,
   );
   currentOrganizationIdRef.current = organization?.selectedOrganizationId;
+  const currentPrincipalIdRef = useRef(sidePanel.principalId);
+  currentPrincipalIdRef.current = sidePanel.principalId;
   const [revision, setRevision] = useState(0);
   const touch = useCallback(() => setRevision((current) => current + 1), []);
 
@@ -328,6 +331,19 @@ export function SavedViewPromotionProvider({
     result: MessengerSavedViewKeepResult,
   ): Promise<MessengerSavedViewKeepResult> => {
     const organizationId = attempt.request.organizationId.trim();
+    if (currentPrincipalIdRef.current !== attempt.principalId) {
+      liveSurfaceRuntime.claimSurface(attempt.runtimeId, attempt.sideOwnerId);
+      workbench.dispatch({
+        type: "promotion/claim-fail",
+        organizationId,
+        promotionId: attempt.promotionId,
+        savedViewId: result.savedView.id,
+        expectedSourceRevision: attempt.sourceRevision,
+        error: "principal_changed",
+      });
+      unlockAttempt(attempt);
+      throw new Error("Account changed. Return to the original account to retry the move.");
+    }
     if (
       currentOrganizationIdRef.current !== undefined
       && currentOrganizationIdRef.current !== organizationId
@@ -433,6 +449,8 @@ export function SavedViewPromotionProvider({
       attempt.request.contextKey,
       attempt.exactKey,
       attempt.sourceRevision,
+      organizationId,
+      attempt.principalId,
     );
     if (!detached.detached) {
       liveSurfaceRuntime.claimSurface(attempt.runtimeId, attempt.sideOwnerId);
@@ -559,6 +577,7 @@ export function SavedViewPromotionProvider({
     let result: MessengerSavedViewKeepResult;
     try {
       result = attempt.request.existingResult
+        ?? attempt.result
         ?? await withPersistenceTimeout(
           messengerApi.keepSavedView(organizationId, attempt.request.input),
           persistenceTimeoutMs,
@@ -578,7 +597,9 @@ export function SavedViewPromotionProvider({
     }
 
     attempt.result = result;
-    cacheKeepResult(queryClient, organizationId, result);
+    if (currentPrincipalIdRef.current === attempt.principalId) {
+      cacheKeepResult(queryClient, organizationId, result);
+    }
     workbench.dispatch({
       type: "promotion/server-commit",
       organizationId,
@@ -586,9 +607,11 @@ export function SavedViewPromotionProvider({
       savedViewId: result.savedView.id,
       expectedSourceRevision: attempt.sourceRevision,
     });
-    void queryClient.invalidateQueries({
-      queryKey: queryKeys.messenger.customGroups(organizationId),
-    }).catch(() => undefined);
+    if (currentPrincipalIdRef.current === attempt.principalId) {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.messenger.customGroups(organizationId),
+      }).catch(() => undefined);
+    }
     return finishClaim(attempt, result);
   }, [
     finishClaim,
@@ -610,6 +633,8 @@ export function SavedViewPromotionProvider({
     const sourceRevision = sidePanel.getTargetRevisionForContext(
       request.contextKey,
       exactKey,
+      organizationId,
+      sidePanel.principalId,
     );
     if (sourceRevision === null) {
       throw new Error("This Side Panel view is no longer available.");
@@ -653,6 +678,7 @@ export function SavedViewPromotionProvider({
       exactKey,
       key,
       mainOwnerId: `main:${organizationId}:${target.viewInstanceId}`,
+      principalId: sidePanel.principalId,
       promotionId: newId("promotion"),
       request: resolvedRequest,
       result: request.existingResult ?? null,
@@ -766,7 +792,7 @@ export function SavedViewPromotionProvider({
   }, [discardAttempt]);
 
   useEffect(() => sidePanel.registerBrowserResetHandler((
-    contextKey,
+    owner,
     target,
   ) => {
     const normalizedTarget = {
@@ -775,7 +801,9 @@ export function SavedViewPromotionProvider({
     } satisfies LiveSurfaceTarget;
     const attempt = Array.from(attemptsRef.current.values()).find(
       (candidate) => (
-        candidate.request.contextKey === contextKey
+        candidate.principalId === owner.principalId
+        && candidate.request.organizationId.trim() === owner.organizationId
+        && candidate.request.contextKey === owner.contextKey
         && candidate.runtimeId === createLiveSurfaceRuntimeId(
           candidate.request.organizationId.trim(),
           normalizedTarget,
@@ -811,6 +839,9 @@ export function SavedViewPromotionProvider({
     if (movingRef.current.has(key)) {
       throw new Error("This view is already moving.");
     }
+    if (attempt.principalId !== currentPrincipalIdRef.current) {
+      throw new Error("Return to the original account to retry this move.");
+    }
     const promotion = workbench.getState().organizations[organizationId]
       ?.promotionsById[attempt.promotionId];
     if (
@@ -826,6 +857,8 @@ export function SavedViewPromotionProvider({
     const currentRevision = sidePanel.getTargetRevisionForContext(
       contextKey,
       attempt.exactKey,
+      organizationId,
+      attempt.principalId,
     );
     if (currentRevision !== attempt.sourceRevision) {
       discardAttempt(attempt);
@@ -835,10 +868,14 @@ export function SavedViewPromotionProvider({
       contextKey,
       attempt.exactKey,
       { ...targetInput },
+      organizationId,
+      attempt.principalId,
     );
     const nextSourceRevision = sidePanel.getTargetRevisionForContext(
       contextKey,
       attempt.exactKey,
+      organizationId,
+      attempt.principalId,
     );
     if (
       !replaced

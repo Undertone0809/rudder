@@ -1,11 +1,20 @@
 import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
-import { ChevronRight, ExternalLink, Loader2 } from "lucide-react";
+import { ChevronRight, ExternalLink, FolderOpen, Loader2 } from "lucide-react";
+import type { ChangeEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createBrowserLocalFilePreview } from "../../api/browserLocalFiles";
+import { readAuthorizedLocalFilePreview } from "../../api/localFiles";
+import { useOptionalOrganization } from "../../context/OrganizationContext";
 import {
   readDesktopShell,
   type DesktopLocalFilePreview,
   type DesktopWorkspaceLaunchTarget,
 } from "../../lib/desktop-shell";
+import {
+  buildWorkspaceHtmlStaticFallbackSrcDoc,
+  isWorkspaceHtmlContentType,
+  isWorkspaceHtmlFilePath,
+} from "../../lib/workspace-html-preview";
 import {
   isWorkspaceFileOpenTarget,
   workspaceUnsupportedFileLaunchTargets,
@@ -29,6 +38,11 @@ import { WorkspaceFilePreview } from "../WorkspaceFilePreview";
 import { WorkspaceFileOpenMenu } from "../workspaces/WorkspaceLaunchControls";
 
 const LOCAL_FILE_DRAFT_SCOPE = "desktop-local-file";
+
+type TranscriptLocalFilePreviewState = {
+  file: OrganizationWorkspaceFileDetail;
+  desktopPreview: DesktopLocalFilePreview | null;
+};
 
 function previewDataUrl(preview: DesktopLocalFilePreview): string | null {
   if (!preview.base64) return null;
@@ -74,6 +88,7 @@ function DesktopLocalTextFileEditor({
   onPreviewChange: (preview: DesktopLocalFilePreview) => void;
 }) {
   const desktopShell = readDesktopShell();
+  const organizationId = useOptionalOrganization()?.selectedOrganizationId ?? null;
   const initialContent = preview.content ?? "";
   const restoredDraftRef = useRef(
     restoreChatSidePanelMarkdownDraft(
@@ -347,17 +362,17 @@ export function TranscriptLocalFilePreview({
   sourceConversationId?: string | null;
 }) {
   const desktopShell = readDesktopShell();
-  const [preview, setPreview] = useState<DesktopLocalFilePreview | null>(null);
+  const organizationId = useOptionalOrganization()?.selectedOrganizationId ?? null;
+  const [preview, setPreview] = useState<TranscriptLocalFilePreviewState | null>(null);
   const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [launchTargetsDiscovered, setLaunchTargetsDiscovered] = useState(false);
   const [openingTargetId, setOpeningTargetId] = useState<WorkspaceOpenTargetId | null>(null);
-  const [error, setError] = useState<string | null>(() => (
-    desktopShell ? null : "Local file previews are available in the Rudder Desktop app."
-  ));
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(desktopShell));
+  const browserFileInputRef = useRef<HTMLInputElement | null>(null);
   const previewRequestRef = useRef<{
-    targetPath: string;
-    promise: Promise<DesktopLocalFilePreview>;
+    targetKey: string;
+    promise: Promise<TranscriptLocalFilePreviewState>;
   } | null>(null);
 
   useEffect(() => {
@@ -365,16 +380,21 @@ export function TranscriptLocalFilePreview({
     if (!desktopShell) {
       setPreview(null);
       setLoading(false);
-      setError("Local file previews are available in the Rudder Desktop app.");
+      setError(null);
       return undefined;
     }
 
+    const targetKey = `desktop:${targetPath}`;
     setLoading(true);
     setError(null);
-    if (previewRequestRef.current?.targetPath !== targetPath) {
+    if (previewRequestRef.current?.targetKey !== targetKey) {
+      const promise = desktopShell.previewLocalFile(targetPath).then((desktopPreview) => ({
+        file: workspacePreviewFile(desktopPreview),
+        desktopPreview,
+      }));
       previewRequestRef.current = {
-        targetPath,
-        promise: desktopShell.previewLocalFile(targetPath),
+        targetKey,
+        promise,
       };
     }
     void previewRequestRef.current.promise
@@ -396,13 +416,52 @@ export function TranscriptLocalFilePreview({
     };
   }, [desktopShell, label, targetPath]);
 
+  useEffect(() => () => {
+    const contentPath = preview?.desktopPreview ? null : preview?.file.contentPath;
+    if (contentPath?.startsWith("blob:")) URL.revokeObjectURL(contentPath);
+  }, [preview]);
+
+  const handleBrowserFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const selectedFile = input.files?.[0] ?? null;
+    input.value = "";
+    if (!selectedFile) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const file = await createBrowserLocalFilePreview(selectedFile, targetPath);
+      setPreview({ file, desktopPreview: null });
+    } catch (cause) {
+      setPreview(null);
+      setError(previewFailureMessage(cause, label));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadOrganizationWorkspaceCopy = async () => {
+    if (!organizationId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const file = await readAuthorizedLocalFilePreview(organizationId, targetPath);
+      setPreview({ file, desktopPreview: null });
+    } catch (cause) {
+      setPreview(null);
+      setError(previewFailureMessage(cause, label));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     setLaunchTargets([]);
     setLaunchTargetsDiscovered(false);
     if (
-      !preview?.parentPath
-      || !preview.fileName
+      !preview?.desktopPreview?.parentPath
+      || !preview.desktopPreview.fileName
       || typeof desktopShell?.listWorkspaceLaunchTargets !== "function"
     ) {
       setLaunchTargets([]);
@@ -421,42 +480,61 @@ export function TranscriptLocalFilePreview({
     return () => {
       cancelled = true;
     };
-  }, [desktopShell, preview?.canonicalPath, preview?.fileName, preview?.parentPath]);
+  }, [
+    desktopShell,
+    preview?.desktopPreview?.canonicalPath,
+    preview?.desktopPreview?.fileName,
+    preview?.desktopPreview?.parentPath,
+  ]);
 
-  const file = useMemo(() => preview ? workspacePreviewFile(preview) : null, [preview]);
+  const file = preview?.file ?? null;
+  const isBrowserLocalHtml = Boolean(
+    !desktopShell
+    && file?.previewKind === "text"
+    && file.content !== null
+    && (isWorkspaceHtmlFilePath(file.filePath) || isWorkspaceHtmlContentType(file.contentType)),
+  );
   const canOpenDefaultApp = typeof desktopShell?.openPath === "function";
   const openTargets = useMemo(
     () => {
       if (!launchTargetsDiscovered) return [];
       return workspaceUnsupportedFileLaunchTargets(launchTargets, {
         canOpenFile: Boolean(
-          preview?.parentPath
-          && preview.fileName
+          preview?.desktopPreview?.parentPath
+          && preview.desktopPreview.fileName
           && (canOpenDefaultApp || typeof desktopShell?.openWorkspaceFileInIde === "function"),
         ),
         canOpenLocation: Boolean(
-          preview?.parentPath
-          && preview.fileName
+          preview?.desktopPreview?.parentPath
+          && preview.desktopPreview.fileName
           && typeof desktopShell?.openWorkspaceFileLocation === "function",
         ),
       }).filter((target) => target.id !== "defaultApp" || canOpenDefaultApp);
     },
-    [canOpenDefaultApp, desktopShell, launchTargets, launchTargetsDiscovered, preview?.fileName, preview?.parentPath],
+    [
+      canOpenDefaultApp,
+      desktopShell,
+      launchTargets,
+      launchTargetsDiscovered,
+      preview?.desktopPreview?.fileName,
+      preview?.desktopPreview?.parentPath,
+    ],
   );
   const openPreview = async (target?: WorkspaceUnsupportedFileLaunchTarget) => {
-    if (!desktopShell || !preview) return;
+    const desktopPreview = preview?.desktopPreview;
+    if (!desktopShell || !desktopPreview) return;
     setOpeningTargetId(target?.id ?? null);
     try {
       if (target && isWorkspaceFileOpenTarget(target) && target.id !== "defaultApp") {
-        await desktopShell.openWorkspaceFileInIde(preview.parentPath, preview.fileName, target.id);
+        await desktopShell.openWorkspaceFileInIde(desktopPreview.parentPath, desktopPreview.fileName, target.id);
       } else if (target?.id === "defaultApp") {
         if (!canOpenDefaultApp) throw new Error("Opening this file with the default app is unavailable.");
-        await desktopShell.openPath(preview.canonicalPath);
+        await desktopShell.openPath(desktopPreview.canonicalPath);
       } else if (target) {
-        await desktopShell.openWorkspaceFileLocation?.(preview.parentPath, preview.fileName, target.id);
+        await desktopShell.openWorkspaceFileLocation?.(desktopPreview.parentPath, desktopPreview.fileName, target.id);
       } else {
         if (!canOpenDefaultApp) return;
-        await desktopShell.openPath(preview.canonicalPath);
+        await desktopShell.openPath(desktopPreview.canonicalPath);
       }
       setError(null);
     } catch (cause) {
@@ -476,6 +554,50 @@ export function TranscriptLocalFilePreview({
   }
 
   if (error || !preview || !file) {
+    if (!desktopShell) {
+      return (
+        <div className="flex min-h-[16rem] items-center justify-center p-4">
+          <input
+            ref={browserFileInputRef}
+            type="file"
+            className="sr-only"
+            aria-label={`Choose ${label} from this device`}
+            onChange={(event) => void handleBrowserFileChange(event)}
+          />
+          <div className="w-full max-w-md space-y-3" data-testid="chat-side-panel-local-file-picker">
+            {error ? (
+              <div role="alert" className="text-sm text-destructive">{error}</div>
+            ) : (
+              <div className="text-sm text-foreground">
+                Choose a local file named {label}; its original workspace path cannot be verified. You can also explicitly read its organization workspace copy.
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                onClick={() => browserFileInputRef.current?.click()}
+              >
+                <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+                Choose local file
+              </button>
+              {organizationId ? (
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  onClick={() => void loadOrganizationWorkspaceCopy()}
+                >
+                  Read workspace copy
+                </button>
+              ) : null}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              File contents stay in this browser and are not sent to Rudder.
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="p-4">
         <div role="alert" className="rounded-[var(--radius-md)] border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
@@ -490,11 +612,32 @@ export function TranscriptLocalFilePreview({
       className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden"
       data-testid="chat-side-panel-local-file-view"
     >
+      {!desktopShell ? (
+        <input
+          ref={browserFileInputRef}
+          type="file"
+          className="sr-only"
+          aria-label={`Choose another ${label} from this device`}
+          onChange={(event) => void handleBrowserFileChange(event)}
+        />
+      ) : null}
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground" title={preview.canonicalPath}>
-            {preview.fileName || label}
+          <div className="truncate text-sm font-medium text-foreground" title={file.filePath}>
+            {preview.desktopPreview?.fileName || file.filePath || label}
           </div>
+          {!desktopShell && !preview.desktopPreview ? (
+            <div
+              className="text-xs text-muted-foreground"
+              data-testid={file.rootPath === "browser-local"
+                ? "transcript-browser-file-source"
+                : "transcript-workspace-file-source"}
+            >
+              {file.rootPath === "browser-local"
+                ? "Selected in browser by filename; original workspace path is not verified."
+                : "Loaded from the selected organization's authorized workspace."}
+            </div>
+          ) : null}
         </div>
         {openTargets.length > 0 ? (
           <WorkspaceFileOpenMenu
@@ -513,19 +656,53 @@ export function TranscriptLocalFilePreview({
               <ExternalLink className="h-3.5 w-3.5" aria-hidden />
               Open
             </button>
+          ) : !desktopShell ? (
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                onClick={() => browserFileInputRef.current?.click()}
+              >
+                <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+                Choose file
+              </button>
+              {organizationId ? (
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  onClick={() => void loadOrganizationWorkspaceCopy()}
+                >
+                  Read workspace copy
+                </button>
+              ) : null}
+            </div>
           ) : null
         )}
       </div>
-      {preview.truncated ? (
+      {preview.desktopPreview?.truncated ? (
         <div className="shrink-0 border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-200" role="status">
           Showing a bounded preview. Open the file to inspect the complete content.
         </div>
       ) : null}
-      {!preview.truncated && preview.content !== null ? (
+      {preview.desktopPreview
+        && !preview.desktopPreview.truncated
+        && preview.desktopPreview.content !== null ? (
         <DesktopLocalTextFileEditor
-          preview={preview}
+          preview={preview.desktopPreview}
           sourceConversationId={sourceConversationId}
-          onPreviewChange={setPreview}
+          onPreviewChange={(desktopPreview) => setPreview({
+            file: workspacePreviewFile(desktopPreview),
+            desktopPreview,
+          })}
+        />
+      ) : isBrowserLocalHtml ? (
+        <iframe
+          data-testid="transcript-browser-local-html-preview"
+          title={`${file.filePath || label} local HTML preview`}
+          srcDoc={buildWorkspaceHtmlStaticFallbackSrcDoc(file.content ?? "")}
+          sandbox=""
+          referrerPolicy="no-referrer"
+          className="block min-h-[384px] w-full min-w-0 flex-1 border-0 bg-white"
         />
       ) : (
         <WorkspaceFilePreview

@@ -5,15 +5,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { TranscriptToolCard } from "./RunTranscriptView.blocks";
 import { TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
-import type { TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "./RunTranscriptView.common";
+import { UNVERIFIED_RUDDER_AGENT_ME_RESULT, type TranscriptAgentDirectoryEntry, type TranscriptToolCardEntry } from "./RunTranscriptView.common";
 import {
-  type CoveredRudderMcpToolName,
   collectRudderMcpTriggerAutomationParents,
   getRudderMcpPresenterDefinition,
   parseRudderMcpResult,
   RUDDER_MCP_PRESENTER_REGISTRY,
   RudderMcpPresenterProvider,
   RudderMcpSemanticPresenter,
+  type CoveredRudderMcpToolName,
 } from "./RunTranscriptView.rudder-mcp";
 
 const toolFixtures = {
@@ -166,6 +166,12 @@ describe("Rudder MCP semantic cards", () => {
   it("renders domain empty and malformed states without a blank disclosure", () => {
     expect(renderPresenter(block("rudder_project_list", []))).toContain("No projects found");
     expect(renderPresenter(block("rudder_project_list", "malformed"))).toContain("Result unavailable");
+  });
+
+  it("shows the fixed unverified identity notice instead of generic unavailable", () => {
+    const html = renderPresenter(block("rudder_agent_me", UNVERIFIED_RUDDER_AGENT_ME_RESULT));
+    expect(html).toContain(UNVERIFIED_RUDDER_AGENT_ME_RESULT);
+    expect(html).not.toContain("Result unavailable");
   });
 
   it("uses internal structured identifiers for whole-card links and Agent directory identities", () => {

@@ -114,6 +114,73 @@ describe("chat generation runtime controls", () => {
     releaseGeneration?.();
   });
 
+  it("preserves an explicit provider steer rejection without requesting continuation", async () => {
+    const releaseGeneration = claimChatGeneration("chat-1", new AbortController(), "generation-1");
+    const coordinator = createChatRuntimeControlCoordinator("chat-1", "generation-1");
+    const attempt = await coordinator.beginAttempt({
+      attemptIndex: 0,
+      runtimeType: "hermes_gateway",
+      model: "hermes-native",
+      isFallback: false,
+    });
+    const handle = controlHandle({
+      runtimeType: "hermes_gateway",
+      steer: vi.fn(async () => ({
+        disposition: "rejected" as const,
+        providerThreadId: "hermes-session-1",
+        providerTurnId: "hermes-run-1",
+        reason: "Hermes API Server explicitly rejected active-run steer (HTTP 409).",
+      })),
+    });
+    await attempt.register(handle);
+
+    await expect(steerActiveChatGeneration({
+      conversationId: "chat-1",
+      expectedGenerationId: "generation-1",
+      feedback: { text: "Continue", clientMessageId: "control-1" },
+    })).resolves.toEqual({
+      status: "provider_rejected",
+      attemptEpoch: 1,
+      providerThreadId: "hermes-session-1",
+      providerTurnId: "hermes-run-1",
+      reason: "Hermes API Server explicitly rejected active-run steer (HTTP 409).",
+    });
+    expect(handle.interrupt).not.toHaveBeenCalled();
+    releaseGeneration?.();
+  });
+
+  it("routes Claude Steer to continuation before claiming a provider send", async () => {
+    const releaseGeneration = claimChatGeneration("chat-1", new AbortController(), "generation-1");
+    const coordinator = createChatRuntimeControlCoordinator("chat-1", "generation-1");
+    const attempt = await coordinator.beginAttempt({
+      attemptIndex: 0,
+      runtimeType: "claude_local",
+      model: "claude-sonnet",
+      isFallback: false,
+    });
+    const handle = controlHandle({
+      runtimeType: "claude_local",
+      capabilities: { steer: "interrupt_continue", interrupt: "process" },
+    });
+    await attempt.register(handle);
+    const claimProviderSend = vi.fn();
+
+    await expect(steerActiveChatGeneration({
+      conversationId: "chat-1",
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 1,
+      feedback: { text: "Use the public API", clientMessageId: "control-1" },
+      claimProviderSend,
+    })).resolves.toEqual({
+      status: "continuation_required",
+      attemptEpoch: 1,
+      reason: "unsupported",
+    });
+    expect(claimProviderSend).not.toHaveBeenCalled();
+    expect(handle.steer).not.toHaveBeenCalled();
+    releaseGeneration?.();
+  });
+
   it("delivers pending Steer as soon as the matching control handle is ready", async () => {
     const releaseGeneration = claimChatGeneration("chat-1", new AbortController(), "generation-1");
     const coordinator = createChatRuntimeControlCoordinator("chat-1", "generation-1");

@@ -19,6 +19,7 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
+  chatMessageTranscriptEntries,
   chatQueuedMessages,
   createDb,
   documents,
@@ -35,10 +36,14 @@ import {
   messengerSavedViewMutations,
   messengerSavedViews,
   messengerThreadUserStates,
+  nativeSegments,
   organizations,
   organizationSecrets,
   productAnalyticsEvents,
   projects,
+  runRuntimeSpans,
+  runtimeBindings,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -60,6 +65,7 @@ import {
   hashChatAnnotationSource,
 } from "../services/chat-inline-annotations.ts";
 import { chatSteerMessageService } from "../services/chat-steer-messages.ts";
+import { createChatConversationListingService } from "../services/chats.conversation-listing.js";
 import { chatService } from "../services/chats.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { issueService } from "../services/issues.ts";
@@ -70,6 +76,8 @@ import {
 } from "../services/messenger-saved-views.ts";
 import { messengerService } from "../services/messenger.ts";
 import * as productAnalyticsService from "../services/product-analytics.ts";
+import { createTranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
+import { sideChatService } from "../services/side-chats.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -165,6 +173,8 @@ describe("messengerService and issue follows", () => {
   let savedViewsSvc!: ReturnType<typeof messengerSavedViewsService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  let transcriptObjectDir = "";
+  let previousTranscriptObjectBasePath: string | undefined;
 
   async function insertSavedViewFixture(
     orgId: string,
@@ -219,6 +229,9 @@ describe("messengerService and issue follows", () => {
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
+    transcriptObjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-messenger-transcripts-"));
+    previousTranscriptObjectBasePath = process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH;
+    process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = transcriptObjectDir;
     chatSvc = chatService(db);
     issueSvc = issueService(db);
     messengerSvc = messengerService(db);
@@ -264,9 +277,43 @@ describe("messengerService and issue follows", () => {
 
   afterAll(async () => {
     await instance?.stop();
+    if (previousTranscriptObjectBasePath === undefined) delete process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH;
+    else process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = previousTranscriptObjectBasePath;
+    if (transcriptObjectDir) fs.rmSync(transcriptObjectDir, { recursive: true, force: true });
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("hydrates stale conversation listing snapshots without recreating deleted user states", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({ id: orgId, name: "Listing deletion", urlKey: `listing-${orgId}`, issuePrefix: "LST" });
+    const rows = await db.insert(chatConversations).values([
+      { orgId, title: "Deleted parent" }, { orgId, title: "Surviving child" },
+    ]).returning();
+    await db.delete(chatConversations).where(eq(chatConversations.id, rows[0].id));
+    const listing = createChatConversationListingService(db);
+    await expect(listing.hydrateConversations(rows, "listing-user")).resolves.toHaveLength(2);
+    const states = await db.select().from(chatConversationUserStates).where(eq(chatConversationUserStates.orgId, orgId));
+    expect(states).toHaveLength(1);
+    expect(states[0]).toMatchObject({ conversationId: rows[1].id, userId: "listing-user", lastReadAt: rows[1].updatedAt });
+    const pinnedAt = new Date();
+    await db.update(chatConversationUserStates).set({ pinnedAt }).where(eq(chatConversationUserStates.id, states[0].id));
+    await listing.listSummariesByIds(orgId, rows.map((row) => row.id), "listing-user");
+    expect((await db.select().from(chatConversationUserStates).where(eq(chatConversationUserStates.orgId, orgId)))[0])
+      .toMatchObject({ id: states[0].id, pinnedAt, lastReadAt: states[0].lastReadAt });
+  });
+
+  it("does not initialize conversation listing state for a mismatched parent organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      { id: orgId, name: "Listing owner", urlKey: `listing-${orgId}`, issuePrefix: "LOW" },
+      { id: otherOrgId, name: "Other owner", urlKey: `listing-${otherOrgId}`, issuePrefix: "OTH" },
+    ]);
+    const [row] = await db.insert(chatConversations).values({ orgId, title: "Owned chat" }).returning();
+    await createChatConversationListingService(db).hydrateConversations([{ ...row, orgId: otherOrgId }], "listing-user");
+    expect(await db.select().from(chatConversationUserStates)).toEqual([]);
   });
 
   it("hydrates public conversation summaries when deletion commits while parent locking waits", async () => {
@@ -289,6 +336,8 @@ describe("messengerService and issue follows", () => {
     const listing = chatService(db);
     const hydration = listing.listSummariesByIds(orgId, rows.map((row) => row.id), "race-user");
     try {
+      // Observe a real DB lock wait instead of depending on a timer or ordering
+      // two uncoordinated operations and hoping the race happened.
       await expect.poll(async () => {
         const waiters = await db.execute(sql`select exists (
           select 1 from pg_stat_activity where ${deletingPid} = any(pg_blocking_pids(pid))
@@ -1993,6 +2042,116 @@ describe("messengerService and issue follows", () => {
       localDisposition: "pending",
       resolvedAt: null,
     });
+  });
+
+  async function recoveryFixture() {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const failedGenerationId = randomUUID();
+    await db.insert(organizations).values({ id: orgId, name: "Queue recovery", urlKey: deriveOrganizationUrlKey(`Recovery ${orgId}`),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`, requireBoardApprovalForNewAgents: false });
+    await db.insert(chatConversations).values({ id: conversationId, orgId, title: "Recovery", createdByUserId: "messenger-test-user" });
+    await db.insert(chatGenerations).values({ id: failedGenerationId, orgId, conversationId,
+      status: "failed", terminalReason: "original_reader_failure", completedAt: new Date() });
+    const old = await chatSvc.createQueuedMessage({ orgId, conversationId, clientMutationId: randomUUID(),
+      payload: { body: "Old accepted input, never replay" }, requestActor: boardQueueRequestActor(orgId) });
+    await db.update(chatQueuedMessages).set({ status: "failed_actionable", deliveryAttempts: 1 }).where(eq(chatQueuedMessages.id, old.id));
+    const queued = await chatSvc.createQueuedMessage({ orgId, conversationId, clientMutationId: randomUUID(),
+      payload: { body: "New explicit continuation" }, requestActor: boardQueueRequestActor(orgId) });
+    const command = { orgId, conversationId, itemId: queued.id, version: queued.version,
+      expectedFailedGenerationId: failedGenerationId, controlActionId: randomUUID(), requestActor: boardQueueRequestActor(orgId) };
+    return { orgId, conversationId, failedGenerationId, old, queued, command };
+  }
+
+  it("queue recovery authorizes one new input and consumes once across concurrent workers", async () => {
+    const f = await recoveryFixture();
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "before-grant", leaseMs: 30_000 })).toBeNull();
+    const results = await Promise.all([chatSvc.authorizeQueuedRecovery(f.command), chatSvc.authorizeQueuedRecovery(f.command)]);
+    expect(results.map((r) => r.idempotent).sort()).toEqual([false, true]);
+    expect(results[0].item.version).toBe(f.queued.version + 1);
+    expect((await chatSvc.getQueueSnapshot(f.conversationId)).latestFailedGenerationId).toBe(f.failedGenerationId);
+    const claims = await Promise.all(Array.from({ length: 4 }, (_, i) =>
+      chatSvc.claimNextServerQueuedMessage({ workerId: `recovery-${i}`, leaseMs: 30_000 })));
+    const claimed = claims.filter((claim) => claim !== null);
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0]?.item).toMatchObject({ id: f.queued.id, deliveryAttempts: 1, deliveryLeaseEpoch: 1 });
+    expect(await db.select().from(chatGenerations).where(eq(chatGenerations.id, claimed[0]!.generationId)))
+      .toMatchObject([{ status: "active", attemptEpoch: 0 }]);
+    expect((await chatSvc.authorizeQueuedRecovery(f.command)).idempotent).toBe(true);
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, f.conversationId))).toHaveLength(1);
+    expect(await db.select().from(chatGenerations).where(eq(chatGenerations.id, f.failedGenerationId)))
+      .toMatchObject([{ status: "failed", terminalReason: "original_reader_failure" }]);
+    expect(await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, f.old.id)))
+      .toMatchObject([{ status: "failed_actionable", deliveryAttempts: 1 }]);
+    expect(await db.select().from(chatControlActions).where(eq(chatControlActions.id, f.command.controlActionId)))
+      .toMatchObject([{ actionKind: "continue", localDisposition: "running_next", providerDisposition: "not_sent" }]);
+  });
+
+  it("queue recovery rejects double-action, stale version, wrong owner/org and old delivered input", async () => {
+    const f = await recoveryFixture();
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, version: 99 })).rejects.toMatchObject({ status: 409 });
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, requestActor: boardQueueRequestActor(f.orgId, "other") })).rejects.toMatchObject({ status: 403 });
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, orgId: randomUUID() })).rejects.toMatchObject({ status: 404 });
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, itemId: f.old.id })).rejects.toMatchObject({ status: 409 });
+    const commands = [f.command, { ...f.command, controlActionId: randomUUID() }];
+    const outcomes = await Promise.allSettled(commands.map((command) => chatSvc.authorizeQueuedRecovery(command)));
+    expect(outcomes.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((r) => r.status === "rejected")).toHaveLength(1);
+  });
+
+  it("queue recovery never resurrects cancellation, including authorization/cancel races", async () => {
+    const f = await recoveryFixture();
+    const outcomes = await Promise.allSettled([
+      chatSvc.authorizeQueuedRecovery(f.command),
+      chatSvc.cancelQueuedMessage({ orgId: f.orgId, conversationId: f.conversationId, itemId: f.queued.id, version: null }),
+    ]);
+    expect(outcomes[1].status).toBe("fulfilled");
+    await expect(chatSvc.authorizeQueuedRecovery(f.command)).rejects.toMatchObject({ status: 409 });
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "cancel-recovery", leaseMs: 30_000 })).toBeNull();
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, f.conversationId))).toHaveLength(0);
+  });
+
+  it("queue recovery invalidates a grant on payload edit and requires fresh explicit authorization", async () => {
+    const f = await recoveryFixture();
+    const authorized = await chatSvc.authorizeQueuedRecovery(f.command);
+    const updated = await chatSvc.updateQueuedMessage({ orgId: f.orgId, conversationId: f.conversationId, itemId: f.queued.id,
+      version: authorized.item.version, payload: { body: "Changed input requires new authorization" } });
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "edited-recovery", leaseMs: 30_000 })).toBeNull();
+    await chatSvc.authorizeQueuedRecovery({ ...f.command, version: updated.version, controlActionId: randomUUID() });
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "reauthorized-recovery", leaseMs: 30_000 }))
+      .toMatchObject({ item: { id: f.queued.id } });
+  });
+
+  it("queue recovery grant cannot move to another failed generation or bypass active execution", async () => {
+    const f = await recoveryFixture();
+    await chatSvc.authorizeQueuedRecovery(f.command);
+    const newGeneration = randomUUID();
+    await db.insert(chatGenerations).values({ id: newGeneration, orgId: f.orgId, conversationId: f.conversationId,
+      status: "active", startedAt: new Date(Date.now() + 1000) });
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "active-recovery", leaseMs: 30_000 })).toBeNull();
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, version: f.queued.version + 1, controlActionId: randomUUID() })).rejects.toMatchObject({ status: 409 });
+    await db.update(chatGenerations).set({ status: "failed" }).where(eq(chatGenerations.id, newGeneration));
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "changed-failure", leaseMs: 30_000 })).toBeNull();
+  });
+
+  it("queue recovery refuses a running Run even with a terminal generation, before and after authorization", async () => {
+    const f = await recoveryFixture();
+    const agentId = randomUUID();
+    await db.insert(agents).values({ id: agentId, orgId: f.orgId, name: "Queue recovery agent", role: "engineer", adapterType: "process" });
+    const [run] = await db.insert(heartbeatRuns).values({ orgId: f.orgId, agentId, chatConversationId: f.conversationId, status: "running" }).returning();
+    await expect(chatSvc.authorizeQueuedRecovery(f.command)).rejects.toMatchObject({ status: 409 });
+    await db.update(heartbeatRuns).set({ status: "failed" }).where(eq(heartbeatRuns.id, run!.id));
+    await chatSvc.authorizeQueuedRecovery(f.command);
+    await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, run!.id));
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "run-still-active", leaseMs: 30_000 })).toBeNull();
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, f.conversationId))).toHaveLength(0);
+  });
+
+  it.each(["stopped", "aborted", "control_lost", "interrupted_unverified"] as const)("queue recovery cannot authorize %s parking", async (status) => {
+    const f = await recoveryFixture();
+    await db.update(chatGenerations).set({ status, terminalReason: "operator_cancelled" }).where(eq(chatGenerations.id, f.failedGenerationId));
+    await expect(chatSvc.authorizeQueuedRecovery(f.command)).rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(chatControlActions).where(eq(chatControlActions.id, f.command.controlActionId))).toHaveLength(0);
   });
 
   it("claims an ordinary queued follow-up after an operator-stopped generation", async () => {
@@ -7965,7 +8124,6 @@ describe("messengerService and issue follows", () => {
   it("accepts the exact completed parent anchor in a Side Chat and binds its files to the child user message", async () => {
     const orgId = randomUUID();
     const parentConversationId = randomUUID();
-    const sideConversationId = randomUUID();
     const annotationId = randomUUID();
     const sourceBody = "Parent response with selected guidance.";
     const selectedText = "selected guidance";
@@ -7990,18 +8148,14 @@ describe("messengerService and issue follows", () => {
       parentConversationId,
       sourceBody,
     );
-    await db.insert(chatConversations).values({
-      id: sideConversationId,
+    const sideConversation = await sideChatService(db).create({
       orgId,
-      title: "Side annotation chat",
-      conversationKind: "side_chat",
-      sideChatState: "active",
-      forkedFromConversationId: parentConversationId,
-      forkedFromMessageId: source.id,
-      issueCreationMode: "manual_approval",
-      planMode: false,
-      createdByUserId: "board-user-side-annotation",
+      userId: "board-user-side-annotation",
+      sourceConversationId: parentConversationId,
+      sourceMessageId: source.id,
+      clientMutationId: randomUUID(),
     });
+    const sideConversationId = sideConversation.id;
     const annotation = {
       id: annotationId,
       surface: "assistant_body" as const,
@@ -8558,11 +8712,204 @@ describe("messengerService and issue follows", () => {
         generationId,
         generationSeqStart: 1,
         generationSeqEnd: 1,
+        sourceEntryId: `message:${assistantMessage.id}:0`,
       },
-      entries[1],
+      { ...entries[1], sourceEntryId: `message:${assistantMessage.id}:1` },
     ];
     expect(hydrated?.transcript).toEqual(expectedTranscript);
     expect(transcript?.transcript).toEqual(expectedTranscript);
+  });
+
+  it("reads a Run-backed transcript without legacy chat transcript rows and preserves it through a fork", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const nativeSessionId = "native-reader-session";
+    const nativeExecutionRef = "native-reader-execution";
+    const userId = "board-user-run-transcript-reader";
+    const entry = {
+      kind: "assistant" as const,
+      ts: "2026-07-23T09:00:00.000Z",
+      text: "Read from the Run Reader",
+      sourceEntryId: "native-entry-1",
+      payload: {
+        kind: "system",
+        ts: "2026-07-23T08:59:00.000Z",
+        text: "Payload text must not replace the canonical Reader item text",
+        generationId: "native-generation",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+    };
+    const expectedEntry = {
+      kind: "assistant" as const,
+      ts: entry.ts,
+      text: entry.text,
+      generationId: "native-generation",
+      generationSeqStart: 7,
+      generationSeqEnd: 7,
+      sourceEntryId: entry.sourceEntryId,
+    };
+    const cursorChunks = ["Hello ", "world"].map((text, index) => ({
+      kind: "cursor:acp:agent_message_chunk",
+      ts: "2026-07-23T09:00:01.000Z",
+      text: text.trim(),
+      sourceEntryId: `acp:update:chunk-${index}`,
+      payload: {
+        provider: "cursor_agent",
+        transport: "cursor-agent-acp-stdio",
+        method: "session/update",
+        sessionId: nativeSessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      },
+    }));
+    const expectedCursorChunks = cursorChunks.map((chunk, index) => ({
+      kind: "assistant" as const,
+      ts: chunk.ts,
+      text: index === 0 ? "Hello " : "world",
+      delta: true,
+      sourceEntryId: chunk.sourceEntryId,
+    }));
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Run Transcript Reader Org",
+      urlKey: deriveOrganizationUrlKey("Run Transcript Reader Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Reader Agent",
+      agentRuntimeType: "cursor",
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Run transcript reader",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      status: "succeeded",
+      chatConversationId: conversationId,
+      sessionIdAfter: nativeSessionId,
+      contextSnapshot: {
+        agentRuntimeType: "cursor",
+        transcriptSource: "native",
+        runtimeProviderProfile: { runtimeType: "cursor" },
+      },
+      resultJson: {},
+    });
+    const bindingId = randomUUID();
+    const segmentId = randomUUID();
+    const spanId = randomUUID();
+    const ownerToken = "native-reader-owner";
+    const openedAt = new Date("2026-07-23T09:00:00.000Z");
+    const closedAt = new Date("2026-07-23T09:01:00.000Z");
+    await db.insert(runtimeBindings).values({
+      id: bindingId,
+      orgId,
+      conversationId,
+      principalScopeRef: `user:${userId}`,
+      agentId,
+      runtimeType: "cursor",
+      continuity: "native",
+      status: "active",
+    });
+    await db.insert(nativeSegments).values({
+      id: segmentId,
+      orgId,
+      bindingId,
+      runtimeType: "cursor",
+      segmentOrdinal: 0,
+      nativeSessionId,
+      rootSessionId: nativeSessionId,
+      state: "sealed",
+      createdAt: openedAt,
+      sealedAt: closedAt,
+      updatedAt: closedAt,
+    });
+    await db.insert(runRuntimeSpans).values({
+      id: spanId,
+      orgId,
+      runId,
+      bindingId,
+      segmentId,
+      attemptRef: "native-reader-attempt",
+      attemptEpoch: 1,
+      ownerToken,
+      ordinal: 0,
+      relation: "primary",
+      nativeExecutionRef,
+      selectorJson: { kind: "cursor_execution", sessionId: nativeSessionId, executionRef: nativeExecutionRef },
+      state: "sealed",
+      completeness: "complete",
+      openedAt,
+      closedAt,
+      writerLeaseReleasedAt: closedAt,
+      updatedAt: closedAt,
+    });
+    const objectStore = createTranscriptObjectStore(transcriptObjectDir);
+    const objectRef = await objectStore.write({
+      orgId,
+      runId,
+      spanId,
+      ownerToken,
+      entries: [entry, ...cursorChunks],
+    });
+    await db.update(runRuntimeSpans)
+      .set({ supplementalObjectRef: objectRef })
+      .where(eq(runRuntimeSpans.id, spanId));
+    const assistantMessage = await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Final reply",
+      runId,
+      replyingAgentId: agentId,
+    });
+    expect(await db.select().from(chatGenerationEvents).where(eq(chatGenerationEvents.orgId, orgId))).toEqual([]);
+    expect(await db.select().from(chatMessageTranscriptEntries).where(eq(chatMessageTranscriptEntries.orgId, orgId))).toEqual([]);
+
+    const [lightweight] = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    expect(lightweight?.transcript).toBeUndefined();
+    expect(lightweight?.transcriptSummary).toEqual({
+      entryCount: 3,
+      startedAt: entry.ts,
+      endedAt: cursorChunks[1]!.ts,
+    });
+    const [hydrated] = await chatSvc.listMessages(conversationId, { includeTranscript: true });
+    expect(hydrated?.transcript).toEqual([expectedEntry, ...expectedCursorChunks]);
+    await expect(chatSvc.getMessageTranscript(conversationId, assistantMessage.id)).resolves.toMatchObject({
+      transcript: [expectedEntry, ...expectedCursorChunks],
+    });
+
+    const fork = await chatSvc.forkConversation({
+      sourceConversationId: conversationId,
+      sourceMessageId: assistantMessage.id,
+      orgId,
+      userId,
+      title: "Forked Run transcript",
+      createdByUserId: userId,
+    });
+    try {
+      const forkedAssistant = (await chatSvc.listMessages(fork.id, { includeTranscript: true }))
+        .find((message) => message.role === "assistant");
+      expect(forkedAssistant?.transcript).toEqual([expectedEntry, ...expectedCursorChunks]);
+    } finally {
+      await db.delete(runtimeSourceAliases).where(and(
+        eq(runtimeSourceAliases.orgId, orgId),
+        eq(runtimeSourceAliases.conversationId, fork.id),
+      ));
+    }
   });
 
   it("lists only the latest five eligible user messages for title generation", async () => {

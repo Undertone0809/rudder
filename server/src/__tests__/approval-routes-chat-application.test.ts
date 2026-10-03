@@ -3,6 +3,7 @@ import { once } from "node:events";
 import type { Server } from "node:http";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { approvalRoutes } from "../routes/approvals.js";
 
@@ -20,6 +21,7 @@ const mockApprovalService = vi.hoisted(() => ({
 }));
 
 const mockChatService = vi.hoisted(() => ({
+  assertApprovalConversationScope: vi.fn(),
   applyApprovedApproval: vi.fn(),
 }));
 
@@ -106,6 +108,7 @@ describe("approval routes chat application", () => {
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
     mockLogActivity.mockResolvedValue(undefined);
     mockIssueService.update.mockResolvedValue(null);
+    mockChatService.assertApprovalConversationScope.mockResolvedValue(null);
     mockChatService.applyApprovedApproval.mockResolvedValue(null);
     mockAccessService.canUser.mockResolvedValue(true);
     mockApprovalService.getById.mockResolvedValue({
@@ -584,6 +587,79 @@ describe("approval routes chat application", () => {
     expect(mockChatService.applyApprovedApproval).toHaveBeenCalledWith(
       expect.objectContaining({ payload }),
       "user-1",
+    );
+  });
+
+  it("fails closed before approval persistence when a payload override retargets the conversation", async () => {
+    const payload = {
+      chatConversationId: "chat-other-org",
+      proposedIssue: {
+        title: "Retargeted issue",
+        description: "This must not be approved for another conversation.",
+        assigneeUnassignedReason: "The approver needs to choose an execution owner.",
+      },
+    };
+    mockChatService.assertApprovalConversationScope.mockRejectedValueOnce(
+      unprocessable("Chat approval conversation cannot be changed during approval"),
+    );
+
+    const res = await request(await createApp())
+      .post("/api/approvals/approval-1/approve")
+      .send({ payload });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("Chat approval conversation cannot be changed during approval");
+    expect(mockChatService.assertApprovalConversationScope).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "approval-1", orgId: "organization-1" }),
+      payload,
+    );
+    expect(mockApprovalService.approve).not.toHaveBeenCalled();
+    expect(mockChatService.applyApprovedApproval).not.toHaveBeenCalled();
+  });
+
+  it("preserves same-organization operation proposal overrides after provenance validation", async () => {
+    const pendingApproval = {
+      id: "approval-operation-1",
+      orgId: "organization-1",
+      type: "chat_operation",
+      status: "pending",
+      payload: {
+        chatConversationId: "chat-1",
+        proposedByAgentId: "agent-1",
+        operationProposal: {
+          targetType: "organization",
+          targetId: "organization-1",
+          summary: "Update the organization name",
+          patch: { name: "Updated organization" },
+        },
+      },
+      requestedByAgentId: "agent-1",
+      requestedByUserId: null,
+    };
+    const payload = {
+      ...pendingApproval.payload,
+      operationProposal: {
+        ...pendingApproval.payload.operationProposal,
+        summary: "Update the organization name",
+      },
+    };
+    mockApprovalService.getById.mockResolvedValue(pendingApproval);
+    mockApprovalService.approve.mockResolvedValue({
+      approval: { ...pendingApproval, status: "approved", payload },
+      applied: false,
+    });
+
+    const res = await request(await createApp())
+      .post("/api/approvals/approval-operation-1/approve")
+      .send({ payload });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.assertApprovalConversationScope).toHaveBeenCalledWith(pendingApproval, payload);
+    expect(mockApprovalService.approve).toHaveBeenCalledWith(
+      "approval-operation-1",
+      "board",
+      undefined,
+      payload,
     );
   });
 

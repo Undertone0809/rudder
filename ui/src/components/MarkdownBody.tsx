@@ -25,8 +25,8 @@ import {
   getWebsiteMetadata,
 } from "../lib/website-metadata-cache";
 import { InspectableImage } from "./InspectableImage";
-import { MarkdownLocalFileLink, renderMarkdownLocalImage } from "./MarkdownLocalImage";
 import type { MentionOption } from "./MarkdownEditor";
+import { MarkdownLocalFileLink, renderMarkdownLocalImage } from "./MarkdownLocalImage";
 import { RudderEntityPreview } from "./RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";

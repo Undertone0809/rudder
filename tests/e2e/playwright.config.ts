@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 
 import { defineConfig } from "@playwright/test";
@@ -21,12 +22,30 @@ import {
 const PORT = E2E_PORT;
 const BASE_URL = E2E_BASE_URL;
 const USE_EXISTING_SERVER = process.env.RUDDER_E2E_USE_EXISTING_SERVER === "1";
+const SCOPED_PREFLIGHT = process.env.RUDDER_E2E_SCOPED_PREFLIGHT === "1";
 const PRODUCTION_UI = process.env.RUDDER_E2E_PRODUCTION_UI === "1";
 const CHROMIUM_EXECUTABLE_PATH = process.env.RUDDER_E2E_CHROMIUM_EXECUTABLE?.trim() || undefined;
 const E2E_CONFIG = path.join(E2E_INSTANCE_ROOT, "config.json");
 const E2E_DATABASE_URL = process.env.RUDDER_E2E_DATABASE_URL?.trim() || null;
 const REPO_ROOT = path.resolve(E2E_ROOT, "../..");
 const SERVER_DIR = path.join(REPO_ROOT, "server");
+
+if (SCOPED_PREFLIGHT) {
+  const required = ["RUDDER_E2E_RUN_ID", "RUDDER_E2E_HOME", "RUDDER_E2E_PORT", "RUDDER_E2E_DB_PORT"];
+  if (required.some((name) => !process.env[name]?.trim())) {
+    throw new Error(`Scoped E2E preflight requires explicit ${required.join(", ")}`);
+  }
+  const tempRoots = [os.tmpdir(), "/tmp", "/private/tmp"].map((root) => path.resolve(root));
+  if (!tempRoots.some((root) => E2E_HOME.startsWith(`${root}${path.sep}`))) {
+    throw new Error(`Scoped E2E home must be under a system temp directory: ${E2E_HOME}`);
+  }
+}
+const SCOPED_HOME_GUARD = SCOPED_PREFLIGHT
+  ? `if [ -e "${E2E_HOME}" ] || [ -L "${E2E_HOME}" ]; then echo "Scoped E2E home already exists: ${E2E_HOME}" >&2; exit 1; fi;`
+  : "";
+const PREPARE_HOME_COMMAND = SCOPED_PREFLIGHT
+  ? ":"
+  : `"${SERVER_DIR}/node_modules/.bin/tsx" "${E2E_ROOT}/support/e2e-preflight.ts"; rm -rf "${E2E_HOME}"`;
 
 const e2eConfigJson = JSON.stringify(
   {
@@ -101,8 +120,10 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "on-first-retry",
   },
-  globalSetup: "./support/global-setup.ts",
-  globalTeardown: "./support/global-teardown.ts",
+  globalSetup: SCOPED_PREFLIGHT ? undefined : "./support/global-setup.ts",
+  // The regular teardown scans global SysV shared memory. Scoped runs leave
+  // their exact-instance process cleanup to the caller and preserve the home.
+  globalTeardown: SCOPED_PREFLIGHT ? undefined : "./support/global-teardown.ts",
   projects: [
     {
       name: "chromium",
@@ -119,8 +140,22 @@ export default defineConfig({
   webServer: USE_EXISTING_SERVER
     ? undefined
     : {
-    command: `bash -lc 'set -euo pipefail; mkdir -p "$(dirname "${E2E_LOCK_PATH}")"; if ! mkdir "${E2E_LOCK_PATH}" 2>/dev/null; then owner_pid="$(cat "${E2E_LOCK_PATH}/pid" 2>/dev/null || true)"; if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then echo "E2E run lock is already held by PID $owner_pid: ${E2E_LOCK_PATH}" >&2; else echo "E2E run lock is stale; refusing unsafe takeover: ${E2E_LOCK_PATH}" >&2; fi; exit 1; fi; printf "%s\\n" "$$" > "${E2E_LOCK_PATH}/pid"; trap '"'"'rm -rf "${E2E_LOCK_PATH}"; rm -f "${E2E_SERVER_PID_PATH}" "${E2E_RUNTIME_DESCRIPTOR_PATH}"'"'"' EXIT INT TERM; "${SERVER_DIR}/node_modules/.bin/tsx" "${E2E_ROOT}/support/e2e-preflight.ts"; rm -rf "${E2E_HOME}"; mkdir -p "$(dirname "${E2E_CONFIG}")" "${E2E_BIN_DIR}"; cat > "${E2E_CODEX_STUB}" <<'"'"'EOF'"'"'
+    command: `bash -lc 'set -euo pipefail; ${SCOPED_HOME_GUARD} mkdir -p "$(dirname "${E2E_LOCK_PATH}")"; if ! mkdir "${E2E_LOCK_PATH}" 2>/dev/null; then owner_pid="$(cat "${E2E_LOCK_PATH}/pid" 2>/dev/null || true)"; if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then echo "E2E run lock is already held by PID $owner_pid: ${E2E_LOCK_PATH}" >&2; else echo "E2E run lock is stale; refusing unsafe takeover: ${E2E_LOCK_PATH}" >&2; fi; exit 1; fi; printf "%s\\n" "$$" > "${E2E_LOCK_PATH}/pid"; trap '"'"'rm -rf "${E2E_LOCK_PATH}"; rm -f "${E2E_SERVER_PID_PATH}" "${E2E_RUNTIME_DESCRIPTOR_PATH}"'"'"' EXIT INT TERM; ${PREPARE_HOME_COMMAND}; mkdir -p "$(dirname "${E2E_CONFIG}")" "${E2E_BIN_DIR}"; cat > "${E2E_CODEX_STUB}" <<'"'"'EOF'"'"'
 #!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  process.stdout.write("codex-cli 0.155.0\\n");
+  process.exit(0);
+}
+if (args.includes("generate-json-schema")) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const directory = args[args.indexOf("--out") + 1];
+  fs.mkdirSync(directory, { recursive: true });
+  // This fixture intentionally lacks native history methods and exercises CLI fallback.
+  fs.writeFileSync(path.join(directory, "ClientRequest.json"), JSON.stringify({ oneOf: [] }));
+  process.exit(0);
+}
 let prompt = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -149,18 +184,41 @@ process.stdin.on("end", async () => {
       item: { id: "reason-1", type: "reasoning", text: "Inspecting current chat state" },
     }) + "\\n",
   );
-  process.stdout.write(
-    JSON.stringify({
-      type: "item.started",
-      item: { type: "tool_use", id: "tool-1", name: memoryToolName, input: { command: "echo chat" } },
-    }) + "\\n",
-  );
-  process.stdout.write(
-    JSON.stringify({
-      type: "item.completed",
-      item: { type: "tool_result", tool_use_id: "tool-1", content: "TRANSCRIPT_TOOL_OUTPUT_E2E", status: "completed" },
-    }) + "\\n",
-  );
+  if (memoryToolName === "command_execution") {
+    process.stdout.write(
+      JSON.stringify({
+        type: "item.started",
+        item: { type: "command_execution", id: "tool-1", command: "echo chat", cwd: process.cwd(), status: "in_progress" },
+      }) + "\\n",
+    );
+    process.stdout.write(
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          id: "tool-1",
+          command: "echo chat",
+          cwd: process.cwd(),
+          status: "completed",
+          exit_code: 0,
+          aggregated_output: "TRANSCRIPT_TOOL_OUTPUT_E2E",
+        },
+      }) + "\\n",
+    );
+  } else {
+    process.stdout.write(
+      JSON.stringify({
+        type: "item.started",
+        item: { type: "tool_use", id: "tool-1", name: memoryToolName, input: { command: "echo chat" } },
+      }) + "\\n",
+    );
+    process.stdout.write(
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "tool_result", tool_use_id: "tool-1", content: "TRANSCRIPT_TOOL_OUTPUT_E2E", status: "completed" },
+      }) + "\\n",
+    );
+  }
   process.stdout.write(
     JSON.stringify({
       type: "item.completed",
@@ -197,8 +255,7 @@ EOF
 chmod +x "${E2E_CLAUDE_STUB}"
 cat > "${E2E_CODEX_ERROR_STUB}" <<'"'"'EOF'"'"'
 #!/usr/bin/env node
-process.stdin.resume();
-process.stdin.on("end", () => {
+// A broken installation fails before reading stdin, including version probes.
   console.error([
     "file:///stub/codex.js:100",
     "    throw new Error(",
@@ -209,7 +266,6 @@ process.stdin.on("end", () => {
     "Node.js v22.17.0",
   ].join("\\n"));
   process.exit(1);
-});
 EOF
 chmod +x "${E2E_CODEX_ERROR_STUB}"
 cat > "${E2E_CONFIG}" <<'"'"'EOF'"'"'

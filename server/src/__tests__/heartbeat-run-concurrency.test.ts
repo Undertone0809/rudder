@@ -8,24 +8,30 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRunAttempts,
   heartbeatRuns,
   issues,
   organizations,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockBudgetService = vi.hoisted(() => ({
   getInvocationBlock: vi.fn(),
 }));
 
 const mockRuntimeAdapter = vi.hoisted(() => {
+  const pendingExecutions = new Map<string, () => void>();
+  const completeRunIds = new Set<string>();
   const calls: Array<{
     runId: string;
     taskKey: string | null;
@@ -33,11 +39,28 @@ const mockRuntimeAdapter = vi.hoisted(() => {
     sessionDisplayId: string | null;
     sessionParams: Record<string, unknown> | null;
   }> = [];
-
   return {
     calls,
+    completeRun(runId: string) {
+      const complete = pendingExecutions.get(runId);
+      if (complete) complete();
+      else completeRunIds.add(runId);
+    },
     reset() {
+      if (pendingExecutions.size > 0) {
+        throw new Error("Cannot reset the runtime adapter while executions are still pending");
+      }
       calls.length = 0;
+      completeRunIds.clear();
+    },
+    drainPendingExecutions() {
+      for (const complete of [...pendingExecutions.values()]) complete();
+    },
+    pendingExecutionCount() {
+      return pendingExecutions.size;
+    },
+    pendingExecutionIds() {
+      return [...pendingExecutions.keys()];
     },
     adapter: {
       type: "codex_local",
@@ -73,7 +96,34 @@ const mockRuntimeAdapter = vi.hoisted(() => {
           sessionDisplayId: ctx.runtime.sessionDisplayId,
           sessionParams: ctx.runtime.sessionParams,
         });
-        return await new Promise(() => {});
+        if (completeRunIds.delete(ctx.runId)) {
+          return {
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            sessionId: null,
+            sessionDisplayId: null,
+            sessionParams: null,
+            nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+            resultJson: { summary: "legacy queued execution completed" },
+          };
+        }
+        return await new Promise((resolve) => {
+          const complete = () => {
+            pendingExecutions.delete(ctx.runId);
+            resolve({
+              exitCode: 0,
+              signal: null,
+              timedOut: false,
+              sessionId: null,
+              sessionDisplayId: null,
+              sessionParams: null,
+              nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+              resultJson: { summary: "test execution drained" },
+            });
+          };
+          pendingExecutions.set(ctx.runId, complete);
+        });
       },
     },
   };
@@ -92,6 +142,34 @@ vi.mock("../agent-runtimes/index.ts", async () => {
   return {
     ...actual,
     getServerAdapter: vi.fn(() => mockRuntimeAdapter.adapter),
+    createProfileBoundRuntimeProviderCapabilityResolverFromConfig: vi.fn(() => (
+      runtimeType: string,
+      binding: { hostId: string; profileId: string } | null,
+    ) => ({
+      adapter: {
+        runtimeType,
+        sessionResume: {
+          evidence: {
+            status: "supported",
+            reason: "Fake adapter resumes its saved session",
+            transport: "test-adapter",
+            profileBound: true,
+            profileRequired: true,
+          },
+        },
+        input: {
+          evidence: {
+            status: "supported",
+            reason: "Fake adapter accepts one input",
+            transport: "test-adapter",
+            profileBound: true,
+            profileRequired: true,
+          },
+        },
+      },
+      binding,
+      profileResolved: Boolean(binding),
+    })),
     runningProcesses: new Map(),
   };
 });
@@ -185,10 +263,36 @@ async function waitForCondition(check: () => Promise<boolean>, timeoutMs = 3_000
   throw new Error("Timed out waiting for test condition");
 }
 
+async function spawnExitedProcessEvidence(): Promise<{ processPid: number; processExitedAt: Date }> {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+  const processPid = child.pid;
+  if (typeof processPid !== "number") throw new Error("Failed to spawn exit-evidence child process");
+
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("Exit-evidence child process did not exit within 3 seconds"));
+    }, 3_000);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout);
+      resolve({ code, signal });
+    });
+  });
+  if (exit.code !== 0 || exit.signal !== null) {
+    throw new Error(`Exit-evidence child ended unexpectedly (code=${exit.code}, signal=${exit.signal})`);
+  }
+  return { processPid, processExitedAt: new Date() };
+}
+
 describe("heartbeat run concurrency", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  const testAgentIds = new Set<string>();
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -198,6 +302,7 @@ describe("heartbeat run concurrency", () => {
   }, 20_000);
 
   beforeEach(async () => {
+    testAgentIds.clear();
     const cleanupAt = new Date();
     await db
       .update(heartbeatRuns)
@@ -206,15 +311,77 @@ describe("heartbeat run concurrency", () => {
         finishedAt: cleanupAt,
         processExitedAt: cleanupAt,
         terminalEffectsPending: false,
-        executionOwnerToken: null,
-        executionLeaseExpiresAt: null,
         updatedAt: cleanupAt,
       })
-      .where(inArray(heartbeatRuns.status, ["queued", "running"]));
+      .where(eq(heartbeatRuns.status, "queued"));
     vi.clearAllMocks();
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     mockRuntimeAdapter.reset();
   }, 15_000);
+
+  afterEach(async () => {
+    // Finish this fixture's queue before releasing its running adapters. Their
+    // completion may otherwise promote queued work into the next test's mock.
+    if (testAgentIds.size > 0) {
+      const cleanupAt = new Date();
+      await db.update(heartbeatRuns).set({
+        status: "cancelled",
+        finishedAt: cleanupAt,
+        processExitedAt: cleanupAt,
+        terminalEffectsPending: false,
+        updatedAt: cleanupAt,
+      }).where(and(
+        inArray(heartbeatRuns.agentId, [...testAgentIds]),
+        eq(heartbeatRuns.status, "queued"),
+      ));
+    }
+    const deadline = Date.now() + 10_000;
+    let observedState: unknown = null;
+    while (Date.now() < deadline) {
+      const runIds = [...new Set(mockRuntimeAdapter.calls.map((call) => call.runId))];
+      const agentIds = [...testAgentIds];
+      mockRuntimeAdapter.drainPendingExecutions();
+      const agentRuns = agentIds.length > 0
+        ? await db
+          .select({ id: heartbeatRuns.id })
+          .from(heartbeatRuns)
+          .where(inArray(heartbeatRuns.agentId, agentIds))
+        : [];
+      const allRunIds = [...new Set([...runIds, ...agentRuns.map((run) => run.id)])];
+      const calledRuns = runIds.length > 0
+        ? await db
+          .select({
+            id: heartbeatRuns.id,
+            status: heartbeatRuns.status,
+            executionOwnerToken: heartbeatRuns.executionOwnerToken,
+            terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+            processExitedAt: heartbeatRuns.processExitedAt,
+          })
+          .from(heartbeatRuns)
+          .where(inArray(heartbeatRuns.id, runIds))
+        : [];
+      const activeSpans = allRunIds.length > 0
+        ? await db
+          .select({ id: runRuntimeSpans.id })
+          .from(runRuntimeSpans)
+          .where(and(inArray(runRuntimeSpans.runId, allRunIds), isNull(runRuntimeSpans.writerLeaseReleasedAt)))
+        : [];
+      observedState = { calledRuns, activeSpanIds: activeSpans.map((span) => span.id) };
+      const drained = (runIds.length === 0 || (calledRuns.length === runIds.length
+        && calledRuns.every((run) => run.status !== "running"
+            && run.executionOwnerToken === null
+            && run.terminalEffectsPending === false
+            && run.processExitedAt !== null)))
+        && activeSpans.length === 0;
+
+      const callsBeforeQuietPeriod = mockRuntimeAdapter.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (drained
+        && mockRuntimeAdapter.pendingExecutionCount() === 0
+        && mockRuntimeAdapter.calls.length === callsBeforeQuietPeriod) return;
+    }
+    throw new Error(`Runtime adapter teardown did not drain: ${JSON.stringify(observedState)}`);
+  });
 
   async function countPostgresLockWaiters() {
     const rows = await db.execute(sql<{ count: number }>`
@@ -306,6 +473,7 @@ describe("heartbeat run concurrency", () => {
       updatedAt: fixtureOptions.createdAt,
     });
 
+    testAgentIds.add(agentId);
     return { orgId, agentId };
   }
 
@@ -476,6 +644,7 @@ describe("heartbeat run concurrency", () => {
       },
     });
     const sourceRunId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence();
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
       orgId: input.orgId,
@@ -484,6 +653,8 @@ describe("heartbeat run concurrency", () => {
       triggerDetail: "manual",
       status: "failed",
       finishedAt: new Date(),
+      processPid: exitedWriter.processPid,
+      processExitedAt: exitedWriter.processExitedAt,
       error: "retry with explicit session",
       sessionIdBefore: "old-source-session",
       sessionIdAfter: "explicit-session",
@@ -1047,6 +1218,7 @@ describe("heartbeat run concurrency", () => {
       stateJson: {},
     });
     const sourceRunId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence();
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
       orgId,
@@ -1055,6 +1227,8 @@ describe("heartbeat run concurrency", () => {
       triggerDetail: "manual",
       status: "failed",
       finishedAt: new Date(),
+      processPid: exitedWriter.processPid,
+      processExitedAt: exitedWriter.processExitedAt,
       error: "retry me",
       sessionIdBefore: "selected-session-before",
       sessionIdAfter: "selected-session-after",
@@ -1558,6 +1732,70 @@ describe("heartbeat run concurrency", () => {
     expect(mockRuntimeAdapter.calls.map((call) => call.taskKey)).toEqual(["serial:1"]);
   });
 
+  it("executes a legacy queued run through the old attempt ledger without creating native identity", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "legacy-queued-ledger",
+      createdAt: new Date("2026-04-27T00:35:00.000Z"),
+    });
+    const [legacyBefore] = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId));
+    expect(legacyBefore).toMatchObject({
+      status: "queued",
+      scene: null,
+      targetType: null,
+      targetId: null,
+      idempotencyKey: null,
+      sessionIntentJson: null,
+    });
+    expect(legacyBefore?.contextSnapshot).not.toHaveProperty("unifiedAgentRun");
+
+    mockRuntimeAdapter.completeRun(runId);
+    await heartbeatService(db).resumeQueuedRuns();
+    await waitForCondition(async () => {
+      const [run] = await db
+        .select({ status: heartbeatRuns.status, terminalEffectsPending: heartbeatRuns.terminalEffectsPending })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId));
+      return mockRuntimeAdapter.calls.some((call) => call.runId === runId)
+        && run?.status === "succeeded"
+        && run.terminalEffectsPending === false;
+    });
+
+    const [finishedRun] = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId));
+    expect(finishedRun).toMatchObject({
+      status: "succeeded",
+      scene: null,
+      targetType: null,
+      targetId: null,
+      idempotencyKey: null,
+      sessionIntentJson: null,
+    });
+    expect(finishedRun?.contextSnapshot).not.toHaveProperty("unifiedAgentRun");
+
+    const attempts = await db
+      .select()
+      .from(heartbeatRunAttempts)
+      .where(and(eq(heartbeatRunAttempts.orgId, orgId), eq(heartbeatRunAttempts.runId, runId)));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      attemptIndex: 0,
+      status: "succeeded",
+      ownerToken: expect.any(String),
+      attemptEpoch: 1,
+      finishedAt: expect.any(Date),
+    });
+    await expect(db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, runId))).resolves.toHaveLength(0);
+    await expect(db.select().from(runtimeBindings).where(eq(runtimeBindings.agentId, agentId))).resolves.toHaveLength(0);
+  });
+
   it("abandons local execution when its initial lease renewal loses ownership", async () => {
     const { orgId, agentId } = await seedAgentFixture(1);
     const runId = await seedQueuedRun({
@@ -1666,7 +1904,31 @@ describe("heartbeat run concurrency", () => {
     expect(statuses.filter((run) => run.status === "running")).toHaveLength(1);
     expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
 
-    mockRuntimeAdapter.reset();
+    const lowRunId = mockRuntimeAdapter.calls[0]?.runId;
+    expect(lowRunId).toBeDefined();
+    mockRuntimeAdapter.completeRun(lowRunId!);
+    await waitForCondition(async () => {
+      const [run] = await db
+        .select({
+          status: heartbeatRuns.status,
+          executionOwnerToken: heartbeatRuns.executionOwnerToken,
+          terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+          processExitedAt: heartbeatRuns.processExitedAt,
+        })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, lowRunId!));
+      const [activeSpan] = await db
+        .select({ id: runRuntimeSpans.id })
+        .from(runRuntimeSpans)
+        .where(and(eq(runRuntimeSpans.runId, lowRunId!), isNull(runRuntimeSpans.writerLeaseReleasedAt)))
+        .limit(1);
+      return run?.status === "succeeded"
+        && run.executionOwnerToken === null
+        && run.terminalEffectsPending === false
+        && run.processExitedAt !== null
+        && !activeSpan;
+    });
+
     const high = await seedAgentFixture(999);
     const highCreatedAt = new Date("2026-04-27T03:00:00.000Z");
     for (let i = 0; i < 11; i += 1) {
@@ -1905,6 +2167,7 @@ describe("heartbeat run concurrency", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    testAgentIds.add(newAgentId);
 
     const issueId = await seedIssueFixture({ orgId, agentId: oldAgentId });
     const activeRunId = await seedLiveIssueExecution({ orgId, agentId: oldAgentId, issueId });
@@ -1955,6 +2218,12 @@ describe("heartbeat run concurrency", () => {
       runId: null,
       payload: { issueId, mutation: "update" },
     });
+
+    // This fixture deliberately leaves an active old-owner run. Retire its
+    // deferred new-owner wake before later tests reap orphaned runs globally.
+    await db.update(agentWakeupRequests)
+      .set({ status: "cancelled" })
+      .where(eq(agentWakeupRequests.id, deferredWakeups[0]!.id));
   });
 
   it("keeps a deferred force-fresh wake fresh when issue execution is promoted", async () => {
@@ -2023,6 +2292,24 @@ describe("heartbeat run concurrency", () => {
       sessionId: null,
       sessionDisplayId: null,
       sessionParams: null,
+    });
+
+    mockRuntimeAdapter.completeRun(promoted.id);
+    await waitForCondition(async () => {
+      const [completed] = await db
+        .select({
+          status: heartbeatRuns.status,
+          executionOwnerToken: heartbeatRuns.executionOwnerToken,
+          terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+          processExitedAt: heartbeatRuns.processExitedAt,
+        })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, promoted.id));
+      return completed?.status === "succeeded"
+        && completed.executionOwnerToken === null
+        && completed.terminalEffectsPending === false
+        && completed.processExitedAt !== null
+        && !mockRuntimeAdapter.pendingExecutionIds().includes(promoted.id);
     });
   });
 
@@ -2118,6 +2405,7 @@ describe("heartbeat run concurrency", () => {
   it("deduplicates concurrent retries for a terminal run without an issue", async () => {
     const { orgId, agentId } = await seedAgentFixture(3);
     const sourceRunId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence();
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
       orgId,
@@ -2126,6 +2414,8 @@ describe("heartbeat run concurrency", () => {
       triggerDetail: "manual",
       status: "failed",
       terminalEffectsPending: false,
+      processPid: exitedWriter.processPid,
+      processExitedAt: exitedWriter.processExitedAt,
       contextSnapshot: { taskKey: "retry-without-issue" },
       finishedAt: new Date(),
       error: "source failed",

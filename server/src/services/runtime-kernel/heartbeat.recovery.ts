@@ -15,6 +15,7 @@ import type {
   HeartbeatRunRecoveryContext
 } from "@rudderhq/shared";
 import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { runningProcesses } from "../../agent-runtimes/index.js";
 import { asBoolean, asNumber, parseObject } from "../../agent-runtimes/utils.js";
 import { conflict } from "../../errors.js";
 import { logger } from "../../middleware/logger.js";
@@ -55,7 +56,88 @@ export async function recordAssignmentRecoveryResult(input: any) {
 }
 
 export function createHeartbeatRecoveryHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, withHeartbeatRecoveryLock, formatDurationMs } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, ensureHeartbeatRunAdmission, terminateRunProcessAndWait, withHeartbeatRecoveryLock, formatDurationMs } = context;
+
+  async function ensureRecoveryProviderWriterStopped(
+    run: typeof heartbeatRuns.$inferSelect,
+    agentRuntimeType: string,
+    now: Date,
+  ) {
+    const trackedProcess = runningProcesses.get(run.id);
+    const trackedChildExited = trackedProcess
+      && (trackedProcess.child.exitCode !== null || trackedProcess.child.signalCode !== null);
+    if (run.processExitedAt) {
+      if (trackedProcess && !trackedChildExited) {
+        throw conflict("Recovery is blocked because a provider writer is still owned by this process", {
+          runId: run.id,
+          processPid: trackedProcess.child.pid ?? null,
+        });
+      }
+      return;
+    }
+    if (!heartbeatSessions.isTrackedLocalChildProcessAdapter(agentRuntimeType)) {
+      throw conflict("Recovery is blocked because provider-writer termination is unavailable for this runtime", {
+        runId: run.id,
+        agentRuntimeType,
+      });
+    }
+    if (!Number.isInteger(run.processPid) || !run.processPid || run.processPid <= 0) {
+      throw conflict("Recovery is blocked because the prior provider writer has no persisted process identity", {
+        runId: run.id,
+      });
+    }
+    if (!trackedProcess || trackedProcess.child.pid !== run.processPid) {
+      throw conflict("Recovery is blocked because ownership of the prior provider writer cannot be proven", {
+        runId: run.id,
+        processPid: run.processPid,
+      });
+    }
+
+    const stopped = await terminateRunProcessAndWait(run, agentRuntimeType);
+    const childExited = trackedProcess.child.exitCode !== null || trackedProcess.child.signalCode !== null;
+    const currentTrackedProcess = runningProcesses.get(run.id);
+    if (
+      !stopped
+      || !childExited
+      || activeRunExecutions.has(run.id)
+      || (currentTrackedProcess && currentTrackedProcess !== trackedProcess)
+    ) {
+      throw conflict("Recovery is blocked because the prior provider writer could not be proven stopped", {
+        runId: run.id,
+        processPid: run.processPid,
+      });
+    }
+
+    const recordedExit = await db
+      .update(heartbeatRuns)
+      .set({ processExitedAt: now, updatedAt: now })
+      .where(and(
+        eq(heartbeatRuns.id, run.id),
+        eq(heartbeatRuns.status, run.status),
+        eq(heartbeatRuns.processPid, run.processPid),
+        run.processStartedAt
+          ? eq(heartbeatRuns.processStartedAt, run.processStartedAt)
+          : isNull(heartbeatRuns.processStartedAt),
+        isNull(heartbeatRuns.processExitedAt),
+      ))
+      .returning({ id: heartbeatRuns.id })
+      .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+    if (!recordedExit) {
+      const current = await getRun(run.id);
+      const sameStartedAt = (current?.processStartedAt?.getTime() ?? null)
+        === (run.processStartedAt?.getTime() ?? null);
+      if (
+        !current?.processExitedAt
+        || current.status !== run.status
+        || current.processPid !== run.processPid
+        || !sameStartedAt
+      ) {
+        throw conflict("Recovery is blocked because provider process exit evidence changed", {
+          runId: run.id,
+        });
+      }
+    }
+  }
 
   async function warnInactiveRunsLocked(opts?: { minInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
     const minInactivityMs = opts?.minInactivityMs ?? HEARTBEAT_RUN_INACTIVITY_WARNING_MS;
@@ -136,6 +218,8 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       now: Date;
     },
   ) {
+    await ensureRecoveryProviderWriterStopped(run, agent.agentRuntimeType, opts.now);
+
     /**
      * Recovery runs intentionally clone the prior run's task context and then
      * layer explicit recovery metadata on top. This keeps retries visible and
@@ -430,6 +514,30 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       if (recoveryGoalId) recoveryContextSnapshot.goalId = recoveryGoalId;
       else delete recoveryContextSnapshot.goalId;
 
+      const recoveryAdmission = await ensureHeartbeatRunAdmission(tx, {
+        agent,
+        scene: (
+          readNonEmptyString(recoveryContextSnapshot.scene)
+          ?? readNonEmptyString(recoveryContextSnapshot.rudderScene)
+          ?? run.scene
+        ) as "chat" | "side_chat" | "issue" | "review" | "automation" | "heartbeat" | "delegation" | null,
+        targetType: run.targetType as any,
+        targetId: run.targetId,
+        source: opts.source,
+        requestId: wakeupRequest.id,
+        idempotencyKey: wakeupRequest.id,
+        contextSnapshot: recoveryContextSnapshot,
+        payload: requestPayload,
+        sourceRunId: run.id,
+        sessionReuseScope:
+          suppressSessionReuse ? "none" : explicitResumeSession ? "explicit" : sessionBefore ? "task" : "none",
+        sessionId: sessionBefore,
+        sessionParams:
+          suppressSessionReuse
+            ? null
+            : explicitResumeSession?.sessionParams ?? (sessionBefore ? { sessionId: sessionBefore } : null),
+      });
+
       const recoveryRun = await tx
         .insert(heartbeatRuns)
         .values({
@@ -441,7 +549,7 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           status: "queued",
           wakeupRequestId: wakeupRequest.id,
           sourceRunId: run.sourceRunId ?? readNonEmptyString(recoveryContextSnapshot.sourceRunId),
-          contextSnapshot: recoveryContextSnapshot,
+          contextSnapshot: recoveryAdmission.contextSnapshot,
           sessionIdBefore: sessionBefore,
           sessionParamsBeforeJson:
             suppressSessionReuse
@@ -449,6 +557,11 @@ export function createHeartbeatRecoveryHandlers(context: any) {
               : explicitResumeSession?.sessionParams ?? (sessionBefore ? { sessionId: sessionBefore } : null),
           sessionReuseScope:
             suppressSessionReuse ? "none" : explicitResumeSession ? "explicit" : sessionBefore ? "task" : "none",
+          scene: recoveryAdmission.scene,
+          targetType: recoveryAdmission.targetType,
+          targetId: recoveryAdmission.targetId,
+          idempotencyKey: recoveryAdmission.idempotencyKey,
+          sessionIntentJson: recoveryAdmission.sessionIntentJson,
           retryOfRunId: run.id,
           processLossRetryCount:
             opts.wakeReason === "process_lost_retry"
@@ -986,6 +1099,22 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       .returning()
       .then((rows: Array<typeof agentWakeupRequests.$inferSelect>) => rows[0]);
 
+    const followupAdmission = await ensureHeartbeatRunAdmission(tx, {
+      agent,
+      scene: "issue",
+      targetType: "issue",
+      targetId: issue.id,
+      source: "automation",
+      requestId: wakeupRequest.id,
+      idempotencyKey: wakeupRequest.id,
+      contextSnapshot,
+      payload: requestPayload,
+      sourceRunId: run.id,
+      sessionReuseScope: sessionBefore ? "task" : "none",
+      sessionId: sessionBefore,
+      sessionParams: sessionBefore ? { sessionId: sessionBefore } : null,
+    });
+
     const followupRun = await tx
       .insert(heartbeatRuns)
       .values({
@@ -996,10 +1125,15 @@ export function createHeartbeatRecoveryHandlers(context: any) {
         triggerDetail: "system",
         status: "queued",
         wakeupRequestId: wakeupRequest.id,
-        contextSnapshot,
+        contextSnapshot: followupAdmission.contextSnapshot,
         sessionIdBefore: sessionBefore,
         sessionParamsBeforeJson: sessionBefore ? { sessionId: sessionBefore } : null,
         sessionReuseScope: sessionBefore ? "task" : "none",
+        scene: followupAdmission.scene,
+        targetType: followupAdmission.targetType,
+        targetId: followupAdmission.targetId,
+        idempotencyKey: followupAdmission.idempotencyKey,
+        sessionIntentJson: followupAdmission.sessionIntentJson,
         updatedAt: now,
       })
       .returning()

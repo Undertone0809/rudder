@@ -1,10 +1,18 @@
 import {
   classifyAgentRuntimeNetworkFailure,
   inferOpenAiCompatibleBiller,
+  pickRudderMcpManagedEnv,
+  preflightManagedExternalMcpBindings,
+  rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
+  type AgentRuntimeLoadedMcpServerMeta,
+  type RudderMcpCliCommand,
+  type RudderMcpPreflightResult,
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
+import { preflightRudderMcpServer } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
   asNumber,
   asString,
@@ -26,6 +34,7 @@ import {
   redactEnvForLogs,
   removeUnselectedRudderSkillSymlinks,
   renderTemplate,
+  resolveCommandPath,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
   RUDDER_PROMPT_SECTION_TAGS,
@@ -34,6 +43,7 @@ import {
   shouldIncludeRuntimeHeartbeatInstructions,
   wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +51,7 @@ import { fileURLToPath } from "node:url";
 import { applyCursorModelEffort, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
+import { buildCursorAcpMcpConfiguration, executeCursorNativeChat } from "./native-capabilities.js";
 import { isCursorUnknownSessionError, parseCursorJsonl } from "./parse.js";
 import { resolveManagedCursorHomeDir } from "./skills.js";
 
@@ -64,6 +75,103 @@ function firstNonEmptyLine(text: string): string {
 
 const CURSOR_QUOTA_EXHAUSTED_RE =
   /(?:usage\s+limit|get\s+cursor\s+pro|quota|rate[-\s]?limit|too many requests|\b429\b|billing)/i;
+const CURSOR_LEGACY_CHAT_TRANSPORT = "cursor-agent-cli-context-handoff";
+
+export async function prepareCursorAcpMcpConfiguration(
+  input: {
+    config: Record<string, unknown>;
+    runtimeEnv: Record<string, string>;
+    authToken?: string | null;
+    onLog: AgentRuntimeExecutionContext["onLog"];
+  },
+  dependencies: {
+    resolveRudderMcpCliCommand: typeof resolveRudderMcpCliCommand;
+    preflightRudderMcpServer: typeof preflightRudderMcpServer;
+    preflightManagedExternalMcpBindings: typeof preflightManagedExternalMcpBindings;
+  } = {
+    resolveRudderMcpCliCommand,
+    preflightRudderMcpServer,
+    preflightManagedExternalMcpBindings,
+  },
+): Promise<{
+  mcpServers: ReturnType<typeof buildCursorAcpMcpConfiguration>["servers"];
+  loadedMcpServers: AgentRuntimeLoadedMcpServerMeta[];
+  rudderMcp: ReturnType<typeof rudderMcpRuntimeMetadata>;
+}> {
+  const runAuthToken = input.authToken?.trim() || null;
+  const mcpRuntimeEnv = { ...input.runtimeEnv };
+  delete mcpRuntimeEnv.RUDDER_API_KEY;
+  if (runAuthToken) mcpRuntimeEnv.RUDDER_API_KEY = runAuthToken;
+
+  let rudderMcpCommand: RudderMcpCliCommand | null = null;
+  let rudderMcpPreflight: RudderMcpPreflightResult = {
+    available: false,
+    provenance: "repo",
+    version: null,
+    contractVersion: null,
+    coreContractHash: null,
+    diagnosticCode: "core_bundle_handshake_failed",
+    diagnostic: runAuthToken
+      ? "Rudder MCP capability preparation failed."
+      : "Signed Run authentication is unavailable.",
+    tools: [],
+  };
+  if (runAuthToken) {
+    try {
+      rudderMcpCommand = await dependencies.resolveRudderMcpCliCommand(__moduleDir);
+      rudderMcpPreflight = await dependencies.preflightRudderMcpServer({
+        command: rudderMcpCommand,
+        runtimeEnv: mcpRuntimeEnv,
+        managedEnv: pickRudderMcpManagedEnv(mcpRuntimeEnv),
+        browserEnabled: false,
+      });
+    } catch {
+      rudderMcpPreflight = {
+        available: false,
+        provenance: "repo",
+        version: null,
+        contractVersion: null,
+        coreContractHash: null,
+        diagnosticCode: "core_bundle_handshake_failed",
+        diagnostic: "Rudder MCP capability preparation failed.",
+        tools: [],
+      };
+    }
+  }
+  const managedExternalBindings = runAuthToken
+    ? await dependencies.preflightManagedExternalMcpBindings(input.config, mcpRuntimeEnv, {
+        onFailure: async () => {
+          await input.onLog(
+            "stderr",
+            "[rudder] One or more managed MCP bindings failed their gateway preflight and were not injected into Cursor.\n",
+          );
+        },
+      })
+    : [];
+  const mcp = buildCursorAcpMcpConfiguration({
+    configuredServers: input.config.cursorAcpMcpServers ?? input.config.acpMcpServers ?? input.config.mcpServers,
+    rudderMcpCommand,
+    rudderMcpPreflight,
+    managedExternalBindings,
+    runtimeEnv: mcpRuntimeEnv,
+    runAuthToken,
+  });
+  if (!mcp.rudderMcp.available) {
+    await input.onLog(
+      "stderr",
+      `[rudder] Rudder MCP is unavailable; Cursor native chat will not receive Rudder core tools: ${mcp.rudderMcp.fallbackReason ?? "capability preflight failed"}\n`,
+    );
+  }
+  return {
+    mcpServers: mcp.servers,
+    loadedMcpServers: mcp.loadedMcpServers,
+    rudderMcp: mcp.rudderMcp,
+  };
+}
+
+function isCursorAcpCommandMissing(errorMessage: string | null | undefined, command: string): boolean {
+  return errorMessage === `Cursor ACP process transport failed: spawn ${command} ENOENT`;
+}
 
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
   const raw = env[key];
@@ -97,9 +205,9 @@ function resolveProviderFromModel(model: string): string | null {
   return null;
 }
 
-function normalizeMode(rawMode: string): "plan" | "ask" | null {
+function normalizeMode(rawMode: string): "agent" | "plan" | "ask" | null {
   const mode = rawMode.trim().toLowerCase();
-  if (mode === "plan" || mode === "ask") return mode;
+  if (mode === "agent" || mode === "plan" || mode === "ask") return mode;
   return null;
 }
 
@@ -119,6 +227,47 @@ function renderRudderEnvNote(env: Record<string, string>): string {
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function providerProfileIdentity(config: Record<string, unknown>) {
+  const workspaceBindingId = asString(
+    config.providerWorkspaceBindingId ?? config.workspaceBindingId,
+    "",
+  ).trim();
+  return {
+    hostId: asString(config.providerHostId ?? config.hostId, "local").trim() || "local",
+    profileId: asString(config.providerProfileId ?? config.profileId, "default").trim() || "default",
+    ...(workspaceBindingId ? { workspaceBindingId } : {}),
+    capabilityRevision: asString(config.capabilityRevision, "").trim() || null,
+  };
+}
+
+function legacyCursorSessionMismatch(input: {
+  params: Record<string, unknown>;
+  cwd: string;
+  command: string;
+  profile: ReturnType<typeof providerProfileIdentity>;
+  providerVersion: string;
+  workspace: {
+    workspaceId: string | null;
+    repoUrl: string | null;
+    repoRef: string | null;
+    workspaceBindingId: string | null;
+  };
+}): string | null {
+  const params = input.params;
+  const storedCwd = asString(params.cwd, "").trim();
+  if (!storedCwd || path.resolve(storedCwd) !== path.resolve(input.cwd)) return "workspace-mismatch";
+  if (asString(params.cursorAcpCommand, "").trim() !== input.command.trim()) return "command-mismatch";
+  if (asString(params.profileHostId, "").trim() !== input.profile.hostId) return "host-mismatch";
+  if (asString(params.profileId, "").trim() !== input.profile.profileId) return "profile-mismatch";
+  const storedRevision = asString(params.capabilityRevision, "").trim();
+  if (storedRevision !== (input.profile.capabilityRevision ?? "")) return "capability-revision-mismatch";
+  if (asString(params.cursorProviderVersion, "").trim() !== input.providerVersion) return "provider-version-mismatch";
+  for (const field of ["workspaceId", "repoUrl", "repoRef", "workspaceBindingId"] as const) {
+    if (asString(params[field], "").trim() !== (input.workspace[field] ?? "")) return "workspace-mismatch";
+  }
+  return null;
 }
 
 function resolveManagedCursorSkillsDir(homeDir: string): string {
@@ -243,6 +392,8 @@ async function renderSelectedCursorSkillPrompt(
   }
   if (sections.length === 0) return "";
   return wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.enabledSkills, [
+    "# Enabled Rudder Skills",
+    "",
     "These skill instructions come only from this agent's Rudder Skills enabled selections.",
     "Do not load Cursor, operator-home, project, bundled, or vendor-default skills unless Rudder enabled them for this agent.",
     "",
@@ -270,6 +421,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const workspaceId = asString(workspaceContext.workspaceId, "");
   const workspaceRepoUrl = asString(workspaceContext.repoUrl, "");
   const workspaceRepoRef = asString(workspaceContext.repoRef, "");
+  const workspaceBindingId = asString(workspaceContext.workspaceBindingId, "");
   const agentHome = asString(workspaceContext.agentHome, "");
   const agentInstructionsDir = asString(workspaceContext.instructionsDir, "");
   const agentMemoryDir = asString(workspaceContext.memoryDir, "");
@@ -421,7 +573,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const billingType = resolveCursorBillingType(runtimeEnv);
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
-  await ensureCommandResolvable(command, cwd, runtimeEnv);
+  if (context.chatMode !== true) {
+    await ensureCommandResolvable(command, cwd, runtimeEnv);
+  }
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
@@ -433,12 +587,17 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const autoTrustEnabled = !hasCursorTrustBypassArg(extraArgs);
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
+  const profileIdentity = providerProfileIdentity(config);
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
+  const failClosedOnMissingResume = context.chatMode === true;
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const canResumeSession =
     runtimeSessionId.length > 0 &&
     (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
-  const sessionId = canResumeSession ? runtimeSessionId : null;
+  const sessionId = canResumeSession || failClosedOnMissingResume ? runtimeSessionId : null;
+  const legacyChatSession = context.chatMode === true
+    && runtimeSessionId.length > 0
+    && asString(runtimeSessionParams.cursorAcpTransport, "").trim() === CURSOR_LEGACY_CHAT_TRANSPORT;
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
@@ -559,14 +718,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     return args;
   };
 
-  const runAttempt = async (resumeSessionId: string | null) => {
+  const runAttempt = async (resumeSessionId: string | null, executionNotes: string[] = []) => {
     const args = buildArgs(resumeSessionId);
     if (onMeta) {
       await onMeta({
         agentRuntimeType: "cursor",
         command,
         cwd,
-        commandNotes,
+        commandNotes: [...commandNotes, ...executionNotes],
         commandArgs: args,
         env: redactEnvForLogs(env),
         prompt,
@@ -637,30 +796,78 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         timedOut: boolean;
         stdout: string;
         stderr: string;
+        pid?: number | null;
+        startedAt?: string | null;
       };
       parsed: ReturnType<typeof parseCursorJsonl>;
     },
     clearSessionWhenMissing = false,
+    legacyChatProvenance?: { kind: "fallback" | "resume"; reason?: string },
   ): AgentRuntimeExecutionResult => {
     if (attempt.proc.timedOut) {
       return {
         exitCode: attempt.proc.exitCode,
         signal: attempt.proc.signal,
         timedOut: true,
+        nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "Cursor timed out before child-process exit was observed." },
         errorMessage: `Timed out after ${timeoutSec}s`,
         clearSession: clearSessionWhenMissing,
+        ...(legacyChatProvenance
+          ? {
+              resultJson: {
+                cursorSessionContinuity: "legacy",
+                cursorSessionSource: "legacy_cli_context_handoff",
+                cursorLegacyExecution: legacyChatProvenance.kind,
+                ...(legacyChatProvenance.reason ? { cursorLegacyFallbackReason: legacyChatProvenance.reason } : {}),
+              },
+            }
+          : {}),
       };
     }
 
     const resolvedSessionId = attempt.parsed.sessionId ?? runtimeSessionId ?? runtime.sessionId ?? null;
     const resolvedSessionParams = resolvedSessionId
-      ? ({
-          sessionId: resolvedSessionId,
-          cwd,
-          ...(workspaceId ? { workspaceId } : {}),
-          ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
-          ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
-        } as Record<string, unknown>)
+      ? legacyChatProvenance
+        ? ({
+            sessionId: resolvedSessionId,
+            cwd,
+            profileHostId: profileIdentity.hostId,
+            profileId: profileIdentity.profileId,
+            ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+            cursorAcpTransport: CURSOR_LEGACY_CHAT_TRANSPORT,
+            cursorAcpCommand: command,
+            ...(asString(config.cursorProviderVersion ?? config.providerVersion, "").trim()
+              ? { cursorProviderVersion: asString(config.cursorProviderVersion ?? config.providerVersion, "").trim() }
+              : {}),
+            ...(workspaceId ? { workspaceId } : {}),
+            ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
+            ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
+            ...(workspaceBindingId || profileIdentity.workspaceBindingId
+              ? { workspaceBindingId: workspaceBindingId || profileIdentity.workspaceBindingId }
+              : {}),
+          } as Record<string, unknown>)
+        : ({
+            sessionId: resolvedSessionId,
+            cwd,
+            profileHostId: profileIdentity.hostId,
+            profileId: profileIdentity.profileId,
+            ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+            cursorAcpTransport: "cursor-agent-acp-stdio",
+            cursorAcpCommand: command,
+            cursorAcpProtocolVersion: 1,
+            cursorAcpAuthMethodId: asString(config.cursorAcpAuthMethodId ?? config.authMethodId, "cursor_login").trim() || "cursor_login",
+            ...(asString(config.cursorProviderVersion ?? config.providerVersion, "").trim()
+              ? { cursorProviderVersion: asString(config.cursorProviderVersion ?? config.providerVersion, "").trim() }
+              : {}),
+            ...(workspaceId ? { workspaceId } : {}),
+            ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
+            ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
+            ...(workspaceBindingId || profileIdentity.workspaceBindingId
+              ? { workspaceBindingId: workspaceBindingId || profileIdentity.workspaceBindingId }
+              : {}),
+          } as Record<string, unknown>)
       : null;
     const parsedError = typeof attempt.parsed.errorMessage === "string" ? attempt.parsed.errorMessage.trim() : "";
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
@@ -700,6 +907,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       exitCode: attempt.proc.exitCode,
       signal: attempt.proc.signal,
       timedOut: false,
+      nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+        ? { status: "confirmed", source: "process_exit" }
+        : { status: "unconfirmed", reason: "Cursor child-process exit was not observed." },
       errorMessage:
         !failed
           ? null
@@ -715,6 +925,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       resultJson: {
         stdout: attempt.proc.stdout,
         stderr: attempt.proc.stderr,
+        ...(legacyChatProvenance
+          ? {
+              cursorSessionContinuity: "legacy",
+              cursorSessionSource: "legacy_cli_context_handoff",
+              cursorLegacyExecution: legacyChatProvenance.kind,
+              ...(legacyChatProvenance.reason ? { cursorLegacyFallbackReason: legacyChatProvenance.reason } : {}),
+            }
+          : {}),
       },
       summary: attempt.parsed.summary,
       clearSession: shouldClearSession,
@@ -722,9 +940,171 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     };
   };
 
-  const initial = await runAttempt(sessionId);
+  let legacyChatProvenance: { kind: "fallback" | "resume"; reason?: string } | undefined;
+  if (context.chatMode === true) {
+    const nativeWorkspace = {
+      workspaceId: workspaceId || null,
+      repoUrl: workspaceRepoUrl || null,
+      repoRef: workspaceRepoRef || null,
+      workspaceBindingId: workspaceBindingId || profileIdentity.workspaceBindingId || null,
+    };
+
+    if (legacyChatSession) {
+      const mismatch = legacyCursorSessionMismatch({
+        params: runtimeSessionParams,
+        cwd,
+        command,
+        profile: profileIdentity,
+        providerVersion: asString(config.cursorProviderVersion ?? config.providerVersion, "").trim(),
+        workspace: nativeWorkspace,
+      });
+      if (mismatch) {
+        const message = `Cursor legacy chat resume rejected: ${mismatch}.`;
+        await onLog("stderr", `[rudder] ${message}\n`);
+        return {
+          exitCode: 1,
+          signal: null,
+          timedOut: false,
+          errorMessage: message,
+          errorCode: "cursor_legacy_resume_mismatch",
+          sessionId: runtimeSessionId,
+          sessionParams: runtimeSessionParams,
+          sessionDisplayId: runtimeSessionId,
+          resultJson: {
+            cursorSessionContinuity: "legacy",
+            cursorSessionSource: "legacy_cli_context_handoff",
+            cursorLegacyExecution: "resume",
+            error: message,
+          },
+        };
+      }
+      legacyChatProvenance = { kind: "resume" };
+      await ctx.onTranscriptSource?.("legacy");
+    } else {
+      const nativeCommand = asString(
+        config.cursorAcpCommand ?? config.acpCommand ?? (command === "cursor-agent" ? "agent" : command),
+        "agent",
+      ).trim() || "agent";
+      const configuredAuthMethodId = nonEmpty(asString(config.cursorAcpAuthMethodId ?? config.authMethodId, ""));
+      const nativeMcpConfiguration = await prepareCursorAcpMcpConfiguration({
+        config,
+        runtimeEnv,
+        authToken,
+        onLog,
+      });
+      const nativeProfile = {
+        binding: profileIdentity,
+        command: nativeCommand,
+        cwd,
+        providerVersion: asString(config.cursorProviderVersion ?? config.providerVersion, "").trim(),
+        mcpServers: nativeMcpConfiguration.mcpServers,
+        env: runtimeEnv,
+        ...(configuredAuthMethodId ? { authMethodId: configuredAuthMethodId } : {}),
+        protocolVersion: 1,
+      };
+      if (onMeta) {
+        await onMeta({
+          agentRuntimeType: "cursor",
+          command: nativeCommand,
+          cwd,
+          commandNotes: [
+            "Using Cursor Agent ACP stdio for chat mode.",
+            "Only a fresh session with explicit ACP unsupported evidence or a missing default agent executable before session creation may fall back to the available legacy cursor-agent CLI/context handoff.",
+            "Saved sessions and any failure after native session creation fail closed.",
+          ],
+          commandArgs: ["acp"],
+          env: redactEnvForLogs(runtimeEnv),
+          prompt,
+          agentInstructionStack: prompt,
+          promptMetrics,
+          loadedSkills,
+          realizedSkills: loadedSkills,
+          promptInjectedSkills: loadedSkills,
+          loadedMcpServers: nativeMcpConfiguration.loadedMcpServers,
+          rudderMcp: nativeMcpConfiguration.rudderMcp,
+          context,
+        });
+      }
+      const nativeFailureLog: { value: { stream: "stdout" | "stderr"; chunk: string } | null } = { value: null };
+      const nativeResult = await executeCursorNativeChat({
+        profile: nativeProfile,
+        binding: profileIdentity,
+        sessionId,
+        sessionParams: sessionId ? runtimeSessionParams : null,
+        workspace: nativeWorkspace,
+        prompt,
+        model,
+        mode,
+        signal: ctx.abortSignal,
+        onSpawn,
+        onLog: async (stream, chunk) => {
+          if (stream === "stderr" && chunk.startsWith("[rudder] Cursor native chat failed ")) {
+            nativeFailureLog.value = { stream, chunk };
+            return;
+          }
+          await onLog(stream, chunk);
+        },
+        controlAttempt: ctx.controlAttempt,
+        requestApproval: ctx.requestApproval,
+        waitForApproval: ctx.waitForApproval,
+      });
+      const missingDefaultAcpCommand = nativeCommand === "agent"
+        && path.basename(command).toLowerCase() === "cursor-agent"
+        && nativeResult.errorCode === "cursor_native_transport-error"
+        && isCursorAcpCommandMissing(nativeResult.errorMessage, nativeCommand);
+      let legacyCursorCommandResolvable = false;
+      if (missingDefaultAcpCommand && !runtimeSessionId && !nativeResult.sessionId) {
+        try {
+          const nativeCommandPath = await resolveCommandPath(nativeCommand, cwd, runtimeEnv);
+          const legacyCommandPath = await resolveCommandPath(command, cwd, runtimeEnv);
+          if (!nativeCommandPath && legacyCommandPath) {
+            await fs.access(legacyCommandPath, fsConstants.X_OK);
+            legacyCursorCommandResolvable = true;
+          }
+        } catch {
+          legacyCursorCommandResolvable = false;
+        }
+      }
+      const freshFallbackAllowedBeforeSessionCreation = !runtimeSessionId
+        && !nativeResult.sessionId
+        && (nativeResult.errorCode === "cursor_native_unsupported" || legacyCursorCommandResolvable);
+      if (!freshFallbackAllowedBeforeSessionCreation) {
+        if (nativeFailureLog.value) await onLog(nativeFailureLog.value.stream, nativeFailureLog.value.chunk);
+        return {
+          ...nativeResult,
+          biller: resolveCursorBiller(runtimeEnv, billingType, nativeResult.provider ?? resolveProviderFromModel(model)),
+          resultJson: {
+            ...(nativeResult.resultJson ?? {}),
+            nativeSession: true,
+            profileId: profileIdentity.profileId,
+            hostId: profileIdentity.hostId,
+          },
+        };
+      }
+      legacyChatProvenance = {
+        kind: "fallback",
+        reason: nativeResult.errorMessage ?? "Cursor ACP is unsupported before session creation.",
+      };
+      await ctx.onTranscriptSource?.("legacy");
+      await onLog(
+        "stdout",
+        "[rudder] Cursor ACP is unsupported or unavailable before session creation; continuing this fresh chat through legacy CLI/context handoff.\n",
+      );
+    }
+  }
+
+  const executionNotes = legacyChatProvenance?.kind === "fallback"
+    ? [
+        "ACP was explicitly unsupported or its default agent executable was unavailable before native session creation; this fresh chat uses legacy Cursor CLI with the selected visible context handoff.",
+      ]
+    : legacyChatProvenance?.kind === "resume"
+      ? ["Resuming the saved legacy Cursor CLI/context-handoff session; do not create or copy into a native ACP session."]
+      : [];
+  const initial = await runAttempt(sessionId, executionNotes);
+  if (legacyChatProvenance) return toResult(initial, false, legacyChatProvenance);
   if (
     sessionId &&
+    !failClosedOnMissingResume &&
     !initial.proc.timedOut &&
     (initial.proc.exitCode ?? 0) !== 0 &&
     isCursorUnknownSessionError(initial.proc.stdout, initial.proc.stderr)

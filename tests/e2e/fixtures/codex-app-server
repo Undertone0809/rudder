@@ -4,6 +4,25 @@ import readline from "node:readline";
 const threadId = "thread-e2e-app-server";
 const turnId = "turn-e2e-app-server";
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli 0.155.0\n");
+  process.exit(0);
+}
+
+if (process.argv.includes("generate-json-schema")) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const outputDir = process.argv[process.argv.indexOf("--out") + 1];
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(path.join(outputDir, "ClientRequest.json"), JSON.stringify({
+    oneOf: ["thread/start", "thread/resume", "turn/start", "turn/interrupt"].map((method) => ({
+      properties: { method: { const: method } },
+    })),
+  }));
+  process.exit(0);
+}
+
 let prompt = "";
 let completed = false;
 let fallbackTimer = null;
@@ -131,6 +150,48 @@ function finishStreamedMarkdown(body) {
   });
 }
 
+function finishPhasedAnswer(body, itemId) {
+  if (completed) return;
+  completed = true;
+  if (fallbackTimer) clearTimeout(fallbackTimer);
+  const finalText = `${body}\n${resultSentinel()}${JSON.stringify({
+    kind: "message",
+    body,
+    structuredPayload: null,
+  })}`;
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: {
+        type: "agentMessage",
+        id: itemId,
+        text: finalText,
+        phase: "final_answer",
+        memoryCitation: null,
+      },
+    },
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        items: [],
+        itemsView: { type: "full" },
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    },
+  });
+}
+
 function emitReasoning(itemId, text) {
   send({
     method: "item/completed",
@@ -161,6 +222,102 @@ rl.on("line", (line) => {
       .join("\n");
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_E2E_CODEX_FAIL_TURN === "1") {
+      send({ method: "item/agentMessage/delta", params: {
+        threadId, turnId, itemId: "failed-answer", delta: "Partial model output before failure.",
+      } });
+      send({ method: "turn/completed", params: { threadId, turn: {
+        id: turnId, status: "failed", items: [],
+        error: { message: "model generation failed after output" },
+      } } });
+      completed = true;
+      return;
+    }
+    if (prompt.includes("Keep final answer deltas in the assistant bubble")) {
+      const commentaryId = "final-bubble-commentary-e2e";
+      const unphasedItemId = "final-bubble-unphased-e2e";
+      const finalItemId = "final-bubble-answer-e2e";
+      const commentary = "I am checking the response before giving the final answer.";
+      const unphasedText = "This unphased assistant event remains process-only.";
+      const finalBody = "This answer remains inside one assistant bubble.";
+      const finalDeltas = ["This answer remains ", "inside one assistant"];
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "agentMessage",
+            id: commentaryId,
+            text: "",
+            phase: "commentary",
+            memoryCitation: null,
+          },
+        },
+      });
+      send({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId: commentaryId, delta: commentary } });
+      send({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "agentMessage",
+            id: commentaryId,
+            text: commentary,
+            phase: "commentary",
+            memoryCitation: null,
+          },
+        },
+      });
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: { type: "agentMessage", id: unphasedItemId, text: "", memoryCitation: null },
+        },
+      });
+      send({
+        method: "item/agentMessage/delta",
+        params: { threadId, turnId, itemId: unphasedItemId, delta: unphasedText },
+      });
+      send({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "agentMessage",
+            id: unphasedItemId,
+            text: unphasedText,
+            memoryCitation: null,
+          },
+        },
+      });
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "agentMessage",
+            id: finalItemId,
+            text: "",
+            phase: "final_answer",
+            memoryCitation: null,
+          },
+        },
+      });
+      finalDeltas.forEach((delta, index) => {
+        setTimeout(() => {
+          send({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId: finalItemId, delta } });
+        }, 250 + index * 350);
+      });
+      setTimeout(() => finishPhasedAnswer(finalBody, finalItemId), 12_000);
+      fallbackTimer = setTimeout(() => finish("Final-answer bubble fixture timed out."), 30_000);
+      return;
+    }
     if (prompt.includes("Keep streamed Markdown nodes stable")) {
       const firstFragment = "- [Rudder](https://rudderhq.dev/docs)";
       const appendedFragments = Array.from(

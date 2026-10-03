@@ -13,7 +13,7 @@ import { AgentIdentity } from "./AgentAvatar";
 import { Identity } from "./Identity";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { filterRoutineStdout } from "./transcript/RunTranscriptView.common";
-import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
+import { useAgentRunTranscripts } from "./transcript/useAgentRunTranscripts";
 import { Skeleton } from "./ui/skeleton";
 
 const MIN_DASHBOARD_RUNS = 4;
@@ -127,11 +127,12 @@ export function ActiveAgentsPanel({ orgId }: ActiveAgentsPanelProps) {
     return map;
   }, [agents]);
 
-  const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
-    runs,
-    orgId,
-    maxChunksPerRun: 120,
-  });
+  const { transcriptByRun, hasOutputForRun } = useAgentRunTranscripts(
+    runs.map((run) => ({
+      runId: run.id,
+      active: isRunActive(run),
+    })),
+  );
 
   return (
     <div>

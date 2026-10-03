@@ -5,10 +5,17 @@ import { getHistoricalTranscriptParser } from "../parsers.js";
 import { buildTranscript, parseNdjsonLog } from "../transcript.js";
 import type { ObservedRunDetail, RunDiagnosis, RunDiagnosisMode, RunExportRow } from "../types.js";
 
+class RudderApiError extends Error {
+  constructor(readonly status: number, url: string) {
+    super(`Request failed (${status}) for ${url}`);
+    this.name = "RudderApiError";
+  }
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) {
-    throw new Error(`Request failed (${response.status}) for ${url}`);
+    throw new RudderApiError(response.status, url);
   }
   return response.json() as Promise<T>;
 }
@@ -63,6 +70,14 @@ interface RunLogPage {
   };
 }
 
+interface RunTranscriptPage {
+  entries?: Array<{ entry: TranscriptEntry | null }>;
+  page: {
+    hasMore: boolean;
+    nextCursor: string | null;
+  };
+}
+
 export async function getRunEvents(apiBaseUrl: string, runId: string): Promise<HeartbeatRunEvent[]> {
   const events: HeartbeatRunEvent[] = [];
   let cursor: string | null = null;
@@ -91,6 +106,35 @@ export async function getRunLog(apiBaseUrl: string, runId: string): Promise<{ co
   } while (true);
 }
 
+export async function getRunTranscript(apiBaseUrl: string, runId: string): Promise<TranscriptEntry[]> {
+  const entries: TranscriptEntry[] = [];
+  let cursor: string | null = null;
+  do {
+    const query = new URLSearchParams({
+      output: "full",
+      order: "oldest",
+      turnLimit: "1000",
+      includeOutput: "true",
+      maxChars: "20000",
+    });
+    if (cursor) query.set("cursor", cursor);
+    const page = await fetchJson<RunTranscriptPage>(
+      `${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}/transcript?${query.toString()}`,
+    );
+    for (const row of page.entries ?? []) {
+      if (row.entry) entries.push(row.entry);
+    }
+    if (!page.page.hasMore) return entries;
+    if (page.page.nextCursor === null) {
+      throw new Error("Transcript endpoint reported more rows without a cursor");
+    }
+    if (page.page.nextCursor === cursor) {
+      throw new Error("Transcript endpoint cursor made no progress");
+    }
+    cursor = page.page.nextCursor;
+  } while (true);
+}
+
 export async function findObservedRunByPrefix(apiBaseUrl: string, runIdPrefix: string): Promise<RunExportRow | null> {
   const match = await findObservedRunSummaryByPrefix(apiBaseUrl, runIdPrefix);
   return match ? getObservedRun(apiBaseUrl, match.id) : null;
@@ -108,23 +152,37 @@ export async function findObservedRunSummaryByPrefix(apiBaseUrl: string, runIdPr
 }
 
 export async function loadObservedRunDetail(apiBaseUrl: string, runId: string): Promise<ObservedRunDetail> {
-  const [observedRun, events, log] = await Promise.all([
-    getObservedRun(apiBaseUrl, runId),
+  const observedRun = await getObservedRun(apiBaseUrl, runId);
+  const nativeBacked = isNativeBackedRun(observedRun.run);
+  const [events, log, transcript] = await Promise.all([
     getRunEvents(apiBaseUrl, runId),
-    getRunLog(apiBaseUrl, runId).catch(() => ({ content: "" })),
+    nativeBacked ? Promise.resolve(null) : getRunLog(apiBaseUrl, runId),
+    getRunTranscript(apiBaseUrl, runId),
   ]);
-  const { logChunks, transcript } = buildObservedTranscript({
-    logContent: log.content,
-    events,
-    agentRuntimeType: observedRun.bundle.agentRuntimeType,
-  });
+  const logContent = log?.content ?? null;
   return {
     ...observedRun,
     events,
-    logContent: log.content,
-    logChunks,
+    logContent,
+    logChunks: parseNdjsonLog(logContent),
     transcript,
   };
+}
+
+function hasNativeIdentityMarker(value: unknown): boolean {
+  const record = objectValue(value);
+  if (!record) return false;
+  return ["runtimeBindingId", "nativeBindingId", "runtimeSegmentId", "nativeSegmentId"]
+    .some((key) => typeof record[key] === "string" && (record[key] as string).trim().length > 0);
+}
+
+function isNativeBackedRun(run: HeartbeatRun): boolean {
+  const context = objectValue(run.contextSnapshot);
+  const retention = objectValue(objectValue(run.resultJson)?.retention);
+  if (context?.transcriptSource === "legacy" || retention?.transcriptSource === "legacy") return false;
+  if (context?.transcriptSource === "native" || context?.transcriptSource === "native_plus_objects"
+    || retention?.transcriptSource === "native" || retention?.transcriptSource === "native_plus_objects") return true;
+  return hasNativeIdentityMarker(context) || hasNativeIdentityMarker(context?.unifiedAgentRun);
 }
 
 export async function diagnoseObservedRun(
@@ -166,7 +224,7 @@ function objectValue(value: unknown) {
 }
 
 function transcriptEntryFromEvent(event: HeartbeatRunEvent): TranscriptEntry | null {
-  if (event.eventType !== "transcript.entry") return null;
+  if (event.eventType !== "transcript.entry" || event.seq === null) return null;
   const payload = objectValue(event.payload);
   if (!payload) return null;
 
@@ -280,6 +338,7 @@ export function observedRunFromFilesystem(input: {
   bundle?: RunExportRow["bundle"];
   events?: HeartbeatRunEvent[];
   logContent?: string | null;
+  transcript?: TranscriptEntry[];
 }): ObservedRunDetail {
   const bundle = input.bundle ?? {
     agentRuntimeType: input.run.contextSnapshot?.agentRuntimeType as string ?? "process",
@@ -288,7 +347,7 @@ export function observedRunFromFilesystem(input: {
     agentConfigFingerprint: null,
     runtimeConfigFingerprint: null,
   };
-  const { logChunks, transcript } = buildObservedTranscript({
+  const { logChunks, transcript: derivedTranscript } = buildObservedTranscript({
     logContent: input.logContent,
     events: input.events,
     agentRuntimeType: bundle.agentRuntimeType,
@@ -303,6 +362,6 @@ export function observedRunFromFilesystem(input: {
     events: input.events ?? [],
     logContent: input.logContent ?? null,
     logChunks,
-    transcript,
+    transcript: input.transcript ?? derivedTranscript,
   };
 }

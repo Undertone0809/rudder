@@ -3,10 +3,11 @@ import { useOptionalToast } from "../../context/ToastContext";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { TranscriptChatTimeline } from "./RunTranscriptView.chat";
+import { filterChatAssistantTranscriptEntries } from "./RunTranscriptView.chat";
+import { TranscriptChatTimeline } from "./RunTranscriptView.chat-timeline";
 import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
-import { normalizeTranscript } from "./RunTranscriptView.normalize";
+import { cursorAcpDisplayEntry, normalizeTranscript, terminalAssistantResponseEntryIndexes } from "./RunTranscriptView.normalize";
 import { RudderMcpPresenterProvider } from "./RunTranscriptView.rudder-mcp";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
@@ -30,6 +31,11 @@ function trailingEntriesByVisibleLimit(
   return entries.slice(startIndex);
 }
 
+function isRudderEchoedStructuredUserInput(entry: RunTranscriptViewProps["entries"][number]) {
+  return entry.kind === "user"
+    && /^conversation input:\s*\{/iu.test(entry.text.trim());
+}
+
 export function RunTranscriptView(props: RunTranscriptViewProps) {
   return (
     <RudderMcpPresenterProvider agents={props.agentDirectory} entries={props.entries}>
@@ -40,6 +46,7 @@ export function RunTranscriptView(props: RunTranscriptViewProps) {
 
 function RunTranscriptViewContent({
   entries,
+  detailRawEntries,
   mode = "nice",
   density = "comfortable",
   limit,
@@ -52,6 +59,7 @@ function RunTranscriptViewContent({
   showDeveloperDiagnostics = false,
   hideAssistantMessages = false,
   hiddenAssistantMessageText = null,
+  terminalRun = false,
   localizeText,
   onOpenFile,
   onOpenSkill,
@@ -77,6 +85,10 @@ function RunTranscriptViewContent({
 
     const desktopShell = readDesktopShell();
     if (!desktopShell) {
+      if (onOpenFile) {
+        onOpenFile(targetPath, targetPath.split(/[\\/]/u).at(-1) || targetPath);
+        return true;
+      }
       toastContext?.pushToast({
         title: "Open from Desktop",
         body: "Local transcript file links can only be opened from the Rudder Desktop app.",
@@ -93,7 +105,7 @@ function RunTranscriptViewContent({
       });
     });
     return true;
-  }, [toastContext]);
+  }, [onOpenFile, toastContext]);
   const handleOpenFile = useCallback((targetPath: string, label: string) => {
     if (onOpenFile) {
       onOpenFile(targetPath, label);
@@ -119,20 +131,47 @@ function RunTranscriptViewContent({
     });
   }, [onOpenFile, toastContext]);
   const renderableEntries = useMemo(
-    () => filterRenderableTranscriptEntries(entries, {
-      presentation,
-      showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
-    }),
+    () => {
+      const renderable = filterRenderableTranscriptEntries(entries, {
+        presentation,
+        showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
+      });
+      return presentation === "detail"
+        ? renderable.filter((entry) => !isRudderEchoedStructuredUserInput(entry))
+        : renderable;
+    },
     [effectiveShowDeveloperDiagnostics, entries, presentation],
   );
+  const displayEntries = useMemo(() => {
+    if (presentation !== "detail") return renderableEntries;
+    const projected = renderableEntries.map((entry) => cursorAcpDisplayEntry(entry) ?? entry);
+    if (!terminalRun) return projected;
+    const terminalIndexes = terminalAssistantResponseEntryIndexes(projected);
+    return projected.map((entry, index) => (
+      terminalIndexes.has(index) && entry.kind === "assistant" && !entry.phase
+        ? { ...entry, phase: "final_answer" as const }
+        : entry
+    ));
+  }, [presentation, renderableEntries, terminalRun]);
+  const rawEntries = presentation === "detail"
+    ? (detailRawEntries ?? entries).filter((entry) => !isRudderEchoedStructuredUserInput(entry))
+    : renderableEntries;
   const blocks = useMemo(
-    () => normalizeTranscript(renderableEntries, streaming, {
+    () => normalizeTranscript(presentation === "chat"
+      ? filterChatAssistantTranscriptEntries(displayEntries, {
+        hideAssistantMessages,
+        hiddenAssistantMessageText,
+        streaming,
+        preserveLifecycleBoundaries: true,
+      })
+      : displayEntries, streaming, {
       showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
+      hideUserMessages: presentation === "chat",
     }),
-    [effectiveShowDeveloperDiagnostics, renderableEntries, streaming],
+    [displayEntries, effectiveShowDeveloperDiagnostics, hiddenAssistantMessageText, hideAssistantMessages, presentation, streaming],
   );
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
-  const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);
+  const visibleNiceEntries = trailingEntriesByVisibleLimit(displayEntries, limit);
   const agentInspections = useMemo(
     () => collectTranscriptAgentInspections(blocks),
     [blocks],
@@ -148,7 +187,7 @@ function RunTranscriptViewContent({
       : undefined
   ), [activeRunAnnotationBlockId, runAnnotationContext]);
 
-  if (renderableEntries.length === 0) {
+  if ((mode === "raw" ? rawEntries : renderableEntries).length === 0) {
     if (!emptyMessage) return null;
     return (
       <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
@@ -206,6 +245,7 @@ function RunTranscriptViewContent({
           onOpenAgent={onOpenAgent}
           annotationSource={annotationSource}
           sentAnnotationContext={sentAnnotationContext}
+          runAnnotationContext={effectiveRunAnnotationContext}
         />
       </div>
           )
@@ -237,7 +277,7 @@ function RunTranscriptViewContent({
       <div hidden={mode !== "raw"}>
         {mode === "raw" ? (
           <div className={className}>
-            <RawTranscriptView entries={renderableEntries} density={density} limit={limit} />
+            <RawTranscriptView entries={rawEntries} density={density} limit={limit} />
           </div>
         ) : null}
       </div>

@@ -16,6 +16,7 @@ import type {
   ChatStreamEvent,
   ChatStreamTranscriptEntry,
   ChatWorkManifestResponse,
+  ContinueChatQueuedMessage,
   ForkChatConversation,
 } from "@rudderhq/shared";
 import {
@@ -51,6 +52,24 @@ export type ChatSteerQueuedMessageRequest = {
   expectedControlVersion?: number;
   lastCommittedRenderSeq?: number;
   renderedBodyHash?: string;
+};
+
+export type ChatContinueQueuedMessageRequest = ContinueChatQueuedMessage;
+
+export type ChatContinueQueuedMessageResponse = {
+  item: ChatQueuedMessage;
+  controlActionId: string;
+  idempotent: boolean;
+};
+
+export type SideChatHistoryPage = {
+  items: ChatConversation[];
+  nextCursor: string | null;
+};
+
+export type ChatRuntimeSensitiveInputRequest = {
+  requestId: string;
+  kind: "secret" | "sudo";
 };
 
 export type ChatDraftRequest = {
@@ -179,6 +198,15 @@ export const chatsApi = {
       preferredAgentId?: string;
     },
   ) => api.post<ChatConversation>(`/chats/${chatId}/side-chats`, data),
+  listSideChats: (chatId: string, options: { cursor?: string | null; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (options.cursor) params.set("cursor", options.cursor);
+    if (typeof options.limit === "number" && Number.isFinite(options.limit)) {
+      params.set("limit", String(Math.max(1, Math.floor(options.limit))));
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return api.get<SideChatHistoryPage>(`/chats/${chatId}/side-chats${query}`);
+  },
   destroySideChat: (chatId: string) =>
     api.delete<{ id: string }>(`/chats/${chatId}/side-chat`),
   keepSideChat: (chatId: string) =>
@@ -220,6 +248,20 @@ export const chatsApi = {
   getMessageTranscript: (chatId: string, messageId: string) =>
     api.get<{ messageId: string; transcript: ChatStreamTranscriptEntry[] }>(
       `/chats/${chatId}/messages/${messageId}/transcript`,
+    ),
+  listRuntimeSensitiveInputs: (chatId: string) =>
+    api.get<{ requests: ChatRuntimeSensitiveInputRequest[] }>(
+      `/chats/${chatId}/runtime-sensitive-inputs`,
+    ),
+  respondToRuntimeSensitiveInput: (chatId: string, requestId: string, value: string) =>
+    api.post<{ status: "accepted" | "already_accepted" }>(
+      `/chats/${chatId}/runtime-sensitive-inputs/${encodeURIComponent(requestId)}/respond`,
+      { value },
+    ),
+  cancelRuntimeSensitiveInput: (chatId: string, requestId: string) =>
+    api.post<{ cancelled: true }>(
+      `/chats/${chatId}/runtime-sensitive-inputs/${encodeURIComponent(requestId)}/cancel`,
+      {},
     ),
   sendMessage: (chatId: string, body: string) =>
     api.post<{ messages: ChatMessage[] }>(`/chats/${chatId}/messages`, { body }),
@@ -333,6 +375,15 @@ export const chatsApi = {
   ) => api.post<ChatSteerResponse>(`/chats/${chatId}/queue/${itemId}/steer`, data, {
     timeoutMs: CHAT_REQUEST_TIMEOUT_MS,
   }),
+  continueQueuedMessage: (
+    chatId: string,
+    itemId: string,
+    data: ChatContinueQueuedMessageRequest,
+  ) => api.post<ChatContinueQueuedMessageResponse>(
+    `/chats/${chatId}/queue/${itemId}/continue`,
+    data,
+    { timeoutMs: CHAT_REQUEST_TIMEOUT_MS },
+  ),
   sendMessageStream: async (
     chatId: string,
     body: string,

@@ -1,6 +1,7 @@
 import type { ChatInlineAnnotationInput, ChatMessage } from "@rudderhq/shared";
 import { createHash } from "node:crypto";
 import { conflict } from "../errors.js";
+import { hasChatPreGenerationNotStartedEvidence } from "./chat-pre-generation-failure.js";
 
 type MutationFile = {
   buffer: Buffer;
@@ -86,6 +87,7 @@ export async function replayChatStreamMessage(input: {
   orgId: string;
   conversationId: string;
   lookup: Parameters<typeof replayChatMessageMutation>[0];
+  deferExistingReplay?: boolean;
   response: any;
   writeStreamEvent: (response: any, event: any) => void;
 }) {
@@ -98,9 +100,10 @@ export async function replayChatStreamMessage(input: {
       modelOverride: input.modelOverride ?? null,
       effortOverride: input.effortOverride ?? null,
       files: input.files,
-    })
+  })
     : null;
   if (input.atomicFirstTurn || !input.clientMutationId) return fingerprint;
+  if (input.deferExistingReplay) return fingerprint;
   const replayedMutation = await input.lookup(
     input.orgId,
     input.conversationId,
@@ -122,7 +125,10 @@ export async function replayChatStreamMessage(input: {
   input.response.setHeader("Cache-Control", "no-cache, no-transform");
   input.response.setHeader("X-Accel-Buffering", "no");
   input.writeStreamEvent(input.response, { type: "ack", userMessage: replayedUserMessage });
-  if (replayedMutation.failure) {
+  if (
+    replayedMutation.failure
+    && !hasChatPreGenerationNotStartedEvidence(replayedMutation.failure, replayedUserMessage)
+  ) {
     input.writeStreamEvent(input.response, {
       type: "error",
       error: replayedMutation.failure.body,

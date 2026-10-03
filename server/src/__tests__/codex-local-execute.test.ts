@@ -362,9 +362,14 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
-async function writeMissingRolloutResumeCodexCommand(commandPath: string): Promise<void> {
+async function writeMissingRolloutResumeCodexCommand(
+  commandPath: string,
+  invocationPath: string,
+): Promise<void> {
   const script = `#!/usr/bin/env node
+const fs = require("node:fs");
 const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(invocationPath)}, JSON.stringify(args) + "\\n", "utf8");
 process.stdin.resume();
 process.stdin.on("end", () => {
   if (args.includes("resume")) {
@@ -1450,7 +1455,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("prunes provider-managed Codex memory git state after execution", async () => {
+  it("preserves provider-managed Codex memory and session state after execution", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-memory-git-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -1508,10 +1513,11 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       expect(result.sessionId).toBe("codex-session-1");
-      await expect(fs.lstat(path.join(managedCodexHome, "memories"))).rejects.toThrow();
-      await expect(fs.lstat(path.join(managedOrgCodexHome, "memories"))).rejects.toThrow();
+      await expect(fs.readFile(path.join(managedCodexHome, "memories", ".git", "HEAD"), "utf8"))
+        .resolves.toBe("ref: refs/heads/main\n");
+      await expect(fs.lstat(path.join(managedOrgCodexHome, "memories", ".git"))).resolves.toBeTruthy();
       await expect(fs.lstat(path.join(managedCodexHome, "sessions", "2026"))).resolves.toBeTruthy();
-      expect(logs).toContainEqual(
+      expect(logs).not.toContainEqual(
         expect.objectContaining({
           stream: "stdout",
           chunk: expect.stringContaining("Pruned provider-managed Codex memory state"),
@@ -1532,7 +1538,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("preserves the Codex execution result when provider memory cleanup fails", async () => {
+  it("never attempts to delete provider memory during execution cleanup", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-memory-cleanup-fail-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -1599,7 +1605,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       expect(result.summary).toBe("hello");
-      expect(logs).toContainEqual(
+      expect(failOnce).toBe(true);
+      expect(logs).not.toContainEqual(
         expect.objectContaining({
           stream: "stderr",
           chunk: expect.stringContaining("simulated cleanup failure"),
@@ -1936,12 +1943,11 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.argv).toEqual(expect.arrayContaining([
         "exec",
         "--json",
-        "--disable",
-        "plugins",
-        "-c",
-        "skills.bundled.enabled=false",
         "-",
       ]));
+      expect(capture.argv).not.toContain("--disable");
+      expect(capture.argv).not.toContain("plugins");
+      expect(capture.argv).not.toContain("skills.bundled.enabled=false");
 
       const managedAuth = path.join(managedCodexHome, "auth.json");
       const managedConfig = path.join(managedCodexHome, "config.toml");
@@ -1953,17 +1959,13 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect((await fs.lstat(managedConfig)).isFile()).toBe(true);
       const managedConfigContents = await fs.readFile(managedConfig, "utf8");
       expect(managedConfigContents).toContain('model = "codex-mini-latest"');
-      expect(managedConfigContents).toContain("[skills.bundled]");
-      expect(managedConfigContents).toContain("enabled = false");
-      expect(managedConfigContents).toContain("[features]");
-      expect(managedConfigContents).toContain("plugins = false");
       expect(managedConfigContents).toContain("[[skills.config]]");
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills"))}`);
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills", "home-leak"))}`);
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills", "home-leak", "SKILL.md"))}`);
-      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
-      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills", "shared-leak"))}`);
-      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills", "shared-leak", "SKILL.md"))}`);
+      expect(managedConfigContents).not.toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
+      expect(managedConfigContents).not.toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills", "shared-leak"))}`);
+      expect(managedConfigContents).not.toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills", "shared-leak", "SKILL.md"))}`);
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills", "repo-leak"))}`);
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills", "repo-leak", "SKILL.md"))}`);
@@ -2274,7 +2276,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("removes inherited Codex [[skills.config]] entries from the managed config before invocation", async () => {
+  it("retains provider skill configuration while isolating untrusted external skill roots", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-sanitize-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -2366,18 +2368,18 @@ describe("codex execute", { timeout: 20_000 }, () => {
 
       const managedConfig = await fs.readFile(path.join(managedCodexHome, "config.toml"), "utf8");
       expect(managedConfig).toContain("[skills.bundled]");
-      expect(managedConfig).toContain("enabled = false");
-      expect(managedConfig).not.toContain('name = "vercel:ai-sdk"');
-      expect(managedConfig).not.toContain('path = "/tmp/valid-skill/SKILL.md"');
+      expect(managedConfig).toContain("enabled = true");
+      expect(managedConfig).toContain('name = "vercel:ai-sdk"');
+      expect(managedConfig).toContain('path = "/tmp/valid-skill/SKILL.md"');
       expect(managedConfig).toContain("[[skills.config]]");
       expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
-      expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
+      expect(managedConfig).not.toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
       expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
       expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
-      expect(logs).toContainEqual(
+      expect(logs).not.toContainEqual(
         expect.objectContaining({
           stream: "stdout",
-          chunk: expect.stringContaining("Removed 2 inherited Codex [[skills.config]] entries"),
+          chunk: expect.stringContaining("Removed inherited Codex [[skills.config]] entries"),
         }),
       );
     } finally {
@@ -2395,7 +2397,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("strips inherited Codex notify hooks, MCP server, and plugin tables from the managed config", async () => {
+  it("strips inherited MCP/notify state while retaining authorized Codex plugin tables", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-strip-managed-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -2484,10 +2486,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
 
       const managedConfigContents = await fs.readFile(path.join(managedCodexHome, "config.toml"), "utf8");
       expect(managedConfigContents).toContain('model = "codex-mini-latest"');
-      expect(managedConfigContents).toContain("[skills.bundled]");
-      expect(managedConfigContents).toContain("enabled = false");
       expect(managedConfigContents).toContain("[features]");
-      expect(managedConfigContents).toContain("plugins = false");
+      expect(managedConfigContents).toContain("plugins = true");
+      expect(managedConfigContents).toContain('[plugins."linear@openai-curated"]');
+      expect(managedConfigContents).toContain("enabled = true");
       expect(managedConfigContents).toContain("[mcp_servers.rudder-tools]");
       expect(managedConfigContents).toContain("command =");
       expect(managedConfigContents).toContain('"mcp-server"');
@@ -2507,15 +2509,13 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).not.toContain("stale-run");
       expect(managedConfigContents).not.toContain("stale/project-library");
       expect(managedConfigContents).not.toContain("notify =");
-      expect(managedConfigContents).not.toContain("plugins = true");
       expect(managedConfigContents).not.toContain("[mcp_servers.linear]");
-      expect(managedConfigContents).not.toContain('[plugins."linear@openai-curated"]');
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.rudderApiKey).toBe("run-jwt-token");
       expect(logs).toContainEqual(
         expect.objectContaining({
           stream: "stdout",
-          chunk: expect.stringContaining("Removed 2 inherited Codex plugin/MCP configuration tables"),
+          chunk: expect.stringContaining("Removed 1 inherited Codex MCP configuration table"),
         }),
       );
       expect(logs).toContainEqual(
@@ -2639,7 +2639,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("prunes inherited Codex plugin cache state from the managed home before invocation", async () => {
+  it("retains provider-native Codex plugin cache state in the managed home", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-prune-plugin-cache-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -2741,15 +2741,15 @@ describe("codex execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
-      await expect(fs.access(path.join(managedCodexHome, "plugins"))).rejects.toThrow();
-      await expect(fs.access(path.join(managedCodexHome, ".tmp", "plugins"))).rejects.toThrow();
-      await expect(fs.access(path.join(managedCodexHome, ".tmp", "plugins.sha"))).rejects.toThrow();
-      await expect(fs.access(path.join(managedCodexHome, ".tmp", "plugins-clone-demo"))).rejects.toThrow();
-      await expect(fs.access(managedTmpPluginMarker)).rejects.toThrow();
-      expect(logs).toContainEqual(
+      await expect(fs.access(path.join(managedCodexHome, "plugins"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(managedCodexHome, ".tmp", "plugins"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(managedCodexHome, ".tmp", "plugins.sha"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(managedCodexHome, ".tmp", "plugins-clone-demo"))).resolves.toBeUndefined();
+      await expect(fs.access(managedTmpPluginMarker)).resolves.toBeUndefined();
+      expect(logs).not.toContainEqual(
         expect.objectContaining({
           stream: "stdout",
-          chunk: expect.stringContaining("Pruned 5 inherited Codex plugin cache entries"),
+          chunk: expect.stringContaining("Pruned inherited Codex plugin cache entries"),
         }),
       );
     } finally {
@@ -3390,12 +3390,11 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.argv).toEqual(expect.arrayContaining([
         "exec",
         "--json",
-        "--disable",
-        "plugins",
-        "-c",
-        "skills.bundled.enabled=false",
         "-",
       ]));
+      expect(capture.argv).not.toContain("--disable");
+      expect(capture.argv).not.toContain("plugins");
+      expect(capture.argv).not.toContain("skills.bundled.enabled=false");
       expect(capture.prompt).toContain("Follow the rudder heartbeat.");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining([
@@ -3415,13 +3414,9 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect((await fs.lstat(isolatedConfig)).isFile()).toBe(true);
       const isolatedConfigContents = await fs.readFile(isolatedConfig, "utf8");
       expect(isolatedConfigContents).toContain('model = "codex-mini-latest"');
-      expect(isolatedConfigContents).toContain("[skills.bundled]");
-      expect(isolatedConfigContents).toContain("enabled = false");
-      expect(isolatedConfigContents).toContain("[features]");
-      expect(isolatedConfigContents).toContain("plugins = false");
       expect(isolatedConfigContents).toContain("[[skills.config]]");
       expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
-      expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
+      expect(isolatedConfigContents).not.toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
       expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
       expect((await fs.lstat(path.join(isolatedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
       await expect(fs.lstat(workspaceSkill)).rejects.toMatchObject({ code: "ENOENT" });
@@ -3816,12 +3811,13 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("recovers from Codex resume errors when the thread rollout is missing", async () => {
+  it("rejects Codex resume when the thread rollout is missing", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-missing-rollout-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
+    const invocationPath = path.join(root, "invocations.ndjson");
     await fs.mkdir(workspace, { recursive: true });
-    await writeMissingRolloutResumeCodexCommand(commandPath);
+    await writeMissingRolloutResumeCodexCommand(commandPath, invocationPath);
 
     try {
       const logs: LogEntry[] = [];
@@ -3858,20 +3854,33 @@ describe("codex execute", { timeout: 20_000 }, () => {
         },
       });
 
-      expect(result.exitCode).toBe(0);
-      expect(result.errorMessage).toBeNull();
-      expect(result.sessionId).toBe("codex-session-2");
-      expect(result.summary).toBe("recovered");
-      expect(result.resultJson).toMatchObject({
-        stderr: "",
+      expect(result).toMatchObject({
+        exitCode: 1,
+        errorCode: "codex_resume_rejected",
+        errorMessage: expect.stringContaining("no rollout found"),
+        sessionId: "old-codex-session",
+        clearSession: false,
+        resultJson: {
+          resume: {
+            status: "rejected",
+            reason: "provider_unknown_session",
+          },
+        },
       });
       expect(logs).toContainEqual(
         expect.objectContaining({
-          stream: "stdout",
-          chunk: expect.stringContaining('Codex resume session "old-codex-session" is unavailable'),
+          stream: "stderr",
+          chunk: expect.stringContaining('Codex resume session "old-codex-session" was rejected'),
         }),
       );
-      expect(logs.some((entry) => entry.stream === "stderr")).toBe(false);
+      expect(logs.some((entry) => entry.chunk.includes("recovered"))).toBe(false);
+      const invocations = (await fs.readFile(invocationPath, "utf8"))
+        .trim()
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as string[]);
+      expect(invocations).toHaveLength(1);
+      expect(invocations[0]).toContain("resume");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -4755,7 +4764,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("does not preserve inherited shared Codex skill entries in the managed config", async () => {
+  it("preserves explicitly authorized shared Codex skill entries in the managed config", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-disable-inherited-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -4830,13 +4839,11 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toBeNull();
 
       const managedConfigContents = await fs.readFile(path.join(managedCodexHome, "config.toml"), "utf8");
-      expect(managedConfigContents).toContain("[skills.bundled]");
-      expect(managedConfigContents).toContain("enabled = false");
-      expect(managedConfigContents).not.toContain('path = "/tmp/shared-enabled-skill/SKILL.md"');
-      expect(managedConfigContents).not.toContain('path = "/tmp/shared-legacy-skill/SKILL.md"');
+      expect(managedConfigContents).toContain('path = "/tmp/shared-enabled-skill/SKILL.md"');
+      expect(managedConfigContents).toContain('path = "/tmp/shared-legacy-skill/SKILL.md"');
       expect(managedConfigContents).toContain("[[skills.config]]");
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
-      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
+      expect(managedConfigContents).not.toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
       expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
     } finally {
@@ -4854,7 +4861,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("prunes stale managed-home skill directories including .system and isolates HOME from the shared user home", async () => {
+  it("retains provider-native managed-home skills while isolating HOME from the shared user home", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-prune-skill-surface-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -4930,13 +4937,9 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.home).toBe(root);
       expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
       expect(capture.agentHome).toBe(agentHome);
-      expect(capture.codexSkillEntries).toEqual(["rudder-docs"]);
-      await expect(fs.lstat(path.join(managedCodexHome, "skills", "stale-skill"))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      await expect(fs.lstat(path.join(managedCodexHome, "skills", ".system"))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
+      expect(capture.codexSkillEntries).toEqual([".system", "rudder-docs", "stale-skill"]);
+      await expect(fs.lstat(path.join(managedCodexHome, "skills", "stale-skill"))).resolves.toBeDefined();
+      await expect(fs.lstat(path.join(managedCodexHome, "skills", ".system"))).resolves.toBeDefined();
       expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;

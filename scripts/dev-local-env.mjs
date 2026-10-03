@@ -265,6 +265,7 @@ export function resolveDevScriptEnvironment({ repoRoot, baseEnv, defaultLocalEnv
 export function resolveDevDesktopEnvironment(baseEnv) {
   return {
     ...baseEnv,
+    RUDDER_DESKTOP_DEV_RUNTIME_OVERRIDE: "1",
     // Development should open the Local Workspace immediately. Keep the full
     // fixture login path available through an explicit `=0` override.
     ...(nonEmpty(baseEnv.RUDDER_DESKTOP_AUTH_BYPASS) ? {} : { RUDDER_DESKTOP_AUTH_BYPASS: "1" }),

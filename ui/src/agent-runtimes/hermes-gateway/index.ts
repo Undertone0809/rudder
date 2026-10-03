@@ -5,7 +5,7 @@ import { parseHermesGatewayStdoutLine } from "./parse-stdout";
 
 export const hermesGatewayUIAdapter: UIAgentRuntimeModule = {
   type: "hermes_gateway",
-  label: "Hermes API Server",
+  label: "Hermes",
   parseStdoutLine: parseHermesGatewayStdoutLine,
   ConfigFields: HermesGatewayConfigFields,
   buildAdapterConfig: buildHermesGatewayConfig,

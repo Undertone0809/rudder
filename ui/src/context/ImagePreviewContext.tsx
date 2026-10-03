@@ -18,11 +18,13 @@ export interface ImagePreviewRequest extends ImagePreviewState {
 
 interface ImagePreviewContextValue {
   closeImagePreview(): void;
+  closeImagePreviewIfSource(src: string): void;
   openImagePreview(preview: ImagePreviewRequest): void;
 }
 
 const unavailableImagePreviewContext: ImagePreviewContextValue = {
   closeImagePreview: () => undefined,
+  closeImagePreviewIfSource: () => undefined,
   openImagePreview: () => undefined,
 };
 
@@ -34,6 +36,11 @@ export function ImagePreviewProvider({ children }: { children: ReactNode }) {
   const requestRef = useRef<ImagePreviewRequest | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const closeImagePreview = useCallback(() => {
+    requestRef.current = null;
+    setRequest(null);
+  }, []);
+  const closeImagePreviewIfSource = useCallback((src: string) => {
+    if (requestRef.current?.src !== src) return;
     requestRef.current = null;
     setRequest(null);
   }, []);
@@ -51,8 +58,8 @@ export function ImagePreviewProvider({ children }: { children: ReactNode }) {
     if (element?.isConnected) element.focus();
   }, []);
   const value = useMemo(
-    () => ({ closeImagePreview, openImagePreview }),
-    [closeImagePreview, openImagePreview],
+    () => ({ closeImagePreview, closeImagePreviewIfSource, openImagePreview }),
+    [closeImagePreview, closeImagePreviewIfSource, openImagePreview],
   );
 
   useEffect(() => {

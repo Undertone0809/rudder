@@ -151,6 +151,62 @@ process.stdin.on("end", async () => {
   return stubPath;
 }
 
+async function createFinalAnswerDeltaCodexStub(finalBody: string, deltas: string[]) {
+  // This is a Codex CLI-shaped JSONL stub for UI regression, not provider parity evidence.
+  const stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-final-answer-delta-"));
+  const stubPath = path.join(stubDir, "codex");
+  const script = `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli 0.155.0\\n");
+  process.exit(0);
+}
+if (process.argv.includes("generate-json-schema")) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const outputDir = process.argv[process.argv.indexOf("--out") + 1];
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(path.join(outputDir, "ClientRequest.json"), JSON.stringify({ oneOf: [] }));
+  process.exit(0);
+}
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", async () => {
+  const sentinel = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+  const finalBody = ${JSON.stringify(finalBody)};
+  const deltas = ${JSON.stringify(deltas)};
+  const send = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  send({ type: "thread.started", thread_id: "final-answer-delta-e2e", model: "gpt-5.4" });
+  send({ type: "item.completed", item: { id: "reason-1", type: "reasoning", text: "Checking the final response." } });
+  for (const text of deltas) {
+    send({ type: "item.completed", item: { id: "final-answer-1", type: "agent_message", phase: "final_answer", text, delta: true } });
+    await pause(500);
+  }
+  await pause(10_000);
+  send({ type: "item.completed", item: { id: "final-answer-1", type: "agent_message", phase: "final_answer", text: finalBody } });
+  await pause(3_000);
+  const finalText = finalBody + "\\n" + sentinel + JSON.stringify({ kind: "message", body: finalBody, structuredPayload: null });
+  send({ type: "turn.completed", result: finalText, usage: { input_tokens: 2, cached_input_tokens: 0, output_tokens: 8 } });
+});
+`;
+  await fs.writeFile(stubPath, script, "utf8");
+  await fs.chmod(stubPath, 0o755);
+  return stubPath;
+}
+
+function isolatedFinalAnswerScreenshotPath(surface: string) {
+  const runId = process.env.RUDDER_E2E_RUN_ID?.replace(/[^a-z0-9._-]/gi, "-") ?? "local";
+  return path.join(os.tmpdir(), `rudder-final-answer-${surface}-${runId}-${Date.now()}.png`);
+}
+
+async function assistantBubbleGap(bubble: Locator, userBubble: Locator) {
+  const [assistantBox, userBox] = await Promise.all([bubble.boundingBox(), userBubble.boundingBox()]);
+  expect(assistantBox).not.toBeNull();
+  expect(userBox).not.toBeNull();
+  return assistantBox!.y - userBox!.y - userBox!.height;
+}
+
 async function createStopCodexStub() {
   await fs.mkdir(E2E_BIN_DIR, { recursive: true });
   const stubPath = path.join(E2E_BIN_DIR, `codex-stop-${randomUUID()}`);
@@ -209,6 +265,18 @@ async function createLargeTranscriptCodexStub(entryCount = 1_000) {
   const stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-large-transcript-"));
   const stubPath = path.join(stubDir, "codex");
   await fs.writeFile(stubPath, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli 0.155.0" + String.fromCharCode(10));
+  process.exit(0);
+}
+if (process.argv.includes("generate-json-schema")) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const directory = process.argv[process.argv.indexOf("--out") + 1];
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, "ClientRequest.json"), JSON.stringify({ oneOf: [] }));
+  process.exit(0);
+}
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -253,6 +321,18 @@ async function createNulTranscriptCodexStub() {
   const stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-nul-transcript-"));
   const stubPath = path.join(stubDir, "codex");
   await fs.writeFile(stubPath, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli 0.155.0" + String.fromCharCode(10));
+  process.exit(0);
+}
+if (process.argv.includes("generate-json-schema")) {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const directory = process.argv[process.argv.indexOf("--out") + 1];
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, "ClientRequest.json"), JSON.stringify({ oneOf: [] }));
+  process.exit(0);
+}
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -308,10 +388,14 @@ test.describe("Chat streaming", () => {
         preferredAgentId: organization.chatAgent.id,
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: {
+          body: "Replay this chat's persisted assistant progress without duplicating its answer.",
+        },
       },
     });
-    expect(chatRes.ok()).toBe(true);
-    const chat = await chatRes.json();
+    const chatResponseBody = await chatRes.text();
+    expect(chatRes.ok(), `Create chat returned ${chatRes.status()}: ${chatResponseBody}`).toBe(true);
+    const chat = JSON.parse(chatResponseBody) as { id: string };
     const assistantMessageId = randomUUID();
 
     await e2eDb.insert(chatMessages).values({
@@ -368,13 +452,21 @@ test.describe("Chat streaming", () => {
 
     const lightweightMessagesResponse = page.waitForResponse((response) =>
       response.request().method() === "GET"
-      && response.url().includes(`/api/chats/${chat.id}/messages?includeTranscript=false`),
+      && (() => {
+        const url = new URL(response.url());
+        return url.pathname === `/api/chats/${chat.id}/messages`
+          && url.searchParams.get("includeTranscript") === "false";
+      })(),
     );
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
     const lightweightMessages = await (await lightweightMessagesResponse).json();
-    expect(lightweightMessages[0].transcript).toBeUndefined();
-    expect(lightweightMessages[0].transcriptSummary).toMatchObject({ entryCount: 5 });
-    expect(lightweightMessages[0].structuredPayload).toBeNull();
+    const lightweightAssistantMessage = lightweightMessages.find(
+      (message: { id: string }) => message.id === assistantMessageId,
+    );
+    expect(lightweightAssistantMessage).toBeDefined();
+    expect(lightweightAssistantMessage?.transcript).toBeUndefined();
+    expect(lightweightAssistantMessage?.transcriptSummary).toMatchObject({ entryCount: 5 });
+    expect(lightweightAssistantMessage?.structuredPayload).toBeNull();
 
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
       "Final answer shown in the assistant message.",
@@ -1029,6 +1121,182 @@ test.describe("Chat streaming", () => {
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText("最终答复", {
       timeout: 15_000,
     });
+  });
+
+  test("keeps the Main Chat response position stable through completion and refresh", async ({ page }) => {
+    test.setTimeout(90_000);
+    const finalBody = "This answer remains inside one assistant bubble.";
+    const visiblePrefix = "This answer remains inside one assistant";
+    const organization = await createStreamingOrg(page, `Final-Delta-Main-${Date.now()}`, {
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+        command: E2E_CODEX_APP_SERVER_STUB,
+        chatAppServerEnabled: true,
+      },
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    const userPrompt = "Keep final answer deltas in the assistant bubble (Main).";
+    await composer.fill(userPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect.poll(() => new URL(page.url()).pathname.split("/").pop() ?? "", {
+      timeout: 15_000,
+    }).not.toBe("chat");
+    const chatId = currentChatId(page.url());
+    const timeline = page.getByTestId("chat-virtual-timeline");
+    const userBubble = timeline.getByTestId("chat-user-message-bubble").filter({ hasText: userPrompt });
+    await expect(userBubble).toHaveCount(1);
+    const streamingTranscript = timeline.getByTestId("chat-transcript-item").last();
+    await expect(streamingTranscript).toContainText("I am checking the response before giving the final answer.", { timeout: 20_000 });
+    await expect(streamingTranscript).toContainText("This unphased assistant event remains process-only.");
+    await expect(streamingTranscript).not.toContainText(visiblePrefix);
+    await expect(streamingTranscript).not.toContainText(finalBody);
+    const streamingBubble = timeline.getByTestId("chat-assistant-message").filter({ hasText: visiblePrefix });
+    await expect(streamingBubble).toHaveCount(1);
+    await expect(streamingBubble).not.toContainText("I am checking the response");
+    await expect(streamingBubble).not.toContainText("This unphased assistant event");
+    await expect(streamingBubble).not.toContainText(finalBody);
+    const streamingBubbleGap = await assistantBubbleGap(streamingBubble, userBubble);
+
+    const countVisibleText = (text: string) => timeline.evaluate(
+      (element, value) => element.innerText.split(value).length - 1,
+      text,
+    );
+    const readAssistantStatus = async () => {
+      const response = await page.request.get(`/api/chats/${chatId}/messages`);
+      if (!response.ok()) return null;
+      const messages = await response.json() as Array<{ role: string; status: string }>;
+      return [...messages].reverse().find((message) => message.role === "assistant")?.status ?? null;
+    };
+    await expect.poll(readAssistantStatus, { timeout: 10_000 }).toBe("streaming");
+    expect(await countVisibleText(visiblePrefix)).toBe(1);
+    await page.screenshot({ path: isolatedFinalAnswerScreenshotPath("main-streaming") });
+
+    await expect.poll(readAssistantStatus, { timeout: 20_000 }).toBe("completed");
+    await page.waitForTimeout(250);
+    const completedBubble = timeline.getByTestId("chat-assistant-message").filter({ hasText: finalBody });
+    await expect(completedBubble).toHaveCount(1);
+    await expect(completedBubble).toContainText("Chat Agent");
+    await expect(completedBubble).not.toContainText("I am checking the response");
+    await expect(completedBubble).not.toContainText("This unphased assistant event");
+    expect(await countVisibleText(finalBody)).toBe(1);
+    await expect(streamingTranscript).not.toContainText(finalBody);
+    const completedTranscript = timeline.getByTestId("chat-transcript-item").last();
+    const processToggle = completedTranscript.locator("button").first();
+    await expect(processToggle).toHaveAttribute("aria-expanded", "true");
+    const completedBubbleGap = await assistantBubbleGap(completedBubble, userBubble);
+    expect(Math.abs(completedBubbleGap - streamingBubbleGap)).toBeLessThanOrEqual(2);
+    await page.screenshot({ path: isolatedFinalAnswerScreenshotPath("main-completed") });
+    await processToggle.click();
+    await expect(processToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(completedTranscript.getByTestId("chat-transcript-content")).toBeHidden();
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const refreshedTimeline = page.getByTestId("chat-virtual-timeline");
+    const refreshedUserBubble = refreshedTimeline.getByTestId("chat-user-message-bubble").filter({ hasText: userPrompt });
+    const refreshedAssistantBubble = refreshedTimeline.getByTestId("chat-assistant-message").filter({ hasText: finalBody });
+    await expect(refreshedUserBubble).toHaveCount(1);
+    await expect(refreshedAssistantBubble).toHaveCount(1);
+    await expect(refreshedUserBubble).toContainText(userPrompt);
+    expect(await refreshedTimeline.evaluate((element, value) => element.innerText.split(value).length - 1, finalBody)).toBe(1);
+    await expect(refreshedTimeline.getByTestId("chat-transcript-item").last()).not.toContainText(finalBody);
+    const refreshedUserTop = (await refreshedUserBubble.boundingBox())?.y;
+    const refreshedAssistantTop = (await refreshedAssistantBubble.boundingBox())?.y;
+    expect(refreshedUserTop).not.toBeNull();
+    expect(refreshedAssistantTop).not.toBeNull();
+    expect(refreshedUserTop!).toBeLessThan(refreshedAssistantTop!);
+    await page.screenshot({ path: isolatedFinalAnswerScreenshotPath("main-complete") });
+  });
+
+  test("keeps streamed final-answer deltas from a Codex-shaped stub in one stable Main Chat bubble", async ({ page }) => {
+    test.setTimeout(90_000);
+    const finalBody = "The final answer is available in one stable assistant bubble.";
+    const deltas = ["The final ", "answer is"];
+    const visiblePrefix = deltas.join("");
+    const stubPath = await createFinalAnswerDeltaCodexStub(finalBody, deltas);
+    const organization = await createStreamingOrg(page, `Final-Delta-Main-${Date.now()}`, { command: stubPath });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    const userPrompt = "Stream a final answer in multiple chunks";
+    await composer.fill(userPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect.poll(() => new URL(page.url()).pathname.split("/").pop() ?? "", {
+      timeout: 15_000,
+    }).not.toBe("chat");
+    const chatId = currentChatId(page.url());
+    const timeline = page.getByTestId("chat-virtual-timeline");
+    const userBubble = timeline.getByTestId("chat-user-message-bubble").filter({ hasText: userPrompt });
+    await expect(userBubble).toHaveCount(1);
+    const streamingTranscript = timeline.getByTestId("chat-transcript-item").last();
+    const streamingBubble = timeline.getByTestId("chat-assistant-message").filter({ hasText: visiblePrefix });
+    await expect(streamingBubble).toHaveCount(1, { timeout: 20_000 });
+    await expect(streamingTranscript).not.toContainText(visiblePrefix);
+    await expect(streamingTranscript).not.toContainText(finalBody);
+    const streamingTranscriptTop = (await streamingTranscript.boundingBox())?.y;
+    expect(streamingTranscriptTop).not.toBeNull();
+    const userBubbleTop = (await userBubble.boundingBox())?.y;
+    expect(userBubbleTop).not.toBeNull();
+    expect(userBubbleTop!).toBeLessThan(streamingTranscriptTop!);
+    const streamingBubbleGap = await assistantBubbleGap(streamingBubble, userBubble);
+
+    const countVisibleText = (text: string) => timeline.evaluate(
+      (element, value) => element.innerText.split(value).length - 1,
+      text,
+    );
+    const readAssistantStatus = async () => {
+      const response = await page.request.get(`/api/chats/${chatId}/messages`);
+      if (!response.ok()) return null;
+      const messages = await response.json() as Array<{ role: string; status: string }>;
+      return [...messages].reverse().find((message) => message.role === "assistant")?.status ?? null;
+    };
+    await expect.poll(readAssistantStatus, { timeout: 10_000 }).toBe("streaming");
+    await expect(streamingBubble).toContainText(visiblePrefix);
+    expect(await countVisibleText(visiblePrefix)).toBe(1);
+    await page.screenshot({ path: isolatedFinalAnswerScreenshotPath("main-streaming") });
+
+    await expect.poll(readAssistantStatus, { timeout: 20_000 }).toBe("completed");
+    await page.waitForTimeout(250);
+    const completedBubble = timeline.getByTestId("chat-assistant-message").filter({ hasText: finalBody });
+    await expect(completedBubble).toHaveCount(1);
+    await expect(completedBubble).toContainText("Chat Agent");
+    expect(await countVisibleText(finalBody)).toBe(1);
+    await expect(streamingTranscript).not.toContainText(finalBody);
+    const completedBubbleTop = (await completedBubble.locator(".group.w-full.max-w-3xl").boundingBox())?.y;
+    expect(completedBubbleTop).not.toBeNull();
+    expect(streamingTranscriptTop!).toBeLessThan(completedBubbleTop!);
+    expect(Math.abs(await assistantBubbleGap(completedBubble, userBubble) - streamingBubbleGap)).toBeLessThanOrEqual(2);
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const refreshedTimeline = page.getByTestId("chat-virtual-timeline");
+    const refreshedUserBubble = refreshedTimeline.getByTestId("chat-user-message-bubble").filter({ hasText: userPrompt });
+    const refreshedAssistantBubble = refreshedTimeline.getByTestId("chat-assistant-message").filter({ hasText: finalBody });
+    await expect(refreshedUserBubble).toHaveCount(1);
+    await expect(refreshedAssistantBubble).toHaveCount(1);
+    await expect(refreshedUserBubble).toContainText(userPrompt);
+    expect(await refreshedTimeline.evaluate((element, value) => element.innerText.split(value).length - 1, finalBody)).toBe(1);
+    await expect(refreshedTimeline.getByTestId("chat-transcript-item").last()).not.toContainText(finalBody);
+    const refreshedUserTop = (await refreshedUserBubble.boundingBox())?.y;
+    const refreshedAssistantTop = (await refreshedAssistantBubble.boundingBox())?.y;
+    expect(refreshedUserTop).not.toBeNull();
+    expect(refreshedAssistantTop).not.toBeNull();
+    expect(refreshedUserTop!).toBeLessThan(refreshedAssistantTop!);
+    await page.screenshot({ path: isolatedFinalAnswerScreenshotPath("main-complete") });
   });
 
   test("internally repairs a successful chat reply when the runtime omits the Rudder sentinel", async ({ page }) => {

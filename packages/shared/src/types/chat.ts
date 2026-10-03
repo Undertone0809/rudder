@@ -175,6 +175,8 @@ export interface ChatRuntimeDescriptor {
   error: string | null;
 }
 
+export type ChatRuntimeContinuity = "native" | "context_handoff" | "legacy";
+
 export type ChatGenerationStatus =
   | "starting"
   | "active"
@@ -240,7 +242,7 @@ export type ChatProviderControlDisposition =
   | "waiting_safe_boundary"
   | "unverified";
 
-export type ChatControlActionKind = "stop" | "steer";
+export type ChatControlActionKind = "stop" | "steer" | "continue";
 
 export type ChatGenerationEventKind =
   | "generation_started"
@@ -355,6 +357,8 @@ export interface ChatQueuedMessage {
 }
 
 export interface ChatQueueSnapshot {
+  /** Refresh this fence before explicit Continue; it is not permission to replay failed input. */
+  latestFailedGenerationId?: string | null;
   activeGenerationId: string | null;
   activeAttemptEpoch: number | null;
   activeControlVersion: number | null;
@@ -502,6 +506,7 @@ export interface ChatConversation {
   forkedFromConversationId: string | null;
   forkedFromMessageId: string | null;
   forkRootConversationId: string | null;
+  runtimeContinuity?: ChatRuntimeContinuity;
   primaryIssue: ChatPrimaryIssueSummary | null;
   issueCreationMode: "manual_approval" | "auto_create";
   planMode: boolean;
@@ -665,6 +670,16 @@ export interface ChatAskUserRequest {
   questions: ChatAskUserQuestion[];
 }
 
+export interface ChatAskUserResponseAnswer {
+  questionId: string;
+  optionIds: string[];
+  freeformText?: string;
+}
+
+export interface ChatAskUserResponse {
+  answers: ChatAskUserResponseAnswer[];
+}
+
 export type ChatRichReference =
   | {
     type: "issue";
@@ -777,6 +792,17 @@ export interface ChatStreamTranscriptEntryEvent {
   bodyHash?: string;
 }
 
+export interface ChatRuntimeSensitiveInputRequest {
+  requestId: string;
+  kind: "secret" | "sudo";
+  generationId?: string;
+  attemptEpoch?: number;
+}
+
+export interface ChatStreamSensitiveInputRequestEvent extends ChatRuntimeSensitiveInputRequest {
+  type: "sensitive_input_request";
+}
+
 export interface ChatStreamFinalEvent {
   type: "final";
   messages: ChatMessage[];
@@ -804,6 +830,7 @@ export type ChatStreamEvent =
   | ChatStreamAssistantStateEvent
   | ChatStreamWaitingForNetworkEvent
   | ChatStreamTranscriptEntryEvent
+  | ChatStreamSensitiveInputRequestEvent
   | ChatStreamFinalEvent
   | ChatStreamErrorEvent
   | ChatStreamQueuedEvent;

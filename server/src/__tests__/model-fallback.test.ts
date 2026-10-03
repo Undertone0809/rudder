@@ -41,6 +41,129 @@ function baseContext(config: Record<string, unknown>): AgentRuntimeExecutionCont
 }
 
 describe("executeAdapterWithModelFallbacks", () => {
+  it("reports exhausted auth scopes on the current result exactly once", async () => {
+    const failure = result({ exitCode: 1, errorCode: "codex_provider_auth_required",
+      resultJson: { providerFailure: { classification: "authentication", retryable: false } } });
+    const adapter: ServerAgentRuntimeModule = { type: "codex_local", testEnvironment: vi.fn(),
+      getProviderReadinessFingerprint: vi.fn(async () => "credential"), execute: vi.fn(async () => failure) };
+    const onAttemptResult = vi.fn();
+    expect(await executeAdapterWithModelFallbacks(adapter, baseContext({ model: "primary",
+      modelFallbacks: [{ model: "backup" }, { model: "last" }] }), { onAttemptResult })).toBe(failure);
+    expect(adapter.execute).toHaveBeenCalledOnce();
+    expect(onAttemptResult).toHaveBeenCalledOnce();
+    expect(onAttemptResult.mock.calls[0][3]).toEqual({ providerDispatched: true, willFallback: false });
+  });
+
+  it("freezes readiness without resolving the next driver before current reconciliation", async () => {
+    const events: string[] = [];
+    let probes = 0;
+    const adapter: ServerAgentRuntimeModule = { type: "codex_local", testEnvironment: vi.fn(), execute: vi.fn(),
+      getProviderReadinessFingerprint: vi.fn(async (ctx) => {
+        events.push(`probe:${ctx.config.model}`);
+        // A re-probe would now falsely match the exhausted scope.
+        return ++probes === 2 ? "fresh" : "failed";
+      }) };
+    const executed = await executeAdapterWithModelFallbacks(adapter, baseContext({ model: "primary",
+      modelFallbacks: [{ model: "backup" }] }), {
+      executeThroughDriver: true, nativeDriverRequired: true, onAttemptSubmissionStart: vi.fn(),
+      onAttemptStart: (attempt) => { events.push(`start:${attempt.index}`); },
+      onAttemptResult: (attempt, _result, _phase, lifecycle) => {
+        events.push(`result:${attempt.index}:${lifecycle.willFallback}`);
+      },
+      resolveDriver: (_type, _adapter, _ctx, attempt) => {
+        events.push(`driver:${attempt.index}`);
+        return { resume: () => ({ status: "supported", value: baseContext({}).runtime }),
+          execute: async () => attempt.index === 0
+            ? result({ exitCode: 1, submissionPhase: "pre_submission", errorCode: "codex_provider_auth_required",
+              resultJson: { providerFailure: { classification: "authentication", retryable: false } } })
+            : result({ model: "backup" }) } as any;
+      },
+    });
+    expect(executed.model).toBe("backup");
+    expect(adapter.getProviderReadinessFingerprint).toHaveBeenCalledTimes(2);
+    expect(events).toEqual(["probe:primary", "start:0", "driver:0", "probe:backup",
+      "result:0:true", "start:1", "driver:1", "result:1:false"]);
+  });
+
+  it("terminalizes a missing next driver through that attempt's owned callback", async () => {
+    const adapter: ServerAgentRuntimeModule = { type: "codex_local", testEnvironment: vi.fn(), execute: vi.fn() };
+    const onAttemptResult = vi.fn();
+    const onAttemptStart = vi.fn();
+    const resolveDriver = vi.fn((_type: string, _adapter: ServerAgentRuntimeModule,
+      _ctx: AgentRuntimeExecutionContext, attempt: { index: number }) => attempt.index === 0
+      ? { resume: () => ({ status: "supported", value: baseContext({}).runtime }),
+        execute: async () => result({ exitCode: 1, submissionPhase: "pre_submission" }) } as any : null);
+    const executed = await executeAdapterWithModelFallbacks(adapter, baseContext({ model: "primary",
+      modelFallbacks: [{ model: "backup" }] }), { nativeDriverRequired: true, executeThroughDriver: true,
+      onAttemptSubmissionStart: vi.fn(), onAttemptResult, onAttemptStart, resolveDriver });
+    expect(executed.errorCode).toBe("runtime_driver_required");
+    expect(onAttemptStart).toHaveBeenCalledTimes(2);
+    expect(onAttemptResult.mock.calls.map(([attempt, , , lifecycle]) => [attempt.index, lifecycle])).toEqual([
+      [0, { providerDispatched: true, willFallback: true }],
+      [1, { providerDispatched: false, willFallback: false }],
+    ]);
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("reports no eligible fallback when all remaining adapters are missing", async () => {
+    const adapter: ServerAgentRuntimeModule = { type: "codex_local", testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ exitCode: 1 })) };
+    const onAttemptResult = vi.fn();
+    await expect(executeAdapterWithModelFallbacks(adapter, baseContext({ model: "primary",
+      modelFallbacks: [{ agentRuntimeType: "claude_local", model: "backup" }] }), {
+      resolveAdapter: () => null, onAttemptResult,
+    })).rejects.toThrow("No adapter found");
+    expect(onAttemptResult).toHaveBeenCalledOnce();
+    expect(onAttemptResult.mock.calls[0][3]).toEqual({ providerDispatched: true, willFallback: false });
+  });
+
+  it("reports resume rejection once without dispatch or fallback", async () => {
+    const adapter: ServerAgentRuntimeModule = { type: "codex_local", testEnvironment: vi.fn(), execute: vi.fn() };
+    const onAttemptResult = vi.fn();
+    const execute = vi.fn();
+    const executed = await executeAdapterWithModelFallbacks(adapter, baseContext({ model: "primary",
+      modelFallbacks: [{ model: "backup" }] }), { executeThroughDriver: true,
+      resolveDriver: () => ({ resume: () => ({ status: "unsupported", reason: "no session" }), execute }) as any,
+      onAttemptResult });
+    expect(executed.errorCode).toBe("runtime_session_resume_rejected");
+    expect(executed.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "not_started" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(onAttemptResult).toHaveBeenCalledOnce();
+    expect(onAttemptResult.mock.calls[0][3]).toEqual({ providerDispatched: false, willFallback: false });
+  });
+
+  it("does not advertise a native cross-runtime fallback", async () => {
+    const adapter: ServerAgentRuntimeModule = { type: "codex_local", testEnvironment: vi.fn(), execute: vi.fn() };
+    const onAttemptResult = vi.fn();
+    const resolveAdapter = vi.fn();
+    const executed = await executeAdapterWithModelFallbacks(adapter, baseContext({ model: "primary",
+      modelFallbacks: [{ agentRuntimeType: "claude_local", model: "backup" }] }), {
+      nativeDriverRequired: true, executeThroughDriver: true, onAttemptSubmissionStart: vi.fn(),
+      resolveAdapter, onAttemptResult,
+      resolveDriver: () => ({ resume: () => ({ status: "supported", value: baseContext({}).runtime }),
+        execute: async () => result({ exitCode: 1, submissionPhase: "pre_submission" }) }) as any,
+    });
+    expect(executed.errorCode).toBe("runtime_driver_required");
+    expect(resolveAdapter).not.toHaveBeenCalled();
+    expect(onAttemptResult).toHaveBeenCalledOnce();
+    expect(onAttemptResult.mock.calls[0][3]).toEqual({ providerDispatched: true, willFallback: false });
+  });
+
+  it.each(["success", "stop", "accepted", "indeterminate", "suspended"])(
+    "does not advertise fallback for %s", async (kind) => {
+      const ctx = baseContext({ model: "primary", modelFallbacks: [{ model: "backup" }] });
+      if (kind === "stop") ctx.abortSignal = AbortSignal.abort();
+      const terminalResult = result({ exitCode: kind === "success" ? 0 : 1,
+        submissionPhase: kind === "accepted" ? "accepted" : kind === "indeterminate" ? "indeterminate" : "pre_submission",
+        ...(kind === "suspended" ? { networkSuspension: { kind: "network_unavailable" } as any } : {}) });
+      const adapter: ServerAgentRuntimeModule = { type: "codex_local", testEnvironment: vi.fn(), execute: vi.fn(async () => terminalResult) };
+      const onAttemptResult = vi.fn();
+      await executeAdapterWithModelFallbacks(adapter, ctx, { onAttemptResult,
+        nativeDriverRequired: kind === "accepted" || kind === "indeterminate" });
+      expect(adapter.execute).toHaveBeenCalledOnce();
+      expect(onAttemptResult.mock.calls[0][3].willFallback).toBe(false);
+    });
+
   it("stops same-provider model fallbacks after terminal authentication failure", async () => {
     const adapter: ServerAgentRuntimeModule = {
       type: "codex_local",
@@ -571,6 +694,242 @@ describe("executeAdapterWithModelFallbacks", () => {
 
     expect(executed.errorMessage).toBe("failed");
     expect(adapter.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes prepared heartbeat contexts through the native driver after session validation", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "adapter" })),
+    };
+    const driver = {
+      resume: vi.fn(() => ({
+        status: "supported" as const,
+        value: {
+          sessionId: "native-session",
+          sessionParams: { sessionId: "native-session", nativeTransport: "app-server-stdio" },
+          sessionDisplayId: "native-session",
+        },
+      })),
+      execute: vi.fn(async (attemptContext: AgentRuntimeExecutionContext) => {
+        expect(attemptContext.context).not.toHaveProperty("chatPrompt");
+        expect(attemptContext.runtime).toMatchObject({
+          sessionId: "native-session",
+          sessionParams: { nativeTransport: "app-server-stdio" },
+          sessionDisplayId: "native-session",
+        });
+        return result({ model: "native-driver" });
+      }),
+      submitInput: vi.fn(),
+    } as any;
+    const ctx = baseContext({ model: "gpt-primary" });
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
+      resolveDriver: () => driver,
+      executeThroughDriver: true,
+    });
+
+    expect(executed.model).toBe("native-driver");
+    expect(driver.resume).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      sessionParams: { sessionId: "session-1" },
+      sessionDisplayId: "session-1",
+    });
+    expect(driver.execute).toHaveBeenCalledTimes(1);
+    expect(driver.submitInput).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("routes Chat submissions through the native driver's input boundary", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "adapter" })),
+    };
+    const driver = {
+      resume: vi.fn(() => ({
+        status: "supported" as const,
+        value: {
+          sessionId: "native-session",
+          sessionParams: { sessionId: "native-session", nativeTransport: "app-server-stdio" },
+          sessionDisplayId: "native-session",
+        },
+      })),
+      submitInput: vi.fn(async (submission: {
+        context: AgentRuntimeExecutionContext;
+        session: { sessionId: string } | null;
+        input: { text: string };
+      }) => {
+        expect(submission.context.runtime).toMatchObject({
+          sessionId: "native-session",
+          sessionParams: { nativeTransport: "app-server-stdio" },
+          sessionDisplayId: "native-session",
+        });
+        expect(submission.session).toMatchObject({ sessionId: "native-session" });
+        expect(submission.input.text).toBe("continue the conversation");
+        return result({ model: "native-driver" });
+      }),
+      execute: vi.fn(),
+    } as any;
+    const ctx = baseContext({ model: "gpt-primary" });
+    ctx.context.chatPrompt = "continue the conversation";
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
+      resolveDriver: () => driver,
+      submitInputThroughDriver: true,
+    });
+
+    expect(executed.model).toBe("native-driver");
+    expect(driver.resume).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      sessionParams: { sessionId: "session-1" },
+      sessionDisplayId: "session-1",
+    });
+    expect(driver.submitInput).toHaveBeenCalledTimes(1);
+    expect(driver.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects native Chat submissions when the profile-bound Driver is unavailable", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "legacy-adapter" })),
+    };
+    const ctx = baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [{ agentRuntimeType: "codex_local", model: "gpt-fallback" }],
+    });
+    ctx.context.chatPrompt = "continue the conversation";
+    const resolveDriver = vi.fn(() => null);
+    const onProviderDispatch = vi.fn();
+    const onAttemptResult = vi.fn();
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
+      resolveDriver,
+      submitInputThroughDriver: true,
+      nativeDriverRequired: true,
+      onProviderDispatch,
+      onAttemptResult,
+    });
+
+    expect(executed).toMatchObject({
+      exitCode: 1,
+      errorCode: "runtime_driver_required",
+      submissionPhase: "pre_submission",
+      nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      resultJson: { runtimeType: "codex_local", nativeDriverRequired: true },
+    });
+    expect(resolveDriver).toHaveBeenCalledTimes(1);
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect(onProviderDispatch).not.toHaveBeenCalled();
+    expect(onAttemptResult).toHaveBeenCalledWith(expect.any(Object), executed, "pre_submission",
+      { providerDispatched: false, willFallback: false });
+  });
+
+  it("does not infer unstarted execution from a driver's pre-submission result", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local", testEnvironment: vi.fn(), execute: vi.fn(),
+    };
+    const driver = {
+      resume: vi.fn(() => ({ status: "supported", value: baseContext({}).runtime })),
+      submitInput: vi.fn(async () => result({
+        exitCode: 1, submissionPhase: "pre_submission", errorCode: "provider_unavailable",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+        resultJson: { providerDispatched: false },
+      })),
+    } as any;
+    const onAttemptResult = vi.fn();
+    await executeAdapterWithModelFallbacks(adapter, baseContext({ model: "primary" }), {
+      resolveDriver: () => driver, submitInputThroughDriver: true, nativeDriverRequired: true,
+      onAttemptSubmissionStart: vi.fn(), onAttemptResult,
+    });
+    expect(driver.submitInput).toHaveBeenCalledOnce();
+    expect(onAttemptResult).toHaveBeenCalledWith(expect.any(Object), expect.any(Object),
+      "pre_submission", { providerDispatched: true, willFallback: false });
+  });
+
+  it("distinguishes admission cancellation from an actual provider dispatch", async () => {
+    const onProviderDispatch = vi.fn();
+    const adapter: ServerAgentRuntimeModule = {
+      type: "process",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => {
+        expect(onProviderDispatch).toHaveBeenCalledOnce();
+        return result({ model: "process" });
+      }),
+    };
+    const ctx = baseContext({ model: "test" });
+    await expect(executeAdapterWithModelFallbacks(adapter, ctx, {
+      onAttemptStart: () => { throw new Error("cancelled before admission completed"); },
+      onProviderDispatch,
+    })).rejects.toThrow("cancelled before admission completed");
+    expect(onProviderDispatch).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+
+    await executeAdapterWithModelFallbacks(adapter, ctx, { onProviderDispatch });
+    expect(adapter.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each(["openclaw_gateway"])(
+    "keeps unsupported %s attempts on their existing adapter fallback",
+    async (runtimeType) => {
+      const adapter: ServerAgentRuntimeModule = {
+        type: runtimeType,
+        testEnvironment: vi.fn(),
+        execute: vi.fn(async () => result({ model: runtimeType })),
+      };
+      const ctx = baseContext({ model: "fallback-model" });
+      ctx.agent = { ...ctx.agent, agentRuntimeType: runtimeType };
+
+      const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
+        resolveDriver: () => null,
+        executeThroughDriver: true,
+      });
+
+      expect(executed.model).toBe(runtimeType);
+      expect(adapter.execute).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("falls back from a native driver attempt to the OpenClaw adapter", async () => {
+    const primaryAdapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "adapter-bypass" })),
+    };
+    const fallbackAdapter: ServerAgentRuntimeModule = {
+      type: "openclaw_gateway",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "gateway-fallback" })),
+    };
+    const driver = {
+      resume: vi.fn(() => ({
+        status: "supported" as const,
+        value: {
+          sessionId: "native-session",
+          sessionParams: { sessionId: "native-session" },
+          sessionDisplayId: "native-session",
+        },
+      })),
+      execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "native runtime unavailable" })),
+      submitInput: vi.fn(),
+    } as any;
+    const ctx = baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [{ agentRuntimeType: "openclaw_gateway", model: "gateway-fallback" }],
+    });
+
+    const executed = await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
+      resolveAdapter: (runtimeType) => runtimeType === "openclaw_gateway" ? fallbackAdapter : null,
+      resolveDriver: (runtimeType) => runtimeType === "codex_local" ? driver : null,
+      executeThroughDriver: true,
+    });
+
+    expect(executed.model).toBe("gateway-fallback");
+    expect(driver.execute).toHaveBeenCalledTimes(1);
+    expect(primaryAdapter.execute).not.toHaveBeenCalled();
+    expect(fallbackAdapter.execute).toHaveBeenCalledTimes(1);
   });
 
   it("fences runtime controls to one model attempt at a time", async () => {

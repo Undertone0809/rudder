@@ -1,5 +1,6 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { isUsableSelectionAnnotationRect } from "@/components/chat/SelectionAnnotationToolbar";
+import { chatTranscriptEntriesForMessage } from "@/components/transcript/useAgentRunTranscripts";
 import {
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
   hashChatAnnotationSource,
@@ -25,9 +26,18 @@ export type PendingChatResponseAnnotationSelection = {
 
 const CHAT_PENDING_SELECTION_HIGHLIGHT = "rudder-chat-pending-selection";
 
+export function chatProcessTranscriptEntries(
+  message: Pick<ChatMessage, "id" | "runId" | "transcript">,
+  loadedTranscriptsByMessageId: Record<string, TranscriptEntry[]>,
+  transcriptByRun: ReadonlyMap<string, TranscriptEntry[]>,
+): TranscriptEntry[] {
+  return chatTranscriptEntriesForMessage(message, loadedTranscriptsByMessageId, transcriptByRun);
+}
+
 export function usePendingChatResponseAnnotationSelection(input: {
   rawMessages: ChatMessage[];
   loadedTranscriptsByMessageId: Record<string, TranscriptEntry[]>;
+  transcriptByRun: ReadonlyMap<string, TranscriptEntry[]>;
   selectedConversationId: string | null;
   draftStorageScopeKey: string;
   activeDraftScopeRef: RefObject<string>;
@@ -64,6 +74,14 @@ export function usePendingChatResponseAnnotationSelection(input: {
       const endElement = range.endContainer instanceof Element
         ? range.endContainer
         : range.endContainer.parentElement;
+      // Stable Run Reader blocks own their selection/editor, including when
+      // their text also carries legacy generation provenance. Do not open a
+      // second page-level process editor for the same selection.
+      if (startElement?.closest('[data-run-transcript-selection-owner="true"]')
+        || endElement?.closest('[data-run-transcript-selection-owner="true"]')) {
+        setPendingSelection(null);
+        return;
+      }
       const sourceRoot = startElement?.closest<HTMLElement>(
         `[${CHAT_ANNOTATION_SOURCE_ATTRIBUTE}]`,
       ) ?? null;
@@ -118,9 +136,11 @@ export function usePendingChatResponseAnnotationSelection(input: {
           setPendingSelection(null);
           return;
         }
-        const transcriptEntries = input.loadedTranscriptsByMessageId[sourceMessage.id]
-          ?? sourceMessage.transcript
-          ?? [];
+        const transcriptEntries = chatProcessTranscriptEntries(
+          sourceMessage,
+          input.loadedTranscriptsByMessageId,
+          input.transcriptByRun,
+        );
         const sourceEntry = transcriptEntries.find((entry) => {
           const candidate = entry as typeof entry & {
             generationId?: string;
@@ -231,6 +251,7 @@ export function usePendingChatResponseAnnotationSelection(input: {
     input.loadedTranscriptsByMessageId,
     input.rawMessages,
     input.selectedConversationId,
+    input.transcriptByRun,
   ]);
 
   useLayoutEffect(() => {

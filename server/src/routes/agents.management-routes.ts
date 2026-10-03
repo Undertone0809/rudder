@@ -15,7 +15,8 @@ import {
   updateAgentPermissionsSchema,
   updateAgentSchema,
   upsertAgentInstructionsFileSchema,
-  wakeAgentSchema
+  wakeAgentSchema,
+  type HeartbeatRun
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, not, or, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
@@ -28,14 +29,22 @@ import { validate } from "../middleware/validate.js";
 import { omitSecretPayloadFields, redactEventPayload } from "../redaction.js";
 import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
 import { delegationRunService } from "../services/delegation-runs.js";
-import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import {
   issueService,
   logActivity,
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
+import {
+  assertRunIntelligenceAccess,
+  filterRunsByRunIntelligenceAccess,
+  resolveRunIdReferenceForScope,
+  sideChatVisibilityCondition,
+} from "../services/run-intelligence-access.js";
 import type { StorageService } from "../storage/types.js";
-import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
+import { registerAgentInvocationInstructionsRoute } from "./agents.management-invocation-instructions.js";
+import { listAgentRunsForRequest } from "./agents.management-run-list.js";
+import { runIntelligenceScope } from "./agents.management-run-scope.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 type AgentManagementRouteContext = {
   router: Router;
@@ -1258,14 +1267,14 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   router.get("/orgs/:orgId/heartbeat-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const runs = await listRunsForRequest(req, orgId);
+    const runs = await listAgentRunsForRequest(req, orgId, heartbeat, db, runIntelligenceScope(req));
     res.json(toHeartbeatRuns(runs));
   });
 
   router.get("/orgs/:orgId/agent-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const runs = await listRunsForRequest(req, orgId);
+    const runs = await listAgentRunsForRequest(req, orgId, heartbeat, db, runIntelligenceScope(req));
     res.json(toAgentRuns(runs));
   });
 
@@ -1273,37 +1282,17 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const overview = await heartbeat.overview(orgId);
+    const scope = runIntelligenceScope(req);
     res.json({
-      latestByAgent: toAgentRuns(overview.latestByAgent),
-      recent: toAgentRuns(overview.recent),
+      latestByAgent: toAgentRuns(await filterRunsByRunIntelligenceAccess<HeartbeatRun>(db, overview.latestByAgent, scope)),
+      recent: toAgentRuns(await filterRunsByRunIntelligenceAccess<HeartbeatRun>(db, overview.recent, scope)),
     });
   });
-
-  async function listRunsForRequest(req: Request, orgId: string) {
-    const agentId = req.query.agentId as string | undefined;
-    const limitParam = req.query.limit as string | undefined;
-    const startDateParam = req.query.startDate as string | undefined;
-    const endDateParam = req.query.endDate as string | undefined;
-    const goalIdParam = req.query.goalId as string | undefined;
-    const startDate = startDateParam ? new Date(startDateParam) : undefined;
-    const endDate = endDateParam ? new Date(endDateParam) : undefined;
-    const filters = {
-      startDate: startDate && Number.isFinite(startDate.getTime()) ? startDate : undefined,
-      endDate: endDate && Number.isFinite(endDate.getTime()) ? endDate : undefined,
-      goalId: goalIdParam && /^[0-9a-f-]{36}$/i.test(goalIdParam) ? goalIdParam : undefined,
-    };
-    const hasDateRange = Boolean(filters.startDate || filters.endDate);
-    const limit = limitParam
-      ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100))
-      : hasDateRange
-        ? undefined
-        : 100;
-    return heartbeat.list(orgId, agentId, limit, filters);
-  }
 
   router.get("/orgs/:orgId/live-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    const scope = runIntelligenceScope(req);
     const goalId = typeof req.query.goalId === "string" && /^[0-9a-f-]{36}$/i.test(req.query.goalId)
       ? req.query.goalId
       : undefined;
@@ -1336,6 +1325,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       .where(
         and(
           eq(heartbeatRuns.orgId, orgId),
+          ...(scope.sideChatOwnerId !== undefined ? [sideChatVisibilityCondition(scope.sideChatOwnerId)] : []),
           ...(goalId ? [eq(heartbeatRuns.goalId, goalId)] : []),
           or(
             inArray(heartbeatRuns.status, ["queued", "running"]),
@@ -1354,6 +1344,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
         .where(
           and(
             eq(heartbeatRuns.orgId, orgId),
+            ...(scope.sideChatOwnerId !== undefined ? [sideChatVisibilityCondition(scope.sideChatOwnerId)] : []),
             ...(goalId ? [eq(heartbeatRuns.goalId, goalId)] : []),
             not(inArray(heartbeatRuns.status, ["queued", "running"])),
             eq(heartbeatRuns.terminalEffectsPending, false),
@@ -1383,16 +1374,15 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   async function getAuthorizedRun(req: Request, res: any, notFoundMessage: string) {
-    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
-    });
+    const scope = runIntelligenceScope(req, notFoundMessage);
+    const runId = await resolveRunIdReferenceForScope(db, req.params.runId as string, scope);
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
     assertCompanyAccess(req, run.orgId);
+    await assertRunIntelligenceAccess(db, run, scope);
     return run;
   }
 
@@ -1407,15 +1397,14 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   async function cancelRunForRequest(req: Request, notFoundMessage: string) {
-    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
-    });
+    const scope = runIntelligenceScope(req, notFoundMessage);
+    const runId = await resolveRunIdReferenceForScope(db, req.params.runId as string, scope);
     const originalRun = await heartbeat.getRun(runId);
     if (!originalRun) {
       throw notFound(notFoundMessage);
     }
     assertCompanyAccess(req, originalRun.orgId);
+    await assertRunIntelligenceAccess(db, originalRun, scope);
 
     const actor = getActorInfo(req);
     const run = await heartbeat.cancelRun(runId);
@@ -1448,16 +1437,15 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   async function retryRunForRequest(req: Request, res: any, notFoundMessage: string) {
-    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
-    });
+    const scope = runIntelligenceScope(req, notFoundMessage);
+    const runId = await resolveRunIdReferenceForScope(db, req.params.runId as string, scope);
     const originalRun = await heartbeat.getRun(runId);
     if (!originalRun) {
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
     assertCompanyAccess(req, originalRun.orgId);
+    await assertRunIntelligenceAccess(db, originalRun, scope);
 
     const actor = getActorInfo(req);
     const run = await heartbeat.retryRun(runId, {
@@ -1494,17 +1482,25 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     res.json(events);
   });
 
+  registerAgentInvocationInstructionsRoute({
+    router,
+    db,
+    storage,
+    heartbeat,
+    getCurrentUserRedactionOptions,
+    resolveScope: runIntelligenceScope,
+  });
+
   async function listRunEventsForRequest(req: Request, res: any, notFoundMessage: string) {
-    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
-    });
+    const scope = runIntelligenceScope(req, notFoundMessage);
+    const runId = await resolveRunIdReferenceForScope(db, req.params.runId as string, scope);
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
     assertCompanyAccess(req, run.orgId);
+    await assertRunIntelligenceAccess(db, run, scope);
 
     const afterSeq = Number(req.query.afterSeq ?? 0);
     const limit = Number(req.query.limit ?? 200);
@@ -1534,16 +1530,15 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   async function readRunLogForRequest(req: Request, res: any, notFoundMessage: string) {
-    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
-    });
+    const scope = runIntelligenceScope(req, notFoundMessage);
+    const runId = await resolveRunIdReferenceForScope(db, req.params.runId as string, scope);
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
     assertCompanyAccess(req, run.orgId);
+    await assertRunIntelligenceAccess(db, run, scope);
 
     const offset = Number(req.query.offset ?? 0);
     const limitBytes = Number(req.query.limitBytes ?? 256000);
@@ -1568,16 +1563,15 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   async function listRunWorkspaceOperationsForRequest(req: Request, res: any, notFoundMessage: string) {
-    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
-    });
+    const scope = runIntelligenceScope(req, notFoundMessage);
+    const runId = await resolveRunIdReferenceForScope(db, req.params.runId as string, scope);
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
     assertCompanyAccess(req, run.orgId);
+    await assertRunIntelligenceAccess(db, run, scope);
 
     const context = asRecord(run.contextSnapshot);
     const executionWorkspaceId = asNonEmptyString(context?.executionWorkspaceId);

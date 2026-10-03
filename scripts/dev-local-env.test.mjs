@@ -22,6 +22,26 @@ test("defaults the development Desktop to local workspace access", () => {
   );
 });
 
+test("passes the resolved dev instance and ports through to the Desktop runtime", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-desktop-dev-runtime-"));
+  const { env } = resolveDevScriptEnvironment({
+    repoRoot,
+    baseEnv: {
+      RUDDER_HOME: "/Users/zeeland/.rudder-worktrees",
+      RUDDER_INSTANCE_ID: "native-chat-preview-20260929",
+      PORT: "3830",
+      RUDDER_EMBEDDED_POSTGRES_PORT: "55334",
+    },
+  });
+
+  const desktopEnv = resolveDevDesktopEnvironment(env);
+  assert.equal(desktopEnv.RUDDER_DESKTOP_DEV_RUNTIME_OVERRIDE, "1");
+  assert.equal(desktopEnv.RUDDER_HOME, "/Users/zeeland/.rudder-worktrees");
+  assert.equal(desktopEnv.RUDDER_INSTANCE_ID, "native-chat-preview-20260929");
+  assert.equal(desktopEnv.PORT, "3830");
+  assert.equal(desktopEnv.RUDDER_EMBEDDED_POSTGRES_PORT, "55334");
+});
+
 test("defaults development startup to non-interactive automatic migrations", () => {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-dev-migrations-"));
   const resolved = resolveDevScriptEnvironment({ repoRoot, baseEnv: {} });

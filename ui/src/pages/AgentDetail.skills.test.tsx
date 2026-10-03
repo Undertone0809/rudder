@@ -13,9 +13,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentsApi } from "../api/agents";
+import { ApiError } from "../api/client";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { I18nProvider } from "../context/I18nContext";
 import { OrganizationProvider } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
 import { AgentDetail } from "./AgentDetail";
 
 (
@@ -27,7 +29,19 @@ vi.mock("../api/agents", () => ({
     get: vi.fn(),
     skills: vi.fn(),
     syncSkills: vi.fn(),
+    skillsAnalytics: vi.fn(),
+    list: vi.fn().mockResolvedValue([]),
   },
+}));
+
+vi.mock("../api/agent-runs", () => ({
+  AGENT_RUN_LIST_AGENT_LIMIT: 100,
+  agentRunsApi: { list: vi.fn().mockResolvedValue([]) },
+}));
+vi.mock("../api/costs", () => ({ costsApi: { trend: vi.fn().mockResolvedValue([]) } }));
+vi.mock("../api/issues", () => ({ issuesApi: { list: vi.fn().mockResolvedValue([]) } }));
+vi.mock("../api/budgets", () => ({
+  budgetsApi: { overview: vi.fn().mockResolvedValue({ policies: [] }) },
 }));
 
 vi.mock("../api/organizationSkills", () => ({
@@ -126,10 +140,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function renderAgentDetail(path = "/OUTA/agents/proof-agent/skills") {
+function renderAgentDetail(path = "/OUTA/agents/proof-agent/skills", client?: QueryClient) {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const queryClient = new QueryClient({
+  const queryClient = client ?? new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
@@ -245,6 +259,105 @@ async function flushQueries() {
 }
 
 describe("AgentDetail skills tab", () => {
+  it("revalidates a previously successful window after another window exposes incomplete history", async () => {
+    const message = "Native transcript history is unavailable or incomplete; skill analytics cannot be computed.";
+    const incompleteHistory = new ApiError(message, 409, {
+      error: message, details: { code: "native_transcript_incomplete", runId: "run-1" },
+    });
+    let rejectRevisitedSevenDays!: (error: Error) => void;
+    const revisitedSevenDays = new Promise<never>((_resolve, reject) => {
+      rejectRevisitedSevenDays = reject;
+    });
+    let sevenDayCalls = 0;
+    vi.mocked(agentsApi.skillsAnalytics).mockImplementation(async (_agentId, options) => {
+      if (options?.windowDays === 7) {
+        sevenDayCalls += 1;
+        if (sevenDayCalls === 2) return revisitedSevenDays;
+        return {
+          agentId: "agent-1", orgId: "org-1", windowDays: 7,
+          startDate: "2026-09-25", endDate: "2026-10-01",
+          totalCount: 1, totalRunsWithSkills: 1,
+          evidenceCounts: { used: 1, requested: 0, loaded: 0 },
+          skills: [], days: [],
+        };
+      }
+      throw incompleteHistory;
+    });
+
+    const container = renderAgentDetail("/OUTA/agents/proof-agent/dashboard");
+    await flushQueries();
+    expect(container.textContent).toContain("1 skill use");
+
+    const windowButton = (label: string) => Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === label);
+    await act(async () => windowButton("1D")!.click());
+    await flushQueries();
+    expect(container.querySelector('[data-testid="agent-skills-analytics-error"]')?.textContent).toBe(message);
+
+    await act(async () => windowButton("7D")!.click());
+    await flushQueries();
+    expect(sevenDayCalls).toBe(2);
+    expect(container.textContent).not.toContain("1 skill use");
+    expect(container.textContent).not.toContain("0 skill uses");
+
+    await act(async () => rejectRevisitedSevenDays(incompleteHistory));
+    await flushQueries();
+    expect(container.querySelector('[data-testid="agent-skills-analytics-error"]')?.textContent).toBe(message);
+    expect(container.textContent).not.toContain("1 skill use");
+    expect(container.textContent).not.toContain("0 skill uses");
+  });
+
+  it("hides previously cached skill counts when refreshing native history fails", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.mocked(agentsApi.skillsAnalytics).mockResolvedValue({
+      agentId: "agent-1", orgId: "org-1", windowDays: 7,
+      startDate: "2026-09-25", endDate: "2026-10-01",
+      totalCount: 2, totalRunsWithSkills: 2,
+      evidenceCounts: { used: 2, requested: 0, loaded: 0 },
+      skills: [], days: [],
+    });
+    const container = renderAgentDetail("/OUTA/agents/proof-agent/dashboard", client);
+    await flushQueries();
+    expect(container.textContent).toContain("2 skill uses");
+    const message = "Native transcript history is unavailable or incomplete; skill analytics cannot be computed.";
+    vi.mocked(agentsApi.skillsAnalytics).mockRejectedValue(new ApiError(message, 409, {
+      error: message, details: { code: "native_transcript_incomplete", runId: "run-1" },
+    }));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: queryKeys.agents.skillsAnalytics("agent-1") });
+    });
+    await flushQueries();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(message);
+    expect(container.textContent).not.toContain("2 skill uses");
+    expect(container.textContent).not.toContain("2 runs with skill usage");
+    expect(container.textContent).not.toContain("0 skill uses");
+  });
+
+  it("shows incomplete native history on the dashboard without reporting zero skill usage", async () => {
+    const message = "Native transcript history is unavailable or incomplete; skill analytics cannot be computed.";
+    vi.mocked(agentsApi.skillsAnalytics).mockRejectedValue(new ApiError(message, 409, {
+      error: message,
+      details: { code: "native_transcript_incomplete", runId: "run-1" },
+    }));
+    const container = renderAgentDetail("/OUTA/agents/proof-agent/dashboard");
+    await flushQueries();
+
+    const assertError = () => {
+      expect(container.querySelector('[data-testid="agent-skills-analytics-error"]')?.textContent).toBe(message);
+      expect(container.textContent).not.toContain("0 skill uses");
+      expect(container.textContent).not.toContain("0 runs with skill usage");
+      expect(container.textContent).not.toContain("No recent skill usage.");
+    };
+    assertError();
+    expect(vi.mocked(agentsApi.skillsAnalytics)).toHaveBeenCalledTimes(1);
+    const oneDay = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "1D");
+    expect(oneDay).toBeDefined();
+    await act(async () => oneDay!.click());
+    await flushQueries();
+    assertError();
+    expect(vi.mocked(agentsApi.skillsAnalytics)).toHaveBeenCalledTimes(2);
+  });
+
   it("opens scoped page find from Command+F and highlights loaded tab content", async () => {
     await renderAgentDetail();
     await flushQueries();

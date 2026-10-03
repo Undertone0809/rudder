@@ -42,6 +42,10 @@ const migrationSql = readFileSync(
   fileURLToPath(new URL("./migrations/0164_native_chat_runtime_binding.sql", import.meta.url)),
   "utf8",
 );
+const writerFenceMigrationSql = readFileSync(
+  fileURLToPath(new URL("./migrations/0180_native_resource_writer_fencing.sql", import.meta.url)),
+  "utf8",
+);
 
 describe("native chat runtime binding schema", () => {
   it("exports lineage tables and durable common-run admission columns", () => {
@@ -105,6 +109,23 @@ describe("native chat runtime binding schema", () => {
       foreignColumns: ["org_id", "run_id", "id"],
       onDelete: "no action",
     });
+  });
+
+  it("fences one active writer per binding and physical native resource", () => {
+    expect(columnsOf(runRuntimeSpans)).toEqual(expect.arrayContaining([
+      "writer_binding_ref",
+      "writer_resource_ref",
+      "writer_lease_released_at",
+    ]));
+    expect(getTableConfig(runRuntimeSpans).indexes.map((index) => index.config.name)).toEqual(expect.arrayContaining([
+      "run_runtime_spans_active_writer_binding_uq",
+      "run_runtime_spans_active_writer_resource_uq",
+    ]));
+
+    expect(writerFenceMigrationSql).toContain("CREATE TRIGGER run_runtime_spans_native_writer_guard");
+    expect(writerFenceMigrationSql).toContain("pg_advisory_xact_lock(hashtextextended(lock_ref, 0))");
+    expect(writerFenceMigrationSql).toContain("native resource already has an active Run writer");
+    expect(writerFenceMigrationSql).toContain("WHERE \"writer_lease_released_at\" IS NULL");
   });
 
   it("keeps the manual 0164 migration aligned without relying on snapshots", () => {

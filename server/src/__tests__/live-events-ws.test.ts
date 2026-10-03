@@ -1,4 +1,5 @@
 import type { Db } from "@rudderhq/db";
+import { chatConversations, heartbeatRuns } from "@rudderhq/db";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -61,6 +62,52 @@ afterEach(async () => {
 });
 
 describe("Live Events WebSocket runtime", () => {
+  it.each([
+    { ownerId: "local-board", deleted: false, scene: null, contextSnapshot: null },
+    { ownerId: "another-user", deleted: false, scene: null, contextSnapshot: null },
+    { ownerId: "local-board", deleted: true, scene: "side_chat", contextSnapshot: null },
+    { ownerId: "another-user", deleted: true, scene: null, contextSnapshot: { rudderScene: "side_chat" } },
+  ])("filters private events with owner $ownerId and deleted=$deleted", async ({ ownerId, deleted, scene, contextSnapshot }) => {
+    const db = {
+      select: () => {
+        let table: unknown;
+        const query = {
+          from(value: unknown) { table = value; return query; },
+          where() { return query; },
+          limit() { return query; },
+          then(resolve: (rows: unknown[]) => unknown) {
+            return Promise.resolve(table === heartbeatRuns
+              ? [{ orgId: "org-1", chatConversationId: deleted ? null : "private-chat", scene, contextSnapshot }]
+              : table === chatConversations
+                ? deleted ? [] : [{ orgId: "org-1", conversationKind: "side_chat", createdByUserId: ownerId }]
+                : []).then(resolve);
+          },
+        };
+        return query;
+      },
+    } as unknown as Db;
+    const server = createServer();
+    const runtime = setupLiveEventsWebSocketServer(server, db, { deploymentMode: "local_trusted" });
+    openRuntimes.add(runtime);
+    const port = await listen(server);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/api/orgs/org-1/events/ws`);
+    openSockets.add(socket);
+    await once(socket, "open");
+    const received: string[] = [];
+    const drained = new Promise<void>((resolve) => socket.on("message", (raw) => {
+      const event = JSON.parse(String(raw));
+      received.push(event.type);
+      if (event.type === "issue.content_updated") resolve();
+    }));
+    publishLiveEvent({ orgId: "org-1", type: "heartbeat.run.event", payload: { runId: "private-run", message: "private text" } });
+    publishLiveEvent({ orgId: "org-1", type: "activity.logged", payload: { entityType: "chat", entityId: "private-chat" } });
+    publishLiveEvent({ orgId: "org-1", type: "issue.content_updated", payload: { entityId: "public-issue" } });
+    await withTimeout(drained, "authorized delivery");
+    expect(received).toEqual(!deleted && ownerId === "local-board"
+      ? ["heartbeat.run.event", "activity.logged", "issue.content_updated"]
+      : ["issue.content_updated"]);
+  });
+
   it("rejects an anonymous local WebSocket when account auth is required", async () => {
     const server = createServer();
     const runtime = setupLiveEventsWebSocketServer(server, {} as Db, {

@@ -238,6 +238,7 @@ export function ChatConversationRuntimeControls(props: {
   return (
     <RuntimeProfileControls
       ariaContext={`this conversation (${props.agent.name} runtime)`}
+      alignSubmenuWithPanel
       disabled={props.disabled}
       pending={props.pending}
       errorMessage={errorMessage}

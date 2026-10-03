@@ -16,6 +16,7 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const nativeBinary = path.join(nativeRoot, "target", "debug", process.platform === "win32" ? "rudder-native.exe" : "rudder-native");
 const tsxBinary = path.join(repoRoot, "cli", "node_modules", "tsx", "dist", "cli.mjs");
 const serverFixture = fileURLToPath(new URL("./fixtures/runs-log-parity-server.mjs", import.meta.url));
+const RUN_ID = "11111111-1111-4111-8111-111111111111";
 
 type Fixture = {
   source: string;
@@ -94,9 +95,9 @@ describe("runs log Rust, API, CLI, and MCP differential fixture", () => {
 
     for (const testCase of fixture.cases) {
       const expected = {
-        runId: "run-1",
+        runId: "run_11111111",
         store: "local_file",
-        logRef: path.join("org-1", "agent-1", "run-1.ndjson"),
+        logRef: path.join("org-1", "agent-1", "111111111111.ndjson"),
         content: testCase.content,
         endOffset: testCase.endOffset,
         eof: testCase.eof,
@@ -115,7 +116,7 @@ describe("runs log Rust, API, CLI, and MCP differential fixture", () => {
         "rudder",
         "runs",
         "log",
-        "run-1",
+        RUN_ID,
         "--offset",
         String(testCase.offset),
         "--limit-bytes",
@@ -135,7 +136,7 @@ describe("runs log Rust, API, CLI, and MCP differential fixture", () => {
         method: "tools/call",
         params: {
           name: "rudder_runs_log",
-          arguments: { run: "run-1", offset: testCase.offset, limitBytes: testCase.limitBytes },
+          arguments: { run: RUN_ID, offset: testCase.offset, limitBytes: testCase.limitBytes },
         },
       }, buildMcpServerEnv({
         RUDDER_API_URL: apiBase,

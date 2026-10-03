@@ -1,10 +1,13 @@
 import type {
   AgentRun,
+  AgentRunInvocationInstructions,
   AgentRunOverview,
   HeartbeatRun,
   HeartbeatRunEvent,
   WorkspaceOperation,
 } from "@rudderhq/shared";
+import type { TranscriptEntry } from "../agent-runtimes";
+import type { ApiRequestOptions } from "./client";
 import { api } from "./client";
 
 export interface ActiveRunForIssue extends HeartbeatRun {
@@ -24,6 +27,7 @@ export interface LiveRunForIssue {
   createdAt: string;
   stdoutExcerpt?: string | null;
   resultJson?: Record<string, unknown> | null;
+  contextSnapshot?: Record<string, unknown> | null;
   agentId: string;
   agentName: string;
   agentRuntimeType: string;
@@ -36,6 +40,140 @@ export const AGENT_RUN_LIST_COMPACT_LIMIT = 50;
 export const AGENT_RUN_LIST_AGENT_LIMIT = 200;
 export const AGENT_RUN_LIST_HISTORY_LIMIT = 1000;
 export const AGENT_RUN_EVENTS_PAGE_LIMIT = 1000;
+export const AGENT_RUN_TRANSCRIPT_TURN_LIMIT = 50;
+
+export type AgentRunTranscriptSource = "native" | "native_plus_objects" | "legacy";
+export type AgentRunTranscriptAvailability = "available" | "pending" | "offline" | "missing" | "expired" | "incompatible";
+export type AgentRunTranscriptCompleteness = "complete" | "partial" | "terminal_only" | "unknown";
+
+export interface AgentRunTranscriptEntry {
+  id: string;
+  index?: number;
+  turnIndex?: number | null;
+  entry: TranscriptEntry | null;
+}
+
+export interface AgentRunTranscriptPage {
+  run?: Pick<AgentRun, "orgId" | "agentId">;
+  entries?: AgentRunTranscriptEntry[];
+  page: {
+    cursor?: string | null;
+    hasMore: boolean;
+    nextCursor: string | null;
+    order?: "oldest" | "newest";
+  };
+  source?: AgentRunTranscriptSource;
+  revision?: string;
+  availability?: AgentRunTranscriptAvailability;
+  completeness?: AgentRunTranscriptCompleteness;
+}
+
+export interface AgentRunTranscriptRequest {
+  cursor?: string | null;
+  turnLimit?: number;
+  includeOutput?: boolean;
+  maxChars?: number;
+}
+
+export interface AgentRunTranscriptResult {
+  entries: TranscriptEntry[];
+  source: AgentRunTranscriptSource | null;
+  revision: string | null;
+  availability: AgentRunTranscriptAvailability | null;
+  completeness: AgentRunTranscriptCompleteness | null;
+  page: AgentRunTranscriptPage["page"];
+}
+
+export type { AgentRunInvocationInstructions } from "@rudderhq/shared";
+
+function mergeTranscriptSources(
+  left: AgentRunTranscriptSource | null,
+  right: AgentRunTranscriptSource | undefined,
+): AgentRunTranscriptSource | null {
+  if (!right) return left;
+  if (!left || left === right) return right;
+  return "native_plus_objects";
+}
+
+function transcriptPage(
+  runId: string,
+  request: AgentRunTranscriptRequest = {},
+  requestOptions: ApiRequestOptions = {},
+) {
+  const searchParams = new URLSearchParams({
+    output: "full",
+    order: "oldest",
+    turnLimit: String(request.turnLimit ?? AGENT_RUN_TRANSCRIPT_TURN_LIMIT),
+  });
+  if (request.cursor) searchParams.set("cursor", request.cursor);
+  if (typeof request.includeOutput === "boolean") {
+    searchParams.set("includeOutput", String(request.includeOutput));
+  }
+  if (typeof request.maxChars === "number") searchParams.set("maxChars", String(request.maxChars));
+  const path = `/run-intelligence/runs/${encodeURIComponent(runId)}/transcript?${searchParams.toString()}`;
+  return requestOptions.signal || requestOptions.timeoutMs
+    ? api.get<AgentRunTranscriptPage>(path, { cache: "no-store" }, requestOptions)
+    : api.get<AgentRunTranscriptPage>(path, { cache: "no-store" });
+}
+
+async function allTranscript(
+  runId: string,
+  request: Omit<AgentRunTranscriptRequest, "cursor"> = {},
+  requestOptions: ApiRequestOptions = {},
+): Promise<AgentRunTranscriptResult> {
+  const entriesById = new Map<string, TranscriptEntry>();
+  let cursor: string | null = null;
+  let pageCount = 0;
+  let source: AgentRunTranscriptSource | null = null;
+  let revision: string | null = null;
+  let availability: AgentRunTranscriptAvailability | null = null;
+  let completeness: AgentRunTranscriptCompleteness | null = null;
+  let lastPage: AgentRunTranscriptPage["page"] = {
+    cursor: null,
+    hasMore: false,
+    nextCursor: null,
+    order: "oldest",
+  };
+
+  while (true) {
+    pageCount += 1;
+    if (pageCount > 2_000) throw new Error("Transcript pagination exceeded the page limit");
+    const page = await transcriptPage(runId, { ...request, cursor }, requestOptions);
+    if (!page.page || typeof page.page.hasMore !== "boolean") {
+      throw new Error("Transcript API returned invalid page metadata");
+    }
+    source = mergeTranscriptSources(source, page.source);
+    if (page.revision && revision && page.revision !== revision) revision = null;
+    else revision = page.revision ?? revision;
+    availability = page.availability ?? availability;
+    completeness = page.completeness ?? completeness;
+    lastPage = page.page;
+    for (const row of page.entries ?? []) {
+      const entry = row?.entry;
+      if (!entry || typeof entry !== "object" || typeof entry.kind !== "string" || typeof entry.ts !== "string") continue;
+      entriesById.set(
+        row.id,
+        typeof entry.sourceEntryId === "string"
+          ? entry
+          : { ...entry, sourceEntryId: row.id },
+      );
+    }
+
+    if (!page.page.hasMore) break;
+    const nextCursor = page.page.nextCursor;
+    if (!nextCursor || nextCursor === cursor) throw new Error("Transcript API returned a non-advancing cursor");
+    cursor = nextCursor;
+  }
+
+  return {
+    entries: [...entriesById.values()],
+    source,
+    revision,
+    availability,
+    completeness,
+    page: lastPage,
+  };
+}
 
 export interface AgentRunListFilters {
   startDate?: string;
@@ -66,6 +204,11 @@ export const agentRunsApi = {
     api.get<HeartbeatRunEvent[]>(
       `/agent-runs/${runId}/events?afterSeq=${encodeURIComponent(String(afterSeq))}&limit=${encodeURIComponent(String(limit))}`,
     ),
+  invocationInstructions: (runId: string, eventId: number) =>
+    api.get<AgentRunInvocationInstructions>(
+      `/agent-runs/${encodeURIComponent(runId)}/events/${encodeURIComponent(String(eventId))}/invocation-instructions`,
+      { cache: "no-store" },
+    ),
   allEvents: async (runId: string) => {
     const events: HeartbeatRunEvent[] = [];
     let afterSeq = 0;
@@ -87,6 +230,8 @@ export const agentRunsApi = {
       `/agent-runs/${runId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
       { cache: "no-store" },
     ),
+  transcript: transcriptPage,
+  allTranscript,
   workspaceOperations: (runId: string) =>
     api.get<WorkspaceOperation[]>(`/agent-runs/${runId}/workspace-operations`),
   workspaceOperationLog: (operationId: string, offset = 0, limitBytes = 256000) =>

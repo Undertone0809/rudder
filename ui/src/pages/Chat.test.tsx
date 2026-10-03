@@ -80,7 +80,7 @@ import {
   withOptimisticOutgoingMessage,
   withOptimisticPlanMode,
 } from "./Chat";
-import { mergeMessengerThreadSummaries } from "./Chat.parts";
+import { mergeMessengerThreadSummaries, recoverableFailureFromMessage } from "./Chat.parts";
 
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
@@ -732,6 +732,24 @@ describe("ChatSystemMessageBody", () => {
     expect(html).not.toContain("rudder-markdown");
   });
 
+  it("links a Side Chat source to its exact assistant message when present", () => {
+    const sourceMessageId = "99c63cd7-5996-4b16-a1e4-c6d462599a2e";
+    const html = renderSystemMessageBody(message({
+      body: "Side Chat started from [Main strategy chat](chat://source-chat).",
+      structuredPayload: {
+        eventType: "side_chat_started",
+        sourceConversationId: "source-chat",
+        sourceConversationTitle: "Main strategy chat",
+        sourceMessageId,
+      },
+    }));
+    expect(html).toContain('href="/messenger/chat/source-chat"');
+    expect(html).toContain(`href="chat://source-chat?messageId=${sourceMessageId}"`);
+    expect(html).toContain('aria-label="Open source message"');
+    expect(html).toContain("at <a");
+    expect(html.replace(/href="[^"]*"/g, "")).not.toContain(sourceMessageId);
+  });
+
   it("renders automation source events as links back to automation detail", () => {
     const automationMessage = message({
       body: "From automation Say hello.",
@@ -866,7 +884,7 @@ describe("ChatMessageItem", () => {
     expect(html).toContain("Final answer.");
   });
 
-  it("renders failed assistant messages with a visible failure callout and retry action", () => {
+  it("renders unverified failed assistant messages without a retry action", () => {
     const html = renderChatMessageItem(message({
       role: "assistant",
       kind: "message",
@@ -879,7 +897,7 @@ describe("ChatMessageItem", () => {
     expect(html).toContain("Response failed");
     expect(html).toContain("This assistant response failed before it completed.");
     expect(html).toContain(">Failed</span>");
-    expect(html).toContain("Retry");
+    expect(html).not.toContain("Retry");
   });
 
   it("renders recoverable chat failure diagnostics on failed assistant messages", () => {
@@ -903,6 +921,42 @@ describe("ChatMessageItem", () => {
     expect(html).toContain("The assistant finished without a final Rudder reply.");
     expect(html).toContain("Code chat_result_missing_sentinel");
     expect(html).toContain("Run 12345678");
+    expect(html).toContain("Retry");
+  });
+
+  it("clearly marks an explicitly undispatched failure as saved input with a Retry action", () => {
+    const html = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      body: "Your input was saved, but the reply did not start.",
+      chatTurnId: "turn-1",
+      turnVariant: 2,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_input_persisted_reply_not_started",
+          message: "Your input was saved, but the reply did not start.",
+          phase: "pre_generation",
+          action: "retry",
+          runId: null,
+          dispatchEvidence: {
+            kind: "chat_pre_generation_not_started_v1",
+            originalDispatch: "not_started",
+            orgId: "org-1",
+            conversationId: "chat-1",
+            userId: "user-1",
+            userMessageId: "user-message-1",
+            chatTurnId: "turn-1",
+            turnVariant: 2,
+          },
+        },
+      },
+    }));
+
+    expect(html).toContain("Input saved; reply not started");
+    expect(html).toContain("Your input was saved, but the reply did not start.");
     expect(html).toContain("Retry");
   });
 
@@ -1703,13 +1757,138 @@ describe("interrupted chat messages", () => {
 });
 
 describe("failed chat retry", () => {
-  it("offers retry for failed assistant messages in a turn", () => {
+  it.each([
+    { label: "with a Run ID", runId: "run-native-fork-unknown" },
+    { label: "without a Run ID", runId: null },
+  ])("keeps persisted unknown native-fork failures non-retryable after refresh $label", ({ runId }) => {
+    const legacyGenericCopy = "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
+    const safeCopy = runId
+      ? "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork."
+      : "This Side Chat fork has an unknown outcome. Do not retry this fork. Ask an operator to reconcile the fork status before sending more input.";
+    const payload = {
+      recoverableFailure: {
+        recoverable: true,
+        retryable: true,
+        code: "native_fork_acceptance_unknown",
+        action: "retry",
+        message: legacyGenericCopy,
+        runId,
+      },
+    };
+    const refreshedMessage = message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      body: legacyGenericCopy,
+      chatTurnId: "turn-native-fork-unknown",
+      runId,
+      structuredPayload: JSON.parse(JSON.stringify(payload)),
+    });
+    const html = renderChatMessageItem(refreshedMessage);
+
+    expect(canRetryFailedChatMessage(refreshedMessage)).toBe(false);
+    expect(html).toContain(safeCopy);
+    expect(html).toContain("Do not retry this fork");
+    expect(html).not.toContain(legacyGenericCopy);
+    expect(html).not.toContain(">Retry</button>");
+    if (runId) {
+      expect(recoverableFailureFromMessage(refreshedMessage)).toMatchObject({ action: "inspect_run" });
+    } else {
+      expect(html).not.toContain("Inspect and reconcile the Run");
+      expect(recoverableFailureFromMessage(refreshedMessage)).toMatchObject({ action: null });
+    }
+  });
+
+  it("fails closed by unknown-fork code even if stale payload says retryable", () => {
+    expect(canRetryFailedChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "turn-native-fork-unknown",
+      runId: "run-native-fork-unknown",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "native_fork_acceptance_unknown",
+          action: "retry",
+          message: "The assistant reply could not be completed; retry when ready.",
+          runId: "run-native-fork-unknown",
+        },
+      },
+    }))).toBe(false);
+  });
+
+  it("requires a Run or explicit matching no-dispatch evidence before offering retry", () => {
     expect(canRetryFailedChatMessage(message({
       role: "assistant",
       kind: "message",
       status: "failed",
       chatTurnId: "turn-1",
+    }))).toBe(false);
+
+    expect(canRetryFailedChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "turn-1",
+      runId: "run-1",
     }))).toBe(true);
+
+    expect(canRetryFailedChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "turn-1",
+      turnVariant: 2,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_input_persisted_reply_not_started",
+          phase: "pre_generation",
+          action: "retry",
+          runId: null,
+          dispatchEvidence: {
+            kind: "chat_pre_generation_not_started_v1",
+            originalDispatch: "not_started",
+            orgId: "org-1",
+            conversationId: "chat-1",
+            userId: "user-1",
+            userMessageId: "user-message-1",
+            chatTurnId: "turn-1",
+            turnVariant: 2,
+          },
+        },
+      },
+    }))).toBe(true);
+
+    expect(canRetryFailedChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "turn-1",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_input_persisted_reply_not_started",
+          phase: "pre_generation",
+          action: "retry",
+          runId: null,
+          dispatchEvidence: {
+            kind: "chat_pre_generation_not_started_v1",
+            originalDispatch: "not_started",
+            orgId: "different-org",
+            conversationId: "chat-1",
+            userId: "user-1",
+            userMessageId: "user-message-1",
+            chatTurnId: "turn-1",
+            turnVariant: 0,
+          },
+        },
+      },
+    }))).toBe(false);
 
     expect(canRetryFailedChatMessage(message({
       role: "assistant",

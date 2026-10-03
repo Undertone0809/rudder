@@ -1,7 +1,18 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { createDb, heartbeatRunEvents, heartbeatRuns } from "../../packages/db/src/index.ts";
-import { E2E_DATABASE_URL } from "./support/e2e-env";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { asc, eq, inArray } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import {
+  chatMessageTranscriptEntries,
+  createDb,
+  heartbeatRunEvents,
+  heartbeatRuns,
+  nativeSegments,
+  runRuntimeSpans,
+} from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
+import { E2E_DATABASE_URL, E2E_INSTANCE_ROOT, E2E_ROOT } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
@@ -41,6 +52,202 @@ function visibleSkillDayIndex(dateKey: string): number {
 }
 
 test.describe("Agent dashboard skills analytics", () => {
+  test("shows an explicit history error for missing native skill history despite a stale local Skill log", async ({ page, request }, testInfo) => {
+    const orgResponse = await request.post("/api/orgs", {
+      data: { name: `Native Skills Missing History ${randomUUID()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json() as { id: string; urlKey: string };
+    const agent = await createE2EChatAgent(request, org.id, {
+      name: "Native Skills Missing History",
+      command: path.join(E2E_ROOT, "fixtures/codex-native-session.mjs"),
+    });
+    const runId = randomUUID();
+    const now = new Date();
+    const logRef = path.join(org.id, agent.id, `${runId}.ndjson`);
+    const staleSkillLog = `${JSON.stringify({
+      ts: now.toISOString(),
+      stream: "stdout",
+      chunk: `${JSON.stringify({
+        type: "item.started",
+        item: {
+          id: "stale-skill-load",
+          type: "command_execution",
+          command: "cat .agents/skills/stale-only/SKILL.md",
+          status: "in_progress",
+        },
+      })}\n`,
+    })}\n`;
+    const logPath = path.join(
+      process.env.RUN_LOG_BASE_PATH ?? path.join(E2E_INSTANCE_ROOT, "data", "run-logs"),
+      logRef,
+    );
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    await fs.writeFile(logPath, staleSkillLog, "utf8");
+    // Persist only Run metadata. Native history is absent; the obsolete local
+    // log is deliberately tempting, but must never supply analytics evidence.
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: org.id,
+      agentId: agent.id,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      finishedAt: now,
+      contextSnapshot: { agentRuntimeType: "codex_local", transcriptSource: "native" },
+      logStore: "local_file",
+      logRef,
+      logBytes: Buffer.byteLength(staleSkillLog, "utf8"),
+    });
+    expect(await fs.readFile(logPath, "utf8")).toBe(staleSkillLog);
+    expect(await e2eDb.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, runId))).toHaveLength(0);
+    expect(await e2eDb.select().from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, org.id))).toHaveLength(0);
+    expect(await e2eDb.select().from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, runId))).toHaveLength(0);
+
+    const message = "Native transcript history is unavailable or incomplete; skill analytics cannot be computed.";
+    const expectedBody = {
+      error: message,
+      details: { code: "native_transcript_incomplete", runId },
+    };
+    const analyticsResponse = await request.get(`/api/agents/${agent.id}/skills/analytics?windowDays=7`);
+    expect(analyticsResponse.status()).toBe(409);
+    expect(await analyticsResponse.json()).toEqual(expectedBody);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => localStorage.setItem("rudder.selectedOrganizationId", orgId), org.id);
+    const dashboardResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/agents/${agent.id}/skills/analytics?`));
+    await page.goto(`/${org.urlKey}/agents/${agent.urlKey}/dashboard`);
+    const uiAnalyticsResponse = await dashboardResponse;
+    expect(uiAnalyticsResponse.status()).toBe(409);
+    expect(await uiAnalyticsResponse.json()).toEqual(expectedBody);
+    const mainContent = page.locator("#main-content");
+    const error = mainContent.getByTestId("agent-skills-analytics-error");
+    await expect(error).toHaveText(message, { timeout: 20_000 });
+    await expect(error).toHaveAttribute("role", "alert");
+    await expect(mainContent.getByText("0 skill uses", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByText("0 runs with skill usage", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByText("No recent skill usage.", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByTestId("skills-usage-area-chart")).toHaveCount(0);
+    await expect(mainContent.getByText("stale-only", { exact: true })).toHaveCount(0);
+    await mainContent.screenshot({ path: testInfo.outputPath("native-skills-missing-history-error.png") });
+  });
+
+  test("shows native-only skill usage from persisted Run transcripts without legacy log data", async ({ page, request }, testInfo) => {
+    const createNativeAgent = async (name: string) => {
+      const orgRes = await request.post("/api/orgs", { data: { name: `${name}-${Date.now()}` } });
+      expect(orgRes.ok()).toBe(true);
+      const org = await orgRes.json() as { id: string; urlKey: string };
+      const agent = await createE2EChatAgent(request, org.id, {
+        name,
+        command: path.join(E2E_ROOT, "fixtures/codex-native-session.mjs"),
+      });
+      return { org, agent };
+    };
+
+    const sendSkillTurn = async (skill: string, reply: string) => {
+      await page.locator(".rudder-mdxeditor-content").first().fill(`Native skill telemetry: ${skill}`);
+      const stream = page.waitForResponse((response) => response.request().method() === "POST"
+        && response.url().endsWith("/messages/stream"));
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+      await (await stream).finished();
+      await expect(page.getByTestId("chat-assistant-message").last()).toContainText(reply, { timeout: 30_000 });
+    };
+
+    const first = await createNativeAgent("Native Skills Primary");
+    const other = await createNativeAgent("Native Skills Other Org");
+
+    await page.goto("/");
+    await page.evaluate((orgId) => localStorage.setItem("rudder.selectedOrganizationId", orgId), first.org.id);
+    await page.goto(`/${first.org.urlKey}/messenger/chat?agentId=${first.agent.id}`);
+    await sendSkillTurn("build-advisor", "Native reply 1");
+    await sendSkillTurn("pua", "Native reply 2");
+    const conversationId = new URL(page.url()).pathname.split("/").at(-1)!;
+
+    const nativeRuns = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.chatConversationId, conversationId))
+      .orderBy(asc(heartbeatRuns.createdAt));
+    expect(nativeRuns).toHaveLength(2);
+    const nativeRunIds = nativeRuns.map((run) => run.id);
+    const spans = await e2eDb.select().from(runRuntimeSpans)
+      .where(inArray(runRuntimeSpans.runId, nativeRunIds));
+    expect(spans).toHaveLength(2);
+    expect(spans.every((span) => span.selectorJson.kind === "codex_turn" && span.state === "sealed")).toBe(true);
+    expect(new Set(spans.map((span) => span.nativeExecutionRef)).size).toBe(2);
+    const segments = await e2eDb.select().from(nativeSegments)
+      .where(inArray(nativeSegments.id, spans.map((span) => span.segmentId)));
+    expect(segments.length).toBeGreaterThan(0);
+    expect(spans.every((span) => segments.some((segment) => segment.id === span.segmentId
+      && segment.orgId === first.org.id))).toBe(true);
+
+    for (const [run, skill] of nativeRuns.map((run, index) => [run, ["build-advisor", "pua"][index]!] as const)) {
+      expect(run.orgId).toBe(first.org.id);
+      expect(run.logRef).toBeNull();
+      expect(run.logBytes ?? 0).toBe(0);
+      expect(run.stdoutExcerpt).toBeNull();
+      expect(run.stderrExcerpt).toBeNull();
+      const transcriptResponse = await page.request.get(`/api/run-intelligence/runs/${run.id}/transcript`);
+      expect(transcriptResponse.ok()).toBe(true);
+      const transcript = await transcriptResponse.json();
+      expect(transcript).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+      expect(transcript.rows.some((row: { kind: string }) => row.kind === "tool_call"
+        && JSON.stringify(row).includes(`/${skill}/SKILL.md`))).toBe(true);
+    }
+
+    const runEvents = await e2eDb.select().from(heartbeatRunEvents)
+      .where(inArray(heartbeatRunEvents.runId, nativeRunIds));
+    expect(runEvents.filter((event) => event.eventType === "adapter.skill_usage")).toHaveLength(0);
+    expect(runEvents.every((event) => event.eventType !== "adapter.invoke"
+      || !JSON.stringify(event.payload ?? {}).includes(".agents/skills/"))).toBe(true);
+    expect(await e2eDb.select().from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, first.org.id))).toHaveLength(0);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => localStorage.setItem("rudder.selectedOrganizationId", orgId), other.org.id);
+    await page.goto(`/${other.org.urlKey}/messenger/chat?agentId=${other.agent.id}`);
+    await sendSkillTurn("private-only", "Native reply 1");
+    const otherConversationId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const otherRuns = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.chatConversationId, otherConversationId));
+    expect(otherRuns).toHaveLength(1);
+    expect(otherRuns[0]!.orgId).toBe(other.org.id);
+
+    const agentAnalyticsResponse = await page.request.get(`/api/agents/${first.agent.id}/skills/analytics?windowDays=7`);
+    expect(agentAnalyticsResponse.ok()).toBe(true);
+    const agentAnalytics = await agentAnalyticsResponse.json();
+    expect(agentAnalytics).toMatchObject({ orgId: first.org.id, totalCount: 2, totalRunsWithSkills: 2 });
+    expect(agentAnalytics.skills.map((skill: { key: string }) => skill.key).sort()).toEqual(["build-advisor", "pua"]);
+
+    const organizationAnalyticsResponse = await page.request.get(`/api/orgs/${first.org.id}/dashboard/skills/analytics?windowDays=7`);
+    expect(organizationAnalyticsResponse.ok()).toBe(true);
+    const organizationAnalytics = await organizationAnalyticsResponse.json();
+    expect(organizationAnalytics).toMatchObject({ orgId: first.org.id, totalCount: 2, totalRunsWithSkills: 2 });
+    expect(organizationAnalytics.skills.map((skill: { key: string }) => skill.key).sort()).toEqual(["build-advisor", "pua"]);
+
+    await page.goto(`/${first.org.urlKey}/agents/${first.agent.urlKey}/dashboard`);
+    const mainContent = page.locator("#main-content");
+    await expect(mainContent.locator("h3").filter({ hasText: "Skills" })).toBeVisible();
+    await expect(mainContent.getByText("2 skill uses")).toBeVisible();
+    await expect(mainContent.getByText("2 runs with skill usage")).toBeVisible();
+    const usageChart = mainContent.locator('[data-testid="skills-usage-area-chart"]');
+    await expect(usageChart.getByText("build-advisor")).toBeVisible();
+    await expect(usageChart.getByText("pua")).toBeVisible();
+    await expect(usageChart.getByText("private-only")).toHaveCount(0);
+
+    const firstOrgRunsAfterOtherOrg = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.orgId, first.org.id));
+    expect(firstOrgRunsAfterOtherOrg.map((run) => run.id).sort()).toEqual(nativeRunIds.sort());
+    const otherOrgRuns = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.orgId, other.org.id));
+    expect(otherOrgRuns.map((run) => run.id)).toEqual([otherRuns[0]!.id]);
+    await mainContent.screenshot({ path: testInfo.outputPath("native-only-skills-dashboard.png") });
+  });
+
   test("shows a 7-day skill usage chart when all recent activity is within the last week", async ({ page, request }, testInfo) => {
     const orgRes = await request.post("/api/orgs", {
       data: {

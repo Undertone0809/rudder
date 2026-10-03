@@ -1,6 +1,7 @@
 import { parseClaudeStdoutLine } from "@rudderhq/agent-runtime-claude-local/ui";
 import { parseCodexStdoutLine } from "@rudderhq/agent-runtime-codex-local/ui";
 import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
+import { parseHermesGatewayStdoutLine } from "@rudderhq/agent-runtime-hermes-gateway";
 import { parseOpenClawGatewayStdoutLine } from "@rudderhq/agent-runtime-openclaw-gateway/ui";
 import { parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
 import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
@@ -13,6 +14,7 @@ const parserByRuntimeType: Record<string, StdoutLineParser> = {
   claude_local: parseClaudeStdoutLine,
   codex_local: parseCodexStdoutLine,
   cursor: parseCursorStdoutLine,
+  hermes_gateway: parseHermesGatewayStdoutLine,
   openclaw_gateway: parseOpenClawGatewayStdoutLine,
   opencode_local: parseOpenCodeStdoutLine,
   pi_local: parsePiStdoutLine,

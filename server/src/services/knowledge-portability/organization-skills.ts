@@ -64,6 +64,7 @@ import {
   buildGlobalSelectionKey,
   buildOrganizationSelectionKey,
   buildSkillRuntimeName,
+  classifyInventoryKind,
   compareOrganizationSkillListItems,
   deriveCanonicalSkillKey,
   deriveSkillSourceInfo,
@@ -90,7 +91,6 @@ import {
   readAdapterSkillCatalogEntries,
   readDiscoveredSkillEntries,
   resolveConfiguredHomeDir,
-  resolveLocalSkillFilePath,
   resolveManagedSkillsRoot,
   resolveRequestedSkillKeysOrThrow,
   resolveWorkspaceEditPath,
@@ -103,6 +103,11 @@ import {
   uniqueImportedSkillKey,
   uniqueSkillSlug
 } from "./organization-skills.catalog.js";
+import {
+  assertDirectLocalSourceIsUnmanaged,
+  resolveCurrentSkillDirectory,
+  resolveValidatedLocalSkillFilePath,
+} from "./organization-skills.local-files.js";
 import { createOrganizationSkillScanHandlers } from "./organization-skills.scans.js";
 import {
   parseFrontmatterMarkdown,
@@ -119,6 +124,7 @@ import {
 
 const ORGANIZATION_SKILL_INSTALLATION_VERSION = 1;
 const MAX_SKILL_UPLOAD_BYTES = 4 * 1024 * 1024;
+const MAX_AGENT_SKILL_PREVIEW_BYTES = 1024 * 1024;
 const skillInstallationPromises = new Map<string, Promise<string>>();
 const skillMutationLocks = new Map<string, Promise<void>>();
 
@@ -398,82 +404,6 @@ export function organizationSkillService(
       && getSkillMeta(current).installationVersion
       === getSkillMeta(snapshot).installationVersion
       && current.updatedAt.getTime() === snapshot.updatedAt.getTime();
-  }
-
-  async function resolveCurrentSkillDirectory(skill: OrganizationSkill) {
-    const directory = normalizeSkillDirectory(skill);
-    if (
-      directory
-      && (await fs.stat(path.join(directory, "SKILL.md")).catch(() => null))?.isFile()
-    ) {
-      return directory;
-    }
-    return null;
-  }
-
-  function isStrictlyWithinPath(root: string, target: string) {
-    const relative = path.relative(root, target);
-    return Boolean(relative)
-      && !relative.startsWith("..")
-      && !path.isAbsolute(relative);
-  }
-
-  async function resolveValidatedLocalSkillFilePath(
-    skill: OrganizationSkill,
-    relativePath: string,
-  ) {
-    const absolutePath = resolveLocalSkillFilePath(skill, relativePath);
-    const skillRoot = normalizeSkillDirectory(skill);
-    if (!absolutePath || !skillRoot) return null;
-    const realRoot = await fs.realpath(skillRoot).catch(() => null);
-    if (!realRoot) return null;
-
-    const targetEntry = await fs.lstat(absolutePath).catch(() => null);
-    if (targetEntry) {
-      const realTarget = await fs.realpath(absolutePath).catch(() => null);
-      return realTarget && isStrictlyWithinPath(realRoot, realTarget)
-        ? absolutePath
-        : null;
-    }
-
-    let existingAncestor = path.dirname(absolutePath);
-    while (
-      !(await fs.lstat(existingAncestor).catch(() => null))
-      && existingAncestor !== path.dirname(existingAncestor)
-    ) {
-      existingAncestor = path.dirname(existingAncestor);
-    }
-    const realAncestor = await fs.realpath(existingAncestor).catch(() => null);
-    if (
-      !realAncestor
-      || (realAncestor !== realRoot && !isStrictlyWithinPath(realRoot, realAncestor))
-    ) {
-      return null;
-    }
-    const projectedTarget = path.resolve(
-      realAncestor,
-      path.relative(existingAncestor, absolutePath),
-    );
-    return isStrictlyWithinPath(realRoot, projectedTarget) ? absolutePath : null;
-  }
-
-  async function assertDirectLocalSourceIsUnmanaged(orgId: string, skill: ImportedSkill) {
-    const sourcePath = skill.packageDir ?? skill.sourceLocator;
-    if (!sourcePath) throw unprocessable("Local skill source path is missing.");
-    const sourceDirectory = path.basename(sourcePath).toLowerCase() === "skill.md"
-      ? path.dirname(sourcePath)
-      : sourcePath;
-    const managedInstalledRoot = path.resolve(resolveManagedSkillsRoot(orgId), "__installed__");
-    const [resolvedSource, resolvedManagedRoot] = await Promise.all([
-      fs.realpath(path.resolve(sourceDirectory)).catch(() => path.resolve(sourceDirectory)),
-      fs.realpath(managedInstalledRoot).catch(() => managedInstalledRoot),
-    ]);
-    const relative = path.relative(resolvedManagedRoot, resolvedSource);
-    if (!relative || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-      throw unprocessable(
-        "Managed organization skill installations cannot be imported as direct local sources.",
-      );
-    }
   }
 
   async function upsertDirectLocalSkill(
@@ -1101,6 +1031,72 @@ export function organizationSkillService(
       desiredSkills: applied.desiredSkills,
       entries: applied.entries,
       warnings: applied.warnings,
+    };
+  }
+
+  async function readAgentSkillFile(
+    agent: EnabledSkillsAgentRef,
+    runtimeConfig: Record<string, unknown>,
+    selectionKey: string,
+    relativePath: string,
+  ): Promise<OrganizationSkillFileDetail | null> {
+    if (!agent?.id) return null;
+
+    const normalizedPath = normalizeSafeRelativeSkillPath(relativePath);
+    if (!normalizedPath) throw notFound("Skill file not found");
+
+    const skills = await listFull(agent.orgId);
+    const entry = (await buildAgentSkillCatalogEntries(
+      agent.orgId,
+      agent.id,
+      agent.agentRuntimeType,
+      runtimeConfig,
+      skills,
+    )).find((candidate) => candidate.selectionKey === selectionKey);
+    if (!entry) return null;
+
+    if (entry.organizationSkillKey) {
+      const skill = skills.find((candidate) => candidate.key === entry.organizationSkillKey);
+      return skill ? readFile(agent.orgId, skill.id, normalizedPath) : null;
+    }
+
+    if (!entry.runtimeSourcePath) return null;
+    const inventoryKind = classifyInventoryKind(normalizedPath);
+    if (inventoryKind === "asset" || inventoryKind === "other") {
+      throw unprocessable("This Agent Skill file does not support an inline text preview.");
+    }
+
+    const skillRoot = path.resolve(entry.runtimeSourcePath);
+    const absolutePath = path.resolve(skillRoot, ...normalizedPath.split("/"));
+    const relativeToRoot = path.relative(skillRoot, absolutePath);
+    if (!relativeToRoot || relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+      throw notFound("Skill file not found");
+    }
+
+    const [realRoot, realFile] = await Promise.all([
+      fs.realpath(skillRoot).catch(() => null),
+      fs.realpath(absolutePath).catch(() => null),
+    ]);
+    if (!realRoot || !realFile) return null;
+    const realRelative = path.relative(realRoot, realFile);
+    if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+      throw notFound("Skill file not found");
+    }
+
+    const fileStat = await fs.stat(realFile).catch(() => null);
+    if (!fileStat?.isFile()) return null;
+    if (fileStat.size > MAX_AGENT_SKILL_PREVIEW_BYTES) {
+      throw unprocessable("This Agent Skill file is too large to preview.");
+    }
+
+    return {
+      skillId: entry.selectionKey,
+      path: normalizedPath,
+      kind: inventoryKind,
+      content: await fs.readFile(realFile, "utf8"),
+      language: inferLanguageFromPath(normalizedPath),
+      markdown: isMarkdownPath(normalizedPath),
+      editable: false,
     };
   }
 
@@ -2218,6 +2214,7 @@ export function organizationSkillService(
       agent: EnabledSkillsAgentRef,
     ) => getEnabledSkillSelectionRefsForAgent(orgId, agent),
     buildAgentSkillSnapshot,
+    readAgentSkillFile,
     resolveDesiredSkillSelectionForAgent,
     listRealizedSkillEntriesForAgent,
     replaceEnabledSkillKeysForAgent: async (

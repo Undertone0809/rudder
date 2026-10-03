@@ -1,9 +1,9 @@
 import { loadConfig, type Config } from "../config.js";
 import { createStorageProviderFromConfig } from "./provider-registry.js";
 import { createStorageService } from "./service.js";
-import type { StorageService } from "./types.js";
+import type { ContentAddressedStorageService } from "./types.js";
 
-let cachedStorageService: StorageService | null = null;
+let cachedStorageService: ContentAddressedStorageService | null = null;
 let cachedSignature: string | null = null;
 
 function signatureForConfig(config: Config): string {
@@ -18,11 +18,11 @@ function signatureForConfig(config: Config): string {
   });
 }
 
-export function createStorageServiceFromConfig(config: Config): StorageService {
+export function createStorageServiceFromConfig(config: Config): ContentAddressedStorageService {
   return createStorageService(createStorageProviderFromConfig(config));
 }
 
-export function getStorageService(): StorageService {
+export function getStorageService(): ContentAddressedStorageService {
   const config = loadConfig();
   const signature = signatureForConfig(config);
   if (!cachedStorageService || cachedSignature !== signature) {
@@ -32,4 +32,4 @@ export function getStorageService(): StorageService {
   return cachedStorageService;
 }
 
-export type { PutFileResult, StorageService } from "./types.js";
+export type { ContentAddressedStorageService, PutFileResult, StorageService } from "./types.js";

@@ -1,6 +1,10 @@
+// @vitest-environment jsdom
+
 import type { Agent } from "@rudderhq/shared";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ChatAgentRuntimeSelector,
   ChatConversationRuntimeControls,
@@ -8,6 +12,8 @@ import {
   chatRuntimeSelectionLabel,
   normalizedChatRuntimeOverridesForModel,
 } from "./Chat.model-selector";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
@@ -104,6 +110,79 @@ describe("chat conversation model options", () => {
     expect(html).toContain(">High<");
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).toContain("lucide-chevron-right");
+  });
+
+  it.each([
+    { width: 1633, height: 1031, left: 949, top: 659, optionsLeft: 1261, optionsTop: 659, narrow: false },
+    { width: 390, height: 844, left: 16, top: 500, optionsLeft: 23, optionsTop: 172, narrow: true },
+  ])("keeps runtime options aligned or separate from their panel at width $width", (viewport) => {
+    const previousWidth = window.innerWidth;
+    const previousHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: viewport.width });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: viewport.height });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      act(() => root.render(
+        <div data-runtime-profile-panel>
+          <ChatConversationRuntimeControls
+            agent={makeAgent()}
+            adapterModels={[]}
+            overrides={{ modelOverride: null, effortOverride: null }}
+            onChange={() => undefined}
+          />
+        </div>,
+      ));
+      const panel = container.querySelector<HTMLElement>("[data-runtime-profile-panel]");
+      const trigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-effort-selector"]');
+      if (!panel) throw new Error("Runtime profile panel was not rendered");
+      if (!trigger) throw new Error("Thinking trigger was not rendered");
+      vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({
+        x: viewport.left,
+        y: viewport.top,
+        left: viewport.left,
+        top: viewport.top,
+        right: viewport.left + 304,
+        bottom: viewport.top + 143,
+        width: 304,
+        height: 143,
+        toJSON: () => ({}),
+      } as DOMRect);
+      vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+        x: viewport.left + 7,
+        y: viewport.top + 96,
+        left: viewport.left + 7,
+        top: viewport.top + 96,
+        right: viewport.left + 297,
+        bottom: viewport.top + 136,
+        width: 290,
+        height: 40,
+        toJSON: () => ({}),
+      } as DOMRect);
+
+      act(() => trigger.click());
+
+      const options = document.body.querySelector<HTMLElement>('[data-testid="chat-effort-options"]');
+      if (!options) throw new Error("Thinking options were not rendered");
+      const expectedHeight = Math.min(
+        320,
+        options.querySelectorAll('[role="option"]').length * 40 + 12,
+      );
+      expect(options.style.left).toBe(`${viewport.optionsLeft}px`);
+      expect(options.style.top).toBe(`${viewport.optionsTop}px`);
+      expect(options.style.maxHeight).toBe(`${viewport.narrow ? 320 : expectedHeight}px`);
+      expect(Number.parseFloat(options.style.top) + expectedHeight).toBeLessThanOrEqual(viewport.height - 12);
+      if (viewport.narrow) {
+        expect(Number.parseFloat(options.style.top) + Number.parseFloat(options.style.maxHeight)).toBeLessThan(viewport.top);
+      }
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: previousHeight });
+    }
   });
 
   it("renders the compact current-Agent runtime entry", () => {

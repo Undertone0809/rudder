@@ -7,7 +7,7 @@ import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Chat transcript internal instructions", () => {
-  test("hides runtime-loaded user-role instruction blocks while keeping agent response visible", async ({ page }) => {
+  test("hides runtime-loaded user-role instruction blocks while keeping agent response visible", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Transcript-Instruction-${Date.now()}` },
     });
@@ -23,29 +23,15 @@ test.describe("Chat transcript internal instructions", () => {
         preferredAgentId: chatAgent.id,
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "What skills do you have?" },
       },
     });
     expect(chatRes.ok()).toBe(true);
     const chat = await chatRes.json();
     const chatTurnId = randomUUID();
-    const userMessageId = randomUUID();
     const assistantMessageId = randomUUID();
 
     await e2eDb.insert(chatMessages).values([
-      {
-        id: userMessageId,
-        orgId: organization.id,
-        conversationId: chat.id,
-        role: "user",
-        kind: "message",
-        status: "completed",
-        body: "What skills do you have?",
-        structuredPayload: null,
-        chatTurnId,
-        turnVariant: 0,
-        createdAt: new Date("2026-06-17T08:00:00.000Z"),
-        updatedAt: new Date("2026-06-17T08:00:00.000Z"),
-      },
       {
         id: assistantMessageId,
         orgId: organization.id,
@@ -56,6 +42,11 @@ test.describe("Chat transcript internal instructions", () => {
         body: "Got it. What would you like to work on next?",
         structuredPayload: {
           __chatTranscript: [
+            {
+              kind: "user",
+              ts: "2026-06-17T07:59:59.000Z",
+              text: 'Conversation input: {"currentMessage":{"role":"user","body":"What skills do you have?"}}',
+            },
             {
               kind: "system",
               ts: "2026-06-17T08:00:00.000Z",
@@ -98,8 +89,8 @@ test.describe("Chat transcript internal instructions", () => {
         replyingAgentId: chatAgent.id,
         chatTurnId,
         turnVariant: 0,
-        createdAt: new Date("2026-06-17T08:00:01.000Z"),
-        updatedAt: new Date("2026-06-17T08:00:01.000Z"),
+        createdAt: new Date(),
+        updatedAt: new Date(),
       },
     ]);
 
@@ -118,7 +109,7 @@ test.describe("Chat transcript internal instructions", () => {
 
     await page.getByRole("button", { name: /Worked for/ }).last().click();
     const transcriptPayload = await (await lazyTranscriptResponse).json();
-    expect(transcriptPayload.transcript).toHaveLength(5);
+    expect(transcriptPayload.transcript).toHaveLength(6);
 
     const transcriptItem = page.getByTestId("chat-transcript-item").last();
     await expect(transcriptItem.getByText("I can use coding, debugging, Rudder operations", { exact: false })).toBeVisible({ timeout: 15_000 });
@@ -126,6 +117,9 @@ test.describe("Chat transcript internal instructions", () => {
     await expect(transcriptItem.getByText("Following communication protocol", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("Use these paths consistently", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("User", { exact: true })).toHaveCount(0);
+    await expect(transcriptItem.getByText("currentMessage", { exact: false })).toHaveCount(0);
+    await expect(transcriptItem.getByText("What skills do you have?", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("Got it. What would you like to work on next?", { exact: false })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("chat-process-without-injected-input.png"), fullPage: true });
   });
 });

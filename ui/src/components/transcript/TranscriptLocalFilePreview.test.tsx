@@ -15,6 +15,7 @@ const {
   previewLocalFile,
   readDesktopShell,
   updateLocalFile,
+  workspaceFilePreview,
 } = vi.hoisted(() => ({
   listWorkspaceLaunchTargets: vi.fn(),
   openPath: vi.fn(),
@@ -23,13 +24,15 @@ const {
   previewLocalFile: vi.fn(),
   readDesktopShell: vi.fn(),
   updateLocalFile: vi.fn(),
+  workspaceFilePreview: vi.fn(),
 }));
 
 vi.mock("../../lib/desktop-shell", () => ({ readDesktopShell }));
 vi.mock("../WorkspaceFilePreview", () => ({
-  WorkspaceFilePreview: ({ file }: { file: { filePath: string; content: string | null } }) => (
-    <pre data-testid="local-file-rendered-preview" data-file-path={file.filePath}>{file.content}</pre>
-  ),
+  WorkspaceFilePreview: ({ file }: { file: { filePath: string; content: string | null } }) => {
+    workspaceFilePreview(file);
+    return <pre data-testid="local-file-rendered-preview" data-file-path={file.filePath}>{file.content}</pre>;
+  },
 }));
 vi.mock("../MarkdownEditor", () => ({
   MarkdownEditor: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
@@ -52,7 +55,7 @@ vi.mock("../WorkspaceCodeEditor", () => ({
 
 const roots: Root[] = [];
 
-async function renderPreview() {
+async function renderPreview(targetPath = "/tmp/evidence.md", label = "evidence.md") {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -60,7 +63,7 @@ async function renderPreview() {
   await act(async () => {
     root.render(
       <StrictMode>
-        <TranscriptLocalFilePreview targetPath="/tmp/evidence.md" label="evidence.md" />
+        <TranscriptLocalFilePreview targetPath={targetPath} label={label} />
       </StrictMode>,
     );
   });
@@ -73,10 +76,91 @@ afterEach(async () => {
   });
   document.body.replaceChildren();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 describe("TranscriptLocalFilePreview", () => {
+  it("reads a user-selected local file in the browser without a server request", async () => {
+    readDesktopShell.mockReturnValue(null);
+    const container = await renderPreview();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const fileInput = container.querySelector<HTMLInputElement>("input[type=file]");
+    expect(container.querySelector("button")?.textContent).toContain("Choose local file");
+    expect(container.textContent).toContain("original workspace path cannot be verified");
+    expect(fileInput).not.toBeNull();
+    Object.defineProperty(fileInput, "files", {
+      configurable: true,
+      value: [new File(["# Browser evidence"], "evidence.md", { type: "text/markdown" })],
+    });
+    await act(async () => {
+      fileInput?.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(previewLocalFile).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent)
+      .toContain("Browser evidence");
+    expect(container.querySelector("[data-testid='transcript-browser-file-source']")?.textContent)
+      .toContain("original workspace path is not verified");
+    expect(container.querySelector(".truncate.text-sm.font-medium")?.textContent)
+      .toBe("evidence.md");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders selected HTML locally in a sandbox without sending its content to Rudder", async () => {
+    const selectedHtml = "<!doctype html><html><head><title>Local preview</title></head><body><main id=\"local-preview\">LOCAL_HTML_SECRET</main></body></html>";
+    readDesktopShell.mockReturnValue(null);
+    const container = await renderPreview("/tmp/evidence.html", "evidence.html");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const fileInput = container.querySelector<HTMLInputElement>("input[type=file]");
+    expect(fileInput).not.toBeNull();
+    Object.defineProperty(fileInput, "files", {
+      configurable: true,
+      value: [new File([selectedHtml], "evidence.html", { type: "text/html" })],
+    });
+
+    await act(async () => {
+      fileInput?.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const iframe = container.querySelector<HTMLIFrameElement>(
+      "[data-testid='transcript-browser-local-html-preview']",
+    );
+    expect(iframe).not.toBeNull();
+    expect(iframe?.getAttribute("sandbox")).toBe("");
+    expect(iframe?.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(iframe?.getAttribute("src")).toBeNull();
+
+    const renderedDocument = new DOMParser().parseFromString(iframe?.srcdoc ?? "", "text/html");
+    expect(renderedDocument.querySelector("#local-preview")?.textContent).toBe("LOCAL_HTML_SECRET");
+    expect(renderedDocument.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content"))
+      .toContain("connect-src 'none'");
+    expect(workspaceFilePreview).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a filename mismatch and keeps the browser picker available", async () => {
+    readDesktopShell.mockReturnValue(null);
+    const container = await renderPreview();
+    const fileInput = container.querySelector<HTMLInputElement>("input[type=file]");
+    expect(fileInput).not.toBeNull();
+    Object.defineProperty(fileInput, "files", {
+      configurable: true,
+      value: [new File(["wrong file"], "other.md", { type: "text/markdown" })],
+    });
+    await act(async () => {
+      fileInput?.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector("[role='alert']")?.textContent)
+      .toContain("evidence.md");
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")).toBeNull();
+    expect(container.querySelector("button")?.textContent).toContain("Choose local file");
+  });
+
   it("loads a safe Desktop preview and keeps the canonical path as evidence", async () => {
     readDesktopShell.mockReturnValue({ openPath, previewLocalFile, updateLocalFile });
     previewLocalFile.mockResolvedValue({
@@ -295,12 +379,11 @@ describe("TranscriptLocalFilePreview", () => {
     expect(container.textContent).toContain("Saved");
   });
 
-  it("shows an explicit Desktop fallback on the web", async () => {
+  it("does not require organization selection for browser-local file access", async () => {
     readDesktopShell.mockReturnValue(null);
-
     const container = await renderPreview();
 
-    expect(container.querySelector("[role='alert']")?.textContent).toContain("Rudder Desktop");
+    expect(container.querySelector("button")?.textContent).toContain("Choose local file");
     expect(previewLocalFile).not.toHaveBeenCalled();
   });
 

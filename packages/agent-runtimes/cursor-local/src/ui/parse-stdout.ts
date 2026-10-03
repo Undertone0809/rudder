@@ -32,6 +32,25 @@ function stringifyUnknown(value: unknown): string {
   }
 }
 
+function cursorAcpTranscriptEvent(
+  frame: Record<string, unknown>,
+  updateKind?: string,
+) {
+  const method = asString(frame.method);
+  const params = asRecord(frame.params);
+  const sessionId = asString(params?.sessionId);
+  const requestId = typeof frame.id === "string" || typeof frame.id === "number" ? frame.id : undefined;
+  return {
+    provider: "cursor_agent" as const,
+    transport: "cursor-agent-acp-stdio" as const,
+    method,
+    ...(sessionId ? { sessionId } : {}),
+    ...(updateKind ? { updateKind } : {}),
+    ...(requestId === undefined ? {} : { requestId }),
+    frame,
+  };
+}
+
 /** Max chars of stdout/stderr to show in run log for shell tool results. */
 const SHELL_OUTPUT_TRUNCATE = 2000;
 
@@ -256,6 +275,152 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
   }
 
   const type = asString(parsed.type);
+
+  if (parsed.method === "session/update") {
+    const params = asRecord(parsed.params);
+    const update = asRecord(params?.update);
+    if (!update) return [];
+    const kind = asString(update.sessionUpdate);
+    const nativeEvent = cursorAcpTranscriptEvent(parsed, kind);
+    if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
+      const content = asRecord(update.content);
+      const text = asString(content?.text);
+      return text ? [{ kind: kind === "agent_message_chunk" ? "assistant" : "thinking", ts, text, delta: true }] : [];
+    }
+    if (kind === "user_message_chunk") {
+      const content = asRecord(update.content);
+      const text = asString(content?.text);
+      return text ? [{ kind: "user", ts, text }] : [];
+    }
+    if (kind === "tool_call" || kind === "tool_call_update") {
+      const toolUseId = asString(update.toolCallId);
+      const status = asString(update.status).trim().toLowerCase();
+      const terminal = status === "completed" || status === "failed" || status === "cancelled" || status === "error";
+      if (terminal) {
+        const content = stringifyUnknown(update.rawOutput ?? update.content)
+          || `Tool call ${status}`;
+        const result: TranscriptEntry = {
+          kind: "tool_result",
+          ts,
+          toolUseId,
+          toolName: asString(update.title) || undefined,
+          content,
+          isError: status !== "completed",
+          cursorAcpEvent: nativeEvent,
+        };
+        if (kind === "tool_call_update") return [result];
+        return [
+          {
+            kind: "tool_call",
+            ts,
+            toolUseId,
+            name: asString(update.title, asString(update.kind, "tool")),
+            input: update.rawInput ?? {},
+            cursorAcpEvent: nativeEvent,
+          },
+          result,
+        ];
+      }
+      if (kind === "tool_call_update") {
+        const title = asString(update.title, asString(update.kind, "tool"));
+        return [{
+          kind: "system",
+          ts,
+          text: `Cursor tool update: ${title} (${status || "updated"})`,
+          cursorAcpEvent: nativeEvent,
+        }];
+      }
+      return [{ kind: "tool_call", ts, toolUseId, name: asString(update.title, asString(update.kind, "tool")),
+        input: update.rawInput ?? update.content ?? {}, cursorAcpEvent: nativeEvent }];
+    }
+    if (kind === "plan" && Array.isArray(update.entries)) {
+      return [{ kind: "todo_list", ts, items: update.entries.flatMap((value) => {
+        const entry = asRecord(value);
+        const text = asString(entry?.content);
+        if (!text) return [];
+        const status = entry?.status === "completed" || entry?.status === "in_progress" ? entry.status : "pending";
+        return [{ text, status }];
+      }), cursorAcpEvent: nativeEvent }];
+    }
+    return [{ kind: "system", ts, text: stringifyUnknown(update), cursorAcpEvent: nativeEvent }];
+  }
+
+  if (typeof parsed.method === "string" && parsed.method.startsWith("cursor/")) {
+    const params = asRecord(parsed.params) ?? {};
+    if (parsed.method === "cursor/update_todos") {
+      const todos = Array.isArray(params.todos) ? params.todos : [];
+      const items: Array<{ text: string; status: "pending" | "in_progress" | "completed" }> = [];
+      const cancelled: string[] = [];
+      const nativeEvent = cursorAcpTranscriptEvent(parsed);
+      for (const value of todos) {
+        const todo = asRecord(value);
+        const text = asString(todo?.content);
+        if (!text) continue;
+        if (todo?.status === "cancelled") {
+          cancelled.push(text);
+          continue;
+        }
+        const status = todo?.status === "completed" || todo?.status === "in_progress" ? todo.status : "pending";
+        items.push({ text, status });
+      }
+      return [
+        ...(items.length > 0 ? [{
+          kind: "todo_list" as const,
+          ts,
+          ...(asString(params.toolCallId) ? { todoListId: asString(params.toolCallId) } : {}),
+          items,
+          cursorAcpEvent: nativeEvent,
+        }] : []),
+        ...cancelled.map((text, index) => ({
+          kind: "system" as const,
+          ts,
+          text: `Cursor todo cancelled: ${text}`,
+          ...(items.length === 0 && index === 0 ? { cursorAcpEvent: nativeEvent } : {}),
+        })),
+        ...(items.length === 0 && cancelled.length === 0 ? [{
+          kind: "system" as const,
+          ts,
+          text: "Cursor todo update",
+          cursorAcpEvent: nativeEvent,
+        }] : []),
+      ];
+    }
+    if (parsed.method === "cursor/task") {
+      const subagent = asRecord(params.subagentType);
+      const subagentType = asString(subagent?.custom, asString(params.subagentType));
+      const details = [
+        asString(params.description),
+        asString(params.prompt) ? `Prompt: ${asString(params.prompt)}` : "",
+        subagentType ? `Type: ${subagentType}` : "",
+        asString(params.agentId) ? `Agent: ${asString(params.agentId)}` : "",
+        asNumber(params.durationMs) > 0 ? `Duration: ${asNumber(params.durationMs)}ms` : "",
+      ].filter(Boolean);
+      return [{
+        kind: "system", ts,
+        text: details.length > 0 ? `Cursor task\n${details.join("\n")}` : "Cursor task notification",
+        cursorAcpEvent: cursorAcpTranscriptEvent(parsed),
+      }];
+    }
+    if (parsed.method === "cursor/generate_image") {
+      const references = Array.isArray(params.referenceImagePaths)
+        ? params.referenceImagePaths.filter((value): value is string => typeof value === "string")
+        : [];
+      const details = [
+        asString(params.description),
+        asString(params.filePath) ? `File: ${asString(params.filePath)}` : "",
+        references.length > 0 ? `References: ${references.join(", ")}` : "",
+      ].filter(Boolean);
+      return [{
+        kind: "system", ts,
+        text: details.length > 0 ? `Cursor image\n${details.join("\n")}` : "Cursor image notification",
+        cursorAcpEvent: cursorAcpTranscriptEvent(parsed),
+      }];
+    }
+    return [{
+      kind: "system", ts, text: `Cursor notification\n${stringifyUnknown(params)}`,
+      cursorAcpEvent: cursorAcpTranscriptEvent(parsed),
+    }];
+  }
 
   if (type === "system") {
     const subtype = asString(parsed.subtype);

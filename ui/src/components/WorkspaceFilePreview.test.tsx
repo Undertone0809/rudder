@@ -146,7 +146,9 @@ describe("WorkspaceFilePreview", () => {
     expect(preview?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(preview?.getAttribute("src")).toContain("preview.localhost:3100/workspace-preview/");
     expect(toolbar).not.toBeNull();
-    expect(toolbar?.querySelector("[role='group'][aria-label='HTML file mode']")).not.toBeNull();
+    const modeGroup = toolbar?.querySelector("[aria-label='HTML file mode']");
+    expect(["group", "radiogroup"]).toContain(modeGroup?.getAttribute("role"));
+    expect(modeGroup?.querySelectorAll("[role='radio']")).toHaveLength(2);
     expect(toolbar?.querySelector("[data-testid='test-file-open']")).not.toBeNull();
     const connectedMenu = toolbar?.querySelector<HTMLButtonElement>("[data-testid='test-file-html-preview-network-menu']");
     expect(connectedMenu?.textContent).toContain("Connected");

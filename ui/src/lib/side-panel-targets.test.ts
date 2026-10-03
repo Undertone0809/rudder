@@ -1,3 +1,4 @@
+import type { ChatConversation } from "@rudderhq/shared";
 import {
   buildAutomationMentionHref,
   buildChatMentionHref,
@@ -10,6 +11,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   sideChatGenerationScopeKey,
+  sideChatTargetFromConversation,
   sidePanelFullPageHref,
   sidePanelTargetFromHref,
   sidePanelTargetKey,
@@ -197,6 +199,24 @@ describe("side panel targets", () => {
     const persistedSideChat = { ...provisionalSideChat, conversationId: "side-chat-1" };
     expect(sidePanelTargetKey(persistedSideChat)).toBe("side-chat:side-chat-1");
     expect(sidePanelFullPageHref(persistedSideChat)).toBe("/messenger/chat/side-chat-1");
+    expect(sideChatTargetFromConversation("chat-1", {
+      id: "side-chat-1",
+      title: "Side chat from: Source",
+      forkedFromMessageId: "message-1",
+      sideChatClientMutationId: null,
+    } as ChatConversation)).toEqual({
+      kind: "side_chat",
+      sourceConversationId: "chat-1",
+      sourceMessageId: "message-1",
+      sourcePreview: null,
+      conversationId: "side-chat-1",
+      clientMutationId: "side-chat-1",
+      label: "Side chat from: Source",
+    });
+    expect(sideChatGenerationScopeKey("org-1", {
+      ...persistedSideChat,
+      clientMutationId: "side-chat-1",
+    })).toBe("side-chat-1");
 
     const runDebugDraft: SidePanelTarget = {
       kind: "run_debug_chat",

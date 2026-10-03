@@ -20,18 +20,22 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
  * keep the same transaction open until the business write commits. Rust uses
  * the same row as its handoff lock, so a handoff waits for an in-flight Node
  * transaction and a writer that starts after the handoff observes owner=rust.
+ * Chat writers may share the authority lock: conversation-level locks serialize
+ * their data, while FOR SHARE still excludes an ownership handoff. Waiting on
+ * one Side Chat must not take an exclusive organization lock from its parent.
  * The token is an opaque identity for the locked epoch, not a bearer value
  * that can authorize a write after this transaction ends.
  */
 export async function lockNodeMutationAuthority(
   tx: TransactionClient,
   organizationId: string,
+  mode: "exclusive" | "shared" = "exclusive",
 ): Promise<MutationStateRow> {
   const result = await tx.execute(sql`
     SELECT owner, mutation_version, fence_epoch, fence_token
     FROM organization_mutation_state
     WHERE org_id = ${organizationId}::uuid
-    FOR UPDATE
+    ${mode === "shared" ? sql`FOR SHARE` : sql`FOR UPDATE`}
   `) as { rows?: MutationStateRow[] } | MutationStateRow[];
   const row = Array.isArray(result) ? result[0] : result.rows?.[0];
   if (!row) {

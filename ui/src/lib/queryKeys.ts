@@ -110,6 +110,8 @@ export const queryKeys = {
     search: (orgId: string, q: string, status: "active" | "resolved" | "archived" | "all" = "all") =>
       ["chats", orgId, status, "search", q] as const,
     detail: (orgId: string, chatId: string) => ["chats", orgId, "detail", chatId] as const,
+    sideChats: (orgId: string, chatId: string, principalId: string | null) =>
+      ["chats", orgId, "side-chats", chatId, principalId] as const,
     messages: (orgId: string, chatId: string) => ["chats", orgId, "messages", chatId] as const,
     messageTranscript: (orgId: string, chatId: string, messageId: string) =>
       ["chats", orgId, "messages", chatId, "transcript", messageId] as const,
@@ -272,6 +274,8 @@ export const queryKeys = {
     queryKeys.agentRuns(orgId, agentId, limit),
   runDetail: (runId: string) => ["agent-run", runId] as const,
   runEvents: (runId: string) => ["run-events", runId] as const,
+  runInvocationInstructions: (runId: string, eventId: number | null) =>
+    ["agent-run-invocation-instructions", runId, eventId] as const,
   runWorkspaceOperations: (runId: string) => ["agent-run", runId, "workspace-operations"] as const,
   liveRuns: (orgId: string) => ["live-runs", orgId] as const,
   runIssues: (runId: string) => ["run-issues", runId] as const,

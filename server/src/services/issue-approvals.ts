@@ -1,5 +1,5 @@
 import type { Db } from "@rudderhq/db";
-import { approvals, issueApprovals, issueLabels, issues, labels } from "@rudderhq/db";
+import { approvals, chatConversations, issueApprovals, issueLabels, issues, labels } from "@rudderhq/db";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
@@ -7,6 +7,11 @@ import { redactEventPayload } from "../redaction.js";
 interface LinkActor {
   agentId?: string | null;
   userId?: string | null;
+}
+
+interface LinkScope {
+  orgId?: string | null;
+  conversationId?: string | null;
 }
 
 export function issueApprovalService(db: Db) {
@@ -38,6 +43,39 @@ export function issueApprovalService(db: Db) {
     }
 
     return { issue, approval };
+  }
+
+  async function assertConversationLinkScope(
+    approval: typeof approvals.$inferSelect,
+    issue: { id: string; orgId: string },
+    scope: LinkScope,
+  ) {
+    if (scope.orgId && scope.orgId !== approval.orgId) {
+      throw unprocessable("Chat approval scope must belong to the approval organization");
+    }
+    const conversationId = scope.conversationId?.trim();
+    if (!conversationId) return;
+
+    const conversation = await db
+      .select({
+        id: chatConversations.id,
+        orgId: chatConversations.orgId,
+        primaryIssueId: chatConversations.primaryIssueId,
+      })
+      .from(chatConversations)
+      .where(and(eq(chatConversations.id, conversationId), eq(chatConversations.orgId, approval.orgId)))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!conversation || issue.orgId !== approval.orgId || conversation.primaryIssueId !== issue.id) {
+      throw unprocessable("Issue approval conversation must belong to the approval organization and target issue");
+    }
+
+    const payloadConversationId = typeof approval.payload?.chatConversationId === "string"
+      ? approval.payload.chatConversationId.trim()
+      : "";
+    if (payloadConversationId !== conversationId) {
+      throw unprocessable("Issue approval conversation does not match its approval payload");
+    }
   }
 
   async function labelsByIssueId(issueIds: string[]) {
@@ -87,7 +125,13 @@ export function issueApprovalService(db: Db) {
         })
         .from(issueApprovals)
         .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
-        .where(eq(issueApprovals.issueId, issueId))
+        .where(
+          and(
+            eq(issueApprovals.issueId, issueId),
+            eq(issueApprovals.orgId, issue.orgId),
+            eq(approvals.orgId, issue.orgId),
+          ),
+        )
         .orderBy(desc(issueApprovals.createdAt));
       return result.map((approval) => ({
         id: approval.id,
@@ -143,7 +187,13 @@ export function issueApprovalService(db: Db) {
         })
         .from(issueApprovals)
         .innerJoin(issues, eq(issueApprovals.issueId, issues.id))
-        .where(eq(issueApprovals.approvalId, approvalId))
+        .where(
+          and(
+            eq(issueApprovals.approvalId, approvalId),
+            eq(issueApprovals.orgId, approval.orgId),
+            eq(issues.orgId, approval.orgId),
+          ),
+        )
         .orderBy(desc(issueApprovals.createdAt));
       const labelsForIssues = await labelsByIssueId(result.map((issue) => issue.id));
       return result.map((issue) => {
@@ -184,7 +234,12 @@ export function issueApprovalService(db: Db) {
         .where(and(eq(issueApprovals.issueId, issueId), eq(issueApprovals.approvalId, approvalId)));
     },
 
-    linkManyForApproval: async (approvalId: string, issueIds: string[], actor?: LinkActor) => {
+    linkManyForApproval: async (
+      approvalId: string,
+      issueIds: string[],
+      actor?: LinkActor,
+      scope?: LinkScope,
+    ) => {
       if (issueIds.length === 0) return [];
 
       const approval = await getApproval(approvalId);
@@ -207,6 +262,7 @@ export function issueApprovalService(db: Db) {
         if (row.orgId !== approval.orgId) {
           throw unprocessable("Issue and approval must belong to the same organization");
         }
+        if (scope) await assertConversationLinkScope(approval, row, scope);
       }
 
       return db
