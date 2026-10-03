@@ -1,6 +1,32 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+terminal_checkpoint_2026_10_03_C07_v5:
+  supersedes: earlier_live_C07_and_PG_fields_only_preserves_historical_receipts
+  configuration: actual_gpt6luna_xhigh_subagents_no_new_threads
+  published_record_head: 262f601546a1f218a14402500b718623902873bb
+  installed_source: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
+  C07:
+    scope: bounded_full_seed_import_root_interactive_merge_PATCH_leaf_not_aggregate
+    stage: accept_Jason_9e070b922e7e26f27e17600f7ee05935535fc3c7a89ec2038683a4074b8cc324
+    verifier: FAIL_actual_Franklin_one_invocation_session72193_exit1
+    criteria: {FAIL: 1, NOT_RUN: 14, PASS_cleanup: 1}
+    observed_failure: target_full_seed_cannot_find_disposable_source_local_encrypted_master_key
+    root_cause: diagnosis_pending_do_not_assume_product_or_harness
+    terminal_sha256: 6ef7b46a924bb512cb31dc2e6e8303e6d16e945edcb25abc442ab7237fff2f32
+    original_OPEN_sha256: cf858a2d31b44ff9733880d5617d6e3572b7aca2ca9488017845ca70dae6aa19
+    CLOSED_sha256: bee2444ee4b37ab5c77c01d1ce5d0827e3a7c3d52aef2a3157cc017c6ca63033
+    archive: /Users/zeeland/.codex/artifacts/rudder-native-auth-installed-7a.NnCYIy/c07-v5-franklin-attempt1
+    cleanup: parent_fresh_PID_PGID22160_absent_four_ports_closed_exact_scratch_absent_no_parent_deletion
+    PG: FREE_parent_closed_original_OPEN_and_all_terminal_bytes_preserved
+    next: McClintock_key_path_diagnosis_additive_successor_Jason_stage_then_fresh_finite_lease_distinct_Franklin_once_no_v5_retry
+  Chat_audit:
+    source_main: 8eedffad752c6065803cc880c7f48e92052c62c7
+    PR226_head: 59b598b6514298efe2eddd0bb95d254d64d113a6
+    result: provider_native_Node_sessions_not_Rust_product_authority_no_blind_merge
+    next_boundary: conversation_scoped_shared_writer_fence_before_no_Issue_two_turn_stream_history_Stop_recovery_slice
+    retained_contract: SideChat_temporary_expiry_Keep_history_and_supported_session_continuity_unchanged
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 publication_checkpoint_2026_10_03_auth83:
   supersedes: live_auth_publication_C07_and_CI_fields_below_only_historical_evidence_preserved
   configuration: actual_gpt6luna_xhigh_subagents_no_new_threads
