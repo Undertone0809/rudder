@@ -49,6 +49,7 @@ import {
   createAuthRuntime,
   type LocalAccountAuthOptions,
 } from "./bootstrap/auth-runtime.js";
+import { assertPublicIngressExposure, preparePublicIngressStartup } from "./bootstrap/public-ingress-startup.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 import { createEmbeddedPostgresStartupLogBuffer } from "./embedded-postgres-startup-logs.js";
@@ -401,6 +402,7 @@ async function startServerRuntime(
     process.env.RUDDER_RUNTIME_OWNER_KIND = runtimeOwnerKind;
   }
   const config = mergeRuntimeConfig(loadConfig(), options.runtimeOverrides);
+  assertPublicIngressExposure(config, Boolean(options.localAccountAuth));
   if (process.env.RUDDER_SECRETS_PROVIDER === undefined) {
     process.env.RUDDER_SECRETS_PROVIDER = config.secretsProvider;
   }
@@ -1071,6 +1073,7 @@ async function startServerRuntime(
   });
   
   const listenPort = await detectPort(config.port);
+  const ingress = await preparePublicIngressStartup(config, listenPort);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
@@ -1088,6 +1091,7 @@ async function startServerRuntime(
     bindHost: config.host,
     workspacePreviewOrigin: config.workspacePreviewOrigin,
     ...createRudderAppStartupOptions(config, activeDatabaseConnectionString, authReady),
+    ...ingress.appOptions,
     mcpDeploymentAllowlists: config.mcpDeploymentAllowlists,
     instanceId,
     localEnv,
@@ -1116,14 +1120,9 @@ async function startServerRuntime(
     logger.warn(`Requested port is busy; using next free port (requestedPort=${config.port}, selectedPort=${listenPort})`);
   }
   
-  const runtimeListenHost = config.host;
-  const runtimeApiHost =
-    runtimeListenHost === "0.0.0.0" || runtimeListenHost === "::"
-      ? "localhost"
-      : runtimeListenHost;
-  process.env.RUDDER_LISTEN_HOST = runtimeListenHost;
+  process.env.RUDDER_LISTEN_HOST = config.host;
   process.env.RUDDER_LISTEN_PORT = String(listenPort);
-  process.env.RUDDER_API_URL = `http://${runtimeApiHost}:${listenPort}`;
+  process.env.RUDDER_API_URL = ingress.publicApiUrl;
   
   const liveEventsRuntime = setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
@@ -1438,7 +1437,7 @@ async function startServerRuntime(
     };
 
     server.once("error", onError);
-    server.listen(listenPort, config.host, () => {
+    server.listen(ingress.nodeListenPort, ingress.nodeListenHost, ingress.onListening(appHandle, rejectListen, () => {
       server.off("error", onError);
       logger.info(`Server listening on ${config.host}:${listenPort}`);
       const shouldOpenOnListen = options.openOnListen ?? process.env.RUDDER_OPEN_ON_LISTEN === "true";
@@ -1491,7 +1490,7 @@ async function startServerRuntime(
       }
 
       resolveListen();
-    });
+    }));
   });
   supervisor.own("http-ingress", () => {
     void beginHttpClose();
@@ -1509,7 +1508,7 @@ async function startServerRuntime(
       localEnv,
       pid: process.pid,
       listenPort,
-      apiUrl: process.env.RUDDER_API_URL ?? `http://${runtimeApiHost}:${listenPort}`,
+      apiUrl: process.env.RUDDER_API_URL ?? ingress.publicApiUrl,
       version: serverVersion,
       ownerKind: runtimeOwnerKind,
       startedAt: new Date().toISOString(),
@@ -1562,7 +1561,7 @@ async function startServerRuntime(
     server,
     host: config.host,
     listenPort,
-    apiUrl: process.env.RUDDER_API_URL ?? `http://${runtimeApiHost}:${listenPort}`,
+    apiUrl: process.env.RUDDER_API_URL ?? ingress.publicApiUrl,
     databaseUrl: activeDatabaseConnectionString,
     instancePaths: {
       homeDir: resolveRudderHomeDir(),

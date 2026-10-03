@@ -1,4 +1,6 @@
-use rudder_server_foundation_core::{ServerConfig, ServerRuntime, init_tracing};
+use rudder_server_foundation_core::{
+    PublicIngressConfig, ServerConfig, ServerRuntime, init_tracing,
+};
 use std::io::{self, Write};
 
 #[tokio::main]
@@ -12,20 +14,49 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = ServerConfig::from_env()?;
+    let ingress_config = PublicIngressConfig::from_env()?;
     let shutdown_signals = install_shutdown_signals()?;
     let runtime = ServerRuntime::bind(config.clone())?;
-    println!("{}", serde_json::to_string(&runtime.startup_receipt())?);
+    let public = ingress_config
+        .map(|config| runtime.bind_public_ingress(config))
+        .transpose()?;
+    let mut startup = serde_json::to_value(runtime.startup_receipt())?;
+    if let Some(public) = public.as_ref() {
+        startup["publicIngress"] = serde_json::json!({
+            "boundAddr": public.bound_addr(), "publicListener": true,
+            "directAuthorities": ["organization_member_directory"],
+            "authenticationAuthority": "private-node-adapter",
+            "unmigratedHttpAuthority": "explicit-private-node-proxy",
+        });
+    }
+    println!("{}", serde_json::to_string(&startup)?);
     std::io::stdout().flush()?;
 
     let control = runtime.control();
+    let public_control = public.as_ref().map(|runtime| runtime.control());
+    let mut public_task = public.map(|runtime| tokio::spawn(async move { runtime.run().await }));
     let mut server_task = tokio::spawn(async move { runtime.run().await });
     tokio::select! {
         result = &mut server_task => {
+            if let Some(public_control) = &public_control { public_control.stop(true).await; }
+            if let Some(public_task) = &mut public_task { public_task.await??; }
+            result??;
+        }
+        result = async {
+            match &mut public_task {
+                Some(task) => task.await,
+                None => std::future::pending().await,
+            }
+        } => {
+            control.shutdown().await;
+            server_task.await??;
             result??;
         }
         reason = shutdown_signal(shutdown_signals) => {
+            if let Some(public_control) = &public_control { public_control.stop(true).await; }
             control.shutdown().await;
             server_task.await??;
+            if let Some(public_task) = &mut public_task { public_task.await??; }
             println!("{}", serde_json::to_string(&ServerRuntime::shutdown_receipt(reason))?);
             std::io::stdout().flush()?;
         }
