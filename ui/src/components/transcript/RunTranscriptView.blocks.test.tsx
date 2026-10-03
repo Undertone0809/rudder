@@ -2,7 +2,7 @@
 
 import type { ChatMessage } from "@rudderhq/shared";
 import type { ReactNode } from "react";
-import { act, useRef, useState } from "react";
+import { act, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
@@ -766,6 +766,71 @@ describe("TranscriptRunAnnotationBlock", () => {
       pendingFiles: [],
       attachmentIds: [],
     }));
+  });
+
+  it("does not save a selected draft after its Run source changes before passive cleanup", () => {
+    const onAnnotate = vi.fn();
+    let attemptedSaveBeforePassiveCleanup = false;
+    function SwitchingTranscriptSource() {
+      const [source, setSource] = useState<"first" | "second">("first");
+      useLayoutEffect(() => {
+        if (source !== "second") return;
+        const saveButton = Array.from(
+          document.querySelectorAll<HTMLButtonElement>("[data-testid='chat-response-annotation-editor'] button"),
+        ).find((button) => button.textContent === "Save");
+        attemptedSaveBeforePassiveCleanup = Boolean(saveButton);
+        saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      }, [source]);
+
+      const sourceMemberId = source === "first" ? "run-1-entry" : "run-2-entry";
+      return (
+        <>
+          <button type="button" data-testid="switch-annotation-source" onClick={() => setSource("second")}>
+            Switch source
+          </button>
+          <TranscriptRunAnnotationBlock
+            block={{
+              type: "thinking",
+              ts: "2026-10-03T00:00:00.000Z",
+              text: "Identical transcript text",
+              streaming: false,
+              sourceEntryIds: [sourceMemberId],
+            }}
+            presentation="detail"
+            context={{
+              sourceRunId: source === "first" ? "run-1" : "run-2",
+              sourceAgentId: source === "first" ? "agent-1" : "agent-2",
+              onAnnotate,
+            }}
+          >
+            <span>Identical transcript text</span>
+          </TranscriptRunAnnotationBlock>
+        </>
+      );
+    }
+
+    const container = render(<SwitchingTranscriptSource />);
+    const textNode = container.querySelector("span")?.firstChild;
+    expect(textNode).not.toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(textNode!);
+    Object.defineProperty(range, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(20, 20, 120, 20),
+    });
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    act(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+
+    const addButton = document.querySelector<HTMLButtonElement>("[role='toolbar'] button");
+    expect(addButton?.textContent).toContain("Add to chat");
+    act(() => addButton?.click());
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).not.toBeNull();
+
+    act(() => container.querySelector<HTMLButtonElement>("[data-testid='switch-annotation-source']")?.click());
+
+    expect(attemptedSaveBeforePassiveCleanup).toBe(true);
+    expect(onAnnotate).not.toHaveBeenCalled();
   });
 
   it("discards a transition annotation when the editor is cancelled", () => {

@@ -88,6 +88,7 @@ export function TranscriptRunAnnotationBlock({
   const blockId = transcriptBlockIdentity(block);
   const itemInteractionId = interactionId ?? blockId;
   const annotationText = transcriptBlockAnnotationText(block);
+  const sourceIdentity = JSON.stringify([context?.sourceRunId, context?.sourceAgentId, blockId, block.sourceEntryIds, annotationText]);
   const isTextBlock = (block.type === "message" && block.role === "assistant") || block.type === "thinking";
   const canAnnotate = (presentation === "detail" || (presentation === "chat" && isTextBlock))
     && !streaming
@@ -115,17 +116,20 @@ export function TranscriptRunAnnotationBlock({
     range: Range;
     anchorRect: DOMRect;
     autoFocus: boolean;
+    sourceIdentity: string;
   } | null>(null);
   const [pendingAnnotation, setPendingAnnotation] = useState<{
     annotation: ChatInlineAnnotationInput;
     anchorKind: "text" | "transition";
     anchorRect: DOMRect;
     autoFocus: boolean;
+    sourceIdentity: string;
   } | null>(null);
   const beginAnnotation = (
     text: string,
     anchor: HTMLButtonElement | null,
     anchorKind: "text" | "transition",
+    sourceIdentity: string,
     anchorRect?: DOMRect,
     autoFocus = true,
   ) => {
@@ -152,11 +156,12 @@ export function TranscriptRunAnnotationBlock({
       anchorKind,
       anchorRect: rect,
       autoFocus,
+      sourceIdentity,
     });
     setPendingSelection(null);
   };
   const handleAnnotate = (anchor: HTMLButtonElement) => {
-    beginAnnotation(annotationText, anchor, "transition");
+    beginAnnotation(annotationText, anchor, "transition", sourceIdentity);
   };
   useEffect(() => {
     if (!canSelectText) {
@@ -188,6 +193,7 @@ export function TranscriptRunAnnotationBlock({
         range: range.cloneRange(),
         anchorRect,
         autoFocus: shouldAutoFocusChatAnnotationToolbar(event),
+        sourceIdentity,
       });
     };
     document.addEventListener("mouseup", updateSelection);
@@ -200,7 +206,7 @@ export function TranscriptRunAnnotationBlock({
       document.removeEventListener("keyup", updateSelection);
       document.removeEventListener("selectionchange", updateSelection);
     };
-  }, [canSelectText]);
+  }, [canSelectText, sourceIdentity]);
 
   useEffect(() => {
     if (!canAnnotate || (context?.activeBlockId && context.activeBlockId !== itemInteractionId)) {
@@ -211,7 +217,6 @@ export function TranscriptRunAnnotationBlock({
 
   // A reused row must never submit a draft belonging to a previous Run or
   // changed source window, even if its visible text happens to be identical.
-  const sourceIdentity = JSON.stringify([context?.sourceRunId, context?.sourceAgentId, blockId, block.sourceEntryIds, annotationText]);
   useEffect(() => {
     setPendingAnnotation(null);
     setPendingSelection(null);
@@ -220,11 +225,15 @@ export function TranscriptRunAnnotationBlock({
   if (!context) return children;
 
   const commitPendingSelection = () => {
-    if (!pendingSelection || !canSelectText) return;
+    if (!pendingSelection || !canSelectText || pendingSelection.sourceIdentity !== sourceIdentity) {
+      setPendingSelection(null);
+      return;
+    }
     beginAnnotation(
       pendingSelection.text,
       triggerRef.current,
       "text",
+      pendingSelection.sourceIdentity,
       pendingSelection.anchorRect,
       pendingSelection.autoFocus,
     );
@@ -236,7 +245,10 @@ export function TranscriptRunAnnotationBlock({
     pendingFiles,
     attachmentIds,
   }: ResponseAnnotationEditorChanges) => {
-    if (!pendingAnnotation || !canAnnotate) return;
+    if (!pendingAnnotation || !canAnnotate || pendingAnnotation.sourceIdentity !== sourceIdentity) {
+      setPendingAnnotation(null);
+      return;
+    }
     const annotation = pendingAnnotation.annotation;
     context.onAnnotate({
       sourceRunId: context.sourceRunId,
