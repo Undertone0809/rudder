@@ -250,9 +250,13 @@ mod tests {
         for token in ["", "Bearer pcp_secret", "synthetic-invalid-jwt", "other"] {
             assert!(!is_native_bearer(token));
         }
-        assert_eq!(
-            hash_token("pcp_example"),
-            "416e146654fabbed34677878b10e0947b89905541cbab16da13528b6508e0dab"
+        assert!(
+            hash_token("pcp_example")
+                == concat!(
+                    "416e1466", "54fabbed", "34677878", "b10e0947", "b8990554", "1cbab16d",
+                    "a13528b6", "508e0dab"
+                ),
+            "hash_token golden vector mismatch"
         );
     }
 

@@ -25,6 +25,14 @@ fn bearer_token(request: &HttpRequest) -> Option<&str> {
     Some(value[7..].trim())
 }
 
+fn has_authentication_candidate(request: &HttpRequest) -> bool {
+    bearer_token(request).is_some_and(|token| !token.is_empty())
+        || request
+            .headers()
+            .get(header::COOKIE)
+            .is_some_and(|value| !value.as_bytes().is_empty())
+}
+
 #[derive(Clone)]
 struct IngressState {
     foundation: Arc<AppState>,
@@ -151,6 +159,16 @@ async fn member_directory(
         return state
             .foundation
             .json_error(StatusCode::BAD_REQUEST, "member_directory_body_not_allowed");
+    }
+    // Required ingress must reject an anonymous direct read locally. Keep any
+    // non-empty bearer or cookie on the compatibility seam: Node owns JWT and
+    // session validation, including its bearer-before-cookie precedence.
+    if state.config.auth_requirement == PublicIngressAuthRequirement::Required
+        && !has_authentication_candidate(&request)
+    {
+        return state
+            .foundation
+            .json_error(StatusCode::UNAUTHORIZED, "authentication_required");
     }
     let identity = match state.config.forwarding_policy.identity(&request) {
         Ok(identity) => identity,
@@ -415,6 +433,340 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
     const INTERNAL: &str = "fedcba9876543210fedcba9876543210";
+    const ORG_ID: &str = "10000000-0000-0000-0000-000000000001";
+    const SESSION_COOKIE: &str = "session=test";
+    // Signed with the default development JWT secret and scoped to ORG_ID.
+    const LOCAL_JWT_AUTHORIZATION: &str = concat!(
+        "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.",
+        "eyJzdWIiOiJqd3QtYWdlbnQiLCJvcmdfaWQiOiIxMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDEiLCJhZGFwdGVyX3R5cGUiOiJjb2RleCIsInJ1bl9pZCI6InRjcC1hdXRoLXRlc3QiLCJpYXQiOjE3NjAwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMCwiaXNzIjoicnVkZGVyIiwiYXVkIjoicnVkZGVyLWFwaSJ9.",
+        "wscHrGkf2pLOU6aUmn9teObGq2Yq6bcsz_Yn-a23QfQ"
+    );
+
+    fn auth_test_foundation() -> Arc<AppState> {
+        Arc::new(
+            AppState::new(ServerConfig {
+                actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                ..ServerConfig::default()
+            })
+            .unwrap(),
+        )
+    }
+
+    async fn public_member_get(
+        address: SocketAddr,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, String) {
+        let mut request = awc::Client::default().get(format!(
+            "http://{address}/api/orgs/{ORG_ID}/members/directory"
+        ));
+        for (name, value) in headers {
+            request = request.insert_header((*name, *value));
+        }
+        let mut response = request.send().await.unwrap();
+        let status = response.status();
+        let body = response.body().await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    fn signed_adapter_response(
+        body: &serde_json::Value,
+        actor_type: &str,
+        actor_id: &str,
+        session_id: &str,
+    ) -> HttpResponse {
+        let now = unix_time_seconds();
+        match ActorEnvelope::new(
+            ActorIdentity::new(actor_type, actor_id).unwrap(),
+            body["organizationId"].as_str().unwrap(),
+            session_id,
+            1,
+            ACTOR_ENVELOPE_AUDIENCE,
+            "GET",
+            body["publicPath"].as_str().unwrap(),
+            MEMBER_DIRECTORY_ACTION,
+            b"",
+            body["requestId"].as_str().unwrap(),
+            body["nonce"].as_str().unwrap(),
+            now.saturating_sub(1),
+            now.saturating_add(30),
+        )
+        .and_then(|unsigned| unsigned.sign(SECRET.as_bytes()))
+        {
+            Ok(signed) => HttpResponse::Ok().json(signed),
+            Err(_) => HttpResponse::InternalServerError().finish(),
+        }
+    }
+
+    #[actix_web::test]
+    async fn required_public_tcp_member_read_rejects_empty_credentials_before_node() {
+        let upstream_reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let unavailable_upstream = format!("http://{}", upstream_reservation.local_addr().unwrap());
+        drop(upstream_reservation);
+
+        let config = PublicIngressConfig::new(
+            "127.0.0.1:0".parse().unwrap(),
+            &unavailable_upstream,
+            INTERNAL,
+        )
+        .unwrap();
+        let runtime = PublicIngressRuntime::bind(config, auth_test_foundation()).unwrap();
+        let address = runtime.bound_addr();
+        let control = runtime.control();
+        let task = actix_web::rt::spawn(runtime.run());
+
+        let cases: [(&str, &[(&str, &str)]); 5] = [
+            ("absent credentials", &[]),
+            ("empty cookie", &[("cookie", "")]),
+            ("empty authorization", &[("authorization", "")]),
+            (
+                "malformed authorization",
+                &[("authorization", "Basic malformed")],
+            ),
+            ("empty bearer", &[("authorization", "Bearer ")]),
+        ];
+        for (case, headers) in cases {
+            let (status, body) = public_member_get(address, headers).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{case}: {body}");
+            assert!(body.contains("authentication_required"), "{case}: {body}");
+        }
+
+        control.stop(true).await;
+        task.await.unwrap().unwrap();
+    }
+
+    #[actix_web::test]
+    async fn public_tcp_auth_preserves_cookie_jwt_node_precedence_and_optional_local_board() {
+        let adapter_calls = Arc::new(AtomicUsize::new(0));
+        let observations = Arc::new(std::sync::Mutex::new(
+            Vec::<(Option<String>, Option<String>)>::new(),
+        ));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let mock = HttpServer::new({
+            let adapter_calls = adapter_calls.clone();
+            let observations = observations.clone();
+            move || {
+                let adapter_calls = adapter_calls.clone();
+                let observations = observations.clone();
+                App::new().route(
+                    AUTH_PATH,
+                    web::get().to(
+                        move |request: HttpRequest, body: web::Json<serde_json::Value>| {
+                            let adapter_calls = adapter_calls.clone();
+                            let observations = observations.clone();
+                            async move {
+                                adapter_calls.fetch_add(1, Ordering::SeqCst);
+                                let authorization = request
+                                    .headers()
+                                    .get(header::AUTHORIZATION)
+                                    .and_then(|value| value.to_str().ok())
+                                    .map(str::to_owned);
+                                let cookie = request
+                                    .headers()
+                                    .get(header::COOKIE)
+                                    .and_then(|value| value.to_str().ok())
+                                    .map(str::to_owned);
+                                assert_eq!(
+                                    request.headers().get("x-rudder-ingress-auth").unwrap(),
+                                    INTERNAL
+                                );
+                                observations
+                                    .lock()
+                                    .unwrap()
+                                    .push((authorization.clone(), cookie.clone()));
+
+                                if let Some(value) = authorization.as_deref().filter(|value| {
+                                    value.get(..7).is_some_and(|prefix| {
+                                        prefix.eq_ignore_ascii_case("Bearer ")
+                                    })
+                                }) {
+                                    let token = value[7..].trim();
+                                    if token
+                                        != LOCAL_JWT_AUTHORIZATION.strip_prefix("Bearer ").unwrap()
+                                    {
+                                        return HttpResponse::Unauthorized().finish();
+                                    }
+                                    return signed_adapter_response(
+                                        &body,
+                                        "agent",
+                                        "jwt-agent",
+                                        "agent-jwt:jwt-agent",
+                                    );
+                                }
+                                if cookie.as_deref() == Some(SESSION_COOKIE) {
+                                    return signed_adapter_response(
+                                        &body,
+                                        "user",
+                                        "session-user",
+                                        "session-id",
+                                    );
+                                }
+                                signed_adapter_response(
+                                    &body,
+                                    "user",
+                                    "local-board",
+                                    "local-implicit",
+                                )
+                            }
+                        },
+                    ),
+                )
+            }
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let adapter_handle = mock.handle();
+        let adapter_task = actix_web::rt::spawn(mock);
+
+        let required_config =
+            PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL).unwrap();
+        let required = PublicIngressRuntime::bind(required_config, auth_test_foundation()).unwrap();
+        let required_address = required.bound_addr();
+        let required_control = required.control();
+        let required_task = actix_web::rt::spawn(required.run());
+
+        for (case, headers) in [
+            ("missing", &[][..]),
+            ("empty cookie", &[("cookie", "")][..]),
+            (
+                "malformed without cookie",
+                &[("authorization", "Basic malformed")][..],
+            ),
+        ] {
+            let (status, body) = public_member_get(required_address, headers).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{case}: {body}");
+            assert!(body.contains("authentication_required"), "{case}: {body}");
+        }
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+        assert!(observations.lock().unwrap().is_empty());
+
+        for (case, headers) in [
+            ("session cookie", &[("cookie", SESSION_COOKIE)][..]),
+            (
+                "malformed header keeps Node cookie precedence",
+                &[
+                    ("authorization", "Basic malformed"),
+                    ("cookie", SESSION_COOKIE),
+                ][..],
+            ),
+            (
+                "empty authorization keeps Node cookie precedence",
+                &[("authorization", ""), ("cookie", SESSION_COOKIE)][..],
+            ),
+            (
+                "local JWT bearer keeps Node bearer precedence",
+                &[
+                    ("authorization", LOCAL_JWT_AUTHORIZATION),
+                    ("cookie", SESSION_COOKIE),
+                ][..],
+            ),
+        ] {
+            let (status, body) = public_member_get(required_address, headers).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{case}: {body}");
+            assert!(body.contains("database_disabled"), "{case}: {body}");
+        }
+
+        let (empty_bearer_status, empty_bearer_body) = public_member_get(
+            required_address,
+            &[("authorization", "Bearer "), ("cookie", SESSION_COOKIE)],
+        )
+        .await;
+        let empty_bearer_observation = observations.lock().unwrap().last().cloned().unwrap();
+        let node_treats_as_bearer = empty_bearer_observation.0.as_deref().is_some_and(|value| {
+            value
+                .get(..7)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Bearer "))
+        });
+        if node_treats_as_bearer
+            && empty_bearer_observation
+                .0
+                .as_deref()
+                .is_some_and(|value| value[7..].trim().is_empty())
+        {
+            assert_eq!(
+                empty_bearer_status,
+                StatusCode::UNAUTHORIZED,
+                "{empty_bearer_body}"
+            );
+            assert!(empty_bearer_body.contains("ingress_authorization_rejected"));
+        } else {
+            assert_eq!(
+                empty_bearer_status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{empty_bearer_body}"
+            );
+            assert!(empty_bearer_body.contains("database_disabled"));
+        }
+
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 5);
+        {
+            let seen = observations.lock().unwrap();
+            assert_eq!(seen[0].1.as_deref(), Some(SESSION_COOKIE));
+            assert_eq!(
+                seen[1],
+                (
+                    Some("Basic malformed".to_owned()),
+                    Some(SESSION_COOKIE.to_owned())
+                )
+            );
+            assert_eq!(seen[2].1.as_deref(), Some(SESSION_COOKIE));
+            assert_eq!(seen[3].0.as_deref(), Some(LOCAL_JWT_AUTHORIZATION));
+            assert_eq!(seen[3].1.as_deref(), Some(SESSION_COOKIE));
+        }
+
+        let optional_config =
+            PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL)
+                .unwrap()
+                .with_auth_requirement(PublicIngressAuthRequirement::Optional);
+        let optional = PublicIngressRuntime::bind(optional_config, auth_test_foundation()).unwrap();
+        let optional_address = optional.bound_addr();
+        let optional_control = optional.control();
+        let optional_task = actix_web::rt::spawn(optional.run());
+        let (status, body) = public_member_get(optional_address, &[]).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(body.contains("database_disabled"));
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 6);
+        assert_eq!(
+            observations.lock().unwrap().last().cloned().unwrap(),
+            (None, None),
+            "optional local-implicit auth must retain the Node compatibility seam"
+        );
+        let (status, body) = public_member_get(optional_address, &[("cookie", "")]).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(body.contains("database_disabled"));
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 7);
+        let optional_empty_cookie = observations.lock().unwrap().last().cloned().unwrap();
+        assert!(optional_empty_cookie.0.is_none());
+        assert!(optional_empty_cookie.1.as_deref().is_none_or(str::is_empty));
+
+        let (status, body) =
+            public_member_get(optional_address, &[("cookie", SESSION_COOKIE)]).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(body.contains("database_disabled"));
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 8);
+        assert_eq!(
+            observations
+                .lock()
+                .unwrap()
+                .last()
+                .cloned()
+                .unwrap()
+                .1
+                .as_deref(),
+            Some(SESSION_COOKIE),
+            "optional session cookies must retain the Node compatibility seam"
+        );
+
+        required_control.stop(true).await;
+        required_task.await.unwrap().unwrap();
+        optional_control.stop(true).await;
+        optional_task.await.unwrap().unwrap();
+        adapter_handle.stop(true).await;
+        adapter_task.await.unwrap().unwrap();
+    }
 
     #[actix_web::test]
     async fn active_authenticated_public_websocket_closes_when_ingress_stops() {
@@ -717,7 +1069,8 @@ mod tests {
                 .unwrap(),
             ),
             config: PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL)
-                .unwrap(),
+                .unwrap()
+                .with_auth_requirement(PublicIngressAuthRequirement::Optional),
         });
         let app = test::init_service(App::new().app_data(state).route(
             "/api/orgs/{org_id}/members/directory",
