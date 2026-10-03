@@ -9,7 +9,12 @@ import {
   type CodexMixedCoverageInput,
   type CoverageIdentity,
 } from "./native-transcript-coverage.js";
-import { CODEX_GAP_ENCODING, CodexGapDictionary } from "./transcript-object-compact.js";
+import {
+  CODEX_GAP_ENCODING,
+  CodexGapDictionary,
+  createCodexGapObjectMetadata,
+  isCodexGapObjectMetadata,
+} from "./transcript-object-compact.js";
 import type {
   NativeTranscriptReadInput,
   NativeTranscriptReadResult,
@@ -626,11 +631,8 @@ function parseStoredObjectMetadata(value: unknown): StoredObjectMetadata {
     || typeof metadata.updatedAt !== "string" || !Number.isFinite(Date.parse(metadata.updatedAt))) {
     throw new Error("Transcript object metadata is invalid");
   }
-  if ((metadata.encoding !== undefined && metadata.encoding !== CODEX_GAP_ENCODING)
-    || (metadata.encoding === CODEX_GAP_ENCODING && (typeof metadata.compactIdentitySha256 !== "string"
-      || !/^[a-f0-9]{64}$/u.test(metadata.compactIdentitySha256)
-      || !Number.isSafeInteger(metadata.logicalBytes) || Number(metadata.logicalBytes) < 0
-      || Number(metadata.logicalBytes) > MAX_OBJECT_BYTES))) throw new Error("Transcript object encoding is invalid");
+  if (metadata.encoding !== undefined && (!isCodexGapObjectMetadata(metadata)
+    || metadata.logicalBytes > MAX_OBJECT_BYTES)) throw new Error("Transcript object encoding is invalid");
   return metadata as StoredObjectMetadata;
 }
 
@@ -971,14 +973,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         spanId: requiredString(input.spanId, "span"),
         ownerToken: requiredString(input.ownerToken, "owner"),
       };
-      const identity = input.compactIdentity;
-      const compact = identity && identity.orgId === binding.orgId && identity.runId === binding.runId
-        && identity.spanId === binding.spanId && identity.ownerToken === binding.ownerToken
-        && typeof identity.attemptId === "string" && identity.attemptId.length > 0
-        && Number.isSafeInteger(identity.attemptEpoch) && identity.attemptEpoch > 0
-        && identity.selector?.kind === "codex_turn" && identity.selector.runId === binding.runId
-        && typeof identity.selector.threadId === "string" && identity.selector.threadId.length > 0
-        && typeof identity.selector.turnId === "string" && identity.selector.turnId.length > 0;
+      const compactMetadata = createCodexGapObjectMetadata(input.compactIdentity, binding);
       await fs.mkdir(path.resolve(root, OBJECT_ROOT_NAME), { recursive: true, mode: 0o700 });
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const ref = objectRef();
@@ -999,9 +994,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
             bytes: 0,
             createdAt: now,
             updatedAt: now,
-            ...(compact ? { encoding: CODEX_GAP_ENCODING,
-              logicalBytes: 0,
-              compactIdentitySha256: createHash("sha256").update(JSON.stringify(identity)).digest("hex") } : {}),
+            ...(compactMetadata ?? {}),
           } satisfies StoredObjectMetadata);
           return { store: "local_file", ...binding, objectRef: ref };
         } catch (error) {

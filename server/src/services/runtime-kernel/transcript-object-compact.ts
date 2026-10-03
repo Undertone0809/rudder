@@ -1,9 +1,66 @@
 import { createHash } from "node:crypto";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
+import type { CoverageIdentity } from "./native-transcript-coverage.js";
 
 export const CODEX_GAP_ENCODING = "codex-gap-dictionary-v1";
 const DICTIONARY_BYTES = 32 * 1024;
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+type CompactObjectBinding = Pick<CoverageIdentity, "orgId" | "runId" | "spanId" | "ownerToken">;
+
+export type CodexGapObjectMetadata = {
+  encoding: typeof CODEX_GAP_ENCODING;
+  compactIdentitySha256: string;
+  logicalBytes: number;
+};
+
+const nonEmptyString = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+
+/** Compact only a new object with a complete identity bound to its owner. */
+export function createCodexGapObjectMetadata(identity: unknown, binding: CompactObjectBinding): CodexGapObjectMetadata | undefined {
+  if (!identity || typeof identity !== "object" || Array.isArray(identity)) return undefined;
+  if (!nonEmptyString(binding.orgId) || !nonEmptyString(binding.runId)
+    || !nonEmptyString(binding.spanId) || !nonEmptyString(binding.ownerToken)) return undefined;
+  const candidate = identity as Record<string, unknown>;
+  const selector = candidate.selector;
+  if (candidate.orgId !== binding.orgId || candidate.runId !== binding.runId
+    || candidate.spanId !== binding.spanId || candidate.ownerToken !== binding.ownerToken
+    || !nonEmptyString(candidate.attemptId)
+    || typeof candidate.attemptEpoch !== "number" || !Number.isSafeInteger(candidate.attemptEpoch) || candidate.attemptEpoch < 1
+    || !selector || typeof selector !== "object" || Array.isArray(selector)) return undefined;
+  const selectorIdentity = selector as Record<string, unknown>;
+  if (selectorIdentity.kind !== "codex_turn" || selectorIdentity.runId !== binding.runId
+    || !nonEmptyString(selectorIdentity.threadId) || !nonEmptyString(selectorIdentity.turnId)) return undefined;
+
+  const boundIdentity: CoverageIdentity = {
+    orgId: binding.orgId,
+    runId: binding.runId,
+    spanId: binding.spanId,
+    attemptId: candidate.attemptId,
+    attemptEpoch: candidate.attemptEpoch,
+    ownerToken: binding.ownerToken,
+    selector: {
+      kind: "codex_turn",
+      runId: binding.runId,
+      threadId: selectorIdentity.threadId,
+      turnId: selectorIdentity.turnId,
+    },
+  };
+  return {
+    encoding: CODEX_GAP_ENCODING,
+    compactIdentitySha256: digest(Buffer.from(JSON.stringify(boundIdentity), "utf8")),
+    logicalBytes: 0,
+  };
+}
+
+export function isCodexGapObjectMetadata(value: unknown): value is CodexGapObjectMetadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const metadata = value as Record<string, unknown>;
+  return metadata.encoding === CODEX_GAP_ENCODING
+    && typeof metadata.compactIdentitySha256 === "string"
+    && /^[a-f0-9]{64}$/u.test(metadata.compactIdentitySha256)
+    && Number.isSafeInteger(metadata.logicalBytes) && Number(metadata.logicalBytes) >= 0;
+}
 
 /** A self-contained backward byte reference, NOT a native retention proof.
  * Every previous committed line supplies the recovery dictionary. No separate

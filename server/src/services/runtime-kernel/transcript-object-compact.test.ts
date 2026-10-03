@@ -1,12 +1,34 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { CodexGapDictionary } from "./transcript-object-compact.js";
+import {
+  CODEX_GAP_ENCODING,
+  CodexGapDictionary,
+  createCodexGapObjectMetadata,
+  isCodexGapObjectMetadata,
+} from "./transcript-object-compact.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const line = (text: string, ts = "2026-10-03T01:02:03.123456Z") => JSON.stringify({ version: 1,
   entry: { kind: "assistant", ts, segmentId: "segment-1", text } });
 
 describe("self-contained gap byte dictionary (not native coverage)", () => {
+  it("creates compact metadata only for an exact, complete new-object binding", () => {
+    const binding = { orgId: "org-1", runId: "run-1", spanId: "span-1", ownerToken: "owner-1" };
+    const identity = { ...binding, attemptId: "attempt-1", attemptEpoch: 1,
+      selector: { kind: "codex_turn" as const, runId: "run-1", threadId: "thread-1", turnId: "turn-1" } };
+    const metadata = createCodexGapObjectMetadata(identity, binding);
+    expect(metadata).toMatchObject({ encoding: CODEX_GAP_ENCODING, logicalBytes: 0 });
+    expect(metadata?.compactIdentitySha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(isCodexGapObjectMetadata(metadata)).toBe(true);
+
+    for (const unknown of [null, undefined, { ...identity, orgId: "other-org" },
+      { ...identity, ownerToken: "other-owner" }, { ...identity, attemptId: "" },
+      { ...identity, attemptEpoch: 0 }, { ...identity, selector: { ...identity.selector, turnId: "" } }]) {
+      expect(createCodexGapObjectMetadata(unknown, binding)).toBeUndefined();
+    }
+    expect(isCodexGapObjectMetadata({ ...metadata, logicalBytes: Number.MAX_SAFE_INTEGER + 1 })).toBe(false);
+  });
+
   it("restores exact bytes/formatting/timestamps/chunk order with no provider or original sidecar", () => {
     const original = [line("界🌍\\\n\"".repeat(1000)), line("界🌍\\\n\"".repeat(1000), "2026-10-03T01:02:04.654321Z"),
       ' {"version":1,"entry":{"kind":"system","ts":"2026-10-03","text":"reasoning started"}} '];
