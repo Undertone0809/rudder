@@ -2,13 +2,15 @@
 
 import type { ChatMessage } from "@rudderhq/shared";
 import type { ReactNode } from "react";
-import { act, useState } from "react";
+import { act, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { readChatAnnotationSourceText } from "../../lib/chat-response-annotation-selection";
 import { mergeNativeSteerTranscriptEntries } from "../../lib/chat-stream-state";
+import { usePendingChatResponseAnnotationSelection } from "../../pages/Chat.response-annotation-selection";
+import { RunTranscriptView } from "./RunTranscriptView";
 import {
   CommandTerminalDetail,
   ExpandableTranscriptResponsePre,
@@ -598,6 +600,104 @@ describe("TranscriptRunAnnotationBlock", () => {
     );
 
     expect(container.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(0);
+  });
+
+  it.each(["assistant", "thinking"] as const)("selects native-only Chat %s without legacy generation provenance", (kind) => {
+    const onAnnotate = vi.fn();
+    const block: TranscriptBlock = kind === "assistant"
+      ? { type: "message", role: "assistant", ts: "2026-10-03T00:00:00Z", text: "Native evidence", streaming: false, sourceEntryIds: ["native-entry-1"] }
+      : { type: "thinking", ts: "2026-10-03T00:00:00Z", text: "Native evidence", streaming: false, sourceEntryIds: ["native-entry-1"] };
+    const container = render(
+      <TranscriptRunAnnotationBlock block={block} presentation="chat"
+        context={{ sourceRunId: "native-run", sourceAgentId: "native-agent", onAnnotate }}>
+        <span>Native evidence</span>
+      </TranscriptRunAnnotationBlock>,
+    );
+    expect(container.querySelector("[data-run-transcript-annotation-trigger]")).toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(container.querySelector("span")!.firstChild!);
+    Object.defineProperty(range, "getBoundingClientRect", { value: () => new DOMRect(20, 20, 120, 20) });
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    act(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    const addButton = document.querySelector<HTMLButtonElement>("[role='toolbar'] button");
+    expect(addButton?.textContent).toContain("Add to chat");
+    act(() => addButton!.click());
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).not.toBeNull();
+    const file = new File(["proof"], "proof.txt", { type: "text/plain" });
+    const fileInput = document.querySelector<HTMLInputElement>("[data-testid='chat-response-annotation-editor'] input[type='file']")!;
+    Object.defineProperty(fileInput, "files", { value: [file] });
+    act(() => fileInput.dispatchEvent(new Event("change", { bubbles: true })));
+    act(() => Array.from(document.querySelectorAll("[data-testid='chat-response-annotation-editor'] button"))
+      .find(button => button.textContent === "Save")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onAnnotate).toHaveBeenCalledTimes(1);
+    expect(onAnnotate).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRunId: "native-run", sourceAgentId: "native-agent", sourceMemberIds: ["native-entry-1"],
+      blockId: "native-entry-1", anchorKind: "text", text: "Native evidence", pendingFiles: [file], attachmentIds: [],
+    }));
+  });
+
+  it.each(["streaming", "missing IDs", "blank IDs", "missing context"])("fails closed for Chat selection: %s", (reason) => {
+    const onAnnotate = vi.fn();
+    const container = render(<TranscriptRunAnnotationBlock
+      block={{ type: "thinking", ts: "2026-10-03T00:00:00Z", text: "Unsafe evidence",
+        streaming: reason === "streaming", sourceEntryIds: reason === "missing IDs" ? [] : reason === "blank IDs" ? [" "] : ["native-1"] }}
+      presentation="chat" context={reason === "missing context" ? undefined : { sourceRunId: "run", sourceAgentId: "agent", onAnnotate }}>
+      <span>Unsafe evidence</span>
+    </TranscriptRunAnnotationBlock>);
+    const range = document.createRange();
+    range.selectNodeContents(container.querySelector("span")!.firstChild!);
+    Object.defineProperty(range, "getBoundingClientRect", { value: () => new DOMRect(20, 20, 120, 20) });
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    act(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    expect(document.querySelector("[role='toolbar']")).toBeNull();
+    expect(onAnnotate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: "native-only transcript", hasLegacyGenerationMetadata: false },
+    { label: "legacy-compatible transcript", hasLegacyGenerationMetadata: true },
+  ])("uses native IDs through the real Chat timeline without a duplicate page listener ($label)", async ({ hasLegacyGenerationMetadata }) => {
+    const onAnnotate = vi.fn();
+    function ChatSelection() {
+      const draft = useRef("scope");
+      const workspace = useRef<HTMLDivElement>(null);
+      const nativeEntry: TranscriptEntry = { kind: "thinking", ts: "2026-10-03T00:00:00Z", text: "Native timeline evidence", sourceEntryId: "native-thinking" };
+      const entries: TranscriptEntry[] = [hasLegacyGenerationMetadata
+        ? Object.assign(nativeEntry, { generationId: "legacy-generation", generationSeqStart: 1, generationSeqEnd: 1 })
+        : nativeEntry];
+      const message = { id: "message", runId: "native-run", conversationId: "chat", role: "assistant", kind: "message", status: "completed", body: "Final", supersededAt: null } as ChatMessage;
+      const legacy = usePendingChatResponseAnnotationSelection({ rawMessages: [message], loadedTranscriptsByMessageId: {},
+        transcriptByRun: new Map([["native-run", entries]]), selectedConversationId: "chat", draftStorageScopeKey: "scope",
+        activeDraftScopeRef: draft, chatMainWorkspaceRef: workspace });
+      return <div ref={workspace}>
+        <output data-testid="legacy-selection">{legacy.pendingSelection ? "duplicate" : "none"}</output>
+        <RunTranscriptView entries={entries} annotationSource={{ sourceConversationId: "chat", sourceMessageId: "message" }}
+          presentation="chat" runAnnotationContext={{ sourceRunId: "native-run", sourceAgentId: "native-agent", onAnnotate }} />
+      </div>;
+    }
+    const container = render(<ThemeProvider><ChatSelection /></ThemeProvider>);
+    const root = container.querySelector<HTMLElement>('[data-run-transcript-selection-owner="true"]')!;
+    expect(root).not.toBeNull();
+    const text = Array.from(root.querySelectorAll("p")).find(p => p.textContent === "Native timeline evidence")!;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    Object.defineProperty(range, "getBoundingClientRect", { value: () => new DOMRect(20, 20, 120, 20) });
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    act(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    expect(document.querySelectorAll("[role='toolbar']")).toHaveLength(1);
+    expect(container.querySelector('[data-testid="legacy-selection"]')?.textContent).toBe("none");
+    act(() => document.querySelector<HTMLButtonElement>("[role='toolbar'] button")!.click());
+    const cancel = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-testid='chat-response-annotation-editor'] button"))
+      .find(button => button.textContent === "Cancel")!;
+    act(() => cancel.click());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).toBeNull();
+    expect(document.querySelectorAll("[role='toolbar']")).toHaveLength(0);
+    expect(container.querySelector('[data-testid="legacy-selection"]')?.textContent).toBe("none");
+    expect(onAnnotate).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(root);
   });
 
   it("waits for the selection toolbar action before creating a text annotation", () => {

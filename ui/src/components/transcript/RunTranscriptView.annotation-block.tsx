@@ -88,14 +88,18 @@ export function TranscriptRunAnnotationBlock({
   const blockId = transcriptBlockIdentity(block);
   const itemInteractionId = interactionId ?? blockId;
   const annotationText = transcriptBlockAnnotationText(block);
-  const canAnnotate = presentation === "detail"
+  const isTextBlock = (block.type === "message" && block.role === "assistant") || block.type === "thinking";
+  const canAnnotate = (presentation === "detail" || (presentation === "chat" && isTextBlock))
     && !streaming
     && stable
     && Boolean(context)
+    && Boolean(context?.sourceRunId.trim())
+    && Boolean(context?.sourceAgentId.trim())
     && (block.sourceEntryIds?.length ?? 0) > 0
+    && block.sourceEntryIds!.every(id => Boolean(id.trim()))
     && Boolean(annotationText.trim());
   const canSelectText = canAnnotate
-    && ((block.type === "message" && block.role === "assistant") || block.type === "thinking");
+    && isTextBlock;
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const blockRootRef = useRef<HTMLDivElement | null>(null);
   const getAnnotationBoundaryRect = useCallback(() => (
@@ -120,15 +124,16 @@ export function TranscriptRunAnnotationBlock({
   } | null>(null);
   const beginAnnotation = (
     text: string,
-    anchor: HTMLButtonElement,
+    anchor: HTMLButtonElement | null,
     anchorKind: "text" | "transition",
     anchorRect?: DOMRect,
     autoFocus = true,
   ) => {
-    if (!context) return;
+    if (!context || !canAnnotate) return;
     const normalizedText = text.trim();
     if (!normalizedText) return;
-    const rect = anchorRect ?? anchor.getBoundingClientRect();
+    const rect = anchorRect ?? anchor?.getBoundingClientRect();
+    if (!rect) return;
     if (rect.width <= 0 || rect.height <= 0) return;
     setPendingAnnotation({
       annotation: {
@@ -160,7 +165,7 @@ export function TranscriptRunAnnotationBlock({
     }
     const updateSelection = (event: Event) => {
       const eventTarget = event.target instanceof Element ? event.target : null;
-      if (eventTarget?.closest('[role="toolbar"][aria-label="Response annotation actions"]')) return;
+      if (eventTarget?.closest('[role="toolbar"][aria-label="Response annotation actions"], [data-testid="chat-response-annotation-editor"]')) return;
       const root = blockRootRef.current;
       const selection = window.getSelection();
       if (!root || !selection || selection.rangeCount !== 1 || selection.isCollapsed) {
@@ -204,10 +209,18 @@ export function TranscriptRunAnnotationBlock({
     }
   }, [canAnnotate, context?.activeBlockId, itemInteractionId]);
 
+  // A reused row must never submit a draft belonging to a previous Run or
+  // changed source window, even if its visible text happens to be identical.
+  const sourceIdentity = JSON.stringify([context?.sourceRunId, context?.sourceAgentId, blockId, block.sourceEntryIds, annotationText]);
+  useEffect(() => {
+    setPendingAnnotation(null);
+    setPendingSelection(null);
+  }, [sourceIdentity]);
+
   if (!context) return children;
 
   const commitPendingSelection = () => {
-    if (!pendingSelection || !triggerRef.current) return;
+    if (!pendingSelection || !canSelectText) return;
     beginAnnotation(
       pendingSelection.text,
       triggerRef.current,
@@ -223,7 +236,7 @@ export function TranscriptRunAnnotationBlock({
     pendingFiles,
     attachmentIds,
   }: ResponseAnnotationEditorChanges) => {
-    if (!pendingAnnotation) return;
+    if (!pendingAnnotation || !canAnnotate) return;
     const annotation = pendingAnnotation.annotation;
     context.onAnnotate({
       sourceRunId: context.sourceRunId,
@@ -251,12 +264,14 @@ export function TranscriptRunAnnotationBlock({
       data-run-transcript-block-type={block.type}
       data-run-transcript-block-ts={block.ts}
       data-run-transcript-block-stable={stable ? "true" : undefined}
-      className={cn("group/run-transcript-block relative", canAnnotate && "pr-8")}
+      data-run-transcript-selection-owner={canSelectText && presentation === "chat" ? "true" : undefined}
+      tabIndex={canSelectText && presentation === "chat" ? -1 : undefined}
+      className={cn("group/run-transcript-block relative", canAnnotate && presentation === "detail" && "pr-8")}
       onFocusCapture={() => context.onAnnotationFocus?.(itemInteractionId)}
       onMouseEnter={() => context.onAnnotationFocus?.(itemInteractionId)}
     >
       {children}
-      {canAnnotate ? (
+      {canAnnotate && presentation === "detail" ? (
         <button
           ref={triggerRef}
           type="button"
@@ -305,7 +320,7 @@ export function TranscriptRunAnnotationBlock({
           )}
           boundaryRect={getAnnotationBoundaryRect()}
           getBoundaryRect={getAnnotationBoundaryRect}
-          returnFocusRef={triggerRef}
+          returnFocusRef={presentation === "chat" ? blockRootRef : triggerRef}
           autoFocus={pendingAnnotation.autoFocus}
           showSelectedTextContext
           onSave={finishAnnotation}

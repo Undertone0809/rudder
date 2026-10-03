@@ -74,6 +74,14 @@ export function usePendingChatResponseAnnotationSelection(input: {
       const endElement = range.endContainer instanceof Element
         ? range.endContainer
         : range.endContainer.parentElement;
+      // Stable Run Reader blocks own their selection/editor, including when
+      // their text also carries legacy generation provenance. Do not open a
+      // second page-level process editor for the same selection.
+      if (startElement?.closest('[data-run-transcript-selection-owner="true"]')
+        || endElement?.closest('[data-run-transcript-selection-owner="true"]')) {
+        setPendingSelection(null);
+        return;
+      }
       const sourceRoot = startElement?.closest<HTMLElement>(
         `[${CHAT_ANNOTATION_SOURCE_ATTRIBUTE}]`,
       ) ?? null;
