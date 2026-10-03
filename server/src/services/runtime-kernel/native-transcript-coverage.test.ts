@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { type CodexMixedCoverageInput, proveCodexMixedSupplementCoverage } from "./native-transcript-coverage.js";
+import {
+  buildCodexByteTimeline,
+  type CodexMixedCoverageInput,
+  proveCodexMixedSupplementCoverage,
+  reconstructCodexByteTimeline,
+} from "./native-transcript-coverage.js";
 
 const sha = (v: Uint8Array) => createHash("sha256").update(v).digest("hex");
 const ts = "2026-01-01T00:00:00.000Z";
@@ -149,5 +154,123 @@ describe("Codex mixed supplement coverage: classification, never deletion", () =
     if (!result.ok) return;
     expect(Buffer.from(result.residualBytes)).toEqual(Buffer.from(input.supplement.bytes));
     expect(result.residualSha256).toBe(input.supplement.sha256);
+  });
+});
+
+describe("reversible byte-exact Codex timeline, no cleanup authority", () => {
+  function reconstruct(input: CodexMixedCoverageInput, timeline: Parameters<typeof reconstructCodexByteTimeline>[0]["timeline"]) {
+    return reconstructCodexByteTimeline({ expected: input.expected, native: input.native,
+      expectedObject: { objectRef: input.supplement.objectRef, sha256: input.supplement.sha256 }, timeline });
+  }
+  it.each([61, 78] as const)("reconstructs every original byte of synthetic %i mixed rows", (shape) => {
+    const input = fixture(shape);
+    edit(input, (rows) => { rows[32].ts = "2026-01-01T00:00:01.123Z"; rows[44].ts = "2026-01-01T00:00:02.456Z"; });
+    const result = buildCodexByteTimeline(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.reconstructedSha256).toBe(input.supplement.sha256);
+    const read = reconstruct(input, result.timeline);
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(Buffer.from(read.bytes)).toEqual(Buffer.from(input.supplement.bytes));
+    expect(result.sizes.totalBytes).toBe(result.sizes.residualBytes + result.sizes.referenceBytes);
+    expect(result.sizes.savedBytes).toBe(result.sizes.originalBytes - result.sizes.totalBytes);
+    const { residualBytes: _residual, ...metadata } = result.timeline;
+    const serialized = JSON.stringify(metadata);
+    expect(result.sizes.referenceBytes).toBe(Buffer.byteLength(serialized, "utf8"));
+    const reopened = reconstruct(input, { ...JSON.parse(serialized), residualBytes: Uint8Array.from(result.timeline.residualBytes) });
+    expect(reopened.ok).toBe(true);
+    if (reopened.ok) expect(Buffer.from(reopened.bytes)).toEqual(Buffer.from(input.supplement.bytes));
+    expect(result.authorizesOldObjectDelete).toBe(false);
+    expect(read.authorizesOldObjectDelete).toBe(false);
+    const residual = Buffer.from(result.timeline.residualBytes).toString();
+    expect(residual).toContain("2026-01-01T00:00:01.123Z");
+    expect(residual).toContain("2026-01-01T00:00:02.456Z");
+    expect(residual).toContain("diagnostic-26");
+    expect(residual).toContain('"status":"inProgress"');
+  });
+
+  it.each(["canonical", "noncanonical"])("preserves BOM, reordered keys, CRLF and %s Unicode encoding", (encoding) => {
+    const input = fixture();
+    const rows = Buffer.from(input.supplement.bytes).toString().trimEnd().split("\n").map((line) => JSON.parse(line));
+    let text = "\ufeff" + rows.map((row) => JSON.stringify({ entry: row.entry, version: row.version }) + " \t").join("\r\n") + "\r\n";
+    if (encoding === "noncanonical") text = text.replaceAll("界", "\\u754c");
+    input.supplement.bytes = Buffer.from(text);
+    input.supplement.sha256 = sha(input.supplement.bytes);
+    const result = buildCodexByteTimeline(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const read = reconstruct(input, result.timeline);
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(Buffer.from(read.bytes)).toEqual(Buffer.from(input.supplement.bytes));
+    if (encoding === "noncanonical") expect(Buffer.from(result.timeline.residualBytes).toString()).toContain("\\u754c");
+  });
+
+  it("preserves chunks splitting a surrogate pair and JSON escapes", () => {
+    const input = fixture();
+    edit(input, (rows) => {
+      rows[31].text = "\ud83c";
+      rows[32].text = "\udf0d\n\"\\";
+      input.native.entries[2].text = rows.filter((row) => row.kind === "assistant" && row.phase === "commentary").map((row) => row.text).join("");
+    });
+    const result = buildCodexByteTimeline(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const read = reconstruct(input, result.timeline);
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(Buffer.from(read.bytes)).toEqual(Buffer.from(input.supplement.bytes));
+  });
+
+  it("counts all reference overhead and saves bytes for a large synthetic tool result", () => {
+    const input = fixture();
+    const content = "synthetic-safe-result界🌍".repeat(1000);
+    edit(input, (rows) => { rows[44].content = content; });
+    input.native.entries[4].content = content;
+    const result = buildCodexByteTimeline(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.sizes.savedBytes).toBeGreaterThan(0);
+    expect(result.reconstructedSha256).toBe(input.supplement.sha256);
+    expect(result.authorizesOldObjectDelete).toBe(false);
+  });
+
+  it("does not claim savings for tiny native fields", () => {
+    const result = buildCodexByteTimeline(fixture());
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.sizes.savedBytes).toBeLessThan(0);
+  });
+
+  it("rejects duplicate JSON keys instead of dropping the hidden original value", () => {
+    const input = fixture();
+    input.supplement.bytes = Buffer.from(Buffer.from(input.supplement.bytes).toString().replace('"text":"diagnostic-0"', '"text":"hidden","text":"diagnostic-0"'));
+    input.supplement.sha256 = sha(input.supplement.bytes);
+    expect(buildCodexByteTimeline(input)).toMatchObject({ ok: false, reason: "timeline_malformed_or_ambiguous", authorizesOldObjectDelete: false });
+  });
+
+  it("rejects unknown reasoning rather than filtering it", () => {
+    const input = fixture();
+    edit(input, (rows) => { rows[29].kind = "reasoning"; });
+    expect(buildCodexByteTimeline(input)).toMatchObject({ ok: false, reason: "unknown_entry_or_scope", authorizesOldObjectDelete: false });
+  });
+
+  const mutations: Array<[string, (input: CodexMixedCoverageInput, t: Parameters<typeof reconstructCodexByteTimeline>[0]["timeline"]) => void]> = [
+    ["residual byte corruption", (_input, t) => { t.residualBytes[0] ^= 1; }],
+    ["residual corruption with updated residual digest", (_input, t) => { t.residualBytes[0] ^= 1; t.residualSha256 = sha(t.residualBytes); }],
+    ["residual reorder", (_input, t) => { t.pieces.reverse(); }],
+    ["wrong slice", (_input, t) => { const p = t.pieces.find((p) => p[0] === 1); if (p?.[0] === 1) p[3] += 1; }],
+    ["unknown piece", (_input, t) => { Object.assign(t.pieces[0], { 0: 9 }); }],
+    ["source ID drift", (_input, t) => { t.references[0].sourceEntryId = "missing"; }],
+    ["ambiguous ref", (_input, t) => { t.references.push(t.references[0]); }],
+    ["scope drift", (input) => { input.native.identity.runId = "other"; }],
+    ["revision drift", (input) => { input.native.revisionAfter = "other"; }],
+    ["content drift under same revision", (input) => { input.native.entries[2].text = "other"; }],
+    ["original digest change", (input) => { input.supplement.sha256 = "other"; }],
+  ];
+  it.each(mutations)("fails closed on %s", (_name, mutate) => {
+    const input = fixture();
+    const result = buildCodexByteTimeline(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    mutate(input, result.timeline);
+    expect(reconstruct(input, result.timeline)).toMatchObject({ ok: false, authorizesOldObjectDelete: false });
   });
 });
