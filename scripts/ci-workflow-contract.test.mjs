@@ -39,6 +39,7 @@ test("keeps the full graph behind planner outputs and affected checks separate",
   assert.match(architecture, /needs\.plan\.outputs\.comparison_sha/);
   assert.doesNotMatch(architecture, /HEAD\^2/);
   assert.match(verify, /RUDDER_NATIVE_ARCHIVE_PATH=.*desktop\/\.packaged\/native\/x86_64-unknown-linux-gnu\/rudder-native/);
+  assert.match(verify, /RUDDER_NATIVE_PROCESS_HOST_PATH=.*desktop\/\.packaged\/native\/x86_64-unknown-linux-gnu\/rudder-process-host/);
   assert.match(native, /name: Verify migration manifest differential parity/);
   assert.match(native, /if: matrix\.target == 'x86_64-unknown-linux-gnu'/);
   assert.match(native, /env -u DATABASE_URL pnpm verify:migration-manifest-differential/);
