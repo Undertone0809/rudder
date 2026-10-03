@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,6 +12,7 @@ import {
   createDb,
   heartbeatRuns,
 } from "../../packages/db/src/index.ts";
+import type { ChatMessage } from "../../packages/shared/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import {
   E2E_CODEX_APP_SERVER_STUB,
@@ -2276,6 +2277,61 @@ test.describe("Chat response annotations", () => {
       runtimeCommand: join(E2E_ROOT, "fixtures", "codex-native-session.mjs"),
       runtimeReplyBody: "Streaming reply for chat.",
     });
+    const streamPath = `/api/chats/${seeded.conversationId}/messages/stream`;
+    const waitForTurnResponse = (body: string, editUserMessageId: string) => page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && new URL(response.url()).pathname === streamPath
+      && response.request().postDataJSON()?.body === body
+      && response.request().postDataJSON()?.editUserMessageId === editUserMessageId
+    ));
+    async function completedPublicTurn(response: Response, body: string): Promise<{ user: ChatMessage; assistant: ChatMessage }> {
+      expect(response.status()).toBe(201);
+      const events = (await response.text()).trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+        type: string; generationId?: string; userMessage?: ChatMessage;
+      }>;
+      expect(events.filter((event) => event.type === "error")).toEqual([]);
+      expect(events.filter((event) => event.type === "ack")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "final")).toHaveLength(1);
+      const ack = events.find((event) => event.type === "ack")!;
+      expect(ack.generationId).toEqual(expect.any(String));
+      expect(ack.userMessage).toMatchObject({
+        orgId: seeded.organization.id, conversationId: seeded.conversationId, role: "user", body,
+      });
+      let completed: { user: ChatMessage; assistant: ChatMessage } | null = null;
+      await expect.poll(async () => {
+        const messagesResponse = await page.request.get(`/api/chats/${seeded.conversationId}/messages`);
+        expect(messagesResponse.ok(), await messagesResponse.text()).toBe(true);
+        const messages = await messagesResponse.json() as ChatMessage[];
+        const user = messages.find((message) => message.id === ack.userMessage!.id && message.body === body);
+        const assistant = user && messages.find((message) => (
+          message.role === "assistant" && message.status === "completed"
+          && message.body === "Streaming reply for chat."
+          && message.chatTurnId === user.chatTurnId && message.turnVariant === user.turnVariant
+          && message.generationId === ack.generationId && message.runId
+        ));
+        if (!user || !assistant) return false;
+        const [generation] = await e2eDb.select().from(chatGenerations).where(and(
+          eq(chatGenerations.orgId, seeded.organization.id),
+          eq(chatGenerations.conversationId, seeded.conversationId),
+          eq(chatGenerations.id, ack.generationId!),
+        ));
+        const [run] = await e2eDb.select().from(heartbeatRuns).where(and(
+          eq(heartbeatRuns.orgId, seeded.organization.id),
+          eq(heartbeatRuns.chatConversationId, seeded.conversationId),
+          eq(heartbeatRuns.id, assistant.runId!),
+        ));
+        const queueResponse = await page.request.get(`/api/chats/${seeded.conversationId}/queue`);
+        expect(queueResponse.ok(), await queueResponse.text()).toBe(true);
+        const queue = await queueResponse.json() as { activeGenerationId: string | null };
+        if (generation?.status !== "completed" || !generation.runtimeTerminalAt || !generation.completedAt
+          || run?.status !== "succeeded" || !run.finishedAt || run.terminalEffectsPending
+          || queue.activeGenerationId !== null) return false;
+        completed = { user, assistant };
+        return true;
+      }, { timeout: 20_000 }).toBe(true);
+      await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0);
+      return completed!;
+    }
     const finalSource = annotationSource(page, {
       messageId: seeded.assistantMessageId,
       surface: "assistant_body",
@@ -2347,7 +2403,9 @@ test.describe("Chat response annotations", () => {
     );
     await expect(failedReply.getByRole("button", { name: "Retry" }))
       .toBeVisible({ timeout: 15_000 });
+    const retryResponse = waitForTurnResponse("Original annotated edit body", originalAnnotatedMessage!.id);
     await failedReply.getByRole("button", { name: "Retry" }).click();
+    const retry = await completedPublicTurn(await retryResponse, "Original annotated edit body");
 
     const retriedTurn = page
       .getByTestId("chat-user-message-turn")
@@ -2371,7 +2429,15 @@ test.describe("Chat response annotations", () => {
     await inlineEditor
       .locator(".rudder-mdxeditor-content")
       .fill("Edited annotated edit body");
+    const editResponse = waitForTurnResponse("Edited annotated edit body", retry.user.id);
     await inlineEditor.getByRole("button", { name: "Send" }).click();
+    const edited = await completedPublicTurn(await editResponse, "Edited annotated edit body");
+    expect(edited.user.id).not.toBe(retry.user.id);
+    expect(edited.user.chatTurnId).toBe(retry.user.chatTurnId);
+    expect(edited.user.turnVariant).toBe(retry.user.turnVariant + 1);
+    expect(edited.assistant.id).not.toBe(retry.assistant.id);
+    expect(edited.assistant.generationId).not.toBe(retry.assistant.generationId);
+    await expect(inlineEditor).toHaveCount(0);
 
     const editedTurn = page
       .getByTestId("chat-user-message-turn")
@@ -2386,10 +2452,10 @@ test.describe("Chat response annotations", () => {
     await expect(editedCard.getByText("edit-fork-annotation.txt")).toBeVisible();
     await page.keyboard.press("Escape");
 
-    const branchAssistant = page
-      .getByTestId("chat-assistant-message")
-      .filter({ hasText: "Streaming reply for chat." })
-      .last();
+    const branchAssistant = page.locator(
+      `[data-testid="chat-assistant-message"][data-message-id="${edited.assistant.id}"]`,
+    );
+    await expect(branchAssistant).toContainText("Streaming reply for chat.");
     await expect(branchAssistant).toBeVisible({ timeout: 20_000 });
     await branchAssistant.hover();
     const forkResponsePromise = page.waitForResponse((response) => (
@@ -2400,6 +2466,7 @@ test.describe("Chat response annotations", () => {
     await branchAssistant.getByRole("button", { name: "More message actions" }).filter({ visible: true }).click();
     await page.getByTestId("chat-fork-more-action").click();
     const forkResponse = await forkResponsePromise;
+    expect(forkResponse.request().postDataJSON()).toMatchObject({ sourceMessageId: edited.assistant.id });
     expect(forkResponse.ok(), await forkResponse.text()).toBe(true);
     const forkedConversation = await forkResponse.json() as { id: string };
     await expect(page).toHaveURL(
