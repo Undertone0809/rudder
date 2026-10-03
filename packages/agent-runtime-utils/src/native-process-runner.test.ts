@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { access, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -13,7 +13,11 @@ const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].inclu
   || (process.platform === "linux" && process.arch === "x64");
 const nativeOnly = it.skipIf(!nativeHostPath || !supportedTarget);
 
-function terminalHost(terminal: Record<string, unknown>, exitCode: number | null = 0) {
+function terminalHost(
+  terminal: Record<string, unknown>,
+  appExit: Record<string, unknown> | null = { code: 0, signal: null },
+  duplicateAt?: "before" | "after",
+) {
   const stdin = new PassThrough();
   const lifecycle = new PassThrough();
   const stdout = new PassThrough();
@@ -33,8 +37,10 @@ function terminalHost(terminal: Record<string, unknown>, exitCode: number | null
     frame({ type: "accepted", outputTransport: "raw" });
     frame({ type: "spawned", pid: 12345 });
     stdout.write("startup-output");
-    frame({ type: "app-exit", code: exitCode, signal: null });
+    if (appExit) frame({ type: "app-exit", ...appExit });
+    if (duplicateAt === "before") frame({ type: "app-exit", ...appExit });
     frame({ type: "terminal", cleanupProven: true, receiptWritten: true, ...terminal });
+    if (duplicateAt === "after") frame({ type: "app-exit", ...appExit });
     lifecycle.end();
     host.emit("close", 0, null);
     setImmediate(() => { stdout.end(); stderr.end("startup-diagnostic"); });
@@ -50,7 +56,7 @@ describe("Rust Agent Run process host", () => {
   it.each([0, 23, null])("rejects trusted failed terminal despite app exit %s without fallback, retaining drained diagnostics", async (exitCode) => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-terminal-failed-"));
     const errorCode = exitCode === null ? "child_wait_failed" : "stdin_write_failed";
-    const host = terminalHost({ status: "failed", errorCode }, exitCode);
+    const host = terminalHost({ status: "failed", errorCode }, { code: exitCode, signal: null });
     const logs: string[] = [];
     const controller = new AbortController();
     const error = await runNativeChildProcessOrFallback("terminal-failed", process.execPath, [], {
@@ -67,6 +73,66 @@ describe("Rust Agent Run process host", () => {
       processResult: { exitCode, signal: null, stdout: "startup-output", stderr: "startup-diagnostic", timedOut: false },
     });
     expect(logs.join("")).toContain("startup-diagnostic");
+  });
+
+  it.each([
+    { appExit: { code: 7, signal: null }, exitCode: 7, signal: null },
+    { appExit: { code: null, signal: "SIGTERM" }, exitCode: null, signal: "SIGTERM" },
+  ])("returns a trusted child_exit result for app exit $appExit", async ({ appExit, exitCode, signal }) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-child-exit-result-"));
+    const host = terminalHost({ status: "failed", errorCode: "child_exit" }, appExit);
+    const logs: string[] = [];
+    const result = await runNativeChildProcessOrFallback("child-exit-result", process.execPath, [], {
+      RUDDER_NATIVE_MODE: "auto",
+    }, {
+      cwd: root, timeoutSec: 10, graceSec: 1, binaryPath: "fake-process-host",
+      runtimeRoot: path.join(root, "receipts"), spawnHost: () => host,
+      onLog: async (_stream, data) => { logs.push(data); }, onLogError: () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode, signal, timedOut: false, stdout: "startup-output", stderr: "startup-diagnostic",
+      diagnostic: { effectiveEngine: "rust", fallbackCode: null },
+    });
+    expect(logs.join("")).toContain("startup-diagnostic");
+  });
+
+  it.each([
+    { name: "zero exit", appExit: { code: 0, signal: null } },
+    { name: "missing app-exit frame", appExit: null },
+    { name: "missing exit code", appExit: { signal: null } },
+    { name: "malformed exit code", appExit: { code: "7", signal: null } },
+    { name: "malformed signal", appExit: { code: null, signal: 15 } },
+    { name: "unsupported signal", appExit: { code: null, signal: "SIGUSR1" } },
+  ])("fails closed for child_exit with $name evidence", async ({ appExit }) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-child-exit-invalid-"));
+    const host = terminalHost({ status: "failed", errorCode: "child_exit" }, appExit);
+    const error = await runNativeChildProcessOrFallback("child-exit-invalid", process.execPath, [], {
+      RUDDER_NATIVE_MODE: "auto",
+    }, {
+      cwd: root, timeoutSec: 10, graceSec: 1, binaryPath: "fake-process-host",
+      runtimeRoot: path.join(root, "receipts"), spawnHost: () => host,
+      onLog: async () => {}, onLogError: () => {},
+    }).then(() => null, (error: unknown) => error);
+
+    expect(error).toBeInstanceOf(NativeProcessUnavailableError);
+    expect(error).toMatchObject({ accepted: true, fallbackCode: "child_exit_result_unverified" });
+  });
+
+  it.each(["before", "after"] as const)("rejects duplicate app exit %s terminal without fallback", async (duplicateAt) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-duplicate-exit-"));
+    try {
+      const host = terminalHost({ status: "failed", errorCode: "child_exit" }, { code: 7, signal: null }, duplicateAt);
+      await expect(runNativeChildProcessOrFallback("duplicate-exit", process.execPath, [], {
+        RUDDER_NATIVE_MODE: "auto",
+      }, {
+        cwd: root, timeoutSec: 10, graceSec: 1, binaryPath: "fake-process-host",
+        runtimeRoot: path.join(root, "receipts"), spawnHost: () => host,
+        onLog: async () => {}, onLogError: () => {},
+      })).rejects.toMatchObject({ accepted: true, fallbackCode: "child_exit_result_unverified" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it.each([undefined, "cancelled", "unknown"])("fails closed for unsupported trusted terminal status %s", async (status) => {
@@ -103,6 +169,31 @@ describe("Rust Agent Run process host", () => {
       binaryPath: path.join(os.tmpdir(), "missing-rudder-process-host"),
     });
     expect(result).toBeNull();
+  });
+
+  nativeOnly("returns nonzero provider output after real Rust host cleanup", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-provider-nonzero-"));
+    const runtimeRoot = path.join(root, "receipts");
+    try {
+      const result = await runNativeChildProcessOrFallback("provider-nonzero", process.execPath, [
+        "-e", "process.stdout.write('provider-output'); process.stderr.write('provider-diagnostic'); process.exitCode=7",
+      ], { RUDDER_NATIVE_MODE: "required", PATH: process.env.PATH ?? "" }, {
+        cwd: root, timeoutSec: 10, graceSec: 1, binaryPath: nativeHostPath!, runtimeRoot,
+        onLog: async () => {}, onLogError: () => {},
+      });
+      expect(result).toMatchObject({
+        exitCode: 7, signal: null, stdout: "provider-output", stderr: "provider-diagnostic",
+        diagnostic: { effectiveEngine: "rust", fallbackCode: null },
+      });
+      const operations = await import("node:fs/promises").then((fs) => fs.readdir(runtimeRoot));
+      expect(operations).toHaveLength(1);
+      const receipt = JSON.parse(await readFile(path.join(runtimeRoot, operations[0]!, "terminal-receipt.json"), "utf8"));
+      expect(receipt.terminal).toMatchObject({
+        status: "failed", errorCode: "child_exit", cleanupProven: true, receiptWritten: true,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   nativeOnly("preserves the bounded rejection code before ownership acceptance", async () => {
