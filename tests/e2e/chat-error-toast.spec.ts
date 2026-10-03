@@ -339,6 +339,7 @@ test.describe("Chat error recovery", () => {
   });
 
   test("refreshes a completed assistant answer as another turn variant", async ({ page }) => {
+    test.setTimeout(120_000);
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Refresh-Chat-${Date.now()}`,
@@ -366,7 +367,10 @@ test.describe("Chat error recovery", () => {
     const firstAssistantMessage = page.getByTestId("chat-assistant-message").filter({
       hasText: "Streaming reply for chat.",
     });
-    await expect(firstAssistantMessage).toBeVisible({ timeout: 15_000 });
+    // This fixture starts a CLI process and deliberately waits ten seconds
+    // between its first chunk and final reply; include startup in the bound.
+    await expect(firstAssistantMessage).toBeVisible({ timeout: 45_000 });
+    await expect(firstAssistantMessage.getByRole("button", { name: "Refresh answer" })).toBeVisible({ timeout: 15_000 });
 
     await firstAssistantMessage.getByRole("button", { name: "Refresh answer" }).click();
 
@@ -375,7 +379,7 @@ test.describe("Chat error recovery", () => {
     await expect(page.getByText("Refresh this final answer").first()).toBeVisible();
     await expect(page.getByTestId("chat-assistant-message").filter({
       hasText: "Streaming reply for chat.",
-    })).toBeVisible({ timeout: 15_000 });
+    })).toBeVisible({ timeout: 45_000 });
 
     await page.getByRole("button", { name: "Previous branch" }).click();
     await expect(page.getByText("1/2")).toBeVisible();
