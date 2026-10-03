@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { resolveRudderNativeTarget } from "@rudderhq/shared";
 import type { MigrationState } from "@rudderhq/db";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -15,6 +19,11 @@ import {
   type MigrationPreflightReport,
   type MigrationPreflightSpawn,
 } from "./migration-preflight.js";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, existsSync: vi.fn(actual.existsSync) };
+});
 
 const databaseUrl = "postgres://rudder:secret@127.0.0.1:5432/rudder";
 const source = {
@@ -417,6 +426,22 @@ describe("migration preflight adapter", () => {
       { binaryPath: "/tmp/migration-preflight", spawnProcess },
     )).rejects.toMatchObject({ classification: "configuration", code: "database_url_protocol_unsupported" });
     expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("resolves the installed server resource before development artifacts without an override", () => {
+    const target = resolveRudderNativeTarget();
+    expect(target).not.toBeNull();
+    const binary = process.platform === "win32" ? "migration-preflight.exe" : "migration-preflight";
+    const expected = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../resources/native", target!, binary);
+    const mock = vi.mocked(existsSync);
+    const original = mock.getMockImplementation();
+    try {
+      mock.mockImplementation(() => true);
+      expect(resolveMigrationPreflightBinary({})).toBe(expected);
+      expect(mock).toHaveBeenCalledWith(expected);
+    } finally {
+      mock.mockImplementation(original!);
+    }
   });
 
   it("resolves an explicit native binary path without probing fallback paths", () => {

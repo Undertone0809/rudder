@@ -634,11 +634,14 @@ jobs:
           set -euo pipefail
           cargo build --manifest-path native/Cargo.toml --release \
             --target "$SERVER_FOUNDATION_TARGET" \
-            -p rudder-server-foundation --bin rudder-server-foundation
+            -p rudder-server-foundation --bin rudder-server-foundation \
+            -p rudder-migration-service --bin migration-preflight
           artifact_dir="dist/server-foundation-artifacts/$SERVER_FOUNDATION_TARGET"
           mkdir -p "$artifact_dir"
           cp "native/target/$SERVER_FOUNDATION_TARGET/release/rudder-server-foundation$SERVER_FOUNDATION_EXTENSION" \
             "$artifact_dir/rudder-server-foundation$SERVER_FOUNDATION_EXTENSION"
+          cp "native/target/$SERVER_FOUNDATION_TARGET/release/migration-preflight$SERVER_FOUNDATION_EXTENSION" \
+            "$artifact_dir/migration-preflight$SERVER_FOUNDATION_EXTENSION"
           {
             echo "target=$SERVER_FOUNDATION_TARGET"
             echo "build_mode=$SERVER_FOUNDATION_BUILD_MODE"

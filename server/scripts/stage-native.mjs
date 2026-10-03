@@ -28,6 +28,12 @@ export function foundationBinaryName(target) {
   return `rudder-server-foundation${config.extension}`;
 }
 
+export function migrationPreflightBinaryName(target) {
+  const config = FOUNDATION_TARGETS[target];
+  if (!config) throw new Error(`Unsupported server migration preflight target: ${target}`);
+  return `migration-preflight${config.extension}`;
+}
+
 function inspectBinary(buffer, target) {
   const expected = FOUNDATION_TARGETS[target];
   if (!expected) throw new Error(`Unsupported server foundation target: ${target}`);
@@ -104,7 +110,11 @@ export async function stageFoundationArtifacts({ artifactDir, resourcesDir, targ
     target,
     path.join(artifactDir, target, foundationBinaryName(target)),
   ]));
+  const migrationSources = Object.fromEntries(targets.map((target) => [
+    target, path.join(artifactDir, target, migrationPreflightBinaryName(target)),
+  ]));
   await validateFoundationArtifacts(sources);
+  await validateFoundationArtifacts(migrationSources);
 
   const resourceRoot = path.resolve(resourcesDir);
   const staged = [];
@@ -112,7 +122,9 @@ export async function stageFoundationArtifacts({ artifactDir, resourcesDir, targ
     const sourcePath = sources[target];
     const destinationPath = path.join(resourceRoot, "native", target, foundationBinaryName(target));
     await publishFoundationArtifact(sourcePath, destinationPath, target);
-    staged.push({ target, path: destinationPath });
+    const migrationPreflightPath = path.join(resourceRoot, "native", target, migrationPreflightBinaryName(target));
+    await publishFoundationArtifact(migrationSources[target], migrationPreflightPath, target);
+    staged.push({ target, path: destinationPath, migrationPreflightPath });
   }
   return staged;
 }
@@ -123,11 +135,15 @@ export async function checkPackagedFoundationArtifacts({ resourcesDir, targets =
     target,
     path.join(resourceRoot, "native", target, foundationBinaryName(target)),
   ]));
+  const migrationSources = Object.fromEntries(targets.map((target) => [
+    target, path.join(resourceRoot, "native", target, migrationPreflightBinaryName(target)),
+  ]));
   await validateFoundationArtifacts(sources, { requireExecutable: true });
-  return targets.map((target) => ({ target, path: sources[target] }));
+  await validateFoundationArtifacts(migrationSources, { requireExecutable: true });
+  return targets.map((target) => ({ target, path: sources[target], migrationPreflightPath: migrationSources[target] }));
 }
 
-export function resolveCargoFoundationExecutable(output) {
+export function resolveCargoFoundationExecutable(output, binaryName = "rudder-server-foundation") {
   const executables = [];
   for (const line of output.split(/\r?\n/u)) {
     if (!line) continue;
@@ -139,7 +155,7 @@ export function resolveCargoFoundationExecutable(output) {
     }
     if (
       message.reason === "compiler-artifact"
-      && message.target?.name === "rudder-server-foundation"
+      && message.target?.name === binaryName
       && message.target.kind?.includes("bin")
       && typeof message.executable === "string"
     ) {
@@ -147,7 +163,7 @@ export function resolveCargoFoundationExecutable(output) {
     }
   }
   if (executables.length !== 1) {
-    throw new Error(`Cargo reported ${executables.length} rudder-server-foundation executables; expected exactly one`);
+    throw new Error(`Cargo reported ${executables.length} ${binaryName} executables; expected exactly one`);
   }
   return executables[0];
 }
@@ -167,7 +183,7 @@ function buildCargoFoundation(command, args) {
       if (signal) return reject(new Error(`${command} exited with signal ${signal}`));
       if (code !== 0) return reject(new Error(`${command} exited with code ${code ?? 1}`));
       try {
-        resolve(resolveCargoFoundationExecutable(stdout));
+        resolve(["rudder-server-foundation", "migration-preflight"].map((name) => resolveCargoFoundationExecutable(stdout, name)));
       } catch (error) {
         reject(error);
       }
@@ -231,13 +247,15 @@ async function main() {
   if (cargoBuildTarget && cargoBuildTarget !== target) {
     throw new Error(`Cannot stage ${cargoBuildTarget} as the current host target ${target}`);
   }
-  const cargoArgs = ["build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "-p", "rudder-server-foundation", "--bin", "rudder-server-foundation", "--message-format=json-render-diagnostics"];
+  const cargoArgs = ["build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "-p", "rudder-server-foundation", "--bin", "rudder-server-foundation", "-p", "rudder-migration-service", "--bin", "migration-preflight", "--message-format=json-render-diagnostics"];
   if (release) cargoArgs.push("--release");
-  const sourcePath = await buildCargoFoundation(process.platform === "win32" ? "cargo.exe" : "cargo", cargoArgs);
+  const [sourcePath, migrationSourcePath] = await buildCargoFoundation(process.platform === "win32" ? "cargo.exe" : "cargo", cargoArgs);
   await inspectSource(sourcePath, target);
+  await inspectSource(migrationSourcePath, target);
   const destinationPath = path.join(resourcesDir, "native", target, binaryName);
   await publishFoundationArtifact(sourcePath, destinationPath, target);
-  console.log(`[server:stage-native] staged ${target}/${binaryName}`);
+  await publishFoundationArtifact(migrationSourcePath, path.join(resourcesDir, "native", target, migrationPreflightBinaryName(target)), target);
+  console.log(`[server:stage-native] staged ${target}/${binaryName} and migration-preflight`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
