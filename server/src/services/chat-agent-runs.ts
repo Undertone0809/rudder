@@ -37,10 +37,13 @@ import {
   type NativeSegmentRecord,
   type RuntimeBindingRecord,
 } from "./runtime-kernel/native-session.js";
+import type { CodexMixedCoverageInput, CoverageIdentity } from "./runtime-kernel/native-transcript-coverage.js";
 import {
   cleanSealedNativeTranscriptMirrors,
   markNativeTranscriptRetentionIncomplete,
   proveSealedNativeRunTranscript,
+  selectAndVerifyNativeTranscriptCleanupState,
+  type NativeTranscriptRunProof,
 } from "./runtime-kernel/native-transcript-retention.js";
 import { getTranscriptObjectStore, type TranscriptObjectHandle, type TranscriptObjectStore } from "./runtime-kernel/transcript-object-store.js";
 import type { TranscriptReader } from "./runtime-kernel/transcript-reader.js";
@@ -483,6 +486,60 @@ export function chatAgentRunService(db: Db, options: {
       runId,
       expectedOwner: { spanId, ownerToken: fence.ownerToken, attemptEpoch: fence.attemptEpoch, attemptId },
     });
+  }
+
+  async function writeCodexShadow(proof: NativeTranscriptRunProof) {
+    if (!transcriptObjectStore.writeCodexTimelineShadow) return;
+    for (const span of proof.spans) {
+      if (span.selectorJson.kind !== "codex_turn" || !span.supplementalObjectRef || span.itemCount > 256) continue;
+      try {
+        await db.transaction(async (tx) => {
+          // Same lock ordering as retention, but no cleanup claim or SQL update.
+          // Keep the original attached ref and recovery state authoritative.
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${proof.runId}))`);
+          const prepared = await selectAndVerifyNativeTranscriptCleanupState(tx, proof);
+          if (!prepared) throw new Error("shadow_owner_fence_changed");
+          const retention = prepared.run.contextSnapshot?.nativeTranscriptRetention as { cleanupLease?: { expiresAt?: string } } | undefined;
+          if (retention?.cleanupLease && (!retention.cleanupLease.expiresAt
+            || Date.parse(retention.cleanupLease.expiresAt) > Date.now()
+            || !Number.isFinite(Date.parse(retention.cleanupLease.expiresAt)))) throw new Error("shadow_retention_lease_active");
+          const identity: CoverageIdentity = { orgId: proof.orgId, runId: proof.runId, spanId: span.spanId,
+            attemptId: span.attemptId, attemptEpoch: span.attemptEpoch, ownerToken: span.ownerToken,
+            selector: span.selectorJson as CoverageIdentity["selector"] };
+          const reader = transcriptReaderFor(tx as unknown as Pick<Db, "select">);
+          const snapshot = async (): Promise<CodexMixedCoverageInput["native"]> => {
+            const entries: Record<string, unknown>[] = [];
+            let cursor: string | null = null;
+            for (let pageIndex = 0; pageIndex < 2; pageIndex += 1) {
+              const page = await reader.readRun({ orgId: proof.orgId, runId: proof.runId, spanId: span.spanId,
+                principal: { type: "board", orgId: proof.orgId, authorized: true }, cursor, limit: 200,
+                signal: AbortSignal.timeout(5000) });
+              if (page.source !== "native" || page.availability !== "available" || page.revision !== span.sourceRevision
+                || page.limitReached || page.truncated || (page.completeness !== "complete" && !page.nextCursor)
+                || page.items.some((item) => item.runId !== proof.runId || item.spanId !== span.spanId || !item.entry)) throw new Error("shadow_native_snapshot_incomplete");
+              entries.push(...page.items.map((item) => item.entry as unknown as Record<string, unknown>));
+              if (entries.length > 256) throw new Error("shadow_native_snapshot_bounds");
+              if (!page.nextCursor) {
+                if (entries.length !== span.itemCount) throw new Error("shadow_native_snapshot_count");
+                return { identity, source: "native", availability: "available", completeness: "complete",
+                  revisionBefore: page.revision, revisionAfter: page.revision, entries };
+              }
+              if (page.nextCursor === cursor) throw new Error("shadow_native_cursor_stalled");
+              cursor = page.nextCursor;
+            }
+            throw new Error("shadow_native_snapshot_bounds");
+          };
+          const native = await snapshot();
+          const shadow = await transcriptObjectStore.writeCodexTimelineShadow!({ objectRef: span.supplementalObjectRef!, identity, native,
+            beforePublish: async () => Boolean(await selectAndVerifyNativeTranscriptCleanupState(tx, proof))
+              && stableJson(await snapshot()) === stableJson(native) });
+          if (!shadow.ok) logger.warn({ orgId: proof.orgId, runId: proof.runId, spanId: span.spanId,
+            reason: shadow.reason }, "Codex shadow persist failed; original supplement retained");
+        });
+      } catch {
+        logger.warn({ orgId: proof.orgId, runId: proof.runId, spanId: span.spanId }, "Codex shadow persist refused; original supplement retained");
+      }
+    }
   }
 
   async function createRun(input: {
@@ -1338,6 +1395,7 @@ export function chatAgentRunService(db: Db, options: {
         };
       }
       if (proofResult.ok) {
+        await writeCodexShadow(proofResult.proof);
         const cleanup = await cleanSealedNativeTranscriptMirrors({
           db,
           proof: proofResult.proof,

@@ -1,7 +1,15 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { logger } from "../../middleware/logger.js";
 import { readManifestTranscriptSnapshot } from "../chat-work-manifest.transcript-snapshot.js";
+import type { CodexMixedCoverageInput, CoverageIdentity } from "./native-transcript-coverage.js";
+import { createTranscriptObjectReader, createTranscriptObjectStore } from "./transcript-object-store.js";
 import { createTranscriptReader, decodeTranscriptCursor, encodeTranscriptCursor, type NativeTranscriptReadInput, type TranscriptItem, type TranscriptPage } from "./transcript-reader.js";
 import { databaseBinding, databaseRun, databaseSegment, databaseSpan, mockDatabase } from "./transcript-reader.test-support.js";
+
+vi.mock("../../middleware/logger.js", () => ({ logger: { warn: vi.fn() } }));
 
 const scope = { orgId: "org-1", runId: "run-1", principal: { type: "board" as const, orgId: "org-1", authorized: true } };
 const row = (id: string, ordinal: number, kind = "assistant", sourceEntryId = id) => ({
@@ -38,6 +46,70 @@ async function collect(read: (cursor: string | null, index: number) => Promise<T
   }
   throw new Error("test exceeded bounded pages");
 }
+
+describe("public Reader Codex shadow comparison keeps authoritative sources unchanged", () => {
+  it.each(["valid", "corrupt", "missing-native", "partial-native", "native-throws"])("preserves normal source/fallback for %s", async (mode) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-shadow-reader-"));
+    try {
+      const store = createTranscriptObjectStore(root);
+      const identity: CoverageIdentity = { orgId: "org-1", runId: "run-1", spanId: "span-1", attemptId: "attempt-1",
+        attemptEpoch: 1, ownerToken: "owner-1", selector: { kind: "codex_turn", runId: "run-1", threadId: "thread-1", turnId: "turn-1" } };
+      const ts = "2026-01-01T00:00:00.000Z";
+      const handle = await store.begin(identity);
+      await store.append(handle, [{ kind: "system", ts, text: "reasoning started" },
+        { kind: "assistant", ts, phase: "final_answer", delta: true, segmentId: "msg-1", text: "one" },
+        { kind: "assistant", ts: "2026-01-01T00:00:01.123Z", phase: "final_answer", delta: true, segmentId: "msg-1", text: "two" }]);
+      await store.finalize(handle, { completeness: "partial" });
+      const native: CodexMixedCoverageInput["native"] = { identity, source: "native", availability: "available", completeness: "complete",
+        revisionBefore: "native-r1", revisionAfter: "native-r1", entries: [{ kind: "assistant", ts, phase: "final_answer",
+          segmentId: "msg-1", sourceEntryId: "msg-1", text: "onetwo" }] };
+      expect(await store.writeCodexTimelineShadow!({ objectRef: handle.objectRef, identity, native, beforePublish: async () => true })).toMatchObject({ ok: true });
+      if (mode === "corrupt") await fs.writeFile(path.join(root, "transcript-objects", "codex-timeline-shadows", handle.objectRef, "residual.bin"), "invalid");
+      const run = databaseRun({ status: "succeeded", contextSnapshot: { transcriptSource: "native" } });
+      const span = databaseSpan("span-1", { orgId: "org-1", state: "sealed", attemptId: "attempt-1", ownerToken: "owner-1",
+        attemptEpoch: 1, writerLeaseReleasedAt: new Date(ts), selectorJson: identity.selector, supplementalObjectRef: handle.objectRef });
+      const db = mockDatabase({ run, spans: [span], bindings: [databaseBinding("span-1", { runtimeType: "codex_local", continuity: "native" })],
+        segments: [databaseSegment("span-1", { runtimeType: "codex_local", nativeSessionId: "thread-1" })] });
+      const resolved = vi.fn(async () => {
+        if (mode === "native-throws") throw new Error("synthetic native unavailable");
+        return { entries: mode === "missing-native" ? [] : native.entries, revision: "native-r1",
+          availability: mode === "missing-native" ? "offline" as const : "available" as const,
+          completeness: mode === "partial-native" || mode === "missing-native" ? "partial" as const : "complete" as const };
+      });
+      const objectReader = createTranscriptObjectReader(store);
+      const originalCompare = objectReader.compareCodexTimelineShadow!;
+      const compare = vi.fn(originalCompare);
+      objectReader.compareCodexTimelineShadow = compare;
+      const fallback = vi.spyOn(objectReader, "readRange");
+      const reader = createTranscriptReader(db as never, { nativeReader: { readRange: resolved }, objectReader });
+      if (mode === "native-throws") {
+        await expect(reader.readRun({ ...scope, limit: 200 })).rejects.toThrow("synthetic native unavailable");
+        expect(compare).not.toHaveBeenCalled();
+      } else {
+        const page = await reader.readRun({ ...scope, limit: 200 });
+        if (mode === "valid" || mode === "corrupt") {
+          expect(compare).toHaveBeenCalledOnce();
+          expect(page).toMatchObject({ source: "native", availability: "available", completeness: "complete", nextCursor: null });
+          expect(page.items.map((item) => item.entry?.kind)).toEqual(["assistant"]);
+          expect(page.items[0].entry).toEqual(native.entries[0]);
+          expect(fallback).not.toHaveBeenCalled();
+          expect(await compare.mock.results[0].value).toMatchObject({ ok: mode === "valid", authorizesOldObjectDelete: false });
+          if (mode === "corrupt") expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: "timeline_bounds_or_residual_digest" }), expect.any(String));
+        } else {
+          expect(compare).not.toHaveBeenCalled();
+          expect(fallback).toHaveBeenCalledOnce();
+          expect(page.completeness).toBe("partial");
+          expect(page.source).toBe("native_plus_objects");
+          expect(page.items.some((item) => item.entry?.kind === "system")).toBe(true);
+        }
+      }
+      expect(resolved).toHaveBeenCalledOnce(); // shadow never calls a provider
+      const original = await store.readRange({ ...identity, objectRef: handle.objectRef });
+      expect(original.entries).toHaveLength(3);
+      expect(original.completeness).toBe("partial");
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+});
 
 describe("native pagination with retained supplements", () => {
   it.each(["supplement attached", "supplement replaced", "selector sealed"] as const)("reports retryable source drift before decoding a stale provider cursor when %s", async (change) => {
