@@ -9,6 +9,7 @@ import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.
 import { logger } from "../middleware/logger.js";
 import { redactSensitiveText } from "../redaction.js";
 import { getStorageService, type ContentAddressedStorageService } from "../storage/index.js";
+import { qualifiedCodexGapIdentity } from "./chat-agent-runs.compact.js";
 import { boundedText, compactNativeAdapterInvokePayload, normalizeSourceSpanInput, stableJson, transcriptEventPayload } from "./chat-agent-runs.helpers.js";
 import { retainNativeChatRunResultJson } from "./chat-run-result-retention.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
@@ -21,6 +22,7 @@ import {
   storeRunInstructionSnapshot,
 } from "./run-instruction-snapshots.js";
 import { getRunLogStore } from "./run-log-store.js";
+import type { HeartbeatTranscriptRetentionInput } from "./runtime-kernel/heartbeat-transcript-retention.js";
 import {
   buildHeartbeatAdapterInvokePayload,
   networkWaitBackoffMs,
@@ -163,7 +165,8 @@ export function chatAgentRunService(db: Db, options: {
     return entry?.orgId === orgId ? entry.attempt.submission.state : null;
   }
 
-  async function appendNativeSupplement(run: ChatRunFenceCarrier, entry: TranscriptEntry) {
+  async function appendNativeSupplement(run: ChatRunFenceCarrier, entry: TranscriptEntry,
+    profile?: HeartbeatTranscriptRetentionInput["profileCapability"]) {
     const identity = fenceIdentityFromRun(run);
     if (!identity) throw new Error("Native transcript requires an immutable span owner");
     // A recovery fences the same span with a new owner/epoch. Keep the object
@@ -175,7 +178,9 @@ export function chatAgentRunService(db: Db, options: {
         const current = await immutableFenceForRun(run);
         if (!current) throw new Error("Native transcript span owner is stale");
         const span = await db
-          .select({ supplementalObjectRef: runRuntimeSpans.supplementalObjectRef })
+          .select({ supplementalObjectRef: runRuntimeSpans.supplementalObjectRef,
+            selectorJson: runRuntimeSpans.selectorJson, bindingId: runRuntimeSpans.bindingId, segmentId: runRuntimeSpans.segmentId,
+            attemptId: runRuntimeSpans.attemptId, nativeExecutionRef: runRuntimeSpans.nativeExecutionRef })
           .from(runRuntimeSpans)
           .where(and(
             eq(runRuntimeSpans.orgId, run.orgId),
@@ -200,8 +205,10 @@ export function chatAgentRunService(db: Db, options: {
             ownerToken: identity.ownerToken,
           });
         }
+        const compactIdentity = await qualifiedCodexGapIdentity(db, run, identity, span, profile);
         const handle = await transcriptObjectStore.begin({
           orgId: run.orgId, runId: run.id, spanId: identity.id, ownerToken: identity.ownerToken,
+          compactIdentity,
         });
         // Re-read after allocation so a recovery/service instance that won the
         // attach race is reused rather than overwritten.
@@ -870,13 +877,14 @@ export function chatAgentRunService(db: Db, options: {
   async function appendTranscriptEntry(
     run: ChatRunFenceCarrier,
     entry: TranscriptEntry,
-    options: { persistRaw?: boolean; persistSupplement?: boolean; spanId?: string | null } = {},
+    options: { persistRaw?: boolean; persistSupplement?: boolean; spanId?: string | null;
+      nativeProfileCapability?: HeartbeatTranscriptRetentionInput["profileCapability"] } = {},
   ) {
     if (options.persistRaw === false) {
       // Keep one object supplement only until the profile-bound native range
       // capability has been proven. A capable provider is the sole durable
       // transcript source.
-      if (options.persistSupplement !== false) await appendNativeSupplement(run, entry);
+      if (options.persistSupplement !== false) await appendNativeSupplement(run, entry, options.nativeProfileCapability);
       // Native providers remain the durable transcript source. This event is a
       // live projection only; the payload is intentionally not written to the
       // heartbeat event ledger and is therefore not a second raw transcript.

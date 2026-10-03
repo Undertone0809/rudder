@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CoverageIdentity } from "./native-transcript-coverage.js";
-import type { NativeTranscriptRunProof } from "./native-transcript-retention.js";
+import { cleanSealedNativeTranscriptMirrors, type NativeTranscriptRunProof } from "./native-transcript-retention.js";
 import { persistCodexTimelineShadows } from "./native-transcript-shadow.js";
 import { createTranscriptObjectReader, createTranscriptObjectStore } from "./transcript-object-store.js";
 import { createTranscriptReader } from "./transcript-reader.js";
@@ -66,6 +66,28 @@ async function fixture(root: string) {
 }
 
 describe("callable terminal shadow caller -> persist -> reopen -> public Reader", () => {
+  it("skips compact new objects before DB/native work: no full object plus shadow double write", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-compact-shadow-skip-"));
+    try {
+      const f = await fixture(root);
+      const compact = await f.store.begin({ ...f.identity, compactIdentity: f.identity });
+      await f.store.append(compact, { kind: "assistant", ts: "2026-10-03", text: "synthetic".repeat(2000) });
+      await f.store.finalize(compact, { completeness: "partial" });
+      f.proof.spans[0].supplementalObjectRef = compact.objectRef;
+      f.span.supplementalObjectRef = compact.objectRef;
+      const readerFactory = vi.fn(f.readerFactory);
+      expect(await persistCodexTimelineShadows({ db: f.db as never, proof: f.proof, store: f.store, readerFactory })).toEqual([]);
+      expect(f.db.transaction).not.toHaveBeenCalled(); expect(readerFactory).not.toHaveBeenCalled();
+      expect(await fs.stat(path.join(root, "transcript-objects", "codex-timeline-shadows")).catch(() => null)).toBeNull();
+      expect((await f.store.readRange({ ...f.identity, objectRef: compact.objectRef })).entries).toHaveLength(1);
+      const stage = vi.spyOn(f.store, "stageSealedRemoval");
+      const cleanup = await cleanSealedNativeTranscriptMirrors({ db: f.db as never, proof: f.proof, transcriptObjectStore: f.store,
+        runLogStore: {} as never, readerFactory: f.readerFactory, retainResultJson: value => value ?? {} });
+      expect(cleanup).toMatchObject({ cleaned: false, reason: "supplement_native_coverage_unproven" });
+      expect(stage).not.toHaveBeenCalled();
+      expect((await f.store.readRange({ ...f.identity, objectRef: compact.objectRef })).entries).toHaveLength(1);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
   it("uses the same single-span public revision and normalized entries at BOTH boundaries", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-shadow-caller-"));
     try {

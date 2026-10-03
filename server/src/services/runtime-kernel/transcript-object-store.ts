@@ -9,6 +9,12 @@ import {
   type CodexMixedCoverageInput,
   type CoverageIdentity,
 } from "./native-transcript-coverage.js";
+import {
+  CODEX_GAP_ENCODING,
+  CodexGapDictionary,
+  createCodexGapObjectMetadata,
+  isCodexGapObjectMetadata,
+} from "./transcript-object-compact.js";
 import type {
   NativeTranscriptReadInput,
   NativeTranscriptReadResult,
@@ -41,6 +47,8 @@ export interface TranscriptObjectBeginInput {
   runId: string;
   spanId: string;
   ownerToken: string;
+  /** Host-attested NEW object only. Recovery never upgrades a legacy object. */
+  compactIdentity?: CoverageIdentity | null;
 }
 
 export interface TranscriptObjectResumeInput extends TranscriptObjectBeginInput {
@@ -144,6 +152,7 @@ export interface TranscriptObjectStore {
   withCodexTimelineShadowLock?<T>(objectRef: string, operation: (
     write: (input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }) => Promise<CodexTimelineShadowResult>,
   ) => Promise<T>): Promise<T>;
+  isSelfContainedCompact?(input: TranscriptObjectBeginInput & { objectRef: string }): Promise<boolean>;
   sweepUnreferenced(input?: TranscriptObjectSweepInput): Promise<TranscriptObjectSweepResult>;
 }
 
@@ -186,6 +195,9 @@ type StoredObjectMetadata = {
   bytes: number;
   createdAt: string;
   updatedAt: string;
+  encoding?: typeof CODEX_GAP_ENCODING;
+  compactIdentitySha256?: string;
+  logicalBytes?: number;
 };
 
 type StoredTranscriptLine = {
@@ -582,7 +594,8 @@ function encodeCursor(objectRef: string, offset: number): string {
   return Buffer.from(JSON.stringify({ version: CURSOR_VERSION, objectRef, offset }), "utf8").toString("base64url");
 }
 
-function parseStoredLine(line: string): TranscriptEntry {
+function parseStoredLine(line: string, codec?: CodexGapDictionary, compact = false): TranscriptEntry {
+  if (codec) line = codec.decode(line, MAX_ENTRY_BYTES - 1, compact);
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
@@ -618,6 +631,8 @@ function parseStoredObjectMetadata(value: unknown): StoredObjectMetadata {
     || typeof metadata.updatedAt !== "string" || !Number.isFinite(Date.parse(metadata.updatedAt))) {
     throw new Error("Transcript object metadata is invalid");
   }
+  if (metadata.encoding !== undefined && (!isCodexGapObjectMetadata(metadata)
+    || metadata.logicalBytes > MAX_OBJECT_BYTES)) throw new Error("Transcript object encoding is invalid");
   return metadata as StoredObjectMetadata;
 }
 
@@ -662,7 +677,7 @@ async function withObjectLock<T>(key: string, operation: () => Promise<T>): Prom
   }
 }
 
-async function scanObjectFile(filePath: string): Promise<{ entryCount: number; sha256: string; bytes: number }> {
+async function scanObjectFile(filePath: string, compact = false, codec = new CodexGapDictionary()): Promise<{ entryCount: number; sha256: string; bytes: number }> {
   await assertRegularFile(filePath, "Transcript object not found");
   const stat = await fs.stat(filePath);
   const hash = createHash("sha256");
@@ -671,7 +686,7 @@ async function scanObjectFile(filePath: string): Promise<{ entryCount: number; s
   try {
     for await (const line of readBoundedLines(stream, MAX_ENTRY_BYTES, (chunk) => hash.update(chunk))) {
       if (line.length === 0) continue;
-      parseStoredLine(line);
+      parseStoredLine(line, codec, compact);
       entryCount += 1;
       if (entryCount > MAX_OBJECT_ENTRIES) throw new Error("Transcript object entry limit exceeded");
     }
@@ -705,6 +720,9 @@ function defaultBasePath(): string {
 function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectStore {
   const root = path.resolve(basePath);
   const ownerRecoveryHandles = new WeakSet<object>();
+  // At most 64 * 32KiB cached recovery dictionaries. Commit-bound cache only;
+  // reopen/failed append rebuilds from the authoritative committed payload.
+  const dictionaries = new Map<string, { bytes: number; entries: number; dictionary: Buffer }>();
   // Keep the directory cursor between bounded batches so protected objects cannot starve later refs.
   let sweepDirectory: Awaited<ReturnType<typeof fs.opendir>> | null = null;
   let sweepTail = Promise.resolve();
@@ -890,7 +908,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       estimatedPayloadBytes += estimatedLineBytes;
       preparedEntries.push(value);
     }
-    if (metadata.bytes + estimatedPayloadBytes > MAX_OBJECT_BYTES || metadata.entryCount + entries.length > MAX_OBJECT_ENTRIES) {
+    if ((metadata.logicalBytes ?? metadata.bytes) + estimatedPayloadBytes > MAX_OBJECT_BYTES || metadata.entryCount + entries.length > MAX_OBJECT_ENTRIES) {
       throw badRequest("Transcript object size limit exceeded");
     }
 
@@ -909,12 +927,23 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       payloadBytes += lineBytes;
       storedLines.push(`${line}\n`);
     }
-    if (metadata.bytes + payloadBytes > MAX_OBJECT_BYTES || metadata.entryCount + entries.length > MAX_OBJECT_ENTRIES) {
+    if ((metadata.logicalBytes ?? metadata.bytes) + payloadBytes > MAX_OBJECT_BYTES || metadata.entryCount + entries.length > MAX_OBJECT_ENTRIES) {
       throw badRequest("Transcript object size limit exceeded");
     }
     if (payloadBytes === 0) return;
 
-    const payload = storedLines.join("");
+    let codec: CodexGapDictionary | undefined;
+    if (metadata.encoding === CODEX_GAP_ENCODING) {
+      const cached = dictionaries.get(paths.payloadPath);
+      codec = new CodexGapDictionary(cached?.bytes === metadata.bytes && cached.entries === metadata.entryCount ? cached.dictionary : undefined);
+      if (!cached || cached.bytes !== metadata.bytes || cached.entries !== metadata.entryCount) {
+        const scanned = await scanObjectFile(paths.payloadPath, true, codec);
+        if (scanned.bytes !== metadata.bytes || scanned.entryCount !== metadata.entryCount) throw new Error("Compact committed payload mismatch");
+      }
+    }
+    const logicalAppendBytes = payloadBytes;
+    const payload = codec ? storedLines.map(line => codec!.encode(line.slice(0, -1)) + "\n").join("") : storedLines.join("");
+    payloadBytes = Buffer.byteLength(payload, "utf8");
     const file = await fs.open(paths.payloadPath, "a");
     try {
       await file.writeFile(payload, "utf8");
@@ -926,8 +955,14 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       ...metadata,
       entryCount: metadata.entryCount + entries.length,
       bytes: metadata.bytes + payloadBytes,
+      ...(codec ? { logicalBytes: metadata.logicalBytes! + logicalAppendBytes } : {}),
       updatedAt: new Date().toISOString(),
     } satisfies StoredObjectMetadata);
+    if (codec) {
+      dictionaries.delete(paths.payloadPath);
+      if (dictionaries.size >= 64) dictionaries.delete(dictionaries.keys().next().value!);
+      dictionaries.set(paths.payloadPath, { bytes: metadata.bytes + payloadBytes, entries: metadata.entryCount + entries.length, dictionary: codec.snapshot() });
+    }
   }
 
   return {
@@ -938,6 +973,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         spanId: requiredString(input.spanId, "span"),
         ownerToken: requiredString(input.ownerToken, "owner"),
       };
+      const compactMetadata = createCodexGapObjectMetadata(input.compactIdentity, binding);
       await fs.mkdir(path.resolve(root, OBJECT_ROOT_NAME), { recursive: true, mode: 0o700 });
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const ref = objectRef();
@@ -958,6 +994,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
             bytes: 0,
             createdAt: now,
             updatedAt: now,
+            ...(compactMetadata ?? {}),
           } satisfies StoredObjectMetadata);
           return { store: "local_file", ...binding, objectRef: ref };
         } catch (error) {
@@ -1009,7 +1046,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
           { allowOwnerRecovery: ownerRecoveryHandles.has(handle) },
         );
         if (metadata.state !== "open") {
-          const summary = await scanObjectFile(paths.payloadPath);
+          const summary = await scanObjectFile(paths.payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
           return {
             objectRef: paths.ref,
             ...summary,
@@ -1017,7 +1054,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
           };
         }
         await reconcileOpenPayload(paths.payloadPath, metadata.bytes);
-        const summary = await scanObjectFile(paths.payloadPath);
+        const summary = await scanObjectFile(paths.payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
         const completeness = options?.completeness ?? "complete";
         await writeJsonAtomically(paths.metadataPath, {
           ...metadata,
@@ -1258,6 +1295,11 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
     writeCodexTimelineShadow: writeShadow,
     compareCodexTimelineShadow: compareShadow,
     withCodexTimelineShadowLock: withShadowLock,
+    async isSelfContainedCompact(input) {
+      const paths = objectPaths(root, input.objectRef);
+      const metadata = await loadMetadata(paths.metadataPath, { ...input, objectRef: paths.ref }, { allowOwnerRecovery: true });
+      return metadata.encoding === CODEX_GAP_ENCODING;
+    },
 
     async readRange(input) {
       const ref = assertObjectRef(input.objectRef);
@@ -1294,13 +1336,14 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       let hasMore = false;
       let incompleteTail = false;
       const stream = createReadStream(paths.payloadPath, { start: 0, end: metadata.bytes - 1 });
+      const codec = metadata.encoding === CODEX_GAP_ENCODING ? new CodexGapDictionary() : undefined;
       try {
         for await (const line of readBoundedLines(stream, MAX_ENTRY_BYTES)) {
           if (input.signal?.aborted) throw new Error("transcript object read cancelled");
           if (line.length === 0) continue;
           let entry: TranscriptEntry;
           try {
-            entry = parseStoredLine(line);
+            entry = parseStoredLine(line, codec, metadata.encoding === CODEX_GAP_ENCODING);
           } catch (error) {
             if (metadata.state === "open") {
               incompleteTail = true;

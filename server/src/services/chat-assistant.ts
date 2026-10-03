@@ -61,11 +61,10 @@ import {
 import { createChatAssistantStdoutBuffer } from "./chat-assistant.stdout-buffer.js";
 import { qualifiedChatCodexStdoutPolicy } from "./chat-assistant.stdout-policy.js";
 import { createChatNativeStopEvidence } from "./chat-assistant.stop-evidence.js";
-import { createChatTranscriptDelivery } from "./chat-assistant.transcript-delivery.js";
+import { createChatTranscriptDelivery, resolveChatTranscriptRetention, withNativeSupplementProfile } from "./chat-assistant.transcript-delivery.js";
 import { createChatAssistantTranscriptProcessor } from "./chat-assistant.transcript-processor.js";
 import { admitClaudeDeferredFork, recordClaudeDeferredForkOutcome, reserveClaudeDeferredFork } from "./claude-deferred-fork-admission.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
-import { resolveHeartbeatTranscriptRetention } from "./runtime-kernel/heartbeat-transcript-retention.js";
 import {
   executeAdapterWithModelFallbacks,
   resolveExecutionSubmissionPhase,
@@ -420,7 +419,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       providerCapabilityResolver, binding: transcriptProviderBinding, session: initialSession,
     });
     const transcriptEvidence = transcriptCapabilityResolution?.adapter.transcript?.evidence;
-    const transcriptRetention = resolveHeartbeatTranscriptRetention({
+    const { retention: transcriptRetention, profileCapability: nativeProfileCapability } = resolveChatTranscriptRetention({
       hasBinding: Boolean(runtimeBinding),
       bindingContinuity: runtimeBinding.continuity,
       capabilityStatus: transcriptCapabilityResolution?.profileResolved && transcriptEvidence?.profileBound
@@ -813,7 +812,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       const transcriptProcessor = createChatAssistantTranscriptProcessor({
         callbacks: input,
         isInactive: isExecutionInactive,
-        appendTranscriptEntry: (entry, delivery) => chatRunsSvc.appendTranscriptEntry(chatRun, entry, delivery),
+        appendTranscriptEntry: withNativeSupplementProfile((entry, delivery) => chatRunsSvc.appendTranscriptEntry(chatRun, entry, delivery), nativeProfileCapability),
         resultSentinel,
         transcriptDelivery,
         assistantTextAccumulator,

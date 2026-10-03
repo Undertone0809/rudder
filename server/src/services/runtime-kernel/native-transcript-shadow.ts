@@ -19,6 +19,8 @@ export async function persistCodexTimelineShadows(input: {
     if (span.selectorJson.kind !== "codex_turn" || !span.supplementalObjectRef || span.itemCount > 256) continue;
     const fail = (reason: string): CodexTimelineShadowResult => ({ ok: false, reason, authorizesOldObjectDelete: false });
     try {
+      if (await input.store.isSelfContainedCompact?.({ objectRef: span.supplementalObjectRef,
+        orgId: input.proof.orgId, runId: input.proof.runId, spanId: span.spanId, ownerToken: span.ownerToken })) continue;
       if (!input.store.withCodexTimelineShadowLock) {
         results.push({ spanId: span.spanId, result: fail("shadow_object_lock_unavailable") });
         continue;

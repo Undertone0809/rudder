@@ -49,6 +49,36 @@ async function collect(read: (cursor: string | null, index: number) => Promise<T
 }
 
 describe("public Reader Codex shadow comparison keeps authoritative sources unchanged", () => {
+  it.each(["missing", "partial", "throws", "expired"])("reopens compact gap dictionary with %s native without fabricating complete", async mode => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-compact-reader-"));
+    try {
+      const identity: CoverageIdentity = { orgId: "org-1", runId: "run-1", spanId: "span-1", attemptId: "attempt-1",
+        attemptEpoch: 1, ownerToken: "owner-1", selector: { kind: "codex_turn", runId: "run-1", threadId: "thread-1", turnId: "turn-1" } };
+      const store = createTranscriptObjectStore(root);
+      const handle = await store.begin({ ...identity, compactIdentity: identity });
+      const entries = [{ kind: "system" as const, sourceEntryId: "reasoning", ts: "2026-10-03T00:00:01.123456Z", text: "reasoning started" },
+        { kind: "assistant" as const, sourceEntryId: "chunk-1", ts: "2026-10-03T00:00:02.654321Z", text: "Synthetic界🌍".repeat(1000), delta: true }];
+      await store.append(handle, entries); await store.finalize(handle, { completeness: "partial" });
+      const span = databaseSpan("span-1", { selectorJson: identity.selector, attemptId: identity.attemptId,
+        ownerToken: identity.ownerToken, supplementalObjectRef: handle.objectRef });
+      const db = mockDatabase({ run: databaseRun({ status: "succeeded", contextSnapshot: { transcriptSource: "native" } }), spans: [span],
+        bindings: [databaseBinding("span-1", { runtimeType: "codex_local", continuity: "native" })], segments: [databaseSegment("span-1", { runtimeType: "codex_local" })] });
+      const reader = createTranscriptReader(db as never, { objectReader: createTranscriptObjectReader(createTranscriptObjectStore(root)),
+        nativeReader: { readRange: async () => {
+          if (mode === "throws") throw new Error("synthetic provider read error");
+          return { entries: [], revision: "raw-r1", availability: mode === "expired" ? "expired" : mode === "missing" ? "missing" : "available",
+            completeness: "partial" };
+        } } });
+      if (mode === "throws") await expect(reader.readRun(scope)).rejects.toThrow("synthetic provider read error");
+      else {
+        const page = await reader.readRun({ ...scope, limit: 200 });
+        expect(page.completeness).not.toBe("complete");
+        expect(page.items.map(item => item.entry)).toEqual(entries);
+        expect((await reader.readRun({ ...scope, limit: 200 })).items).toEqual(page.items);
+      }
+      expect((await store.readRange({ ...identity, objectRef: handle.objectRef })).entries).toEqual(entries);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
   it.each(["valid", "corrupt", "missing-native", "partial-native", "native-throws"])("preserves normal source/fallback for %s", async (mode) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-shadow-reader-"));
     try {

@@ -14,6 +14,7 @@ interface ShadowStoreDependencies {
   parseStoredObjectMetadata: (value: unknown) => {
     objectRef: string; orgId: string; runId: string; spanId: string;
     sourceOwnerHash: string; state: "open" | "sealed"; bytes: number; entryCount: number;
+    encoding?: string;
   };
   ownerTokenSha256: (ownerToken: string) => string;
   withObjectLock: <T>(key: string, operation: () => Promise<T>) => Promise<T>;
@@ -55,6 +56,7 @@ export function createCodexTimelineShadowStore({
       || metadata.runId !== input.identity.runId || metadata.spanId !== input.identity.spanId
       || metadata.sourceOwnerHash !== ownerTokenSha256(input.identity.ownerToken)) throw new Error("shadow_original_identity");
     if (metadata.state !== "sealed" || metadata.bytes > 2 * 1024 * 1024 || metadata.entryCount > 256) throw new Error("shadow_original_not_bounded_sealed");
+    if (metadata.encoding) throw new Error("shadow_compact_already_selfcontained");
     const bytes = await readShadowFile(paths.payloadPath, 2 * 1024 * 1024);
     if (bytes.length !== metadata.bytes) throw new Error("shadow_original_byte_count");
     return { paths, metadata, bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
