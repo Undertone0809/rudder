@@ -7,6 +7,7 @@ import { readManifestTranscriptSnapshot } from "../chat-work-manifest.transcript
 import type { CodexMixedCoverageInput, CoverageIdentity } from "./native-transcript-coverage.js";
 import { createTranscriptObjectReader, createTranscriptObjectStore } from "./transcript-object-store.js";
 import { createTranscriptReader, decodeTranscriptCursor, encodeTranscriptCursor, type NativeTranscriptReadInput, type TranscriptItem, type TranscriptPage } from "./transcript-reader.js";
+import { stableHash } from "./transcript-reader.normalize.js";
 import { databaseBinding, databaseRun, databaseSegment, databaseSpan, mockDatabase } from "./transcript-reader.test-support.js";
 
 vi.mock("../../middleware/logger.js", () => ({ logger: { warn: vi.fn() } }));
@@ -61,7 +62,7 @@ describe("public Reader Codex shadow comparison keeps authoritative sources unch
         { kind: "assistant", ts: "2026-01-01T00:00:01.123Z", phase: "final_answer", delta: true, segmentId: "msg-1", text: "two" }]);
       await store.finalize(handle, { completeness: "partial" });
       const native: CodexMixedCoverageInput["native"] = { identity, source: "native", availability: "available", completeness: "complete",
-        revisionBefore: "native-r1", revisionAfter: "native-r1", entries: [{ kind: "assistant", ts, phase: "final_answer",
+        revisionBefore: stableHash(["native-r1"]), revisionAfter: stableHash(["native-r1"]), entries: [{ kind: "assistant", ts, phase: "final_answer",
           segmentId: "msg-1", sourceEntryId: "msg-1", text: "onetwo" }] };
       expect(await store.writeCodexTimelineShadow!({ objectRef: handle.objectRef, identity, native, beforePublish: async () => true })).toMatchObject({ ok: true });
       if (mode === "corrupt") await fs.writeFile(path.join(root, "transcript-objects", "codex-timeline-shadows", handle.objectRef, "residual.bin"), "invalid");

@@ -1,6 +1,6 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, promises as fs } from "node:fs";
+import { createReadStream, promises as fs, constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { badRequest, conflict, forbidden, notFound } from "../../errors.js";
 import { syncDirectory, syncFileHandle } from "../../file-system-durability.js";
@@ -141,6 +141,10 @@ export interface TranscriptObjectStore {
     beforePublish: () => Promise<boolean>;
   }): Promise<CodexTimelineShadowResult>;
   compareCodexTimelineShadow?(input: CodexTimelineShadowInput): Promise<CodexTimelineShadowResult>;
+  /** Object lock first; caller may then acquire retention advisory/row locks. */
+  withCodexTimelineShadowLock?<T>(objectRef: string, operation: (
+    write: (input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }) => Promise<CodexTimelineShadowResult>,
+  ) => Promise<T>): Promise<T>;
   sweepUnreferenced(input?: TranscriptObjectSweepInput): Promise<TranscriptObjectSweepResult>;
 }
 
@@ -712,14 +716,35 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
     const shadows = path.join(paths.root, "codex-timeline-shadows");
     return { ...paths, shadows, published: path.join(shadows, paths.ref) };
   };
+  // Shadow paths only. Never stat a path then reopen it: a FIFO/symlink swap
+  // must fail without blocking, and all bounds/data checks use the SAME FD.
+  async function readShadowFile(filePath: string, maximum: number) {
+    const file = await fs.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | fsConstants.O_NOFOLLOW);
+    try {
+      const before = await file.stat();
+      if (!before.isFile() || before.size > maximum) throw new Error("shadow_file_bounds");
+      const buffer = Buffer.alloc(maximum + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      const after = await file.stat();
+      if (length > maximum || length !== before.size || after.size !== before.size
+        || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) throw new Error("shadow_file_changed");
+      return buffer.subarray(0, length);
+    } finally { await file.close(); }
+  }
   async function readShadowOriginal(input: CodexTimelineShadowInput) {
     const paths = shadowPaths(input.objectRef);
-    const metadata = await loadMetadata(paths.metadataPath, { objectRef: paths.ref,
-      orgId: input.identity.orgId, runId: input.identity.runId, spanId: input.identity.spanId, ownerToken: input.identity.ownerToken });
+    const metadata = parseStoredObjectMetadata(JSON.parse((await readShadowFile(paths.metadataPath, 128 * 1024)).toString("utf8")));
+    if (metadata.objectRef !== paths.ref || metadata.orgId !== input.identity.orgId
+      || metadata.runId !== input.identity.runId || metadata.spanId !== input.identity.spanId
+      || metadata.sourceOwnerHash !== ownerTokenSha256(input.identity.ownerToken)) throw new Error("shadow_original_identity");
     if (metadata.state !== "sealed" || metadata.bytes > 2 * 1024 * 1024 || metadata.entryCount > 256) throw new Error("shadow_original_not_bounded_sealed");
-    await assertRegularFile(paths.payloadPath, "Transcript object payload not found");
-    if ((await fs.stat(paths.payloadPath)).size !== metadata.bytes) throw new Error("shadow_original_byte_count");
-    const bytes = await fs.readFile(paths.payloadPath);
+    const bytes = await readShadowFile(paths.payloadPath, 2 * 1024 * 1024);
+    if (bytes.length !== metadata.bytes) throw new Error("shadow_original_byte_count");
     return { paths, metadata, bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
   }
   async function compareShadow(input: CodexTimelineShadowInput): Promise<CodexTimelineShadowResult> {
@@ -741,12 +766,8 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       if (!directory.isDirectory() || directory.isSymbolicLink()) return shadowFailure("shadow_directory_invalid");
       const manifestPath = path.join(original.paths.published, "manifest.json");
       const residualPath = path.join(original.paths.published, "residual.bin");
-      await assertRegularFile(manifestPath, "Shadow manifest missing");
-      await assertRegularFile(residualPath, "Shadow residual missing");
-      if ((await fs.stat(manifestPath)).size > 128 * 1024
-        || (await fs.stat(residualPath)).size > 2 * 1024 * 1024) return shadowFailure("shadow_file_bounds");
-      const manifest = await fs.readFile(manifestPath);
-      const residualBytes = await fs.readFile(residualPath);
+      const manifest = await readShadowFile(manifestPath, 128 * 1024);
+      const residualBytes = await readShadowFile(residualPath, 2 * 1024 * 1024);
       const timeline = { ...JSON.parse(manifest.toString("utf8")), residualBytes } as CodexByteTimeline;
       const reconstructed = reconstructCodexByteTimeline({ expected: input.identity,
         expectedObject: { objectRef: input.objectRef, sha256: original.sha256 }, native: input.native, timeline });
@@ -761,9 +782,30 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
     }
   }
 
-  async function writeShadow(input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }): Promise<CodexTimelineShadowResult> {
-    const paths = shadowPaths(input.objectRef);
+  async function withShadowLock<T>(objectRef: string, operation: (
+    write: (input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }) => Promise<CodexTimelineShadowResult>,
+  ) => Promise<T>): Promise<T> {
+    const paths = shadowPaths(objectRef);
     return withObjectLock(paths.payloadPath, async () => {
+      let active = true;
+      let writing: Promise<CodexTimelineShadowResult> | undefined;
+      try {
+        return await operation(async input => {
+          if (!active || writing || input.objectRef !== objectRef) return shadowFailure("shadow_lock_scope_invalid");
+          writing = writeShadowLocked(input);
+          return writing;
+        });
+      } finally {
+        active = false;
+        if (writing) await writing; // Do not release ownership around a detached in-flight write.
+      }
+    });
+  }
+  async function writeShadow(input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }): Promise<CodexTimelineShadowResult> {
+    return withShadowLock(input.objectRef, write => write(input));
+  }
+  async function writeShadowLocked(input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }): Promise<CodexTimelineShadowResult> {
+    const paths = shadowPaths(input.objectRef);
       try {
         const original = await readShadowOriginal(input);
         const built = buildCodexByteTimeline({ expected: input.identity,
@@ -801,7 +843,6 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         // Keep unpublished files for evidence; no remove/stage/purge operation.
         return shadowFailure("shadow_persistence_failed");
       }
-    });
   }
 
   async function withSweepLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -1348,6 +1389,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
     sweepUnreferenced,
     writeCodexTimelineShadow: writeShadow,
     compareCodexTimelineShadow: compareShadow,
+    withCodexTimelineShadowLock: withShadowLock,
 
     async readRange(input) {
       const ref = assertObjectRef(input.objectRef);

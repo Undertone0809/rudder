@@ -880,8 +880,11 @@ async function readNativeSpan(
       selector: input.selector as CoverageIdentity["selector"] };
     try {
       const compared = await shadowReader.compareCodexTimelineShadow(input, { identity, source: "native",
-        availability: "available", completeness: "complete", revisionBefore: revision, revisionAfter: revision,
-        entries: rawItems.map((raw) => (asRecord(raw)?.entry ?? raw) as Record<string, unknown>) });
+        availability: "available", completeness: "complete",
+        // Single selected span public Reader revision/projection, identical to
+        // the caller's readRun({spanId}) snapshot, not the raw provider layer.
+        revisionBefore: stableHash([revision]), revisionAfter: stableHash([revision]),
+        entries: items.map((item) => item.entry as unknown as Record<string, unknown>) });
       if (!compared.ok && compared.reason !== "shadow_not_present") logger.warn({ orgId: input.orgId,
         runId: input.run.id, spanId: input.span.id, reason: compared.reason }, "Codex shadow comparison failed; original source retained");
     } catch {
