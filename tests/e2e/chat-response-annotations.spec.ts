@@ -1013,7 +1013,7 @@ test.describe("Chat response annotations", () => {
         sourceRunId: seeded.runId,
         sourceAgentId: seeded.agent.id,
         sourceMemberIds: [sourceEntryId],
-        sourceEntryId: expect.any(String),
+        sourceEntryId,
       }),
     ]);
 
@@ -1040,7 +1040,7 @@ test.describe("Chat response annotations", () => {
         surface: "agent_run_transcript",
         sourceRunId: seeded.runId,
         sourceAgentId: seeded.agent.id,
-        sourceEntryId: expect.any(String),
+        sourceEntryId,
         sourceMemberIds: [sourceEntryId],
         selectedText: NATIVE_REASONING_TEXT,
         comment: "Keep this thinking evidence tied to the native Reader source.",
