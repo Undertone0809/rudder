@@ -10,12 +10,13 @@ import {
   projects,
   projectWorkspaces,
 } from "@rudderhq/db";
+import { sameMergeTimestamp, type MergeTimestampValues } from "./worktree-merge-timestamps.js";
 
-type IssueRow = typeof issues.$inferSelect;
-type CommentRow = typeof issueComments.$inferSelect;
+type IssueRow = typeof issues.$inferSelect & MergeTimestampValues;
+type CommentRow = typeof issueComments.$inferSelect & MergeTimestampValues;
 type AgentRow = typeof agents.$inferSelect;
-type ProjectRow = typeof projects.$inferSelect;
-type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
+type ProjectRow = typeof projects.$inferSelect & MergeTimestampValues;
+type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect & MergeTimestampValues;
 type GoalRow = typeof goals.$inferSelect;
 type IssueDocumentLinkRow = typeof issueDocuments.$inferSelect;
 type DocumentRevisionTableRow = typeof documentRevisions.$inferSelect;
@@ -74,7 +75,7 @@ export type PlannedCommentSkip = {
   action: "skip_existing" | "skip_missing_parent";
 };
 
-export type IssueDocumentRow = {
+export type IssueDocumentRow = MergeTimestampValues & {
   id: IssueDocumentLinkRow["id"];
   orgId: IssueDocumentLinkRow["orgId"];
   issueId: IssueDocumentLinkRow["issueId"];
@@ -95,7 +96,7 @@ export type IssueDocumentRow = {
   documentUpdatedAt: Date;
 };
 
-export type DocumentRevisionRow = {
+export type DocumentRevisionRow = MergeTimestampValues & {
   id: DocumentRevisionTableRow["id"];
   orgId: DocumentRevisionTableRow["orgId"];
   documentId: DocumentRevisionTableRow["documentId"];
@@ -107,7 +108,7 @@ export type DocumentRevisionRow = {
   createdAt: Date;
 };
 
-export type IssueAttachmentRow = {
+export type IssueAttachmentRow = MergeTimestampValues & {
   id: IssueAttachmentTableRow["id"];
   orgId: IssueAttachmentTableRow["orgId"];
   issueId: IssueAttachmentTableRow["issueId"];
@@ -247,10 +248,6 @@ function groupBy<T>(rows: T[], keyFor: (row: T) => string): Map<string, T[]> {
     }
   }
   return out;
-}
-
-function sameDate(left: Date, right: Date): boolean {
-  return left.getTime() === right.getTime();
 }
 
 function sortDocumentRows(rows: IssueDocumentRow[]): IssueDocumentRow[] {
@@ -675,8 +672,8 @@ export function buildWorktreeMergePlan(input: {
       && existingDocument.latestRevisionNumber === latestRevisionNumber
       && (existingDocument.updatedByAgentId ?? null) === targetUpdatedByAgentId
       && (existingDocument.updatedByUserId ?? null) === (document.updatedByUserId ?? null)
-      && sameDate(existingDocument.documentUpdatedAt, document.documentUpdatedAt)
-      && sameDate(existingDocument.linkUpdatedAt, document.linkUpdatedAt)
+      && sameMergeTimestamp(existingDocument, document, "documentUpdatedAt")
+      && sameMergeTimestamp(existingDocument, document, "linkUpdatedAt")
       && revisionsToInsert.length === 0;
 
     if (documentAlreadyMatches) {
