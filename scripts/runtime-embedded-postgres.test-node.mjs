@@ -75,6 +75,34 @@ test("fixture and repaired bytes match both exact pnpm patch Git objects", () =>
   assert.equal(gitBlob(patched), "f8f99c748ccd947c0fd2ca5a40fcf672ce26ce97");
 });
 
+test("Windows Git checkout preserves the pinned wrapper fixture and pnpm patch bytes", () => {
+  const root = temporaryRoot();
+  const files = [
+    "patches/embedded-postgres@18.1.0-beta.16.patch",
+    "scripts/fixtures/embedded-postgres-18.1.0-beta.16/index.js.txt",
+  ];
+  function git(...args) {
+    const result = spawnSync("git", ["-c", "core.autocrlf=true", "-c", "core.safecrlf=false", ...args], {
+      cwd: root, encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+  }
+  git("init", "--quiet");
+  copyFileSync(path.join(repoRoot, ".gitattributes"), path.join(root, ".gitattributes"));
+  for (const file of files) {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    copyFileSync(path.join(repoRoot, file), path.join(root, file));
+  }
+  git("add", "--force", ".gitattributes", ...files);
+  for (const file of files) rmSync(path.join(root, file));
+  git("checkout-index", "--all", "--force");
+  for (const file of files) {
+    const checkedOut = readFileSync(path.join(root, file));
+    assert.deepEqual(checkedOut, readFileSync(path.join(repoRoot, file)), file);
+    assert.equal(checkedOut.includes(Buffer.from("\r\n")), false, `${file} must use LF`);
+  }
+});
+
 test("repairs a shared hoisted dependency once and is byte/inode idempotent", () => {
   const f = fixture();
   assert.deepEqual(repairEmbeddedPostgres(f), [{ entryPath: f.serverEntry, status: "patched" }]);
