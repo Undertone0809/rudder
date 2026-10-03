@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CodexMixedCoverageInput, CoverageIdentity } from "./native-transcript-coverage.js";
+import { CodexGapDictionary } from "./transcript-object-compact.js";
 import {
   createTranscriptObjectReader,
   createTranscriptObjectStore,
@@ -36,6 +37,134 @@ const entries: TranscriptEntry[] = [
   { kind: "assistant", ts: "2026-09-23T00:00:01.000Z", text: "first" },
   { kind: "tool_result", ts: "2026-09-23T00:00:02.000Z", toolUseId: "tool-1", content: "second", isError: false },
 ];
+
+describe("first-write compact gap object, legacy compatibility and safe retention", () => {
+  const identity: CoverageIdentity = { ...binding, attemptId: "attempt-1", attemptEpoch: 1,
+    selector: { kind: "codex_turn", runId: binding.runId, threadId: "thread-1", turnId: "turn-1" } };
+  const input = (objectRef: string) => ({ ...binding, objectRef, limit: 2 });
+  const workload: TranscriptEntry[] = Array.from({ length: 8 }, (_, index) => ({ kind: "assistant",
+    ts: `2026-10-03T00:00:0${index}.123456Z`, sourceEntryId: `entry-${index}`, segmentId: "msg-1",
+    delta: index < 7, text: "Synthetic界🌍 chunk ".repeat(2000), phase: "final_answer" }));
+
+  it("measures actual first written bytes vs SAME legacy load, reopens and paginates exact entries with no shadow", async () => {
+    const f = await fixture();
+    const writes = { legacy: 0, compact: 0 };
+    let cohort: keyof typeof writes = "legacy";
+    const open = fs.open.bind(fs);
+    const spy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const file = await open(...args);
+      const write = file.writeFile.bind(file);
+      file.writeFile = async (...values: Parameters<typeof file.writeFile>) => {
+        const bytes = typeof values[0] === "string" ? Buffer.byteLength(values[0], "utf8")
+          : values[0] instanceof Uint8Array ? values[0].byteLength : 0;
+        await write(...values); writes[cohort] += bytes;
+      };
+      return file;
+    });
+    let legacy, compact;
+    try {
+      legacy = await f.store.begin(binding);
+      for (const entry of workload) await f.store.append(legacy, entry);
+      await f.store.finalize(legacy, { completeness: "partial" });
+      cohort = "compact";
+      compact = await f.store.begin({ ...binding, compactIdentity: identity });
+      for (const entry of workload) await f.store.append(compact, entry);
+      await f.store.finalize(compact, { completeness: "partial" });
+    } finally { spy.mockRestore(); }
+    expect(writes.compact).toBeLessThan(writes.legacy / 2); // ALL writeFile bytes, including metadata, not representation estimate.
+    const reopened = createTranscriptObjectStore(f.root);
+    const all: TranscriptEntry[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await reopened.readRange({ ...input(compact!.objectRef), cursor });
+      expect(page.completeness).toBe("partial"); all.push(...page.entries); cursor = page.nextCursor;
+    } while (cursor);
+    expect(all).toEqual(workload);
+    const codec = new CodexGapDictionary();
+    const compactPayload = await fs.readFile(path.join(f.root, "transcript-objects", compact!.objectRef + ".ndjson"), "utf8");
+    const reconstructed = compactPayload.trimEnd().split("\n").map(line => codec.decode(line, 2 * 1024 * 1024, true) + "\n").join("");
+    expect(Buffer.from(reconstructed)).toEqual(await fs.readFile(path.join(f.root, "transcript-objects", legacy!.objectRef + ".ndjson")));
+    const meta = JSON.parse(await fs.readFile(path.join(f.root, "transcript-objects", compact!.objectRef + ".json"), "utf8"));
+    expect(meta.encoding).toBe("codex-gap-dictionary-v1");
+    expect(await fs.readdir(path.join(f.root, "transcript-objects"))).toHaveLength(4); // two objects only; no sidecar/shadow/dictionary file.
+    expect((await reopened.readRange({ ...input(legacy!.objectRef), limit: 200 })).entries).toEqual(workload);
+    console.log(JSON.stringify({ metric: "actual_initial_writeFile_UTF8_bytes_including_metadata", legacy: writes.legacy, compact: writes.compact, rows: workload.length }));
+  });
+
+  it("unknown/mismatched qualification remains v1, never converts existing legacy object on resume", async () => {
+    const f = await fixture();
+    const handle = await f.store.begin({ ...binding, compactIdentity: { ...identity, runId: "other-run" } });
+    await f.store.append(handle, workload[0]!);
+    const resumed = await f.store.resume({ ...binding, compactIdentity: identity, objectRef: handle.objectRef });
+    await f.store.append(resumed, workload[1]!);
+    const metadata = JSON.parse(await fs.readFile(path.join(f.root, "transcript-objects", handle.objectRef + ".json"), "utf8"));
+    expect(metadata.encoding).toBeUndefined();
+    expect(await f.store.isSelfContainedCompact!({ ...binding, objectRef: handle.objectRef })).toBe(false);
+  });
+
+  it("rebuilds committed dictionary after store/owner recovery and rejects cross-org access", async () => {
+    const f = await fixture(); const handle = await f.store.begin({ ...binding, compactIdentity: identity });
+    await f.store.append(handle, workload[0]!);
+    const reopened = createTranscriptObjectStore(f.root);
+    const resumed = await reopened.resume({ ...binding, ownerToken: "recovered-owner", objectRef: handle.objectRef });
+    await reopened.append(resumed, workload[1]!);
+    expect((await reopened.readRange({ ...input(handle.objectRef), ownerToken: "recovered-owner", allowOwnerRecovery: true })).entries).toEqual(workload.slice(0, 2));
+    await expect(reopened.readRange({ ...input(handle.objectRef), orgId: "other-org" })).rejects.toThrow();
+  });
+
+  it("failed disk write does not commit/cache an entry; own reopen keeps last committed bytes", async () => {
+    const f = await fixture(); const handle = await f.store.begin({ ...binding, compactIdentity: identity });
+    await f.store.append(handle, workload[0]!);
+    const open = fs.open.bind(fs);
+    const spy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const file = await open(...args);
+      if (String(args[0]).endsWith(".ndjson") && args[1] === "a") file.writeFile = async () => { throw Object.assign(new Error("synthetic disk full"), { code: "ENOSPC" }); };
+      return file;
+    });
+    try { await expect(f.store.append(handle, workload[1]!)).rejects.toMatchObject({ code: "ENOSPC" }); } finally { spy.mockRestore(); }
+    const reopened = createTranscriptObjectStore(f.root);
+    expect((await reopened.readRange(input(handle.objectRef))).entries).toEqual(workload.slice(0, 1));
+    const resumed = await reopened.resume({ ...binding, objectRef: handle.objectRef });
+    await reopened.append(resumed, workload[1]!);
+    expect((await reopened.readRange(input(handle.objectRef))).entries).toEqual(workload.slice(0, 2));
+  });
+
+  it("metadata publish failure preserves committed prefix, then owner reopen reconciles uncommitted tail", async () => {
+    const f = await fixture(); const handle = await f.store.begin({ ...binding, compactIdentity: identity });
+    await f.store.append(handle, workload[0]!);
+    const rename = fs.rename.bind(fs);
+    const spy = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (String(to).endsWith(handle.objectRef + ".json")) throw Object.assign(new Error("synthetic metadata publish failure"), { code: "EIO" });
+      return rename(from, to);
+    });
+    try { await expect(f.store.append(handle, workload[1]!)).rejects.toMatchObject({ code: "EIO" }); } finally { spy.mockRestore(); }
+    expect((await f.store.readRange(input(handle.objectRef))).entries).toEqual(workload.slice(0, 1));
+    const reopened = createTranscriptObjectStore(f.root);
+    const resumed = await reopened.resume({ ...binding, objectRef: handle.objectRef });
+    await reopened.append(resumed, workload[1]!);
+    expect((await reopened.readRange(input(handle.objectRef))).entries).toEqual(workload.slice(0, 2));
+  });
+
+  it("sealed corruption fails, open corruption is partial; compression never bypasses logical byte quota", async () => {
+    const f = await fixture(); const handle = await f.store.begin({ ...binding, compactIdentity: identity });
+    await f.store.append(handle, workload[0]!);
+    const payloadPath = path.join(f.root, "transcript-objects", handle.objectRef + ".ndjson");
+    const metaPath = path.join(f.root, "transcript-objects", handle.objectRef + ".json");
+    const metadata = JSON.parse(await fs.readFile(metaPath, "utf8"));
+    const before = await fs.readFile(payloadPath);
+    await fs.writeFile(metaPath, JSON.stringify({ ...metadata, logicalBytes: 256 * 1024 * 1024 }));
+    await expect(f.store.append(handle, workload[1]!)).rejects.toThrow("size limit");
+    expect(await fs.readFile(payloadPath)).toEqual(before);
+    await fs.writeFile(metaPath, JSON.stringify(metadata));
+    await f.store.finalize(handle, { completeness: "partial" });
+    const record = JSON.parse(before.toString("utf8")); expect(record.version).toBe(2);
+    record.sha256 = "0".repeat(64);
+    await fs.writeFile(payloadPath, JSON.stringify(record) + "\n");
+    await expect(f.store.readRange(input(handle.objectRef))).rejects.toThrow("digest");
+    await fs.writeFile(metaPath, JSON.stringify({ ...metadata, state: "open" }));
+    expect(await f.store.readRange(input(handle.objectRef))).toMatchObject({ entries: [], completeness: "partial" });
+  });
+});
 
 async function shadowFixture() {
   const f = await fixture();

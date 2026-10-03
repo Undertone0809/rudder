@@ -826,7 +826,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       const transcriptProcessor = createChatAssistantTranscriptProcessor({
         callbacks: input,
         isInactive: isExecutionInactive,
-        appendTranscriptEntry: (entry, delivery) => chatRunsSvc.appendTranscriptEntry(chatRun, entry, delivery),
+        appendTranscriptEntry: (entry, delivery) => chatRunsSvc.appendTranscriptEntry(chatRun, entry, {
+          ...delivery,
+          nativeProfileCapability: transcriptRetention.mode === "native" ? {
+            runtimeType: runtimeAgentType, binding: transcriptProviderBinding,
+            driverStatus: runtimeDriver?.capabilities.transcriptRange?.status ?? "unknown",
+            resolution: transcriptCapabilityResolution ?? null,
+          } : null,
+        }),
         resultSentinel,
         transcriptDelivery,
         assistantTextAccumulator,
