@@ -123,6 +123,17 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         .filter((item) => item?.type === "text" && typeof item.text === "string")
         .map((item) => item.text)
         .join("\n");
+      if (prompt.includes("Native annotation reasoning fixture marker")) {
+        const reasoning = {
+          type: "reasoning",
+          id: randomUUID(),
+          summary: ["Native reasoning fixture: stable visible thinking source."],
+          content: [],
+        };
+        turn.items.push(reasoning);
+        save(thread);
+        send({ method: "item/completed", params: { threadId: thread.id, turnId: turn.id, item: reasoning } });
+      }
       // Opt-in reply shape for continuation UI cases. Keep their existing
       // message oracle without replacing this fixture's persisted history.
       const replyBody = process.env.RUDDER_E2E_CODEX_REPLY_BODY;
