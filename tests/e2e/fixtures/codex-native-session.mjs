@@ -111,7 +111,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     } else if (request.method === "turn/start") {
       const thread = load(params.threadId);
       const turn = { id: randomUUID(), status: "inProgress", itemsView: { type: "full" }, items: [] };
-      const text = `Native reply ${thread.turns.length + 1}`;
+      const defaultText = `Native reply ${thread.turns.length + 1}`;
       turn.items.push({ type: "userMessage", id: randomUUID(), content: params.input });
       thread.turns.push(turn);
       thread.updatedAt = Date.now();
@@ -123,6 +123,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         .filter((item) => item?.type === "text" && typeof item.text === "string")
         .map((item) => item.text)
         .join("\n");
+      // Opt-in reply shape for continuation UI cases. Keep their existing
+      // message oracle without replacing this fixture's persisted history.
+      const replyBody = process.env.RUDDER_E2E_CODEX_REPLY_BODY;
+      const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1];
+      const text = replyBody && sentinel
+        ? `${replyBody}\n${sentinel}${JSON.stringify({
+          kind: "message", body: replyBody, structuredPayload: null,
+        })}`
+        : defaultText;
       const skillTelemetry = [...prompt.matchAll(/\bNative skill telemetry:\s*([a-z0-9][a-z0-9-]*)\b/gi)].at(-1)?.[1];
       if (skillTelemetry) {
         turn.items.push({

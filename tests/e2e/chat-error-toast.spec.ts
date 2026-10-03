@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_BASE_URL, E2E_CODEX_APP_SERVER_STUB, E2E_CODEX_ERROR_STUB, E2E_CODEX_STUB, E2E_DB_PORT, E2E_INSTANCE_ROOT } from "./support/e2e-env";
+import { E2E_BASE_URL, E2E_CODEX_APP_SERVER_STUB, E2E_CODEX_ERROR_STUB, E2E_DB_PORT, E2E_INSTANCE_ROOT, E2E_ROOT } from "./support/e2e-env";
 
 const ORG_NAME = `Err-Chat-${Date.now()}`;
 
@@ -349,7 +349,12 @@ test.describe("Chat error recovery", () => {
     const organization = await orgRes.json();
     const chatAgent = await createE2EChatAgent(page.request, organization.id, {
       name: "Refresh Agent",
-      command: E2E_CODEX_STUB,
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+        command: join(E2E_ROOT, "fixtures", "codex-native-session.mjs"),
+        chatAppServerEnabled: true,
+        env: { RUDDER_E2E_CODEX_REPLY_BODY: "Streaming reply for chat." },
+      },
     });
 
     await page.goto("/");
@@ -367,8 +372,7 @@ test.describe("Chat error recovery", () => {
     const firstAssistantMessage = page.getByTestId("chat-assistant-message").filter({
       hasText: "Streaming reply for chat.",
     });
-    // This fixture starts a CLI process and deliberately waits ten seconds
-    // between its first chunk and final reply; include startup in the bound.
+    // The first turn and Refresh use the same stateful App Server fixture.
     await expect(firstAssistantMessage).toBeVisible({ timeout: 45_000 });
     await expect(firstAssistantMessage.getByRole("button", { name: "Refresh answer" })).toBeVisible({ timeout: 15_000 });
 

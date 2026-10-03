@@ -223,6 +223,7 @@ async function seedAnnotationChat(
   options: {
     nativeSteerRuntime?: boolean;
     runtimeCommand?: string;
+    runtimeReplyBody?: string;
     finalBody?: string;
     readyText?: string;
   } = {},
@@ -240,6 +241,9 @@ async function seedAnnotationChat(
           model: "gpt-5.4",
           command: options.runtimeCommand,
           chatAppServerEnabled: true,
+          ...(options.runtimeReplyBody ? {
+            env: { RUDDER_E2E_CODEX_REPLY_BODY: options.runtimeReplyBody },
+          } : {}),
         },
       }
       : options.nativeSteerRuntime
@@ -2268,7 +2272,10 @@ test.describe("Chat response annotations", () => {
 
   test("keeps immutable annotations through message edit and remaps their source and files in a UI Fork", async ({ page }) => {
     test.setTimeout(120_000);
-    const seeded = await seedAnnotationChat(page, `Response-Annotation-Edit-Fork-${Date.now()}`);
+    const seeded = await seedAnnotationChat(page, `Response-Annotation-Edit-Fork-${Date.now()}`, {
+      runtimeCommand: join(E2E_ROOT, "fixtures", "codex-native-session.mjs"),
+      runtimeReplyBody: "Streaming reply for chat.",
+    });
     const finalSource = annotationSource(page, {
       messageId: seeded.assistantMessageId,
       surface: "assistant_body",
