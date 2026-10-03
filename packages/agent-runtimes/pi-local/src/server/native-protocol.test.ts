@@ -34,6 +34,7 @@ async function makePiFixture(directory: string, options: {
   invalidFrameAfterUsage?: boolean;
   stallPrompt?: boolean;
   exitOnAbort?: boolean;
+  captureRuntimeContext?: boolean;
 } = {}): Promise<string> {
   const command = path.join(directory, "pi-fixture.mjs");
   await fs.writeFile(command, `#!/usr/bin/env node
@@ -43,6 +44,17 @@ import readline from "node:readline";
 
 const args = process.argv.slice(2);
 fs.writeFileSync(path.join(process.cwd(), "argv.json"), JSON.stringify(args));
+if (${options.captureRuntimeContext === true}) {
+  fs.writeFileSync(path.join(process.cwd(), "runtime-context.json"), JSON.stringify(
+    Object.fromEntries(Object.entries({
+      RUDDER_API_KEY: "synthetic-current-run-token",
+      RUDDER_RUN_ID: "second-run",
+      RUDDER_ORG_ID: "test-org",
+      RUDDER_AGENT_ID: "test-agent",
+      OPENAI_API_KEY: "synthetic-current-provider-token",
+    }).map(([key, expected]) => [key, process.env[key] === expected]))
+  ));
+}
 const requestLog = path.join(process.cwd(), "requests.jsonl");
 const sessionIndex = args.indexOf("--session");
 const sessionFile = sessionIndex >= 0 ? args[sessionIndex + 1] : "";
@@ -1163,13 +1175,20 @@ describe("Pi native protocol contract", () => {
 
   it("reuses persisted session-file params across a second Pi RPC process", async () => {
     const directory = await makeFixtureDirectory("rudder-pi-native-resume-");
-    const command = await makePiFixture(directory);
+    const command = await makePiFixture(directory, { captureRuntimeContext: true });
     const sessionFile = path.join(directory, "session.jsonl");
     await fs.writeFile(sessionFile, "", "utf8");
     const first = await executePiNativeChat({
       command,
       cwd: directory,
-      env: { HOME: directory },
+      env: {
+        HOME: directory,
+        RUDDER_API_KEY: "synthetic-first-run-token",
+        RUDDER_RUN_ID: "first-run",
+        RUDDER_ORG_ID: "test-org",
+        RUDDER_AGENT_ID: "test-agent",
+        OPENAI_API_KEY: "synthetic-first-provider-token",
+      },
       sessionFile,
       sessionDir: directory,
       prompt: "resume native",
@@ -1181,10 +1200,19 @@ describe("Pi native protocol contract", () => {
     });
     const persisted = sessionCodec.deserialize(sessionCodec.serialize(first.sessionParams ?? null) ?? null)!;
     const persistedEnv = persisted.rpcEnv as Record<string, string>;
+    expect(persistedEnv).toEqual({ HOME: directory });
+    const currentEnv = {
+      ...persistedEnv,
+      RUDDER_API_KEY: "synthetic-current-run-token",
+      RUDDER_RUN_ID: "second-run",
+      RUDDER_ORG_ID: "test-org",
+      RUDDER_AGENT_ID: "test-agent",
+      OPENAI_API_KEY: "synthetic-current-provider-token",
+    };
     const second = await executePiNativeChat({
       command: String(persisted.command),
       cwd: String(persisted.cwd),
-      env: persistedEnv,
+      env: currentEnv,
       sessionFile: String(persisted.sessionFile),
       sessionDir: String(persisted.sessionDir),
       prompt: "resume native",
@@ -1197,6 +1225,20 @@ describe("Pi native protocol contract", () => {
     });
     expect(first.exitCode).toBe(0);
     expect(second.exitCode).toBe(0);
+    expect(JSON.parse(await fs.readFile(path.join(directory, "runtime-context.json"), "utf8"))).toEqual({
+      RUDDER_API_KEY: true,
+      RUDDER_RUN_ID: true,
+      RUDDER_ORG_ID: true,
+      RUDDER_AGENT_ID: true,
+      OPENAI_API_KEY: true,
+    });
+    for (const params of [first.sessionParams, second.sessionParams]) {
+      const serialized = JSON.stringify(sessionCodec.serialize(params ?? null));
+      expect(serialized).not.toContain("synthetic-");
+      expect(serialized).not.toContain("RUDDER_API_KEY");
+      expect(serialized).not.toContain("OPENAI_API_KEY");
+      expect(serialized).not.toContain("RUDDER_RUN_ID");
+    }
     expect(second.sessionParams).toMatchObject({
       sessionFile,
       sessionDir: directory,

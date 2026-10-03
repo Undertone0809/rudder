@@ -2139,7 +2139,9 @@ export async function executePiNativeChat(input: {
   const cwd = persisted?.cwd ?? input.cwd;
   const sessionFile = persisted?.sessionFile ?? input.sessionFile;
   const sessionDir = persisted?.sessionDir ?? input.sessionDir;
-  const env = persisted?.rpcEnv ?? input.env;
+  // Persisted RPC env is secret-free profile metadata. Every execution needs
+  // the current Run's transient credentials and identity, including after fork.
+  const env = input.env;
   const rpcArgs = persisted?.rpcArgs ?? [...(input.rpcArgs ?? [])];
   if (persisted) {
     if (path.resolve(cwd) !== path.resolve(input.cwd)) {
@@ -2154,7 +2156,7 @@ export async function executePiNativeChat(input: {
     if (JSON.stringify(rpcArgs) !== JSON.stringify(input.rpcArgs ?? [])) {
       throw new PiNativeCapabilityError("unsupported", "Pi persisted RPC args do not match the current provider profile.");
     }
-    if (JSON.stringify(env) !== JSON.stringify(safeEnv(input.env))) {
+    if (JSON.stringify(persisted.rpcEnv) !== JSON.stringify(safeEnv(env))) {
       throw new PiNativeCapabilityError("unsupported", "Pi persisted RPC environment does not match the current provider profile.");
     }
     await requireKnownProviderSession(
