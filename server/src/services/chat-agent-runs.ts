@@ -1,6 +1,6 @@
 import type { AgentRuntimeNetworkSuspension, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { chatMessages, goals, heartbeatRunAttempts, heartbeatRuns, nativeSegments, runRuntimeSpans, runtimeBindings } from "@rudderhq/db";
+import { chatMessages, goals, heartbeatRunAttempts, heartbeatRuns, runRuntimeSpans } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -9,6 +9,7 @@ import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.
 import { logger } from "../middleware/logger.js";
 import { redactSensitiveText } from "../redaction.js";
 import { getStorageService, type ContentAddressedStorageService } from "../storage/index.js";
+import { qualifiedCodexGapIdentity } from "./chat-agent-runs.compact.js";
 import { boundedText, compactNativeAdapterInvokePayload, normalizeSourceSpanInput, stableJson, transcriptEventPayload } from "./chat-agent-runs.helpers.js";
 import { retainNativeChatRunResultJson } from "./chat-run-result-retention.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
@@ -21,7 +22,7 @@ import {
   storeRunInstructionSnapshot,
 } from "./run-instruction-snapshots.js";
 import { getRunLogStore } from "./run-log-store.js";
-import { hasVerifiedHeartbeatNativeTranscriptProfile, type HeartbeatTranscriptRetentionInput } from "./runtime-kernel/heartbeat-transcript-retention.js";
+import type { HeartbeatTranscriptRetentionInput } from "./runtime-kernel/heartbeat-transcript-retention.js";
 import {
   buildHeartbeatAdapterInvokePayload,
   networkWaitBackoffMs,
@@ -38,7 +39,6 @@ import {
   type NativeSegmentRecord,
   type RuntimeBindingRecord,
 } from "./runtime-kernel/native-session.js";
-import type { CoverageIdentity } from "./runtime-kernel/native-transcript-coverage.js";
 import {
   cleanSealedNativeTranscriptMirrors,
   markNativeTranscriptRetentionIncomplete,
@@ -205,32 +205,7 @@ export function chatAgentRunService(db: Db, options: {
             ownerToken: identity.ownerToken,
           });
         }
-        // New allocation only. Profile support is not native durability: use a
-        // self-contained dictionary, never discard the recovery transcript.
-        let compactIdentity: CoverageIdentity | null = null;
-        if (profile?.runtimeType === "codex_local" && hasVerifiedHeartbeatNativeTranscriptProfile(profile)
-          && profile.binding.orgId === run.orgId && span.attemptId === run.runtimeAttemptRef?.id
-          && span.selectorJson.kind === "codex_turn" && span.selectorJson.runId === run.id
-          && typeof span.selectorJson.threadId === "string" && span.selectorJson.threadId.length > 0
-          && typeof span.selectorJson.turnId === "string" && span.selectorJson.turnId.length > 0
-          && span.nativeExecutionRef === span.selectorJson.turnId) {
-          const binding = await db.select().from(runtimeBindings).where(and(
-            eq(runtimeBindings.id, span.bindingId), eq(runtimeBindings.orgId, run.orgId),
-          )).limit(1).then(rows => rows[0] ?? null);
-          const segment = binding ? await db.select().from(nativeSegments).where(and(
-            eq(nativeSegments.id, span.segmentId), eq(nativeSegments.orgId, run.orgId),
-            eq(nativeSegments.bindingId, binding.id),
-          )).limit(1).then(rows => rows[0] ?? null) : null;
-          if (binding?.runtimeType === "codex_local" && binding.status === "active" && binding.continuity === "native"
-            && segment?.runtimeType === "codex_local" && segment.nativeSessionId === span.selectorJson.threadId
-            && binding.hostId === profile.binding.hostId && binding.profileId === profile.binding.profileId
-            && (binding.workspaceBindingId ?? null) === (profile.binding.workspaceBindingId ?? null)
-            && (binding.capabilityRevision ?? null) === (profile.binding.capabilityRevision ?? null)) {
-            compactIdentity = { orgId: run.orgId, runId: run.id, spanId: identity.id,
-              attemptId: span.attemptId!, attemptEpoch: identity.attemptEpoch, ownerToken: identity.ownerToken,
-              selector: span.selectorJson as CoverageIdentity["selector"] };
-          }
-        }
+        const compactIdentity = await qualifiedCodexGapIdentity(db, run, identity, span, profile);
         const handle = await transcriptObjectStore.begin({
           orgId: run.orgId, runId: run.id, spanId: identity.id, ownerToken: identity.ownerToken,
           compactIdentity,

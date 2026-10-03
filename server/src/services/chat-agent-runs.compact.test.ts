@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { chatAgentRunService } from "./chat-agent-runs.js";
+import { resolveChatTranscriptRetention, withNativeSupplementProfile } from "./chat-assistant.transcript-delivery.js";
 import type { HeartbeatTranscriptRetentionInput } from "./runtime-kernel/heartbeat-transcript-retention.js";
 import { createTranscriptObjectStore } from "./runtime-kernel/transcript-object-store.js";
 import { databaseBinding, databaseRun, databaseSegment, databaseSpan, mockDatabase } from "./runtime-kernel/transcript-reader.test-support.js";
@@ -60,7 +61,10 @@ describe("actual Chat caller first-write eligibility", () => {
           } };
         const runs = chatAgentRunService(db as never, { transcriptObjectStore: store });
         const entry: TranscriptEntry = { kind: "assistant", ts: "2026-10-03T00:00:00.123456Z", sourceEntryId: "entry-1", text: "synthetic界🌍".repeat(1000) };
-        const call = runs.appendTranscriptEntry(run, entry, { persistRaw: false, nativeProfileCapability: mode === "missing-proof" ? null : profile });
+        const host = resolveChatTranscriptRetention({ hasBinding: true, bindingContinuity: "native", capabilityStatus: "supported",
+          profileCapability: mode === "missing-proof" ? null : profile });
+        const append = withNativeSupplementProfile((value, delivery) => runs.appendTranscriptEntry(run, value, delivery), host.profileCapability);
+        const call = append(entry, { source: "native", runId: run.id, spanId: "span-1", persistRaw: false, persistSupplement: true });
         if (mode === "owner-lost") {
           await expect(call).rejects.toThrow("stale");
           expect(await fs.readdir(root)).toEqual([]);

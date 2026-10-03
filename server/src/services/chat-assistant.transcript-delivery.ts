@@ -1,5 +1,24 @@
-import type { HeartbeatTranscriptRetentionPolicy } from "./runtime-kernel/heartbeat-transcript-retention.js";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { ChatTranscriptDelivery } from "./chat-assistant.helpers.js";
+import { resolveHeartbeatTranscriptRetention, type HeartbeatTranscriptRetentionInput, type HeartbeatTranscriptRetentionPolicy } from "./runtime-kernel/heartbeat-transcript-retention.js";
 import { isExplicitLegacyTranscriptSource, markLegacyTranscriptSource } from "./runtime-kernel/transcript-source.js";
+
+/** Reuse exactly the host proof that selected native retention, not a user flag. */
+export function resolveChatTranscriptRetention(input: HeartbeatTranscriptRetentionInput) {
+  const retention = resolveHeartbeatTranscriptRetention(input);
+  return { retention, profileCapability: retention.mode === "native" ? input.profileCapability : null };
+}
+
+export function withNativeSupplementProfile(
+  append: (entry: TranscriptEntry, delivery: ChatTranscriptDelivery & {
+    persistSupplement?: boolean;
+    nativeProfileCapability?: HeartbeatTranscriptRetentionInput["profileCapability"];
+  }) => Promise<unknown>,
+  profileCapability: HeartbeatTranscriptRetentionInput["profileCapability"],
+) {
+  return (entry: TranscriptEntry, delivery: ChatTranscriptDelivery & { persistSupplement?: boolean }) =>
+    append(entry, { ...delivery, nativeProfileCapability: profileCapability });
+}
 
 export function createChatTranscriptDelivery(input: {
   retention: HeartbeatTranscriptRetentionPolicy;
