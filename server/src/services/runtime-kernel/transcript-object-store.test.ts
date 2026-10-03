@@ -102,6 +102,66 @@ describe("first-write compact gap object, legacy compatibility and safe retentio
     expect(await f.store.isSelfContainedCompact!({ ...binding, objectRef: handle.objectRef })).toBe(false);
   });
 
+  it("removes a sealed compact object after validating its decoded records", async () => {
+    const f = await fixture();
+    const handle = await f.store.begin({ ...binding, compactIdentity: identity });
+    await f.store.append(handle, workload.slice(0, 2));
+    await f.store.finalize(handle, { completeness: "partial" });
+    await f.store.removeSealed(input(handle.objectRef));
+    expect(await fs.readdir(path.join(f.root, "transcript-objects"))).toEqual([]);
+  });
+
+  it("stages, restores after reopen, and purges sealed compact retention without losing records", async () => {
+    const f = await fixture();
+    const handle = await f.store.begin({ ...binding, compactIdentity: identity });
+    await f.store.append(handle, workload.slice(0, 2));
+    await f.store.finalize(handle, { completeness: "partial" });
+    const staged = await f.store.stageSealedRemoval!(input(handle.objectRef));
+    const reopened = createTranscriptObjectStore(f.root);
+    await reopened.restoreStagedRemoval!({ ...input(handle.objectRef), stageId: staged.stageId });
+    expect((await reopened.readRange(input(handle.objectRef))).entries).toEqual(workload.slice(0, 2));
+    const restaged = await reopened.stageSealedRemoval!(input(handle.objectRef));
+    await reopened.purgeStagedRemoval!({ ...input(handle.objectRef), stageId: restaged.stageId });
+    expect(await fs.readdir(path.join(f.root, "transcript-objects"))).toEqual([]);
+  });
+
+  it("retains corrupted compact evidence instead of staging or deleting it", async () => {
+    const f = await fixture();
+    const handle = await f.store.begin({ ...binding, compactIdentity: identity });
+    await f.store.append(handle, workload[0]!);
+    await f.store.finalize(handle, { completeness: "partial" });
+    const payload = path.join(f.root, "transcript-objects", `${handle.objectRef}.ndjson`);
+    const record = JSON.parse(await fs.readFile(payload, "utf8"));
+    record.sha256 = "0".repeat(64);
+    await fs.writeFile(payload, `${JSON.stringify(record)}\n`);
+    const corrupted = await fs.readFile(payload);
+    await expect(f.store.stageSealedRemoval!(input(handle.objectRef))).rejects.toThrow();
+    await expect(f.store.removeSealed(input(handle.objectRef))).rejects.toThrow();
+    expect(await fs.readFile(payload)).toEqual(corrupted);
+    expect(await fs.readdir(path.join(f.root, "transcript-objects"))).toHaveLength(2);
+  });
+
+  it("rejects foreign ownership and corrupted staged compact restore/purge without removing evidence", async () => {
+    const f = await fixture();
+    const handle = await f.store.begin({ ...binding, compactIdentity: identity });
+    await f.store.append(handle, workload[0]!);
+    await f.store.finalize(handle, { completeness: "partial" });
+    const staged = await f.store.stageSealedRemoval!(input(handle.objectRef));
+    const request = { ...input(handle.objectRef), stageId: staged.stageId };
+    await expect(f.store.restoreStagedRemoval!({ ...request, orgId: "other-org" })).rejects.toThrow();
+    await expect(f.store.purgeStagedRemoval!({ ...request, ownerToken: "other-owner" })).rejects.toThrow();
+    const stageDir = path.join(f.root, "transcript-objects", `.retention-${handle.objectRef}-${staged.stageId}`);
+    const payload = path.join(stageDir, `${handle.objectRef}.ndjson`);
+    const record = JSON.parse(await fs.readFile(payload, "utf8"));
+    record.sha256 = "0".repeat(64);
+    await fs.writeFile(payload, `${JSON.stringify(record)}\n`);
+    const corrupted = await fs.readFile(payload);
+    await expect(f.store.restoreStagedRemoval!(request)).rejects.toThrow("digest");
+    await expect(f.store.purgeStagedRemoval!(request)).rejects.toThrow("digest");
+    expect(await fs.readFile(payload)).toEqual(corrupted);
+    expect(await fs.readdir(stageDir)).toHaveLength(2);
+  });
+
   it("rebuilds committed dictionary after store/owner recovery and rejects cross-org access", async () => {
     const f = await fixture(); const handle = await f.store.begin({ ...binding, compactIdentity: identity });
     await f.store.append(handle, workload[0]!);

@@ -1106,7 +1106,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
           return;
         }
         if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
-        const summary = await scanObjectFile(paths.payloadPath);
+        const summary = await scanObjectFile(paths.payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
         if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
           throw new Error("Transcript object does not match its committed metadata");
         }
@@ -1146,7 +1146,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         if (metadata.state !== "sealed") throw conflict("Transcript object is not sealed");
         if (payloadStat) {
           if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
-          const summary = await scanObjectFile(paths.payloadPath);
+          const summary = await scanObjectFile(paths.payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
           if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
             throw new Error("Transcript object does not match its committed metadata");
           }
@@ -1207,7 +1207,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         if (payloadStat) {
           if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
           const metadata = await loadMetadata(metadataPath, { ...binding, objectRef: ref }, { allowOwnerRecovery: input.allowOwnerRecovery });
-          const summary = await scanObjectFile(payloadPath);
+          const summary = await scanObjectFile(payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
           if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
             throw new Error("Staged transcript object does not match its committed metadata");
           }
@@ -1275,7 +1275,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         if (metadata.state !== "sealed") throw conflict("Staged transcript object is not sealed");
         if (payloadStat) {
           if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
-          const summary = await scanObjectFile(payloadPath);
+          const summary = await scanObjectFile(payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
           if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
             throw new Error("Staged transcript object does not match its committed metadata");
           }
