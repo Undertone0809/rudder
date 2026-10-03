@@ -1,0 +1,24 @@
+diff --git a/dist/index.js b/dist/index.js
+index ccfe17a82f4879bf20cc345c579a987d9eba5309..f8f99c748ccd947c0fd2ca5a40fcf672ce26ce97 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -140,12 +140,17 @@ class EmbeddedPostgres {
+                     const message = chunk.toString('utf-8');
+                     this.options.onLog(message);
+                 });
+-                process.on('exit', (code) => {
++                process.stderr?.on('data', (chunk) => {
++                    this.options.onError(chunk.toString('utf-8'));
++                });
++                // close follows stream drainage, including stderr after exit.
++                process.once('error', reject);
++                process.on('close', (code, signal) => {
+                     if (code === 0) {
+                         resolve();
+                     }
+                     else {
+-                        reject(`Postgres init script exited with code ${code}. Please check the logs for extra info. The data directory might already exist.`);
++                        reject(`Postgres init script exited with code ${code}${signal ? ` (signal ${signal})` : ''}. Please check the logs for extra info. The data directory might already exist.`);
+                     }
+                 });
+             });
