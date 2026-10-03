@@ -265,7 +265,20 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   const includeMigrationJournal = opts.includeMigrationJournal === true;
   const excludedTableNames = normalizeTableNameSet(opts.excludeTables);
   const nullifiedColumnsByTable = normalizeNullifyColumnMap(opts.nullifyColumns);
-  const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
+  const sql = postgres(opts.connectionString, {
+    max: 1,
+    connect_timeout: connectTimeout,
+    // Backups must preserve PostgreSQL temporal text. JS Date loses microseconds
+    // and interprets timestamp-without-time-zone values in the host timezone.
+    types: {
+      backupTemporal: {
+        to: 1184,
+        from: [1082, 1114, 1184],
+        serialize: (value: string) => value,
+        parse: (value: string) => value,
+      },
+    },
+  });
   mkdirSync(opts.backupDir, { recursive: true });
   const backupFile = resolve(
     opts.backupDir,

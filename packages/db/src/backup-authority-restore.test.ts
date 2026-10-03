@@ -85,12 +85,22 @@ it("restores Project provisioning, monotonic fences and immutable receipts witho
     FOR EACH ROW EXECUTE FUNCTION backup_always_event()`;
   await db`ALTER TABLE backup_trigger_fixture ENABLE ALWAYS TRIGGER backup_always`;
   await db`INSERT INTO backup_trigger_fixture VALUES (1)`;
+  await db`CREATE TABLE backup_temporal_precision_fixture
+    (id integer PRIMARY KEY, instant timestamptz, wall_clock timestamp)`;
+  await db`INSERT INTO backup_temporal_precision_fixture VALUES
+    (1, '2026-10-03 02:00:00.123456+00', '2026-10-03 02:00:00.654321')`;
+  const temporalQuery = `SELECT id, to_char(instant AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') AS instant,
+    to_char(wall_clock, 'YYYY-MM-DD HH24:MI:SS.US') AS wall_clock
+    FROM backup_temporal_precision_fixture ORDER BY id`;
+  const originalTemporalValues = await db.unsafe(temporalQuery);
   const originalFence = await db`SELECT * FROM project_goal_mutation_state WHERE project_id = ${project}`;
   const backup = await runDatabaseBackup({
     connectionString: sourceUrl, backupDir: join(root, "backups"), retentionDays: 1,
     includeMigrationJournal: true,
   });
   await runDatabaseRestore({ connectionString: restoredUrl, backupFile: backup.backupFile });
+  // Database text, not JS Date equality: Date parsers hide sub-millisecond loss.
+  expect(await clone.unsafe(temporalQuery)).toEqual(originalTemporalValues);
   // Deliberately do not migrate the clone: worktree init preserves this journal.
   expect(await clone`SELECT * FROM drizzle.__drizzle_migrations ORDER BY id`)
     .toEqual(await db`SELECT * FROM drizzle.__drizzle_migrations ORDER BY id`);

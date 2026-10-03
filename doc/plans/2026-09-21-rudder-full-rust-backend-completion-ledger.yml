@@ -1,6 +1,35 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+convergence_checkpoint_2026_10_03_temporal_repair:
+  supersedes: earlier_live_worker_PG_CI_and_next_action_fields_only_history_preserved
+  record_base: bfe96ef39869f698b6af184e2fe4827eca81de75
+  installed_source_unchanged: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
+  backup_export:
+    scope: transitional_Node_backup_compatibility_not_Rust_authority_or_retirement
+    patch_sha256: 59f158e587e8a312c500e3b513d7d9658a7c4af4ae64a367a06d222f10ddfc41
+    author_before: actual_PG_FAIL_session67705_microseconds_truncated_wall_clock_shifted_minus8hours
+    author_after: actual_PG_PASS_session83184_exit0_same_database_text_assertion_including_fence_receipt_and_migration_restore
+    checks: actual_PG1PASS_backup_lib8PASS_db_typecheck_and_scoped_diffcheck_PASS
+    stage: accept_Goodall_exact59f158e_two_file_diff_parent_FULLread
+    verifier: Singer_fresh_gpt6luna_xhigh_disposable_PG_lane_reserved_max10min_no_installed_claim
+    installed_acceptance: pending_new_build_old646_not_relabelled
+    PG: FREE_after_test_owned_cleanup_fresh_no_live_owned_process_observation
+  C07:
+    v7: CLOSED_FAIL_no_retry_all16criteria_preserved
+    v8_stage: needs_more_evidence_f611f0787ac78c7e3d42bb36b1a0b61c890497fed77fcd12b93eeb998c3ced84_no_OPEN_or_run
+    v9: Averroes_actual_spawn_gpt6luna_xhigh_bounded_diagnostic_phase_successor_pending_no_runtime
+    root_cause_limit: typed_precision_defect_proven_in_focused_backup_not_attributed_to_every_v7_catalog_difference
+  native_process:
+    PR262_head: 7113792176b33d58cb6d5bb4ac3601817410e9eb
+    implementation: Lorentz_two_file_child_exit_patch_then_parent_succeeded_terminal_compatibility_repair_unpublished
+    checks: actual_Rust_host28PASS_including_nonzero_output_receipt_and_duplicate_exit_before_after_terminal_typecheck_PASS
+    stage: Dewey_reject_late_duplicate_exit_parent_fixed_with_two_regressions_successor_review_pending
+    remaining_CI: Hilbert_actual_spawn_gpt6luna_xhigh_Rust_auth_and_Desktop_failure_diagnosis
+    security: exact711_GitGuardian_FAILURE_unadjudicated_no_waiver
+  publication: unaccepted_working_changes_not_merged_stage_and_real_workflow_gates_pending
+  next: stage_temporal_fix_then_new_installed_seed_candidate_do_not_rerun_known_defective646_for_success_claim
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 terminal_checkpoint_2026_10_03_C07_v7:
   supersedes: earlier_live_C07_v7_pending_and_PG_reserved_fields_only_history_preserved
   record_source_head: b16d46b7324c9957b4acccb25934b24794250929
