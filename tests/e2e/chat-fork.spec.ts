@@ -162,12 +162,14 @@ async function forkFromAssistantMessage(page: Page, conversationId: string, mess
   await expect(sourceAssistant).toBeVisible({ timeout: 15_000 });
   await sourceAssistant.hover();
   await expect(sourceAssistant.getByRole("button", { name: "Copy message" })).toBeVisible();
-  await expect(sourceAssistant.getByRole("button", { name: "Fork from here" })).toBeVisible();
+  await expect(sourceAssistant.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
+  await sourceAssistant.getByRole("button", { name: "More message actions" }).filter({ visible: true }).click();
+  await expect(page.getByTestId("chat-fork-more-action")).toBeVisible();
   const forkResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${conversationId}/fork`),
   );
-  await sourceAssistant.getByRole("button", { name: "Fork from here" }).click();
+  await page.getByTestId("chat-fork-more-action").click();
   const forkResponse = await forkResponsePromise;
   expect(forkResponse.ok()).toBe(true);
   const forkedConversation = await forkResponse.json() as { id: string };
@@ -287,12 +289,14 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   const sourceAssistant = page.locator(`[data-testid="chat-assistant-message"][data-message-id="${sourceMessageIds[1]}"]`);
   await expect(sourceAssistant).toContainText("Middle branch point", { timeout: 15_000 });
   await sourceAssistant.hover();
-  await expect(sourceAssistant.getByRole("button", { name: "Fork from here" })).toBeVisible();
+  await expect(sourceAssistant.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
+  await sourceAssistant.getByRole("button", { name: "More message actions" }).filter({ visible: true }).click();
+  await expect(page.getByTestId("chat-fork-more-action")).toBeVisible();
   const forkResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${sourceConversationId}/fork`),
   );
-  await sourceAssistant.getByRole("button", { name: "Fork from here" }).click();
+  await page.getByTestId("chat-fork-more-action").click();
   const forkResponse = await forkResponsePromise;
   expect(forkResponse.ok()).toBe(true);
   const forkedConversation = await forkResponse.json() as {
@@ -572,12 +576,14 @@ test("forks from an earlier assistant message while a later reply is streaming",
 
   await sourceAssistant.scrollIntoViewIfNeeded();
   await sourceAssistant.hover();
-  await expect(sourceAssistant.getByRole("button", { name: "Fork from here" })).toBeVisible();
+  await expect(sourceAssistant.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
+  await sourceAssistant.getByRole("button", { name: "More message actions" }).filter({ visible: true }).click();
+  await expect(page.getByTestId("chat-fork-more-action")).toBeVisible();
   const forkResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${sourceConversationId}/fork`),
   );
-  await sourceAssistant.getByRole("button", { name: "Fork from here" }).click();
+  await page.getByTestId("chat-fork-more-action").click();
   const forkResponse = await forkResponsePromise;
   expect(forkResponse.ok()).toBe(true);
   const forkedConversation = await forkResponse.json() as {

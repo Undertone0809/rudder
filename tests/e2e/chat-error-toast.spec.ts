@@ -280,7 +280,10 @@ test.describe("Chat error recovery", () => {
     });
     await expect(failedMessage).toHaveCount(0);
     await expect(recoveredMessage.getByRole("button", { name: "Copy message" })).toBeVisible({ timeout: 15_000 });
-    await expect(recoveredMessage.getByRole("button", { name: "Fork from here" })).toBeVisible({ timeout: 15_000 });
+    await expect(recoveredMessage.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
+    await recoveredMessage.getByRole("button", { name: "More message actions" }).filter({ visible: true }).click();
+    await expect(page.getByTestId("chat-fork-more-action")).toBeVisible({ timeout: 15_000 });
+    await page.keyboard.press("Escape");
     expect((await readFile(retryableFailureStub.invocationPath, "utf8"))
       .split("\n").filter((line) => line === "app-server --stdio")).toHaveLength(2);
     expect(await readFile(retryableFailureStub.counterPath, "utf8")).toBe("2");

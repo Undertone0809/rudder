@@ -2389,7 +2389,9 @@ test.describe("Chat response annotations", () => {
       response.request().method() === "POST"
       && response.url().includes(`/api/chats/${seeded.conversationId}/fork`)
     ));
-    await branchAssistant.getByRole("button", { name: "Fork from here" }).click();
+    await expect(branchAssistant.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
+    await branchAssistant.getByRole("button", { name: "More message actions" }).filter({ visible: true }).click();
+    await page.getByTestId("chat-fork-more-action").click();
     const forkResponse = await forkResponsePromise;
     expect(forkResponse.ok(), await forkResponse.text()).toBe(true);
     const forkedConversation = await forkResponse.json() as { id: string };
