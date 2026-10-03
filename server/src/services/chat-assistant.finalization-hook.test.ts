@@ -15,7 +15,12 @@ const fixture = vi.hoisted(() => {
     sourceRunId: "parent-run", sourceSpanId: "parent-span", sourceBoundaryRef: "parent-assistant",
     sessionIntent: { kind: "fresh" }, providerCapability: null, downgradeReason: null };
   return { binding, session, run, admission, events: [] as string[], sealed: false,
-    controller: new AbortController(), loseOwner: false,
+    controller: new AbortController(), loseOwner: false, runtimeType: "claude_local",
+    stop: null as AbortController | null, stopResult: null as AgentRuntimeExecutionResult | null,
+    repeatResult: null as AgentRuntimeExecutionResult | null,
+    rejectRecording: false, mismatchRecording: false, loseOwnerDuringRecord: false,
+    recordGate: null as (() => Promise<void>) | null,
+    observedRecording: vi.fn(),
     reference: { bindingId: "binding", segmentId: "segment", intentId: "intent" },
     observer: vi.fn(), abort: vi.fn(), finalize: vi.fn(), transfer: vi.fn(),
     terminalOutcome: vi.fn(), release: vi.fn(), dispatch: vi.fn() };
@@ -26,8 +31,8 @@ vi.mock("./chat-assistant.runtime-resolution.js", () => ({
   isAgentRuntimeType: () => true,
   createChatAssistantRuntimeResolution: () => ({
     resolveChatInvocation: async () => ({
-      runtimeSource: { agentRuntimeType: "claude_local", descriptor: { runtimeAgentId: "agent" }, runtimeSkills: [] },
-      adapter: { type: "claude_local" },
+      runtimeSource: { agentRuntimeType: fixture.runtimeType, descriptor: { runtimeAgentId: "agent" }, runtimeSkills: [] },
+      adapter: { type: fixture.runtimeType },
       config: { model: "primary", cwd: "/tmp", modelFallbacks: [{ model: "backup" }] },
       linkedIssueIds: [], linkedProjectId: null, linkedGoalId: null,
       sceneContext: { rudderWorkspace: {}, rudderScene: {} },
@@ -86,18 +91,39 @@ vi.mock("./chat-agent-runs.js", () => ({ chatAgentRunService: () => ({
   createRun: async () => fixture.run,
   beginOwnedRunExecution: () => ({ signal: fixture.controller.signal, release: fixture.release }),
   beginRuntimeAttempt: async () => fixture.run.runtimeAttemptRef,
-  recordNativeExecutionResult: async () => {
+  recordNativeExecutionResult: async (runId: string, result: AgentRuntimeExecutionResult, fence: unknown) => {
+    fixture.observedRecording(runId, result, fence);
+    await fixture.recordGate?.();
+    if (fixture.rejectRecording) return null;
+    if (fixture.loseOwnerDuringRecord) fixture.controller.abort();
+    if (fixture.mismatchRecording) return { id: "foreign-span", attemptRef: { id: "foreign-attempt" } };
     fixture.sealed = true;
     fixture.events.push("span_sealed");
     return { id: "span", attemptRef: fixture.run.runtimeAttemptRef };
   },
   finalizeRun: fixture.finalize,
+  finishRuntimeAttempt: async () => {},
+  appendTranscriptEntry: async () => {},
 }) }));
 vi.mock("./runtime-kernel/model-fallback.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./runtime-kernel/model-fallback.js")>();
   return { ...actual, executeAdapterWithModelFallbacks: async (
-    _adapter: unknown, _context: unknown, options: Parameters<typeof actual.executeAdapterWithModelFallbacks>[2],
+    _adapter: unknown, context: { onLog?: (stream: "stdout", chunk: string) => Promise<void> }, options: Parameters<typeof actual.executeAdapterWithModelFallbacks>[2],
   ) => {
+    if (fixture.stopResult) {
+      const attempt: ModelAttemptSpec = { index: 0, agentRuntimeType: fixture.runtimeType, model: "primary",
+        config: null, isFallback: false, fallbackIndex: null, totalFallbacks: 0 };
+      await options!.onAttemptStart!(attempt, { type: fixture.runtimeType,
+        parseStdoutLine: (line: string) => [JSON.parse(line)] } as any);
+      options!.onProviderDispatch?.(attempt);
+      await context.onLog?.("stdout", JSON.stringify({ kind: "assistant", text: "Visible partial response", delta: true }) + "\n");
+      fixture.stop?.abort();
+      await options!.onAttemptResult!(attempt, fixture.stopResult, "accepted", { providerDispatched: true, willFallback: false });
+      if (fixture.repeatResult) {
+        await options!.onAttemptResult!(attempt, fixture.repeatResult, "accepted", { providerDispatched: true, willFallback: false });
+      }
+      return fixture.stopResult;
+    }
     const attempt: ModelAttemptSpec = { index: 0, agentRuntimeType: "claude_local", model: "primary",
       config: null, isFallback: false, fallbackIndex: null, totalFallbacks: 1 };
     const failure: AgentRuntimeExecutionResult = { exitCode: 1, signal: null, timedOut: false,
@@ -122,6 +148,12 @@ describe("production Chat dependent finalization hookup (mocked persistence)", (
     fixture.events.length = 0;
     fixture.sealed = false;
     fixture.loseOwner = false;
+    fixture.runtimeType = "claude_local";
+    fixture.stop = null;
+    fixture.stopResult = null;
+    fixture.repeatResult = null;
+    fixture.rejectRecording = fixture.mismatchRecording = fixture.loseOwnerDuringRecord = false;
+    fixture.recordGate = null;
     fixture.controller = new AbortController();
     fixture.observer.mockImplementation(async () => {
       expect(fixture.sealed).toBe(true);
@@ -188,5 +220,139 @@ describe("production Chat dependent finalization hookup (mocked persistence)", (
     expect(fixture.abort).not.toHaveBeenCalled();
     expect(fixture.finalize).not.toHaveBeenCalled();
     expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("production Chat Stop terminal evidence (mocked fenced persistence)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fixture.events.length = 0;
+    fixture.sealed = false;
+    fixture.runtimeType = "hermes_gateway";
+    fixture.controller = new AbortController();
+    fixture.stop = new AbortController();
+    fixture.rejectRecording = fixture.mismatchRecording = fixture.loseOwnerDuringRecord = false;
+    fixture.recordGate = null;
+    fixture.run.runtimeSpanOwnerToken = "owner";
+    fixture.run.runtimeAttemptRef = { id: "attempt", attemptIndex: 0 };
+    fixture.repeatResult = null;
+    fixture.observer.mockResolvedValue(undefined);
+    fixture.finalize.mockResolvedValue(undefined);
+    fixture.stopResult = {
+      exitCode: 1, signal: "SIGTERM", timedOut: false, submissionPhase: "accepted",
+      resultJson: { providerStatus: "interrupted", control: { interruptRequested: true, stopConfirmed: true,
+        privatePrompt: "must-not-persist" }, privatePrompt: "must-not-persist" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_stop_ack" },
+    };
+  });
+
+  const execute = () => chatAssistantService(db as any).streamChatAssistantReply({
+    conversation: { id: "side", orgId: "org", conversationKind: "chat", planMode: false },
+    messages: [{ id: "message", role: "user", body: "current input", attachments: [] }],
+    userMessageId: "message", contextLinks: [], stream: true, abortSignal: fixture.stop!.signal,
+  } as any);
+  const terminal = () => fixture.finalize.mock.calls[0]?.[1];
+
+  it("preserves observed native Stop evidence after fenced recording in the actual Chat caller", async () => {
+    await expect(execute()).resolves.toMatchObject({ outcome: "stopped", partialBody: "Visible partial response" });
+    expect(fixture.finalize).toHaveBeenCalledOnce();
+    expect(terminal()).toMatchObject({ status: "cancelled", errorCode: "chat_stopped",
+      resultJson: { outcome: "stopped", partialBody: "Visible partial response",
+        control: { interruptRequested: true, stopConfirmed: true }, providerStatus: "interrupted",
+        nativeWriterQuiescence: { status: "confirmed", source: "provider_stop_ack" },
+        nativeStopEvidence: { orgId: "org", runId: "run", spanId: "span", attemptId: "attempt", attemptEpoch: 1 } } });
+    expect(terminal().resultJson.control).toEqual({ interruptRequested: true, stopConfirmed: true });
+    expect(JSON.stringify(terminal())).not.toContain("must-not-persist");
+    expect(fixture.observedRecording.mock.invocationCallOrder[0]).toBeLessThan(fixture.finalize.mock.invocationCallOrder[0]!);
+  });
+
+  it("preserves explicit false and unconfirmed status without copying diagnostic secrets", async () => {
+    fixture.stopResult!.resultJson = { providerStatus: "unknown", control: { interruptRequested: true, stopConfirmed: false } };
+    fixture.stopResult!.nativeWriterQuiescence = { status: "unconfirmed", reason: "secret must-not-persist" };
+    await execute();
+    expect(terminal().resultJson.control).toEqual({ interruptRequested: true, stopConfirmed: false });
+    expect(terminal().resultJson.nativeWriterQuiescence).toEqual({ status: "unconfirmed" });
+    expect(JSON.stringify(terminal())).not.toContain("must-not-persist");
+  });
+
+  it("does not turn interrupt ACK or inconsistent unconfirmed proof into stopConfirmed true", async () => {
+    fixture.stopResult!.nativeWriterQuiescence = { status: "unconfirmed", reason: "ACK only" };
+    await execute();
+    expect(terminal().resultJson.control?.stopConfirmed).not.toBe(true);
+    expect(terminal().resultJson.nativeWriterQuiescence).toEqual({ status: "unconfirmed" });
+  });
+
+  it("does not overwrite previously observed confirmed evidence with a duplicate false result", async () => {
+    fixture.repeatResult = { ...fixture.stopResult!, resultJson: { providerStatus: "unknown",
+      control: { interruptRequested: true, stopConfirmed: false } },
+    nativeWriterQuiescence: { status: "unconfirmed", reason: "duplicate" } };
+    await execute();
+    expect(terminal().resultJson.control?.stopConfirmed).toBe(true);
+    expect(terminal().resultJson.providerStatus).toBe("interrupted");
+    expect(terminal().resultJson.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_stop_ack" });
+  });
+
+  it.each(["rejectRecording", "mismatchRecording"] as const)("retains no provider evidence when %s fails the existing fence", async (key) => {
+    fixture[key] = true;
+    await execute();
+    expect(terminal().resultJson).toEqual({ outcome: "stopped", partialBody: "Visible partial response",
+      retention: { transcriptSource: "legacy" } });
+  });
+
+  it("cannot publish stopped evidence after owner loss while recording awaited", async () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const recording = new Promise<void>((resolve) => { entered = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fixture.recordGate = async () => { entered(); await held; };
+    const pending = execute();
+    await recording;
+    fixture.controller.abort();
+    release();
+    await pending;
+    expect(terminal()?.resultJson?.control?.stopConfirmed).not.toBe(true);
+  });
+
+  it.each(["owner", "attempt"] as const)("cannot attach stale proof when %s identity changes during recording", async (changed) => {
+    let entered!: () => void;
+    let release!: () => void;
+    const recording = new Promise<void>((resolve) => { entered = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fixture.recordGate = async () => { entered(); await held; };
+    const pending = execute();
+    await recording;
+    if (changed === "owner") fixture.run.runtimeSpanOwnerToken = "successor-owner";
+    else fixture.run.runtimeAttemptRef = { id: "successor-attempt", attemptIndex: 1 };
+    release();
+    await pending;
+    expect(terminal()?.resultJson).not.toHaveProperty("nativeStopEvidence");
+    expect(terminal()?.resultJson?.control?.stopConfirmed).not.toBe(true);
+    if (changed === "owner") expect(fixture.run.runtimeSpanOwnerToken).toBe("successor-owner");
+    else expect(fixture.run.runtimeAttemptRef.id).toBe("successor-attempt");
+  });
+
+  it("leaves pre-dispatch Stop unchanged, with no invented native control evidence", async () => {
+    fixture.stop!.abort();
+    await execute();
+    expect(terminal().resultJson).toEqual({ outcome: "stopped", partialBody: "",
+      retention: { transcriptSource: "legacy" } });
+    expect(fixture.observedRecording).toHaveBeenCalledWith("run", expect.objectContaining({
+      submissionPhase: "pre_submission", nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+    }), expect.objectContaining({ orgId: "org", spanId: "span", attemptId: "attempt", ownerToken: "owner", attemptEpoch: 1 }));
+  });
+
+  it("leaves natural completion application terminal shape unchanged", async () => {
+    fixture.stop = null;
+    fixture.stopResult = { exitCode: 0, signal: null, timedOut: false, summary: "Visible partial response",
+      resultJson: { providerStatus: "complete", control: { interruptRequested: false, stopConfirmed: false } },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" } };
+    await chatAssistantService(db as any).streamChatAssistantReply({
+      conversation: { id: "side", orgId: "org", conversationKind: "chat", planMode: false },
+      messages: [{ id: "message", role: "user", body: "current input", attachments: [] }],
+      userMessageId: "message", contextLinks: [], stream: true,
+    } as any);
+    expect(terminal()).toMatchObject({ status: "succeeded", resultJson: { outcome: "completed", body: "Visible partial response" } });
+    expect(terminal().resultJson).not.toHaveProperty("control");
+    expect(terminal().resultJson).not.toHaveProperty("nativeStopEvidence");
   });
 });
