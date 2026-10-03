@@ -94,7 +94,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  GitFork,
   Lightbulb,
   Loader2,
   Maximize2,
@@ -2638,6 +2637,9 @@ export function ChatMessageItem({
     && message.kind === "message"
     && message.status === "completed"
     && (!message.supersededAt || Boolean(turnBranchControls));
+  const canForkMessage = canShowAssistantMessageActions
+    && Boolean(onForkMessage)
+    && message.status !== "streaming";
   const isInlineEditing = isUser && Boolean(inlineEdit);
   const hasVisibleUserMessageContent = message.body.trim().length > 0
     || visibleMessageAttachments.length > 0;
@@ -2784,29 +2786,20 @@ export function ChatMessageItem({
                   <RefreshCcw className="h-4 w-4" />
                 </button>
               ) : null}
-              {canOpenSideChat ? (
+              {canOpenSideChat || canForkMessage ? (
                 <AssistantMessageMoreMenu
-                  onOpenSideChat={() => onOpenSideChat?.(message)}
+                  onOpenSideChat={canOpenSideChat ? () => onOpenSideChat?.(message) : undefined}
+                  onForkMessage={canForkMessage ? () => onForkMessage?.(message) : undefined}
                   className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground md:inline-flex"
                 />
               ) : null}
-              {canShowAssistantMessageActions && onForkMessage && message.status !== "streaming" ? (
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                  aria-label="Fork from here"
-                  title="Fork from here"
-                  onClick={() => onForkMessage(message)}
-                >
-                  <GitFork className="h-4 w-4" />
-                </button>
-              ) : null}
             </div>
           ) : null}
-          {canOpenSideChat ? (
+          {canOpenSideChat || canForkMessage ? (
             <div className="mt-1 flex justify-end md:hidden">
               <AssistantMessageMoreMenu
-                onOpenSideChat={() => onOpenSideChat?.(message)}
+                onOpenSideChat={canOpenSideChat ? () => onOpenSideChat?.(message) : undefined}
+                onForkMessage={canForkMessage ? () => onForkMessage?.(message) : undefined}
                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               />
             </div>
@@ -2976,7 +2969,8 @@ function AssistantMessageContextMenu(props: {
 
 function AssistantMessageMoreMenu(props: {
   className: string;
-  onOpenSideChat: () => void;
+  onOpenSideChat?: () => void;
+  onForkMessage?: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -2992,12 +2986,22 @@ function AssistantMessageMoreMenu(props: {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" data-testid="chat-message-actions-menu">
-        <DropdownMenuItem
-          data-testid="chat-open-side-chat-more-action"
-          onSelect={props.onOpenSideChat}
-        >
-          Open Side Chat
-        </DropdownMenuItem>
+        {props.onOpenSideChat ? (
+          <DropdownMenuItem
+            data-testid="chat-open-side-chat-more-action"
+            onSelect={props.onOpenSideChat}
+          >
+            Open Side Chat
+          </DropdownMenuItem>
+        ) : null}
+        {props.onForkMessage ? (
+          <DropdownMenuItem
+            data-testid="chat-fork-more-action"
+            onSelect={props.onForkMessage}
+          >
+            Fork from here
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

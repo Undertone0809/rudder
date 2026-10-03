@@ -243,8 +243,8 @@ function chatMessageItemElement(
   localizeText?: (text: string) => string,
   onOpenSideChat: (message: ChatMessage) => void = vi.fn(),
   key?: string,
+  onForkMessage: (message: ChatMessage) => void = vi.fn(),
 ) {
-  const onForkMessage = vi.fn();
   return (
     <ThemeProvider>
       <ChatMessageItem
@@ -335,6 +335,15 @@ function renderChatMessageItem(
     localizeText,
     onOpenSideChat,
   ));
+}
+
+function expectForkMenuWithoutSideChat(container: HTMLElement) {
+  const trigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-message-actions-trigger"]');
+  expect(trigger).not.toBeNull();
+  act(() => trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
+  expect(document.body.querySelector('[data-testid="chat-open-side-chat-more-action"]')).toBeNull();
+  expect(document.body.querySelector('[data-testid="chat-fork-more-action"]')).not.toBeNull();
+  expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
 }
 
 describe("assistant attribution", () => {
@@ -1332,7 +1341,7 @@ describe("assistant chat message rendering", () => {
     const onOpenSideChat = vi.fn();
     const container = renderChatMessageItem(sourceMessage, [], {}, undefined, onOpenSideChat);
 
-    expect(container.querySelector('button[aria-label="Fork from here"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Copy message"]')).not.toBeNull();
     const actionTriggers = Array.from(container.querySelectorAll<HTMLButtonElement>(
       'button[data-testid="chat-message-actions-trigger"]',
@@ -1350,6 +1359,7 @@ describe("assistant chat message rendering", () => {
       '[data-testid="chat-open-side-chat-more-action"]',
     );
     expect(moreMenuAction?.textContent).toContain("Open Side Chat");
+    expect(document.body.querySelector('[data-testid="chat-fork-more-action"]')?.textContent).toContain("Fork from here");
     act(() => moreMenuAction?.click());
 
     cleanupFn?.();
@@ -1376,7 +1386,7 @@ describe("assistant chat message rendering", () => {
       body: "Partial answer",
     }));
 
-    expect(container.querySelector('[data-testid="chat-message-actions-trigger"]')).toBeNull();
+    expectForkMenuWithoutSideChat(container);
   });
 
   it("does not expose Side Chat for superseded assistant replies", () => {
@@ -1388,7 +1398,18 @@ describe("assistant chat message rendering", () => {
       supersededAt: new Date("2026-08-01T00:00:00.000Z"),
     }));
 
-    expect(container.querySelector('[data-testid="chat-message-actions-trigger"]')).toBeNull();
+    expectForkMenuWithoutSideChat(container);
+  });
+
+  it("preserves the message fork callback in More without a standalone fork icon", () => {
+    const source = message({ role: "assistant", kind: "message", status: "completed", body: "Branch this answer" });
+    const onFork = vi.fn();
+    const container = render(chatMessageItemElement(source, [], {}, undefined, vi.fn(), undefined, onFork));
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-message-actions-trigger"]');
+    expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
+    act(() => trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
+    act(() => document.body.querySelector<HTMLElement>('[data-testid="chat-fork-more-action"]')?.click());
+    expect(onFork).toHaveBeenCalledExactlyOnceWith(source);
   });
 
   it("hides interrupted recovery chrome while preserving partial assistant content", () => {
@@ -1763,7 +1784,7 @@ describe("steer fallback chat rendering", () => {
     expect(container.textContent).toContain("Useful partial answer.");
     expect(container.textContent).not.toContain("Stopped");
     expect(container.textContent).not.toContain("Response failed");
-    expect(container.querySelector('[data-testid="chat-message-actions-trigger"]')).toBeNull();
+    expectForkMenuWithoutSideChat(container);
   });
 
   it("suppresses a stopped placeholder assistant bubble", () => {
