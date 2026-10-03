@@ -2776,6 +2776,447 @@ test.describe("Chat response annotations", () => {
     await expect(forkedSource).toHaveClass(/chat-message-jump-highlight/);
   });
 
+  test("preserves native Reader annotation provenance and files through message edit and UI Fork", async ({ page }) => {
+    test.setTimeout(120_000);
+    const orgResponse = await page.request.post("/api/orgs", {
+      data: { name: `Response-Annotation-Native-Edit-Fork-${Date.now()}` },
+    });
+    expect(orgResponse.ok(), await orgResponse.text()).toBe(true);
+    const organization = await orgResponse.json() as SeededNativeAnnotationChat["organization"];
+    const agent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Native Annotation Edit Fork Agent",
+      command: join(E2E_ROOT, "fixtures", "codex-native-session.mjs"),
+    }) as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agent.id}`);
+    await composer(page).fill("Native annotation reasoning fixture marker. Create a stable native reply.");
+    const nativeStream = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().endsWith("/messages/stream")
+    ));
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await (await nativeStream).finished();
+    const sourceAssistant = page.getByTestId("chat-assistant-message").last();
+    await expect(sourceAssistant).toContainText("Native reply 1", { timeout: 30_000 });
+    const conversationId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const assistantMessageId = await sourceAssistant.getAttribute("data-message-id");
+    expect(assistantMessageId).toBeTruthy();
+
+    const sourceRuns = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.chatConversationId, conversationId));
+    expect(sourceRuns).toHaveLength(1);
+    const sourceRun = sourceRuns[0]!;
+    expect(sourceRun.agentId).toBe(agent.id);
+    expect(sourceRun.status).toBe("succeeded");
+    expect(sourceRun.resultJson).toMatchObject({ retention: { transcriptSource: "native" } });
+    const seeded: SeededNativeAnnotationChat = {
+      organization,
+      agent,
+      conversationId,
+      assistantMessageId: assistantMessageId!,
+      runId: sourceRun.id,
+    };
+    const [assistantRow] = await e2eDb.select().from(chatMessages)
+      .where(eq(chatMessages.id, seeded.assistantMessageId));
+    expect(assistantRow?.runId).toBe(seeded.runId);
+    const sourceSpans = await e2eDb.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.runId, seeded.runId));
+    expect(sourceSpans.length).toBeGreaterThan(0);
+    const span = sourceSpans[0];
+    if (!span) throw new Error("Expected the native Chat Run to have a bound runtime span");
+    expect(span).toMatchObject({ orgId: organization.id, runId: seeded.runId });
+    const [binding] = await e2eDb.select().from(runtimeBindings)
+      .where(eq(runtimeBindings.id, span.bindingId));
+    if (!binding) throw new Error("Expected the native Run span to reference its Chat binding");
+    expect(binding).toMatchObject({
+      id: span.bindingId,
+      orgId: organization.id,
+      conversationId: seeded.conversationId,
+    });
+    const [segment] = await e2eDb.select().from(nativeSegments)
+      .where(eq(nativeSegments.id, span.segmentId));
+    expect(segment).toMatchObject({ id: span.segmentId, bindingId: binding.id, orgId: organization.id });
+
+    type NativeReaderEntry = {
+      sourceEntryId?: string;
+      entry?: {
+        kind?: string;
+        text?: string;
+        sourceEntryId?: string;
+        generationId?: string;
+        generationSeqStart?: number;
+        generationSeqEnd?: number;
+      };
+    };
+    type NativeReaderPage = {
+      source?: string;
+      availability?: string;
+      completeness?: string;
+      entries?: NativeReaderEntry[];
+    };
+    async function readNativeReader(runId: string) {
+      const response = await page.request.get(
+        `/api/run-intelligence/runs/${runId}/transcript?output=full&order=oldest&turnLimit=50&includeOutput=false&maxChars=4000`,
+      );
+      expect(response.ok(), await response.text()).toBe(true);
+      return await response.json() as NativeReaderPage;
+    }
+    const readerPage = await readNativeReader(seeded.runId);
+    expect(readerPage).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    const readerEntry = readerPage.entries?.find((candidate) => (
+      candidate.entry?.kind === "thinking"
+      && candidate.entry.text === NATIVE_REASONING_TEXT
+    ));
+    expect(readerEntry?.sourceEntryId).toEqual(expect.any(String));
+    const sourceEntryId = readerEntry!.sourceEntryId!;
+    expect(readerEntry?.entry?.sourceEntryId).toBe(sourceEntryId);
+    expect(readerEntry?.entry).not.toHaveProperty("generationId");
+    expect(readerEntry?.entry).not.toHaveProperty("generationSeqStart");
+    expect(readerEntry?.entry).not.toHaveProperty("generationSeqEnd");
+    const sourceTuple = {
+      sourceRunId: seeded.runId,
+      sourceAgentId: seeded.agent.id,
+      sourceEntryId,
+      sourceMemberIds: [sourceEntryId],
+    };
+
+    const runEvents = await e2eDb.select({ eventType: heartbeatRunEvents.eventType })
+      .from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, seeded.runId));
+    expect(runEvents.some((event) => event.eventType === "transcript.entry")).toBe(false);
+    const sourceGenerations = await e2eDb.select({ id: chatGenerations.id })
+      .from(chatGenerations).where(eq(chatGenerations.conversationId, seeded.conversationId));
+    expect(sourceGenerations.length).toBeGreaterThan(0);
+    const generationEvents = (await Promise.all(sourceGenerations.map(({ id }) => (
+      e2eDb.select({ eventKind: chatGenerationEvents.eventKind })
+        .from(chatGenerationEvents).where(eq(chatGenerationEvents.generationId, id))
+    )))).flat();
+    expect(generationEvents.some((event) => event.eventKind === "transcript")).toBe(false);
+    const legacyTranscriptRows = await e2eDb.select({ entrySeq: chatMessageTranscriptEntries.entrySeq })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, organization.id));
+    expect(legacyTranscriptRows).toEqual([]);
+
+    const processItem = sourceAssistant.locator(
+      "xpath=preceding-sibling::*[@data-testid='chat-transcript-item'][1]",
+    );
+    const processToggle = processItem
+      .getByRole("button", { name: /Worked for|Show process|Hide process/ })
+      .first();
+    if (await processToggle.getAttribute("aria-expanded") !== "true") {
+      await processToggle.click();
+    }
+    const assistantBlock = processItem.locator(
+      `[data-run-transcript-block="true"][data-run-transcript-block-id="${sourceEntryId}"]`,
+    );
+    await expect(assistantBlock).toHaveCount(1);
+    await expect(assistantBlock).toHaveAttribute("data-run-transcript-block-stable", "true");
+    await expect(assistantBlock).toHaveAttribute("data-run-transcript-block-type", "thinking");
+    await expect(assistantBlock).toContainText(NATIVE_REASONING_TEXT);
+    await expect(assistantBlock).not.toContainText("Native reply 1");
+    await selectVisibleText(page, assistantBlock, NATIVE_REASONING_TEXT);
+    await addSelectionToChat(page);
+
+    const annotationComment = "Carry this exact native Reader evidence through edit and Fork.";
+    const attachmentContent = "native Reader edit and fork attachment evidence";
+    const attachmentBytes = Buffer.from(attachmentContent, "utf8");
+    await editAnnotation(page, 1, {
+      comment: annotationComment,
+      files: [{
+        name: "native-edit-fork-annotation.txt",
+        mimeType: "text/plain",
+        buffer: attachmentBytes,
+      }],
+    });
+
+    const streamPath = `/api/chats/${seeded.conversationId}/messages/stream`;
+    const waitForTurnResponse = (body: string, editUserMessageId?: string) => page.waitForResponse((response) => {
+      if (response.request().method() !== "POST" || new URL(response.url()).pathname !== streamPath) return false;
+      const data = response.request().postDataJSON() as { body?: string; editUserMessageId?: string | null } | null;
+      return data?.body === body && (data.editUserMessageId ?? undefined) === editUserMessageId;
+    });
+    async function completedNativeTurn(
+      response: Response,
+      body: string,
+      expectedReply: string,
+    ): Promise<{ user: ChatMessage; assistant: ChatMessage }> {
+      expect(response.status()).toBe(201);
+      const events = (await response.text()).trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+        type: string;
+        generationId?: string;
+        userMessage?: ChatMessage;
+      }>;
+      expect(events.filter((event) => event.type === "error")).toEqual([]);
+      expect(events.filter((event) => event.type === "ack")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "final")).toHaveLength(1);
+      const ack = events.find((event) => event.type === "ack")!;
+      expect(ack.generationId).toEqual(expect.any(String));
+      expect(ack.userMessage).toMatchObject({
+        orgId: seeded.organization.id,
+        conversationId: seeded.conversationId,
+        role: "user",
+        body,
+      });
+      let completed: { user: ChatMessage; assistant: ChatMessage } | null = null;
+      await expect.poll(async () => {
+        const response = await page.request.get(`/api/chats/${seeded.conversationId}/messages`);
+        expect(response.ok(), await response.text()).toBe(true);
+        const messages = await response.json() as ChatMessage[];
+        const user = messages.find((message) => message.id === ack.userMessage!.id && message.body === body);
+        const assistant = user && messages.find((message) => (
+          message.role === "assistant" && message.status === "completed"
+          && message.body === expectedReply
+          && message.chatTurnId === user.chatTurnId && message.turnVariant === user.turnVariant
+          && message.generationId === ack.generationId && message.runId
+        ));
+        if (!user || !assistant?.runId) return false;
+        const [generation] = await e2eDb.select().from(chatGenerations).where(and(
+          eq(chatGenerations.orgId, seeded.organization.id),
+          eq(chatGenerations.conversationId, seeded.conversationId),
+          eq(chatGenerations.id, ack.generationId!),
+        ));
+        const [run] = await e2eDb.select().from(heartbeatRuns).where(and(
+          eq(heartbeatRuns.orgId, seeded.organization.id),
+          eq(heartbeatRuns.chatConversationId, seeded.conversationId),
+          eq(heartbeatRuns.id, assistant.runId),
+        ));
+        const queueResponse = await page.request.get(`/api/chats/${seeded.conversationId}/queue`);
+        expect(queueResponse.ok(), await queueResponse.text()).toBe(true);
+        const queue = await queueResponse.json() as { activeGenerationId: string | null };
+        if (generation?.status !== "completed" || !generation.runtimeTerminalAt || !generation.completedAt
+          || run?.status !== "succeeded" || !run.finishedAt || run.terminalEffectsPending
+          || queue.activeGenerationId !== null) return false;
+        completed = { user, assistant };
+        return true;
+      }, { timeout: 20_000 }).toBe(true);
+      await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0);
+      return completed!;
+    }
+
+    const messagesPath = streamPath;
+    await installChatMutationCapture(page, messagesPath);
+    const originalBody = "Original native annotated edit body";
+    await composer(page).fill(originalBody);
+    const originalResponse = waitForTurnResponse(originalBody);
+    await page.getByRole("button", { name: "Send" }).click();
+    const original = await completedNativeTurn(await originalResponse, originalBody, "Native reply 2");
+    const originalTurn = page.getByTestId("chat-user-message-turn").filter({ hasText: originalBody });
+    await expect(originalTurn.getByRole("button", { name: "Show 1 annotation" })).toBeVisible({ timeout: 15_000 });
+
+    const captures = await readChatMutationCaptures(page);
+    const capture = captures[0];
+    if (captures.length !== 1 || capture?.kind !== "multipart") {
+      throw new Error("Expected one captured native annotation multipart chat mutation");
+    }
+    const annotationsField = capture.parts.find((part) => (
+      part.kind === "field" && part.name === "inlineAnnotations"
+    ));
+    if (!annotationsField || annotationsField.kind !== "field") {
+      throw new Error("Expected captured native inline annotation provenance");
+    }
+    const submittedAnnotations = JSON.parse(annotationsField.value) as Array<Record<string, unknown>>;
+    expect(submittedAnnotations).toHaveLength(1);
+    const submittedAnnotation = submittedAnnotations[0]!;
+    expect(submittedAnnotation).toMatchObject({
+      selectedText: NATIVE_REASONING_TEXT,
+      comment: annotationComment,
+      surface: "agent_run_transcript",
+      ...sourceTuple,
+      anchorKind: "text",
+      attachmentFileIndexes: [0],
+    });
+    const capturedFile = capture.parts.find((part) => part.kind === "file");
+    expect(capturedFile).toMatchObject({
+      fileName: "native-edit-fork-annotation.txt",
+      mimeType: "text/plain",
+      bytes: [...attachmentBytes],
+    });
+
+    type NativeAnnotation = {
+      id: string;
+      selectedText: string;
+      comment: string | null;
+      surface: string;
+      sourceRunId: string;
+      sourceAgentId: string;
+      sourceEntryId: string;
+      sourceMemberIds: string[];
+      attachmentIds: string[];
+    };
+    type NativeAnnotationMessage = {
+      id: string;
+      role: string;
+      body: string;
+      runId?: string | null;
+      chatTurnId: string | null;
+      turnVariant: number;
+      structuredPayload: { inlineAnnotations?: NativeAnnotation[] } | null;
+      attachments: Array<{
+        id: string;
+        originalFilename: string | null;
+        contentPath: string;
+      }>;
+    };
+    async function getConversationMessages(id: string) {
+      const response = await page.request.get(`/api/chats/${id}/messages`);
+      expect(response.ok(), await response.text()).toBe(true);
+      return await response.json() as NativeAnnotationMessage[];
+    }
+    async function expectAttachmentContent(contentPath: string) {
+      const response = await page.request.get(contentPath);
+      expect(response.ok(), await response.text()).toBe(true);
+      expect((await response.body()).toString("utf8")).toBe(attachmentContent);
+    }
+    const originalMessages = await getConversationMessages(seeded.conversationId);
+    const originalAnnotatedMessage = originalMessages.find((message) => (
+      message.role === "user" && message.body === originalBody
+    ));
+    const originalAnnotation = originalAnnotatedMessage?.structuredPayload?.inlineAnnotations?.[0];
+    expect(originalAnnotation).toMatchObject({
+      id: submittedAnnotation.id,
+      selectedText: NATIVE_REASONING_TEXT,
+      comment: annotationComment,
+      surface: "agent_run_transcript",
+      ...sourceTuple,
+      attachmentIds: [expect.any(String)],
+    });
+    const originalAttachment = originalAnnotatedMessage?.attachments.find(({ id }) => (
+      originalAnnotation?.attachmentIds.includes(id)
+    ));
+    expect(originalAttachment).toMatchObject({ originalFilename: "native-edit-fork-annotation.txt" });
+    await expectAttachmentContent(originalAttachment!.contentPath);
+
+    const originalBubble = originalTurn.getByTestId("chat-user-message-bubble");
+    await originalBubble.hover();
+    await originalTurn.getByRole("button", { name: "Edit message" }).click();
+    const inlineEditor = page.getByTestId("chat-inline-message-editor");
+    await expect(inlineEditor).toBeVisible();
+    await inlineEditor.locator(".rudder-mdxeditor-content").fill("Edited native annotated edit body");
+    const editedBody = "Edited native annotated edit body";
+    const editResponse = waitForTurnResponse(editedBody, original.user.id);
+    await inlineEditor.getByRole("button", { name: "Send" }).click();
+    const edited = await completedNativeTurn(await editResponse, editedBody, "Native reply 3");
+    expect(edited.user.id).not.toBe(original.user.id);
+    expect(edited.user.chatTurnId).toBe(original.user.chatTurnId);
+    expect(edited.user.turnVariant).toBe(original.user.turnVariant + 1);
+    expect(edited.assistant.id).not.toBe(original.assistant.id);
+    expect(edited.assistant.generationId).not.toBe(original.assistant.generationId);
+    await expect(inlineEditor).toHaveCount(0);
+
+    const editedMessages = await getConversationMessages(seeded.conversationId);
+    const editedAnnotatedMessage = editedMessages.find((message) => (
+      message.id === edited.user.id && message.body === editedBody
+    ));
+    const editedAnnotation = editedAnnotatedMessage?.structuredPayload?.inlineAnnotations?.[0];
+    expect(editedAnnotation).toMatchObject({
+      id: originalAnnotation!.id,
+      selectedText: NATIVE_REASONING_TEXT,
+      comment: annotationComment,
+      surface: "agent_run_transcript",
+      ...sourceTuple,
+      attachmentIds: [expect.any(String)],
+    });
+    const editedAttachment = editedAnnotatedMessage?.attachments.find(({ id }) => (
+      editedAnnotation?.attachmentIds.includes(id)
+    ));
+    expect(editedAttachment).toMatchObject({ originalFilename: "native-edit-fork-annotation.txt" });
+    await expectAttachmentContent(editedAttachment!.contentPath);
+
+    const editedTurn = page.getByTestId("chat-user-message-turn").filter({ hasText: editedBody });
+    await expect(editedTurn.getByRole("button", { name: "Show 1 annotation" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-user-message-turn").filter({ hasText: originalBody })).toHaveCount(0);
+    const editedCard = await expandSentAnnotations(page, editedTurn, 1);
+    await expect(editedCard).toContainText(annotationComment);
+    await expect(editedCard.getByText("native-edit-fork-annotation.txt")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    const branchAssistant = page.locator(
+      `[data-testid="chat-assistant-message"][data-message-id="${edited.assistant.id}"]`,
+    );
+    await expect(branchAssistant).toContainText("Native reply 3");
+    await branchAssistant.hover();
+    const forkResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().includes(`/api/chats/${seeded.conversationId}/fork`)
+    ));
+    await branchAssistant.getByRole("button", { name: "More message actions" }).filter({ visible: true }).click();
+    await page.getByTestId("chat-fork-more-action").click();
+    const forkResponse = await forkResponsePromise;
+    expect(forkResponse.request().postDataJSON()).toMatchObject({ sourceMessageId: edited.assistant.id });
+    expect(forkResponse.ok(), await forkResponse.text()).toBe(true);
+    const forkedConversation = await forkResponse.json() as { id: string };
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${forkedConversation.id}$`), { timeout: 15_000 });
+
+    const forkedTurn = page.getByTestId("chat-user-message-turn").filter({ hasText: editedBody });
+    await expect(forkedTurn.getByRole("button", { name: "Show 1 annotation" })).toBeVisible({ timeout: 15_000 });
+    const forkedCard = await expandSentAnnotations(page, forkedTurn, 1);
+    await expect(forkedCard).toContainText(annotationComment);
+    await expect(forkedCard.getByText("native-edit-fork-annotation.txt")).toBeVisible();
+
+    const forkMessages = await getConversationMessages(forkedConversation.id);
+    const forkedAnnotatedMessage = forkMessages.find((message) => (
+      message.role === "user" && message.body === editedBody
+    ));
+    const forkedAnnotation = forkedAnnotatedMessage?.structuredPayload?.inlineAnnotations?.[0];
+    expect(forkedAnnotation).toMatchObject({
+      id: originalAnnotation!.id,
+      selectedText: NATIVE_REASONING_TEXT,
+      comment: annotationComment,
+      surface: "agent_run_transcript",
+      ...sourceTuple,
+      attachmentIds: [expect.any(String)],
+    });
+    expect(forkedAnnotation!.attachmentIds[0]).not.toBe(editedAnnotation!.attachmentIds[0]);
+    const forkedAttachment = forkedAnnotatedMessage?.attachments.find(({ id }) => (
+      forkedAnnotation!.attachmentIds.includes(id)
+    ));
+    expect(forkedAttachment).toMatchObject({ originalFilename: "native-edit-fork-annotation.txt" });
+    await expectAttachmentContent(forkedAttachment!.contentPath);
+
+    const childReaderPage = await readNativeReader(forkedAnnotation!.sourceRunId);
+    expect(childReaderPage).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    const childReaderMatches = childReaderPage.entries?.filter((candidate) => (
+      candidate.sourceEntryId === forkedAnnotation!.sourceEntryId
+      && candidate.entry?.sourceEntryId === forkedAnnotation!.sourceEntryId
+    )) ?? [];
+    expect(childReaderMatches).toHaveLength(1);
+    expect(childReaderMatches[0]?.entry).toMatchObject({
+      kind: "thinking",
+      text: forkedAnnotation!.selectedText,
+    });
+
+    const organizationRuns = await e2eDb.select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns).where(eq(heartbeatRuns.orgId, organization.id));
+    const organizationRunEvents = (await Promise.all(organizationRuns.map(({ id }) => (
+      e2eDb.select({ eventType: heartbeatRunEvents.eventType })
+        .from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, id))
+    )))).flat();
+    expect(organizationRunEvents.some((event) => event.eventType === "transcript.entry")).toBe(false);
+    const organizationGenerations = await e2eDb.select({ id: chatGenerations.id })
+      .from(chatGenerations).where(eq(chatGenerations.orgId, organization.id));
+    const organizationGenerationEvents = (await Promise.all(organizationGenerations.map(({ id }) => (
+      e2eDb.select({ eventKind: chatGenerationEvents.eventKind })
+        .from(chatGenerationEvents).where(eq(chatGenerationEvents.generationId, id))
+    )))).flat();
+    expect(organizationGenerationEvents.some((event) => event.eventKind === "transcript")).toBe(false);
+    const organizationTranscriptRows = await e2eDb.select({ entrySeq: chatMessageTranscriptEntries.entrySeq })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, organization.id));
+    expect(organizationTranscriptRows).toEqual([]);
+
+    await forkedCard
+      .getByTestId("chat-response-annotation-sent-card-entry")
+      .getByRole("button", { name: "Show source" })
+      .click();
+    await expect(page).toHaveURL(new RegExp(
+      `/agents/${seeded.agent.id}/runs/${seeded.runId}(?:[/?#]|$)`,
+    ));
+  });
+
   test("carries annotation count and provenance through Queue edit and Steer delivery", async ({ page }) => {
     test.setTimeout(120_000);
     const seeded = await seedAnnotationChat(
