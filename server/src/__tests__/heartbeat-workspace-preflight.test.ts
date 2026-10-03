@@ -2139,8 +2139,52 @@ describe("heartbeat managed workspace preflight", () => {
       promptSanitizedForPersistence: true,
     });
     const persistedAdapterPayload = JSON.stringify(adapterInvoke?.payload ?? {});
-    expect(persistedAdapterPayload).toContain(`#### today memory: ${todayKey}.md`);
-    expect(persistedAdapterPayload).toContain(`#### yesterday memory: ${yesterdayKey}.md`);
+    expect(adapterInvoke).toBeDefined();
+    const { getStorageService } = await import("../storage/index.js");
+    const { readRunInstructionSnapshotForEvent, RUN_INSTRUCTION_SNAPSHOT_NAMESPACE } =
+      await import("../services/run-instruction-snapshots.js");
+    const { createHash } = await import("node:crypto");
+    const restored = await readRunInstructionSnapshotForEvent({
+      db,
+      storage: getStorageService(),
+      orgId: agent.orgId,
+      runId: run!.id,
+      eventId: adapterInvoke!.id,
+    });
+    expect(restored).not.toBeNull();
+    const sanitizedText = restored!.agentInstructionStack;
+    const sha256 = createHash("sha256").update(sanitizedText, "utf8").digest("hex");
+    const byteSize = Buffer.byteLength(sanitizedText, "utf8");
+    expect(byteSize).toBeGreaterThan(0);
+    expect(restored).toMatchObject({ prompt: sanitizedText, sha256, byteSize });
+    expect(adapterInvoke!.payload).toMatchObject({
+      invocationInstructionSnapshot: {
+        status: "available",
+        objectKey: `${agent.orgId}/${RUN_INSTRUCTION_SNAPSHOT_NAMESPACE}/${sha256}`,
+        sha256,
+        byteSize,
+      },
+      invocationInstructionTextReference: {
+        present: true, source: "stored_snapshot", via: "invocation-instructions",
+        field: "agentInstructionStack", sha256, byteSize,
+      },
+      invocationPromptReference: {
+        present: true, source: "stored_snapshot", via: "invocation-instructions",
+        field: "prompt", sha256, byteSize, sameAsInstructions: true,
+      },
+      invocationContent: {
+        textStored: false, textSource: "stored_snapshot", snapshotTextStored: true,
+        prompt: { present: true, inline: false, sanitizedSha256: sha256, sanitizedUtf8ByteLength: byteSize },
+      },
+    });
+    expect(adapterInvoke!.payload).not.toHaveProperty("prompt");
+    expect(adapterInvoke!.payload).not.toHaveProperty("agentInstructionStack");
+    expect(sanitizedText).toContain(`#### today memory: ${todayKey}.md`);
+    expect(sanitizedText).toContain(`#### yesterday memory: ${yesterdayKey}.md`);
+    expect(sanitizedText).not.toContain("[startup context omitted from persisted prompt]");
+    expect(sanitizedText).not.toContain("Today startup memory signal");
+    expect(sanitizedText).not.toContain("Yesterday startup memory signal");
+    expect(sanitizedText).not.toContain("默认装载今天和昨天的 memory md");
     expect(persistedAdapterPayload).not.toContain("[startup context omitted from persisted prompt]");
     expect(persistedAdapterPayload).not.toContain("Today startup memory signal");
     expect(persistedAdapterPayload).not.toContain("Yesterday startup memory signal");
