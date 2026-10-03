@@ -1,6 +1,28 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+main_forward_integration_checkpoint_2026_10_03:
+  supersedes: earlier_live_source_CI_and_Main_drift_fields_only_history_preserved
+  integrated_source: f93c8f1e175e6a3ee2076606e2f3ef219924aaac
+  integrated_tree: aba2f7d5ee9bf4de6265809e973f59f952e491c3
+  main: feeeff71b3dd08887bd5af53d36fcd4097ce7fc4
+  integration: normal_forward_merge_same_isolated_branch_no_reset_rebase_force_or_protected_Main_merge
+  source_delta: six_PR265_paths_257add21del_equal_Main_and_reviewed_preview
+  source_diff_sha256: 6addd9751ff9ca71a2693c82c494079dad1fc7fd1c22bacef72ca82a669b1110
+  stage: /private/tmp/rudder-ea397-main-forward-stage-20261003-kant.json
+  stage_sha256: a5c9adc1d1f06c19ccdc767f7e2733241cd8c62e10bcccb3091506bf6f87cf2a
+  stage_scope: accept_early_Draft_CI_only_not_final_product_or_merge
+  predecessor_CI: exact_ea397_Test37122179850_and_D137122179860_COMPLETED_SUCCESS_parent_live_confirmed
+  integrated_CI: NOT_RUN_remote_candidate_not_yet_published
+  focused_tests: NOT_RUN_local_Vitest_missing_no_bulk_dependency_restore_under_resource_HOLD
+  installed_source: 9d211bf6ec5e2b360b7c0536a5022cc14f3c5b5c
+  installed_scope: unchanged_9d_component_receipts_not_rebound_to_integrated_startup
+  installed14_gate: parent_fresh_full_gate_EXIT0_preparation_not_independent_workflow_PASS
+  C07_C08: stage_ready_NOT_RUN_no_new_OPEN_resource_window_pending
+  installed_gap: fresh_npm_dependency_patch_propagation_and_affected_startup_unproven_reviewer_followup_running
+  Actix_next: existing_c89_listener_read_component_PASS_public_WS_protocol_QUESTION_real_event_trigger_preparation
+  preservation: original7b2a_dirty_untouched_index_empty_unrelated_cache_preserved
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 main_drift_audit_checkpoint_2026_10_03:
   published_head: ea397a7ecf2cd6a6cc5e86c101d30c75b2d028b3
   installed_source: 9d211bf6ec5e2b360b7c0536a5022cc14f3c5b5c
@@ -370,15 +392,15 @@ execution_checkpoint_2026_10_03_xhigh:
   claims: {implementation_complete: false, release_ready: false, production_verified: false}
 status: in_progress
 current_candidate:
-  source_sha: 9d211bf6ec5e2b360b7c0536a5022cc14f3c5b5c
-  source_tree: e1942506d04316f1e99da674575826daa087186a
+  source_sha: f93c8f1e175e6a3ee2076606e2f3ef219924aaac
+  source_tree: aba2f7d5ee9bf4de6265809e973f59f952e491c3
   installed_source_sha: 9d211bf6ec5e2b360b7c0536a5022cc14f3c5b5c
   installed_source_tree: e1942506d04316f1e99da674575826daa087186a
   worktree: /Users/zeeland/.codex/worktrees/project-create-main-integration/rudder-oss
   branch: codex/project-create-main56-20261002
   pr: https://github.com/Undertone0809/rudder/pull/236
   origin_main_last_observed: feeeff71b3dd08887bd5af53d36fcd4097ce7fc4
-  publication: DRAFT_unmerged_34c27_published_remote_and_REST_confirmed_runtime9d_not_relabelled_no_aggregate_acceptance
+  publication: local_Main_forward_f93c8f1_unpublished_predecessor_ea397_remote_DRAFT_unmerged_installed9d_not_relabelled
   working_repair_patch_sha256: 59f158e587e8a312c500e3b513d7d9658a7c4af4ae64a367a06d222f10ddfc41
   working_repair_scope: temporal_repair_in_installed9d_build_old646_preserved_as_history
   documentation_head: 34c27d737a237d0aea84bf4ea8bbaa6e97fb63e7
@@ -388,7 +410,7 @@ current_candidate:
   source_authority_audit: artifacts/2026-10-02-rudder-authority-main56-source-audit-v2.json
   source_authority_audit_stage: artifacts/2026-10-02-rudder-authority-main56-source-audit-v2-stage-accept.json
   source_authority_audit_scope: historical646_22rows_Main56_source_only_not_acceptance_of_new_backup_repair
-  main_drift: Main8eed_five_navigation_readiness_lines_adapted_at406_exact_file_blob_no_ancestry_rebase_or_rendered_claim
+  main_drift: Mainfeee_normally_integrated_atf93c8f1_six_PR265_paths_exact_preview_match_affected_installed_startup_pending
   state: aggregate_acceptance_pending
   packet: doc/plans/2026-10-03-rudder-project-create-delivery-packet-v47-current646-leaf-convergence.json
   packet_scope: historical_installed646_leaf_only_not_acceptance_of_new9d_source
