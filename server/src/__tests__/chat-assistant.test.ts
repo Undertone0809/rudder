@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { codexChatStdoutCapturePolicy } from "../../../packages/agent-runtimes/codex-local/src/server/execute.js";
 import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
 import { NATIVE_CHAT_RUNTIME_TYPES } from "../services/runtime-kernel/runtime-driver.js";
 
@@ -4176,10 +4177,19 @@ describe("chatAssistantService operator profile prompt injection", () => {
   });
 
   it.each(["qualified", "unknown", "unbound", "mismatched"])("issues Codex stdout policy only for profile-qualified retention: %s", async (qualification) => {
+    // Exercise the real dispatch boundary: the old test driver did not add
+    // provider binding fields and therefore hid the production hash mismatch.
+    if (qualification === "qualified") {
+      const { createRuntimeDriver } = await import("../services/runtime-kernel/runtime-driver.js");
+      mockGetRuntimeDriver.mockImplementation(((runtimeType: any, options: any) =>
+        createRuntimeDriver(runtimeType, options)) as any);
+    }
     mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockReturnValue((
       runtimeType: string, binding: Record<string, unknown>,
     ) => qualification === "unknown" ? null : ({
-      adapter: { runtimeType, transcript: {
+      adapter: { runtimeType,
+        input: { evidence: { status: "supported", profileBound: true, reason: "fixture" } },
+        transcript: {
         evidence: { status: "supported", profileBound: qualification !== "unbound", reason: "fixture" },
         readRange: async () => ({}),
       } },
@@ -4199,6 +4209,17 @@ describe("chatAssistantService operator profile prompt injection", () => {
       expect(ctx.context.rudderCodexStdoutPolicy.configSha256).toBe(
         createHash("sha256").update(JSON.stringify(ctx.config)).digest("hex"),
       );
+      expect(ctx.config).toMatchObject({
+        providerHostId: "local", providerProfileId: "default",
+        providerBindingId: mockRuntimeBinding.id, providerOrgId: "organization-1",
+      });
+      expect(codexChatStdoutCapturePolicy(ctx)).toBe("omit");
+      for (const key of ["providerHostId", "providerProfileId", "providerBindingId",
+        "providerOrgId", "providerWorkspaceBindingId", "capabilityRevision", "model"]) {
+        expect(codexChatStdoutCapturePolicy({
+          ...ctx, config: { ...ctx.config, [key]: "drifted" },
+        })).toBe("capture");
+      }
     } else expect(ctx.context.rudderCodexStdoutPolicy).toBeNull();
   });
 

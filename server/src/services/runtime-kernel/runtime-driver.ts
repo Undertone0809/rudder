@@ -814,6 +814,22 @@ function invalidOperation<T>(capability: RuntimeDriverCapabilityName, reason: st
   return { status: "invalid", capability, reason };
 }
 
+/** Use the same admitted binding projection at qualification and dispatch. */
+export function bindRuntimeExecutionConfig(
+  config: AgentRuntimeExecutionContext["config"],
+  providerBinding: RuntimeProviderBindingRef | null,
+): AgentRuntimeExecutionContext["config"] {
+  return providerBinding ? {
+    ...config,
+    providerHostId: providerBinding.hostId,
+    providerProfileId: providerBinding.profileId,
+    providerBindingId: providerBinding.id ?? null,
+    providerOrgId: providerBinding.orgId ?? null,
+    providerWorkspaceBindingId: providerBinding.workspaceBindingId ?? null,
+    capabilityRevision: providerBinding.capabilityRevision ?? null,
+  } : config;
+}
+
 function createDriver(
   runtimeType: NativeChatRuntimeType,
   adapter: ServerAgentRuntimeModule,
@@ -828,15 +844,8 @@ function createDriver(
   const sessionCodec = adapter.sessionCodec ?? null;
   const providerCapabilities = providerState.adapter;
   const capabilities = capabilitiesFor(providerState, providerBinding, factoryOptions);
-  const boundExecutionConfig = (config: AgentRuntimeExecutionContext["config"]) => providerBinding ? {
-    ...config,
-    providerHostId: providerBinding.hostId,
-    providerProfileId: providerBinding.profileId,
-    providerBindingId: providerBinding.id ?? null,
-    providerOrgId: providerBinding.orgId ?? null,
-    providerWorkspaceBindingId: providerBinding.workspaceBindingId ?? null,
-    capabilityRevision: providerBinding.capabilityRevision ?? null,
-  } : config;
+  const boundExecutionConfig = (config: AgentRuntimeExecutionContext["config"]) =>
+    bindRuntimeExecutionConfig(config, providerBinding);
 
   const buildContextHandoff = (request: RuntimeDriverContextHandoffRequest): RuntimeDriverOperation<RuntimeDriverContextHandoff> => {
     if (capabilities.contextHandoff.status !== "supported") {

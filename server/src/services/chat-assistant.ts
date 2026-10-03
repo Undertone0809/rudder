@@ -74,6 +74,7 @@ import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
 import { createRuntimeApprovalBridge } from "./runtime-kernel/runtime-approval.js";
+import { bindRuntimeExecutionConfig } from "./runtime-kernel/runtime-driver.js";
 import { admitSideChatRuntimeFork, type SideChatRuntimeAdmission } from "./side-chat-runtime-admission.js";
 
 export type { ChatAssistantStaleOutcome } from "./chat-assistant.execution-owner.js";
@@ -1021,8 +1022,13 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 runtimeType: runtimeAgentType,
                 runId,
                 orgId: input.conversation.orgId,
+                // Driver dispatch adds the admitted provider binding. Seal
+                // that exact config, not the earlier unbound projection.
                 configSha256: createHash("sha256").update(JSON.stringify(
-                  projectPrimaryRuntimeConfig(runtimeExecutionConfig, runtimeAgentType),
+                  bindRuntimeExecutionConfig(
+                    projectPrimaryRuntimeConfig(runtimeExecutionConfig, runtimeAgentType),
+                    { ...providerBinding, id: runtimeBinding.id },
+                  ),
                 )).digest("hex"),
               }
               : null,

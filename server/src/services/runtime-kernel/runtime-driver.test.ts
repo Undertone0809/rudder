@@ -12,6 +12,7 @@ import type {
   ServerAgentRuntimeModule,
 } from "@rudderhq/agent-runtime-utils";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
@@ -26,6 +27,7 @@ import {
   type RuntimeProviderCapabilityResolverContext,
 } from "./provider-capabilities.js";
 import {
+  bindRuntimeExecutionConfig,
   createRuntimeDriver,
   getRuntimeDriver,
   listRuntimeDrivers,
@@ -812,6 +814,24 @@ describe("runtime driver facade", () => {
     await driver.execute(context);
     expect(execute).toHaveBeenCalledTimes(2);
     expect(context.config.providerBindingId).toBe("forged");
+  });
+
+  it("projects exactly six binding fields and is byte-idempotent before policy sealing", () => {
+    const config = { model: "selected-model", env: { CODEX_HOME: "/owned/profile" } };
+    const binding = { id: "binding-1", orgId: "org-1", hostId: "local", profileId: "profile-1",
+      workspaceBindingId: "workspace-1", capabilityRevision: "revision-1" };
+    const bound = bindRuntimeExecutionConfig(config, binding);
+    const fields = Object.keys(bound).filter(key => !(key in config));
+    expect(fields).toEqual(["providerHostId", "providerProfileId", "providerBindingId",
+      "providerOrgId", "providerWorkspaceBindingId", "capabilityRevision"]);
+    expect(bound).toEqual({ ...config, providerHostId: "local", providerProfileId: "profile-1",
+      providerBindingId: "binding-1", providerOrgId: "org-1",
+      providerWorkspaceBindingId: "workspace-1", capabilityRevision: "revision-1" });
+    const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    expect(digest(bound)).not.toBe(digest(config));
+    expect(JSON.stringify(bindRuntimeExecutionConfig(bound, binding))).toBe(JSON.stringify(bound));
+    expect(bindRuntimeExecutionConfig(config, null)).toBe(config);
+    expect(config).toEqual({ model: "selected-model", env: { CODEX_HOME: "/owned/profile" } });
   });
 
   it("requires new input and clears an explicitly null session instead of replaying context", async () => {
