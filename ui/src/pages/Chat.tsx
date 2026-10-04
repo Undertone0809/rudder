@@ -1796,6 +1796,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               }
             }
           } }, });
+      // Once the stream settles, reconciliation must not retain an invisible
+      // send lock while final-event rendering already permits editing/sending.
+      // Clear the ownership flag too: this invocation's finally must not release
+      // a newer send's lock while the cache refresh is still in flight.
+      if (chatSendLockAcquired) {
+        releaseChatSendLock(chatId);
+        chatSendLockAcquired = false;
+      }
       if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }
       await refreshChat(chatId);
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
