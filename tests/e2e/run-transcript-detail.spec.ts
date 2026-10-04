@@ -2498,6 +2498,165 @@ test.describe("Run transcript detail", () => {
     await expect(detailPane.getByRole("button", { name: "Expand transcript" })).toBeVisible();
   });
 
+  test("renders mocked transcript availability and read errors once while preserving partial history", async ({ page }) => {
+    const organization = await createOrganization(page, `Run-Detail-Transcript-Availability-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Transcript Availability Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const runId = randomUUID();
+    const startedAt = new Date("2026-10-03T09:00:00.000Z");
+    const marker = `Reader partial history ${runId}`;
+
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "scheduled",
+      triggerDetail: "Scheduled heartbeat",
+      status: "succeeded",
+      startedAt,
+      finishedAt: new Date(startedAt.getTime() + 1_000),
+      resultJson: { summary: "Transcript availability presentation fixture." },
+      resultSummaryJson: { summary: "Transcript availability presentation fixture." },
+      createdAt: startedAt,
+      updatedAt: new Date(startedAt.getTime() + 1_000),
+    });
+    await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 1,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "info",
+      message: "run transcript entry",
+      payload: {
+        kind: "assistant",
+        text: marker,
+        ts: new Date(startedAt.getTime() + 500).toISOString(),
+      },
+      createdAt: new Date(startedAt.getTime() + 500),
+    });
+
+    type ReaderFixture = {
+      run?: { id?: string; orgId?: string };
+      entries?: unknown[];
+      page?: { hasMore?: boolean; nextCursor?: string | null };
+      availability?: string;
+      completeness?: string;
+    };
+    let readerMode: "missing" | "offline" | "error" = "missing";
+    const readerPath = `/api/run-intelligence/runs/${runId}/transcript`;
+    // Begin with the actual public Reader response and seeded event. These
+    // response-only overrides exercise UI presentation; they do not claim the
+    // underlying Reader source is missing/offline or that source recovery works.
+    await page.route(`**${readerPath}?*`, async (route) => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      const reader = await response.json() as ReaderFixture;
+      expect(reader.run).toMatchObject({ id: runId, orgId: organization.id });
+      expect(reader.page).toMatchObject({ hasMore: false, nextCursor: null });
+      expect(Array.isArray(reader.entries)).toBe(true);
+      expect(JSON.stringify(reader.entries)).toContain(marker);
+
+      if (readerMode === "error") {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Synthetic transcript Reader failure" }),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        response,
+        json: {
+          ...reader,
+          availability: readerMode,
+          completeness: "unknown",
+          entries: readerMode === "missing" ? [] : reader.entries,
+        },
+      });
+    });
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 15_000 });
+    const mainContinuation = detailPane.getByTestId("transcript-continuation");
+    const missingMessage = "No transcript source is available for this run.";
+    const offlineMessage = "The transcript source is offline.";
+    const unknownCompleteness = "Transcript completeness is unknown.";
+    await expect(detailPane.getByText(missingMessage, { exact: true })).toHaveCount(1);
+    await expect(detailPane.getByText(unknownCompleteness, { exact: true })).toHaveCount(1);
+    await expect(detailPane.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
+    await expect(detailPane.getByText("No transcript for this run.", { exact: true })).toHaveCount(0);
+
+    const waitForReaderRead = () => page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET" && url.pathname === readerPath;
+    });
+    const mainRefresh = mainContinuation.getByRole("button", { name: "Refresh transcript" });
+    const missingRefresh = waitForReaderRead();
+    await mainRefresh.click();
+    expect((await missingRefresh).status()).toBe(200);
+    await expect(detailPane.getByText(missingMessage, { exact: true })).toHaveCount(1);
+    await expect(mainRefresh).toBeEnabled();
+
+    readerMode = "offline";
+    const offlineRefresh = waitForReaderRead();
+    await mainRefresh.click();
+    expect((await offlineRefresh).status()).toBe(200);
+    await expect(detailPane.getByText(marker, { exact: true })).toBeVisible();
+    await expect(detailPane.getByText(offlineMessage, { exact: true })).toHaveCount(1);
+    await expect(detailPane.getByText(unknownCompleteness, { exact: true })).toHaveCount(1);
+    await expect(detailPane.getByText(missingMessage, { exact: true })).toHaveCount(0);
+    await expect(mainRefresh).toBeEnabled();
+
+    await detailPane.getByRole("button", { name: "Expand transcript" }).click();
+    const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });
+    await expect(transcriptDialog).toBeVisible();
+    const fullscreenContinuation = transcriptDialog.getByTestId("transcript-continuation");
+    await expect(transcriptDialog.getByText(marker, { exact: true })).toBeVisible();
+    await expect(transcriptDialog.getByText(offlineMessage, { exact: true })).toHaveCount(1);
+    await expect(transcriptDialog.getByText(unknownCompleteness, { exact: true })).toHaveCount(1);
+
+    readerMode = "error";
+    const readError = waitForReaderRead();
+    const fullscreenRefresh = fullscreenContinuation.getByRole("button", { name: "Refresh transcript" });
+    await expect(fullscreenRefresh).toBeEnabled();
+    await fullscreenRefresh.click();
+    expect((await readError).status()).toBe(503);
+    const errorMessage = "Transcript read failed: Synthetic transcript Reader failure";
+    await expect(transcriptDialog.getByText(marker, { exact: true })).toBeVisible();
+    await expect(transcriptDialog.getByText(errorMessage, { exact: true })).toHaveCount(1);
+    await expect(transcriptDialog.getByText(offlineMessage, { exact: true })).toHaveCount(0);
+    await expect(transcriptDialog.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
+
+    await page.keyboard.press("Escape");
+    await expect(transcriptDialog).not.toBeVisible();
+    await expect(detailPane.getByText(marker, { exact: true })).toBeVisible();
+    await expect(detailPane.getByText(errorMessage, { exact: true })).toHaveCount(1);
+    await detailPane.getByRole("button", { name: "Expand transcript" }).click();
+    await expect(transcriptDialog).toBeVisible();
+    await expect(transcriptDialog.getByText(marker, { exact: true })).toBeVisible();
+    await expect(transcriptDialog.getByText(errorMessage, { exact: true })).toHaveCount(1);
+  });
+
   test("does not promote stderr excerpts for failed or successful run detail pages", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Stderr-Status-${Date.now()}`);
 
