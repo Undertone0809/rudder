@@ -29,6 +29,28 @@ import {
 } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
+
+function expectNativeGenerationCheckpoints(
+  events: Array<{ eventKind: string; payload: Record<string, unknown> | null }>,
+  runId: string,
+  spanId: string,
+) {
+  // Catch raw reasoning copied under a different event kind as well.
+  expect(JSON.stringify(events)).not.toContain(NATIVE_REASONING_TEXT);
+  // Stop/client acknowledgements retain small visibility checkpoints, not
+  // legacy process entries. Check every payload instead of equating the
+  // compatibility eventKind with raw transcript storage (plan section 9.1).
+  for (const event of events.filter((candidate) => candidate.eventKind === "transcript")) {
+    expect(Object.keys(event.payload ?? {}).sort()).toEqual(["bodyHash", "runId", "source", "spanId"]);
+    expect(event.payload).toEqual({
+      source: "native",
+      runId,
+      spanId,
+      bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(Buffer.byteLength(JSON.stringify(event.payload), "utf8")).toBeLessThan(256);
+  }
+}
 const ONE_BY_ONE_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X5p1sAAAAASUVORK5CYII=",
   "base64",
@@ -970,10 +992,10 @@ test.describe("Chat response annotations", () => {
       .from(chatGenerations).where(eq(chatGenerations.conversationId, seeded.conversationId));
     expect(sourceGenerations.length).toBeGreaterThan(0);
     const generationEvents = (await Promise.all(sourceGenerations.map(({ id }) => (
-      e2eDb.select({ eventKind: chatGenerationEvents.eventKind })
+      e2eDb.select({ eventKind: chatGenerationEvents.eventKind, payload: chatGenerationEvents.payload })
         .from(chatGenerationEvents).where(eq(chatGenerationEvents.generationId, id))
     )))).flat();
-    expect(generationEvents.some((event) => event.eventKind === "transcript")).toBe(false);
+    expectNativeGenerationCheckpoints(generationEvents, seeded.runId, span.id);
     const legacyTranscriptRows = await e2eDb.select({ entrySeq: chatMessageTranscriptEntries.entrySeq })
       .from(chatMessageTranscriptEntries)
       .where(eq(chatMessageTranscriptEntries.orgId, organization.id));
@@ -2910,10 +2932,10 @@ test.describe("Chat response annotations", () => {
       .from(chatGenerations).where(eq(chatGenerations.conversationId, seeded.conversationId));
     expect(sourceGenerations.length).toBeGreaterThan(0);
     const generationEvents = (await Promise.all(sourceGenerations.map(({ id }) => (
-      e2eDb.select({ eventKind: chatGenerationEvents.eventKind })
+      e2eDb.select({ eventKind: chatGenerationEvents.eventKind, payload: chatGenerationEvents.payload })
         .from(chatGenerationEvents).where(eq(chatGenerationEvents.generationId, id))
     )))).flat();
-    expect(generationEvents.some((event) => event.eventKind === "transcript")).toBe(false);
+    expectNativeGenerationCheckpoints(generationEvents, seeded.runId, span.id);
     const legacyTranscriptRows = await e2eDb.select({ entrySeq: chatMessageTranscriptEntries.entrySeq })
       .from(chatMessageTranscriptEntries)
       .where(eq(chatMessageTranscriptEntries.orgId, organization.id));
