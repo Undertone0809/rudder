@@ -3181,7 +3181,11 @@ test.describe("Chat response annotations", () => {
     const editedCard = await expandSentAnnotations(page, editedTurn, 1);
     await expect(editedCard).toContainText(annotationComment);
     await expect(editedCard.getByText("native-edit-fork-annotation.txt")).toBeVisible();
-    await page.keyboard.press("Escape");
+    // This is an inline disclosure, not an Escape-dismissable overlay.
+    // Escape intentionally navigates back and would leave the edited chat.
+    await editedTurn.getByRole("button", { name: "Hide 1 annotation", exact: true }).click();
+    await expect(editedCard).not.toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${seeded.conversationId}$`));
 
     const branchAssistant = page.locator(
       `[data-testid="chat-assistant-message"][data-message-id="${edited.assistant.id}"]`,
