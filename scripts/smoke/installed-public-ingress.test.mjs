@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
+import http from "node:http";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createWorkflowDeadline } from "./installed-public-ingress-deadline.mjs";
 import { describe, it } from "node:test";
 import { SMOKE_NATIVE_TARGETS, nativeBinaryName } from "./installed-member-directory.mjs";
 import {
@@ -11,9 +15,11 @@ import {
   assertSupervisedRustChildExit,
   assertWebSocketRejection,
   buildCliEnvironment,
+  buildInstalledCliInvocation,
   buildServerEnvironment,
   canRemoveSmokeProfile,
   extractTarEntry,
+  fetchJson,
   isExpectedIssueCreatedFrame,
   packageArchiveDigest,
   parseArgs,
@@ -27,9 +33,127 @@ import {
   validateInstallReceipt,
   waitForIssueCreatedFrame,
   waitForExit,
+  waitForCliClose,
 } from "./installed-public-ingress.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
+
+it("a work deadline enters owned teardown with a retained-profile QUESTION on missing Rust identity", async () => {
+  const workflow = createWorkflowDeadline({ totalTimeoutMs: 200, cleanupReserveMs: 150, signals: null });
+  const child = new EventEmitter();
+  child.exitCode = null; child.signalCode = null;
+  const signals = [];
+  child.kill = (signal) => { signals.push(signal); queueMicrotask(() => child.emit("close", null, signal)); return true; };
+  const runtime = { owner: "installed-public-ingress-smoke", ownerId: "deadline", child,
+    logs: { stdout: "", stderr: "" }, termRequested: false, stopPromise: null };
+  try {
+    await new Promise((resolve) => workflow.signal.addEventListener("abort", resolve, { once: true }));
+    workflow.beginCleanup();
+    await assert.rejects(stopAndAssertRustListenerExited(runtime, [], workflow.stepTimeout(100)), SmokeQuestionError);
+    assert.deepEqual(signals, ["SIGTERM"]);
+    assert.equal(shouldRetainSmokeProfile({ keepTemp: false, runtime, serverStarted: true, shutdownVerified: false }), true);
+  } finally { workflow.dispose(); }
+});
+
+it("a real owned CLI read subprocess ignoring TERM is closed and reaped after cancellation", async () => {
+  const child = spawn(process.execPath, ["-e", 'process.on("SIGTERM", () => {}); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);'],
+    { stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await once(child.stdout, "data", { signal: AbortSignal.timeout(2000) });
+    await assert.rejects(waitForCliClose(child, 25), /CLI timed out/u);
+    assert.equal(child.signalCode, "SIGKILL");
+    assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await waitForExit(child, 2000);
+    }
+  }
+});
+
+it("supplies the disposable credential only through the isolated CLI environment", () => {
+  const key = "pcp_" + "a".repeat(48);
+  const invocation = buildInstalledCliInvocation("/installed/cli.js", "/tmp/owned", "http://127.0.0.1:9999", "org", key, "member");
+  assert.equal(invocation.env.RUDDER_API_KEY, key);
+  assert.equal(invocation.env.RUDDER_HOME, "/tmp/owned/cli-profile");
+  assert.ok(!invocation.args.includes("--api-key"));
+  assert.ok(!invocation.args.some((arg) => arg.includes(key)));
+});
+
+it("bounds HTTP body consumption when headers arrive but the response stalls", async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.write("{");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await assert.rejects(fetchJson(`http://127.0.0.1:${server.address().port}`, {}, { timeoutMs: 100 }), /abort|timeout/iu);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+it("overall cancellation aborts an in-flight HTTP request", async () => {
+  const server = http.createServer(() => {});
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const controller = new AbortController();
+  try {
+    const response = fetchJson(`http://127.0.0.1:${server.address().port}`, {}, { signal: controller.signal, timeoutMs: 5000 });
+    controller.abort(new Error("workflow deadline"));
+    await assert.rejects(response, /workflow deadline/u);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+it("CLI cancellation awaits owned close after TERM rather than abandoning the process", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    setTimeout(() => child.emit("close", null, signal), 10);
+    return true;
+  };
+  const controller = new AbortController();
+  const completion = waitForCliClose(child, 5000, controller.signal);
+  controller.abort(new Error("workflow deadline"));
+  await assert.rejects(completion, /workflow deadline/u);
+  assert.deepEqual(signals, ["SIGTERM"]);
+  assert.deepEqual(await waitForExit(child, 100), { code: null, signal: null });
+});
+
+it("a CLI ignoring TERM is escalated only on that exact owned process and awaited", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    if (signal === "SIGKILL") queueMicrotask(() => child.emit("close", null, signal));
+    return true;
+  };
+  await assert.rejects(waitForCliClose(child, 10), /CLI timed out/u);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
+it("cancelled event waits detach listeners before teardown", async () => {
+  const socket = new EventEmitter();
+  const controller = new AbortController();
+  const waiter = waitForIssueCreatedFrame(socket, { orgId: "org", title: "x" }, 5000, controller.signal);
+  controller.abort(new Error("workflow deadline"));
+  await assert.rejects(waiter.promise, /workflow deadline/u);
+  for (const event of ["message", "close", "error"]) assert.equal(socket.listenerCount(event), 0);
+});
+
+it("expired close waits detach their observation listener", async () => {
+  const child = new EventEmitter();
+  await assert.rejects(waitForExit(child, 5), /did not exit/u);
+  assert.equal(child.listenerCount("close"), 0);
+});
 
 it("waits for pipe close even when exitCode was already set", async () => {
   const child = new EventEmitter();

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createWorkflowDeadline } from "./installed-public-ingress-deadline.mjs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { once } from "node:events";
 import { createRequire } from "node:module";
 import { constants as fsConstants } from "node:fs";
 import { access, lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, rm } from "node:fs/promises";
@@ -82,6 +82,7 @@ export function parseArgs(args) {
     provenanceSha256: null,
     sourceSha: null,
     timeoutMs: 180_000,
+    totalTimeoutMs: 1_200_000,
     keepTemp: false,
     help: false,
   };
@@ -94,6 +95,7 @@ export function parseArgs(args) {
     else if (arg === "--provenance-sha256") options.provenanceSha256 = args[++index] ?? "";
     else if (arg === "--source-sha") options.sourceSha = args[++index] ?? "";
     else if (arg === "--timeout-ms") options.timeoutMs = Number.parseInt(args[++index] ?? "", 10);
+    else if (arg === "--total-timeout-ms") options.totalTimeoutMs = Number(args[++index] ?? "");
     else if (arg === "--keep-temp") options.keepTemp = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`Unexpected argument: ${arg}`);
@@ -126,6 +128,9 @@ export function parseArgs(args) {
   }
   if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new Error("--timeout-ms must be a positive integer");
+  }
+  if (!Number.isSafeInteger(options.totalTimeoutMs) || options.totalTimeoutMs <= 60_000 || options.totalTimeoutMs > 1_200_000) {
+    throw new Error("--total-timeout-ms must be an integer greater than 60000 and at most 1200000");
   }
   return options;
 }
@@ -170,6 +175,15 @@ export function buildCliEnvironment(baseEnv, profile) {
     assert.equal(Object.hasOwn(env, key), false, `${key} must not select a source binary or private listener`);
   }
   return env;
+}
+
+export function buildInstalledCliInvocation(cliEntry, runRoot, apiUrl, orgId, agentKey, agentName) {
+  const args = [cliEntry, "org", "members", "--org-id", orgId, "--api-base", apiUrl,
+    "--query", agentName, "--type", "agent", "--limit", "5", "--json"];
+  assert.ok(!args.includes("--api-key") && !args.includes(agentKey), "bearer credential must never enter CLI argv");
+  const env = buildCliEnvironment(process.env, path.join(runRoot, "cli-profile"));
+  env.RUDDER_API_KEY = agentKey;
+  return { args, env };
 }
 
 function sha256(value) {
@@ -730,12 +744,16 @@ export function waitForExit(child, timeoutMs) {
     return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
   }
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`owned server process did not exit within ${timeoutMs}ms`)), timeoutMs);
-    child.once("close", (code, signal) => {
+    const onClose = (code, signal) => {
       clearTimeout(timer);
       closedChildren.add(child);
       resolve({ code, signal });
-    });
+    };
+    const timer = setTimeout(() => {
+      child.off("close", onClose);
+      reject(new Error(`owned server process did not exit within ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once("close", onClose);
   });
 }
 
@@ -749,8 +767,14 @@ async function stopOwnedServer(runtime, timeoutMs = 20_000) {
   return await runtime.stopPromise;
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function delay(ms, signal) {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const finish = () => { signal?.removeEventListener("abort", onAbort); resolve(); };
+    const onAbort = () => { clearTimeout(timer); signal.removeEventListener("abort", onAbort); reject(signal.reason); };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function freePort() {
@@ -765,22 +789,29 @@ async function freePort() {
   return address.port;
 }
 
-async function portIsListening(port) {
-  return await new Promise((resolve) => {
+async function portIsListening(port, timeoutMs = 500) {
+  return await new Promise((resolve, reject) => {
     const socket = createConnection({ host: "127.0.0.1", port });
+    socket.setTimeout(timeoutMs, () => {
+      socket.destroy();
+      reject(new SmokeQuestionError("owned port observation timed out; absence is unproven"));
+    });
     socket.once("connect", () => {
       socket.destroy();
       resolve(true);
     });
-    socket.once("error", () => resolve(false));
+    socket.once("error", (error) => {
+      if (error.code === "ECONNREFUSED") resolve(false);
+      else reject(new SmokeQuestionError("owned port observation unavailable", { cause: error }));
+    });
   });
 }
 
 async function waitForPortClosed(port, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!await portIsListening(port)) return;
-    await delay(50);
+    if (!await portIsListening(port, Math.max(1, Math.min(500, deadline - Date.now())))) return;
+    await delay(Math.max(1, Math.min(50, deadline - Date.now())));
   }
   throw new Error(`owned listener port ${port} remained open after supervised shutdown`);
 }
@@ -802,6 +833,13 @@ async function jsonResponse(response) {
   return { status: response.status, body };
 }
 
+export async function fetchJson(url, init = {}, { signal, timeoutMs = 30_000 } = {}) {
+  signal?.throwIfAborted();
+  // Keep the abort signal alive through body consumption, not only headers.
+  const boundedSignal = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]);
+  return await jsonResponse(await fetch(url, { ...init, signal: boundedSignal }));
+}
+
 function briefBody(body) {
   if (!body || typeof body !== "object") return body;
   const { token: _token, apiKey: _apiKey, secret: _secret, ...safe } = body;
@@ -812,27 +850,29 @@ function assertStatus(result, expected, label) {
   assert.equal(result.status, expected, `${label}: ${JSON.stringify(briefBody(result.body))}`);
 }
 
-async function waitForHealth(runtime, publicUrl, timeoutMs) {
+async function waitForHealth(runtime, publicUrl, timeoutMs, signal) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
       throw new Error(`installed server exited before public health (${runtime.child.exitCode ?? runtime.child.signalCode})`);
     }
     try {
-      const response = await fetch(`${publicUrl}/api/health`, { signal: AbortSignal.timeout(1_000) });
-      if (response.status === 200) return await jsonResponse(response);
+      const response = await fetchJson(`${publicUrl}/api/health`, {}, { signal, timeoutMs: 1_000 });
+      if (response.status === 200) return response;
     } catch {
       // Public readiness can lag while embedded PostgreSQL and migrations start.
     }
-    await delay(100);
+    await delay(100, signal);
   }
   throw new Error(`installed public health timed out\n${safeText(runtime.logs.stderr)}`);
 }
 
-async function waitForPrivatePort(runtime, publicPort, timeoutMs) {
+async function waitForPrivatePort(runtime, publicPort, timeoutMs, signal) {
   const deadline = Date.now() + timeoutMs;
   const listenPattern = /Server listening on 127\.0\.0\.1:(\d+)/gu;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const logs = `${runtime.logs.stdout}\n${runtime.logs.stderr}`;
     const matches = [...logs.matchAll(listenPattern)];
     const port = Number(matches.at(-1)?.[1]);
@@ -840,24 +880,24 @@ async function waitForPrivatePort(runtime, publicPort, timeoutMs) {
     if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
       throw new Error(`installed server exited before private listener readiness (${runtime.child.exitCode ?? runtime.child.signalCode})`);
     }
-    await delay(50);
+    await delay(50, signal);
   }
   throw new Error(`private Node listener identity was not logged\n${safeText(runtime.logs.stdout)}\n${safeText(runtime.logs.stderr)}`);
 }
 
-async function createOrganization(apiUrl, name, issuePrefix) {
-  const result = await jsonResponse(await fetch(`${apiUrl}/api/orgs`, {
+async function createOrganization(apiUrl, name, issuePrefix, work) {
+  const result = await fetchJson(`${apiUrl}/api/orgs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name, issuePrefix, requireBoardApprovalForNewAgents: false }),
-  }));
+  }, work);
   assertStatus(result, 201, "create disposable organization");
   assert.match(result.body.id, /^[0-9a-f-]{36}$/iu);
   return result.body.id;
 }
 
-async function createAgent(apiUrl, orgId, name) {
-  const result = await jsonResponse(await fetch(`${apiUrl}/api/orgs/${orgId}/agents`, {
+async function createAgent(apiUrl, orgId, name, work) {
+  const result = await fetchJson(`${apiUrl}/api/orgs/${orgId}/agents`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -866,59 +906,80 @@ async function createAgent(apiUrl, orgId, name) {
       agentRuntimeType: "process",
       agentRuntimeConfig: {},
     }),
-  }));
+  }, work);
   assertStatus(result, 201, "create disposable agent");
   assert.match(result.body.id, /^[0-9a-f-]{36}$/iu);
   return result.body.id;
 }
 
-async function createAgentKey(apiUrl, agentId) {
-  const result = await jsonResponse(await fetch(`${apiUrl}/api/agents/${agentId}/keys`, {
+async function createAgentKey(apiUrl, agentId, work) {
+  const result = await fetchJson(`${apiUrl}/api/agents/${agentId}/keys`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "installed-public-ingress-smoke" }),
-  }));
+  }, work);
   assertStatus(result, 201, "create disposable agent key");
   assert.match(result.body.token, /^pcp_[a-f0-9]{48}$/u);
   return result.body.token;
 }
 
-async function runInstalledCliMemberRead(cliEntry, runRoot, apiUrl, orgId, agentKey, agentName, timeoutMs) {
-  const child = spawn(process.execPath, [
-    cliEntry,
-    "org", "members",
-    "--org-id", orgId,
-    "--api-base", apiUrl,
-    "--api-key", agentKey,
-    "--query", agentName,
-    "--type", "agent",
-    "--limit", "5",
-    "--json",
-  ], {
+export async function waitForCliClose(child, timeoutMs, signal) {
+  const close = new Promise((resolve, reject) => {
+    child.once("close", (code, terminationSignal) => { closedChildren.add(child); resolve({ code, signal: terminationSignal }); });
+    child.once("error", reject);
+  });
+  let cancellation;
+  let cancelResolve;
+  const cancelled = new Promise((resolve) => { cancelResolve = resolve; });
+  const cancel = (reason) => { cancellation ??= reason; cancelResolve(); };
+  const onAbort = () => cancel(signal.reason);
+  const timer = setTimeout(() => cancel(new Error("installed CLI timed out")), timeoutMs);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+  try {
+    const outcome = await Promise.race([close, cancelled]);
+    if (!cancellation) return outcome;
+    if (!closedChildren.has(child)) child.kill("SIGTERM");
+    try {
+      await waitForExit(child, 2_000);
+    } catch {
+      // The CLI is an exact owned, short-lived read process, never the server/PG supervisor.
+      if (!closedChildren.has(child)) child.kill("SIGKILL");
+      try { await waitForExit(child, 2_000); }
+      catch (error) {
+        child.stdout?.destroy(); child.stderr?.destroy(); child.unref?.();
+        throw new SmokeQuestionError("owned installed CLI shutdown unverified; retain profile", { cause: error });
+      }
+    }
+    throw cancellation;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+async function runInstalledCliMemberRead(cliEntry, runRoot, apiUrl, orgId, agentKey, agentName, timeoutMs, signal) {
+  signal?.throwIfAborted();
+  const invocation = buildInstalledCliInvocation(cliEntry, runRoot, apiUrl, orgId, agentKey, agentName);
+  const child = spawn(process.execPath, invocation.args, {
     cwd: runRoot,
-    env: buildCliEnvironment(process.env, path.join(runRoot, "cli-profile")),
+    env: invocation.env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
   let stdout = "";
   let stderr = "";
-  child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
-  child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-  const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
-  let result;
-  try {
-    const [code, signal] = await once(child, "close");
-    result = { code, signal, stdout, stderr };
-  } finally {
-    clearTimeout(timer);
-  }
+  child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout = (stdout + chunk).slice(-MAX_LOG_BYTES); });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr = (stderr + chunk).slice(-MAX_LOG_BYTES); });
+  const result = { ...await waitForCliClose(child, timeoutMs, signal), stdout, stderr };
   assert.equal(result.code, 0, `installed CLI member read failed: ${safeText(result.stderr, agentKey)} ${safeText(result.stdout, agentKey)}`);
   const page = JSON.parse(result.stdout);
   assert.ok(page.items.some((member) => member.name === agentName), "installed CLI did not return the disposable member through public ingress");
   return page;
 }
 
-async function websocketHandshake(url, authorization, timeoutMs) {
+async function websocketHandshake(url, authorization, timeoutMs, signal) {
+  signal?.throwIfAborted();
   const headers = {
     connection: "Upgrade",
     upgrade: "websocket",
@@ -929,7 +990,7 @@ async function websocketHandshake(url, authorization, timeoutMs) {
   const requestUrl = new URL(url);
   requestUrl.protocol = requestUrl.protocol === "wss:" ? "https:" : "http:";
   return await new Promise((resolve, reject) => {
-    const request = http.request(requestUrl, { method: "GET", headers });
+    const request = http.request(requestUrl, { method: "GET", headers, signal });
     let settled = false;
     const finish = (result) => {
       if (settled) return;
@@ -968,33 +1029,47 @@ function websocketUrl(baseUrl, orgId) {
   return `${baseUrl.replace(/^http:/u, "ws:")}/api/orgs/${encodeURIComponent(orgId)}/events/ws`;
 }
 
-async function openAuthenticatedWebSocket(WebSocket, url, agentKey, timeoutMs) {
+async function openAuthenticatedWebSocket(WebSocket, url, agentKey, timeoutMs, signal) {
+  signal?.throwIfAborted();
   const socket = new WebSocket(url, {
     headers: { authorization: `Bearer ${agentKey}` },
     handshakeTimeout: timeoutMs,
   });
   await new Promise((resolve, reject) => {
+    const clear = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      clear();
+      socket.terminate();
+      reject(signal.reason);
+    };
     const timer = setTimeout(() => {
+      clear();
       socket.terminate();
       reject(new Error("authenticated public websocket did not open in time"));
     }, timeoutMs);
     socket.once("open", () => {
-      clearTimeout(timer);
+      clear();
       resolve();
     });
     socket.once("unexpected-response", (_request, response) => {
-      clearTimeout(timer);
+      clear();
+      socket.terminate();
       reject(new Error(`authenticated public websocket rejected with ${response.statusCode}`));
     });
     socket.once("error", (error) => {
-      clearTimeout(timer);
+      clear();
       reject(error);
     });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
   return socket;
 }
 
-export function waitForIssueCreatedFrame(socket, expected, timeoutMs) {
+export function waitForIssueCreatedFrame(socket, expected, timeoutMs, signal) {
   let finishWait;
   let timer;
   const promise = new Promise((resolve, reject) => {
@@ -1003,6 +1078,7 @@ export function waitForIssueCreatedFrame(socket, expected, timeoutMs) {
       socket.off("message", onMessage);
       socket.off("close", onClose);
       socket.off("error", onError);
+      signal?.removeEventListener("abort", onAbort);
       if (error) reject(error);
       else resolve(event);
     };
@@ -1024,11 +1100,14 @@ export function waitForIssueCreatedFrame(socket, expected, timeoutMs) {
     };
     const onClose = () => finish(new Error("public websocket closed before the activity frame arrived"));
     const onError = (error) => finish(error);
+    const onAbort = () => finish(signal.reason);
     socket.on("message", onMessage);
     socket.once("close", onClose);
     socket.once("error", onError);
     finishWait = finish;
     timer = setTimeout(() => finish(new Error("activity.logged issue.created frame did not arrive before timeout")), timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
   void promise.catch(() => undefined);
   return {
@@ -1054,8 +1133,8 @@ async function closeWebSocket(socket, timeoutMs) {
   });
 }
 
-async function createIssue(apiUrl, orgId, agentKey, title) {
-  const result = await jsonResponse(await fetch(`${apiUrl}/api/orgs/${orgId}/issues`, {
+async function createIssue(apiUrl, orgId, agentKey, title, work) {
+  const result = await fetchJson(`${apiUrl}/api/orgs/${orgId}/issues`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${agentKey}`,
@@ -1068,12 +1147,12 @@ async function createIssue(apiUrl, orgId, agentKey, title) {
       priority: "high",
       assigneeAgentId: null,
     }),
-  }));
+  }, work);
   assertStatus(result, 201, "public Issue creation");
   const issue = assertCreatedIssueResponse(result.body);
-  const readback = await jsonResponse(await fetch(`${apiUrl}/api/issues/${issue.id}`, {
+  const readback = await fetchJson(`${apiUrl}/api/issues/${issue.id}`, {
     headers: { authorization: `Bearer ${agentKey}` },
-  }));
+  }, work);
   assertStatus(readback, 200, "public persisted Issue readback");
   assert.equal(readback.body.id, issue.id);
   assert.equal(readback.body.orgId, orgId);
@@ -1101,7 +1180,7 @@ function ownedRustPid(runtime) {
   return match[1];
 }
 
-async function recordListenerOwnership(runtime, publicPort, privatePort, rustExecutable) {
+async function recordListenerOwnership(runtime, publicPort, privatePort, rustExecutable, signal) {
   try {
     const identity = await assertInstalledListenerOwnership({
       publicPort,
@@ -1111,7 +1190,7 @@ async function recordListenerOwnership(runtime, publicPort, privatePort, rustExe
       rustExecutable,
       nodeExecutable: process.execPath,
       nodeParentPid: process.pid,
-    });
+    }, { signal });
     console.log(`[installed-public-ingress] listener ownership: ${JSON.stringify(identity)}`);
     return identity;
   } catch (error) {
@@ -1123,11 +1202,13 @@ async function recordListenerOwnership(runtime, publicPort, privatePort, rustExe
 }
 
 export async function stopAndAssertRustListenerExited(runtime, ports, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
   const pid = `${runtime.logs.stdout}\n${runtime.logs.stderr}`
     .match(/\[rudder-rust-bridge\] started pid=(\d+)/u)?.[1];
   // Always stop the exact owned supervisor, even when startup never logged Rust.
   await stopOwnedServer(runtime, Math.min(timeoutMs, 20_000));
-  await Promise.all(ports.filter(Number.isInteger).map((port) => waitForPortClosed(port, 8_000)));
+  await Promise.all(ports.filter(Number.isInteger).map((port) =>
+    waitForPortClosed(port, Math.max(1, Math.min(8_000, deadline - Date.now())))));
   if (!pid) {
     throw new SmokeQuestionError("Owned supervisor stopped but Rust startup identity was never observed; retain the disposable profile");
   }
@@ -1136,7 +1217,20 @@ export async function stopAndAssertRustListenerExited(runtime, ports, timeoutMs)
 }
 
 async function runSmoke(options) {
-  const installed = await inspectReceiptFile(options);
+  const workflow = createWorkflowDeadline({ totalTimeoutMs: options.totalTimeoutMs });
+  try {
+    const installed = await inspectReceiptFile(options);
+    workflow.signal.throwIfAborted();
+    await runInstalledWorkflow(options, installed, workflow);
+  } finally {
+    workflow.dispose();
+  }
+}
+
+async function runInstalledWorkflow(options, installed, workflow) {
+  const signal = workflow.signal;
+  const step = () => workflow.stepTimeout(options.timeoutMs);
+  const work = { signal, timeoutMs: Math.min(options.timeoutMs, 30_000) };
   const runRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-installed-public-ingress."));
   const runId = randomUUID();
   const publicPort = await freePort();
@@ -1161,6 +1255,7 @@ async function runSmoke(options) {
   let finalVerdict = "FAIL";
 
   try {
+    signal.throwIfAborted();
     console.log(`[installed-public-ingress] install prefix: ${installed.installRoot}`);
     console.log(`[installed-public-ingress] source SHA: ${installed.sourceSha}; receipt SHA-256: ${installed.receiptSha256}`);
     console.log(`[installed-public-ingress] native provenance SHA-256: ${installed.provenanceSha256}; CI run: ${installed.ciRunId}`);
@@ -1171,26 +1266,27 @@ async function runSmoke(options) {
     runtime = startServer(installed.serverEntry, runRoot, env, `${runId}:bootstrap`);
     serverStarted = true;
     shutdownVerified = false;
-    await waitForHealth(runtime, publicUrl, options.timeoutMs);
-    const privatePort = await waitForPrivatePort(runtime, publicPort, options.timeoutMs);
-    await recordListenerOwnership(runtime, publicPort, privatePort, installed.hostNativeEntry.binaryPath);
-    const orgId = await createOrganization(publicUrl, `Installed ingress ${runId.slice(0, 8)}`, "IIS");
-    const foreignOrgId = await createOrganization(publicUrl, `Installed ingress foreign ${runId.slice(0, 8)}`, "IIF");
+    await waitForHealth(runtime, publicUrl, step(), signal);
+    const privatePort = await waitForPrivatePort(runtime, publicPort, step(), signal);
+    await recordListenerOwnership(runtime, publicPort, privatePort, installed.hostNativeEntry.binaryPath, signal);
+    const orgId = await createOrganization(publicUrl, `Installed ingress ${runId.slice(0, 8)}`, "IIS", work);
+    const foreignOrgId = await createOrganization(publicUrl, `Installed ingress foreign ${runId.slice(0, 8)}`, "IIF", work);
     const agentName = `Installed ingress member ${runId.slice(0, 8)}`;
-    const agentId = await createAgent(publicUrl, orgId, agentName);
-    const agentKey = await createAgentKey(publicUrl, agentId);
+    const agentId = await createAgent(publicUrl, orgId, agentName, work);
+    const agentKey = await createAgentKey(publicUrl, agentId, work);
     console.log(`[installed-public-ingress] fixture identity: ${JSON.stringify({ runId, profile, publicUrl, orgId, foreignOrgId, agentId })}`);
-    await stopAndAssertRustListenerExited(runtime, [publicPort, privatePort, databasePort], options.timeoutMs);
+    await stopAndAssertRustListenerExited(runtime, [publicPort, privatePort, databasePort], step());
     runtime = null;
     shutdownVerified = true;
 
+    signal.throwIfAborted();
     env = buildServerEnvironment(baseEnv, { ...baseInput, deploymentMode: "authenticated" });
     runtime = startServer(installed.serverEntry, runRoot, env, `${runId}:authenticated`);
     shutdownVerified = false;
-    const health = await waitForHealth(runtime, publicUrl, options.timeoutMs);
+    const health = await waitForHealth(runtime, publicUrl, step(), signal);
     assert.equal(health.status, 200, "public Actix health did not return HTTP 200");
-    const authenticatedPrivatePort = await waitForPrivatePort(runtime, publicPort, options.timeoutMs);
-    await recordListenerOwnership(runtime, publicPort, authenticatedPrivatePort, installed.hostNativeEntry.binaryPath);
+    const authenticatedPrivatePort = await waitForPrivatePort(runtime, publicPort, step(), signal);
+    await recordListenerOwnership(runtime, publicPort, authenticatedPrivatePort, installed.hostNativeEntry.binaryPath, signal);
 
     const cliMembers = await runInstalledCliMemberRead(
       installed.cliEntry,
@@ -1199,21 +1295,22 @@ async function runSmoke(options) {
       orgId,
       agentKey,
       agentName,
-      options.timeoutMs,
+      step(), signal,
     );
     assert.ok(cliMembers.items.length > 0);
-    const foreignMemberRead = await jsonResponse(await fetch(
+    const foreignMemberRead = await fetchJson(
       `${publicUrl}/api/orgs/${foreignOrgId}/members/directory?limit=1`,
       { headers: { authorization: `Bearer ${agentKey}` } },
-    ));
+      work,
+    );
     assertStatus(foreignMemberRead, 403, "public member read across organizations");
 
-    const publicNoAuth = await websocketHandshake(websocketUrl(publicUrl, orgId), null, options.timeoutMs);
+    const publicNoAuth = await websocketHandshake(websocketUrl(publicUrl, orgId), null, step(), signal);
     assertWebSocketRejection(publicNoAuth, "upstream_websocket_rejected");
     const privateNoAuth = await websocketHandshake(
       websocketUrl(`http://127.0.0.1:${authenticatedPrivatePort}`, orgId),
       null,
-      options.timeoutMs,
+      step(), signal,
     );
     assertWebSocketRejection(privateNoAuth, "forbidden");
 
@@ -1222,13 +1319,13 @@ async function runSmoke(options) {
     const foreignPublicSocket = await websocketHandshake(
       websocketUrl(publicUrl, foreignOrgId),
       `Bearer ${agentKey}`,
-      options.timeoutMs,
+      step(), signal,
     );
     assertWebSocketRejection(foreignPublicSocket, "upstream_websocket_rejected");
     const foreignPrivateSocket = await websocketHandshake(
       websocketUrl(`http://127.0.0.1:${authenticatedPrivatePort}`, foreignOrgId),
       `Bearer ${agentKey}`,
-      options.timeoutMs,
+      step(), signal,
     );
     assertWebSocketRejection(foreignPrivateSocket, "forbidden");
 
@@ -1236,18 +1333,18 @@ async function runSmoke(options) {
       WebSocket,
       websocketUrl(publicUrl, orgId),
       agentKey,
-      options.timeoutMs,
+      step(), signal,
     );
     const firstIssueTitle = `Installed ingress event one ${runId.slice(0, 8)}`;
     const firstEventWaiter = waitForIssueCreatedFrame(
       activeSocket,
       { orgId, title: firstIssueTitle },
-      options.timeoutMs,
+      step(), signal,
     );
     let firstIssue;
     let firstEvent;
     try {
-      firstIssue = await createIssue(publicUrl, orgId, agentKey, firstIssueTitle);
+      firstIssue = await createIssue(publicUrl, orgId, agentKey, firstIssueTitle, work);
       firstEvent = await firstEventWaiter.promise;
     } finally {
       firstEventWaiter.cancel();
@@ -1263,18 +1360,18 @@ async function runSmoke(options) {
       WebSocket,
       websocketUrl(publicUrl, orgId),
       agentKey,
-      options.timeoutMs,
+      step(), signal,
     );
     const secondIssueTitle = `Installed ingress event two ${runId.slice(0, 8)}`;
     const secondEventWaiter = waitForIssueCreatedFrame(
       activeSocket,
       { orgId, title: secondIssueTitle },
-      options.timeoutMs,
+      step(), signal,
     );
     let secondIssue;
     let secondEvent;
     try {
-      secondIssue = await createIssue(publicUrl, orgId, agentKey, secondIssueTitle);
+      secondIssue = await createIssue(publicUrl, orgId, agentKey, secondIssueTitle, work);
       secondEvent = await secondEventWaiter.promise;
     } finally {
       secondEventWaiter.cancel();
@@ -1294,7 +1391,9 @@ async function runSmoke(options) {
   } catch (error) {
     primaryError = error;
   } finally {
-    if (activeSocket) await closeWebSocket(activeSocket, 5_000).catch(() => activeSocket.terminate());
+    workflow.beginCleanup();
+    const cleanupTimeout = (ms) => Math.max(1, Math.min(ms, workflow.remainingMs()));
+    if (activeSocket) await closeWebSocket(activeSocket, cleanupTimeout(5_000)).catch(() => activeSocket.terminate());
     if (runtime) {
       const logs = `${runtime.logs.stdout}\n${runtime.logs.stderr}`;
       const portMatch = logs.match(/Server listening on 127\.0\.0\.1:(\d+)/u);
@@ -1302,17 +1401,18 @@ async function runSmoke(options) {
         await stopAndAssertRustListenerExited(
           runtime,
           [publicPort, Number(portMatch?.[1]), databasePort],
-          options.timeoutMs,
+          cleanupTimeout(28_000),
         );
         runtime = null;
         shutdownVerified = true;
       } catch (error) {
         cleanupError = error;
         console.error(`[installed-public-ingress] cleanup: ${safeText(error.stack ?? error)}`);
+        console.error(`[installed-public-ingress] unresolved owned supervisor PID: ${runtime.child.pid}; profile retained; do not open another runtime lease`);
         finalVerdict = "QUESTION";
       }
     }
-    if (shouldRetainSmokeProfile({ keepTemp: options.keepTemp, runtime, serverStarted, shutdownVerified })) {
+    if (shouldRetainSmokeProfile({ keepTemp: options.keepTemp || primaryError instanceof SmokeQuestionError, runtime, serverStarted, shutdownVerified })) {
       console.log(`[installed-public-ingress] kept disposable profile: ${runRoot}`);
     } else {
       await rm(runRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
@@ -1332,7 +1432,7 @@ async function runSmoke(options) {
 
 function usage() {
   console.error(
-    "Usage: node scripts/smoke/installed-public-ingress.mjs --install-root <receipt-prefix> --receipt <installed-receipt-v2.json> --receipt-sha256 <sha256> --provenance-sha256 <sha256> --source-sha <40-hex-commit> [--keep-temp] [--timeout-ms <ms>]",
+    "Usage: node scripts/smoke/installed-public-ingress.mjs --install-root <receipt-prefix> --receipt <installed-receipt-v2.json> --receipt-sha256 <sha256> --provenance-sha256 <sha256> --source-sha <40-hex-commit> [--keep-temp] [--timeout-ms <ms>] [--total-timeout-ms <ms>]",
   );
   console.error(`Receipt contract: ${RECEIPT_SCHEMA}; native provenance independently binds both executables for all six targets.`);
 }
