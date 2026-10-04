@@ -30,6 +30,7 @@ import {
   parseArgs,
   parsePackageTarball,
   requestOwnedTermination,
+  recordOwnedSupervisorStart,
   resolveReceiptRelativeEntry,
   shouldRetainSmokeProfile,
   SmokePrerequisiteError,
@@ -112,6 +113,33 @@ it("the owning runner exits QUESTION while the exact held child and file logging
       runner.kill("SIGKILL");
       await waitForExit(runner, 2000);
     }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("persists supervisor identity before failed readiness and keeps it after verified child close", {
+  skip: process.platform !== "darwin",
+}, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ingress-start-identity."));
+  const entry = path.join(directory, "fixture.mjs");
+  await writeFile(entry, 'setInterval(() => {}, 1000);', { mode: 0o600 });
+  const runtime = startServer(entry, directory, process.env, "startup-failure-owner");
+  try {
+    await once(runtime.child, "spawn");
+    const receipt = await recordOwnedSupervisorStart(runtime, directory);
+    assert.equal(receipt.record.pid, runtime.child.pid);
+    assert.equal(receipt.record.originalParentPid, process.pid);
+    assert.equal(receipt.record.state, "OWNED_RUNNING");
+    assert.equal((await stat(receipt.path)).mode & 0o777, 0o600);
+    await assert.rejects(stopAndAssertRustListenerExited(runtime, [], 2000), /Rust startup identity was never observed/u);
+    assert.ok(runtime.child.exitCode !== null || runtime.child.signalCode !== null);
+    assert.equal((await stat(receipt.path)).mode & 0o777, 0o600);
+  } finally {
+    if (runtime.child.exitCode === null && runtime.child.signalCode === null) {
+      runtime.child.kill("SIGTERM");
+      await waitForExit(runtime.child, 2000);
+    }
+    runtime.stopObservingLogs();
     await rm(directory, { recursive: true, force: true });
   }
 });

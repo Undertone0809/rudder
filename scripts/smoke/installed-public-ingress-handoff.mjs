@@ -108,10 +108,10 @@ function assertLiveChild(child) {
   assertExecutable(child.spawnfile);
 }
 
-function makeRecord({ child, ownerId, kind, sourceSha, supportSha256, timestamp, processWitness }) {
+function makeRecord({ child, ownerId, kind, sourceSha, supportSha256, timestamp, processWitness, recordState }) {
   const parentPid = process.pid;
   return freezeDeep({
-    schema: "rudder-owned-process-handoff-v1",
+    schema: recordState === HANDOFF_STATE ? "rudder-owned-process-handoff-v1" : "rudder-owned-process-start-v1",
     pid: child.pid,
     ownerId,
     kind,
@@ -130,8 +130,8 @@ function makeRecord({ child, ownerId, kind, sourceSha, supportSha256, timestamp,
       osComm: processWitness.comm,
     },
     parentOwner: PARENT_OWNER,
-    reasonCategory: "shutdown_unverified",
-    state: HANDOFF_STATE,
+    reasonCategory: recordState === HANDOFF_STATE ? "shutdown_unverified" : "spawn_observed",
+    state: recordState,
     releaseAllowed: false,
     recoveryPolicy: {
       inspectBeforeSignals: ["exactPID", "executable", "startBinding"],
@@ -143,7 +143,16 @@ function makeRecord({ child, ownerId, kind, sourceSha, supportSha256, timestamp,
 }
 
 /** Persist an immutable, secret-free receipt before allowing a child to outlive its caller. */
-export async function persistOwnedProcessHandoff({
+export async function persistOwnedProcessHandoff(input) {
+  return await persistOwnedProcessRecord(input, HANDOFF_STATE);
+}
+
+/** Record birth/ownership before product readiness can fail. This never permits detach. */
+export async function persistOwnedProcessStart(input) {
+  return await persistOwnedProcessRecord(input, "OWNED_RUNNING");
+}
+
+async function persistOwnedProcessRecord({
   directory,
   child,
   ownerId,
@@ -151,7 +160,7 @@ export async function persistOwnedProcessHandoff({
   sourceSha,
   supportSha256,
   reason,
-}) {
+}, recordState) {
   void reason; // Never persist caller-supplied prose; the handoff uses a fixed category.
   assertLiveChild(child);
   assertSafeIdentifier(ownerId, "ownerId");
@@ -164,7 +173,7 @@ export async function persistOwnedProcessHandoff({
   const targetDirectory = path.resolve(directory);
   const processWitness = await observeDarwinProcess(child);
   const timestamp = new Date().toISOString();
-  const record = makeRecord({ child, ownerId, kind, sourceSha, supportSha256, timestamp, processWitness });
+  const record = makeRecord({ child, ownerId, kind, sourceSha, supportSha256, timestamp, processWitness, recordState });
   const serialized = `${JSON.stringify(record, null, 2)}\n`;
   assert.ok(Buffer.byteLength(serialized, "utf8") <= MAX_RECORD_BYTES, "handoff record exceeds its size limit");
   assert.doesNotMatch(serialized, BEARER_KEY_PATTERN, "handoff record must not contain a bearer key");
@@ -173,7 +182,8 @@ export async function persistOwnedProcessHandoff({
   const directoryStat = await lstat(targetDirectory);
   assert.ok(directoryStat.isDirectory() && !directoryStat.isSymbolicLink(), "handoff target must be a real directory");
 
-  const recordPath = path.join(targetDirectory, `owned-process-handoff-${child.pid}-${randomUUID()}.json`);
+  const recordKind = recordState === HANDOFF_STATE ? "handoff" : "start";
+  const recordPath = path.join(targetDirectory, `owned-process-${recordKind}-${child.pid}-${randomUUID()}.json`);
   let handle;
   let created = false;
   try {
