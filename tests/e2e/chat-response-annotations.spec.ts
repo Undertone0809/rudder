@@ -882,7 +882,7 @@ test.describe("Chat response annotations", () => {
     const run = sourceRuns[0]!;
     expect(run.agentId).toBe(agent.id);
     expect(run.status).toBe("succeeded");
-    expect(run.resultJson).toMatchObject({ retention: { transcriptSource: "native" } });
+    expect(run.contextSnapshot).toMatchObject({ transcriptSource: "native" });
     const seeded: SeededNativeAnnotationChat = {
       organization,
       agent,
@@ -900,6 +900,22 @@ test.describe("Chat response annotations", () => {
     const span = sourceSpans[0];
     if (!span) throw new Error("Expected the native Chat Run to have a bound runtime span");
     expect(span).toMatchObject({ orgId: organization.id, runId: seeded.runId });
+    expect(span.supplementalObjectRef).toEqual(expect.any(String));
+    // Native Reader provenance does not prove supplement coverage; retain its recovery pointer.
+    expect(run.contextSnapshot).toMatchObject({
+      nativeTranscriptRetention: {
+        status: "cleanup_failed",
+        reason: "supplement_native_coverage_unproven",
+        retryCount: 1,
+        recovery: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "transcript_supplement",
+            objectRef: span.supplementalObjectRef,
+            spanId: span.id,
+          }),
+        ]),
+      },
+    });
     const [binding] = await e2eDb.select().from(runtimeBindings)
       .where(eq(runtimeBindings.id, span.bindingId));
     if (!binding) throw new Error("Expected the native Run span to reference its Chat binding");
@@ -2815,7 +2831,7 @@ test.describe("Chat response annotations", () => {
     const sourceRun = sourceRuns[0]!;
     expect(sourceRun.agentId).toBe(agent.id);
     expect(sourceRun.status).toBe("succeeded");
-    expect(sourceRun.resultJson).toMatchObject({ retention: { transcriptSource: "native" } });
+    expect(sourceRun.contextSnapshot).toMatchObject({ transcriptSource: "native" });
     const seeded: SeededNativeAnnotationChat = {
       organization,
       agent,
