@@ -40,10 +40,34 @@ import {
   validateInstallReceipt,
   waitForIssueCreatedFrame,
   waitForExit,
+  waitForPrivatePort,
   waitForCliClose,
 } from "./installed-public-ingress.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
+
+it("discovers the private socket by owned PID despite a public-port startup log", async () => {
+  const runtime = {
+    child: { pid: 123, exitCode: null, signalCode: null },
+    logs: { stdout: "Server listening on 127.0.0.1:32001", stderr: "" },
+  };
+  const observe = async (publicPort, pid) => {
+    assert.equal(publicPort, 32001);
+    assert.equal(pid, 123);
+    return { port: 32002, pid: 123, address: "127.0.0.1:32002" };
+  };
+  assert.equal(await waitForPrivatePort(runtime, 32001, 1000, undefined, observe), 32002);
+  assert.equal(runtime.privatePort, 32002);
+});
+
+it("does not promote a public-port log into private ownership when observation is empty", async () => {
+  const runtime = {
+    child: { pid: 123, exitCode: null, signalCode: null },
+    logs: { stdout: "Server listening on 127.0.0.1:32001", stderr: "" },
+  };
+  await assert.rejects(waitForPrivatePort(runtime, 32001, 20, undefined, async () => null), SmokeQuestionError);
+  assert.equal(runtime.privatePort, undefined);
+});
 
 it("the owning runner exits QUESTION while the exact held child and file logging survive", { skip: process.platform !== "darwin" }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "ingress-parent-exit-fixture."));

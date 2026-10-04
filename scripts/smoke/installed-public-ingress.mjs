@@ -20,6 +20,7 @@ import {
 } from "./installed-member-directory.mjs";
 import {
   assertInstalledListenerOwnership,
+  observeOwnedPrivateListener,
   ListenerObservationUnavailable,
 } from "./installed-public-ingress-listeners.mjs";
 
@@ -927,22 +928,29 @@ async function waitForHealth(runtime, publicUrl, timeoutMs, signal) {
   throw new Error(`installed public health timed out\n${safeText(runtime.logs.stderr)}`);
 }
 
-async function waitForPrivatePort(runtime, publicPort, timeoutMs, signal) {
+export async function waitForPrivatePort(runtime, publicPort, timeoutMs, signal, observe = observeOwnedPrivateListener) {
   const deadline = Date.now() + timeoutMs;
-  const listenPattern = /Server listening on 127\.0\.0\.1:(\d+)/gu;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
     if (runtime.logs.observationError) throw new SmokeQuestionError("owned runtime log observation failed", { cause: runtime.logs.observationError });
-    const logs = `${runtime.logs.stdout}\n${runtime.logs.stderr}`;
-    const matches = [...logs.matchAll(listenPattern)];
-    const port = Number(matches.at(-1)?.[1]);
-    if (Number.isInteger(port) && port > 0 && port !== publicPort) return port;
+    let listener;
+    try {
+      listener = await observe(publicPort, runtime.child.pid, undefined, signal);
+    } catch (error) {
+      if (error instanceof ListenerObservationUnavailable) throw new SmokeQuestionError(error.message, { cause: error });
+      throw error;
+    }
+    if (listener) {
+      runtime.privatePort = listener.port;
+      console.log(`[installed-public-ingress] private listener observation: ${JSON.stringify(listener)}`);
+      return listener.port;
+    }
     if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
       throw new Error(`installed server exited before private listener readiness (${runtime.child.exitCode ?? runtime.child.signalCode})`);
     }
     await delay(50, signal);
   }
-  throw new Error(`private Node listener identity was not logged\n${safeText(runtime.logs.stdout)}\n${safeText(runtime.logs.stderr)}`);
+  throw new SmokeQuestionError("private Node socket ownership was not observed before readiness deadline");
 }
 
 async function createOrganization(apiUrl, name, issuePrefix, work) {
@@ -1474,12 +1482,10 @@ async function runInstalledWorkflow(options, installed, workflow) {
     const cleanupTimeout = (ms) => Math.max(1, Math.min(ms, workflow.remainingMs()));
     if (activeSocket) await closeWebSocket(activeSocket, cleanupTimeout(5_000)).catch(() => activeSocket.terminate());
     if (runtime) {
-      const logs = `${runtime.logs.stdout}\n${runtime.logs.stderr}`;
-      const portMatch = logs.match(/Server listening on 127\.0\.0\.1:(\d+)/u);
       try {
         await stopAndAssertRustListenerExited(
           runtime,
-          [publicPort, Number(portMatch?.[1]), databasePort],
+          [publicPort, runtime.privatePort, databasePort],
           cleanupTimeout(28_000),
         );
         runtime = null;
