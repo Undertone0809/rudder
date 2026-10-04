@@ -965,7 +965,30 @@ test.describe("Chat streaming", () => {
     await expect(sendButton).not.toHaveAttribute("aria-busy", "true");
     await expect(composerSurface).not.toHaveClass(/chat-composer--streaming/);
 
-    releaseMessagesRefresh();
+    // The final UI enables editing before refresh finishes. Its next action
+    // must acquire a new send lock instead of being silently discarded.
+    try {
+      const userTurn = page.getByTestId("chat-user-message-turn").filter({
+        hasText: "Complete fragmented commentary",
+      });
+      await userTurn.getByTestId("chat-user-message-bubble").hover();
+      await userTurn.getByRole("button", { name: "Edit message" }).click();
+      const inlineEditor = page.getByTestId("chat-inline-message-editor");
+      await expect(inlineEditor).toBeVisible();
+      await inlineEditor.locator(".rudder-mdxeditor-content").fill("Complete fragmented commentary after edit");
+      const editRequest = page.waitForRequest((request) => (
+        request.method() === "POST"
+        && new URL(request.url()).pathname === `/api/chats/${chat.id}/messages/stream`
+        && request.postDataJSON()?.editUserMessageId
+        && request.postDataJSON()?.body === "Complete fragmented commentary after edit"
+      ), { timeout: 10_000 });
+      await expect(inlineEditor.getByRole("button", { name: "Send" })).toBeEnabled();
+      await inlineEditor.getByRole("button", { name: "Send" }).click();
+      await editRequest;
+      await expect(inlineEditor).toHaveCount(0, { timeout: 15_000 });
+    } finally {
+      releaseMessagesRefresh();
+    }
     await expect.poll(() => refreshCompleted, { timeout: 15_000 }).toBe(true);
   });
 
