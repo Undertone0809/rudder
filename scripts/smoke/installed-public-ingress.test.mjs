@@ -22,11 +22,52 @@ import {
   resolveReceiptRelativeEntry,
   shouldRetainSmokeProfile,
   SmokePrerequisiteError,
+  SmokeQuestionError,
+  stopAndAssertRustListenerExited,
   validateInstallReceipt,
   waitForIssueCreatedFrame,
+  waitForExit,
 } from "./installed-public-ingress.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
+
+it("waits for pipe close even when exitCode was already set", async () => {
+  const child = new EventEmitter();
+  child.exitCode = 1;
+  child.signalCode = null;
+  let settled = false;
+  const completion = waitForExit(child, 1000).then((result) => {
+    settled = true;
+    return result;
+  });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  child.emit("close", 1, null);
+  assert.deepEqual(await completion, { code: 1, signal: null });
+  assert.deepEqual(await waitForExit(child, 1000), { code: 1, signal: null });
+});
+
+it("missing Rust startup identity still stops only the owned supervisor and remains QUESTION", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    queueMicrotask(() => {
+      child.signalCode = signal;
+      child.emit("close", null, signal);
+    });
+    return true;
+  };
+  const runtime = {
+    owner: "installed-public-ingress-smoke", ownerId: "missing-rust",
+    child, logs: { stdout: "", stderr: "" }, termRequested: false, stopPromise: null,
+  };
+  await assert.rejects(stopAndAssertRustListenerExited(runtime, [], 1000), SmokeQuestionError);
+  assert.deepEqual(signals, ["SIGTERM"]);
+  assert.equal(canRemoveSmokeProfile({ runtime, serverStarted: true, shutdownVerified: false }), false);
+});
 const sourceSha = "755c273fe35fe28c36c37d598687d26dd09648d6";
 const packageNames = [
   "@rudderhq/agent-runtime-claude-local",
