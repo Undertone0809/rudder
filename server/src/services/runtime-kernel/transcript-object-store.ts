@@ -49,6 +49,10 @@ export interface TranscriptObjectBeginInput {
   ownerToken: string;
   /** Host-attested NEW object only. Recovery never upgrades a legacy object. */
   compactIdentity?: CoverageIdentity | null;
+  /** Mark a NEW raw object as eligible for an owner-fenced compact handoff. */
+  earlyHandoffEligible?: boolean;
+  /** Internal reverse edge used only while constructing a compact handoff child. */
+  compactHandoffParentRef?: string;
 }
 
 export interface TranscriptObjectResumeInput extends TranscriptObjectBeginInput {
@@ -58,6 +62,16 @@ export interface TranscriptObjectResumeInput extends TranscriptObjectBeginInput 
 export interface TranscriptObjectHandle extends TranscriptObjectBeginInput {
   store: TranscriptObjectStoreType;
   objectRef: string;
+  earlyHandoffEligible?: boolean;
+}
+
+export type TranscriptObjectFenceCommit = (commit: () => Promise<void>) => Promise<boolean>;
+
+export interface TranscriptObjectCompactHandoffInput {
+  handle: TranscriptObjectHandle;
+  compactIdentity: CoverageIdentity;
+  /** The callback must publish while holding the active Run/Attempt owner fence. */
+  withPublishFence: TranscriptObjectFenceCommit;
 }
 
 export interface TranscriptObjectFinalizeOptions {
@@ -131,7 +145,14 @@ export interface TranscriptObjectStore {
   begin(input: TranscriptObjectBeginInput): Promise<TranscriptObjectHandle>;
   /** Reopen an existing open object after a durable owner recovery. */
   resume(input: TranscriptObjectResumeInput): Promise<TranscriptObjectHandle>;
-  append(handle: TranscriptObjectHandle, entries: TranscriptEntry | readonly TranscriptEntry[]): Promise<void>;
+  append(handle: TranscriptObjectHandle, entries: TranscriptEntry | readonly TranscriptEntry[], options?: {
+    withOwnerFence?: TranscriptObjectFenceCommit;
+  }): Promise<void>;
+  /** Atomically link a copied, identity-bound compact child from a new raw root. */
+  handoffCompact?(input: TranscriptObjectCompactHandoffInput): Promise<{
+    activated: boolean;
+    objectRef: string | null;
+  }>;
   finalize(handle: TranscriptObjectHandle, options?: TranscriptObjectFinalizeOptions): Promise<TranscriptObjectFinalizeReceipt>;
   removeSealed(input: TranscriptObjectReadRangeInput): Promise<void>;
   stageSealedRemoval?(input: TranscriptObjectReadRangeInput): Promise<{ objectRef: string; stageId: string }>;
@@ -198,6 +219,14 @@ type StoredObjectMetadata = {
   encoding?: typeof CODEX_GAP_ENCODING;
   compactIdentitySha256?: string;
   logicalBytes?: number;
+  earlyHandoffEligible?: true;
+  compactHandoffParentRef?: string;
+  compactHandoff?: {
+    objectRef: string;
+    prefixEntryCount: number;
+    prefixSha256: string;
+    compactIdentitySha256: string;
+  };
 };
 
 type StoredTranscriptLine = {
@@ -631,8 +660,34 @@ function parseStoredObjectMetadata(value: unknown): StoredObjectMetadata {
     || typeof metadata.updatedAt !== "string" || !Number.isFinite(Date.parse(metadata.updatedAt))) {
     throw new Error("Transcript object metadata is invalid");
   }
-  if (metadata.encoding !== undefined && (!isCodexGapObjectMetadata(metadata)
-    || metadata.logicalBytes > MAX_OBJECT_BYTES)) throw new Error("Transcript object encoding is invalid");
+  if (metadata.encoding !== undefined) {
+    const validGapMetadata = isCodexGapObjectMetadata(value);
+    if (!validGapMetadata || typeof metadata.logicalBytes !== "number"
+      || metadata.logicalBytes > MAX_OBJECT_BYTES) {
+      throw new Error("Transcript object encoding is invalid");
+    }
+  }
+  if (metadata.earlyHandoffEligible !== undefined && metadata.earlyHandoffEligible !== true) {
+    throw new Error("Transcript object handoff eligibility is invalid");
+  }
+  if (metadata.compactHandoffParentRef !== undefined
+    && (typeof metadata.compactHandoffParentRef !== "string"
+      || !OBJECT_REF_RE.test(metadata.compactHandoffParentRef)
+      || metadata.compactHandoffParentRef === metadata.objectRef)) {
+    throw new Error("Transcript object handoff parent is invalid");
+  }
+  if (metadata.compactHandoff !== undefined) {
+    const handoff = metadata.compactHandoff;
+    if (!handoff || typeof handoff !== "object"
+      || typeof handoff.objectRef !== "string" || !OBJECT_REF_RE.test(handoff.objectRef)
+      || handoff.objectRef === metadata.objectRef
+      || !Number.isSafeInteger(handoff.prefixEntryCount) || handoff.prefixEntryCount < 0
+      || typeof handoff.prefixSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(handoff.prefixSha256)
+      || typeof handoff.compactIdentitySha256 !== "string" || !/^[a-f0-9]{64}$/u.test(handoff.compactIdentitySha256)
+      || metadata.earlyHandoffEligible !== true || metadata.encoding !== undefined) {
+      throw new Error("Transcript object handoff metadata is invalid");
+    }
+  }
   return metadata as StoredObjectMetadata;
 }
 
@@ -757,6 +812,20 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         .filter((ref): ref is string => typeof ref === "string" && ref.trim().length > 0)
         .map((ref) => ref.trim()),
     );
+    for (const protectedRef of [...protectedRefs]) {
+      if (!OBJECT_REF_RE.test(protectedRef)) continue;
+      try {
+        const protectedPaths = objectPaths(root, protectedRef);
+        const protectedMetadata = parseStoredObjectMetadata(JSON.parse(
+          await fs.readFile(protectedPaths.metadataPath, "utf8"),
+        ));
+        if (protectedMetadata.objectRef === protectedRef && protectedMetadata.compactHandoff) {
+          protectedRefs.add(protectedMetadata.compactHandoff.objectRef);
+        }
+      } catch {
+        // A missing or malformed root cannot make an unverified child reachable.
+      }
+    }
     const objectRoot = path.resolve(root, OBJECT_ROOT_NAME);
     const result: TranscriptObjectSweepResult = {
       scanned: 0,
@@ -807,6 +876,30 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
           result.skipped += 1;
           continue;
         }
+        let retentionMetadata = metadata;
+        if (metadata.compactHandoffParentRef) {
+          try {
+            const parentPaths = objectPaths(root, metadata.compactHandoffParentRef);
+            const parentMetadata = parseStoredObjectMetadata(JSON.parse(
+              await fs.readFile(parentPaths.metadataPath, "utf8"),
+            ));
+            if (parentMetadata.objectRef === metadata.compactHandoffParentRef
+              && parentMetadata.orgId === metadata.orgId
+              && parentMetadata.runId === metadata.runId
+              && parentMetadata.spanId === metadata.spanId
+              && parentMetadata.compactHandoff?.objectRef === ref
+              && parentMetadata.compactHandoff.compactIdentitySha256 === metadata.compactIdentitySha256) {
+              retentionMetadata = parentMetadata;
+              if (protectedRefs.has(parentMetadata.objectRef) || !input.withRetentionGuard) {
+                protectedRefs.add(ref);
+                result.protected += 1;
+                continue;
+              }
+            }
+          } catch {
+            // An unpublished child is not reachable from its raw root.
+          }
+        }
         if (now.getTime() - Date.parse(metadata.updatedAt) < minAgeMs) {
           result.skipped += 1;
           continue;
@@ -850,10 +943,10 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
             };
             if (!input.withRetentionGuard) return await collect() ? "deleted" : "skipped";
             return input.withRetentionGuard({
-              objectRef: ref,
-              orgId: metadata.orgId,
-              runId: metadata.runId,
-              spanId: metadata.spanId,
+              objectRef: retentionMetadata.objectRef,
+              orgId: retentionMetadata.orgId,
+              runId: retentionMetadata.runId,
+              spanId: retentionMetadata.spanId,
               payloadMissing,
             }, collect);
           });
@@ -974,6 +1067,15 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         ownerToken: requiredString(input.ownerToken, "owner"),
       };
       const compactMetadata = createCodexGapObjectMetadata(input.compactIdentity, binding);
+      if (input.earlyHandoffEligible && compactMetadata) {
+        throw badRequest("A compact transcript object cannot be an early handoff root");
+      }
+      const compactHandoffParentRef = input.compactHandoffParentRef
+        ? assertObjectRef(input.compactHandoffParentRef)
+        : undefined;
+      if (compactHandoffParentRef && (!compactMetadata || compactHandoffParentRef === "")) {
+        throw badRequest("A compact handoff child requires a compact identity");
+      }
       await fs.mkdir(path.resolve(root, OBJECT_ROOT_NAME), { recursive: true, mode: 0o700 });
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const ref = objectRef();
@@ -995,8 +1097,15 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
             createdAt: now,
             updatedAt: now,
             ...(compactMetadata ?? {}),
+            ...(input.earlyHandoffEligible ? { earlyHandoffEligible: true as const } : {}),
+            ...(compactHandoffParentRef ? { compactHandoffParentRef } : {}),
           } satisfies StoredObjectMetadata);
-          return { store: "local_file", ...binding, objectRef: ref };
+          return {
+            store: "local_file",
+            ...binding,
+            objectRef: ref,
+            ...(input.earlyHandoffEligible ? { earlyHandoffEligible: true } : {}),
+          };
         } catch (error) {
           if ((error as NodeJS.ErrnoException | null)?.code !== "EEXIST" || attempt === 2) throw error;
         }
@@ -1012,28 +1121,247 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         ownerToken: requiredString(input.ownerToken, "owner"),
       };
       const paths = objectPaths(root, input.objectRef);
-      await withObjectLock(paths.payloadPath, async () => {
-        const metadata = await loadMetadata(
+      const metadata = await withObjectLock(paths.payloadPath, async () => {
+        const current = await loadMetadata(
           paths.metadataPath,
           { ...binding, objectRef: paths.ref },
           { allowOwnerRecovery: true },
         );
-        if (metadata.state !== "open") throw conflict("Transcript object is finalized");
-        await reconcileOpenPayload(paths.payloadPath, metadata.bytes);
+        if (current.state !== "open") throw conflict("Transcript object is finalized");
+        await reconcileOpenPayload(paths.payloadPath, current.bytes);
+        return current;
       });
-      const handle = { store: "local_file" as const, ...binding, objectRef: paths.ref };
+      const handle = {
+        store: "local_file" as const,
+        ...binding,
+        objectRef: paths.ref,
+        ...(metadata.earlyHandoffEligible ? { earlyHandoffEligible: true } : {}),
+      };
       ownerRecoveryHandles.add(handle);
       return handle;
     },
 
-    async append(handle, entries) {
+    async handoffCompact(input) {
+      const { handle } = input;
+      if (handle.store !== "local_file") throw badRequest("Transcript object store is unsupported");
+      const binding = {
+        orgId: requiredString(handle.orgId, "organization"),
+        runId: requiredString(handle.runId, "run"),
+        spanId: requiredString(handle.spanId, "span"),
+        ownerToken: requiredString(handle.ownerToken, "owner"),
+      };
+      const rootPaths = objectPaths(root, handle.objectRef);
+      const compactMetadata = createCodexGapObjectMetadata(input.compactIdentity, binding);
+      if (!compactMetadata) throw badRequest("Compact transcript identity is incomplete");
+      return withObjectLock(rootPaths.payloadPath, async () => {
+        const allowOwnerRecovery = ownerRecoveryHandles.has(handle);
+        const rootMetadata = await loadMetadata(rootPaths.metadataPath, {
+          ...binding,
+          objectRef: rootPaths.ref,
+        }, { allowOwnerRecovery });
+        const digestObjectEntries = async (
+          objectRef: string,
+          entryLimit: number,
+          allowRecovery: boolean,
+        ) => {
+          const digest = createHash("sha256");
+          let entryCount = 0;
+          let cursor: string | null = null;
+          while (entryCount < entryLimit) {
+            const page = await this.readRange({
+              ...binding,
+              objectRef,
+              cursor,
+              limit: Math.min(MAX_PAGE_LIMIT, entryLimit - entryCount),
+              allowOwnerRecovery: allowRecovery,
+            });
+            for (const entry of page.entries) digest.update(JSON.stringify(entry)).update("\n");
+            entryCount += page.entries.length;
+            cursor = page.nextCursor;
+            if (!cursor) break;
+          }
+          return { entryCount, sha256: digest.digest("hex"), cursor };
+        };
+
+        if (rootMetadata.compactHandoff) {
+          const childPaths = objectPaths(root, rootMetadata.compactHandoff.objectRef);
+          const childMetadata = await loadMetadata(childPaths.metadataPath, {
+            ...binding,
+            objectRef: childPaths.ref,
+          }, { allowOwnerRecovery: true });
+          if (childMetadata.compactHandoffParentRef !== rootPaths.ref
+            || childMetadata.compactIdentitySha256 !== compactMetadata.compactIdentitySha256
+            || rootMetadata.compactHandoff.compactIdentitySha256 !== compactMetadata.compactIdentitySha256
+            || childMetadata.encoding !== CODEX_GAP_ENCODING
+            || childMetadata.entryCount < rootMetadata.compactHandoff.prefixEntryCount) {
+            throw conflict("Transcript compact handoff identity does not match its root");
+          }
+          const childPrefix = await digestObjectEntries(
+            childPaths.ref,
+            rootMetadata.compactHandoff.prefixEntryCount,
+            true,
+          );
+          if (childPrefix.entryCount !== rootMetadata.compactHandoff.prefixEntryCount
+            || childPrefix.sha256 !== rootMetadata.compactHandoff.prefixSha256) {
+            throw new Error("Transcript compact handoff prefix digest does not match its root");
+          }
+          const active = await input.withPublishFence(async () => undefined);
+          return { activated: active, objectRef: active ? childPaths.ref : null };
+        }
+        if (rootMetadata.state !== "open" || rootMetadata.earlyHandoffEligible !== true
+          || rootMetadata.encoding !== undefined) {
+          return { activated: false, objectRef: null };
+        }
+        await reconcileOpenPayload(rootPaths.payloadPath, rootMetadata.bytes);
+
+        const pendingChildren: Array<{ objectRef: string; entryCount: number }> = [];
+        for (const item of await fs.readdir(rootPaths.root, { withFileTypes: true })) {
+          if (!item.isFile() || !item.name.endsWith(".json")) continue;
+          const candidateRef = item.name.slice(0, -".json".length);
+          if (!OBJECT_REF_RE.test(candidateRef) || candidateRef === rootPaths.ref) continue;
+          try {
+            const candidate = parseStoredObjectMetadata(JSON.parse(await fs.readFile(
+              objectPaths(root, candidateRef).metadataPath,
+              "utf8",
+            )));
+            if (candidate.objectRef === candidateRef
+              && candidate.orgId === binding.orgId
+              && candidate.runId === binding.runId
+              && candidate.spanId === binding.spanId
+              && candidate.compactHandoffParentRef === rootPaths.ref
+              && candidate.compactIdentitySha256 === compactMetadata.compactIdentitySha256
+              && candidate.encoding === CODEX_GAP_ENCODING
+              && candidate.state === "open"
+              && candidate.entryCount <= rootMetadata.entryCount) {
+              pendingChildren.push({ objectRef: candidateRef, entryCount: candidate.entryCount });
+            }
+          } catch {
+            // An incomplete or malformed child is retained but never linked.
+          }
+        }
+
+        let childHandle: TranscriptObjectHandle | null = null;
+        let copiedEntryCount = 0;
+        for (const candidate of pendingChildren) {
+          try {
+            const candidateHandle = await this.resume({ ...binding, objectRef: candidate.objectRef });
+            const [sourcePrefix, childPrefix] = await Promise.all([
+              digestObjectEntries(rootPaths.ref, candidate.entryCount, allowOwnerRecovery),
+              digestObjectEntries(candidate.objectRef, candidate.entryCount, true),
+            ]);
+            if (sourcePrefix.entryCount !== candidate.entryCount
+              || childPrefix.entryCount !== candidate.entryCount
+              || sourcePrefix.sha256 !== childPrefix.sha256) continue;
+            childHandle = candidateHandle;
+            copiedEntryCount = candidate.entryCount;
+            break;
+          } catch {
+            // Keep searching; the raw root remains the authoritative evidence.
+          }
+        }
+        childHandle ??= await this.begin({
+          ...binding,
+          compactIdentity: input.compactIdentity,
+          compactHandoffParentRef: rootPaths.ref,
+        });
+
+        let cursor = copiedEntryCount > 0 ? encodeCursor(rootPaths.ref, copiedEntryCount) : null;
+        while (copiedEntryCount < rootMetadata.entryCount) {
+          const page = await this.readRange({
+            ...binding,
+            objectRef: rootPaths.ref,
+            cursor,
+            limit: Math.min(MAX_PAGE_LIMIT, rootMetadata.entryCount - copiedEntryCount),
+            allowOwnerRecovery,
+          });
+          if (page.entries.length === 0) break;
+          await this.append(childHandle, page.entries);
+          copiedEntryCount += page.entries.length;
+          cursor = page.nextCursor;
+        }
+
+        const sourcePrefix = await digestObjectEntries(rootPaths.ref, rootMetadata.entryCount, allowOwnerRecovery);
+        if (sourcePrefix.entryCount !== rootMetadata.entryCount) {
+          throw new Error("Transcript early handoff source count does not match committed metadata");
+        }
+        const childMetadata = await loadMetadata(objectPaths(root, childHandle.objectRef).metadataPath, {
+          ...binding,
+          objectRef: childHandle.objectRef,
+        }, { allowOwnerRecovery: ownerRecoveryHandles.has(childHandle) });
+        const childPrefix = await digestObjectEntries(childHandle.objectRef, rootMetadata.entryCount, true);
+        if (childMetadata.entryCount !== rootMetadata.entryCount
+          || childPrefix.entryCount !== rootMetadata.entryCount
+          || childPrefix.sha256 !== sourcePrefix.sha256) {
+          throw new Error("Transcript compact handoff did not preserve its committed prefix");
+        }
+
+        let published = false;
+        const publish = async () => {
+          if (published) throw new Error("Transcript compact handoff was published more than once");
+          await writeJsonAtomically(rootPaths.metadataPath, {
+            ...rootMetadata,
+            compactHandoff: {
+              objectRef: childHandle.objectRef,
+              prefixEntryCount: rootMetadata.entryCount,
+              prefixSha256: sourcePrefix.sha256,
+              compactIdentitySha256: compactMetadata.compactIdentitySha256,
+            },
+            updatedAt: new Date().toISOString(),
+          } satisfies StoredObjectMetadata);
+          published = true;
+        };
+        const ownerFenced = await input.withPublishFence(publish);
+        return {
+          activated: ownerFenced && published,
+          objectRef: ownerFenced && published ? childHandle.objectRef : null,
+        };
+      });
+    },
+
+    async append(handle, entries, options) {
       if (handle.store !== "local_file") throw badRequest("Transcript object store is unsupported");
       const normalizedEntries = Array.isArray(entries) ? entries : [entries];
       const paths = objectPaths(root, handle.objectRef);
-      await withObjectLock(
-        paths.payloadPath,
-        () => appendUnlocked(handle, normalizedEntries, ownerRecoveryHandles.has(handle)),
-      );
+      await withObjectLock(paths.payloadPath, async () => {
+        const allowOwnerRecovery = ownerRecoveryHandles.has(handle);
+        const commit = async () => {
+          const metadata = await loadMetadata(paths.metadataPath, { ...handle, objectRef: paths.ref }, {
+            allowOwnerRecovery,
+          });
+          const handoff = metadata.compactHandoff;
+          if (!handoff) {
+            await appendUnlocked(handle, normalizedEntries, allowOwnerRecovery);
+            return;
+          }
+          const childPaths = objectPaths(root, handoff.objectRef);
+          const childHandle = { ...handle, objectRef: childPaths.ref, earlyHandoffEligible: undefined };
+          const childMetadata = await loadMetadata(childPaths.metadataPath, {
+            ...childHandle,
+            objectRef: childPaths.ref,
+          }, { allowOwnerRecovery: true });
+          if (childMetadata.compactHandoffParentRef !== paths.ref
+            || childMetadata.compactIdentitySha256 !== handoff.compactIdentitySha256
+            || childMetadata.encoding !== CODEX_GAP_ENCODING) {
+            throw conflict("Transcript compact handoff child is unavailable");
+          }
+          await withObjectLock(childPaths.payloadPath, () => appendUnlocked(
+            childHandle,
+            normalizedEntries,
+            allowOwnerRecovery,
+          ));
+        };
+        if (!options?.withOwnerFence) {
+          await commit();
+          return;
+        }
+        let committed = false;
+        const ownerFenced = await options.withOwnerFence(async () => {
+          if (committed) throw new Error("Transcript append was committed more than once");
+          await commit();
+          committed = true;
+        });
+        if (!ownerFenced || !committed) throw new Error("Transcript append lost its active Run owner fence");
+      });
     },
 
     async finalize(handle, options) {
@@ -1045,6 +1373,21 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
           { ...handle, objectRef: paths.ref },
           { allowOwnerRecovery: ownerRecoveryHandles.has(handle) },
         );
+        if (metadata.compactHandoff) {
+          const childPaths = objectPaths(root, metadata.compactHandoff.objectRef);
+          const childHandle = { ...handle, objectRef: childPaths.ref, earlyHandoffEligible: undefined };
+          if (ownerRecoveryHandles.has(handle)) ownerRecoveryHandles.add(childHandle);
+          const childReceipt = await this.finalize(childHandle, options);
+          if (metadata.state === "open") {
+            await writeJsonAtomically(paths.metadataPath, {
+              ...metadata,
+              state: "sealed",
+              completeness: childReceipt.completeness,
+              updatedAt: new Date().toISOString(),
+            } satisfies StoredObjectMetadata);
+          }
+          return { ...childReceipt, objectRef: paths.ref };
+        }
         if (metadata.state !== "open") {
           const summary = await scanObjectFile(paths.payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
           return {
@@ -1099,6 +1442,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         const metadata = await loadMetadata(paths.metadataPath, { ...binding, objectRef: ref }, {
           allowOwnerRecovery: input.allowOwnerRecovery,
         });
+        if (metadata.compactHandoff) throw conflict("Transcript handoff removal requires both references");
         if (metadata.state !== "sealed") throw conflict("Transcript object is not sealed");
         if (!payloadStat) {
           await fs.unlink(paths.metadataPath);
@@ -1143,6 +1487,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         const metadata = await loadMetadata(paths.metadataPath, { ...binding, objectRef: ref }, {
           allowOwnerRecovery: input.allowOwnerRecovery,
         });
+        if (metadata.compactHandoff) throw conflict("Transcript handoff removal requires both references");
         if (metadata.state !== "sealed") throw conflict("Transcript object is not sealed");
         if (payloadStat) {
           if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
@@ -1317,6 +1662,33 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       const payloadStat = await fs.stat(paths.payloadPath);
       if (payloadStat.size < metadata.bytes || (metadata.state === "sealed" && payloadStat.size !== metadata.bytes)) {
         throw new Error("Transcript object payload does not match committed metadata");
+      }
+      if (metadata.compactHandoff) {
+        const childRef = metadata.compactHandoff.objectRef;
+        const childPaths = objectPaths(root, childRef);
+        const childMetadata = await loadMetadata(childPaths.metadataPath, {
+          ...binding,
+          objectRef: childRef,
+        }, { allowOwnerRecovery: input.allowOwnerRecovery });
+        if (childMetadata.compactHandoffParentRef !== ref
+          || childMetadata.compactIdentitySha256 !== metadata.compactHandoff.compactIdentitySha256
+          || childMetadata.encoding !== CODEX_GAP_ENCODING
+          || childMetadata.entryCount < metadata.compactHandoff.prefixEntryCount) {
+          throw new Error("Transcript compact handoff references an invalid child");
+        }
+        const offset = parseCursor(input.cursor, ref);
+        const childPage = await this.readRange({
+          ...input,
+          objectRef: childRef,
+          cursor: encodeCursor(childRef, offset),
+        });
+        return {
+          ...childPage,
+          nextCursor: childPage.nextCursor
+            ? encodeCursor(ref, parseCursor(childPage.nextCursor, childRef))
+            : null,
+          revision: `${objectRevision(ref)}:${childPage.revision}`,
+        } satisfies TranscriptObjectReadRangeResult;
       }
       const start = parseCursor(input.cursor, ref);
       const limit = normalizeLimit(input.limit);

@@ -68,6 +68,7 @@ export interface CodexAppServerChatOptions {
   controlAttempt?: AgentRuntimeExecutionContext["controlAttempt"];
   requestApproval?: AgentRuntimeExecutionContext["requestApproval"];
   waitForApproval?: AgentRuntimeExecutionContext["waitForApproval"];
+  onNativeExecutionIdentity?: AgentRuntimeExecutionContext["onNativeExecutionIdentity"];
   onProviderAuthFailure?: (message: string) => Promise<void> | void;
   /** Internal host policy. Missing/unknown values retain legacy capture. */
   stdoutCapturePolicy?: "capture" | "omit";
@@ -530,6 +531,26 @@ export async function executeCodexAppServerChat(
     await options.onLog("stdout", line);
   };
 
+  const nativeExecutionIdentityNotifications = new Map<string, Promise<void>>();
+  const notifyNativeExecutionIdentity = async (candidateThreadId: string, candidateTurnId: string) => {
+    const activeThreadId = candidateThreadId.trim();
+    const activeTurnId = candidateTurnId.trim();
+    if (!options.onNativeExecutionIdentity || !activeThreadId || !activeTurnId) return;
+    const key = `${activeThreadId}\u0000${activeTurnId}`;
+    const existing = nativeExecutionIdentityNotifications.get(key);
+    if (existing) return existing;
+    const pending = Promise.resolve().then(() => options.onNativeExecutionIdentity!({
+      kind: "codex_turn",
+      threadId: activeThreadId,
+      turnId: activeTurnId,
+    }));
+    nativeExecutionIdentityNotifications.set(key, pending);
+    // A rejected callback may already have committed part of its durable
+    // handoff. Keep the rejection memoized for this execution so a duplicate
+    // turn/started notification cannot replay those side effects.
+    await pending;
+  };
+
   const emitReasoningDelta = async (itemId: string, text: string) => {
     if (!text) return;
     if (itemId) reasoningDeltaItemIds.add(itemId);
@@ -705,6 +726,11 @@ export async function executeCodexAppServerChat(
         return;
       }
       if (notification.method === "turn/started") {
+        if (notificationThreadId && notificationTurnId && notificationThreadId === threadId) {
+          if (turnId && notificationTurnId === turnId) {
+            await notifyNativeExecutionIdentity(notificationThreadId, notificationTurnId);
+          }
+        }
         await emit({ type: "turn.started" });
         return;
       }
@@ -924,6 +950,7 @@ export async function executeCodexAppServerChat(
     turnId = asString(asRecord(turnResponse.turn)?.id).trim() || null;
     if (!turnId) throw new Error("Codex App Server did not return a turn id");
     submissionPhase = "accepted";
+    await notifyNativeExecutionIdentity(threadId, turnId);
     const activeThreadId = threadId;
     const activeTurnId = turnId;
 

@@ -1,4 +1,8 @@
-import type { AgentRuntimeNetworkSuspension, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type {
+  AgentRuntimeNativeExecutionIdentity,
+  AgentRuntimeNetworkSuspension,
+  TranscriptEntry,
+} from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import { chatMessages, goals, heartbeatRunAttempts, heartbeatRuns, runRuntimeSpans } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
@@ -22,7 +26,10 @@ import {
   storeRunInstructionSnapshot,
 } from "./run-instruction-snapshots.js";
 import { getRunLogStore } from "./run-log-store.js";
-import type { HeartbeatTranscriptRetentionInput } from "./runtime-kernel/heartbeat-transcript-retention.js";
+import {
+  hasVerifiedHeartbeatNativeTranscriptProfile,
+  type HeartbeatTranscriptRetentionInput,
+} from "./runtime-kernel/heartbeat-transcript-retention.js";
 import {
   buildHeartbeatAdapterInvokePayload,
   networkWaitBackoffMs,
@@ -36,6 +43,8 @@ import {
 import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
 import {
   attachRuntimeSpanSupplement,
+  bindCodexTurnNativeExecutionIdentity,
+  withOpenRunRuntimeSpanOwner,
   type NativeSegmentRecord,
   type RuntimeBindingRecord,
 } from "./runtime-kernel/native-session.js";
@@ -209,6 +218,10 @@ export function chatAgentRunService(db: Db, options: {
         const handle = await transcriptObjectStore.begin({
           orgId: run.orgId, runId: run.id, spanId: identity.id, ownerToken: identity.ownerToken,
           compactIdentity,
+          earlyHandoffEligible: !compactIdentity
+            && profile?.runtimeType === "codex_local"
+            && profile.binding.orgId === run.orgId
+            && hasVerifiedHeartbeatNativeTranscriptProfile(profile),
         });
         // Re-read after allocation so a recovery/service instance that won the
         // attach race is reused rather than overwritten.
@@ -255,7 +268,101 @@ export function chatAgentRunService(db: Db, options: {
     }
     const handle = await pending;
     if (!await immutableFenceForRun(run)) throw new Error("Native transcript span owner is stale");
-    await transcriptObjectStore.append(handle, entry);
+    const attemptId = run.runtimeAttemptRef?.id?.trim();
+    if (!attemptId) throw new Error("Native transcript span attempt is missing");
+    await transcriptObjectStore.append(handle, entry, {
+      withOwnerFence: async (commit) => (await withOpenRunRuntimeSpanOwner(db, {
+        orgId: run.orgId,
+        runId: run.id,
+        spanId: identity.id,
+        ownerToken: identity.ownerToken,
+        attemptEpoch: identity.attemptEpoch,
+        attemptId,
+      }, async () => {
+        await commit();
+        return true;
+      })) === true,
+    });
+  }
+
+  async function bindNativeExecutionIdentity(
+    run: ChatRunFenceCarrier,
+    nativeIdentity: AgentRuntimeNativeExecutionIdentity,
+    profile?: HeartbeatTranscriptRetentionInput["profileCapability"],
+  ) {
+    if (nativeIdentity.kind !== "codex_turn") throw new Error("Unsupported native execution identity");
+    const owner = fenceIdentityFromRun(run);
+    const attemptId = run.runtimeAttemptRef?.id?.trim();
+    if (!owner || !attemptId || !await immutableFenceForRun(run)) {
+      throw new Error("Native execution identity has no active Run owner");
+    }
+    const span = await bindCodexTurnNativeExecutionIdentity(db, {
+      orgId: run.orgId,
+      runId: run.id,
+      spanId: owner.id,
+      ownerToken: owner.ownerToken,
+      attemptEpoch: owner.attemptEpoch,
+      attemptId,
+      threadId: nativeIdentity.threadId,
+      turnId: nativeIdentity.turnId,
+    });
+    if (!span) throw new Error("Codex native execution identity lost its Run owner or conflicted with the span");
+
+    const compactIdentity = await qualifiedCodexGapIdentity(db, run, owner, span, profile);
+    const key = `${run.id}:${owner.id}`;
+    let handle: TranscriptObjectHandle | null = null;
+    const inFlight = transcriptSupplements.get(key);
+    if (inFlight) handle = await inFlight;
+
+    let supplementalObjectRef = span.supplementalObjectRef?.trim() || null;
+    if (!supplementalObjectRef && handle) {
+      supplementalObjectRef = await db.select({ supplementalObjectRef: runRuntimeSpans.supplementalObjectRef })
+        .from(runRuntimeSpans)
+        .where(and(
+          eq(runRuntimeSpans.orgId, run.orgId),
+          eq(runRuntimeSpans.runId, run.id),
+          eq(runRuntimeSpans.id, owner.id),
+          eq(runRuntimeSpans.ownerToken, owner.ownerToken),
+          eq(runRuntimeSpans.attemptEpoch, owner.attemptEpoch),
+          eq(runRuntimeSpans.attemptId, attemptId),
+          eq(runRuntimeSpans.state, "open"),
+        ))
+        .limit(1)
+        .then((rows) => rows[0]?.supplementalObjectRef?.trim() || null);
+    }
+    if (!supplementalObjectRef) return;
+    if (!handle || handle.objectRef !== supplementalObjectRef) {
+      handle = await transcriptObjectStore.resume({
+        objectRef: supplementalObjectRef,
+        orgId: run.orgId,
+        runId: run.id,
+        spanId: owner.id,
+        ownerToken: owner.ownerToken,
+      });
+      transcriptSupplements.set(key, Promise.resolve(handle));
+    }
+    // Only a newly allocated raw root is eligible. Existing attached v1
+    // objects remain immutable even after the provider identity is learned.
+    if (!handle.earlyHandoffEligible || !compactIdentity || !transcriptObjectStore.handoffCompact) return;
+    const handoff = await transcriptObjectStore.handoffCompact({
+      handle,
+      compactIdentity,
+      withPublishFence: async (publish) => (await withOpenRunRuntimeSpanOwner(db, {
+        orgId: run.orgId,
+        runId: run.id,
+        spanId: owner.id,
+        ownerToken: owner.ownerToken,
+        attemptEpoch: owner.attemptEpoch,
+        attemptId,
+        runtimeType: "codex_local",
+      }, async () => {
+        await publish();
+        return true;
+      })) === true,
+    });
+    if (!handoff.activated || !handoff.objectRef) {
+      throw new Error("Codex transcript compact handoff lost its active Run owner");
+    }
   }
 
   async function sealNativeSupplements(runId: string) {
@@ -1477,6 +1584,7 @@ export function chatAgentRunService(db: Db, options: {
     appendAdapterInvoke,
     appendEvent,
     appendTranscriptEntry,
+    bindNativeExecutionIdentity,
     markLegacyTranscriptSource,
     beginRuntimeAttempt,
     markRuntimeAttemptWaiting,

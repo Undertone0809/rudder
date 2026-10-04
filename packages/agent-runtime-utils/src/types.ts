@@ -374,6 +374,9 @@ export interface AgentRuntimeExecutionContext {
   /** Host-created, non-secret transport selectors; persist before provider submission.
    * Never populate this callback from provider output or session metadata. */
   onNativeTransportProfile?: (profile: Record<string, unknown>) => Promise<void>;
+  /** Provider-attested native execution identity, emitted as soon as the exact
+   * execution reference is known and before later transcript output is handled. */
+  onNativeExecutionIdentity?: (identity: AgentRuntimeNativeExecutionIdentity) => Promise<void>;
   /** Called before a native Chat transport falls back to a legacy transcript. */
   onTranscriptSource?: (source: "legacy") => Promise<void>;
   onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
@@ -386,6 +389,12 @@ export interface AgentRuntimeExecutionContext {
   /** One-shot sensitive input returned over a transient, non-persistent host channel. */
   requestTransientInput?: (request: AgentRuntimeTransientInputRequest) => Promise<AgentRuntimeTransientInputResult>;
 }
+
+export type AgentRuntimeNativeExecutionIdentity = Readonly<{
+  kind: "codex_turn";
+  threadId: string;
+  turnId: string;
+}>;
 
 export type AgentRuntimeTransientInputKind = "secret" | "sudo";
 
