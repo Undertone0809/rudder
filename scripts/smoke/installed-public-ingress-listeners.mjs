@@ -55,6 +55,96 @@ export async function observeListener(port, pid, execute = execFileAsync, signal
   return assertLoopbackListener(result.stdout, { port, pid });
 }
 
+function assertOwnedPrivateListenerOutput(output, publicPort, nodePid) {
+  assertValidIdentity(publicPort, nodePid);
+  assert.equal(typeof output, "string", "lsof returned invalid listener output");
+  const lines = output.split(/\r?\n/u);
+  if (lines.at(-1) === "") lines.pop();
+  assert.ok(lines.length > 0, "lsof returned empty output without a no-listener exit");
+
+  let processPid = null;
+  let processRecords = 0;
+  let descriptorNeedsName = false;
+  const addresses = [];
+  for (const line of lines) {
+    if (line.startsWith("p")) {
+      const match = /^p(\d+)$/u.exec(line);
+      assert.ok(match, "lsof returned a malformed PID field");
+      processRecords += 1;
+      assert.equal(processRecords, 1, "lsof returned multiple process records");
+      processPid = Number(match[1]);
+      continue;
+    }
+    if (line.startsWith("f")) {
+      assert.notEqual(processPid, null, "lsof returned a descriptor before its PID");
+      assert.ok(line.length > 1, "lsof returned an incomplete descriptor field");
+      assert.equal(descriptorNeedsName, false, "lsof omitted a name for a prior descriptor");
+      descriptorNeedsName = true;
+      continue;
+    }
+    if (line.startsWith("n")) {
+      assert.notEqual(processPid, null, "lsof returned a socket name before its PID");
+      assert.ok(line.length > 1, "lsof returned an empty socket name");
+      addresses.push(line.slice(1));
+      descriptorNeedsName = false;
+      continue;
+    }
+    assert.fail(`lsof returned an unexpected or incomplete field: ${line}`);
+  }
+
+  assert.equal(processRecords, 1, "lsof did not return exactly one process record");
+  assert.equal(processPid, nodePid, "private listener owner differs from supervised Node PID");
+  assert.equal(descriptorNeedsName, false, "lsof returned an incomplete descriptor record");
+  assert.ok(addresses.length > 0, "lsof returned no socket names for the owned PID");
+
+  const listeners = addresses.map((address) => {
+    const match = /^127\.0\.0\.1:(\d+)$/u.exec(address);
+    assert.ok(match, "owned private listener is not bound exclusively to 127.0.0.1");
+    const port = Number(match[1]);
+    assertValidIdentity(port, nodePid);
+    assert.equal(String(port), match[1], "lsof returned a non-canonical listener port");
+    assert.notEqual(port, publicPort, "public ingress socket cannot prove the private Node listener");
+    return { port, address };
+  });
+  const ports = new Set(listeners.map((listener) => listener.port));
+  assert.equal(ports.size, 1, "owned Node PID has multiple listening ports");
+
+  return { port: listeners[0].port, pid: nodePid, address: listeners[0].address };
+}
+
+export async function observeOwnedPrivateListener(publicPort, nodePid, execute = execFileAsync, signal) {
+  assertValidIdentity(publicPort, nodePid);
+  let result;
+  try {
+    result = await execute(
+      "lsof",
+      ["-nP", "-a", "-p", String(nodePid), "-iTCP", "-sTCP:LISTEN", "-Fpn"],
+      { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, signal },
+    );
+  } catch (error) {
+    const hasNoSignal = error?.signal === null || error?.signal === undefined;
+    if (error?.code === 1 && error.killed === false && hasNoSignal
+      && error.stdout === "" && error.stderr === "") {
+      return null;
+    }
+    if (error?.code === 1 && error.killed === false && hasNoSignal
+      && error.stderr === "" && typeof error.stdout === "string" && error.stdout.length > 0) {
+      assert.fail("lsof returned non-empty output with an unsuccessful listener observation");
+    }
+    throw new ListenerObservationUnavailable("OS owned private listener observation failed or unavailable", {
+      cause: error,
+    });
+  }
+
+  assert.ok(result && typeof result === "object", "lsof returned an invalid listener result");
+  if (typeof result.stderr !== "string" || result.stderr !== "") {
+    throw new ListenerObservationUnavailable("lsof returned diagnostics while observing the owned private listener", {
+      cause: new Error(typeof result.stderr === "string" ? result.stderr : "missing stderr field"),
+    });
+  }
+  return assertOwnedPrivateListenerOutput(result.stdout, publicPort, nodePid);
+}
+
 export function assertProcessObservation(textFiles, parentOutput, { pid, parentPid, executable }) {
   assert.equal(parentOutput.trim(), String(parentPid), "OS process ancestry differs from supervised parent");
   const lines = textFiles.trim().split("\n");
