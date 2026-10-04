@@ -270,6 +270,119 @@ fn hash_history_gap_is_manifest_mismatch() {
     assert_manifest_gap(&result);
 }
 
+fn legacy_tail_snapshot(names: &[&str], use_names: bool) -> MigrationHistorySnapshot {
+    snapshot(
+        MigrationHistoryColumns {
+            id: true,
+            name: use_names,
+            hash: true,
+            ..Default::default()
+        },
+        names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| MigrationHistoryRow {
+                id: index as u64 + 1,
+                name: use_names.then(|| (*name).to_owned()),
+                hash: Some(hash_for(name)),
+                created_at: None,
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn applied_legacy_tail_does_not_hide_the_next_journaled_migration() {
+    let (_root, manifest) = manifest_with_legacy_tail(
+        &["0000_first.sql", "0001_second.sql", "0002_third.sql"],
+        &[
+            "0055_illegal_sheva_callister.sql",
+            "0128_modern_jetstream.sql",
+        ],
+    );
+    for use_names in [false, true] {
+        let mut names = vec![
+            "0000_first.sql",
+            "0001_second.sql",
+            "0055_illegal_sheva_callister.sql",
+            "0128_modern_jetstream.sql",
+        ];
+        let pending =
+            reconcile_migration_history(&manifest, &legacy_tail_snapshot(&names, use_names))
+                .unwrap();
+        assert_eq!(pending.reason, MigrationHistoryReason::PendingMigrations);
+        assert_eq!(pending.applied_migrations.len(), 4);
+        assert_eq!(pending.pending_migrations.len(), 1);
+        assert_eq!(pending.pending_migrations[0].file_name, "0002_third.sql");
+        assert_eq!(
+            pending.pending_migrations[0].sha256,
+            hash_for("0002_third.sql")
+        );
+        assert!(pending.diagnostics.is_empty());
+
+        // The ordinary applier records the new journal entry after the legacy
+        // rows already retained from the predecessor. Its journal is current.
+        names.push("0002_third.sql");
+        let current =
+            reconcile_migration_history(&manifest, &legacy_tail_snapshot(&names, use_names))
+                .unwrap();
+        assert_eq!(current.status, MigrationHistoryStatus::UpToDate);
+        assert_eq!(current.reason, MigrationHistoryReason::ManifestMatch);
+        assert_eq!(current.applied_migrations.len(), 5);
+        assert!(current.pending_migrations.is_empty());
+        assert!(current.diagnostics.is_empty());
+    }
+}
+
+#[test]
+fn applied_legacy_tail_does_not_allow_journal_gaps_or_reordering() {
+    let (_root, manifest) = manifest_with_legacy_tail(
+        &["0000_first.sql", "0001_second.sql", "0002_third.sql"],
+        &[
+            "0055_illegal_sheva_callister.sql",
+            "0128_modern_jetstream.sql",
+        ],
+    );
+    for names in [
+        vec![
+            "0000_first.sql",
+            "0002_third.sql",
+            "0055_illegal_sheva_callister.sql",
+            "0128_modern_jetstream.sql",
+        ],
+        vec![
+            "0001_second.sql",
+            "0055_illegal_sheva_callister.sql",
+            "0000_first.sql",
+            "0128_modern_jetstream.sql",
+            "0002_third.sql",
+        ],
+    ] {
+        let result =
+            reconcile_migration_history(&manifest, &legacy_tail_snapshot(&names, false)).unwrap();
+        assert_eq!(result.reason, MigrationHistoryReason::ManifestMismatch);
+    }
+}
+
+#[test]
+fn applied_legacy_tail_still_rejects_duplicate_history() {
+    let (_root, manifest) =
+        manifest_with_legacy_tail(&["0000_first.sql"], &["0055_illegal_sheva_callister.sql"]);
+    let result = reconcile_migration_history(
+        &manifest,
+        &legacy_tail_snapshot(
+            &[
+                "0000_first.sql",
+                "0055_illegal_sheva_callister.sql",
+                "0055_illegal_sheva_callister.sql",
+            ],
+            false,
+        ),
+    )
+    .unwrap();
+    assert_eq!(result.reason, MigrationHistoryReason::ManifestMismatch);
+}
+
 #[test]
 fn known_legacy_hashes_are_ignored_but_unknown_hashes_fail_closed() {
     let (_root, manifest) = manifest(&["0000_first.sql"]);

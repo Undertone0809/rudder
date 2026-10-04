@@ -21,6 +21,7 @@ import { applyPendingMigrations, ensurePostgresDatabase } from "../client.js";
 const migrations = path.dirname(fileURLToPath(import.meta.url));
 const originalOrg = randomUUID();
 const originalProject = randomUUID();
+const originalResource = randomUUID();
 const catchupOrg = randomUUID();
 const catchupProject = randomUUID();
 let root = "";
@@ -70,7 +71,9 @@ async function receipt(
   commandKind:
     | "organization_branding"
     | "project_goal_link"
-    | "project_delete" = "organization_branding",
+    | "project_delete"
+    | "project_create"
+    | "organization_resource" = "organization_branding",
   fenceEpoch = 0,
 ) {
   return sql.unsafe(
@@ -147,6 +150,14 @@ beforeAll(async () => {
     await db`SELECT org_id FROM organization_mutation_state WHERE org_id = ${catchupOrg}`,
   ).toHaveLength(0);
 
+  const throughCurrent = migrationSnapshot("through-0176", 176);
+  await migrate(drizzle(db), { migrationsFolder: throughCurrent });
+  await db`INSERT INTO organization_resources
+    (id, org_id, name, kind, source_type, locator)
+    VALUES (${originalResource}, ${originalOrg}, 'Before resource fence', 'file', 'external', 'https://example.test/before-resource-fence')`;
+  const legacyReceiptActivity = await activity(originalOrg);
+  await receipt(db, originalOrg, legacyReceiptActivity, "pre-0177-receipt");
+
   await applyPendingMigrations(url);
   await applyPendingMigrations(url);
 }, 120_000);
@@ -158,6 +169,63 @@ afterAll(async () => {
 });
 
 describe("D1 durable mutation schema on real PostgreSQL", () => {
+  it("preserves existing activity-backed receipts and narrowly permits import patch receipts", async () => {
+    expect(
+      await db`SELECT command_kind, activity_id::text AS activity_id
+        FROM organization_mutation_receipts
+        WHERE org_id = ${originalOrg} AND idempotency_key = 'pre-0177-receipt'`,
+    ).toHaveLength(1);
+    const legacyReceipt = await db`SELECT activity_id::text AS activity_id
+      FROM organization_mutation_receipts
+      WHERE org_id = ${originalOrg} AND idempotency_key = 'pre-0177-receipt'`;
+    expect(legacyReceipt[0]?.activity_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+
+    const org = await organization();
+    const projectId = await insertProject(org);
+    const importedResult = {
+      organization_id: org,
+      version: 1,
+      fence_epoch: 0,
+      fingerprint: "a".repeat(64),
+      activity_id: null,
+      outcome: "applied",
+      result: {
+        kind: "project_patch",
+        project_id: projectId,
+        mutation_origin: "organization_import",
+      },
+    };
+    await db`INSERT INTO organization_mutation_receipts
+      (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
+       resulting_version, fence_epoch, activity_id, result)
+      VALUES (${org}, 'import-patch', 'project_goal_set_replacement', ${"a".repeat(64)},
+        'applied', 1, 0, NULL, ${JSON.stringify(importedResult)}::jsonb)`;
+
+    const ordinaryResult = {
+      ...importedResult,
+      activity_id: null,
+      result: { kind: "project_goal_set_replacement", project_id: projectId },
+    };
+    await expect(db`INSERT INTO organization_mutation_receipts
+      (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
+       resulting_version, fence_epoch, activity_id, result)
+      VALUES (${org}, 'ordinary-without-activity', 'project_goal_set_replacement', ${"b".repeat(64)},
+        'applied', 1, 0, NULL, ${JSON.stringify(ordinaryResult)}::jsonb)`).rejects.toMatchObject({
+      code: "23514",
+    });
+
+    const importWithActivity = await activity(org);
+    await expect(db`INSERT INTO organization_mutation_receipts
+      (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
+       resulting_version, fence_epoch, activity_id, result)
+      VALUES (${org}, 'import-with-activity', 'project_goal_set_replacement', ${"c".repeat(64)},
+        'applied', 1, 0, ${importWithActivity}, ${JSON.stringify(importedResult)}::jsonb)`).rejects.toMatchObject({
+      code: "23514",
+    });
+  });
+
   it("backfills Node-owned baselines without activating Rust or changing old writes", async () => {
     expect(
       await db`SELECT name FROM organizations WHERE id = ${originalOrg}`,
@@ -173,6 +241,17 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     expect(
       await db`SELECT org_id, owner, mutation_version::text, fence_epoch::text
         FROM project_goal_mutation_state WHERE project_id = ${originalProject}`,
+    ).toEqual([
+      {
+        org_id: originalOrg,
+        owner: "node",
+        mutation_version: "0",
+        fence_epoch: "0",
+      },
+    ]);
+    expect(
+      await db`SELECT org_id, owner, mutation_version::text, fence_epoch::text
+        FROM organization_resource_mutation_state WHERE resource_id = ${originalResource}`,
     ).toEqual([
       {
         org_id: originalOrg,
@@ -258,6 +337,60 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     expect(
       await db`SELECT org_id FROM project_goal_mutation_state WHERE project_id = ${projectId}`,
     ).toEqual([{ org_id: projectOrg }]);
+  });
+
+  it("keeps resource authority scoped, monotonic, and durable after canonical deletion", async () => {
+    const resourceOrg = await organization();
+    const otherOrg = await organization();
+    const resourceId = randomUUID();
+    await db`INSERT INTO organization_resources
+      (id, org_id, name, kind, source_type, locator)
+      VALUES (${resourceId}, ${resourceOrg}, 'Fenced resource', 'file', 'external', 'https://example.test/fenced-resource')`;
+    await db`INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+      VALUES (${resourceId}, ${resourceOrg})`;
+
+    await expect(db`INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+      VALUES (${resourceId}, ${otherOrg})`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`UPDATE organization_resource_mutation_state SET org_id = ${otherOrg}
+      WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`UPDATE organization_resource_mutation_state SET owner = 'rust'
+      WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+    await db`UPDATE organization_resource_mutation_state
+      SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+      WHERE resource_id = ${resourceId}`;
+    await expect(db`UPDATE organization_resource_mutation_state
+      SET mutation_version = -1 WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`UPDATE organization_resource_mutation_state
+      SET fence_epoch = 2 WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`DELETE FROM organization_resource_mutation_state
+      WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+
+    await db`DELETE FROM organization_resources WHERE id = ${resourceId}`;
+    expect(await db`SELECT resource_id::text AS resource_id, org_id::text AS org_id,
+      owner, mutation_version::text, fence_epoch::text
+      FROM organization_resource_mutation_state WHERE resource_id = ${resourceId}`)
+      .toEqual([{
+        resource_id: resourceId,
+        org_id: resourceOrg,
+        owner: "rust",
+        mutation_version: "0",
+        fence_epoch: "1",
+      }]);
+    await expect(db`DELETE FROM organization_resource_mutation_state
+      WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("requires activity-backed organization-resource mutation receipts", async () => {
+    const org = await organization();
+    const audit = await activity(org);
+    await receipt(db, org, audit, "resource-command", "organization_resource");
+    await expect(db`INSERT INTO organization_mutation_receipts
+      (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
+       resulting_version, fence_epoch, activity_id, result)
+      VALUES (${org}, 'resource-command-without-activity', 'organization_resource', ${"b".repeat(64)},
+        'applied', 1, 0, NULL,
+        ${JSON.stringify({ organization_id: org, version: 1, fence_epoch: 0 })}::jsonb)`)
+      .rejects.toMatchObject({ code: "23514" });
   });
 
   it("rejects deleting live Project authority and keeps its fence intact", async () => {
@@ -485,6 +618,15 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
       await db`SELECT command_kind FROM organization_mutation_receipts
         WHERE org_id = ${org} AND idempotency_key = 'project-delete'`,
     ).toEqual([{ command_kind: "project_delete" }]);
+  });
+
+  it("accepts project creation in the immutable organization receipt kind constraint", async () => {
+    const org = await organization();
+    await receipt(db, org, await activity(org), "project-create", "project_create", 1);
+    expect(
+      await db`SELECT command_kind FROM organization_mutation_receipts
+        WHERE org_id = ${org} AND idempotency_key = 'project-create'`,
+    ).toEqual([{ command_kind: "project_create" }]);
   });
 
   it("preserves the old activity-first organization deletion transaction", async () => {

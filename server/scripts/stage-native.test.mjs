@@ -9,6 +9,7 @@ import {
   FOUNDATION_TARGETS,
   checkPackagedFoundationArtifacts,
   foundationBinaryName,
+  migrationPreflightBinaryName,
   resolveCargoFoundationExecutable,
   resolveFoundationTarget,
   stageFoundationArtifacts,
@@ -46,6 +47,7 @@ function makeArtifactRoot(targets = Object.keys(FOUNDATION_TARGETS)) {
     const dir = path.join(root, target);
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, foundationBinaryName(target)), fakeBinary(target), { mode: 0o600 });
+    writeFileSync(path.join(dir, migrationPreflightBinaryName(target)), fakeBinary(target), { mode: 0o600 });
   }
   return root;
 }
@@ -146,7 +148,7 @@ test("replaces a staged executable without changing bytes seen by an existing re
     assert.deepEqual(readFileSync(destinationPath), replacementBytes);
     assert.deepEqual(await previousReader.readFile(), previousBytes);
     if (process.platform !== "win32") assert.notEqual(statSync(destinationPath).ino, previousStat.ino);
-    assert.deepEqual(readdirSync(path.dirname(destinationPath)), [foundationBinaryName(target)]);
+    assert.deepEqual(readdirSync(path.dirname(destinationPath)).sort(), [foundationBinaryName(target), migrationPreflightBinaryName(target)].sort());
 
     writeFileSync(sourcePath, Buffer.from("invalid replacement"));
     await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /Unrecognized/u);
@@ -232,6 +234,7 @@ test("keeps all six payloads in the server npm package without adding install-ti
     for (const target of Object.keys(FOUNDATION_TARGETS)) {
       const filename = `resources/native/${target}/${foundationBinaryName(target)}`;
       assert.ok(packagedPaths.has(filename));
+      assert.ok(packagedPaths.has(`resources/native/${target}/${migrationPreflightBinaryName(target)}`));
       if (process.platform !== "win32") {
         const entry = result.files.find(({ path: packagedPath }) => packagedPath === filename);
         assert.notEqual(entry.mode & 0o111, 0);
@@ -259,6 +262,8 @@ test("restores a normalized native mode through a real npm tarball install lifec
     mkdirSync(isolatedHome, { recursive: true });
     writeFileSync(sourceBinary, fakeBinary(target), { mode: 0o644 });
     chmodSync(sourceBinary, 0o644);
+    const preflightRelativePath = path.join("native", target, migrationPreflightBinaryName(target));
+    writeFileSync(path.join(packageRoot, "resources", preflightRelativePath), fakeBinary(target), { mode: 0o644 });
     for (const script of ["postinstall-native-mode.mjs", "postinstall-postgres-compat.mjs"]) {
       copyFileSync(path.join(serverRoot, "resources", script), path.join(packageRoot, "resources", script));
     }
@@ -266,7 +271,9 @@ test("restores a normalized native mode through a real npm tarball install lifec
       name: packageManifest.name,
       version: packageManifest.version,
       files: ["resources"],
-      scripts: { postinstall: packageManifest.scripts.postinstall },
+      // Isolate native mode restoration; the PostgreSQL repair lifecycle is
+      // covered by runtime-embedded-postgres.test-node.mjs with real consumers.
+      scripts: { postinstall: "node resources/postinstall-native-mode.mjs" },
     }));
 
     const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", packDir], {
@@ -295,6 +302,8 @@ test("restores a normalized native mode through a real npm tarball install lifec
     });
     const installedBinary = path.join(installPrefix, "node_modules", "@rudderhq", "server", "resources", hostRelativePath);
     assert.notEqual(statSync(installedBinary).mode & 0o111, 0, "postinstall did not restore executable mode");
+    const installedPreflight = path.join(installPrefix, "node_modules", "@rudderhq", "server", "resources", preflightRelativePath);
+    assert.notEqual(statSync(installedPreflight).mode & 0o111, 0, "postinstall did not restore migration preflight executable mode");
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -319,3 +328,41 @@ function requireNativeTargets(resourcesDir) {
     throw error;
   }
 }
+
+
+test("rejects a missing or wrong-target migration preflight before publishing any foundation", async () => {
+  const artifactDir = makeArtifactRoot();
+  const resourcesDir = mkdtempSync(path.join(os.tmpdir(), "rudder-preflight-missing-"));
+  const target = "x86_64-unknown-linux-gnu";
+  const preflight = path.join(artifactDir, target, migrationPreflightBinaryName(target));
+  try {
+    await unlink(preflight);
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir }), /migration-preflight/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+    writeFileSync(preflight, fakeBinary("aarch64-unknown-linux-gnu"));
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir }), /does not match x86_64-unknown-linux-gnu/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+    writeFileSync(preflight, fakeBinary(target));
+    await stageFoundationArtifacts({ artifactDir, resourcesDir });
+    const packaged = path.join(resourcesDir, "native", target, migrationPreflightBinaryName(target));
+    if (process.platform !== "win32") {
+      await chmod(packaged, 0o644);
+      await assert.rejects(checkPackagedFoundationArtifacts({ resourcesDir }), /not executable/u);
+      await chmod(packaged, 0o755);
+    }
+    await unlink(packaged);
+    await assert.rejects(checkPackagedFoundationArtifacts({ resourcesDir }), /migration-preflight/u);
+  } finally {
+    rmSync(artifactDir, { recursive: true, force: true });
+    rmSync(resourcesDir, { recursive: true, force: true });
+  }
+});
+
+test("selects the migration executable from Cargo output separately from foundation", () => {
+  const output = [
+    JSON.stringify({ reason: "compiler-artifact", target: { name: "rudder-server-foundation", kind: ["bin"] }, executable: "/fixture/foundation" }),
+    JSON.stringify({ reason: "compiler-artifact", target: { name: "migration-preflight", kind: ["bin"] }, executable: "/fixture/migration" }),
+  ].join("\n");
+  assert.equal(resolveCargoFoundationExecutable(output, "migration-preflight"), "/fixture/migration");
+  assert.throws(() => resolveCargoFoundationExecutable(output.split("\n")[0], "migration-preflight"), /0 migration-preflight/u);
+});

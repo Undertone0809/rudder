@@ -16,6 +16,7 @@ import type {
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import { badRequest, conflict, unprocessable } from "../errors.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { lockNodeOrganizationResourceMutationAuthority } from "./organization-resource-mutation-fence.js";
 import { lockNodeProjectGoalMutationAuthority } from "./project-goal-mutation-fence.js";
 
 function toOrganizationResource(row: typeof organizationResources.$inferSelect): OrganizationResource {
@@ -116,7 +117,7 @@ async function createOrReuseOrganizationResource(
     if (existing) return existing;
   }
 
-  return dbOrTx
+  const created = await dbOrTx
     .insert(organizationResources)
     .values({
       orgId,
@@ -129,6 +130,10 @@ async function createOrReuseOrganizationResource(
     })
     .returning()
     .then((rows: typeof organizationResources.$inferSelect[]) => rows[0]);
+  await lockNodeOrganizationResourceMutationAuthority(dbOrTx, orgId, created.id, {
+    initializeFromCanonical: true,
+  });
+  return created;
 }
 
 async function fetchProjectOrgId(db: Db, projectId: string) {
@@ -254,6 +259,9 @@ export async function replaceProjectResourceAttachments(
   if (project.orgId !== input.orgId) {
     throw unprocessable("Project must belong to same organization");
   }
+  if ((input.newResources?.length ?? 0) > 0) {
+    await lockNodeMutationAuthority(dbOrTx, input.orgId);
+  }
   await lockNodeProjectGoalMutationAuthority(dbOrTx, input.orgId, input.projectId);
 
   const createdResourceIds: string[] = [];
@@ -360,7 +368,16 @@ export function resourceCatalogService(db: Db) {
             ),
           )
           .then((rows) => rows[0] ?? null);
+        const resourceState = await lockNodeOrganizationResourceMutationAuthority(
+          tx,
+          orgId,
+          resourceId,
+          { initializeFromCanonical: Boolean(existing) },
+        );
         if (!existing) return null;
+        if (!resourceState) {
+          throw conflict("Organization resource mutation authority is not provisioned");
+        }
 
         assertValidLibraryResource({
           sourceType: input.sourceType ?? existing.sourceType,
@@ -412,6 +429,21 @@ export function resourceCatalogService(db: Db) {
     removeOrganizationResource: async (orgId: string, resourceId: string): Promise<OrganizationResource | null> => {
       const row = await db.transaction(async (tx) => {
         await lockNodeMutationAuthority(tx, orgId);
+        const existing = await tx
+          .select()
+          .from(organizationResources)
+          .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, resourceId)))
+          .then((rows) => rows[0] ?? null);
+        const resourceState = await lockNodeOrganizationResourceMutationAuthority(
+          tx,
+          orgId,
+          resourceId,
+          { initializeFromCanonical: Boolean(existing) },
+        );
+        if (!existing) return null;
+        if (!resourceState) {
+          throw conflict("Organization resource mutation authority is not provisioned");
+        }
         await lockAttachedResourceProjectMutationAuthorities(tx, orgId, resourceId);
         return tx
           .delete(organizationResources)

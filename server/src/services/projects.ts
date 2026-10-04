@@ -18,12 +18,15 @@ import {
   type WorkspaceRuntimeService,
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
-import { unprocessable } from "../errors.js";
+import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { HttpError, conflict, forbidden, unauthorized, unprocessable } from "../errors.js";
 import {
   ensureOrganizationWorkspaceLayout,
   ensureProjectLibraryLayout,
   resolveOrganizationWorkspaceRoot,
+  resolveRudderInstanceRoot,
 } from "../home-paths.js";
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
@@ -34,7 +37,17 @@ import {
   listProjectResourceAttachmentsByProjectIds,
   replaceProjectResourceAttachments,
 } from "./resource-catalog.js";
+import type { RustFoundationActor, RustFoundationBridge } from "./rust-foundation-bridge.js";
 import { listWorkspaceRuntimeServicesForProjectWorkspaces } from "./workspace-runtime.js";
+
+export type ProjectCreateContext =
+  | { lane: "node"; caller: "import" }
+  | {
+    lane: "rust";
+    caller: "public" | "onboarding";
+    actor: RustFoundationActor;
+    idempotencyKey?: string | null;
+  };
 
 type ProjectRow = typeof projects.$inferSelect;
 // Legacy project workspace rows are still attached for compatibility with old
@@ -42,6 +55,28 @@ type ProjectRow = typeof projects.$inferSelect;
 // user-facing Project Workspace management surface.
 type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
 type WorkspaceRuntimeServiceRow = typeof workspaceRuntimeServices.$inferSelect;
+type WorkspaceImportIdentity = {
+  importKey: string;
+  portableWorkspaceKey: string;
+};
+type WorkspaceImportValues = Pick<
+  ProjectWorkspaceRow,
+  | "orgId"
+  | "projectId"
+  | "name"
+  | "sourceType"
+  | "cwd"
+  | "repoUrl"
+  | "repoRef"
+  | "defaultRef"
+  | "visibility"
+  | "setupCommand"
+  | "cleanupCommand"
+  | "remoteProvider"
+  | "remoteWorkspaceRef"
+  | "sharedWorkspaceKey"
+  | "metadata"
+>;
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 type CreateWorkspaceInput = {
   name?: string | null;
@@ -60,6 +95,47 @@ type CreateWorkspaceInput = {
   isPrimary?: boolean;
 };
 type UpdateWorkspaceInput = Partial<CreateWorkspaceInput>;
+
+function deriveImportedProjectWorkspaceId(
+  orgId: string,
+  projectId: string,
+  identity: WorkspaceImportIdentity,
+) {
+  const namespace = Buffer.from("6ba7b8119dad11d180b400c04fd430c8", "hex");
+  const digest = createHash("sha1")
+    .update(namespace)
+    .update(JSON.stringify([
+      "rudder:project-workspace-import:v1",
+      identity.importKey,
+      orgId,
+      projectId,
+      identity.portableWorkspaceKey,
+    ]))
+    .digest()
+    .subarray(0, 16);
+  digest[6] = (digest[6]! & 0x0f) | 0x50;
+  digest[8] = (digest[8]! & 0x3f) | 0x80;
+  const hex = digest.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function matchesImportedWorkspace(row: ProjectWorkspaceRow, expected: WorkspaceImportValues) {
+  return row.orgId === expected.orgId
+    && row.projectId === expected.projectId
+    && row.name === expected.name
+    && row.sourceType === expected.sourceType
+    && row.cwd === expected.cwd
+    && row.repoUrl === expected.repoUrl
+    && row.repoRef === expected.repoRef
+    && row.defaultRef === expected.defaultRef
+    && row.visibility === expected.visibility
+    && row.setupCommand === expected.setupCommand
+    && row.cleanupCommand === expected.cleanupCommand
+    && row.remoteProvider === expected.remoteProvider
+    && row.remoteWorkspaceRef === expected.remoteWorkspaceRef
+    && row.sharedWorkspaceKey === expected.sharedWorkspaceKey
+    && isDeepStrictEqual(row.metadata, expected.metadata);
+}
 
 interface ProjectWithGoals extends Omit<ProjectRow, "executionWorkspacePolicy"> {
   urlKey: string;
@@ -342,7 +418,7 @@ function resolveGoalIds(data: { goalIds?: string[]; goalId?: string | null }): s
   return undefined;
 }
 
-async function assertGoalsBelongToOrganization(db: Db, orgId: string, goalIds: string[] | undefined) {
+async function assertGoalsBelongToOrganization(db: Pick<Db, "select">, orgId: string, goalIds: string[] | undefined) {
   if (goalIds === undefined || goalIds.length === 0) return;
 
   const uniqueGoalIds = [...new Set(goalIds)];
@@ -356,7 +432,7 @@ async function assertGoalsBelongToOrganization(db: Db, orgId: string, goalIds: s
   }
 }
 
-async function assertLeadAgentBelongsToOrganization(db: Db, orgId: string, leadAgentId: string | null | undefined) {
+async function assertLeadAgentBelongsToOrganization(db: Pick<Db, "select">, orgId: string, leadAgentId: string | null | undefined) {
   if (!leadAgentId) return;
 
   const row = await db
@@ -475,7 +551,7 @@ async function ensureSinglePrimaryWorkspace(
     );
 }
 
-export function projectService(db: Db) {
+export function projectService(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   return {
     list: async (orgId: string): Promise<ProjectWithGoals[]> => {
       const rows = await db.select().from(projects).where(eq(projects.orgId, orgId));
@@ -532,7 +608,70 @@ export function projectService(db: Db) {
         resourceAttachments?: ProjectResourceAttachmentInput[];
         newResources?: CreateProjectInlineResourceInput[];
       },
+      context: ProjectCreateContext,
     ): Promise<ProjectWithGoals> => {
+      // Lane selection is trusted caller context, never a field of data. Once
+      // dispatched to Rust, any failure ends this invocation without Node writes.
+      if (!context) throw forbidden("Project creation requires an explicit trusted authority lane");
+      if (context.lane === "rust") {
+        if (context.caller !== "public" && context.caller !== "onboarding") {
+          throw forbidden("Caller is not eligible for Rust Project creation");
+        }
+        const actor = context.actor;
+        if (actor.type === "none") throw unauthorized();
+        if (context.caller === "onboarding" && actor.type !== "board") {
+          throw forbidden("Board access required");
+        }
+        if (actor.type === "agent" && actor.orgId !== orgId) {
+          throw forbidden("Agent key cannot access another organization");
+        }
+        if (actor.type === "board" && actor.source !== "local_implicit"
+          && !actor.isInstanceAdmin && !actor.orgIds?.includes(orgId)) {
+          throw forbidden("User does not have access to this organization");
+        }
+        if (rustFoundationBridge?.projectGoalSetMode !== "required") {
+          throw new HttpError(503, "Rust Project creation is not enabled");
+        }
+        const idempotencyKey = context.idempotencyKey?.trim() || randomUUID();
+        // Organization layout remains Node-owned, including friendly mapping,
+        // migration and ownership checks. Rust owns only Project provisioning.
+        const organizationLayout = await ensureOrganizationWorkspaceLayout(orgId);
+        const roots = {
+          organizationWorkspaceRoot: organizationLayout.root,
+          projectCreateStateRoot: join(resolveRudderInstanceRoot(), "data"),
+        };
+        let response;
+        try {
+          response = await rustFoundationBridge.projectCreate(
+            actor, orgId, data, idempotencyKey, {}, roots,
+          );
+        } catch {
+          throw new HttpError(503, "Rust Project creation is unavailable");
+        }
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(response.body.toString("utf8"));
+          if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid response");
+        } catch {
+          throw new HttpError(502, "Rust Project creation returned an invalid response");
+        }
+        if (response.status !== 201) {
+          throw new HttpError(
+            response.status >= 400 && response.status <= 599 ? response.status : 502,
+            typeof body.error === "string" ? body.error : "Rust Project creation failed",
+            body.details,
+          );
+        }
+        if (typeof body.id !== "string" || body.orgId !== orgId) {
+          throw new HttpError(502, "Rust Project creation returned an invalid scope");
+        }
+        // The receipt contains the complete response. Live hydration would
+        // provision Library paths again, including on replay after deletion.
+        return body as unknown as ProjectWithGoals;
+      }
+      if (context.lane !== "node" || context.caller !== "import") {
+        throw forbidden("Node Project creation is reserved for organization import");
+      }
       const {
         goalIds: inputGoalIds,
         resourceAttachments,
@@ -540,23 +679,6 @@ export function projectService(db: Db) {
         ...projectData
       } = data;
       const ids = resolveGoalIds({ goalIds: inputGoalIds, goalId: projectData.goalId });
-      await assertGoalsBelongToOrganization(db, orgId, ids);
-      await assertLeadAgentBelongsToOrganization(db, orgId, projectData.leadAgentId);
-
-      // Auto-assign a color from the palette if none provided
-      if (!projectData.color) {
-        const existing = await db.select({ color: projects.color }).from(projects).where(eq(projects.orgId, orgId));
-        const usedColors = new Set(existing.map((r) => r.color).filter(Boolean));
-        const nextColor = PROJECT_COLORS.find((c) => !usedColors.has(c)) ?? PROJECT_COLORS[existing.length % PROJECT_COLORS.length];
-        projectData.color = nextColor;
-      }
-      projectData.icon = projectData.icon ?? DEFAULT_PROJECT_ICON;
-
-      const existingProjects = await db
-        .select({ id: projects.id, name: projects.name })
-        .from(projects)
-        .where(eq(projects.orgId, orgId));
-      projectData.name = resolveProjectNameForUniqueShortname(projectData.name, existingProjects);
       const projectId = projectData.id ?? randomUUID();
 
       // Also write goalId to the legacy column (first goal or null)
@@ -564,6 +686,19 @@ export function projectService(db: Db) {
 
       const row = await db.transaction(async (tx) => {
         await lockNodeMutationAuthority(tx, orgId);
+        await assertGoalsBelongToOrganization(tx, orgId, ids);
+        await assertLeadAgentBelongsToOrganization(tx, orgId, projectData.leadAgentId);
+        const existingProjects = await tx
+          .select({ id: projects.id, name: projects.name, color: projects.color })
+          .from(projects)
+          .where(eq(projects.orgId, orgId));
+        if (!projectData.color) {
+          const usedColors = new Set(existingProjects.map((project) => project.color).filter(Boolean));
+          projectData.color = PROJECT_COLORS.find((color) => !usedColors.has(color))
+            ?? PROJECT_COLORS[existingProjects.length % PROJECT_COLORS.length];
+        }
+        projectData.icon = projectData.icon ?? DEFAULT_PROJECT_ICON;
+        projectData.name = resolveProjectNameForUniqueShortname(projectData.name, existingProjects);
         await ensureProjectLibraryLayout({
           orgId,
           projectId,
@@ -612,7 +747,6 @@ export function projectService(db: Db) {
         resourceAttachments?: ProjectResourceAttachmentInput[];
         newResources?: CreateProjectInlineResourceInput[];
       },
-      options?: { allowScalarUpdateWhenProjectGoalOwned?: boolean },
     ): Promise<ProjectWithGoals | null> => {
       const {
         goalIds: inputGoalIds,
@@ -660,16 +794,8 @@ export function projectService(db: Db) {
           byProjectId.get(id) ?? [],
         )
         : [];
-      const writesProjectGoalComponent = ids !== undefined
-        || resourceAttachments !== undefined
-        || newResources !== undefined;
-
       const row = await db.transaction(async (tx) => {
-        if (writesProjectGoalComponent || !options?.allowScalarUpdateWhenProjectGoalOwned) {
-          await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
-        } else {
-          await lockNodeMutationAuthority(tx, existingProject.orgId);
-        }
+        await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
         const updatedRow = await tx
           .update(projects)
           .set(updates)
@@ -752,6 +878,7 @@ export function projectService(db: Db) {
     createWorkspace: async (
       projectId: string,
       data: CreateWorkspaceInput,
+      importIdentity?: WorkspaceImportIdentity,
     ): Promise<ProjectWorkspace | null> => {
       const project = await db
         .select()
@@ -774,6 +901,29 @@ export function projectService(db: Db) {
         cwd,
         repoUrl,
       });
+      if (importIdentity && (!importIdentity.importKey.trim() || !importIdentity.portableWorkspaceKey.trim())) {
+        throw unprocessable("Idempotent workspace imports require an import key and portable workspace key");
+      }
+      const importWorkspaceId = importIdentity
+        ? deriveImportedProjectWorkspaceId(project.orgId, projectId, importIdentity)
+        : null;
+      const workspaceValues: WorkspaceImportValues = {
+        orgId: project.orgId,
+        projectId,
+        name,
+        sourceType,
+        cwd: cwd ?? null,
+        repoUrl: repoUrl ?? null,
+        repoRef: readNonEmptyString(data.repoRef),
+        defaultRef: readNonEmptyString(data.defaultRef) ?? readNonEmptyString(data.repoRef),
+        visibility: readNonEmptyString(data.visibility) ?? "default",
+        setupCommand: readNonEmptyString(data.setupCommand),
+        cleanupCommand: readNonEmptyString(data.cleanupCommand),
+        remoteProvider: readNonEmptyString(data.remoteProvider),
+        remoteWorkspaceRef,
+        sharedWorkspaceKey: readNonEmptyString(data.sharedWorkspaceKey),
+        metadata: (data.metadata as Record<string, unknown> | null | undefined) ?? null,
+      };
 
       const existing = await db
         .select()
@@ -785,6 +935,19 @@ export function projectService(db: Db) {
       const shouldBePrimary = data.isPrimary === true || existing.length === 0;
       const created = await db.transaction(async (tx) => {
         await lockNodeMutationAuthority(tx, project.orgId);
+        if (importWorkspaceId) {
+          const existingImportedWorkspace = await tx
+            .select()
+            .from(projectWorkspaces)
+            .where(eq(projectWorkspaces.id, importWorkspaceId))
+            .then((rows) => rows[0] ?? null);
+          if (existingImportedWorkspace) {
+            if (!matchesImportedWorkspace(existingImportedWorkspace, workspaceValues)) {
+              throw conflict("Project workspace import key conflicts with existing workspace content");
+            }
+            return existingImportedWorkspace;
+          }
+        }
         if (shouldBePrimary) {
           await tx
             .update(projectWorkspaces)
@@ -800,21 +963,8 @@ export function projectService(db: Db) {
         const row = await tx
           .insert(projectWorkspaces)
           .values({
-            orgId: project.orgId,
-            projectId,
-            name,
-            sourceType,
-            cwd: cwd ?? null,
-            repoUrl: repoUrl ?? null,
-            repoRef: readNonEmptyString(data.repoRef),
-            defaultRef: readNonEmptyString(data.defaultRef) ?? readNonEmptyString(data.repoRef),
-            visibility: readNonEmptyString(data.visibility) ?? "default",
-            setupCommand: readNonEmptyString(data.setupCommand),
-            cleanupCommand: readNonEmptyString(data.cleanupCommand),
-            remoteProvider: readNonEmptyString(data.remoteProvider),
-            remoteWorkspaceRef,
-            sharedWorkspaceKey: readNonEmptyString(data.sharedWorkspaceKey),
-            metadata: (data.metadata as Record<string, unknown> | null | undefined) ?? null,
+            ...(importWorkspaceId ? { id: importWorkspaceId } : {}),
+            ...workspaceValues,
             isPrimary: shouldBePrimary,
           })
           .returning()

@@ -1,0 +1,435 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rust-project-create-v27",
+  "status": "acceptance_pending",
+  "owner": {
+    "root_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3",
+    "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
+  },
+  "intent": {
+    "raw_request": "完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。",
+    "corrections": [
+      "Publish bounded draft candidates early for CI; merge only qualified increments."
+    ],
+    "non_goals": [
+      "Node remains public listener/auth and organization-root preparation authority.",
+      "No whole-creator retirement, whole migration, production, foreign-platform execution or Windows runtime durability claim from macOS checks.",
+      "Windows atomic-publication runtime evidence separately required for a Windows claim.",
+      "No default Vitest globalSetup, source modification, builds or PG execution during preparation."
+    ],
+    "authorization": "implementation | local_integration | publication"
+  },
+  "candidate": {
+    "branch": "codex/project-create-pilot-20260929",
+    "source_ref": "719619b3006de870adf4430a1a845efff3c9ffab",
+    "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+    "dirty_fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+    "source_tree": "cc91713959cd716ff783103b4dbccbf9a16effed",
+    "frozen": false,
+    "build": {
+      "id": "rudderhq-server-0.7.24-sha256-d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "state": "tarball_created_prepack_lifecycle_skipped_for_current_tsc_failure",
+      "artifact": {
+        "path": "/tmp/rudder-project-create-v27.6.hrMVrS/rudderhq-server-0.7.24.tgz",
+        "sha256": "d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+        "packing_command": "npm pack --ignore-scripts",
+        "compressed_bytes": 28682411,
+        "unpacked_bytes": 84240437,
+        "file_count": 1923
+      },
+      "validated_outputs": [
+        "All six packaged native target artifacts pass server/scripts/stage-native.mjs --check-packaged; native sources unchanged from the prior package build.",
+        "Candidate server dist contains projects.js, onboarding.js, and organization-portability.import.js; package listing includes all three.",
+        "Vite build output ui/dist and packaged server/ui-dist compare equal; both contain 214 files.",
+        "Tarball listing includes the three changed server modules, UI index, and all six native target binaries."
+      ],
+      "lifecycle_limit": "Full server prepack is not PASS: UI TypeScript checking fails at ui/src/.../MessengerContextSidebar.tsx:1572 because directDomPrepaintRows is not a ReactVirtualizerOptions property. Vite build itself succeeded. The checked-in/ignored prepared outputs were packaged with scripts disabled for installed runtime acceptance only.",
+      "related_artifacts": {
+        "cli_sha256": "9e73c0b2f76d98abe4fc27aa26ef0a692ac93a40003075ea893407bc52a6db35",
+        "db_sha256": "1c03f71167d209da1c621e9389b5877e9039b0055c08071281a4debd45175571",
+        "cli_and_db_scope": "unchanged between d56c9406 and 719619b3; old 692ce7 artifact bundle predates their repairs and must not be reused for CLI/DB"
+      },
+      "prior_artifact_source_sha": "d56c9406c0aa7295a7477835915c2bf29f4c8b85",
+      "prior_artifact_bundle": "server-f54f7190 is stale for changed server files; CLI/DB artifacts were refreshed after their prior repairs and are source-unchanged in 719619b3"
+    },
+    "runtime": {
+      "id": "pending-create-v27.6-macos-arm64",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "state": "awaiting_independent_verifier_runtime_lease_on_refreshed_server_tarball"
+    },
+    "organization_data": {
+      "organization_id": null,
+      "data_id": "create-v27.6-independent-fresh-isolated-fixture",
+      "fixture_parent": "new /private/tmp/rudder-create-v276.* root assigned by verifier; prior v27.5 fixture is historical and must not be reused or modified",
+      "binding_rule": "Before first product mutation, verifier records actual created child root, runtime PIDs/ports and organization IDs in its lease; all are isolated disposable fixture data. Existing local services and databases are not owned by this verifier."
+    },
+    "workload_fixture": "Project Create HTTP/CLI/MCP/onboarding, preserved import/worktree merge, shared Library files, intent crash recovery, audit/receipt rollback, owner routing and outbox replay.",
+    "acceptance_packet": {
+      "version": "27.6",
+      "fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+      "criteria": [
+        "public-entry-parity: HTTP201 legacy shape/defaults; CLI/MCP create with empty/multiple goals; goalIds precedence over goalId; board onboarding creates once, preserves caller metadata and current actor/run.",
+        "resources: Existing scoped resource attachments and supported newResources atomically created; foreign references rejected with no durable effects.",
+        "sync-library: At success, expected Library root and README already usable. Existing directory symlinks, README symlinks/directories, nonempty user content and same-name shared directories preserved by inode/link/hash manifests.",
+        "intent-publication: Intent separate from shared Library; complete staged+synced publication without replacement. Incomplete staging retry succeeds; existing final intent not overwritten; malformed final fails closed and retained.",
+        "intent-identity: Same key/request reuses UUID/resolved path after precommit failure. Changed request/root/resolved identity409 without second project path or changed durable command state.",
+        "atomic-db: Project, Rust owner/epoch, goals/resources/attachments, audit, receipt and outbox commit together. Independently force audit and receipt storage failures; verify whole snapshots, org version and retry. Allowed residual FS artifacts retained, no rollback-cleanup claim.",
+        "crash-recovery: Owned precommit crash/provision failure then restart/retry; postcommit acknowledgement loss then receipt replay; avoid fabricated deterministic failpoints.",
+        "receipt-no-fs: Same-key replay exact response and single audit/outbox; changed intent409; current actor/org/run reauthorization. After Project deletion, replay creates no Project or Project-specific filesystem artifacts; Node organization-layout preparation remains outside this claim and preserves new same-name/UUID incarnation and user files.",
+        "outbox: Actual public WS activity.logged and persisted published record; pending across restart then delivery once by dedupe identity, no delayed mutation of recreated content.",
+        "dynamic-ownership: Generated Rust-owned ID immediately PATCH/goals/DELETE routes by stored owner, without predeclared allowlist; repeat after restart; stale Node writes rejected and outage no fallback. Default-off creates remain explicitly Node-owned; existing Rust ownership fails closed when required authority is disabled.",
+        "scalar-owner-boundary: Real onboarding description reseed and existing-target portability replacement/hydration route by persisted owner. Node transactions reject stale scalar updates under the Project lock; Rust failures do not fall back. Verify Node-owned compatibility, Rust-owned audit/receipt semantics, and no preflight partial write.",
+        "preserved-node-lanes: New-organization import and agent-safe source-org CEO/run delegation remain Node-owned. Existing-target Rust Project replacement uses the authenticated Rust lane while other import steps retain behavior. Real worktree merge commits the complete Node-owned transaction; failures atomic; later Node route still works.",
+        "scope-failures: Foreign org, terminated/current caller, stale run and invalid references rejected; no receipt disclosure, DB write or unauthorized projectFS. Public data cannot choose trusted roots or caller lane; root/lane spoofing cannot redirect files or select Node fallback.",
+        "size-and-latency: Representative large supported payload and name/path edge cases; preserve response/replay; record lock-held provisioning timing without inventing performance budget.",
+        "installed-upgrade-cleanup: Normal six-target package/fresh install; upgrade isolated predecessor data; preserve unrelated state. Record actual roots/PIDs/ports/IDs, restore own hidden assets and stop only owned processes.",
+        "seed-schema-authority: Fresh normal installed worktree seed preserves routines, CHECKs and trigger modes with the full journal; new merge Project receives Node owner and later public PATCH works; preserved guards reject stale ownership and receipt mutation. Do not repair the prior defective fixture to claim PASS."
+      ],
+      "state_inventory": []
+    },
+    "freeze_scope": "Freeze exact source 719619b3 and the SHA-bound server tarball for isolated installed acceptance. The server tarball uses prepared outputs with lifecycle scripts skipped because full prepack currently fails the UI tsc check; do not claim full build or release readiness. Independent verifier binds the fresh runtime/data identities before mutation.",
+    "budget_lease": {
+      "id": "create-v27.6-independent-macos-arm64-verification",
+      "fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+      "expires_at": "2026-10-01T00:00:00Z",
+      "scope": "Isolated local installed acceptance only; sole local PG slot."
+    }
+  },
+  "candidate_history": [
+    {
+      "packet_version": "27.5",
+      "source_sha": "d56c9406c0aa7295a7477835915c2bf29f4c8b85",
+      "source_tree": "2982ef42adb327bfa71f4da9733bdb4bd4b3f273",
+      "fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
+      "reviewer": "reject; scalar Node writers mutated Rust-owned Project without advancing its fence",
+      "review_receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-scalar-owner-review-v27.5.json",
+      "verifier": "FAIL; onboarding reseed changed a Rust-owned Project description with mutation_version unchanged",
+      "verifier_receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.5.json",
+      "disposition": "Superseded by owner-lock and owner-aware dispatch repair in 719619b3. Fresh candidate acceptance required."
+    }
+  ],
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "candidate_fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "build_id": "rudderhq-server-0.7.24-sha256-d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+      "runtime_id": "pending-create-v27.6-macos-arm64",
+      "data_id": "create-v27.6-independent-fresh-isolated-fixture",
+      "packet_version": "27.6",
+      "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
+      "level": "stage",
+      "scope": "Committed source and acceptance-packet review; package listing and output hashes are recorded, but the reviewer did not claim a full prepack lifecycle or installed runtime verdict.",
+      "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.6.json"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "build_id": "rudderhq-server-0.7.24-sha256-d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+      "runtime_id": "pending-create-v27.6-macos-arm64",
+      "data_id": "create-v27.6-independent-fresh-isolated-fixture",
+      "packet_version": "27.6",
+      "evidence": null
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "build_id": "rudderhq-server-0.7.24-sha256-d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+      "runtime_id": "pending-create-v27.6-macos-arm64",
+      "data_id": "create-v27.6-independent-fresh-isolated-fixture",
+      "packet_version": "27.6"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      "Installed verifier FAIL exposed missing lazy CLI modules. Local esbuild entries and build-regression test repair packaging; log-store test-only stabilization also pending checkpoint. Backend runtime source unchanged; passed backend observations may be reused only with explicit equivalence and verifier rebind. CLI install/merge evidence must be refreshed.",
+      "7a4 thin-diagnostic repair accepted at stage; CLI artifact refreshed via normal lifecycle. v27.2 FAIL and v27.3 reject retained in receipt_history.",
+      "a6ca backup schema preservation checkpoint9focusedPASS including true PostgreSQL restore. New DB artifact prepared; source/build stage binding pending.",
+      "v27.5 reviewer reject and independent FAIL bound d56 scalar-owner bypass. Commit719619b3 removes the bypass, locks all scalar Project updates, and adds owner-aware onboarding/import routing. Previous PASS observations require unaffected-equivalence rebind; changed workflows require fresh installed proof.",
+      "v27.6 server tarball d4a2a7ae was created from prepared candidate outputs with npm pack --ignore-scripts after confirming all six native targets and 214-file Vite/UI output equality. Automatic prepack remains blocked by the existing MessengerContextSidebar.tsx:1572 UI type error; this package is for installed acceptance only and does not establish full build/release readiness."
+    ],
+    "invalidated_receipts": [
+      "v27.5 receipts apply only to d56 and are historical. v27.6 stage review accepted source 719619b3 and server package hash d4a2; the independent installed verifier is running with a fresh runtime/data lease, then final review and exact-head CI remain pending."
+    ]
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "isolated_risk",
+    "target_ref": "refs/heads/main",
+    "base_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
+    "branch_refs": [
+      "refs/heads/codex/project-create-pilot-20260929"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss",
+    "patch_tree_sha": "cc91713959cd716ff783103b4dbccbf9a16effed",
+    "expected_old_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "doc/plans/2026-09-23-rudder-installed-member-directory-delivery-packet-v18.json"
+    ],
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "Unrelated v18 remains untracked and excluded from both candidate commits; SHA256 5bf0c51a3c21ad69fcd7f465ed9af10bc62f5ae0148ead0e38295dc274827e13."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  },
+  "publication": {
+    "pr": "https://github.com/Undertone0809/rudder/pull/236",
+    "draft": true,
+    "published_head": "d56c9406c0aa7295a7477835915c2bf29f4c8b85",
+    "matrix_run": 36516032181,
+    "real_entry_run": 36516032204,
+    "real_entry_verdict": "PASS"
+  },
+  "author_evidence": {
+    "scope": "Not independent acceptance",
+    "passed": [
+      "73 focused Node cases and server typecheck",
+      "23 native project unit cases",
+      "14 native migration validation cases",
+      "19 release compatibility cases",
+      "Private HTTP create and scoped PostgreSQL checks",
+      "Smoke parser tests and workflow actionlint",
+      "Fresh-instance root recovery fix:25 native project unit cases PASS; corrected capabilities exact black-box case PASS.",
+      "Full macOS public create smokePASS: HTTP/actual CLI/MCP/restart/owner routing/auth/outage; durable author receipt recorded.",
+      "Delete real-entry regressionPASS incl large response, FK parity, outbox restart and no fallback.",
+      "Corrected exact native create blackboxPASS against real PostgreSQL; first absent data leaf succeeds, absent instance parent IO500 rolls back.",
+      "dee9 CLI emitted-module regression1PASS, thin/lazy bootstrap3PASS, CLI typecheckPASS, changed-import lint3PASS; Carson log-store no-globalSetup focused5PASS."
+    ],
+    "failures": [
+      "Initial public smoke could not load embedded PostgreSQL ICU dependency symlinks; official isolated dependency hydration repaired startup.",
+      "Public basic create reached actual API after all179 migrations but returned500. CI36505621372 reproduced create500 inside goal smoke; root cause investigation pending.",
+      "606c CI Windows existing README-directory parity test failed with OS error5. aef narrows existing-directory preservation to Windows error5; Windows rerun pending."
+    ],
+    "repairs": "Fresh-root and Windows directory repairs passed prior platform CI. Installed verifier exposed CLI lazy-module omission repaired in dee9; normal fresh-install verification and exact-head CI remain pending.",
+    "receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json",
+    "delete_regression": "/tmp/rudder-goal-delete-queued.nzFPBz/results.md"
+  },
+  "next_executable": "Collect Linnaeus's independent code review and Mill's v27.6 installed verifier receipt. Resolve any precise blocker without bypassing migration preflight; after verifier PASS obtain final reviewer acceptance, then update PR236 and run exact-head CI.",
+  "terminal_claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "stage_review": {
+    "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
+    "verdict": "accept",
+    "scope": "Refreshed accept on exacta683; remaining fixture classification discrepancy resolved.",
+    "correction": "Initial stage paragraph incorrectly described file-root as500. Actual PG returned422 InvalidInput; retain product mapping. Final fixture uses absent instance parent to exercise IO500 and asserts SQL rollback/no Project files/no invented instance parent; exact actual-PG testPASS.",
+    "receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review.json"
+  },
+  "ci_history": [
+    {
+      "source": "606c729df58c138b39b6a6df505105944361ced7",
+      "matrix": 36505621311,
+      "disposition": "Superseded/cancelled after observed native failures; not PASS.",
+      "failures": [
+        "macOS/Linux startup capability assertion omitted project_create.",
+        "Windows existing README directory returned error5; native parity test failed."
+      ],
+      "real_entry": 36505621372,
+      "real_entry_verdict": "FAIL",
+      "reason": "Fresh profile missing instance/data; public create500 inside goal smoke.",
+      "repair": "aef native first-use directory creation, Windows directory parity and capability assertion."
+    },
+    {
+      "source": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
+      "matrix": 36506924872,
+      "disposition": "Superseded after native fixture failure; six foundation artifacts succeeded and retain runtime-equivalent build evidence only.",
+      "failures": [
+        "Old native fixture expected500 for absent data leaf; repaired runtime correctly returned201."
+      ],
+      "real_entry": 36506924875,
+      "real_entry_verdict": "FAIL",
+      "passed": [
+        "Branding",
+        "Project-Goal"
+      ],
+      "reason": "MCP successful result uses prj_ shortref; obsolete smoke asserted UUID.",
+      "repair": "a683 test-only fixes; exact native real-PG and full author smokePASS."
+    },
+    {
+      "source": "b9f966da8b35c76b0554cdeba31ceba562a8badd",
+      "matrix": 36508241419,
+      "matrix_status": "FAIL_Intel_log_store_offsets_5s_timeout_all_other_applicable_jobs_PASS",
+      "real_entry": 36508241444,
+      "real_entry_verdict": "PASS",
+      "passed": [
+        "Branding",
+        "Project-Goal",
+        "Project Create HTTP/CLI/MCP",
+        "Project DELETE"
+      ],
+      "confirmed_matrix_jobs": [
+        {
+          "id": 109214778942,
+          "name": "Desktop packaged smoke macOS arm64",
+          "verdict": "PASS"
+        },
+        {
+          "id": 109214779024,
+          "name": "Verify windows-latest",
+          "verdict": "PASS"
+        },
+        {
+          "id": 109214779100,
+          "name": "Native foundations x86_64-pc-windows-msvc",
+          "verdict": "PASS"
+        }
+      ]
+    },
+    {
+      "source": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+      "matrix": 36511577073,
+      "matrix_status": "cancelled_superseded",
+      "failure": "arm64 Clippy could not resolve index.crates.io; serde registry config fetch failed before compilation",
+      "real_entry": 36511577072,
+      "real_entry_verdict": "PASS"
+    },
+    {
+      "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+      "matrix": 36512462912,
+      "matrix_status": "cancelled_superseded_no_individual_failure_observed_before_cancellation_Ubuntu_and_Desktop_incomplete",
+      "real_entry": 36512462914,
+      "real_entry_verdict": "PASS"
+    }
+  ],
+  "receipt_history": [
+    {
+      "packet_version": "27.2",
+      "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "receipts": {
+        "reviewer": {
+          "verdict": "accept",
+          "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+          "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+          "build_id": "server-f54f7190-ci-host-514d101c",
+          "runtime_id": "create-v27.2-ci36506924872-macos-arm64",
+          "data_id": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.2",
+          "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
+          "level": "stage_implementation_and_proposed_acceptance",
+          "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review.json"
+        },
+        "verifier": {
+          "verdict": "FAIL",
+          "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.json",
+          "reason": "Normal installed CLI tarball omits dist/commands/worktree.js; worktree init and merge-history fail. Repair and remaining criteria require refreshed acceptance.",
+          "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+          "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+          "build_id": "server-f54f7190-ci-host-514d101c",
+          "runtime_id": "create-v27.2-ci36506924872-macos-arm64",
+          "data_id": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.2"
+        },
+        "final_review": {
+          "verdict": "pending",
+          "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+          "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+          "build_id": "server-f54f7190-ci-host-514d101c",
+          "runtime_id": "create-v27.2-ci36506924872-macos-arm64",
+          "data_id": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.2"
+        }
+      },
+      "disposition": "FAIL retained; CLI packaging repair requires new installed artifact and affected workflow proof."
+    },
+    {
+      "packet_version": "27.3",
+      "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+      "receipts": {
+        "reviewer": {
+          "verdict": "reject",
+          "reason": "Emitted lazy modules caused thin CLI installs without @rudderhq/db to expose raw missing-package errors instead of the existing full-runtime diagnostic. Narrow program.ts guard and emitted thin-install regression now pass locally; refreshed source/artifact/stage required.",
+          "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
+          "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+          "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
+          "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
+          "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.3"
+        },
+        "verifier": {
+          "verdict": "pending",
+          "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
+          "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+          "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
+          "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
+          "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.3"
+        },
+        "final_review": {
+          "verdict": "pending",
+          "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
+          "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+          "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
+          "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
+          "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.3"
+        }
+      },
+      "disposition": "Stage reject thin CLI diagnostic; no PG acceptance executed."
+    },
+    {
+      "packet_version": "27.4",
+      "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+      "receipts": {
+        "reviewer": {
+          "verdict": "accept",
+          "candidate_fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
+          "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+          "build_id": "server-f54f7190-cli-09238fd9-host-514d101c",
+          "runtime_id": "create-v27.4-7a4-cli0923-macos-arm64",
+          "data_id": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.4",
+          "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
+          "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.4.json",
+          "level": "stage"
+        },
+        "verifier": {
+          "verdict": "FAIL",
+          "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.4.json",
+          "reason": "Installed worktree seed/merge target has no Project provisioning trigger/owner row; subsequent public PATCH409. Backup schema preservation repair and renewed installed proof required.",
+          "candidate_fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
+          "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+          "build_id": "server-f54f7190-cli-09238fd9-host-514d101c",
+          "runtime_id": "create-v27.4-7a4-cli0923-macos-arm64",
+          "data_id": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.4"
+        },
+        "final_review": {
+          "verdict": "pending",
+          "candidate_fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
+          "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+          "build_id": "server-f54f7190-cli-09238fd9-host-514d101c",
+          "runtime_id": "create-v27.4-7a4-cli0923-macos-arm64",
+          "data_id": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.4"
+        }
+      },
+      "disposition": "Installed FAIL after true merge; backup seed lost routines/triggers while retaining migration journal. a6ca repairs schema export; fresh seed required."
+    }
+  ]
+}

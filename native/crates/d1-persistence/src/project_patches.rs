@@ -501,6 +501,9 @@ pub(crate) async fn apply(
                 goal_ids: next_goal_ids,
                 primary_goal_after: primary_after,
                 state_integrity,
+                mutation_origin: (command.mutation_origin
+                    == crate::ProjectPatchMutationOrigin::OrganizationImport)
+                    .then_some(command.mutation_origin),
             },
             entity_id: resource_activity
                 .as_ref()

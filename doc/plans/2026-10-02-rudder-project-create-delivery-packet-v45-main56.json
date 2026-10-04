@@ -1,0 +1,608 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-project-create-main56-20261002-v45",
+  "status": "blocked",
+  "owner": {
+    "root_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3",
+    "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
+  },
+  "intent": {
+    "raw_request": "2026-09-21-rudder-full-rust-backend-completion-plan.md， 完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。 最终目标不是 Node orchestration + Rust sidecar，而是： Actix Web 接管核心 HTTP/WebSocket 服务；SQLx 接管 PostgreSQL 查询、 事务和迁移；第一方业务服务、鉴权/session、调度器、workers、 Agent Run、Chat/Side Chat、Automation、provider adapters、常用后端 组件、CLI 和 MCP 均由 Rust 实现，对应 Node 后端退出运行时。 同时纳入第一方 identity、analytics collector、managed MCP、 嵌入式 PostgreSQL 生命周期，以及拥有产品状态的维护和更新恢复工具。 不能因为它们不在 server 目录，就把它们排除。 保留 React、前端工具、Electron shell，以及用户选择的外部 provider CLI、MCP、Local App 和插件组件。允许短生命周期安装入口， 但不能用这些例外保留第一方 Node 业务、迁移、调度或常驻工具运行时。 先读取当前 AGENTS.md、完整计划、原始迁移方案和实际实现/测试。 保护已有未提交工作，使用独立迁移 worktree，不把当前代码 reset 回计划中的旧 SHA。复用已有 Rust 实现，不无审查合并历史大 PR。 刷新完整能力与 authority 清单，区分： 已实现、私有验证、真实入口接入、默认路径验证、旧实现退出。 持续维护计划指定的 ledger 和 status 文件，不沿用聊天中的估算百分比。 按 Phase 0–7 连续推进，优先接通已有 Actix/read 能力； 第一个完整写入切片优先完成现有 D1 组织 branding 与 Project–Goal link。 每个切片都包括真实入口、鉴权、事务、审计、副作用、恢复、 相关 CLI/MCP 和旧 writer 的退出，而不是只迁移文件或新增 crate。 保持现有功能和行为，尤其保留 Side Chat 临时/过期/转永久、 消息历史、stream/cancel/reconnect 和受支持的会话连续性。 不要强迫 Chat 依赖 Issue，不要借迁移删功能或进行未授权产品重设计。 禁止生产双写、陈旧 writer 继续写入、静默 Node fallback、 用 Node 子进程包装旧实现，以及把后端业务转移进 Electron/bootstrap。 迁移事务关联单元前，必须确保所有旧 writer 也遵守 ownership/fence。 每个切片按当前仓库规则完成测试、reviewer、精确候选冻结、 独立真实工作流 verifier 和最终 reviewer 验收。 通过后提交合格增量并继续下一切片，不等我再次说“继续”。 最终必须证明：移除旧第一方 Node 后端资产后，安装后的 UI/API/CLI/MCP、数据库升级、调度、执行、恢复和支持平台仍通过验收。 私有 Rust 测试通过、Actix 能启动或单个 PR 合并，都不代表总目标完成。 你被授权在隔离本地环境、测试数据库和正常开发/CI 范围实施、 测试、制作候选产物，并按仓库规则提交和更新 PR。 未经额外授权，不删除真实用户数据、不迁移生产数据库、 不发布 stable、不切换生产流量、不购买服务。 缺少凭证、签名、平台环境或生产授权时，只阻塞受影响步骤， 继续其他可执行工作，并明确记录缺口。 分别报告 implementation\\_complete、release\\_ready 和 production\\_verified； 没有实际生产证据，不得声称已上线完成。 如因上下文、额度或环境中断，持久化精确提交、已通过检查、 剩余任务、阻塞和下一条可执行步骤，保持未完成状态以便恢复。 需要说明的是，重构的过程中 Main 分支时不时会有新功能或者修改进来，你的 rust 也要对应去做好适配。这个你自己调度分析就好。 不要因为完成一个小切片或一个 PR 就结束整个目标。 利用 spawn agent gpt-6-luna max,多 agents 来并发推进任务，加速推进任务，你负责调度整体的开发 开始推进",
+    "corrections": [
+      {
+        "raw": "基于反思的问题，构建对应优化",
+        "scope": "Delivery convergence and C03/C05 installed acceptance; full Rust goal remains active"
+      }
+    ],
+    "non_goals": [
+      "No production database migration or traffic switch",
+      "No stable release",
+      "No deletion of real user data",
+      "No aggregate acceptance from scoped leaf PASS"
+    ],
+    "authorization": "Disposable local implementation, installed verification, development CI and protected-PR updates; merge only after exact gates; no production cutover."
+  },
+  "candidate": {
+    "branch": "codex/project-create-main56-20261002",
+    "source_ref": "refs/heads/codex/project-create-pilot-20260929",
+    "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "source_tree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "dirty_fingerprint": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "changed_paths": [
+      ".github/workflows/rust-d1-real-entry.yml",
+      "cli/esbuild.config.mjs",
+      "cli/src/__tests__/packaged-lazy-commands.test.ts",
+      "cli/src/program.ts",
+      "desktop/src/local-app-watchdog-runner.mjs",
+      "desktop/src/local-app-windows-processes.mjs",
+      "desktop/src/local-app-windows-processes.test.mjs",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-plan.md",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml",
+      "doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json",
+      "doc/plans/2026-09-29-rudder-project-delete-delivery-packet-v26.json",
+      "doc/plans/2026-09-29-rust-project-create-service-pilot.md",
+      "doc/plans/artifacts/2026-09-29-rudder-backup-authority-author-regression.json",
+      "doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json",
+      "doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.4.json",
+      "doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.json",
+      "doc/plans/artifacts/2026-09-29-rudder-project-create-seed-schema-diagnosis.json",
+      "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.4.json",
+      "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.5.json",
+      "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review.json",
+      "native/Cargo.lock",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/d1-persistence/Cargo.toml",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/links.rs",
+      "native/crates/d1-persistence/src/organization_resources.rs",
+      "native/crates/d1-persistence/src/project_creations.rs",
+      "native/crates/d1-persistence/src/project_library.rs",
+      "native/crates/d1-persistence/src/project_patches.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/migration-core/tests/validation.rs",
+      "native/crates/migration-history-core/src/lib.rs",
+      "native/crates/migration-history-core/tests/reconciliation.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/db/src/backup-authority-restore.test.ts",
+      "packages/db/src/backup-lib.test.ts",
+      "packages/db/src/backup-lib.ts",
+      "packages/db/src/client.test.ts",
+      "packages/db/src/migrations/0176_project_create_receipt_kind.sql",
+      "packages/db/src/migrations/0177_organization_import_receipt_activity_mode.sql",
+      "packages/db/src/migrations/0178_organization_resource_mutation_state.sql",
+      "packages/db/src/migrations/meta/0176_snapshot.json",
+      "packages/db/src/migrations/meta/0177_snapshot.json",
+      "packages/db/src/migrations/meta/0178_snapshot.json",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-mutations.test.ts",
+      "packages/db/src/schema/index.ts",
+      "packages/db/src/schema/organization_mutations.ts",
+      "packages/db/src/schema/organization_resource_mutation_state.ts",
+      "scripts/release-compatibility-matrix.mjs",
+      "scripts/release-compatibility-matrix.test.mjs",
+      "scripts/smoke/rust-project-create-real-entry.test.ts",
+      "scripts/smoke/rust-project-create-real-entry.ts",
+      "scripts/smoke/rust-project-delete-real-entry.ts",
+      "scripts/smoke/rust-project-goal-real-entry.ts",
+      "server/src/__tests__/company-portability-routes.test.ts",
+      "server/src/__tests__/company-portability.test.ts",
+      "server/src/__tests__/config-env-loading.test.ts",
+      "server/src/__tests__/http-app-vite-lifecycle.test.ts",
+      "server/src/__tests__/log-store-offsets.test.ts",
+      "server/src/__tests__/orgs-service.test.ts",
+      "server/src/__tests__/project-ownership-caller-regression.test.ts",
+      "server/src/__tests__/project-routes.test.ts",
+      "server/src/__tests__/projects-service.test.ts",
+      "server/src/__tests__/resource-catalog-service.test.ts",
+      "server/src/bootstrap/register-api-routes.ts",
+      "server/src/config.ts",
+      "server/src/routes/onboarding.ts",
+      "server/src/routes/orgs.ts",
+      "server/src/routes/projects.ts",
+      "server/src/services/knowledge-portability/organization-portability.import.ts",
+      "server/src/services/knowledge-portability/organization-portability.ts",
+      "server/src/services/organization-resource-mutation-fence.ts",
+      "server/src/services/organization-resource-rust-authority.test.ts",
+      "server/src/services/organization-resource-rust-authority.ts",
+      "server/src/services/projects-create.test.ts",
+      "server/src/services/projects.ts",
+      "server/src/services/resource-catalog.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts",
+      "server/src/__tests__/organization-resource-mutation-fence.test.ts"
+    ],
+    "build": {
+      "id": "main56_installed_seal14e39_static_artifact_stage_accepted",
+      "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+      "status": "static_verified_supported_postinstall_recorded_independent_artifact_stage_ACCEPT",
+      "receipt_path": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/receipt/2026-10-01T23-07-34-710Z-integrated646-complete-dist-verified.json",
+      "receipt_sha256": "14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49",
+      "install_prefix": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/install-prefix-complete-dist",
+      "normal_pack_session": "unknown_current_session_not_captured",
+      "normal_install_session": "unknown_initial_ignore_scripts_and_local_tar_refresh_observed",
+      "sealer_session": "unknown_receipt_observed_on_disk",
+      "server_entry_sha256": "unknown",
+      "ui_file_count": "unknown",
+      "scope": "Current646 static successor seal14e39 independently artifact-stage accepted by Peirce/d5b8; supported isolated postinstall recorded, unknown build/pack sessions explicit. No current646 product runtime acceptance; predecessor566 lease remains separate."
+    },
+    "runtime": {
+      "id": "not_started_main56",
+      "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+      "status": "not_started"
+    },
+    "organization_data": {
+      "organization_id": "pending_fresh_disposable",
+      "data_id": "pending_fresh_disposable"
+    },
+    "workload_fixture": "566b-specific integrated build, UI/runtime reconciliation, and remaining aggregate criteria pending. B224 C10 success/replay/stale-Node leaf independently PASS and final review accept; not integrated whole-candidate equivalence.",
+    "budget_lease": {
+      "id": "project-create-v43-integrated-acceptance-root",
+      "fingerprint": "02bfedbff1405be0b60e2feb38643568425f506db3ccca2d3adc3b5ef39006ba",
+      "expires_at": "2026-10-02T18:00:00Z"
+    },
+    "acceptance_packet": {
+      "version": "45",
+      "fingerprint": "266078b7b50236285b250873491505ff099753b8289a51e5b3ad0184a1c7a225",
+      "criteria": [
+        "The exact Main56-integrated candidate on observed origin/main 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce builds, and Rust migration preflight accepts journal 0178 plus the frozen predecessor fixtures without rewriting historical migrations.",
+        "With RUDDER_RUST_PROJECT_GOAL_SET_MODE unset, ordinary public Project creation and Board onboarding select Rust by default; explicit off/shadow and unavailable-Rust cases fail closed and never invoke the Node Project-create writer. No private authority header or opt-in allowlist is required.",
+        "Public API and Board onboarding retain existing authentication, organization scoping, response, and UI contracts while persisting Rust-owned Project rows, goals/resources, activity, immutable receipt, outbox, and owner/fence state; cross-organization access remains rejected.",
+        "First-party CLI and MCP Project-create calls continue through the supported public authority and preserve UUID and response contracts; supported create operations persist Rust ownership and no silent Node fallback is reachable.",
+        "Project creation atomically commits SQL state and synchronous Library intent/provisioning within its declared filesystem recovery boundary; injected activity/receipt failures roll back, stable-key retry/replay returns the original result, and restart does not duplicate Projects or Library contents.",
+        "Existing-target organization import retry preserves the signed Rust hydration lane: lost success response does not fall back to Node, same-key retry reuses workspace and receipts, changed content conflicts without state mutation, and aggregate import audit remains singular.",
+        "Existing Node-owned Project updates, organization import, seed, and atomic worktree-merge behavior remain compatible; newly Rust-owned Project update/delete routes remain Rust-owned, while stale public/onboarding Node create callers are rejected. Direct SQL or stale binaries that bypass service fences remain a separately tracked rollout risk, not a claim of database-level exclusion.",
+        "The existing Project resource detail panel edits resource name, locator and description, plus the project-specific attachment note. Save completes both existing public requests; reopening/refetching shows persisted values, and Cancel discards unsaved edits. Existing attachment role/sortOrder, JSON metadata and supported Library locator constraints remain preserved. No JSON metadata editor or new persisted draft contract is introduced, and UI Save is not claimed to be one atomic transaction. Independently verify public resource PATCH/DELETE response fields, nullable JSON metadata and description, omitted-metadata preservation, Board-only auth and organization404 isolation; shared Rust/Node Project attachments remain usable, and delete preserves Project owners and increments affected mutation versions.",
+        "Resource mutation commits canonical state, retained ownership/tombstone, receipt, audit and outbox atomically. Injected audit failure rolls back every effect; exact-key update/delete replay and restart replay are singular, changed payload conflicts, and old delete replay does not touch a recreated canonical UUID. Stale Node resource update/delete is rejected before writing after Rust ownership.",
+        "Rust-owned or Rust-attached resource routes require the Rust authority. Explicit off/shadow, unavailable bridge or invalid authority lookup returns an error without Node fallback; Node-only resources retain their existing supported writer.",
+        "A fresh release-shaped installed verification records default public API, Board onboarding, CLI/MCP, migration/upgrade, ownership and audit readbacks, restart/replay, and owned-process cleanup; npm pack --ignore-scripts alone is insufficient.",
+        "Ledger and status distinguish implementation/private validation, real-entry connection, default-path verification, and old-writer retirement; implementation_complete, release_ready, and production_verified remain false.",
+        "Main integration preserves generic-agent dialog copy/language and open/close behavior, Issues/Linear sidebar spacing/title/collapse and Project navigation in desktop and constrained viewports. Integrated UI/package identity and exact-source CI are recorded; unchanged backend evidence is reusable only after the issuing verifier explicitly reconciles content equivalence.",
+        "A disposable Organization created through the public API receives a public default-mode Rust Project with linked Goal and inline resource; Board public Organization DELETE returns 200/{ok:true}, removes live canonical organization-scoped rows, ownership/receipts/outbox and owned storage/workspace mapping, while preserving ONLY product_analytics_events historical rows exactly unchanged under the existing migration0131 no-organization-FK contract, leaves the foreign sentinel unchanged, and closes only owned processes/ports. This is compatibility proof, not transfer of the entire organization deletion authority to Rust."
+      ],
+      "state_inventory": [
+        {
+          "back_cancel_close_reopen_draft_semantics": "New Project has Close (×), not Cancel. Preserve existing dismissal/reset behavior; no persisted draft is invented. Resource inline editor separately retains Cancel/Save/reopen behavior.",
+          "current_decision": "Enter Project details and choose Create",
+          "deferred_controls": [
+            "No new controls in this backend slice"
+          ],
+          "primary_affordance": "Create Project",
+          "safety_critical_context": "Authenticated actor and selected organization; created Project ownership and audit/recovery identity.",
+          "state": "Default Board/Public Project-create workflow",
+          "visible_controls": [
+            "Choose project identity",
+            "Project name",
+            "description",
+            "status",
+            "Add sources",
+            "target date",
+            "expand/collapse",
+            "Close (×)",
+            "Create project"
+          ]
+        },
+        {
+          "back_cancel_close_reopen_draft_semantics": "API workflow; no user draft is created.",
+          "current_decision": "Retry the same import after a lost Rust hydration response",
+          "deferred_controls": [
+            "No new UI controls"
+          ],
+          "primary_affordance": "Retry the same import key",
+          "safety_critical_context": "Target organization authorization, persisted Project owner, and prior committed receipt",
+          "state": "Existing-target organization import retry",
+          "visible_controls": [
+            "Existing organization target",
+            "Project replacement and workspace data"
+          ]
+        },
+        {
+          "back_cancel_close_reopen_draft_semantics": "Existing UI contract; no draft or fallback behavior is introduced.",
+          "current_decision": "Public/onboarding create must fail closed rather than selecting the legacy Node writer",
+          "deferred_controls": [
+            "No fallback switch or private header is presented to users"
+          ],
+          "primary_affordance": "Return an explicit failure; preserve retryability without duplicate state.",
+          "safety_critical_context": "No Project should be partially or silently created under a different writer authority.",
+          "state": "Rust unavailable or mode explicitly off/shadow",
+          "visible_controls": [
+            "Existing create action and normal error surface"
+          ]
+        },
+        {
+          "state": "Project resource detail editor",
+          "current_decision": "Edit resource details and project-specific note, then save",
+          "visible_controls": [
+            "Name",
+            "Locator",
+            "Description",
+            "Project note",
+            "Save",
+            "Cancel"
+          ],
+          "deferred_controls": [
+            "No new controls"
+          ],
+          "safety_critical_context": "Selected organization, existing resource identity and shared Project references",
+          "primary_affordance": "Save existing resource details and attachment note",
+          "back_cancel_close_reopen_draft_semantics": "Cancel discards unsaved edits; reopening reloads saved values. No persisted unsaved draft or JSON metadata editor is introduced. Save uses the existing two sequential public requests."
+        }
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "pending",
+      "candidate_fingerprint": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+      "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+      "build_id": "main56_installed_seal14e39_static_artifact_stage_accepted",
+      "runtime_id": "not_started_main56",
+      "data_id": "pending_fresh_disposable",
+      "packet_version": "45"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+      "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+      "build_id": "main56_installed_seal14e39_static_artifact_stage_accepted",
+      "runtime_id": "not_started_main56",
+      "data_id": "pending_fresh_disposable",
+      "packet_version": "45"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+      "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+      "build_id": "main56_installed_seal14e39_static_artifact_stage_accepted",
+      "runtime_id": "not_started_main56",
+      "data_id": "pending_fresh_disposable",
+      "packet_version": "45"
+    },
+    "bounded_leaves": [
+      {
+        "id": "C01-preflight",
+        "verdict": "PASS",
+        "scope": "predecessor/current migration replay only",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C03-C05-installed",
+        "verdict": "PASS",
+        "evidence_sha256": "fd17d72e9217826f2fa4fb60ad22373394e75cb1e022d62415b49d2754029215",
+        "receipt_sha256": "e6737e8171bac74538914b44a68b1eff65b8ade873b6c11b3ed39c01aa77fdf4",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C02-C10-mode-module",
+        "verdict": "stage_accept_only",
+        "receipt_sha256": "ce5d4c0d983776541b8a5015e1390924f8c08ac4d5cdef5cd9026e7033fb6abe",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C02-C10-off-shadow-installed",
+        "verdict": "PASS",
+        "scope": "off/shadow public API negative probes only, not full C02/C10 criteria",
+        "evidence_sha256": "201a246a52770b461be9cb8328ca0aeea96a97f9d931812acf2c91d29af02356",
+        "receipt_sha256": "cf0805d20a0590cf1b611d50b6f0e2e43bc383878a3271fd4b32019c279c486e",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C07-installed-merge-patch",
+        "verdict": "PASS",
+        "scope": "full-seeded target CLI MERGE/PATCH compatibility leaf only, not aggregate C07",
+        "evidence_sha256": "329c5448f142266e9da1ce1b5e3884ca5c8044f70881d4f742afca1405129f3a",
+        "transcript_receipt_sha256": "a4deabd8d37404d12e0f4293bd3c7179837a5143fb2038fbd651b482b7590307",
+        "catalog_supplement_sha256": "df6c15b2277f2617a7e6da71911e0ab3529fe8ba570999f06940dcbffade62cd",
+        "leaf_final_review": "accept",
+        "receipt": "doc/plans/artifacts/2026-10-01-rudder-project-create-c07-merge-0132dc-verifier.json",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C07-installed-rust-owner-normal-patch-delete",
+        "verdict": "PASS",
+        "scope": "fresh installed public Rust-owned Project PATCH/GET and DELETE/GET normal path only, not stale writer, restart or aggregate C07",
+        "evidence_sha256": "f9dfc5771d6d4becfa76af0712b05babc7e26fee16cd6893e9d0ddf04dd79289",
+        "prior_question_sha256": "3216d21bc331362cec96cee0bfe1a0221a90ae242016e591c037aa3ee186ef52",
+        "leaf_final_review": "accept",
+        "receipt": "doc/plans/artifacts/2026-10-01-rudder-project-create-c07-rust-owner-normal-0132dc-verifier.json",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C07-installed-internal-stale-node-writer-fence",
+        "verdict": "PASS",
+        "scope": "installed legacy Node projectService update/remove on a publicly created Rust-owned Project only; not public PATCH/DELETE or aggregate C07",
+        "evidence_sha256": "11de379dd89de832b0671d4082ed0f990be20fbc2295aa48c8531503184bc17c",
+        "prior_question_sha256": "45ae9e0a60b0bb13aef5be94b84f14123242de0870df3db31ed00b518d4cd277",
+        "leaf_final_review": "accept",
+        "receipt": "doc/plans/artifacts/2026-10-01-rudder-project-create-c07-stale-node-writer-0132dc-verifier.json",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C10-installed-resource-unavailable-patch-delete",
+        "verdict": "PASS",
+        "scope": "required Rust bridge unavailable public organization-resource PATCH/DELETE on Rust-owned resources only; not C02 or aggregate C10",
+        "evidence_sha256": "e33e58077f302ade9e10006bb23fd8cccd3a3bf440a89e27a49d429439378c56",
+        "leaf_final_review": "accept",
+        "receipt": "doc/plans/artifacts/2026-10-01-rudder-project-create-c10-unavailable-0132dc-verifier.json",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C02-installed-project-patch-unavailable",
+        "verdict": "PASS",
+        "scope": "required Rust bridge unavailable public Project PATCH /api/projects/:id only; not C10 or aggregate C02",
+        "evidence_sha256": "e5da30354cffecb1f19c9821b0bc91ec9bf48135329d9c174889f8535dda1c07",
+        "independent_verifier_receipt_sha256": "f91f4d48ccc6401e1b6b503030a6d975fda1489cd40b8ad2a509bbab0f8f6af1",
+        "leaf_final_review": "accept",
+        "receipt": "doc/plans/artifacts/2026-10-01-rudder-project-create-c02-unavailable-0132dc-verifier.json",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C-import-existing-target-lost-hydration-response-restart",
+        "verdict": "PASS",
+        "scope": "installed v36 equivalent import path only; first public 503 after successful Rust hydration, same-key 200, changed-payload 409, restart replay 200, immutable SQL snapshot and cleanup; not aggregate #236",
+        "runner_sha256": "c77eb8d46f18ebf47d5d02831e922e56ef017e79ffa684cfd05f511b83309d9c",
+        "evidence_sha256": "743639f9d327b20742081a8e360fec37fe0f6dc53f418ce309f31fdc3fc93ac3",
+        "prior_fail_evidence_sha256": "3d7ca7906e8480ba2fdff458cf32736698f9e5cf9d4b0e78b535247e2f455aff",
+        "leaf_final_review": "accept",
+        "receipt": "doc/plans/artifacts/2026-10-01-rudder-project-create-import-recovery-0132dc-verifier.json",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "C-installed-exact-cli-mcp-project-create",
+        "verdict": "PASS",
+        "scope": "historical completed exact-0132 macOS arm64 installed CLI create and pipelined MCP stdio tool path, with Rust owner/fence, receipt, audit, outbox, and cleanup; prefix node_modules later removed; not Board/UI, sequential MCP, or aggregate #236",
+        "artifact_receipt_sha256": "e792430d6bc335d8b534dfc7abd725aec3005d9d5eff8f36af6b034842507961",
+        "runner_sha256": "f1de193a125041c55e9efbc9d7fd6003e79c7ec6d38da5cda528f9542b36d68d",
+        "evidence_sha256": "9de4a5df08f7c5ae20e7ac1cf7b64b75aeb132c0a2079114133ffdb42e4a7be6",
+        "independent_verifier_receipt_sha256": "e4967c0b3e79b43fd270dd3dbb5a49b2b8ec21e57b925999f8ff42b708e4bfad",
+        "leaf_final_review": "accept",
+        "receipt": "doc/plans/artifacts/2026-10-01-rudder-project-create-exact-cli-mcp-0132dc-verifier.json",
+        "successor_rebind": "pending issuing-verifier reconciliation; original scope/source/build retained"
+      },
+      {
+        "id": "Org-DELETE-v3",
+        "verdict": "PASS",
+        "scope": "default installed public Rust Project with linked Goal/resource then Organization DELETE compatibility only",
+        "source_sha": "566b8f93c537e20d0016b17b6299e26ece979113",
+        "build_id": "274c936303bbdd1648e8981b9e673e5f3bcdc4979695dc648097a9232cecc34c",
+        "packet_sha256": "87526ed61a49a76ff60dee3668eb3e168da419ae1e93ecec0b2117740ce5c4a5",
+        "receipt": "doc/plans/artifacts/2026-10-02-rudder-org-delete-v3-independent-pass.json",
+        "receipt_sha256": "517b1fa4b7b471be66ed6932c95a1a3307d1862d64d21460a9cd19e036c969d6",
+        "evidence_sha256": "f91d9a2bfe1f81c96bd8fd1d560aac9e9f9fd44c51ca29907c59038ed7ab54e6",
+        "final_review": "accept",
+        "final_receipt": "doc/plans/artifacts/2026-10-02-rudder-org-delete-v3-final-accept.json",
+        "final_receipt_sha256": "5e1f36a3c89850bd399ca93dc6667829c7459a6c8a30cbd0888ad8f9b044bbbf",
+        "cleanup": "independently verified",
+        "v2_FAIL": "preserved, not reclassified"
+      }
+    ],
+    "source_fence_stage": {
+      "verdict": "accept",
+      "reviewer": "Harvey",
+      "agent_id": "01a0f81c-a475-70b0-8485-68b8a79f8d31",
+      "source_sha": "b224db88fb0ce8ad67edd2417844deba6ec61c3e",
+      "source_tree": "7e707acb4c70907ee77df3ce23c009e7d32d881e",
+      "scope": "three-file existing-resource SELECT-before-provisioning DML fix; focused static stage only",
+      "checks": "5 focused tests, 9 real PostgreSQL cases, server typecheck, lint three files, build PASS",
+      "product_acceptance": "none",
+      "successor_rebind": "source-only unchanged fence content; installed acceptance still b224 bounded",
+      "packet_version": "43"
+    },
+    "source_integration_stage": {
+      "verdict": "accept",
+      "reviewer": "Harvey",
+      "source_sha": "566b8f93c537e20d0016b17b6299e26ece979113",
+      "source_tree": "55116641467ac06123dd16c026315ea27f1efe3e",
+      "scope": "exact24path Main carry plus one log store conflict; early sameDraftPR CI only",
+      "product_acceptance": "none",
+      "packet_version": "43"
+    }
+  },
+  "drift": {
+    "active": true,
+    "events": [
+      {
+        "type": "pending_Main_adaptation",
+        "observed_main_sha": "502b05607c22f557a53711d1ef3529fe0d991ac0",
+        "candidate_base_sha": "2419acf538befeb3b4dc8f97c761f66de2315051",
+        "scope": "PR247 native process and PR248 test-only paths; merge-tree clean; not integrated"
+      },
+      {
+        "type": "pending_Main_test_conflict",
+        "observed_main_sha": "8fc0ff3de9cde8e2737b195f40e174eb8828d2f5",
+        "previous_observed_main_sha": "6d2318766a8fd6c456c3177c007158b796b6844d",
+        "scope": "PR253 changes only server/src/__tests__/log-store-offsets.test.ts; merge-tree of exact0132 candidate against current Main reports one textual test-file conflict. Preserve both the candidate's structured-error proof and Main's bounded macOS CI timeout when adapting after current installed acceptance. No product runtime code changed by this Main delta; current bounded runtime receipts remain applicable to their frozen source, but integration SHA and CI must be refreshed."
+      },
+      {
+        "type": "pending_Main_PR252_test_only",
+        "observed_main_sha": "c0eb01fbeb635d5d1de1b2333387a4d019539b78",
+        "previous_observed_main_sha": "8fc0ff3de9cde8e2737b195f40e174eb8828d2f5",
+        "scope": "PR252 adds only desktop/src/local-app-native-host.test.ts Windows CI-load timeout change. After fetch, merge-tree against exact0132 still reports only the pre-existing server/src/__tests__/log-store-offsets.test.ts conflict. No product source or installed behavior changed by this Main delta; preserve frozen leaf evidence but refresh integration SHA, candidate and exact-source CI before merge."
+      },
+      {
+        "type": "resource_fence_source_successor",
+        "previous_sha": "0132dc92c17b20d3284d1307777b527644f4065f",
+        "source_sha": "b224db88fb0ce8ad67edd2417844deba6ec61c3e",
+        "reason": "C10 runner stage reject on Node initialization DML before Rust409; fixed source and strengthened response assertions",
+        "prior_runner_sha256": "137edb84a56e1dd411ebb250a923004671a207e0ecf8e510596b6bd3f21a5a43",
+        "response_assertion_runner_sha256": "60de9ced72c4fe1a45490969e1ef8098d297bcc64c630ff57231ea3856a56618",
+        "scope": "UI/native/CLI/database source unchanged from0132; C10 stale-resource proof affected; original bounded leaves remain historical until issuer rebind"
+      },
+      {
+        "type": "Main_UI_delta",
+        "previous_observed_main_sha": "c0eb01fbeb635d5d1de1b2333387a4d019539b78",
+        "observed_main_sha": "7ed0eaefbd017772cb2186b69cf0990be84da22e",
+        "changed_paths": 17,
+        "scope": "UI/layout/DESIGN; backend evidence not invalidated solely by this delta, integrated UI needs build/rendered proof; log-store test conflict remains"
+      },
+      {
+        "type": "installed_artifact_preparation_successor",
+        "source_sha": "566b8f93c537e20d0016b17b6299e26ece979113",
+        "product_source_changed": false,
+        "receipt_path": "/Users/zeeland/.codex/artifacts/rudder-integrated566.6TRxWt/receipt/2026-10-01T20-52-58-859Z-integrated566-complete-dist-verified.json",
+        "receipt_sha256": "274c936303bbdd1648e8981b9e673e5f3bcdc4979695dc648097a9232cecc34c",
+        "prior_prefixes": "historical/unselected; missing modules or server dist; retained",
+        "scope": "normal server compile and full lifecycle pack followed by fresh offline install; actual integrated six-target receipt contract; historical product leaves require issuer reconciliation"
+      },
+      {
+        "type": "criterion_correction_preserve_existing_analytics_history",
+        "source_sha": "566b8f93c537e20d0016b17b6299e26ece979113",
+        "product_source_changed": false,
+        "prior_raw_verdict": "FAIL",
+        "prior_raw_evidence": "/private/tmp/org-delete-integrated566-0VYzFl/evidence.json",
+        "prior_observation": "Public default Rust create201 and organization DELETE200; all live rows gone; historical organization_created analytics row retained",
+        "source_contract": "Migration0131 drops organization FK; current product_analytics_events schema has no organization FK; existing organization deletion omits historical analytics",
+        "correction": "Explicit event-table full-row equality instead of broad delete-every-org_id-row claim; no blanket analytics exemption or product source/privacy redesign",
+        "independent_review": "Pauli_accept; corrected independent run PASS; final bounded leaf accept"
+      },
+      {
+        "type": "pending_Main_delta_20261002",
+        "observed_main_sha": "56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce",
+        "candidate_base_sha": "7ed0eaefbd017772cb2186b69cf0990be84da22e",
+        "candidate_head_unchanged": true,
+        "scope": "public REST latest Main differs from PR base; independent delta audit dispatched, no integration yet. Frozen installed leaves remain scoped to566; merge must reconcile Main and current CI before claiming delivery."
+      },
+      {
+        "type": "published_Main56_source_successor",
+        "from_source": "566b8f93c537e20d0016b17b6299e26ece979113",
+        "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+        "tree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+        "normal_push": true,
+        "scope": "exact11 Main org profile paths, no runtime or database started during integration, earlyDraftCI only",
+        "affected": "shared/server/UI compiled artifacts; newinstalledidentity and currentCI required",
+        "retained_leases": "independent566 bounded leaves preserve their old identity; no automatic acceptance transfer"
+      }
+    ],
+    "invalidated_receipts": [
+      "predecessor aggregate runtime binding replaced; predecessor bounded leaves retain their original identities and await issuing-verifier successor reconciliation"
+    ]
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "branch_refs": [
+      {
+        "ref": "refs/heads/codex/project-create-pilot-20260929",
+        "sha": "566b8f93c537e20d0016b17b6299e26ece979113"
+      },
+      {
+        "ref": "refs/remotes/origin/main",
+        "sha": "7ed0eaefbd017772cb2186b69cf0990be84da22e"
+      }
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/private/tmp/rudder-b224-main-sync.6rlWmV",
+    "patch_tree_sha": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "expected_old_sha": "566b8f93c537e20d0016b17b6299e26ece979113",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none",
+    "early_draft_publication": {
+      "source_sha": "566b8f93c537e20d0016b17b6299e26ece979113",
+      "remote_confirmed": true,
+      "previous_remote_sha": "b224db88fb0ce8ad67edd2417844deba6ec61c3e",
+      "matrix_CI": 36899362783,
+      "D1_CI": 36899362801,
+      "D1": "PASS",
+      "state": "matrix_pending",
+      "merge_claim": false
+    }
+  },
+  "preservation": {
+    "checked": false,
+    "unrelated_dirty_paths": [
+      "separate records worktree retains pre-existing dirty files"
+    ],
+    "index_fingerprint_before": "unknown_pending",
+    "index_fingerprint_after": "unknown_pending",
+    "worktree_fingerprint_before": "unknown_pending",
+    "worktree_fingerprint_after": "unknown_pending",
+    "unrelated_paths_preserved": false,
+    "index_preserved": false,
+    "evidence": [
+      "PR236 source checkout remains clean at exact SHA/tree",
+      "Records checkout dirty files preserved; no bulk stage/reset"
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  },
+  "predecessor_installed_freeze": {
+    "source_sha": "566b8f93c537e20d0016b17b6299e26ece979113",
+    "tree": "55116641467ac06123dd16c026315ea27f1efe3e",
+    "receipt_sha256": "274c936303bbdd1648e8981b9e673e5f3bcdc4979695dc648097a9232cecc34c",
+    "selected_for_whole646_acceptance": false
+  },
+  "current_remote_publication": {
+    "PR": 236,
+    "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "tree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "base_sha": "56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce",
+    "push": "normal_fast_forward_566_to646_after_independent_source_stage_and_ref_rebind",
+    "merge": false,
+    "source_stage_receipt": "doc/plans/artifacts/2026-10-02-rudder-main56-integration-stage-accept.json",
+    "ref_rebind_receipt": "doc/plans/artifacts/2026-10-02-rudder-main56-ref-and-negatives-v3-stage-accept.json",
+    "focused_source_defaults": "3_PASS_real_current_source_aliases_noDB",
+    "full_workspace_checks": "locked install exit0; seven focused tests and shared/server/UI typechecks PASS; full baseline belongs to CI"
+  },
+  "predecessor_aggregate": {
+    "verdict": "QUESTION",
+    "scope": "historical incomplete parent aggregate, not a 566b verifier observation",
+    "packet": "2026-10-02-rudder-project-create-delivery-packet-v40-resource-fence.json",
+    "packet_sha256": "c65083fe88eda73cddf825bef5dbe832d70868534ced05bc2aed11ef0c01789b"
+  },
+  "predecessor_packet": "doc/plans/2026-10-02-rudder-project-create-delivery-packet-v44-org-accepted.json",
+  "remaining_execution": {
+    "artifact_review": "Peirce_accept_artifact_stage_only",
+    "Org_DELETE": "v3 independent PASS + Pauli final leaf accept; v2 FAIL retained",
+    "Board": "exact logical stage accept; TaskSpace26 absent, replacement permission pending, blocks UI only",
+    "authority_failures": "V6 independent QUESTION receipt4f15df: POST503/503 PATCH500 engine42P01 OIDrestored unchanged target/foreign; public PATCH log correlation missing; DELETE unexecuted; cleanup independently verified; source566 only, not current646 acceptance; Schrodinger diagnosis pending",
+    "resource_adversarial": "v2 QUESTION preserved; v3 stage4bc4b9 accepted, Peirce seven-case PASS58587d, Pauli final leaf accept2e19f and independent cleanup; bounded source566 receipt274c only; current646 finite dependency rebind pending, not aggregate acceptance",
+    "database_lane": "released after independent V6 QUESTION and verified process/port/temp-root cleanup; current646 runtime not started; next bounded packet/stage before lease",
+    "aggregate_verifier": "pending",
+    "final_review": "pending",
+    "production": "not_authorized_or_verified",
+    "new_candidate_artifact": "current646 staticVERIFIED14e39 supportedpostinstall independently artifact-stage accepted d5b8; unknown pack session explicit; no product runtime acceptance; old274c source566 remains separate",
+    "successor_leaf_rebind": "finite dependency and source equivalence + original issuing verifier reconciliation required"
+  },
+  "current_CI": {
+    "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "status": "matrix_success_independent_tree_content_equivalence_confirmed_not_identical_commit",
+    "matrix_run": 36932056409,
+    "D1_run": 36932056373,
+    "D1": "PASS",
+    "foundation_artifacts": "six jobs PASS; not six-platform runtime acceptance",
+    "last_known_matrix_state": "run36932056409 success; Ubuntu110603647828 success Unit tests and Build, CLI start tests skipped not passed",
+    "independent_exact_tree_binding": "Harvey verified copied Plan sourceb9403bfe558b0f9cffe660516394c90fc350c4da treefaf equals646 candidate tree; synthetic commit not assumed identical",
+    "identity_receipt": "doc/plans/artifacts/2026-10-02-rudder-integrated646-ci-tree-equivalence.json",
+    "identity_receipt_sha256": "8ca532428cb445f3e00ff6b0c04d4a2fe9efb8e107ab0efa60636b52d9faf696",
+    "predecessor": {
+      "matrix_run": 36899362783,
+      "status": "SUCCESS",
+      "D1_run": 36899362801,
+      "D1": "PASS",
+      "tested_commit": "977e700cca01d2ed3594045ece5c25ab395657f5",
+      "tested_tree": "55116641467ac06123dd16c026315ea27f1efe3e",
+      "tree_equivalence": "independently verified; not identical checkout SHA"
+    }
+  },
+  "browser_gap": {
+    "observed": "ego-browser taskSpace(26) notfound; readonly listTaskSpaces confirms absence",
+    "policy": "Do not create another space or operate another goal's space without user's explicit replacement approval",
+    "approval": "requested asynchronously; pending",
+    "affected": "Board/UI execution only"
+  }
+}
