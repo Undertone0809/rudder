@@ -566,16 +566,12 @@ export function LogViewer({
                   { value: "transcript", label: "Transcript" },
                   {
                     value: "invocation",
-                    label: instructionSnapshotStatus === "available"
-                      ? locale === "zh-CN" ? "指令" : "Instructions"
-                      : locale === "zh-CN" ? "元数据" : "Metadata",
-                    mobileLabel: instructionSnapshotStatus === "available"
-                      ? locale === "zh-CN" ? "指令" : "Instructions"
-                      : locale === "zh-CN" ? "元数据" : "Metadata",
+                    label: locale === "zh-CN" ? "元数据" : "Metadata",
+                    mobileLabel: locale === "zh-CN" ? "元数据" : "Metadata",
                     tooltip: instructionSnapshotStatus === "available"
                       ? locale === "zh-CN"
-                        ? "本次运行的注入指令快照与运行时元数据"
-                        : "Injected instruction snapshot and runtime metadata for this Run"
+                        ? "本次运行的元数据及实际注入的指令快照"
+                        : "Run metadata and the instruction snapshot used for this Run"
                       : locale === "zh-CN"
                         ? "本次运行的运行时元数据及可用的指令详情"
                         : "Runtime metadata and any available instruction details for this Run",
