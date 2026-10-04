@@ -30,6 +30,7 @@ const EXPECTED_SOURCE_SHA = "755c273fe35fe28c36c37d598687d26dd09648d6";
 const EXPECTED_PRODUCT_TREE = "a9c2944999151b1fa9b80ac17bd75f96b7574fa3";
 const EXPECTED_NATIVE_CI_RUN = 37186766971;
 const MAX_LOG_BYTES = 512 * 1024;
+const closedChildren = new WeakSet();
 const RECEIPT_PACKAGES = [
   "@rudderhq/agent-runtime-claude-local",
   "@rudderhq/agent-runtime-codex-local",
@@ -720,17 +721,19 @@ function startServer(serverEntry, cwd, env, ownerId) {
   child.stdout.setEncoding("utf8").on("data", (chunk) => appendLog(logs, "stdout", chunk));
   child.stderr.setEncoding("utf8").on("data", (chunk) => appendLog(logs, "stderr", chunk));
   child.on("error", (error) => appendLog(logs, "stderr", `${error.stack ?? error}\n`));
+  child.once("close", () => closedChildren.add(child));
   return { owner: SMOKE_OWNER, ownerId, child, logs, termRequested: false, stopPromise: null };
 }
 
-function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) {
+export function waitForExit(child, timeoutMs) {
+  if (closedChildren.has(child)) {
     return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
   }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`owned server process did not exit within ${timeoutMs}ms`)), timeoutMs);
     child.once("close", (code, signal) => {
       clearTimeout(timer);
+      closedChildren.add(child);
       resolve({ code, signal });
     });
   });
@@ -1119,12 +1122,17 @@ async function recordListenerOwnership(runtime, publicPort, privatePort, rustExe
   }
 }
 
-async function stopAndAssertRustListenerExited(runtime, ports, timeoutMs) {
-  const pid = ownedRustPid(runtime);
+export async function stopAndAssertRustListenerExited(runtime, ports, timeoutMs) {
+  const pid = `${runtime.logs.stdout}\n${runtime.logs.stderr}`
+    .match(/\[rudder-rust-bridge\] started pid=(\d+)/u)?.[1];
+  // Always stop the exact owned supervisor, even when startup never logged Rust.
   await stopOwnedServer(runtime, Math.min(timeoutMs, 20_000));
+  await Promise.all(ports.filter(Number.isInteger).map((port) => waitForPortClosed(port, 8_000)));
+  if (!pid) {
+    throw new SmokeQuestionError("Owned supervisor stopped but Rust startup identity was never observed; retain the disposable profile");
+  }
   const logs = `${runtime.logs.stdout}\n${runtime.logs.stderr}`;
   assertSupervisedRustChildExit(runtime.logs, pid);
-  await Promise.all(ports.filter(Number.isInteger).map((port) => waitForPortClosed(port, 8_000)));
 }
 
 async function runSmoke(options) {
