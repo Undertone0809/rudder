@@ -715,7 +715,7 @@ async function readConversationMessageItems(
   return items;
 }
 
-async function validateAgentRunTranscriptAnnotation(
+export async function validateAgentRunTranscriptAnnotation(
   query: ValidationQuery,
   input: {
     orgId: string;

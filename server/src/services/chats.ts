@@ -3781,6 +3781,7 @@ export function chatService(db: Db, storage?: StorageService) {
         sourceConversation: source,
         targetConversationId: child.id,
         orgId: input.orgId,
+        requesterUserId: input.userId,
         ...await loadForkTranscripts(tx, forkMessages),
       });
 

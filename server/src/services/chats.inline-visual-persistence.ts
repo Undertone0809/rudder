@@ -15,6 +15,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
+import { validateAgentRunTranscriptAnnotation, type ValidationQuery } from "./chat-inline-annotation-validation.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 import { NATIVE_CHAT_FORK_ALIAS_KIND, type NativeChatForkSource } from "./chats.native-fork-aliases.js";
 import type { MessageHydrationRow } from "./chats.types.js";
@@ -59,6 +60,7 @@ export async function copyForkChatMessages(input: {
   sourceConversation: typeof chatConversations.$inferSelect;
   targetConversationId: string;
   orgId: string;
+  requesterUserId: string;
   transcriptBySourceMessageId: ReadonlyMap<string, readonly ChatStreamTranscriptEntry[]>;
   nativeSourceByMessageId?: ReadonlyMap<string, NativeChatForkSource>;
 }) {
@@ -146,6 +148,20 @@ export async function copyForkChatMessages(input: {
     return copiedAttachmentId;
   }
 
+  // Run evidence keeps its immutable source tuple through a Fork. Validate it
+  // with the actual requester against the current Reader before copying metadata
+  // or files; chat-message lineage only applies to message-backed annotations.
+  for (const message of input.messages) {
+    for (const annotation of chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)) {
+      if (annotation.surface !== "agent_run_transcript") continue;
+      await validateAgentRunTranscriptAnnotation(input.tx as unknown as ValidationQuery, {
+        orgId: input.orgId,
+        requesterUserId: input.requesterUserId,
+        annotation,
+      });
+    }
+  }
+
   const copiedMessages = input.messages.map((message) => {
     const copiedMessageId = copiedMessageIdBySourceId.get(message.id)!;
     const visualMappings = chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload);
@@ -153,6 +169,14 @@ export async function copyForkChatMessages(input: {
     const copiedAnnotations = chatInlineAnnotationsFromStructuredPayload(
       message.structuredPayload,
     ).map((annotation) => {
+      if (annotation.surface === "agent_run_transcript") {
+        return {
+          ...annotation,
+          attachmentIds: annotation.attachmentIds.map((attachmentId) =>
+            copyAttachment(attachmentId, message.id)
+          ),
+        };
+      }
       if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
         return {
           ...annotation,
