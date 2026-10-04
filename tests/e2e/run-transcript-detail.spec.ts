@@ -538,12 +538,11 @@ test.describe("Run transcript detail", () => {
     }, organization.id);
     await page.goto(`/agents/${agent.id}/runs/${run.id}`);
     const nativeDetailPane = page.getByTestId("agent-runs-detail-pane");
-    // Snapshot-backed invocation details are labelled Instructions. Read this
-    // real Run's own endpoint, not the later seeded legacy Run's inline text.
+    // Metadata exposes this Run's retained injected instruction snapshot.
     const nativeInstructionsPath = `/api/agent-runs/${run.id}/events/${firstInvocation!.id}/invocation-instructions`;
     const nativeInstructionsRead = page.waitForResponse(response => response.request().method() === "GET"
       && new URL(response.url()).pathname === nativeInstructionsPath);
-    await nativeDetailPane.getByRole("tab", { name: "Instructions", exact: true }).click();
+    await nativeDetailPane.getByRole("tab", { name: "Metadata", exact: true }).click();
     const nativeInstructionsResponse = await nativeInstructionsRead;
     expect(nativeInstructionsResponse.status()).toBe(200);
     expect(nativeInstructionsResponse.headers()["cache-control"]).toContain("no-store");

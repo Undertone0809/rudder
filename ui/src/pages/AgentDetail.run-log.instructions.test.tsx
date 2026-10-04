@@ -57,7 +57,7 @@ async function flushQueries() {
 }
 
 describe("Run Detail retained instruction snapshot", () => {
-  it.each(["stored_snapshot", "persisted_invocation_inline"] as const)("fetches and renders full typed Instructions and distinct restored debug input: %s", async source => {
+  it.each(["stored_snapshot", "persisted_invocation_inline"] as const)("fetches and renders the retained instruction snapshot in Metadata with distinct restored debug input: %s", async source => {
     const runId = "run-snapshot-1";
     const eventId = 17;
     const snapshotText = [
@@ -132,18 +132,20 @@ describe("Run Detail retained instruction snapshot", () => {
     });
     await flushQueries();
 
-    const instructionsTab = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"))
-      .find((tab) => tab.textContent?.includes("Instructions"));
-    expect(instructionsTab).toBeDefined();
+    const metadataTab = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"))
+      .find((tab) => tab.textContent?.includes("Metadata"));
+    expect(metadataTab).toBeDefined();
+    expect(metadataTab?.querySelector('[role="tooltip"]')?.textContent)
+      .toBe("Run metadata and the instruction snapshot used for this Run");
     expect(fetchSnapshot).not.toHaveBeenCalled();
     await act(async () => {
-      instructionsTab!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
-      instructionsTab!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+      metadataTab!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      metadataTab!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
       await Promise.resolve();
     });
     await flushQueries();
 
-    expect(instructionsTab!.getAttribute("data-state")).toBe("active");
+    expect(metadataTab!.getAttribute("data-state")).toBe("active");
     expect(fetchSnapshot).toHaveBeenCalledWith(runId, eventId);
     const renderedSnapshot = container.querySelector<HTMLElement>("[data-testid='invocation-prompt']");
     expect(renderedSnapshot).not.toBeNull();
@@ -185,6 +187,7 @@ describe("Run Detail retained instruction snapshot", () => {
     expect(metadataTab).toBeDefined();
     expect(metadataTab?.querySelector('[role="tooltip"]')?.textContent)
       .toBe("Runtime metadata and any available instruction details for this Run");
-    expect(container.textContent).not.toContain("Injected instruction snapshot and runtime metadata for this Run");
+    expect(container.querySelector('[data-testid="invocation-prompt"]')?.textContent)
+      .toContain("Inline legacy details");
   });
 });
