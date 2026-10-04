@@ -554,8 +554,24 @@ test.describe("Run transcript detail", () => {
     expect(nativeInstructions.agentInstructionStack.trim()).toBeTruthy();
     expect(nativeInstructions.sha256).toBe(createHash("sha256").update(nativeInstructions.agentInstructionStack).digest("hex"));
     expect(nativeInstructions.byteSize).toBe(Buffer.byteLength(nativeInstructions.agentInstructionStack));
-    await expect.poll(() => nativeDetailPane.getByTestId("invocation-prompt").textContent())
+    const instructionPrompt = nativeDetailPane.getByTestId("invocation-prompt");
+    await expect.poll(() => instructionPrompt.textContent())
       .toBe(nativeInstructions.agentInstructionStack);
+    await instructionPrompt.evaluate((element) => {
+      let scroller = element.parentElement;
+      while (scroller) {
+        const overflowY = window.getComputedStyle(scroller).overflowY;
+        if ((overflowY === "auto" || overflowY === "scroll") && scroller.scrollHeight > scroller.clientHeight) break;
+        scroller = scroller.parentElement;
+      }
+      if (!scroller) throw new Error("Metadata instruction scroller was not found");
+      const promptTop = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+      scroller.scrollTop = Math.max(0, promptTop - 68);
+    });
+    await expect(nativeDetailPane.getByText("Injected Agent Instruction Stack", { exact: true })).toBeVisible();
+    await expect(instructionPrompt).toBeInViewport();
+    await page.mouse.move(1438, 2);
+    await expect(page.getByRole("tooltip")).toBeHidden();
     await page.screenshot({
       path: isolatedE2EScreenshotPath("rudder-run-detail-metadata-injected-instructions"),
       fullPage: false,
