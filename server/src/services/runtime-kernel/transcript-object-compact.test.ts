@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CODEX_GAP_ENCODING,
   CodexGapDictionary,
+  createCodexGapHandoffSelectorSha256,
   createCodexGapObjectMetadata,
   isCodexGapObjectMetadata,
 } from "./transcript-object-compact.js";
@@ -27,6 +28,29 @@ describe("self-contained gap byte dictionary (not native coverage)", () => {
       expect(createCodexGapObjectMetadata(unknown, binding)).toBeUndefined();
     }
     expect(isCodexGapObjectMetadata({ ...metadata, logicalBytes: Number.MAX_SAFE_INTEGER + 1 })).toBe(false);
+  });
+
+  it("keeps takeover lineage stable without weakening the owner-bound object identity", () => {
+    const binding = { orgId: "org-1", runId: "run-1", spanId: "span-1", ownerToken: "owner-1" };
+    const identity = { ...binding, attemptId: "attempt-1", attemptEpoch: 1,
+      selector: { kind: "codex_turn" as const, runId: "run-1", threadId: "thread-1", turnId: "turn-1" } };
+    const takeover = { ...identity, ownerToken: "owner-2", attemptEpoch: 2 };
+    const firstMetadata = createCodexGapObjectMetadata(identity, binding);
+    const takeoverMetadata = createCodexGapObjectMetadata(takeover, { ...binding, ownerToken: "owner-2" });
+
+    expect(firstMetadata?.compactIdentitySha256).not.toBe(takeoverMetadata?.compactIdentitySha256);
+    expect(createCodexGapHandoffSelectorSha256(identity, binding))
+      .toBe(createCodexGapHandoffSelectorSha256(takeover, { ...binding, ownerToken: "owner-2" }));
+    expect(createCodexGapHandoffSelectorSha256({
+      ...takeover,
+      selector: { ...takeover.selector, turnId: "other-turn" },
+    }, { ...binding, ownerToken: "owner-2" }))
+      .not.toBe(createCodexGapHandoffSelectorSha256(takeover, { ...binding, ownerToken: "owner-2" }));
+    expect(createCodexGapHandoffSelectorSha256({
+      ...takeover,
+      selector: { ...takeover.selector, nonIdentityAnnotation: "ignored" },
+    }, { ...binding, ownerToken: "owner-2" }))
+      .toBe(createCodexGapHandoffSelectorSha256(takeover, { ...binding, ownerToken: "owner-2" }));
   });
 
   it("restores exact bytes/formatting/timestamps/chunk order with no provider or original sidecar", () => {

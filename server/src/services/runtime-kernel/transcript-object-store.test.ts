@@ -208,6 +208,143 @@ describe("first-write compact gap object, legacy compatibility and safe retentio
     expect(await readAll(reopened, staleRoot.objectRef)).toEqual([workload[0]]);
   });
 
+  it("reuses a published child after owner takeover only for the same stable selector and prefix", async () => {
+    const f = await fixture();
+    const root = await f.store.begin({ ...binding, earlyHandoffEligible: true });
+    const prefix = workload.slice(0, 2);
+    await f.store.append(root, prefix);
+    const first = await f.store.handoffCompact!({
+      handle: root,
+      compactIdentity: identity,
+      withPublishFence: async (publish) => { await publish(); return true; },
+    });
+    expect(first).toMatchObject({ activated: true });
+    const objectDir = path.join(f.root, "transcript-objects");
+    const firstRootMetadataBytes = await fs.readFile(path.join(objectDir, `${root.objectRef}.json`));
+    const firstRootMetadata = JSON.parse(firstRootMetadataBytes.toString("utf8"));
+    const childRef = firstRootMetadata.compactHandoff.objectRef as string;
+    const rootMetadataPath = path.join(objectDir, `${root.objectRef}.json`);
+    const childMetadataPath = path.join(objectDir, `${childRef}.json`);
+    const childMetadataBytes = await fs.readFile(childMetadataPath);
+    const childPayloadPath = path.join(objectDir, `${childRef}.ndjson`);
+
+    const recovered = createTranscriptObjectStore(f.root);
+    const recoveredRoot = await recovered.resume({ ...binding, ownerToken: "owner-2", objectRef: root.objectRef });
+    const takeoverIdentity = { ...identity, ownerToken: "owner-2", attemptEpoch: 2 };
+
+    await fs.writeFile(childMetadataPath, JSON.stringify({
+      ...JSON.parse(childMetadataBytes.toString("utf8")),
+      compactHandoffParentRef: "tobj_v1_00000000-0000-4000-8000-000000000000",
+    }));
+    await expect(recovered.handoffCompact!({
+      handle: recoveredRoot,
+      compactIdentity: takeoverIdentity,
+      withPublishFence: async (publish) => { await publish(); return true; },
+    })).rejects.toThrow("identity does not match its root");
+    await fs.writeFile(childMetadataPath, childMetadataBytes);
+
+    await expect(recovered.handoffCompact!({
+      handle: recoveredRoot,
+      compactIdentity: {
+        ...takeoverIdentity,
+        selector: { ...takeoverIdentity.selector, turnId: "different-turn" },
+      },
+      withPublishFence: async (publish) => { await publish(); return true; },
+    })).rejects.toThrow("identity does not match its root");
+
+    await fs.writeFile(rootMetadataPath, JSON.stringify({
+      ...firstRootMetadata,
+      compactHandoff: { ...firstRootMetadata.compactHandoff, prefixSha256: "0".repeat(64) },
+    }));
+    await expect(recovered.handoffCompact!({
+      handle: recoveredRoot,
+      compactIdentity: takeoverIdentity,
+      withPublishFence: async (publish) => { await publish(); return true; },
+    })).rejects.toThrow("prefix digest does not match its root");
+    await fs.writeFile(rootMetadataPath, firstRootMetadataBytes);
+
+    const takeover = await recovered.handoffCompact!({
+      handle: recoveredRoot,
+      compactIdentity: takeoverIdentity,
+      withPublishFence: async (publish) => { await publish(); return true; },
+    });
+    expect(takeover).toEqual({ activated: true, objectRef: childRef });
+    expect(JSON.parse((await fs.readFile(rootMetadataPath)).toString("utf8")))
+      .toMatchObject({
+        compactHandoff: {
+          objectRef: childRef,
+          prefixEntryCount: prefix.length,
+          compactHandoffSelectorSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+      });
+
+    const suffix: TranscriptEntry = {
+      kind: "assistant", ts: "2026-10-04T00:02:00.000Z", sourceEntryId: "takeover-suffix", text: "new owner append",
+    };
+    await recovered.append(recoveredRoot, suffix, {
+      withOwnerFence: async (commit) => { await commit(); return true; },
+    });
+    const durableRootMetadata = await fs.readFile(rootMetadataPath);
+    const durableChildPayload = await fs.readFile(childPayloadPath);
+    const staleSuffix: TranscriptEntry = {
+      kind: "assistant", ts: "2026-10-04T00:02:01.000Z", sourceEntryId: "stale-owner-suffix", text: "must not append",
+    };
+    await expect(f.store.append(root, staleSuffix, {
+      withOwnerFence: async () => false,
+    })).rejects.toThrow("lost its active Run owner fence");
+    await expect(f.store.handoffCompact!({
+      handle: root,
+      compactIdentity: identity,
+      withPublishFence: async () => false,
+    })).resolves.toEqual({ activated: false, objectRef: null });
+
+    expect(await fs.readFile(rootMetadataPath)).toEqual(durableRootMetadata);
+    expect(await fs.readFile(childPayloadPath)).toEqual(durableChildPayload);
+    expect(await readAll(recovered, root.objectRef)).toEqual([...prefix, suffix]);
+  });
+
+  it("reuses an unpublished child after takeover and links its original owner-bound hash", async () => {
+    const f = await fixture();
+    const root = await f.store.begin({ ...binding, earlyHandoffEligible: true });
+    const prefix = workload.slice(0, 2);
+    await f.store.append(root, prefix);
+    await expect(f.store.handoffCompact!({
+      handle: root,
+      compactIdentity: identity,
+      withPublishFence: async () => false,
+    })).resolves.toEqual({ activated: false, objectRef: null });
+
+    const objectDir = path.join(f.root, "transcript-objects");
+    const jsonFiles = await fs.readdir(objectDir);
+    expect(jsonFiles.filter((name) => name.endsWith(".json"))).toHaveLength(2);
+    const candidateRef = jsonFiles.find((name) => name.endsWith(".json") && !name.startsWith(`${root.objectRef}.`))
+      ?.slice(0, -".json".length);
+    expect(candidateRef).toBeTruthy();
+
+    const recovered = createTranscriptObjectStore(f.root);
+    const recoveredRoot = await recovered.resume({ ...binding, ownerToken: "owner-2", objectRef: root.objectRef });
+    const takeoverIdentity = { ...identity, ownerToken: "owner-2", attemptEpoch: 2 };
+    const takeover = await recovered.handoffCompact!({
+      handle: recoveredRoot,
+      compactIdentity: takeoverIdentity,
+      withPublishFence: async (publish) => { await publish(); return true; },
+    });
+    expect(takeover).toEqual({ activated: true, objectRef: candidateRef });
+
+    const rootMetadata = JSON.parse(await fs.readFile(path.join(objectDir, `${root.objectRef}.json`), "utf8"));
+    const childMetadata = JSON.parse(await fs.readFile(path.join(objectDir, `${candidateRef}.json`), "utf8"));
+    expect(rootMetadata.compactHandoff.compactIdentitySha256).toBe(childMetadata.compactIdentitySha256);
+    expect(rootMetadata.compactHandoff.compactHandoffSelectorSha256)
+      .toBe(childMetadata.compactHandoffSelectorSha256);
+    await expect(recovered.handoffCompact!({
+      handle: recoveredRoot,
+      compactIdentity: takeoverIdentity,
+      withPublishFence: async (publish) => { await publish(); return true; },
+    })).resolves.toEqual({ activated: true, objectRef: candidateRef });
+    expect((await fs.readdir(objectDir)).filter((name) => name.endsWith(".json"))).toHaveLength(2);
+    expect(await readAll(recovered, root.objectRef)).toEqual(prefix);
+  });
+
   it("stages, restores after reopen, and purges sealed compact retention without losing records", async () => {
     const f = await fixture();
     const handle = await f.store.begin({ ...binding, compactIdentity: identity });

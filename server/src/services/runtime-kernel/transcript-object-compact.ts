@@ -53,6 +53,29 @@ export function createCodexGapObjectMetadata(identity: unknown, binding: Compact
   };
 }
 
+/** Stable native lineage for recovering a published handoff after owner takeover.
+ * Unlike compactIdentitySha256, this deliberately excludes the transient owner
+ * token and attempt epoch while retaining the organization, Run, Span, Attempt,
+ * and exact native turn selector.
+ */
+export function createCodexGapHandoffSelectorSha256(identity: unknown, binding: CompactObjectBinding): string | undefined {
+  if (!createCodexGapObjectMetadata(identity, binding)) return undefined;
+  const candidate = identity as CoverageIdentity;
+  return digest(Buffer.from(JSON.stringify({
+    kind: "codex-gap-handoff-selector-v1",
+    orgId: candidate.orgId,
+    runId: candidate.runId,
+    spanId: candidate.spanId,
+    attemptId: candidate.attemptId,
+    selector: {
+      kind: "codex_turn",
+      runId: candidate.selector.runId,
+      threadId: candidate.selector.threadId,
+      turnId: candidate.selector.turnId,
+    },
+  }), "utf8"));
+}
+
 export function isCodexGapObjectMetadata(value: unknown): value is CodexGapObjectMetadata {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const metadata = value as Record<string, unknown>;
