@@ -114,6 +114,12 @@ export const agentIconSchema = z.preprocess(
   ]).nullable(),
 );
 
+const persistedAgentRuntimeTypeSchema = z.enum(AGENT_RUNTIME_TYPES);
+const creatableAgentRuntimeTypeSchema = persistedAgentRuntimeTypeSchema.refine(
+  (runtimeType) => runtimeType !== "hermes_local",
+  "The legacy Hermes runtime cannot be created; use the Hermes runtime instead.",
+);
+
 export const createAgentSchema = z.object({
   name: optionalAgentNameSchema,
   role: z.enum(AGENT_ROLES).optional().default("general"),
@@ -121,7 +127,7 @@ export const createAgentSchema = z.object({
   icon: agentIconSchema.optional(),
   capabilities: z.string().optional().nullable(),
   desiredSkills: z.array(z.string().min(1)).optional(),
-  agentRuntimeType: z.enum(AGENT_RUNTIME_TYPES).optional().default("process"),
+  agentRuntimeType: creatableAgentRuntimeTypeSchema.optional().default("process"),
   agentRuntimeConfig: agentRuntimeConfigSchema.optional().default({}),
   runtimeConfig: z.record(z.unknown()).optional().default({}),
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
@@ -145,6 +151,9 @@ export const updateAgentSchema = createAgentSchema
   .omit({ permissions: true, seedOrganizationIntelligenceDefaults: true })
   .partial()
   .extend({
+    // Keep old persisted Hermes agents editable while preventing any new
+    // create/hire request from selecting the retired runtime.
+    agentRuntimeType: persistedAgentRuntimeTypeSchema.optional(),
     permissions: z.never().optional(),
     replaceAgentRuntimeConfig: z.boolean().optional(),
     status: z.enum(AGENT_STATUSES).optional(),

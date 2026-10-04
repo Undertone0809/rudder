@@ -14,6 +14,7 @@ const {
   openWorkspaceFileLocation,
   previewLocalFile,
   readDesktopShell,
+  readAuthorizedLocalFilePreview,
   updateLocalFile,
   workspaceFilePreview,
 } = vi.hoisted(() => ({
@@ -23,11 +24,13 @@ const {
   openWorkspaceFileLocation: vi.fn(),
   previewLocalFile: vi.fn(),
   readDesktopShell: vi.fn(),
+  readAuthorizedLocalFilePreview: vi.fn(),
   updateLocalFile: vi.fn(),
   workspaceFilePreview: vi.fn(),
 }));
 
 vi.mock("../../lib/desktop-shell", () => ({ readDesktopShell }));
+vi.mock("../../api/localFiles", () => ({ readAuthorizedLocalFilePreview }));
 vi.mock("../WorkspaceFilePreview", () => ({
   WorkspaceFilePreview: ({ file }: { file: { filePath: string; content: string | null } }) => {
     workspaceFilePreview(file);
@@ -54,6 +57,50 @@ vi.mock("../WorkspaceCodeEditor", () => ({
 }));
 
 const roots: Root[] = [];
+const originalDirectoryPicker = Object.getOwnPropertyDescriptor(window, "showDirectoryPicker");
+
+function browserDirectory(rootName: string, file: File | null, relativePath = file?.name ?? "evidence.md") {
+  const pathSegments = relativePath.split("/");
+  const fileHandle = {
+    getFile: vi.fn(async () => file!),
+  };
+  const makeDirectoryHandle = (name: string, depth: number) => ({
+    name,
+    getDirectoryHandle: vi.fn(async (childName: string) => {
+      if (pathSegments[depth] !== childName || depth >= pathSegments.length - 1) {
+        throw new DOMException("Directory not found", "NotFoundError");
+      }
+      return makeDirectoryHandle(childName, depth + 1);
+    }),
+    getFileHandle: vi.fn(async (fileName: string) => {
+      if (depth !== pathSegments.length - 1 || pathSegments[depth] !== fileName || !file || file.name !== fileName) {
+        throw new DOMException("File not found", "NotFoundError");
+      }
+      return fileHandle;
+    }),
+  });
+  const directoryHandle = makeDirectoryHandle(rootName, 0);
+  return { directoryHandle, fileHandle };
+}
+
+function installBrowserDirectoryPicker(directoryHandle: ReturnType<typeof browserDirectory>["directoryHandle"]) {
+  const picker = vi.fn().mockResolvedValue(directoryHandle);
+  Object.defineProperty(window, "showDirectoryPicker", { configurable: true, value: picker });
+  return picker;
+}
+
+async function chooseBrowserDirectory(container: HTMLElement, file: File) {
+  const { directoryHandle } = browserDirectory("tmp", file);
+  installBrowserDirectoryPicker(directoryHandle);
+  const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    .find((candidate) => candidate.textContent?.includes("Choose workspace folder"));
+  expect(button).toBeDefined();
+  await act(async () => {
+    button?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  return directoryHandle;
+}
 
 async function renderPreview(targetPath = "/tmp/evidence.md", label = "evidence.md") {
   const container = document.createElement("div");
@@ -75,6 +122,8 @@ afterEach(async () => {
     for (const root of roots.splice(0)) root.unmount();
   });
   document.body.replaceChildren();
+  if (originalDirectoryPicker) Object.defineProperty(window, "showDirectoryPicker", originalDirectoryPicker);
+  else Reflect.deleteProperty(window, "showDirectoryPicker");
   vi.clearAllMocks();
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -86,23 +135,20 @@ describe("TranscriptLocalFilePreview", () => {
     const container = await renderPreview();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const fileInput = container.querySelector<HTMLInputElement>("input[type=file]");
-    expect(container.querySelector("button")?.textContent).toContain("Choose local file");
-    expect(container.textContent).toContain("original workspace path cannot be verified");
+    expect(container.querySelector("button")?.textContent).toContain("Choose workspace folder");
+    expect(container.textContent).toContain("browser cannot verify the selected folder's full system path");
     expect(fileInput).not.toBeNull();
-    Object.defineProperty(fileInput, "files", {
-      configurable: true,
-      value: [new File(["# Browser evidence"], "evidence.md", { type: "text/markdown" })],
-    });
-    await act(async () => {
-      fileInput?.dispatchEvent(new Event("change", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    const directoryHandle = await chooseBrowserDirectory(
+      container,
+      new File(["# Browser evidence"], "evidence.md", { type: "text/markdown" }),
+    );
 
     expect(previewLocalFile).not.toHaveBeenCalled();
     expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent)
       .toContain("Browser evidence");
     expect(container.querySelector("[data-testid='transcript-browser-file-source']")?.textContent)
-      .toContain("original workspace path is not verified");
+      .toContain("browser cannot verify the selected folder's full system path");
+    expect(directoryHandle.getFileHandle).toHaveBeenCalledWith("evidence.md", { create: false });
     expect(container.querySelector(".truncate.text-sm.font-medium")?.textContent)
       .toBe("evidence.md");
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -115,15 +161,10 @@ describe("TranscriptLocalFilePreview", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const fileInput = container.querySelector<HTMLInputElement>("input[type=file]");
     expect(fileInput).not.toBeNull();
-    Object.defineProperty(fileInput, "files", {
-      configurable: true,
-      value: [new File([selectedHtml], "evidence.html", { type: "text/html" })],
-    });
-
-    await act(async () => {
-      fileInput?.dispatchEvent(new Event("change", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await chooseBrowserDirectory(
+      container,
+      new File([selectedHtml], "evidence.html", { type: "text/html" }),
+    );
 
     const iframe = container.querySelector<HTMLIFrameElement>(
       "[data-testid='transcript-browser-local-html-preview']",
@@ -144,21 +185,134 @@ describe("TranscriptLocalFilePreview", () => {
   it("surfaces a filename mismatch and keeps the browser picker available", async () => {
     readDesktopShell.mockReturnValue(null);
     const container = await renderPreview();
-    const fileInput = container.querySelector<HTMLInputElement>("input[type=file]");
-    expect(fileInput).not.toBeNull();
-    Object.defineProperty(fileInput, "files", {
-      configurable: true,
-      value: [new File(["wrong file"], "other.md", { type: "text/markdown" })],
-    });
-    await act(async () => {
-      fileInput?.dispatchEvent(new Event("change", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await chooseBrowserDirectory(
+      container,
+      new File(["wrong file"], "other.md", { type: "text/markdown" }),
+    );
 
     expect(container.querySelector("[role='alert']")?.textContent)
       .toContain("evidence.md");
     expect(container.querySelector("[data-testid='local-file-rendered-preview']")).toBeNull();
-    expect(container.querySelector("button")?.textContent).toContain("Choose local file");
+    expect(container.querySelector("button")?.textContent).toContain("Choose workspace folder");
+  });
+
+  it("reads only the requested workspace-relative file after a read-only folder grant", async () => {
+    readDesktopShell.mockReturnValue(null);
+    const selectedFile = new File(["# Granted evidence"], "evidence.md", { type: "text/markdown" });
+    const { directoryHandle, fileHandle } = browserDirectory("rudder-oss", selectedFile, "src/evidence.md");
+    const picker = installBrowserDirectoryPicker(directoryHandle);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const container = await renderPreview("/Users/zeeland/projects/rudder-oss/src/evidence.md");
+
+    const grantButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Choose workspace folder"));
+    expect(grantButton).toBeDefined();
+    await act(async () => {
+      grantButton?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(picker).toHaveBeenCalledWith({ mode: "read" });
+    expect(directoryHandle.getDirectoryHandle).toHaveBeenCalledWith("src", { create: false });
+    const srcHandle = await directoryHandle.getDirectoryHandle.mock.results[0]!.value;
+    expect(srcHandle.getFileHandle).toHaveBeenCalledWith("evidence.md", { create: false });
+    expect(fileHandle.getFile).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent)
+      .toContain("Granted evidence");
+    expect(container.textContent).toContain("relative path: src/evidence.md");
+    expect(readAuthorizedLocalFilePreview).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["cancelled", new DOMException("Picker dismissed", "AbortError"), null],
+    ["denied", new DOMException("Permission denied", "NotAllowedError"), "denied"],
+  ])("does not read a file when the folder grant is %s", async (_label, pickerError, message) => {
+    readDesktopShell.mockReturnValue(null);
+    Object.defineProperty(window, "showDirectoryPicker", {
+      configurable: true,
+      value: vi.fn().mockRejectedValue(pickerError),
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const container = await renderPreview();
+    const grantButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Choose workspace folder"));
+
+    await act(async () => {
+      grantButton?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    if (message) {
+      expect(container.textContent?.toLowerCase()).toContain(message);
+    } else {
+      expect(container.querySelector("[role='alert']")).toBeNull();
+    }
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")).toBeNull();
+    expect(readAuthorizedLocalFilePreview).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves a visible preview when replacement folder selection is cancelled", async () => {
+    readDesktopShell.mockReturnValue(null);
+    const originalFile = new File(["# Original evidence"], "evidence.md", { type: "text/markdown" });
+    const { directoryHandle, fileHandle } = browserDirectory("tmp", originalFile);
+    const initialPicker = installBrowserDirectoryPicker(directoryHandle);
+    const container = await renderPreview();
+    const chooseFolder = () => Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("Choose workspace folder"));
+
+    await act(async () => {
+      chooseFolder()?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(initialPicker).toHaveBeenCalledWith({ mode: "read" });
+    expect(fileHandle.getFile).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent)
+      .toContain("Original evidence");
+
+    const cancelReplacement = vi.fn().mockRejectedValue(
+      new DOMException("Picker dismissed", "AbortError"),
+    );
+    Object.defineProperty(window, "showDirectoryPicker", {
+      configurable: true,
+      value: cancelReplacement,
+    });
+    await act(async () => {
+      chooseFolder()?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(cancelReplacement).toHaveBeenCalledWith({ mode: "read" });
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent)
+      .toContain("Original evidence");
+    expect(container.querySelector("[role='alert']")).toBeNull();
+    expect(fileHandle.getFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a missing requested file inside the granted folder without a server read", async () => {
+    readDesktopShell.mockReturnValue(null);
+    const { directoryHandle } = browserDirectory("tmp", null);
+    Object.defineProperty(window, "showDirectoryPicker", {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(directoryHandle),
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const container = await renderPreview();
+    const grantButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Choose workspace folder"));
+
+    await act(async () => {
+      grantButton?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(
+      "selected folder does not contain the recorded file",
+    );
+    expect(readAuthorizedLocalFilePreview).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("loads a safe Desktop preview and keeps the canonical path as evidence", async () => {
@@ -383,8 +537,9 @@ describe("TranscriptLocalFilePreview", () => {
     readDesktopShell.mockReturnValue(null);
     const container = await renderPreview();
 
-    expect(container.querySelector("button")?.textContent).toContain("Choose local file");
+    expect(container.querySelector("button")?.textContent).toContain("Choose workspace folder");
     expect(previewLocalFile).not.toHaveBeenCalled();
+    expect(readAuthorizedLocalFilePreview).not.toHaveBeenCalled();
   });
 
   it("explains that a missing historical target may have lost its command working directory", async () => {

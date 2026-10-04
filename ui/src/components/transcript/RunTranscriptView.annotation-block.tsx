@@ -5,7 +5,7 @@ import {
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import type { ChatInlineAnnotationInput } from "@rudderhq/shared";
 import { MessageSquare } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   shouldAutoFocusChatAnnotationToolbar,
 } from "../../lib/chat-response-annotation-selection";
@@ -89,6 +89,10 @@ export function TranscriptRunAnnotationBlock({
   const itemInteractionId = interactionId ?? blockId;
   const annotationText = transcriptBlockAnnotationText(block);
   const sourceIdentity = JSON.stringify([context?.sourceRunId, context?.sourceAgentId, blockId, block.sourceEntryIds, annotationText]);
+  const sourceIdentityRef = useRef(sourceIdentity);
+  useLayoutEffect(() => {
+    sourceIdentityRef.current = sourceIdentity;
+  }, [sourceIdentity]);
   const isTextBlock = (block.type === "message" && block.role === "assistant") || block.type === "thinking";
   const canAnnotate = (presentation === "detail" || (presentation === "chat" && isTextBlock))
     && !streaming
@@ -133,7 +137,7 @@ export function TranscriptRunAnnotationBlock({
     anchorRect?: DOMRect,
     autoFocus = true,
   ) => {
-    if (!context || !canAnnotate) return;
+    if (!context || !canAnnotate || sourceIdentityRef.current !== sourceIdentity) return;
     const normalizedText = text.trim();
     if (!normalizedText) return;
     const rect = anchorRect ?? anchor?.getBoundingClientRect();
@@ -169,6 +173,10 @@ export function TranscriptRunAnnotationBlock({
       return undefined;
     }
     const updateSelection = (event: Event) => {
+      if (sourceIdentityRef.current !== sourceIdentity) {
+        setPendingSelection(null);
+        return;
+      }
       const eventTarget = event.target instanceof Element ? event.target : null;
       if (eventTarget?.closest('[role="toolbar"][aria-label="Response annotation actions"], [data-testid="chat-response-annotation-editor"]')) return;
       const root = blockRootRef.current;
@@ -225,7 +233,7 @@ export function TranscriptRunAnnotationBlock({
   if (!context) return children;
 
   const commitPendingSelection = () => {
-    if (!pendingSelection || !canSelectText || pendingSelection.sourceIdentity !== sourceIdentity) {
+    if (!pendingSelection || !canSelectText || pendingSelection.sourceIdentity !== sourceIdentityRef.current) {
       setPendingSelection(null);
       return;
     }
@@ -245,14 +253,18 @@ export function TranscriptRunAnnotationBlock({
     pendingFiles,
     attachmentIds,
   }: ResponseAnnotationEditorChanges) => {
-    if (!pendingAnnotation || !canAnnotate || pendingAnnotation.sourceIdentity !== sourceIdentity) {
+    if (!pendingAnnotation || !canAnnotate || pendingAnnotation.sourceIdentity !== sourceIdentityRef.current) {
       setPendingAnnotation(null);
       return;
     }
     const annotation = pendingAnnotation.annotation;
+    if (annotation.surface !== "agent_run_transcript") {
+      setPendingAnnotation(null);
+      return;
+    }
     context.onAnnotate({
-      sourceRunId: context.sourceRunId,
-      sourceAgentId: context.sourceAgentId,
+      sourceRunId: annotation.sourceRunId,
+      sourceAgentId: annotation.sourceAgentId,
       blockId,
       sourceMemberIds: block.sourceEntryIds,
       blockType: block.type,

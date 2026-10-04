@@ -4,6 +4,7 @@ import {
   advancePersistedRunEventCursor,
   canPersistRunTranscriptAnnotations,
   getRunTranscriptEmptyMessage,
+  isTerminalRunTranscriptPage,
   mergeRunEvents,
 } from "./AgentDetail.run-log";
 
@@ -68,6 +69,28 @@ describe("Run transcript empty-state lifecycle", () => {
       .toBe("Waiting for transcript...");
     expect(getRunTranscriptEmptyMessage({ ...missing, availability: "available" }, false))
       .toBe("No transcript for this run.");
+  });
+});
+
+describe("terminal Run transcript presentation", () => {
+  it("marks a complete successful Hermes transcript as terminal so its final answer is labeled", () => {
+    expect(isTerminalRunTranscriptPage({
+      status: "succeeded",
+      hasData: true,
+      availability: "available",
+      completeness: "complete",
+      canNext: false,
+    })).toBe(true);
+  });
+
+  it.each([
+    { status: "failed", hasData: true, availability: "available", completeness: "complete", canNext: false },
+    { status: "succeeded", hasData: false, availability: "available", completeness: "complete", canNext: false },
+    { status: "succeeded", hasData: true, availability: "offline", completeness: "complete", canNext: false },
+    { status: "succeeded", hasData: true, availability: "available", completeness: "partial", canNext: false },
+    { status: "succeeded", hasData: true, availability: "available", completeness: "complete", canNext: true },
+  ])("does not mark a nonterminal transcript page as final: $status/$availability/$completeness", (input) => {
+    expect(isTerminalRunTranscriptPage(input)).toBe(false);
   });
 });
 

@@ -187,6 +187,12 @@ describe("Run Detail retained instruction snapshot", () => {
     expect(metadataTab).toBeDefined();
     expect(metadataTab?.querySelector('[role="tooltip"]')?.textContent)
       .toBe("Runtime metadata and any available instruction details for this Run");
+    await act(async () => {
+      metadataTab!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      metadataTab!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+      await Promise.resolve();
+    });
+    await flushQueries();
     expect(container.querySelector('[data-testid="invocation-prompt"]')?.textContent)
       .toContain("Inline legacy details");
   });

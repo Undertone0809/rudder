@@ -142,6 +142,7 @@ describe("transcript reader", () => {
       maxLegacyTotalBytes: 16 * 1024 * 1024,
     });
     const collected: string[] = [];
+    const collectedSourceEntryIds: string[] = [];
     let cursor: string | null = null;
     let pageCount = 0;
     while (true) {
@@ -154,12 +155,15 @@ describe("transcript reader", () => {
       });
       pageCount += 1;
       collected.push(...page.items.map((entry) => entry.text ?? ""));
+      collectedSourceEntryIds.push(...page.items.map((entry) => entry.sourceEntryId ?? ""));
       cursor = page.nextCursor;
       if (!cursor) break;
       expect(pageCount).toBeLessThanOrEqual(101);
     }
 
     expect(collected).toEqual(Array.from({ length: 10_000 }, (_, index) => `entry-${index} 世界`));
+    expect(collectedSourceEntryIds.every(Boolean)).toBe(true);
+    expect(new Set(collectedSourceEntryIds).size).toBe(10_000);
     expect(logStore.read.mock.calls.every(([, readOptions]) => (readOptions?.limitBytes ?? Infinity) <= 16 * 1024)).toBe(true);
     expect(pageCount).toBeLessThanOrEqual(101);
     expect(bytes.equals(logStore.original)).toBe(true);
@@ -2053,6 +2057,60 @@ describe("transcript reader", () => {
     expect(page.items).toHaveLength(2);
     expect(page.nextCursor).toEqual(expect.any(String));
     expect(nativeReader).toHaveBeenCalledOnce();
+  });
+
+  it("keeps generated native source identities unique across provider cursors without rewriting upstream IDs", async () => {
+    const db = mockDatabase({
+      run: databaseRun(),
+      spans: [databaseSpan("span-1")],
+      bindings: [databaseBinding("span-1")],
+      segments: [databaseSegment("span-1")],
+    });
+    const nativeReader = vi.fn()
+      .mockResolvedValueOnce({
+        items: [{ kind: "assistant", ts: "2026-09-22T00:00:01.000Z", payload: { text: "first page" } }],
+        nextCursor: "provider-page-2",
+        revision: "native-fallback-id-r1",
+        availability: "available" as const,
+        completeness: "partial" as const,
+      })
+      .mockResolvedValueOnce({
+        items: [{ id: "immutable-upstream-id", kind: "assistant", ts: "2026-09-22T00:00:02.000Z", payload: { text: "second page" } }],
+        nextCursor: "provider-page-3",
+        revision: "native-fallback-id-r1",
+        availability: "available" as const,
+        completeness: "partial" as const,
+      })
+      .mockResolvedValueOnce({
+        items: [{ kind: "assistant", ts: "2026-09-22T00:00:03.000Z", payload: { text: "third page" } }],
+        nextCursor: null,
+        revision: "native-fallback-id-r1",
+        availability: "available" as const,
+        completeness: "complete" as const,
+      });
+    const reader = createTranscriptReader(db as never, { nativeReader: { read: nativeReader } });
+    const input = {
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board" as const, orgId: "org-1", authorized: true },
+      limit: 1,
+    };
+
+    const first = await reader.readRun(input);
+    const second = await reader.readRun({ ...input, cursor: first.nextCursor });
+    const third = await reader.readRun({ ...input, cursor: second.nextCursor });
+
+    expect(first.items[0]).toMatchObject({ id: "span-1:0", sourceEntryId: "span-1:0", sequence: 0 });
+    expect(second.items[0]).toMatchObject({ id: "immutable-upstream-id", sourceEntryId: "immutable-upstream-id", sequence: 1 });
+    expect(third.items[0]).toMatchObject({ id: "span-1:2", sourceEntryId: "span-1:2", sequence: 2 });
+    expect([first, second, third].flatMap((page) => page.items.map((entry) => entry.ts))).toEqual([
+      "2026-09-22T00:00:01.000Z",
+      "2026-09-22T00:00:02.000Z",
+      "2026-09-22T00:00:03.000Z",
+    ]);
+    expect(new Set([first, second, third].flatMap((page) => page.items.map((entry) => entry.sourceEntryId))).size).toBe(3);
+    expect(nativeReader).toHaveBeenNthCalledWith(2, expect.objectContaining({ cursor: "provider-page-2" }));
+    expect(nativeReader).toHaveBeenNthCalledWith(3, expect.objectContaining({ cursor: "provider-page-3" }));
   });
 
   it("bounds conversation run reads and resumes with the nested native cursor", async () => {

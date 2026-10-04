@@ -1378,6 +1378,79 @@ describe("assistant chat message rendering", () => {
     expect(onOpenSideChat).toHaveBeenNthCalledWith(2, sourceMessage);
   });
 
+  it("keeps Side Chat in message actions and preserves speaker alignment after sending", () => {
+    const agentReply = message({
+      id: "agent-reply",
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      replyingAgentId: "agent-1",
+      body: "The agent response.",
+    });
+    const sentUserMessage = message({
+      id: "sent-user-message",
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "The sent user message.",
+    });
+    const container = render(
+      <>
+        {chatMessageItemElement(agentReply)}
+        <ThemeProvider>
+          <OptimisticUserDraftItem
+            body="The sent user message."
+            createdAt={new Date("2026-06-15T10:00:00.000Z")}
+            onCopyMessageText={vi.fn()}
+            onEditDraftOnly={vi.fn()}
+            skillReferences={[]}
+          />
+        </ThemeProvider>
+        {chatMessageItemElement(sentUserMessage)}
+      </>,
+    );
+
+    const agentMessageElement = container.querySelector<HTMLElement>(
+      '[data-testid="chat-assistant-message"]',
+    );
+    expect(agentMessageElement?.classList.contains("justify-start")).toBe(true);
+    act(() => agentMessageElement?.dispatchEvent(new MouseEvent("contextmenu", {
+      button: 2,
+      bubbles: true,
+      cancelable: true,
+    })));
+    expect(document.body.querySelector('[data-testid="chat-open-side-chat-context-action"]')?.textContent)
+      .toContain("Open Side Chat");
+    expect(agentMessageElement?.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+    const actionTrigger = agentMessageElement?.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-message-actions-trigger"]',
+    );
+    act(() => actionTrigger?.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      ctrlKey: false,
+    })));
+    expect(document.body.querySelector('[data-testid="chat-open-side-chat-more-action"]')?.textContent)
+      .toContain("Open Side Chat");
+    expect(
+      container.querySelector('[data-testid="chat-assistant-message-toolbar"]')?.classList.contains("justify-end"),
+    ).toBe(false);
+
+    const userBubbles = Array.from(container.querySelectorAll<HTMLElement>(
+      '[data-testid="chat-user-message-bubble"]',
+    ));
+    const userToolbars = Array.from(container.querySelectorAll<HTMLElement>(
+      '[data-testid="chat-user-message-toolbar"]',
+    ));
+    expect(userBubbles).toHaveLength(2);
+    expect(userToolbars).toHaveLength(2);
+    expect(userBubbles.every((bubble) => bubble.parentElement?.classList.contains("items-end"))).toBe(true);
+    expect(userBubbles.every((bubble) => (
+      bubble.parentElement?.parentElement?.classList.contains("justify-end")
+    ))).toBe(true);
+    expect(userToolbars.every((toolbar) => toolbar.classList.contains("justify-end"))).toBe(true);
+  });
+
   it("does not expose Side Chat for an incomplete assistant response", () => {
     const container = renderChatMessageItem(message({
       role: "assistant",

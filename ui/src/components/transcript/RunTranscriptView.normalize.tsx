@@ -1,7 +1,7 @@
 import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { isNativeSteerTranscriptEntry } from "../../lib/chat-stream-state";
-import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
+import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isRudderInjectedAgentInstructionText, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
 
@@ -630,7 +630,7 @@ export function segmentTranscriptEntriesByTurn(entries: TranscriptEntry[]): {
 export function normalizeTranscript(
   entries: TranscriptEntry[],
   streaming: boolean,
-  options?: { showDeveloperDiagnostics?: boolean; hideUserMessages?: boolean },
+  options?: { showDeveloperDiagnostics?: boolean; showAgentInstructions?: boolean; hideUserMessages?: boolean },
 ): TranscriptBlock[] {
   const blocks: TranscriptBlock[] = [];
   const pendingToolBlocks = new Map<string, Extract<TranscriptBlock, { type: "tool" }>>();
@@ -687,7 +687,8 @@ export function normalizeTranscript(
       const steerMessage = isNativeSteerMessage ? entry.steerMessage : undefined;
       if (entry.kind === "user" && !isNativeSteerMessage) {
         if (isInternalAgentInstructionText(entry.text)) {
-          if (options?.showDeveloperDiagnostics) {
+          if (options?.showDeveloperDiagnostics
+            || (options?.showAgentInstructions && isRudderInjectedAgentInstructionText(entry.text))) {
             blocks.push({
               type: "event",
               ts: entry.ts,
@@ -1130,7 +1131,7 @@ export function summarizeChatTurn(blocks: TranscriptBlock[]): string | null {
 export function normalizeChatTranscriptTurns(
   entries: TranscriptEntry[],
   streaming: boolean,
-  options?: { showDeveloperDiagnostics?: boolean; hideUserMessages?: boolean },
+  options?: { showDeveloperDiagnostics?: boolean; showAgentInstructions?: boolean; hideUserMessages?: boolean },
 ): {
   preludeBlocks: TranscriptBlock[];
   turns: ChatTranscriptTurn[];

@@ -234,8 +234,16 @@ export function formatInvocationValueForDisplay(value: unknown, censorUsernameIn
 
 export function readInvocationAgentInstructionStack(payload: Record<string, unknown> | null | undefined): unknown {
   if (!payload) return undefined;
-  if (payload.agentInstructionStack !== undefined) return payload.agentInstructionStack;
-  return payload.prompt;
+  if (payload.agentInstructionStack !== undefined) {
+    const value = payload.agentInstructionStack;
+    return value === null || (typeof value === "string" && value.trim().length === 0)
+      ? undefined
+      : value;
+  }
+  const legacyPrompt = payload.prompt;
+  return legacyPrompt === null || (typeof legacyPrompt === "string" && legacyPrompt.trim().length === 0)
+    ? undefined
+    : legacyPrompt;
 }
 
 export function readInvocationInstructionSnapshotStatus(payload: Record<string, unknown> | null | undefined) {

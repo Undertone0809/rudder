@@ -83,6 +83,26 @@ export function getRunTranscriptEmptyMessage(
       : "No transcript for this run.";
 }
 
+export function isTerminalRunTranscriptPage({
+  status,
+  hasData,
+  availability,
+  completeness,
+  canNext,
+}: {
+  status: string;
+  hasData: boolean | undefined;
+  availability: string | undefined;
+  completeness: string | undefined;
+  canNext: boolean | undefined;
+}) {
+  return status === "succeeded"
+    && hasData === true
+    && availability === "available"
+    && completeness === "complete"
+    && canNext === false;
+}
+
 export function advancePersistedRunEventCursor(
   currentCursor: number,
   persistedEvents: HeartbeatRunEvent[],
@@ -443,11 +463,13 @@ export function LogViewer({
     [isHermesTranscript, nativeTranscript, run.agentId, run.orgId, transcript],
   );
   const transcriptNavigation = transcriptNavigationByRun.get(run.id);
-  const terminalTranscriptPage = run.status === "succeeded"
-    && transcriptState?.hasData === true
-    && transcriptState.availability === "available"
-    && transcriptState.completeness === "complete"
-    && transcriptNavigation?.canNext === false;
+  const terminalTranscriptPage = isTerminalRunTranscriptPage({
+    status: run.status,
+    hasData: transcriptState?.hasData,
+    availability: transcriptState?.availability ?? undefined,
+    completeness: transcriptState?.completeness ?? undefined,
+    canNext: transcriptNavigation?.canNext,
+  });
   const canPersistTranscriptAnnotations = canPersistRunTranscriptAnnotations(transcriptState);
   const transcriptEmptyMessage = getRunTranscriptEmptyMessage(transcriptState, isLive);
   const hasInvocationTab = Boolean(adapterInvokePayload);
@@ -642,7 +664,7 @@ export function LogViewer({
               collapseStdout
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
-              terminalRun={terminalTranscriptPage && !isHermesTranscript}
+              terminalRun={terminalTranscriptPage}
               agentDirectory={agentDirectory}
               runAnnotationContext={onAnnotate && canPersistTranscriptAnnotations ? {
                 sourceRunId: run.id,
@@ -836,7 +858,7 @@ export function LogViewer({
               collapseStdout
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
-              terminalRun={terminalTranscriptPage && !isHermesTranscript}
+              terminalRun={terminalTranscriptPage}
               agentDirectory={agentDirectory}
               runAnnotationContext={onAnnotate && canPersistTranscriptAnnotations ? {
                 sourceRunId: run.id,

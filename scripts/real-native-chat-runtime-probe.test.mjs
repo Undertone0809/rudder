@@ -7,12 +7,14 @@ import {
   assertLocalHermesConfiguration,
   assertNativeReaderBoundary,
   assertNativeRunContinuity,
-  publicReaderExecutionLineageGap,
   assertRuntimeLeaseHealth,
   assertRuntimeLeaseProof,
+  markTerminalAssistantPersisted,
+  publicReaderExecutionLineageGap,
   runProbe,
   sendChatStreamOnce,
   sendResourcePostOnce,
+  verifyPersistedTurn,
 } from "./real-native-chat-runtime-probe.mjs";
 
 const sourceSha = "a".repeat(40);
@@ -56,6 +58,88 @@ function exactReaderEvidence(runId, spanId, attemptId, bindingId) {
     rowExecutionBindingsSha256: "c".repeat(64),
   };
 }
+
+test("terminal assistant criteria pass only after the persisted message and succeeded Run are read back", () => {
+  const receipt = { criteria: { firstTerminalAssistant: {
+    status: "pending",
+    assistantMessageId: "assistant-1",
+    runId: "run-1",
+  } } };
+  markTerminalAssistantPersisted(receipt, "first", {
+    id: "assistant-1",
+    role: "assistant",
+    status: "completed",
+    runId: "run-1",
+    body: "Persisted response",
+  }, { id: "run-1", status: "succeeded" });
+  assert.deepEqual(receipt.criteria.firstTerminalAssistant, {
+    status: "pass",
+    assistantMessageId: "assistant-1",
+    assistantStatus: "completed",
+    runId: "run-1",
+    runStatus: "succeeded",
+    persisted: true,
+  });
+
+  for (const [assistant, run] of [
+    [{ id: "assistant-1", status: "completed", runId: "run-1", body: "Response" }, { id: "run-1", status: "running" }],
+    [{ id: "assistant-1", status: "completed", runId: "run-other", body: "Response" }, { id: "run-1", status: "succeeded" }],
+    [{ id: "assistant-1", status: "completed", runId: "run-1", body: " " }, { id: "run-1", status: "succeeded" }],
+  ]) {
+    const pendingReceipt = structuredClone({ criteria: { firstTerminalAssistant: {
+      status: "pending", assistantMessageId: "assistant-1", runId: "run-1",
+    } } });
+    assert.throws(() => markTerminalAssistantPersisted(pendingReceipt, "first", assistant, run), (error) => (
+      error instanceof ProbeError && error.code === "terminal_assistant_persistence_mismatch"
+    ));
+    assert.equal(pendingReceipt.criteria.firstTerminalAssistant.status, "pending");
+  }
+});
+
+test("persisted readback failures leave terminal-assistant criteria pending", async () => {
+  const user = { id: "user-1", role: "user", status: "completed", body: "Question" };
+  const assistant = {
+    id: "assistant-1",
+    role: "assistant",
+    status: "completed",
+    runId: "run-1",
+    body: "Persisted response",
+  };
+  const pendingReceipt = () => ({ criteria: { firstTerminalAssistant: {
+    status: "pending",
+    assistantMessageId: assistant.id,
+    runId: "run-1",
+  } } });
+  const baseInput = {
+    apiBase: "http://127.0.0.1:4101",
+    conversationId: "conversation-1",
+    agentId: "agent-1",
+    runId: "run-1",
+    userMessageId: user.id,
+    assistantMessage: assistant,
+    userBody: user.body,
+    timeoutMs: 100,
+    evidenceDir: "/tmp/native-chat-probe-readback-test",
+    turnName: "first",
+  };
+
+  for (const scenario of [
+    { messages: [user], run: { id: "run-1", agentId: "agent-1", chatConversationId: "conversation-1", status: "succeeded" }, code: "persisted_chat_messages_missing" },
+    { messages: [user, { ...assistant, runId: "run-other" }], run: { id: "run-1", agentId: "agent-1", chatConversationId: "conversation-1", status: "succeeded" }, code: "persisted_assistant_message_mismatch" },
+    { messages: [user, assistant], run: { id: "run-1", agentId: "agent-1", chatConversationId: "conversation-1", status: "failed" }, code: "run_not_succeeded" },
+  ]) {
+    const receipt = pendingReceipt();
+    let checkpointCount = 0;
+    await assert.rejects(verifyPersistedTurn({
+      ...baseInput,
+      receipt,
+      readJson: async (_apiBase, _method, route) => route.includes("/messages?") ? scenario.messages : scenario.run,
+      saveCheckpoint: async () => { checkpointCount += 1; },
+    }), (error) => error instanceof ProbeError && error.code === scenario.code);
+    assert.equal(receipt.criteria.firstTerminalAssistant.status, "pending");
+    assert.equal(checkpointCount, 0);
+  }
+});
 
 test("runtime lease binds a clean exact Node checkout and health instance without requiring health.sourceSha", () => {
   const proof = assertRuntimeLeaseProof(runtimeLeaseObservations());

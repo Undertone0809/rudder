@@ -613,26 +613,31 @@ export function isProviderProtocolEnvelopeLine(trimmed: string): boolean {
   return false;
 }
 
-export function isInternalAgentInstructionText(text: string): boolean {
+export function isRudderInjectedAgentInstructionText(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
 
   const firstLine = trimmed.split(/\r?\n/, 1)[0]?.replace(/^#+\s*/, "").trim().toLowerCase() ?? "";
   const normalized = compactWhitespace(trimmed).toLowerCase();
 
-  if (firstLine === "<rudder_agent_instruction>") return true;
-  if (firstLine === "<rudder_agent_operating_contract>") return true;
-  if (firstLine === "rudder agent operating contract") return true;
-  if (firstLine === "conversation input:" && /"currentMessage"\s*:/.test(trimmed)) return true;
-  if (normalized.includes("rudder protocol by delivering a progress update")) return true;
-  if (
+  return firstLine === "<rudder_agent_instruction>"
+    || firstLine === "<rudder_agent_operating_contract>"
+    || firstLine === "rudder agent operating contract"
+    || (
     normalized.includes("your home directory is $agent_home")
     && normalized.includes("use these paths consistently")
-  ) {
-    return true;
-  }
+    );
+}
 
-  return false;
+export function isInternalAgentInstructionText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const firstLine = trimmed.split(/\r?\n/, 1)[0]?.replace(/^#+\s*/, "").trim().toLowerCase() ?? "";
+  const normalized = compactWhitespace(trimmed).toLowerCase();
+
+  return isRudderInjectedAgentInstructionText(trimmed)
+    || (firstLine === "conversation input:" && /"currentMessage"\s*:/.test(trimmed))
+    || normalized.includes("rudder protocol by delivering a progress update");
 }
 
 export function filterRoutineStdout(value: string | null | undefined, showDeveloperDiagnostics: boolean): string {
@@ -679,7 +684,8 @@ export function filterRenderableTranscriptEntries(
 
   for (const entry of entries) {
     if (entry.kind === "init") continue;
-    if (entry.kind === "user" && isInternalAgentInstructionText(entry.text)) continue;
+    if (entry.kind === "user" && isInternalAgentInstructionText(entry.text)
+      && !(options?.presentation === "detail" && isRudderInjectedAgentInstructionText(entry.text))) continue;
 
     // Chat is an operator-facing work surface. Raw process diagnostics remain
     // available in Run Detail instead of being serialized into the conversation.

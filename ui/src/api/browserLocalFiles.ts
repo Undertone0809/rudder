@@ -32,6 +32,122 @@ const TEXT_EXTENSIONS = new Set([
   "xml",
 ]);
 
+type BrowserDirectoryPickerWindow = Window & {
+  showDirectoryPicker?: (options: { mode: "read" }) => Promise<FileSystemDirectoryHandle>;
+};
+
+export type BrowserLocalDirectoryRead = {
+  file: File;
+  rootName: string;
+  relativePath: string;
+};
+
+function targetPathSegments(targetPath: string): string[] {
+  let path = targetPath.trim();
+  if (/^file:/iu.test(path)) {
+    try {
+      path = new URL(path).pathname;
+    } catch {
+      throw new Error("The recorded local file path is not valid.");
+    }
+  }
+
+  const withoutQuery = path.split(/[?#]/u, 1)[0] ?? path;
+  const segments = withoutQuery.replaceAll("\\", "/").split("/").filter(Boolean).map((segment) => {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  });
+  if (!segments.length || segments.some((segment) => segment === "." || segment === "..")) {
+    throw new Error("The recorded local file path cannot be resolved safely.");
+  }
+  return segments;
+}
+
+export function browserLocalTargetRelativePath(targetPath: string, grantedRootName: string): string {
+  const segments = targetPathSegments(targetPath);
+  const matchingRootIndexes = segments.flatMap((segment, index) => segment === grantedRootName ? [index] : []);
+  if (matchingRootIndexes.length !== 1) {
+    throw new Error(
+      matchingRootIndexes.length === 0
+        ? "Choose a folder whose name appears in the recorded file path."
+        : "Choose a folder with a name that appears only once in the recorded file path.",
+    );
+  }
+
+  const relativeSegments = segments.slice(matchingRootIndexes[0]! + 1);
+  if (!relativeSegments.length) {
+    throw new Error("The selected folder is the file target, not its containing folder.");
+  }
+  return relativeSegments.join("/");
+}
+
+export function getBrowserLocalDirectoryPicker() {
+  if (typeof window === "undefined") return undefined;
+  const pickerWindow = window as BrowserDirectoryPickerWindow;
+  return pickerWindow.showDirectoryPicker?.bind(pickerWindow);
+}
+
+export function browserLocalDirectoryPickerError(cause: unknown): string {
+  if (cause instanceof DOMException && cause.name === "AbortError") {
+    return "Folder access was cancelled. No files were read.";
+  }
+  if (cause instanceof DOMException && cause.name === "NotAllowedError") {
+    return "Folder access was denied. No files were read.";
+  }
+  return cause instanceof Error ? cause.message : "Could not access the selected folder.";
+}
+
+export async function readBrowserLocalFileFromDirectory(
+  directory: FileSystemDirectoryHandle,
+  targetPath: string,
+): Promise<BrowserLocalDirectoryRead> {
+  const relativePath = browserLocalTargetRelativePath(targetPath, directory.name);
+  const segments = relativePath.split("/");
+  let currentDirectory = directory;
+  try {
+    for (const segment of segments.slice(0, -1)) {
+      currentDirectory = await currentDirectory.getDirectoryHandle(segment, { create: false });
+    }
+    const fileHandle = await currentDirectory.getFileHandle(segments.at(-1)!, { create: false });
+    return {
+      file: await fileHandle.getFile(),
+      rootName: directory.name,
+      relativePath,
+    };
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === "NotFoundError") {
+      throw new Error(`The selected folder does not contain the recorded file at ${relativePath}.`);
+    }
+    throw cause;
+  }
+}
+
+export function readBrowserLocalFileFromDirectorySelection(
+  files: Iterable<File>,
+  targetPath: string,
+): BrowserLocalDirectoryRead {
+  const selectedFiles = Array.from(files);
+  const selectedRoots = new Set(
+    selectedFiles.map((file) => file.webkitRelativePath.replaceAll("\\", "/").split("/")[0]).filter(Boolean),
+  );
+  if (selectedRoots.size !== 1) {
+    throw new Error("Choose one folder containing the recorded file.");
+  }
+  const rootName = selectedRoots.values().next().value as string;
+  const relativePath = browserLocalTargetRelativePath(targetPath, rootName);
+  const matches = selectedFiles.filter((file) => {
+    const segments = file.webkitRelativePath.replaceAll("\\", "/").split("/");
+    return segments[0] === rootName && segments.slice(1).join("/") === relativePath;
+  });
+  if (matches.length !== 1) {
+    throw new Error(`The selected folder does not contain the recorded file at ${relativePath}.`);
+  }
+  return { file: matches[0]!, rootName, relativePath };
+}
+
 function expectedFileName(targetPath: string) {
   const pathWithoutQuery = targetPath.split(/[?#]/u, 1)[0] ?? targetPath;
   const pathName = pathWithoutQuery.replaceAll("\\", "/").split("/").at(-1) ?? "";

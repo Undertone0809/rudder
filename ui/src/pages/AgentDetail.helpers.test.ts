@@ -15,6 +15,14 @@ describe("readInvocationAgentInstructionStack", () => {
     })).toBe("Legacy invocation prompt");
   });
 
+  it("does not render an empty instruction stack or fall back to user prompt text", () => {
+    expect(readInvocationAgentInstructionStack({
+      agentInstructionStack: "",
+      prompt: "User input is not the instruction stack.",
+    })).toBeUndefined();
+    expect(readInvocationAgentInstructionStack({ prompt: "   " })).toBeUndefined();
+  });
+
   it("does not treat a native digest summary as invocation text", () => {
     const payload = {
       invocationContent: {

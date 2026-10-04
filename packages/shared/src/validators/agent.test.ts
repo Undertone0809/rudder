@@ -78,6 +78,16 @@ describe("agent runtime validation", () => {
       agentRuntimeType: "gemini_local",
     })).toThrow();
   });
+
+  it("prevents creating legacy Hermes agents while keeping persisted ones editable", () => {
+    const legacyAgent = { name: "Old Hermes", agentRuntimeType: "hermes_local" as const };
+
+    expect(() => createAgentSchema.parse(legacyAgent)).toThrow("legacy Hermes runtime cannot be created");
+    expect(() => createAgentHireSchema.parse(legacyAgent)).toThrow("legacy Hermes runtime cannot be created");
+    expect(updateAgentSchema.parse({ agentRuntimeType: "hermes_local" })).toMatchObject({
+      agentRuntimeType: "hermes_local",
+    });
+  });
 });
 
 describe("agent intelligence seeding validation", () => {

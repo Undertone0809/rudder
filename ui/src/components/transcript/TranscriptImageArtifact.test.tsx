@@ -3,7 +3,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as browserLocalFiles from "../../api/browserLocalFiles";
 import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 
 const { closeImagePreviewIfSource, readDesktopShell, previewLocalFile } = vi.hoisted(() => ({
@@ -21,10 +20,36 @@ vi.mock("../InspectableImage", () => ({
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const roots: Root[] = [];
+const originalDirectoryPicker = Object.getOwnPropertyDescriptor(window, "showDirectoryPicker");
 let originalCreateObjectURL: PropertyDescriptor | undefined;
 let originalRevokeObjectURL: PropertyDescriptor | undefined;
 const createObjectURL = vi.fn(() => "blob:browser-image-preview");
 const revokeObjectURL = vi.fn();
+let selectedBrowserFile: File | null = null;
+let deferDirectoryRead = false;
+let releaseDirectoryRead: (() => void) | undefined;
+const selectedFileHandle = {
+  getFile: vi.fn(async () => {
+    if (deferDirectoryRead) {
+      deferDirectoryRead = false;
+      await new Promise<void>((resolve) => { releaseDirectoryRead = resolve; });
+    }
+    return selectedBrowserFile!;
+  }),
+};
+const selectedDirectoryHandle = {
+  name: "tmp",
+  getDirectoryHandle: vi.fn(async () => {
+    throw new DOMException("Directory not found", "NotFoundError");
+  }),
+  getFileHandle: vi.fn(async (name: string) => {
+    if (!selectedBrowserFile || selectedBrowserFile.name !== name) {
+      throw new DOMException("File not found", "NotFoundError");
+    }
+    return selectedFileHandle;
+  }),
+};
+const showDirectoryPicker = vi.fn(async () => selectedDirectoryHandle);
 
 async function render(path = "/tmp/screenshot.png", displayLabel = "screenshot.png") {
   const container = document.createElement("div");
@@ -38,11 +63,12 @@ async function render(path = "/tmp/screenshot.png", displayLabel = "screenshot.p
 }
 
 async function chooseFile(container: HTMLElement, file: File) {
-  const input = container.querySelector<HTMLInputElement>('input[type="file"]');
-  expect(input).not.toBeNull();
-  Object.defineProperty(input, "files", { configurable: true, value: [file] });
+  selectedBrowserFile = file;
+  const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    .find((candidate) => candidate.textContent?.includes("workspace folder"));
+  expect(button).not.toBeUndefined();
   await act(async () => {
-    input?.dispatchEvent(new Event("change", { bubbles: true }));
+    button?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
@@ -52,7 +78,11 @@ beforeEach(() => {
   originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+  Object.defineProperty(window, "showDirectoryPicker", { configurable: true, value: showDirectoryPicker });
   readDesktopShell.mockReturnValue(null);
+  selectedBrowserFile = null;
+  deferDirectoryRead = false;
+  releaseDirectoryRead = undefined;
 });
 
 afterEach(async () => {
@@ -60,6 +90,8 @@ afterEach(async () => {
     for (const root of roots.splice(0)) root.unmount();
   });
   document.body.replaceChildren();
+  if (originalDirectoryPicker) Object.defineProperty(window, "showDirectoryPicker", originalDirectoryPicker);
+  else Reflect.deleteProperty(window, "showDirectoryPicker");
   if (originalCreateObjectURL) Object.defineProperty(URL, "createObjectURL", originalCreateObjectURL);
   else Reflect.deleteProperty(URL, "createObjectURL");
   if (originalRevokeObjectURL) Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectURL);
@@ -69,17 +101,19 @@ afterEach(async () => {
 });
 
 describe("TranscriptImageArtifact", () => {
-  it("previews a user-selected matching image locally without a server request", async () => {
+  it("previews the requested image from an explicitly granted local folder without a server request", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const container = await render();
-    expect(container.textContent).toContain("original workspace path cannot be verified");
+    expect(container.textContent).toContain("browser cannot verify the selected folder's full system path");
     expect(container.textContent).toContain("not sent to Rudder");
 
     await chooseFile(container, new File([new Uint8Array([137, 80, 78, 71])], "screenshot.png", { type: "image/png" }));
 
     expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:browser-image-preview");
-    expect(container.textContent).toContain("original workspace path is not verified");
+    expect(container.textContent).toContain("relative path: screenshot.png");
     expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(showDirectoryPicker).toHaveBeenCalledWith({ mode: "read" });
+    expect(selectedDirectoryHandle.getFileHandle).toHaveBeenCalledWith("screenshot.png", { create: false });
     expect(previewLocalFile).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     await act(async () => {
@@ -158,38 +192,30 @@ describe("TranscriptImageArtifact", () => {
   });
 
   it("discards and revokes a selection that resolves after the recorded path changes", async () => {
-    const actual = browserLocalFiles.createBrowserLocalFilePreview;
-    let release: (() => void) | undefined;
-    vi.spyOn(browserLocalFiles, "createBrowserLocalFilePreview").mockImplementation(async (file, path) => {
-      await new Promise<void>((resolve) => { release = resolve; });
-      return actual(file, path);
-    });
     const container = await render();
     const root = roots.at(-1)!;
-    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
-    Object.defineProperty(input, "files", { configurable: true, value: [new File(["image"], "screenshot.png", { type: "image/png" })] });
-    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    selectedBrowserFile = new File(["image"], "screenshot.png", { type: "image/png" });
+    deferDirectoryRead = true;
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((candidate) => candidate.textContent?.includes("workspace folder"));
+    await act(async () => { button?.click(); await Promise.resolve(); });
     await act(async () => { root.render(<TranscriptImageArtifact path="/tmp/other/screenshot.png" displayLabel="screenshot.png" />); });
-    await act(async () => { release?.(); });
+    await act(async () => { releaseDirectoryRead?.(); });
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toContain("screenshot.png");
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:browser-image-preview");
   });
 
   it("discards and revokes a selection that resolves after unmount", async () => {
-    const actual = browserLocalFiles.createBrowserLocalFilePreview;
-    let release: (() => void) | undefined;
-    vi.spyOn(browserLocalFiles, "createBrowserLocalFilePreview").mockImplementation(async (file, path) => {
-      await new Promise<void>((resolve) => { release = resolve; });
-      return actual(file, path);
-    });
     const container = await render();
     const root = roots.pop()!;
-    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
-    Object.defineProperty(input, "files", { configurable: true, value: [new File(["image"], "screenshot.png", { type: "image/png" })] });
-    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    selectedBrowserFile = new File(["image"], "screenshot.png", { type: "image/png" });
+    deferDirectoryRead = true;
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((candidate) => candidate.textContent?.includes("workspace folder"));
+    await act(async () => { button?.click(); await Promise.resolve(); });
     await act(async () => { root.unmount(); });
-    await act(async () => { release?.(); });
+    await act(async () => { releaseDirectoryRead?.(); });
     expect(container.querySelector("img")).toBeNull();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:browser-image-preview");
   });

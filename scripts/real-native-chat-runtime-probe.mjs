@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -922,6 +922,29 @@ function criteriaStatus(receipt, name, status, detail = {}) {
   receipt.criteria[name] = { status, ...detail };
 }
 
+export function markTerminalAssistantPersisted(receipt, turnName, assistant, run) {
+  const criterionName = `${turnName}TerminalAssistant`;
+  const pending = receipt.criteria[criterionName];
+  if (!pending || pending.status !== "pending"
+    || assistant?.status !== "completed"
+    || !assistant.body?.trim()
+    || !nonEmptyString(assistant.id)
+    || !nonEmptyString(run?.id)
+    || assistant.runId !== run.id
+    || pending.assistantMessageId !== assistant.id
+    || pending.runId !== run.id
+    || run.status !== "succeeded") {
+    throw new ProbeError("terminal_assistant_persistence_mismatch");
+  }
+  criteriaStatus(receipt, criterionName, "pass", {
+    assistantMessageId: assistant.id,
+    assistantStatus: assistant.status,
+    runId: run.id,
+    runStatus: run.status,
+    persisted: true,
+  });
+}
+
 async function checkpoint(directory, receipt) {
   await saveReceipt(directory, receipt);
 }
@@ -1001,13 +1024,27 @@ async function sendTurn({ receipt, evidenceDir, apiBase, route, body, timeoutMs,
   return { conversationId, assistantMessage: assistant, userMessageId: result.ack.userMessageId };
 }
 
-async function verifyPersistedTurn({ apiBase, conversationId, agentId, runId, userMessageId, assistantMessage, userBody, timeoutMs }) {
+export async function verifyPersistedTurn({
+  apiBase,
+  conversationId,
+  agentId,
+  runId,
+  userMessageId,
+  assistantMessage,
+  userBody,
+  timeoutMs,
+  receipt,
+  evidenceDir,
+  turnName,
+  readJson = requestJson,
+  saveCheckpoint = checkpoint,
+}) {
   const deadline = Date.now() + timeoutMs;
   let messages = [];
   let run = null;
   while (Date.now() < deadline) {
-    messages = await requestJson(apiBase, "GET", `/api/chats/${conversationId}/messages?includeTranscript=true`);
-    run = await requestJson(apiBase, "GET", `/api/heartbeat-runs/${runId}`);
+    messages = await readJson(apiBase, "GET", `/api/chats/${conversationId}/messages?includeTranscript=true`);
+    run = await readJson(apiBase, "GET", `/api/heartbeat-runs/${runId}`);
     const persistedUser = Array.isArray(messages) ? messages.find((message) => message.id === userMessageId) : null;
     const persistedAssistant = Array.isArray(messages) ? messages.find((message) => message.id === assistantMessage.id) : null;
     if (persistedUser && persistedAssistant && TERMINAL_RUN_STATUSES.has(run.status)) break;
@@ -1028,6 +1065,8 @@ async function verifyPersistedTurn({ apiBase, conversationId, agentId, runId, us
   if (run.status !== "succeeded") {
     throw new ProbeError("run_not_succeeded", { status: run.status ?? null, errorCode: run.errorCode ?? null });
   }
+  markTerminalAssistantPersisted(receipt, turnName, persistedAssistant, run);
+  await saveCheckpoint(evidenceDir, receipt);
   return {
     run,
     userMessage: { id: persistedUser.id, bodySha256: sha256(persistedUser.body), status: persistedUser.status },
@@ -1212,6 +1251,9 @@ export async function runProbe(config, {
       assistantMessage: first.assistantMessage,
       userBody: firstBody,
       timeoutMs: config.timeoutMs,
+      receipt,
+      evidenceDir,
+      turnName: "first",
     });
     const firstNative = await readNativeEvidence(config.apiBase, firstReadback.run);
     receipt.turns.first = {
@@ -1253,6 +1295,9 @@ export async function runProbe(config, {
       assistantMessage: second.assistantMessage,
       userBody: secondBody,
       timeoutMs: config.timeoutMs,
+      receipt,
+      evidenceDir,
+      turnName: "second",
     });
     const secondNative = await readNativeEvidence(config.apiBase, secondReadback.run);
     const continuity = assertNativeRunContinuity({
@@ -1338,6 +1383,9 @@ export async function runProbe(config, {
         assistantMessage: sideFirst.assistantMessage,
         userBody: sideFirstBody,
         timeoutMs: config.timeoutMs,
+        receipt,
+        evidenceDir,
+        turnName: "sideChatFirst",
       });
       const sideFirstNative = await readNativeEvidence(config.apiBase, sideFirstReadback.run);
       receipt.turns.sideChatFirst = {
@@ -1383,6 +1431,9 @@ export async function runProbe(config, {
         assistantMessage: sideSecond.assistantMessage,
         userBody: sideSecondBody,
         timeoutMs: config.timeoutMs,
+        receipt,
+        evidenceDir,
+        turnName: "sideChatSecond",
       });
       const sideSecondNative = await readNativeEvidence(config.apiBase, sideSecondReadback.run);
       const sideContinuity = assertNativeRunContinuity({

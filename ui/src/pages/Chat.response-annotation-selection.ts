@@ -15,6 +15,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 
 export type PendingChatResponseAnnotationSelection = {
   source: string;
+  sourceContextIdentity: string;
   sourceConversationId: string;
   sourceMessageId: string;
   surface: "assistant_body" | "process_transcript";
@@ -46,9 +47,28 @@ export function usePendingChatResponseAnnotationSelection(input: {
   const [pendingSelection, setPendingSelection] =
     useState<PendingChatResponseAnnotationSelection | null>(null);
   const selectionSequenceRef = useRef(0);
+  const sourceContextIdentity = JSON.stringify([
+    input.selectedConversationId,
+    input.draftStorageScopeKey,
+    input.activeDraftScopeRef.current,
+  ]);
+  const sourceContextIdentityRef = useRef(sourceContextIdentity);
+  useLayoutEffect(() => {
+    if (sourceContextIdentityRef.current === sourceContextIdentity) return;
+    sourceContextIdentityRef.current = sourceContextIdentity;
+    selectionSequenceRef.current += 1;
+  }, [sourceContextIdentity]);
 
   useEffect(() => {
     const updateSelection = (event: Event) => {
+      if (sourceContextIdentityRef.current !== sourceContextIdentity) {
+        setPendingSelection(null);
+        return;
+      }
+      if (input.activeDraftScopeRef.current !== input.draftStorageScopeKey) {
+        setPendingSelection(null);
+        return;
+      }
       const selectionSequence = selectionSequenceRef.current + 1;
       selectionSequenceRef.current = selectionSequence;
       const eventTarget = event.target;
@@ -203,6 +223,7 @@ export function usePendingChatResponseAnnotationSelection(input: {
       void hashChatAnnotationSource(source).then((sourceHash) => {
         if (
           selectionSequenceRef.current !== selectionSequence
+          || sourceContextIdentityRef.current !== sourceContextIdentity
           || input.activeDraftScopeRef.current !== input.draftStorageScopeKey
           || sourceMessage.conversationId !== input.selectedConversationId
         ) {
@@ -221,6 +242,7 @@ export function usePendingChatResponseAnnotationSelection(input: {
         const liveRect = liveSelection.range.getBoundingClientRect();
         setPendingSelection({
           source,
+          sourceContextIdentity,
           sourceConversationId: sourceMessage.conversationId,
           sourceMessageId: sourceMessage.id,
           surface,
@@ -251,11 +273,12 @@ export function usePendingChatResponseAnnotationSelection(input: {
     input.loadedTranscriptsByMessageId,
     input.rawMessages,
     input.selectedConversationId,
+    sourceContextIdentity,
     input.transcriptByRun,
   ]);
 
   useLayoutEffect(() => {
-    if (!pendingSelection) return;
+    if (!pendingSelection || pendingSelection.sourceContextIdentity !== sourceContextIdentityRef.current) return;
     if (
       input.activeDraftScopeRef.current !== input.draftStorageScopeKey
       || pendingSelection.sourceConversationId !== input.selectedConversationId
@@ -294,7 +317,9 @@ export function usePendingChatResponseAnnotationSelection(input: {
   };
 
   return {
-    pendingSelection,
+    pendingSelection: pendingSelection?.sourceContextIdentity === sourceContextIdentity
+      ? pendingSelection
+      : null,
     setPendingSelection,
     clearPendingSelection,
   };

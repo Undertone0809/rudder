@@ -1233,7 +1233,7 @@ export function TranscriptEventRow({
   const detail = presentation === "detail";
   const collapsible = block.collapseByDefault === true;
   const isFileChange = block.label === "file change";
-  const eventLabel = block.cursorAcpEvent ? "Cursor ACP event" : "stderr";
+  const eventLabel = block.cursorAcpEvent ? "Cursor ACP event" : formatTranscriptLabel(block.label);
   const preview = truncate(compactWhitespace(block.text), compact ? 96 : 140);
   const toneClasses =
     block.tone === "error"

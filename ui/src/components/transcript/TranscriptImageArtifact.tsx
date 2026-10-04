@@ -1,7 +1,13 @@
 import { useImagePreview } from "@/context/ImagePreviewContext";
 import { FolderOpen, ImageOff, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
-import { createBrowserLocalFilePreview } from "../../api/browserLocalFiles";
+import {
+  browserLocalDirectoryPickerError,
+  createBrowserLocalFilePreview,
+  getBrowserLocalDirectoryPicker,
+  readBrowserLocalFileFromDirectory,
+  readBrowserLocalFileFromDirectorySelection,
+} from "../../api/browserLocalFiles";
 import { readDesktopShell, type DesktopLocalFilePreview } from "../../lib/desktop-shell";
 import { InspectableImage } from "../InspectableImage";
 
@@ -39,14 +45,19 @@ export function TranscriptImageArtifact({
   const desktopShell = readDesktopShell();
   const { closeImagePreviewIfSource } = useImagePreview();
   const [preview, setPreview] = useState<DesktopLocalFilePreview | null>(null);
-  const [browserImageSrc, setBrowserImageSrc] = useState<{ path: string; url: string } | null>(null);
+  const [browserImageSrc, setBrowserImageSrc] = useState<{
+    path: string;
+    url: string;
+    rootName: string;
+    relativePath: string;
+  } | null>(null);
   const browserUrlRef = useRef<string | null>(null);
   const browserRequestRef = useRef(0);
   const currentPathRef = useRef(path);
   currentPathRef.current = path;
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!durableAssetPath);
-  const browserFileInputRef = useRef<HTMLInputElement | null>(null);
+  const browserDirectoryInputRef = useRef<HTMLInputElement | null>(null);
   const previewRequestRef = useRef<{
     path: string;
     promise: Promise<DesktopLocalFilePreview>;
@@ -113,34 +124,85 @@ export function TranscriptImageArtifact({
     releaseBrowserUrl();
   }, [displayLabel, path, releaseBrowserUrl]);
 
-  const chooseBrowserImage = async (event: ChangeEvent<HTMLInputElement>) => {
+  const acceptBrowserDirectoryRead = async (
+    selected: Awaited<ReturnType<typeof readBrowserLocalFileFromDirectory>>,
+    selectedPath: string,
+    request: number,
+  ) => {
+    const selectedPreview = await createBrowserLocalFilePreview(selected.file, selectedPath);
+    if (selectedPreview.previewKind !== "image" || !selectedPreview.contentPath) {
+      if (selectedPreview.contentPath?.startsWith("blob:")) URL.revokeObjectURL(selectedPreview.contentPath);
+      throw new Error("Select an image file matching the recorded relative path.");
+    }
+    if (request !== browserRequestRef.current || selectedPath !== currentPathRef.current) {
+      if (selectedPreview.contentPath.startsWith("blob:")) URL.revokeObjectURL(selectedPreview.contentPath);
+      return;
+    }
+    releaseBrowserUrl();
+    browserUrlRef.current = selectedPreview.contentPath.startsWith("blob:") ? selectedPreview.contentPath : null;
+    setBrowserImageSrc({
+      path: selectedPath,
+      url: selectedPreview.contentPath,
+      rootName: selected.rootName,
+      relativePath: selected.relativePath,
+    });
+  };
+
+  const handleBrowserDirectoryChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
-    const selectedFile = input.files?.[0] ?? null;
+    const selectedFiles = Array.from(input.files ?? []);
     input.value = "";
-    if (!selectedFile) return;
+    if (!selectedFiles.length) return;
     const request = ++browserRequestRef.current;
     const selectedPath = path;
-    releaseBrowserUrl();
-    setBrowserImageSrc(null);
     setLoading(true);
     setError(null);
     try {
-      const selectedPreview = await createBrowserLocalFilePreview(selectedFile, path);
-      if (selectedPreview.previewKind !== "image" || !selectedPreview.contentPath) {
-        if (selectedPreview.contentPath?.startsWith("blob:")) URL.revokeObjectURL(selectedPreview.contentPath);
-        throw new Error("Select an image file matching the recorded filename.");
-      }
-      if (request !== browserRequestRef.current || selectedPath !== currentPathRef.current) {
-        if (selectedPreview.contentPath.startsWith("blob:")) URL.revokeObjectURL(selectedPreview.contentPath);
+      const selected = readBrowserLocalFileFromDirectorySelection(selectedFiles, selectedPath);
+      releaseBrowserUrl();
+      setBrowserImageSrc(null);
+      await acceptBrowserDirectoryRead(selected, selectedPath, request);
+    } catch (cause) {
+      if (request !== browserRequestRef.current || selectedPath !== currentPathRef.current) return;
+      releaseBrowserUrl();
+      setBrowserImageSrc(null);
+      setError(imagePreviewFailureMessage(cause, displayLabel));
+    } finally {
+      if (request === browserRequestRef.current && selectedPath === currentPathRef.current) setLoading(false);
+    }
+  };
+
+  const chooseBrowserWorkspaceFolder = async () => {
+    const picker = getBrowserLocalDirectoryPicker();
+    if (!picker) {
+      browserDirectoryInputRef.current?.click();
+      return;
+    }
+
+    const request = ++browserRequestRef.current;
+    const selectedPath = path;
+    let directoryGranted = false;
+    setError(null);
+    try {
+      const directory = await picker({ mode: "read" });
+      if (request !== browserRequestRef.current || selectedPath !== currentPathRef.current) return;
+      directoryGranted = true;
+      releaseBrowserUrl();
+      setBrowserImageSrc(null);
+      setLoading(true);
+      const selected = await readBrowserLocalFileFromDirectory(directory, selectedPath);
+      await acceptBrowserDirectoryRead(selected, selectedPath, request);
+    } catch (cause) {
+      if (request !== browserRequestRef.current || selectedPath !== currentPathRef.current) return;
+      if (!directoryGranted) {
+        setError(cause instanceof DOMException && cause.name === "AbortError"
+          ? null
+          : browserLocalDirectoryPickerError(cause));
         return;
       }
       releaseBrowserUrl();
-      browserUrlRef.current = selectedPreview.contentPath.startsWith("blob:") ? selectedPreview.contentPath : null;
-      setBrowserImageSrc({ path: selectedPath, url: selectedPreview.contentPath });
-    } catch (cause) {
-      if (request !== browserRequestRef.current || selectedPath !== currentPathRef.current) return;
       setBrowserImageSrc(null);
-      setError(imagePreviewFailureMessage(cause, displayLabel));
+      setError(browserLocalDirectoryPickerError(cause) || imagePreviewFailureMessage(cause, displayLabel));
     } finally {
       if (request === browserRequestRef.current && selectedPath === currentPathRef.current) setLoading(false);
     }
@@ -162,19 +224,23 @@ export function TranscriptImageArtifact({
       return (
         <div className="ml-5 mt-1.5 max-w-sm rounded-lg border border-border/45 bg-muted/10 px-3 py-2 text-xs text-muted-foreground" data-testid="transcript-browser-image-picker">
           <input
-            ref={browserFileInputRef}
+            ref={(input) => {
+              browserDirectoryInputRef.current = input;
+              input?.setAttribute("webkitdirectory", "");
+            }}
             type="file"
+            multiple
             accept="image/*"
             className="sr-only"
-            aria-label={`Choose ${displayLabel} from this device`}
-            onChange={(event) => void chooseBrowserImage(event)}
+            aria-label={`Choose the folder containing ${displayLabel}`}
+            onChange={(event) => void handleBrowserDirectoryChange(event)}
           />
           {error ? <p role="alert">{error}</p> : (
-            <p>Choose a local image named {displayLabel}. Its original workspace path cannot be verified.</p>
+            <p>To preview {displayLabel}, grant read-only access to a folder whose name appears once in the recorded path. Only the remaining relative path is read. The browser cannot verify the selected folder&apos;s full system path.</p>
           )}
-          <button type="button" className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-foreground" onClick={() => browserFileInputRef.current?.click()}>
+          <button type="button" className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-foreground" onClick={() => void chooseBrowserWorkspaceFolder()}>
             <FolderOpen className="h-3.5 w-3.5" aria-hidden />
-            Choose local image
+            Choose workspace folder
           </button>
           <p className="mt-2">File contents stay in this browser and are not sent to Rudder.</p>
         </div>
@@ -202,17 +268,21 @@ export function TranscriptImageArtifact({
       />
       {currentBrowserImageSrc && !desktopShell ? (
         <div className="mt-1.5 max-w-xs text-xs text-muted-foreground">
-          <p>Selected in this browser by filename; original workspace path is not verified.</p>
+          <p>Read locally from {browserImageSrc?.rootName} at relative path: {browserImageSrc?.relativePath}. The browser cannot verify the selected folder&apos;s full system path.</p>
           <input
-            ref={browserFileInputRef}
+            ref={(input) => {
+              browserDirectoryInputRef.current = input;
+              input?.setAttribute("webkitdirectory", "");
+            }}
             type="file"
+            multiple
             accept="image/*"
             className="sr-only"
-            aria-label={`Choose another ${displayLabel} from this device`}
-            onChange={(event) => void chooseBrowserImage(event)}
+            aria-label={`Choose another folder containing ${displayLabel}`}
+            onChange={(event) => void handleBrowserDirectoryChange(event)}
           />
-          <button type="button" className="mt-1 rounded-sm text-foreground underline-offset-2 hover:underline" onClick={() => browserFileInputRef.current?.click()}>
-            Choose another image
+          <button type="button" className="mt-1 rounded-sm text-foreground underline-offset-2 hover:underline" onClick={() => void chooseBrowserWorkspaceFolder()}>
+            Choose another workspace folder
           </button>
         </div>
       ) : null}
