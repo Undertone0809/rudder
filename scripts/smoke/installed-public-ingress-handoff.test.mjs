@@ -9,6 +9,7 @@ import {
   detachAfterRecordedHandoff,
   parseDarwinProcessWitness,
   persistOwnedProcessHandoff,
+  persistOwnedProcessStart,
 } from "./installed-public-ingress-handoff.mjs";
 
 const sourceSha = "755c273fe35fe28c36c37d598687d26dd09648d6";
@@ -54,6 +55,24 @@ function handoffInput(directory, child, overrides = {}) {
 }
 
 describe("installed public ingress owned-process handoff", () => {
+  it("records the live owner before readiness without granting detach or release", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    await withTempDirectory(async (directory) => {
+      await withSpawnedFixture(async (child) => {
+        const receipt = await persistOwnedProcessStart(handoffInput(directory, child));
+        assert.equal(receipt.record.schema, "rudder-owned-process-start-v1");
+        assert.equal(receipt.record.state, "OWNED_RUNNING");
+        assert.equal(receipt.record.pid, child.pid);
+        assert.equal(receipt.record.originalParentPid, process.pid);
+        assert.equal(receipt.record.releaseAllowed, false);
+        assert.equal(receipt.record.reasonCategory, "spawn_observed");
+        assert.ok(receipt.record.startBinding.osStartedAt);
+        assert.equal((await stat(receipt.path)).mode & 0o777, 0o600);
+        await assert.rejects(detachAfterRecordedHandoff(child, receipt), /not held unresolved/u);
+      });
+    });
+  });
   it("parses only the Darwin PID, lstart, PPID, and comm witness", () => {
     assert.deepEqual(
       parseDarwinProcessWitness(" 4242 Sun Oct  4 11:12:13 2026 100 /usr/bin/node\n"),

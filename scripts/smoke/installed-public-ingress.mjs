@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createWorkflowDeadline } from "./installed-public-ingress-deadline.mjs";
-import { persistOwnedProcessHandoff, detachAfterRecordedHandoff } from "./installed-public-ingress-handoff.mjs";
+import { persistOwnedProcessHandoff, persistOwnedProcessStart, detachAfterRecordedHandoff } from "./installed-public-ingress-handoff.mjs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { constants as fsConstants, openSync, closeSync, fstatSync, readSync } from "node:fs";
@@ -775,6 +775,17 @@ export function startServer(serverEntry, cwd, env, ownerId) {
     refreshLogs, stopObservingLogs: () => clearInterval(poll), termRequested: false, stopPromise: null };
 }
 
+export async function recordOwnedSupervisorStart(runtime, runRoot) {
+  assert.equal(runtime.owner, SMOKE_OWNER, "refusing to record an unowned supervisor");
+  const receipt = await persistOwnedProcessStart({
+    directory: runRoot, child: runtime.child, ownerId: runtime.ownerId, kind: "server",
+    sourceSha: EXPECTED_SOURCE_SHA, supportSha256: sha256(await readFile(SCRIPT_PATH)),
+  });
+  runtime.ownershipStartReceipt = receipt;
+  console.log(`[installed-public-ingress] owned supervisor start: ${JSON.stringify(receipt)}`);
+  return receipt;
+}
+
 async function recordUnresolvedChild(child, runRoot, ownerId, kind) {
   const receipt = await persistOwnedProcessHandoff({
     directory: runRoot, child, ownerId, kind,
@@ -1265,6 +1276,12 @@ export async function stopAndAssertRustListenerExited(runtime, ports, timeoutMs)
     .match(/\[rudder-rust-bridge\] started pid=(\d+)/u)?.[1];
   // Always stop the exact owned supervisor, even when startup never logged Rust.
   await stopOwnedServer(runtime, Math.min(timeoutMs, 20_000));
+  console.log(`[installed-public-ingress] owned supervisor close: ${JSON.stringify({
+    pid: runtime.child.pid, ownerId: runtime.ownerId,
+    startReceipt: runtime.ownershipStartReceipt?.path ?? null,
+    exitCode: runtime.child.exitCode, signalCode: runtime.child.signalCode,
+    closed: closedChildren.has(runtime.child),
+  })}`);
   await Promise.all(ports.filter(Number.isInteger).map((port) =>
     waitForPortClosed(port, Math.max(1, Math.min(8_000, deadline - Date.now())))));
   if (!pid) {
@@ -1324,6 +1341,7 @@ async function runInstalledWorkflow(options, installed, workflow) {
     runtime = startServer(installed.serverEntry, runRoot, env, `${runId}:bootstrap`);
     serverStarted = true;
     shutdownVerified = false;
+    await recordOwnedSupervisorStart(runtime, runRoot);
     await waitForHealth(runtime, publicUrl, step(), signal);
     const privatePort = await waitForPrivatePort(runtime, publicPort, step(), signal);
     await recordListenerOwnership(runtime, publicPort, privatePort, installed.hostNativeEntry.binaryPath, signal);
@@ -1341,6 +1359,7 @@ async function runInstalledWorkflow(options, installed, workflow) {
     env = buildServerEnvironment(baseEnv, { ...baseInput, deploymentMode: "authenticated" });
     runtime = startServer(installed.serverEntry, runRoot, env, `${runId}:authenticated`);
     shutdownVerified = false;
+    await recordOwnedSupervisorStart(runtime, runRoot);
     const health = await waitForHealth(runtime, publicUrl, step(), signal);
     assert.equal(health.status, 200, "public Actix health did not return HTTP 200");
     const authenticatedPrivatePort = await waitForPrivatePort(runtime, publicPort, step(), signal);
