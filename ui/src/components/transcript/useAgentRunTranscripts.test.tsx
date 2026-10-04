@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/api/client";
 import { TranscriptContinuationControls } from "./TranscriptContinuationControls";
 import {
   agentRunTranscriptQueryKey,
@@ -50,6 +51,7 @@ function ReaderProbe({ targets }: { targets: readonly AgentRunTranscriptTarget[]
 
 function NavigationProbe({ runId, raw = false, active = false }: { runId: string; raw?: boolean; active?: boolean }) {
   const { transcriptByRun, transcriptStateByRun, transcriptNavigationByRun, refetchRun } = useAgentRunTranscripts([{ runId, active }], { raw });
+  const [refetchResult, setRefetchResult] = useState("not-run");
   const navigation = transcriptNavigationByRun.get(runId);
   const state = transcriptStateByRun.get(runId);
   const entries = transcriptByRun.get(runId) ?? [];
@@ -62,7 +64,11 @@ function NavigationProbe({ runId, raw = false, active = false }: { runId: string
       <div data-testid="navigation-page">{navigation?.pageNumber ?? "pending"}</div>
       <div data-testid="navigation-previous-count">{navigation?.previousPageCount ?? "pending"}</div>
       <TranscriptContinuationControls navigation={navigation} state={state} />
-      <button data-testid="lazy-refetch" onClick={() => void refetchRun(runId)}>Load details</button>
+      <button data-testid="lazy-refetch" onClick={async () => {
+        const result = await refetchRun(runId);
+        setRefetchResult(result?.entries.map((entry) => "text" in entry ? entry.text : entry.kind).join("|") ?? "none");
+      }}>Load details</button>
+      <div data-testid="refetch-result" data-result={refetchResult} />
       <button
         type="button"
         data-testid="navigation-previous"
@@ -323,6 +329,86 @@ describe("useAgentRunTranscripts", () => {
         .toBe("available|complete|loaded");
       expect(rendered.host.querySelector("[role='alert']")).toBeNull();
       expect(reads).toBe(3);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it.each([401, 403, 404])("hides cached same-page data after %i and recovers after an authorized read", async (status) => {
+    let reads = 0;
+    transcriptMock.mockImplementation(async () => {
+      reads += 1;
+      if (reads === 1) return transitionPage("same-page protected history", "same-page-r1", null, "same-page-next");
+      if (reads === 2) throw new ApiError(`Transcript denied (${status})`, status, null);
+      return transitionPage("same-page authorized recovery", "same-page-r2");
+    });
+    const rendered = renderNavigationProbe(`run-same-page-${status}`);
+    try {
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("same-page protected history"));
+      });
+
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[data-testid='lazy-refetch']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[role='alert']")?.textContent)
+          .toContain(`Transcript denied (${status})`));
+      });
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe("");
+      expect(rendered.host.querySelector("[data-testid='navigation-state']")?.textContent).toBe("none|none|pending");
+      expect(rendered.host.querySelector("[data-testid='navigation-page']")?.textContent).toBe("1");
+      expect(rendered.host.querySelector<HTMLButtonElement>("[data-testid='navigation-next']")?.disabled).toBe(true);
+
+      expect(transcriptMock).toHaveBeenLastCalledWith(`run-same-page-${status}`, expect.objectContaining({ cursor: null }), expect.anything());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='refetch-result']")?.getAttribute("data-result")).toBe("none"));
+      });
+
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("same-page authorized recovery"));
+      });
+      expect(rendered.host.textContent).not.toContain("same-page protected history");
+      expect(rendered.host.querySelector("[role='alert']")).toBeNull();
+      expect(reads).toBe(3);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it.each([401, 403, 404])("hides retained prior-page data and navigation after cursor change gets %i", async (status) => {
+    let reads = 0;
+    transcriptMock.mockImplementation(async (_runId: string, { cursor }: { cursor?: string | null }) => {
+      reads += 1;
+      if (reads === 1) return transitionPage("prior protected page", "cursor-r1", null, "protected-next");
+      if (reads === 2) throw new ApiError(`Transcript denied (${status})`, status, null);
+      return transitionPage("cursor authorized recovery", "cursor-r2");
+    });
+    const rendered = renderNavigationProbe(`run-cursor-${status}`);
+    try {
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("prior protected page"));
+      });
+
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[data-testid='navigation-next']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[role='alert']")?.textContent)
+          .toContain(`Transcript denied (${status})`));
+      });
+      expect(transcriptMock).toHaveBeenLastCalledWith(`run-cursor-${status}`, expect.objectContaining({ cursor: "protected-next" }), expect.anything());
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe("");
+      expect(rendered.host.querySelector("[data-testid='navigation-state']")?.textContent).toBe("none|none|pending");
+      expect(rendered.host.querySelector("[data-testid='navigation-page']")?.textContent).toBe("1");
+      expect(rendered.host.querySelector("[data-testid='navigation-previous-count']")?.textContent).toBe("0");
+      expect(rendered.host.querySelector<HTMLButtonElement>("[data-testid='navigation-previous']")?.disabled).toBe(true);
+      expect(rendered.host.querySelector<HTMLButtonElement>("[data-testid='navigation-next']")?.disabled).toBe(true);
+
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("cursor authorized recovery"));
+      });
+      expect(rendered.host.textContent).not.toContain("prior protected page");
+      expect(rendered.host.querySelector("[role='alert']")).toBeNull();
+      expect(transcriptMock).toHaveBeenCalledTimes(3);
     } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
   });
 
