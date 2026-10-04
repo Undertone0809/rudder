@@ -55,7 +55,7 @@ than default, and private Node auth/application authorities remain.
 Use the companion ledger/status current checkpoint for live CI, packet,
 installed-artifact identity, remaining gates, and the next executable step.
 PR #245 now targets protected Main; the published support head is
-`8955597184bc409e3ab84244f1735f1e929a8c3e`, while installed product bytes
+`8d25940bbecbcb3c1f57988dff19a147a23f8db4`, while installed product bytes
 remain bound to source `755c273fe35fe28c36c37d598687d26dd09648d6`.
 Independent workflow-v2 stage review rejected secret CLI arguments and an
 unenforced cleanup-safe total deadline. The corrections are
@@ -67,18 +67,44 @@ support commit `8955597184bc409e3ab84244f1735f1e929a8c3e`: 43 focused tests
 pass, one platform-inapplicable case is skipped, and the packet validates.
 Independent v4 stage review is accepted, including a reviewer-run confirmation
 of the focused tests. Verifier preparation is complete and one separately
-admitted installed workflow is dispatched; its terminal receipt is pending.
-None of these facts is installed acceptance. The finite twenty-minute work budget does not expire
+admitted installed workflow returned `QUESTION` at C1: its private-listener
+log discovery timed out before the authenticated workflow. This is not product
+FAIL or installed acceptance. The local successor support checkpoint
+`8d25940bbecbcb3c1f57988dff19a147a23f8db4` records supervisor birth/ownership
+before readiness and its close event, and discovers the private loopback socket
+by its owned Node PID instead of the public address log. The installed artifact
+bytes match; the root cause is the runner, not a demonstrated product cutover
+failure. Workflow-v5 is frozen and validates; 54 focused tests pass with one
+platform skip. The same unaccepted Draft PR now publishes exact support8d for
+CI; predecessor b801 checks passed but do not qualify the new support candidate.
+Independent v5 stage review rejected one evidence-classification defect:
+reliable no-listener observations were reported as QUESTION at the deadline.
+Local v6 checkpoint `766cad626072077bfefc2e11e4a6984b8d2794d9` corrects
+confirmed absence to FAIL while retaining QUESTION for unavailable/no queries
+and respecting cancellation. Its 57 focused tests pass with one platform skip;
+the successor packet validates. Independent v6 stage accepts the bounded fix;
+changed-hash preparation and its additive digest correction are consumed.
+The root separately consumed resource-recovery accept and admitted one finite
+installed attempt; its terminal verdict remains pending.
+The finite twenty-minute work budget does not expire
 resource ownership. Unconfirmed shutdown records a durable, identity-bound
 `HELD_UNRESOLVED` parent handoff before detaching; only the root's verified
 recovery permits release. Identity or persistence failure retains ownership and
 fails closed, so that safety-failure branch cannot guarantee bounded exit.
-The one-attempt work lease is open; no installed workflow verdict exists yet.
-Do not admit a second runtime while this attempt or an unresolved hold remains.
+The old attempt is now CLOSED for resource ownership only: the reviewer checked
+the immutable runner's referenced-child/durable-detach control flow, and the
+root freshly confirmed no known Rust PID, logged-port listeners, exact-profile
+open handles, PostgreSQL PID file, or handoff. Historical supervisor identity
+remains unavailable; this does not retrofit C6 or upgrade the old QUESTION.
+The admitted v6 attempt is the sole current runtime lane; no automatic retry is
+allowed, and unconfirmed cleanup retains ownership rather than expiring it.
+No final reviewer may accept the old QUESTION as installed PASS.
 Continue with one integration candidate; independent artifact review,
-focused smoke support, and exact-head CI run in parallel. Freeze the executable
-workflow only after event-ordering, receipt-content binding, and owned shutdown
-guards are reviewed. No production or whole-migration completion is claimed.
+focused smoke support, and exact-head CI run in parallel. Keep the exact frozen
+v6 identity during its admitted attempt; request final review only after its
+independent verifier PASS. Reconcile the newly observed Main test/config delta
+before protected PR integration. No production or whole-migration completion
+is claimed.
 
 ## Historical checkpoint (2026-09-29)
 
