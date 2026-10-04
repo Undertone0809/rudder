@@ -44,7 +44,10 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
+mod project_reads;
 mod workspace_backup_files;
+
+pub use project_reads::PROJECT_READ_ACTION;
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,
@@ -102,6 +105,7 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "workspace_backup_file_read",
     "workspace_backup_download",
     "organization_member_directory",
+    "project_read",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -2553,6 +2557,10 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .route(
+                    "/internal/orgs/{org_id}/project-reads",
+                    web::post().to(project_reads::project_reads),
+                )
                 .route(
                     "/api/orgs/{org_id}/workspace/backups",
                     web::get().to(workspace_backups),

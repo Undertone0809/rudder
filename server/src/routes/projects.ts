@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { badRequest, conflict } from "../errors.js";
+import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { validate } from "../middleware/validate.js";
 import { logActivity, projectService, resourceCatalogService } from "../services/index.js";
 import type { ProjectCreateContext } from "../services/projects.js";
@@ -69,6 +70,27 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
   const router = Router();
   const svc = projectService(db, rustFoundationBridge);
   const resources = resourceCatalogService(db);
+
+  async function forwardProjectRead(req: Request, res: Response, orgId: string, projectId: string | null, resourcesOnly = false) {
+    if (!rustFoundationBridge) {
+      res.status(503).json({ error: "Rust Project reads are unavailable", code: "rust_foundation_project_read_unavailable" });
+      return;
+    }
+    let response: RustFoundationResponse;
+    try {
+      response = await rustFoundationBridge.projectRead(req.actor, orgId, {
+        projectId,
+        resourcesOnly,
+        // SQL UUIDs are canonical lowercase. Use the same key as legacy
+        // hydration when looking up a friendly organization folder mapping.
+        organizationWorkspaceRoot: resolveOrganizationWorkspaceRoot(isUuidLike(orgId) ? orgId.toLowerCase() : orgId),
+      });
+    } catch {
+      res.status(503).json({ error: "Rust Project reads are unavailable", code: "rust_foundation_project_read_request_failed" });
+      return;
+    }
+    res.status(response.status).set("content-type", response.contentType).send(response.body);
+  }
 
   async function readResourceAttachmentReceiptResponse(
     req: Request,
@@ -226,30 +248,29 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
   router.get("/orgs/:orgId/projects", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const result = await svc.list(orgId);
-    res.json(result);
+    await forwardProjectRead(req, res, orgId, null);
   });
 
   router.get("/projects/:id", async (req, res) => {
     const id = req.params.id as string;
-    const project = await svc.getById(id);
-    if (!project) {
+    const orgId = await svc.getOrganizationId(id);
+    if (!orgId) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    assertCompanyAccess(req, project.orgId);
-    res.json(project);
+    assertCompanyAccess(req, orgId);
+    await forwardProjectRead(req, res, orgId, id);
   });
 
   router.get("/projects/:id/resources", async (req, res) => {
     const id = req.params.id as string;
-    const project = await svc.getById(id);
-    if (!project) {
+    const orgId = await svc.getOrganizationId(id);
+    if (!orgId) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    assertCompanyAccess(req, project.orgId);
-    res.json(project.resources);
+    assertCompanyAccess(req, orgId);
+    await forwardProjectRead(req, res, orgId, id, true);
   });
 
   router.post("/orgs/:orgId/projects", validate(createProjectSchema), async (req, res) => {

@@ -33,6 +33,11 @@ export interface RustFoundationBridge {
   readonly projectGoalSetMode: RustFoundationMode;
   readonly requiresStartup: boolean;
   start(): Promise<void>;
+  projectRead(
+    actor: RustFoundationActor,
+    orgId: string,
+    input: { projectId: string | null; resourcesOnly: boolean; organizationWorkspaceRoot: string },
+  ): Promise<RustFoundationResponse>;
   projectCreate(
     actor: RustFoundationActor,
     orgId: string,
@@ -114,6 +119,7 @@ const ORGANIZATION_RESOURCE_ACTION = "organization.resource.mutate";
 const PROJECT_GOAL_SET_ACTION = "project.goal_set.replace";
 const PROJECT_DELETE_ACTION = "project.delete";
 const PROJECT_CREATE_ACTION = "project.create";
+const PROJECT_READ_ACTION = "project.read";
 const ACTOR_ENVELOPE_PROTOCOL_VERSION = 2;
 const ACTOR_ENVELOPE_SCHEMA = "rudder.actor-envelope.v2";
 const ACTOR_ENVELOPE_LIFETIME_SECONDS = 60;
@@ -376,9 +382,9 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
   const actorEnvelopeKey = options.actorEnvelopeKey?.trim()
     || process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim()
     || randomBytes(32).toString("hex");
-  const requiresStartup = mode === "required"
-    || organizationBrandingMode === "required"
-    || projectGoalSetMode === "required";
+  // Project reads are an API-wide Rust capability, independent of each
+  // Project's mutation owner and the remaining mutation pilot switches.
+  const requiresStartup = true;
   let child: RustFoundationChild | null = null;
   let baseUrl: string | null = null;
   let lifecycleState: BridgeLifecycleState = "idle";
@@ -533,6 +539,42 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     projectGoalSetMode,
     requiresStartup,
     start: ensureStarted,
+    async projectRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/project-reads`;
+      const body = Buffer.from(JSON.stringify(input), "utf8");
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({
+        actor,
+        organizationId: orgId,
+        method: "POST",
+        path: requestPath,
+        action: PROJECT_READ_ACTION,
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+      });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+          },
+          body: body as unknown as BodyInit,
+          signal: AbortSignal.timeout(requestTimeoutMs),
+        });
+        return {
+          status: response.status,
+          contentType: response.headers.get("content-type") ?? "application/json",
+          body: Buffer.from(await response.arrayBuffer()),
+        } satisfies RustFoundationResponse;
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust Project read request failed", { cause: error });
+      }
+    },
     async projectCreate(actor, orgId, data, idempotencyKey, activityDetails, roots) {
       if (projectGoalSetMode !== "required") {
         throw new RustFoundationBridgeError("request_failed", "Rust Project creation requires required mode");

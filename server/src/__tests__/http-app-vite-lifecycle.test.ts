@@ -1,6 +1,6 @@
 import express from "express";
 import { createServer } from "node:net";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../middleware/auth.js", () => ({
   actorMiddleware: vi.fn(() => (_req: unknown, _res: unknown, next: () => void) => next()),
@@ -22,6 +22,16 @@ vi.mock("../routes/llms.js", () => ({ llmRoutes: vi.fn(() => express.Router()) }
 vi.mock("../services/rudder-plugins.js", () => ({
   rudderPluginService: vi.fn(() => ({ syncAllLocalApps: vi.fn(async () => undefined) })),
 }));
+vi.mock("../services/rust-foundation-bridge.js", () => ({
+  createRustFoundationBridge: vi.fn(() => ({
+    mode: "off",
+    organizationBrandingMode: "off",
+    projectGoalSetMode: "off",
+    requiresStartup: true,
+    start: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+  })),
+}));
 vi.mock("../ui-branding.js", () => ({ applyUiBranding: (html: string) => html }));
 vi.mock("../bootstrap/register-api-routes.js", () => ({
   registerApiRoutes: vi.fn(() => express.Router()),
@@ -30,6 +40,15 @@ vi.mock("../bootstrap/register-api-routes.js", () => ({
 import { createHttpApp, resolveViteHmrPort } from "../bootstrap/create-http-app.js";
 import { registerApiRoutes } from "../bootstrap/register-api-routes.js";
 import type { ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
+import { createRustFoundationBridge } from "../services/rust-foundation-bridge.js";
+
+function createLifecycleDb() {
+  return {
+    // All-off optional authorities still enter the startup transaction. Its
+    // callback has no handoff queries, so these lifecycle tests need no DB.
+    transaction: vi.fn(async (callback: (tx: Record<string, never>) => Promise<void>) => callback({})),
+  };
+}
 
 async function reserveEphemeralPort(): Promise<number> {
   const server = createServer();
@@ -61,7 +80,8 @@ const baseOpts = {
   deploymentMode: "local_trusted",
   deploymentExposure: "private",
   rustFoundationMode: "off",
-  // These lifecycle fixtures have no database; Project writes are not exercised.
+  rustOrganizationBrandingMode: "off",
+  // The bridge lifecycle is stubbed; native reads/writes are not exercised.
   rustProjectGoalSetMode: "off",
   allowedHostnames: [],
   bindHost: "127.0.0.1",
@@ -70,20 +90,28 @@ const baseOpts = {
 } as const;
 
 describe("createHttpApp Vite lifecycle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("closes the Chat runtime when API route registration fails", async () => {
+    const db = createLifecycleDb();
     vi.mocked(registerApiRoutes).mockImplementationOnce((_db, _opts, _preview, runtime) => {
       expect(runtime?.acceptingWork).toBe(true);
       throw new Error("route registration failed");
     });
 
     await expect(createHttpApp(
-      {} as never,
+      db as never,
       { ...baseOpts, uiMode: "none", serverPort: 3100 } as never,
-      {} as never,
     )).rejects.toThrow("route registration failed");
 
     const runtime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[3] as ChatBackgroundRuntime;
     expect(runtime.acceptingWork).toBe(false);
+    const bridge = vi.mocked(createRustFoundationBridge).mock.results.at(-1)?.value;
+    expect(bridge?.start).toHaveBeenCalledTimes(1);
+    expect(bridge?.close).toHaveBeenCalledTimes(1);
+    expect(db.transaction).not.toHaveBeenCalled();
   });
 
   it("closes the owned HMR listener idempotently so the same port can be rebound", async () => {
@@ -92,11 +120,14 @@ describe("createHttpApp Vite lifecycle", () => {
     const serverPort = hmrPort - 10_000;
     expect(resolveViteHmrPort(serverPort)).toBe(hmrPort);
 
+    const firstDb = createLifecycleDb();
     const first = await createHttpApp(
-      {} as never,
+      firstDb as never,
       { ...baseOpts, serverPort } as never,
-      {} as never,
     );
+    const firstBridge = vi.mocked(createRustFoundationBridge).mock.results.at(-1)?.value;
+    expect(firstBridge?.start).toHaveBeenCalledTimes(1);
+    expect(firstDb.transaction).toHaveBeenCalledTimes(1);
     const firstChatRuntime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[3] as ChatBackgroundRuntime;
     expect(firstChatRuntime.acceptingWork).toBe(true);
     expect(await canBind(hmrPort)).toBe(false);
@@ -105,20 +136,26 @@ describe("createHttpApp Vite lifecycle", () => {
     const duplicateClose = first.close();
     expect(duplicateClose).toBe(firstClose);
     await firstClose;
+    expect(firstBridge?.close).toHaveBeenCalledTimes(1);
     expect(firstChatRuntime.acceptingWork).toBe(false);
     expect(firstChatRuntime.setTimeout(vi.fn(), 0)).toBeNull();
     expect(await canBind(hmrPort)).toBe(true);
 
+    const secondDb = createLifecycleDb();
     const second = await createHttpApp(
-      {} as never,
+      secondDb as never,
       { ...baseOpts, serverPort } as never,
-      {} as never,
     );
+    const secondBridge = vi.mocked(createRustFoundationBridge).mock.results.at(-1)?.value;
+    expect(secondBridge).not.toBe(firstBridge);
+    expect(secondBridge?.start).toHaveBeenCalledTimes(1);
+    expect(secondDb.transaction).toHaveBeenCalledTimes(1);
     const secondChatRuntime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[3] as ChatBackgroundRuntime;
     expect(secondChatRuntime).not.toBe(firstChatRuntime);
     expect(secondChatRuntime.acceptingWork).toBe(true);
     expect(await canBind(hmrPort)).toBe(false);
     await second.close();
+    expect(secondBridge?.close).toHaveBeenCalledTimes(1);
     expect(secondChatRuntime.acceptingWork).toBe(false);
     expect(await canBind(hmrPort)).toBe(true);
   });
@@ -127,11 +164,14 @@ describe("createHttpApp Vite lifecycle", () => {
     const hmrPort = await reserveEphemeralPort();
     const serverPort = hmrPort - 10_000;
     const cleanupError = new Error("Chat runtime close failed");
+    const db = createLifecycleDb();
     const handle = await createHttpApp(
-      {} as never,
+      db as never,
       { ...baseOpts, serverPort } as never,
-      {} as never,
     );
+    const bridge = vi.mocked(createRustFoundationBridge).mock.results.at(-1)?.value;
+    expect(bridge?.start).toHaveBeenCalledTimes(1);
+    expect(db.transaction).toHaveBeenCalledTimes(1);
     const runtime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[3] as ChatBackgroundRuntime;
     runtime.close = vi.fn().mockImplementation(() => {
       throw cleanupError;
@@ -139,6 +179,7 @@ describe("createHttpApp Vite lifecycle", () => {
 
     expect(await canBind(hmrPort)).toBe(false);
     await expect(handle.close()).rejects.toBe(cleanupError);
+    expect(bridge?.close).toHaveBeenCalledTimes(1);
     expect(await canBind(hmrPort)).toBe(true);
   });
 });

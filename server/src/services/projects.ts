@@ -553,6 +553,14 @@ async function ensureSinglePrimaryWorkspace(
 
 export function projectService(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   return {
+    // Admission only: public reads hydrate in Rust after organization access
+    // has been checked, without invoking legacy read-time Library provisioning.
+    getOrganizationId: async (id: string): Promise<string | null> => {
+      if (!isUuidLike(id)) return null;
+      const [row] = await db.select({ orgId: projects.orgId }).from(projects).where(eq(projects.id, id));
+      return row?.orgId ?? null;
+    },
+
     list: async (orgId: string): Promise<ProjectWithGoals[]> => {
       const rows = await db.select().from(projects).where(eq(projects.orgId, orgId));
       const withGoals = await attachGoals(db, rows);

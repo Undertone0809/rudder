@@ -72,6 +72,13 @@ jobs:
           test -x native/target/debug/rudder-server-foundation
           test -x native/target/debug/migration-preflight
 
+      - name: Verify API-wide Rust Project reads against legacy data
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/project-read-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Smoke Rust organization branding real entry
         run: |
           set -o pipefail
