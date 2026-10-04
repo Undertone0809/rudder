@@ -3291,13 +3291,18 @@ test.describe("Chat response annotations", () => {
         .from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, id))
     )))).flat();
     expect(organizationRunEvents.some((event) => event.eventType === "transcript.entry")).toBe(false);
-    const organizationGenerations = await e2eDb.select({ id: chatGenerations.id })
-      .from(chatGenerations).where(eq(chatGenerations.orgId, organization.id));
-    const organizationGenerationEvents = (await Promise.all(organizationGenerations.map(({ id }) => (
+    // Fork copies references, not a child execution. Parent native visibility
+    // checkpoints are legitimate and must not be mistaken for invented child events.
+    const childGenerations = await e2eDb.select({ id: chatGenerations.id })
+      .from(chatGenerations).where(and(
+        eq(chatGenerations.orgId, organization.id),
+        eq(chatGenerations.conversationId, forkedConversation.id),
+      ));
+    const childGenerationEvents = (await Promise.all(childGenerations.map(({ id }) => (
       e2eDb.select({ eventKind: chatGenerationEvents.eventKind })
         .from(chatGenerationEvents).where(eq(chatGenerationEvents.generationId, id))
     )))).flat();
-    expect(organizationGenerationEvents.some((event) => event.eventKind === "transcript")).toBe(false);
+    expect(childGenerationEvents.some((event) => event.eventKind === "transcript")).toBe(false);
     const organizationTranscriptRows = await e2eDb.select({ entrySeq: chatMessageTranscriptEntries.entrySeq })
       .from(chatMessageTranscriptEntries)
       .where(eq(chatMessageTranscriptEntries.orgId, organization.id));
