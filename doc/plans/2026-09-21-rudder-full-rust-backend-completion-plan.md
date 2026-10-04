@@ -36,12 +36,31 @@ commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
   - 17c9613e3df39e2c67c07d455206312b7ac33a75
   - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
-updated_at: 2026-09-29
+updated_at: 2026-10-04
 ---
 
 # Purpose and terminal outcome
 
-## Active checkpoint (2026-09-29)
+## Current checkpoint (2026-10-04)
+
+PR #236 is merged at `bb785f029b0036652dc9012cd45f3ac8decafea6`.
+Its accepted fourteen-clause increment does not accept the whole authority
+inventory or alter historical FAIL/QUESTION receipts. PR #245 is the active
+Actix ingress lane, forward-integrated with that Main at source
+`755c273fe35fe28c36c37d598687d26dd09648d6`. Its installed candidate has a
+fresh normal npm installation and archive-content checks, not independent
+installed workflow acceptance. Ingress is still explicitly selected rather
+than default, and private Node auth/application authorities remain.
+
+Use the companion ledger/status current checkpoint for live CI, packet,
+installed-artifact identity, remaining gates, and the next executable step.
+Retarget PR #245 from the merged predecessor branch to protected Main before
+merge. Continue with one integration candidate; independent artifact review,
+focused smoke support, and exact-head CI run in parallel. Freeze the executable
+workflow only after event-ordering, receipt-content binding, and owned shutdown
+guards are reviewed. No production or whole-migration completion is claimed.
+
+## Historical checkpoint (2026-09-29)
 
 The bounded D1 private-bridge increment was accepted and merged through PR #225
 at `e2e603f07c7d4b7410fea7792b9a4d0667d3777e`. Delivery records followed in
@@ -1145,9 +1164,12 @@ server/CLI/MCP path, followed by D1 default writer ownership and old-writer nega
 proof. Existing private implementations are inputs to these slices, not completed
 authority transfers. Do not add a private-only capability merely to increase counts.
 
-In goal mode the parent coordinates scoped `gpt-6-luna` / `max` workers, reconciles
+In goal mode the parent coordinates scoped `gpt-6-luna` / `xhigh` workers, reconciles
 their evidence, owns the delivery records and Git integration, and assigns
-independent review and verification. Every worker has explicit file ownership and
+independent review and verification. The later user instruction supersedes the
+earlier max setting: every spawn must explicitly specify both exact model and
+effort parameters, then verify actual runtime records; no silent downgrade or
+replacement new thread is permitted. Every worker has explicit file ownership and
 a concrete terminal output. Required native CI runs collect all failing crates
 with `--no-fail-fast`, avoiding one new failure per full matrix cycle.
 
