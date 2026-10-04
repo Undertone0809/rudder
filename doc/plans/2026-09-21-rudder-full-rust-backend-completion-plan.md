@@ -54,8 +54,25 @@ than default, and private Node auth/application authorities remain.
 
 Use the companion ledger/status current checkpoint for live CI, packet,
 installed-artifact identity, remaining gates, and the next executable step.
-Retarget PR #245 from the merged predecessor branch to protected Main before
-merge. Continue with one integration candidate; independent artifact review,
+PR #245 now targets protected Main; the published support head is
+`21479b3a85fd8f10c6c8eb21e09dfa00f8b60186`, while installed product bytes
+remain bound to source `755c273fe35fe28c36c37d598687d26dd09648d6`.
+Independent workflow-v2 stage review rejected secret CLI arguments and an
+unenforced cleanup-safe total deadline. The corrections are
+checkpointed at `21479b3a85fd8f10c6c8eb21e09dfa00f8b60186` with 34 focused
+checks passing and published to the same unaccepted Draft PR for early CI.
+Workflow-v3 stage review rejected cancellation during final close and the
+unresponsive-supervisor terminal boundary. Workflow-v4 corrections are frozen at
+support commit `8955597184bc409e3ab84244f1735f1e929a8c3e`: 43 focused tests
+pass, one platform-inapplicable case is skipped, and the packet validates.
+Independent stage review and verifier preparation are dispatched; neither is
+installed acceptance. The finite twenty-minute work budget does not expire
+resource ownership. Unconfirmed shutdown records a durable, identity-bound
+`HELD_UNRESOLVED` parent handoff before detaching; only the root's verified
+recovery permits release. Identity or persistence failure retains ownership and
+fails closed, so that safety-failure branch cannot guarantee bounded exit.
+No runtime lease has been opened and no installed workflow verdict exists yet.
+Continue with one integration candidate; independent artifact review,
 focused smoke support, and exact-head CI run in parallel. Freeze the executable
 workflow only after event-ordering, receipt-content binding, and owned shutdown
 guards are reviewed. No production or whole-migration completion is claimed.
