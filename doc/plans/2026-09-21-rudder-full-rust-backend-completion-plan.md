@@ -85,7 +85,16 @@ and respecting cancellation. Its 57 focused tests pass with one platform skip;
 the successor packet validates. Independent v6 stage accepts the bounded fix;
 changed-hash preparation and its additive digest correction are consumed.
 The root separately consumed resource-recovery accept and admitted one finite
-installed attempt; its terminal verdict remains pending.
+installed attempt. That single attempt ran at 12:02:59Z, before the start window
+ended, and returned independent PASS at 12:03:13Z. The root fully consumed its
+receipt and freshly verified resource closure. This accepts only explicit
+macOS installed API/CLI/WebSocket ingress and reconnect, not UI/MCP, default
+ingress, Node retirement, or whole-migration completion. Final review accepts
+this bounded slice. Main's two test/config changes are forward-integrated at
+`6514b0221dfe064a8497de15ebd567da0677ea56`, with an independently accepted
+preview-equivalent tree and 18 passing wrapper fixture checks. The final reviewer
+rebinds acceptance to that unchanged installed-product/support content. Exact
+successor CI and protected-PR gates still block a merge; prior 8d CI is historical.
 The finite twenty-minute work budget does not expire
 resource ownership. Unconfirmed shutdown records a durable, identity-bound
 `HELD_UNRESOLVED` parent handoff before detaching; only the root's verified
@@ -96,15 +105,18 @@ the immutable runner's referenced-child/durable-detach control flow, and the
 root freshly confirmed no known Rust PID, logged-port listeners, exact-profile
 open handles, PostgreSQL PID file, or handoff. Historical supervisor identity
 remains unavailable; this does not retrofit C6 or upgrade the old QUESTION.
-The admitted v6 attempt is the sole current runtime lane; no automatic retry is
-allowed, and unconfirmed cleanup retains ownership rather than expiring it.
+The v6 attempt is CLOSED/SPENT with its profile retained; no automatic retry or
+new runtime is admitted. Unconfirmed cleanup would retain ownership rather than
+expire it.
 No final reviewer may accept the old QUESTION as installed PASS.
 Continue with one integration candidate; independent artifact review,
 focused smoke support, and exact-head CI run in parallel. Keep the exact frozen
-v6 identity during its admitted attempt; request final review only after its
-independent verifier PASS. Reconcile the newly observed Main test/config delta
-before protected PR integration. No production or whole-migration completion
-is claimed.
+v6 identity and spent lease; no installed replay is required for the reviewed
+test/config and metadata-only successor. Publish the accepted content to the
+same Draft PR for exact-head CI, then recheck protected-merge gates. In parallel,
+one audited gpt-6-luna/xhigh implementer works on default ingress and managed
+attach identity in its isolated checkout, with no runtime or production actions.
+No production or whole-migration completion is claimed.
 
 ## Historical checkpoint (2026-09-29)
 
