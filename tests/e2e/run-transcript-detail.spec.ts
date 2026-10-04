@@ -556,6 +556,10 @@ test.describe("Run transcript detail", () => {
     expect(nativeInstructions.byteSize).toBe(Buffer.byteLength(nativeInstructions.agentInstructionStack));
     await expect.poll(() => nativeDetailPane.getByTestId("invocation-prompt").textContent())
       .toBe(nativeInstructions.agentInstructionStack);
+    await page.screenshot({
+      path: isolatedE2EScreenshotPath("rudder-run-detail-metadata-injected-instructions"),
+      fullPage: false,
+    });
     if (baseURL) {
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
     }
