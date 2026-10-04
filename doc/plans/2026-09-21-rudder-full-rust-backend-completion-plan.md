@@ -43,6 +43,18 @@ updated_at: 2026-10-04
 
 ## Current checkpoint (2026-10-04)
 
+Current published PR #245 head is `bdf2621e831d0a75fcc98617024b5d91474365a5`.
+Its D1 run `37202950941` passes. Test run `37202950944` has a Windows
+Native test failure: a forbidden request-PID substring coincidentally appeared
+in a permitted monotonic clock, rather than in leaked request data. The local
+test-only correction distinguishes sanctioned clock/hash values from actual
+request-PID leakage; all fourteen focused tests pass. Independent artifact
+review and successor CI are pending, so no protected merge is claimed.
+The default-ingress implementation is isolated at checkpoint `0ff234721e43f153db186f7f7146b67c679deb5d`;
+its effective-config versus health-identity boundary is being repaired before
+stage acceptance. These updates do not change installed source 755 or frozen
+v6 support 766, and do not widen the accepted explicit-ingress scope.
+
 PR #236 is merged at `bb785f029b0036652dc9012cd45f3ac8decafea6`.
 Its accepted fourteen-clause increment does not accept the whole authority
 inventory or alter historical FAIL/QUESTION receipts. PR #245 is the active
