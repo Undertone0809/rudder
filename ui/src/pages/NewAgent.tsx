@@ -93,10 +93,19 @@ export function NewAgent() {
   const [searchParams] = useSearchParams();
   const presetAdapterType = searchParams.get("agentRuntimeType");
   const presetHermesConnectionMode = searchParams.get("hermesConnectionMode") === "custom" ? "custom" : "local";
+  const isHermesCreationFlow = presetAdapterType === "hermes_gateway";
 
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
-  const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
+  const [configValues, setConfigValues] = useState<CreateConfigValues>(() => {
+    if (presetAdapterType === "hermes_gateway") {
+      return createValuesForAdapterType(
+        "hermes_gateway",
+        presetHermesConnectionMode,
+      );
+    }
+    return defaultCreateValues;
+  });
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -243,13 +252,15 @@ export function NewAgent() {
     if (!selectedOrganizationId || !hasLoadedAgents) return;
     setFormError(null);
     if (isLocalHermes && (runtimeAvailabilityPending || hermesAvailability?.status !== "available")) {
-      setFormError(hermesAvailability?.hint ?? hermesAvailability?.message ?? "Checking local Hermes availability. Try again once the check completes.");
+      setFormError(runtimeAvailabilityPending || !hermesAvailability
+        ? "Still checking for Hermes on this machine. Try again once it is ready."
+        : "Hermes isn't ready on this machine yet. Install or finish setting it up, then try again.");
       return;
     }
     if (configValues.agentRuntimeType === "hermes_gateway"
       && configValues.hermesConnectionMode === "custom"
       && (!configValues.url.trim() || !configValues.apiKey?.trim())) {
-      setFormError("A custom Hermes API Server needs both its URL and API key. Choose local Hermes to reuse this machine's setup.");
+      setFormError("Custom Hermes connections need both a URL and an API key. Choose local Hermes to use this machine's existing setup.");
       return;
     }
     const trimmedName = name.trim();
@@ -300,10 +311,12 @@ export function NewAgent() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="text-lg font-semibold">New Agent</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Advanced agent configuration
-        </p>
+        <h1 className="text-lg font-semibold">{isLocalHermes ? "Create with Hermes" : "New Agent"}</h1>
+        {!isLocalHermes && (
+          <p className="text-sm text-muted-foreground mt-1">
+            Advanced agent configuration
+          </p>
+        )}
       </div>
 
       {isLocalHermes && (
@@ -315,12 +328,13 @@ export function NewAgent() {
             : "rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"}
         >
           {runtimeAvailabilityPending || !hermesAvailability
-            ? "Checking local Hermes installation and setup…"
+            ? "Checking for Hermes on this machine…"
             : hermesAvailability.status === "available"
-              ? hermesAvailability.hermesLocalBackend === "acp"
-                ? `Hermes is installed and its local ACP setup check passed. This agent will use ACP; native Product RPC is unavailable (${hermesAvailability.hermesProductRpcCapabilityGap ?? "capability gap"}).`
-                : "Hermes is installed and its local ACP setup check passed. Native Product RPC prerequisites were detected; this agent will use that backend."
-              : `${hermesAvailability.message} ${hermesAvailability.hint ?? ""}`}
+              ? "Hermes is ready locally. Rudder will connect automatically."
+              : "Hermes isn't ready on this machine yet. Install or finish setting it up, then try again."}
+          <p className="mt-1">
+            You don't need to enter a server address or API key. This agent uses the Hermes setup and access permissions already configured on this machine.
+          </p>
         </div>
       )}
 
@@ -349,14 +363,38 @@ export function NewAgent() {
           />
         </div>
 
-        {/* Shared config form */}
-        <AgentConfigForm
-          mode="create"
-          values={configValues}
-          onChange={(patch) => setConfigValues((prev) => ({ ...prev, ...patch }))}
-          adapterModels={adapterModels}
-          hideInstructionsFile
-        />
+        {/* Keep configuration controls available without putting them on the local Hermes common path. */}
+        {isHermesCreationFlow ? (
+          <details
+            data-testid="new-agent-advanced-settings"
+            className="border-t border-border"
+            open={presetHermesConnectionMode === "custom"}
+          >
+            <summary className="cursor-pointer px-4 py-3 text-sm font-medium hover:bg-accent/30">
+              Advanced settings
+            </summary>
+            <div className="border-t border-border px-4 pb-4">
+              <p className="py-3 text-xs text-muted-foreground">
+                Adjust the model, runtime chain, fallback options, or local environment settings.
+              </p>
+              <AgentConfigForm
+                mode="create"
+                values={configValues}
+                onChange={(patch) => setConfigValues((prev) => ({ ...prev, ...patch }))}
+                adapterModels={adapterModels}
+                hideInstructionsFile
+              />
+            </div>
+          </details>
+        ) : (
+          <AgentConfigForm
+            mode="create"
+            values={configValues}
+            onChange={(patch) => setConfigValues((prev) => ({ ...prev, ...patch }))}
+            adapterModels={adapterModels}
+            hideInstructionsFile
+          />
+        )}
 
         {organizationSkillsPending || showOrganizationSkillPicker ? (
           <div className="border-t border-border px-4 py-4">
