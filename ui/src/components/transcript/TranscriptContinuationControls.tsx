@@ -10,19 +10,46 @@ export function TranscriptContinuationControls({
   navigation,
   state,
   className,
-  emptyStateOwnedByTranscript = false,
+  isLive = false,
+  showAvailabilityDetails = false,
 }: {
   navigation?: AgentRunTranscriptNavigation | null;
   state?: AgentRunTranscriptState | null;
   className?: string;
-  emptyStateOwnedByTranscript?: boolean;
+  isLive?: boolean;
+  showAvailabilityDetails?: boolean;
 }) {
-  const errorText = emptyStateOwnedByTranscript ? null : state?.error
-    ? `Transcript unavailable: ${state.error.message}`
-    : state?.availability && state.availability !== "available" && state.availability !== "pending"
-      ? `Transcript ${state.availability}.`
+  const availabilityMessage = (() => {
+    switch (state?.availability) {
+      case "missing": return isLive ? null : "No transcript source is available for this run.";
+      case "offline": return "The transcript source is offline.";
+      case "expired": return "The transcript source has expired.";
+      case "incompatible": return "The transcript source is incompatible with this reader.";
+      default: return null;
+    }
+  })();
+  const unavailable = state?.availability
+    && state.availability !== "available"
+    && state.availability !== "pending";
+  const errorText = state?.error
+    ? showAvailabilityDetails
+      ? `Transcript read failed: ${state.error.message}`
+      : `Transcript unavailable: ${state.error.message}`
+    : unavailable
+      ? showAvailabilityDetails
+        ? availabilityMessage
+        : `Transcript ${state.availability}.`
       : null;
   const partial = state?.completeness === "partial" || navigation?.hasMore === true;
+  const completenessText = showAvailabilityDetails
+    ? partial
+      ? "Partial transcript"
+      : state?.completeness === "terminal_only"
+        ? "Only the terminal result is available."
+        : state?.completeness === "unknown" && !(isLive && state?.availability === "missing")
+          ? "Transcript completeness is unknown."
+          : null
+    : null;
   const hasNavigation = Boolean(
     navigation && (
       navigation.canPrevious
@@ -31,7 +58,7 @@ export function TranscriptContinuationControls({
       || navigation.historyTruncated
     ),
   );
-  if (!errorText && !partial && !hasNavigation && !navigation?.onReset) return null;
+  if (!errorText && !partial && !completenessText && !hasNavigation && !navigation?.onReset) return null;
 
   const isLoading = Boolean(state?.loading);
   return (
@@ -51,8 +78,10 @@ export function TranscriptContinuationControls({
         aria-live="polite"
       >
         {isLoading ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden /> : null}
-        {errorText || partial || hasNavigation ? (
-          <span>{errorText ?? (partial ? "Partial transcript" : "Transcript continuation")}</span>
+        {errorText ? <span>{errorText}</span> : null}
+        {showAvailabilityDetails && completenessText ? <span>{completenessText}</span> : null}
+        {!errorText && !completenessText && (partial || hasNavigation) ? (
+          <span>{partial ? "Partial transcript" : "Transcript continuation"}</span>
         ) : null}
         {navigation && (hasNavigation || partial) ? (
           <span className="text-muted-foreground/80">Page {navigation.pageNumber}</span>
