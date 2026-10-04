@@ -1044,6 +1044,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             resumeSessionId: resumeSession.sessionId, run: chatRun, transcript,
             isInactive: isExecutionInactive,
           }),
+          onNativeExecutionIdentity: (identity) => chatRunsSvc.bindNativeExecutionIdentity(
+            chatRun,
+            identity,
+            nativeProfileCapability,
+          ),
           onTranscriptSource: transcript.onTranscriptSource,
           onMeta: async (meta) => {
             if (isExecutionInactive()) return;

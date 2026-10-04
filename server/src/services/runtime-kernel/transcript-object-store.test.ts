@@ -42,6 +42,16 @@ describe("first-write compact gap object, legacy compatibility and safe retentio
   const identity: CoverageIdentity = { ...binding, attemptId: "attempt-1", attemptEpoch: 1,
     selector: { kind: "codex_turn", runId: binding.runId, threadId: "thread-1", turnId: "turn-1" } };
   const input = (objectRef: string) => ({ ...binding, objectRef, limit: 2 });
+  const readAll = async (store: ReturnType<typeof createTranscriptObjectStore>, objectRef: string) => {
+    const result: TranscriptEntry[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await store.readRange({ ...input(objectRef), limit: 200, cursor });
+      result.push(...page.entries);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return result;
+  };
   const workload: TranscriptEntry[] = Array.from({ length: 8 }, (_, index) => ({ kind: "assistant",
     ts: `2026-10-03T00:00:0${index}.123456Z`, sourceEntryId: `entry-${index}`, segmentId: "msg-1",
     delta: index < 7, text: "Synthetic界🌍 chunk ".repeat(2000), phase: "final_answer" }));
@@ -109,6 +119,93 @@ describe("first-write compact gap object, legacy compatibility and safe retentio
     await f.store.finalize(handle, { completeness: "partial" });
     await f.store.removeSealed(input(handle.objectRef));
     expect(await fs.readdir(path.join(f.root, "transcript-objects"))).toEqual([]);
+  });
+
+  it("recovers a durable partial child prefix after a copy crash without duplicating the root history", async () => {
+    const f = await fixture();
+    const early = await f.store.begin({ ...binding, earlyHandoffEligible: true });
+    const prefix: TranscriptEntry[] = Array.from({ length: 205 }, (_, index) => ({
+      kind: "assistant",
+      ts: `2026-10-04T00:00:${String(index).padStart(2, "0")}.000Z`,
+      sourceEntryId: `early-${index}`,
+      text: `early ${index}`,
+    }));
+    await f.store.append(early, prefix.slice(0, 200));
+    await f.store.append(early, prefix.slice(200));
+
+    const rename = fs.rename.bind(fs);
+    let childMetadataPublishes = 0;
+    const spy = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (String(to).endsWith(".json") && !String(to).endsWith(`${early.objectRef}.json`)) {
+        childMetadataPublishes += 1;
+        if (childMetadataPublishes === 3) {
+          throw Object.assign(new Error("synthetic process loss during child append"), { code: "EIO" });
+        }
+      }
+      return rename(from, to);
+    });
+    try {
+      await expect(f.store.handoffCompact!({
+        handle: early,
+        compactIdentity: identity,
+        withPublishFence: async (publish) => { await publish(); return true; },
+      })).rejects.toMatchObject({ code: "EIO" });
+    } finally { spy.mockRestore(); }
+
+    const objectDir = path.join(f.root, "transcript-objects");
+    expect((await fs.readdir(objectDir)).filter((name) => name.endsWith(".json"))).toHaveLength(2);
+    const reopened = createTranscriptObjectStore(f.root);
+    const recoveredRoot = await reopened.resume({ ...binding, objectRef: early.objectRef });
+    await expect(reopened.handoffCompact!({
+      handle: recoveredRoot,
+      compactIdentity: identity,
+      withPublishFence: async (publish) => { await publish(); return true; },
+    })).resolves.toMatchObject({ activated: true });
+    expect((await fs.readdir(objectDir)).filter((name) => name.endsWith(".json"))).toHaveLength(2);
+
+    const suffix: TranscriptEntry = {
+      kind: "assistant", ts: "2026-10-04T00:01:00.000Z", sourceEntryId: "after-handoff", text: "after handoff",
+    };
+    await reopened.append(recoveredRoot, suffix);
+    expect(await readAll(reopened, early.objectRef)).toEqual([...prefix, suffix]);
+  });
+
+  it("recovers a published handoff when its acknowledgement is lost and preserves raw evidence on a stale fence", async () => {
+    const f = await fixture();
+    const early = await f.store.begin({ ...binding, earlyHandoffEligible: true });
+    await f.store.append(early, workload.slice(0, 2));
+    let loseAcknowledgement = true;
+    await expect(f.store.handoffCompact!({
+      handle: early,
+      compactIdentity: identity,
+      withPublishFence: async (publish) => {
+        await publish();
+        if (loseAcknowledgement) {
+          loseAcknowledgement = false;
+          throw new Error("synthetic lost handoff acknowledgement");
+        }
+        return true;
+      },
+    })).rejects.toThrow("synthetic lost handoff acknowledgement");
+
+    const reopened = createTranscriptObjectStore(f.root);
+    const recoveredRoot = await reopened.resume({ ...binding, objectRef: early.objectRef });
+    await expect(reopened.handoffCompact!({
+      handle: recoveredRoot,
+      compactIdentity: identity,
+      withPublishFence: async (publish) => { await publish(); return true; },
+    })).resolves.toMatchObject({ activated: true });
+    expect(await readAll(reopened, early.objectRef)).toEqual(workload.slice(0, 2));
+    expect((await fs.readdir(path.join(f.root, "transcript-objects"))).filter((name) => name.endsWith(".json"))).toHaveLength(2);
+
+    const staleRoot = await reopened.begin({ ...binding, earlyHandoffEligible: true });
+    await reopened.append(staleRoot, workload[0]!);
+    await expect(reopened.handoffCompact!({
+      handle: staleRoot,
+      compactIdentity: identity,
+      withPublishFence: async () => false,
+    })).resolves.toMatchObject({ activated: false, objectRef: null });
+    expect(await readAll(reopened, staleRoot.objectRef)).toEqual([workload[0]]);
   });
 
   it("stages, restores after reopen, and purges sealed compact retention without losing records", async () => {

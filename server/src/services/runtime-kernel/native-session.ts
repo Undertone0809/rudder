@@ -1066,6 +1066,150 @@ export async function attachRuntimeSpanSupplement(db: Db, input: {
   });
 }
 
+/** Keep owner-sensitive object-store mutations inside the same Run fence used
+ * by span sealing. Callers must acquire the object-store lock first, then call
+ * this helper, so concurrent appends and handoff publication share one lock
+ * order without allowing a stale owner to commit file changes. */
+export async function withOpenRunRuntimeSpanOwner<T>(db: Db, input: {
+  orgId: string;
+  runId: string;
+  spanId: string;
+  ownerToken: string;
+  attemptEpoch: number;
+  attemptId: string;
+  runtimeType?: string;
+}, operation: (span: RunRuntimeSpanRecord) => Promise<T>): Promise<T | null> {
+  return db.transaction(async (tx) => {
+    const txDb = tx as unknown as RuntimeDb;
+    if (!await selectActiveRunOwner(txDb, input)) return null;
+    const span = await tx.select().from(runRuntimeSpans).where(and(
+      eq(runRuntimeSpans.orgId, input.orgId),
+      eq(runRuntimeSpans.runId, input.runId),
+      eq(runRuntimeSpans.id, input.spanId),
+      eq(runRuntimeSpans.ownerToken, input.ownerToken),
+      eq(runRuntimeSpans.attemptEpoch, input.attemptEpoch),
+      eq(runRuntimeSpans.attemptId, input.attemptId),
+      eq(runRuntimeSpans.state, "open"),
+    )).for("update").limit(1).then((rows) => rows[0] ?? null);
+    if (!span) return null;
+    const attempt = await tx.select({
+      ownerToken: heartbeatRunAttempts.ownerToken,
+      attemptEpoch: heartbeatRunAttempts.attemptEpoch,
+      runtimeType: heartbeatRunAttempts.runtimeType,
+    }).from(heartbeatRunAttempts).where(and(
+      eq(heartbeatRunAttempts.id, input.attemptId),
+      eq(heartbeatRunAttempts.orgId, input.orgId),
+      eq(heartbeatRunAttempts.runId, input.runId),
+      eq(heartbeatRunAttempts.ownerToken, input.ownerToken),
+      eq(heartbeatRunAttempts.attemptEpoch, input.attemptEpoch),
+      ...(input.runtimeType ? [eq(heartbeatRunAttempts.runtimeType, input.runtimeType)] : []),
+    )).for("update").limit(1).then((rows) => rows[0] ?? null);
+    if (!attempt) return null;
+    return operation(span);
+  });
+}
+
+/** Persist Codex's exact turn selector while the provider is still streaming.
+ * The event is host-notified, then checked against the active Run/Attempt and
+ * its durable Binding/Segment before it can qualify a compact transcript. */
+export async function bindCodexTurnNativeExecutionIdentity(db: Db, input: {
+  orgId: string;
+  runId: string;
+  spanId: string;
+  ownerToken: string;
+  attemptEpoch: number;
+  attemptId: string;
+  threadId: string;
+  turnId: string;
+}): Promise<RunRuntimeSpanRecord | null> {
+  const threadId = stringValue(input.threadId);
+  const turnId = stringValue(input.turnId);
+  if (!threadId || !turnId) return null;
+  return db.transaction(async (tx) => {
+    const txDb = tx as unknown as RuntimeDb;
+    if (!await selectActiveRunOwner(txDb, input)) return null;
+    const span = await tx.select().from(runRuntimeSpans).where(and(
+      eq(runRuntimeSpans.orgId, input.orgId),
+      eq(runRuntimeSpans.runId, input.runId),
+      eq(runRuntimeSpans.id, input.spanId),
+      eq(runRuntimeSpans.ownerToken, input.ownerToken),
+      eq(runRuntimeSpans.attemptEpoch, input.attemptEpoch),
+      eq(runRuntimeSpans.attemptId, input.attemptId),
+      eq(runRuntimeSpans.state, "open"),
+    )).for("update").limit(1).then((rows) => rows[0] ?? null);
+    if (!span) return null;
+    const identity = await persistedSpanRuntimeIdentity(txDb, {
+      orgId: input.orgId,
+      span,
+      driverRuntimeType: "codex_local",
+      context: "Codex early execution identity",
+    });
+    if (!identity) return null;
+    const attempt = await tx.select({
+      runtimeType: heartbeatRunAttempts.runtimeType,
+      ownerToken: heartbeatRunAttempts.ownerToken,
+      attemptEpoch: heartbeatRunAttempts.attemptEpoch,
+    }).from(heartbeatRunAttempts).where(and(
+      eq(heartbeatRunAttempts.id, input.attemptId),
+      eq(heartbeatRunAttempts.orgId, input.orgId),
+      eq(heartbeatRunAttempts.runId, input.runId),
+      eq(heartbeatRunAttempts.ownerToken, input.ownerToken),
+      eq(heartbeatRunAttempts.attemptEpoch, input.attemptEpoch),
+      eq(heartbeatRunAttempts.runtimeType, "codex_local"),
+    )).for("update").limit(1).then((rows) => rows[0] ?? null);
+    if (!attempt) return null;
+
+    const selector = {
+      kind: "codex_turn",
+      threadId,
+      turnId,
+      inputCorrelationRef: span.inputCorrelationRef,
+      runId: input.runId,
+    };
+    const existingSelector = jsonRecord(span.selectorJson);
+    if (existingSelector?.kind === "codex_turn") {
+      return existingSelector.threadId === threadId && existingSelector.turnId === turnId
+        && span.nativeExecutionRef === turnId
+        ? span
+        : null;
+    }
+    if (existingSelector?.kind !== "pending" || span.nativeExecutionRef) return null;
+    if (identity.binding.runtimeType !== "codex_local"
+      || (identity.segment.nativeSessionId && identity.segment.nativeSessionId !== threadId)) return null;
+
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`runtime-binding:${identity.binding.id}`}, 0))`);
+    if (!identity.segment.nativeSessionId) {
+      const [updatedSegment] = await tx.update(nativeSegments).set({
+        nativeSessionId: threadId,
+        rootSessionId: identity.segment.rootSessionId ?? threadId,
+        state: "open",
+        updatedAt: new Date(),
+      }).where(and(
+        eq(nativeSegments.id, identity.segment.id),
+        eq(nativeSegments.orgId, input.orgId),
+        eq(nativeSegments.bindingId, identity.binding.id),
+        isNull(nativeSegments.nativeSessionId),
+      )).returning();
+      if (!updatedSegment) return null;
+    }
+    const [updatedSpan] = await tx.update(runRuntimeSpans).set({
+      nativeExecutionRef: turnId,
+      selectorJson: selector,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(runRuntimeSpans.orgId, input.orgId),
+      eq(runRuntimeSpans.runId, input.runId),
+      eq(runRuntimeSpans.id, input.spanId),
+      eq(runRuntimeSpans.ownerToken, input.ownerToken),
+      eq(runRuntimeSpans.attemptEpoch, input.attemptEpoch),
+      eq(runRuntimeSpans.attemptId, input.attemptId),
+      eq(runRuntimeSpans.state, "open"),
+      isNull(runRuntimeSpans.nativeExecutionRef),
+    )).returning();
+    return updatedSpan ?? null;
+  });
+}
+
 export async function finishRunRuntimeSpan(db: Db, input: {
   orgId: string;
   runId: string;

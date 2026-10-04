@@ -141,6 +141,11 @@ rl.on("line", (line) => {
       "utf8",
     );
   }
+  if (process.env.RUDDER_TEST_EARLY_TURN_STARTED_THEN_EXIT === "1" && message.method === "turn/start") {
+    send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    setTimeout(() => process.exit(0), 10);
+    return;
+  }
   if (process.env.RUDDER_TEST_EXIT_AFTER_REQUEST === message.method) process.exit(0);
   if (message.method === "initialized") return;
   if (message.method === "initialize") {
@@ -228,6 +233,20 @@ rl.on("line", (line) => {
     }
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_TEST_UNRELATED_TURN_STARTED_DURING_TURN === "1") {
+      setTimeout(() => {
+        send({ method: "turn/started", params: { threadId: threadId + "-unrelated", turn: { id: turnId } } });
+        send({ method: "turn/started", params: { threadId, turn: { id: "turn-stale-app-1" } } });
+        finish("completed");
+      }, 20);
+      return;
+    }
+    if (process.env.RUDDER_TEST_DUPLICATE_TURN_STARTED_AFTER_RESPONSE === "1") {
+      setTimeout(() => {
+        send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+      }, 5);
+      return;
+    }
     if (process.env.RUDDER_TEST_STALL_TURN === "1") return;
     if (process.env.RUDDER_TEST_UNICODE_LOAD === "1") {
       const large = process.env.RUDDER_TEST_UNICODE_LARGE === "1";
@@ -622,6 +641,108 @@ describe("executeCodexAppServerChat", () => {
       submissionPhase: "indeterminate",
       providerTurnId: null,
     });
+  });
+
+  it("ignores unrelated-thread and stale-turn notifications after binding the response identity", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const onNativeExecutionIdentity = vi.fn(async () => undefined);
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+        RUDDER_TEST_UNRELATED_TURN_STARTED_DURING_TURN: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+      onNativeExecutionIdentity,
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, submissionPhase: "accepted", providerTurnId: "turn-app-1" });
+    expect(onNativeExecutionIdentity).toHaveBeenCalledTimes(1);
+    expect(onNativeExecutionIdentity).toHaveBeenCalledWith({
+      kind: "codex_turn",
+      threadId: "thread-app-1",
+      turnId: "turn-app-1",
+    });
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests.map((request) => request.method)).toEqual(["thread/start", "turn/start"]);
+  });
+
+  it("keeps dispatched turns accepted and memoizes callback failure across duplicate turn notifications", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const onNativeExecutionIdentity = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      setTimeout(() => reject(new Error("synthetic native identity handoff failure")), 40);
+    }));
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+        RUDDER_TEST_DUPLICATE_TURN_STARTED_AFTER_RESPONSE: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+      onNativeExecutionIdentity,
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorMessage: "synthetic native identity handoff failure",
+      submissionPhase: "accepted",
+      providerTurnId: "turn-app-1",
+    });
+    expect(onNativeExecutionIdentity).toHaveBeenCalledTimes(1);
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests.map((request) => request.method)).toEqual(["thread/start", "turn/start"]);
+  });
+
+  it("does not treat an early turn/started notification as an RPC acceptance or legacy-retry signal", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const onNativeExecutionIdentity = vi.fn(async () => undefined);
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+        RUDDER_TEST_EARLY_TURN_STARTED_THEN_EXIT: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+      onNativeExecutionIdentity,
+    });
+
+    expect(result).toMatchObject({ exitCode: 1, submissionPhase: "indeterminate", providerTurnId: null });
+    expect(onNativeExecutionIdentity).not.toHaveBeenCalled();
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests.map((request) => request.method)).toEqual(["thread/start", "turn/start"]);
   });
 
   it.each(["thread/start", "turn/start"] as const)(

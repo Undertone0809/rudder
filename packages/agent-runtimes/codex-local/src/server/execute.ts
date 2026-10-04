@@ -1137,6 +1137,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           : readinessLeaseAbortController.signal,
         controlAttempt: ctx.controlAttempt,
         onProviderAuthFailure: persistAuthFailureGate,
+        onNativeExecutionIdentity: ctx.onNativeExecutionIdentity,
       });
       const appEndedAt = new Date();
       const providerAuthFailure = appResult.providerAuthFailure === true || isCodexProviderAuthFailure(
