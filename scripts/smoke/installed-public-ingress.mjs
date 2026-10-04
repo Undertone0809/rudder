@@ -930,6 +930,7 @@ async function waitForHealth(runtime, publicUrl, timeoutMs, signal) {
 
 export async function waitForPrivatePort(runtime, publicPort, timeoutMs, signal, observe = observeOwnedPrivateListener) {
   const deadline = Date.now() + timeoutMs;
+  let observedAbsence = false;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
     if (runtime.logs.observationError) throw new SmokeQuestionError("owned runtime log observation failed", { cause: runtime.logs.observationError });
@@ -945,12 +946,17 @@ export async function waitForPrivatePort(runtime, publicPort, timeoutMs, signal,
       console.log(`[installed-public-ingress] private listener observation: ${JSON.stringify(listener)}`);
       return listener.port;
     }
+    observedAbsence = true;
     if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
       throw new Error(`installed server exited before private listener readiness (${runtime.child.exitCode ?? runtime.child.signalCode})`);
     }
     await delay(50, signal);
   }
-  throw new SmokeQuestionError("private Node socket ownership was not observed before readiness deadline");
+  signal?.throwIfAborted();
+  if (observedAbsence) {
+    throw new Error("OS queries confirmed no owned private Node listener before readiness deadline");
+  }
+  throw new SmokeQuestionError("private Node socket observation was not attempted before readiness deadline");
 }
 
 async function createOrganization(apiUrl, name, issuePrefix, work) {

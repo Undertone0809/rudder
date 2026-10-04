@@ -6,6 +6,7 @@ import http from "node:http";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { createWorkflowDeadline } from "./installed-public-ingress-deadline.mjs";
+import { ListenerObservationUnavailable } from "./installed-public-ingress-listeners.mjs";
 import { persistOwnedProcessHandoff, detachAfterRecordedHandoff, parseDarwinProcessWitness } from "./installed-public-ingress-handoff.mjs";
 import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
@@ -60,13 +61,43 @@ it("discovers the private socket by owned PID despite a public-port startup log"
   assert.equal(runtime.privatePort, 32002);
 });
 
-it("does not promote a public-port log into private ownership when observation is empty", async () => {
+it("fails confirmed absence at readiness deadline without promoting the public-port log", async () => {
   const runtime = {
     child: { pid: 123, exitCode: null, signalCode: null },
     logs: { stdout: "Server listening on 127.0.0.1:32001", stderr: "" },
   };
-  await assert.rejects(waitForPrivatePort(runtime, 32001, 20, undefined, async () => null), SmokeQuestionError);
+  await assert.rejects(waitForPrivatePort(runtime, 32001, 20, undefined, async () => null), (error) => {
+    assert.equal(error instanceof SmokeQuestionError, false);
+    assert.match(error.message, /OS queries confirmed no owned private Node listener/u);
+    return true;
+  });
   assert.equal(runtime.privatePort, undefined);
+});
+
+it("keeps unavailable private socket observation as QUESTION even after a clean absence", async () => {
+  const runtime = { child: { pid: 123, exitCode: null, signalCode: null }, logs: { stdout: "", stderr: "" } };
+  let observations = 0;
+  await assert.rejects(waitForPrivatePort(runtime, 32001, 1000, undefined, async () => {
+    if (++observations === 1) return null;
+    throw new ListenerObservationUnavailable("permission denied");
+  }), SmokeQuestionError);
+  assert.equal(observations, 2);
+  assert.equal(runtime.privatePort, undefined);
+});
+
+it("keeps an unattempted private socket query as QUESTION rather than inventing absence", async () => {
+  const runtime = { child: { pid: 123, exitCode: null, signalCode: null }, logs: { stdout: "", stderr: "" } };
+  await assert.rejects(waitForPrivatePort(runtime, 32001, 0, undefined, async () => assert.fail("must not observe")), SmokeQuestionError);
+});
+
+it("cancellation cannot be reclassified as confirmed private listener absence", async () => {
+  const runtime = { child: { pid: 123, exitCode: null, signalCode: null }, logs: { stdout: "", stderr: "" } };
+  const controller = new AbortController();
+  const reason = new Error("cancelled private listener wait");
+  await assert.rejects(waitForPrivatePort(runtime, 32001, 1000, controller.signal, async () => {
+    controller.abort(reason);
+    return null;
+  }), (error) => error === reason);
 });
 
 it("the owning runner exits QUESTION while the exact held child and file logging survive", { skip: process.platform !== "darwin" }, async () => {
