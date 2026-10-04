@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   ProbeError,
@@ -290,14 +291,36 @@ test("two consecutive Side Chat sends retain one logical session and own distinc
   }), (error) => error instanceof ProbeError && error.code === "native_execution_identity_incomplete");
 });
 
-test("the current public Reader projection blocks runtime dispatch with a concrete QUESTION", () => {
-  assert.deepEqual(publicReaderExecutionLineageGap(), {
+test("the current public Reader route proves org-scoped Run/Attempt/Span projection on compact and full output", () => {
+  assert.equal(publicReaderExecutionLineageGap(), null);
+});
+
+test("the source preflight rejects a lineage lookup missing its own organization predicate", () => {
+  const routePath = new URL("../server/src/routes/run-intelligence.ts", import.meta.url);
+  const source = readFileSync(routePath, "utf8");
+  const lookupStart = source.indexOf("async function readTranscriptStoredLineage(");
+  const lookupEnd = source.indexOf("\nfunction buildRunErrors", lookupStart);
+  assert.ok(lookupStart >= 0 && lookupEnd > lookupStart, "stored lineage lookup should exist");
+
+  const lookup = source.slice(lookupStart, lookupEnd);
+  const unscopedLookup = lookup.replace("      eq(runRuntimeSpans.orgId, orgId),\n", "");
+  assert.notEqual(unscopedLookup, lookup, "fixture must remove only the lineage lookup organization predicate");
+  const unscopedRoute = `${source.slice(0, lookupStart)}${unscopedLookup}${source.slice(lookupEnd)}`;
+  assert.deepEqual(publicReaderExecutionLineageGap(unscopedRoute)?.missingRowIdentityFields, [
+    "runId",
+    "attemptId",
+    "spanId",
+  ]);
+});
+
+test("the source preflight reports a concrete gap when Reader rows lack stored execution lineage", () => {
+  assert.deepEqual(publicReaderExecutionLineageGap("router.get('/runs/:runId/transcript', ...);"), {
     endpoint: "GET /api/run-intelligence/runs/:runId/transcript",
     source: "server/src/routes/run-intelligence.ts",
     projectedRowIdentityFields: ["id", "index", "sourceEntryId"],
     requiredRowIdentityFields: ["runId", "attemptId", "spanId"],
-    reason: "The public Reader projection omits per-row execution lineage; its internal TranscriptItem contract has runId/spanId but no attemptId.",
-    smallestProductApiProjection: "Expose runId, attemptId, and spanId on each projected row alongside sourceEntryId, with attemptId resolved from the owning span/attempt.",
+    reason: "The route source does not prove that each public Reader row receives its exact stored Run/Attempt/Span lineage.",
+    smallestProductApiProjection: "Resolve Reader span IDs through organization- and Run-scoped stored spans, then project runId, attemptId, and spanId onto compact rows and full entries.",
     missingRowIdentityFields: ["runId", "attemptId", "spanId"],
   });
 });
@@ -306,6 +329,7 @@ test("the Reader lineage blocker returns QUESTION before any API or runtime work
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
   const checkpoints = [];
+  const missingLineage = publicReaderExecutionLineageGap("router.get('/runs/:runId/transcript', ...);");
   globalThis.fetch = async () => {
     fetchCount += 1;
     throw new Error("API calls must not be reached while projection lineage is missing");
@@ -320,6 +344,7 @@ test("the Reader lineage blocker returns QUESTION before any API or runtime work
     }, {
       createEvidenceDirectory: async () => "/tmp/native-chat-lineage-gate-test",
       saveCheckpoint: async (_directory, value) => { checkpoints.push(structuredClone(value)); },
+      inspectReaderLineage: () => missingLineage,
     });
     assert.equal(receipt.verdict, "QUESTION");
     assert.equal(receipt.failure.code, "public_reader_execution_lineage_unavailable");

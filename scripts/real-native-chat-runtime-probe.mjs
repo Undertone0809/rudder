@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,8 +17,8 @@ const PUBLIC_READER_EXECUTION_LINEAGE_GAP = Object.freeze({
   source: "server/src/routes/run-intelligence.ts",
   projectedRowIdentityFields: ["id", "index", "sourceEntryId"],
   requiredRowIdentityFields: ["runId", "attemptId", "spanId"],
-  reason: "The public Reader projection omits per-row execution lineage; its internal TranscriptItem contract has runId/spanId but no attemptId.",
-  smallestProductApiProjection: "Expose runId, attemptId, and spanId on each projected row alongside sourceEntryId, with attemptId resolved from the owning span/attempt.",
+  reason: "The route source does not prove that each public Reader row receives its exact stored Run/Attempt/Span lineage.",
+  smallestProductApiProjection: "Resolve Reader span IDs through organization- and Run-scoped stored spans, then project runId, attemptId, and spanId onto compact rows and full entries.",
 });
 
 export class ProbeError extends Error {
@@ -471,10 +472,45 @@ export function assertNativeRunContinuity(first, second) {
   };
 }
 
-export function publicReaderExecutionLineageGap() {
-  const missingRowIdentityFields = PUBLIC_READER_EXECUTION_LINEAGE_GAP.requiredRowIdentityFields
-    .filter((field) => !PUBLIC_READER_EXECUTION_LINEAGE_GAP.projectedRowIdentityFields.includes(field));
-  if (missingRowIdentityFields.length === 0) return null;
+export function publicReaderExecutionLineageGap(sourceText = readFileSync(
+  path.join(REPO_ROOT, PUBLIC_READER_EXECUTION_LINEAGE_GAP.source),
+  "utf8",
+)) {
+  const hasStoredLineageShape = /type TranscriptStoredLineage\s*=\s*\{\s*runId:\s*string;\s*attemptId:\s*string\s*\|\s*null;\s*spanId:\s*string;\s*\}/u.test(sourceText);
+  const lookupStart = sourceText.indexOf("async function readTranscriptStoredLineage(");
+  const lookupEnd = sourceText.indexOf("\nfunction buildRunErrors", lookupStart);
+  const storedLookup = lookupStart >= 0 && lookupEnd > lookupStart
+    ? sourceText.slice(lookupStart, lookupEnd)
+    : "";
+  const hasOrgRunScopedSpanLookup = storedLookup.includes("eq(runRuntimeSpans.orgId, orgId)")
+    && storedLookup.includes("eq(runRuntimeSpans.runId, runId)")
+    && storedLookup.includes("inArray(runRuntimeSpans.id, spanIds)");
+  const lineageStart = sourceText.indexOf("const lineageForItem = (item: TranscriptItem)");
+  const lineageEnd = sourceText.indexOf("const chronologicalTrace", lineageStart);
+  const lineageProjection = lineageStart >= 0 && lineageEnd > lineageStart
+    ? sourceText.slice(lineageStart, lineageEnd)
+    : "";
+  const hasFailClosedReaderLineage = lineageProjection.includes("item.runId !== null && item.runId !== stored.runId")
+    && lineageProjection.includes("return { runId: null, attemptId: null, spanId: null };");
+  const compactRowsStart = sourceText.indexOf("const allRows = paged.rows.map");
+  const compactRowsEnd = sourceText.indexOf("const rows = outputMode", compactRowsStart);
+  const compactRowsProjection = compactRowsStart >= 0 && compactRowsEnd > compactRowsStart
+    ? sourceText.slice(compactRowsStart, compactRowsEnd)
+    : "";
+  const fullEntriesStart = sourceText.indexOf("entries: responseItems.map");
+  const fullEntriesEnd = sourceText.indexOf("output: includeOutputs", fullEntriesStart);
+  const fullEntriesProjection = fullEntriesStart >= 0 && fullEntriesEnd > fullEntriesStart
+    ? sourceText.slice(fullEntriesStart, fullEntriesEnd)
+    : "";
+  const hasCompactAndFullProjection = compactRowsProjection.includes("...lineageForItem(item)")
+    && fullEntriesProjection.includes("...lineageForItem(item)");
+  const hasExactReaderLineageProjection = hasStoredLineageShape
+    && hasOrgRunScopedSpanLookup
+    && hasFailClosedReaderLineage
+    && hasCompactAndFullProjection;
+  if (hasExactReaderLineageProjection) return null;
+
+  const missingRowIdentityFields = [...PUBLIC_READER_EXECUTION_LINEAGE_GAP.requiredRowIdentityFields];
   return {
     ...PUBLIC_READER_EXECUTION_LINEAGE_GAP,
     projectedRowIdentityFields: [...PUBLIC_READER_EXECUTION_LINEAGE_GAP.projectedRowIdentityFields],
@@ -1031,6 +1067,7 @@ async function readNativeEvidence(apiBase, run) {
 export async function runProbe(config, {
   createEvidenceDirectory = createEvidenceDir,
   saveCheckpoint = checkpoint,
+  inspectReaderLineage = publicReaderExecutionLineageGap,
 } = {}) {
   const evidenceDir = await createEvidenceDirectory();
   const receipt = {
@@ -1062,7 +1099,7 @@ export async function runProbe(config, {
   };
   await saveCheckpoint(evidenceDir, receipt);
 
-  const readerLineageGap = publicReaderExecutionLineageGap();
+  const readerLineageGap = inspectReaderLineage();
   if (readerLineageGap) {
     receipt.notCovered.push("native runtime execution and resource creation blocked because public Reader rows omit exact Run/Attempt/Span lineage");
     receipt.blockers = [{ code: "public_reader_execution_lineage_unavailable", ...readerLineageGap }];
