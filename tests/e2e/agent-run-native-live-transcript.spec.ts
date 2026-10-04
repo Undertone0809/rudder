@@ -135,7 +135,7 @@ test("native Run transcript preserves available diagnostics until exact native p
     Object.assign(window, { __nativePublicationMissingAlerts: seen });
     new MutationObserver(() => {
       const text = document.querySelector(".run-detail-container")?.textContent ?? "";
-      if (/Transcript missing\.|Transcript unavailable:/i.test(text)) seen.push(text);
+      if (/Transcript missing\.|Transcript unavailable:|No transcript source is available for this run\./i.test(text)) seen.push(text);
     }).observe(document, { subtree: true, childList: true, characterData: true });
   });
   const missingAlerts = () => runPage.evaluate(() =>
@@ -190,6 +190,7 @@ test("native Run transcript preserves available diagnostics until exact native p
       } else {
         await expect(transcript.getByText("Waiting for transcript...", { exact: true })).toBeVisible();
       }
+      await expect(transcript.getByText("No transcript source is available for this run.", { exact: true })).toHaveCount(0);
     };
     await assertRenderedUnpublished(initialUiProjection);
     await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
@@ -236,6 +237,7 @@ test("native Run transcript preserves available diagnostics until exact native p
         await expect.poll(() => missingReads).toBeGreaterThan(readsBeforeReload);
         await expect(transcript.getByText("Waiting for transcript...", { exact: true })).toBeVisible();
         await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
+        await expect(transcript.getByText("No transcript source is available for this run.", { exact: true })).toHaveCount(0);
         await expect(transcript.getByRole("alert").filter({ hasText: /Transcript unavailable:/i })).toHaveCount(0);
         expect(await missingAlerts()).toEqual([]);
       }

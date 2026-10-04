@@ -16,6 +16,7 @@ import {
 
 const transcriptMock = vi.hoisted(() => vi.fn());
 const legacyTranscriptMock = vi.hoisted(() => vi.fn());
+const organizationContextMock = vi.hoisted(() => ({ selectedOrganizationId: null as string | null }));
 
 vi.mock("@/api/agent-runs", () => ({
   agentRunsApi: {
@@ -27,6 +28,10 @@ vi.mock("@/api/chats", () => ({
   chatsApi: {
     getMessageTranscript: legacyTranscriptMock,
   },
+}));
+
+vi.mock("@/context/OrganizationContext", () => ({
+  useOptionalOrganization: () => organizationContextMock,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -112,9 +117,9 @@ function renderNavigationProbe(runId: string, raw = false, active = false, exist
       </QueryClientProvider>,
     );
   });
-  const rerender = (nextActive: boolean) => act(() => {
+  const rerender = (nextActive: boolean, nextRunId = runId, nextRaw = raw) => act(() => {
     root.render(<QueryClientProvider client={queryClient}>
-      <NavigationProbe runId={runId} raw={raw} active={nextActive} />
+      <NavigationProbe runId={nextRunId} raw={nextRaw} active={nextActive} />
     </QueryClientProvider>);
   });
   return { host, root, queryClient, rerender };
@@ -129,6 +134,7 @@ function transitionPage(text: string, revision = text, cursor: string | null = n
 }
 
 beforeEach(() => {
+  organizationContextMock.selectedOrganizationId = null;
   transcriptMock.mockReset();
   legacyTranscriptMock.mockReset();
   legacyTranscriptMock.mockResolvedValue({
@@ -251,6 +257,140 @@ describe("useAgentRunTranscripts", () => {
       expect(rendered.host.textContent).not.toContain("Earlier pages");
       expect(rendered.host.textContent).not.toContain("old-page");
     } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("keeps the last partial page and its completeness visible when Refresh fails", async () => {
+    let reads = 0;
+    transcriptMock.mockImplementation(async () => {
+      if (++reads === 1) return transitionPage("retained partial history", "partial-r1", null, "next-page");
+      throw new Error("503 Service Unavailable");
+    });
+    const rendered = renderNavigationProbe("run-refresh-failure");
+    try {
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("retained partial history"));
+      });
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[role='alert']")?.textContent)
+          .toContain("Transcript unavailable: 503 Service Unavailable"));
+      });
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+        .toBe("retained partial history");
+      expect(rendered.host.querySelector("[data-testid='navigation-state']")?.textContent)
+        .toBe("available|partial|loaded");
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.disabled)
+          .toBe(false));
+      });
+      expect(reads).toBe(2);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("replaces retained entries after a failed Refresh recovers successfully", async () => {
+    let reads = 0;
+    transcriptMock.mockImplementation(async () => {
+      if (++reads === 1) return transitionPage("stale retained history", "old-r", null, "old-next");
+      if (reads === 2) throw new Error("503 Service Unavailable");
+      return transitionPage("recovered replacement history", "new-r");
+    });
+    const rendered = renderNavigationProbe("run-refresh-recovery");
+    try {
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("stale retained history"));
+      });
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[role='alert']")?.textContent)
+          .toContain("Transcript unavailable: 503 Service Unavailable"));
+      });
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+        .toBe("stale retained history");
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.disabled)
+          .toBe(false));
+      });
+
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("recovered replacement history"));
+      });
+      expect(rendered.host.textContent).not.toContain("stale retained history");
+      expect(rendered.host.querySelector("[data-testid='navigation-state']")?.textContent)
+        .toBe("available|complete|loaded");
+      expect(rendered.host.querySelector("[role='alert']")).toBeNull();
+      expect(reads).toBe(3);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("does not reuse retained pages across organization, Run, or Raw view changes", async () => {
+    organizationContextMock.selectedOrganizationId = "org-a";
+    const toolOnlyPage = {
+      entries: [{ id: "tool-only", entry: { kind: "assistant", role: "assistant", rowId: 2,
+        sessionId: "scope-session", ts: "2026-10-02T03:11:56.000Z",
+        toolCalls: [{ id: "call", function: { name: "tool_describe", arguments: "{}" } }] } }],
+      source: "native", revision: "scope-r1", availability: "available", completeness: "partial",
+      page: { cursor: null, hasMore: true, nextCursor: "scope-next", order: "oldest" },
+    };
+    let reads = 0;
+    transcriptMock.mockImplementation(async () => {
+      if (++reads === 1) return toolOnlyPage;
+      throw new Error("503 Service Unavailable");
+    });
+    const rendered = renderNavigationProbe("run-scoped", false);
+    try {
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("tool_call"));
+      });
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[role='alert']")?.textContent)
+          .toContain("Transcript unavailable: 503 Service Unavailable"));
+      });
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe("tool_call");
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.disabled)
+          .toBe(false));
+      });
+
+      rendered.rerender(false, "run-scoped", true);
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe("");
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => {
+        await vi.waitFor(() => expect(reads).toBe(3));
+        await vi.waitFor(() => expect(rendered.host.querySelector("[role='alert']")?.textContent)
+          .toContain("Transcript unavailable: 503 Service Unavailable"));
+      });
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe("");
+
+      organizationContextMock.selectedOrganizationId = "org-b";
+      rendered.rerender(false, "run-scoped", true);
+      await act(async () => {
+        await vi.waitFor(() => expect(reads).toBe(4));
+        await vi.waitFor(() => expect(rendered.host.querySelector("[role='alert']")?.textContent)
+          .toContain("Transcript unavailable: 503 Service Unavailable"));
+      });
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe("");
+
+      rendered.rerender(false, "run-changed", true);
+      await act(async () => {
+        await vi.waitFor(() => expect(reads).toBe(5));
+        await vi.waitFor(() => expect(rendered.host.querySelector("[role='alert']")?.textContent)
+          .toContain("Transcript unavailable: 503 Service Unavailable"));
+      });
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe("");
+      expect(rendered.host.textContent).not.toContain("tool_call");
+      expect(agentRunTranscriptQueryKey("same-run", null, 0, null, "org-a"))
+        .not.toEqual(agentRunTranscriptQueryKey("same-run", null, 0, null, "org-b"));
+    } finally {
+      act(() => rendered.root.unmount());
+      rendered.queryClient.clear();
+      organizationContextMock.selectedOrganizationId = null;
+    }
   });
 
   it("manual reset isolates an in-flight old page and does not refresh another Run", async () => {
