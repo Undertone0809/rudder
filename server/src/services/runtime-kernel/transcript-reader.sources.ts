@@ -151,6 +151,8 @@ function initialLegacyCursor(run: HeartbeatRunRecord): string {
     skipEntries: 0,
     totalBytes: 0,
     totalItems: 0,
+    missingLog: false,
+    totalEntries: 0,
   });
 }
 
@@ -214,7 +216,11 @@ export function createLegacyTranscriptReader(options: {
         skipEntries: 0,
         totalBytes: 0,
         totalItems: 0,
+        missingLog: false,
+        totalEntries: 0,
       };
+      state.missingLog ??= false;
+      state.totalEntries ??= 0;
       if (input.diagnosticProjection) {
         state.totalBytes = 0;
         state.totalItems = 0;
@@ -228,8 +234,9 @@ export function createLegacyTranscriptReader(options: {
         });
       }
 
+      let missingLog = state.missingLog;
       if (state.phase === "log" && input.run.logStore && input.run.logRef) {
-        let page: LegacyLogPage;
+        let page: LegacyLogPage | null = null;
         try {
           page = await readLegacyLogPage(store, {
             store: input.run.logStore as RunLogHandle["store"],
@@ -250,45 +257,62 @@ export function createLegacyTranscriptReader(options: {
           });
         } catch (error) {
           if ((error as { status?: unknown }).status === 404) {
+            // A missing object log is one unavailable legacy source, not proof
+            // that this Run has no transcript. Continue through this Run's
+            // retained result/context/events when no log entries were read.
+            // Once paging has started, don't restart another source at offset
+            // zero and risk duplicating or misordering an already-read page.
+            if (state.offset > 0 || state.skipEntries > 0 || state.totalBytes > 0 || state.totalItems > 0) {
+              return {
+                entries: [],
+                revision: defaultRevision(input.run, "missing"),
+                availability: "missing",
+                completeness: "unknown",
+              };
+            }
+            missingLog = true;
+            state.missingLog = true;
+            state.phase = hasTranscriptCandidates(input.run.resultJson) ? "result"
+              : hasTranscriptCandidates(input.run.contextSnapshot) ? "context"
+                : "events";
+            state.offset = 0;
+            state.skipEntries = 0;
+          }
+          else throw error;
+        }
+        if (page) {
+          const totalBytes = state.totalBytes + page.readBytes;
+          const totalItems = state.totalItems + page.entries.length;
+          if (page.next || page.limitReached) {
+            return transcriptResult(page.entries, {
+              revision,
+              itemOffset: state.totalItems,
+              nextCursor: page.next && !page.limitReached ? encodeLegacyCursor({
+                ...state,
+                offset: page.offset,
+                skipEntries: page.skipEntries,
+                totalBytes,
+                totalItems,
+                totalEntries: state.totalEntries + page.entries.length,
+              }) : null,
+              limitReached: page.limitReached,
+            });
+          }
+          if (page.entries.length > 0) return transcriptResult(page.entries, { revision, itemOffset: state.totalItems });
+          if (state.totalItems > 0 && page.eof) {
             return {
-              entries: [],
-              revision: defaultRevision(input.run, "missing"),
-              availability: "missing",
-              completeness: "unknown",
+              ...transcriptResult([], { revision, itemOffset: state.totalItems }),
+              completeness: "complete",
             };
           }
-          throw error;
+          state.totalBytes = totalBytes;
+          state.totalItems = totalItems;
+          state.phase = hasTranscriptCandidates(input.run.resultJson) ? "result"
+            : hasTranscriptCandidates(input.run.contextSnapshot) ? "context"
+              : "events";
+          state.offset = 0;
+          state.skipEntries = 0;
         }
-        const totalBytes = state.totalBytes + page.readBytes;
-        const totalItems = state.totalItems + page.entries.length;
-        if (page.next || page.limitReached) {
-          return transcriptResult(page.entries, {
-            revision,
-            itemOffset: state.totalItems,
-            nextCursor: page.next && !page.limitReached ? encodeLegacyCursor({
-              ...state,
-              offset: page.offset,
-              skipEntries: page.skipEntries,
-              totalBytes,
-              totalItems,
-            }) : null,
-            limitReached: page.limitReached,
-          });
-        }
-        if (page.entries.length > 0) return transcriptResult(page.entries, { revision, itemOffset: state.totalItems });
-        if (state.totalItems > 0 && page.eof) {
-          return {
-            ...transcriptResult([], { revision, itemOffset: state.totalItems }),
-            completeness: "complete",
-          };
-        }
-        state.totalBytes = totalBytes;
-        state.totalItems = totalItems;
-        state.phase = hasTranscriptCandidates(input.run.resultJson) ? "result"
-          : hasTranscriptCandidates(input.run.contextSnapshot) ? "context"
-            : "events";
-        state.offset = 0;
-        state.skipEntries = 0;
       }
 
   let pageBytesUsed = state.totalBytes;
@@ -332,6 +356,7 @@ export function createLegacyTranscriptReader(options: {
           bytesRead += byteLength;
           if (entry) entries.push(entry);
         }
+        const totalEntries = state.totalEntries + entries.length;
         pageBytesUsed += bytesRead;
         pageItemsUsed += itemsRead;
         const hasMore = index < candidate.length;
@@ -346,7 +371,7 @@ export function createLegacyTranscriptReader(options: {
           return transcriptResult(entries, {
             revision,
             itemOffset: state.totalItems,
-            nextCursor: encodeLegacyCursor({ ...state, offset: index, skipEntries: 0, totalBytes: pageBytesUsed, totalItems: pageItemsUsed }),
+            nextCursor: encodeLegacyCursor({ ...state, offset: index, skipEntries: 0, totalBytes: pageBytesUsed, totalItems: pageItemsUsed, totalEntries }),
           });
         }
         if (limitReached) {
@@ -357,7 +382,7 @@ export function createLegacyTranscriptReader(options: {
             revision,
             itemOffset: state.totalItems,
             nextCursor: hasMore
-              ? encodeLegacyCursor({ ...state, offset: index, skipEntries: 0, totalBytes: pageBytesUsed, totalItems: pageItemsUsed })
+              ? encodeLegacyCursor({ ...state, offset: index, skipEntries: 0, totalBytes: pageBytesUsed, totalItems: pageItemsUsed, totalEntries })
               : null,
           });
         }
@@ -436,6 +461,15 @@ export function createLegacyTranscriptReader(options: {
           : null;
         const limitReached = eventBudgetLimit ?? itemBudgetLimit ?? totalLimit;
         const hasMore = Boolean(eventPage.nextCursor) && !limitReached;
+        const totalEntries = state.totalEntries + entries.length;
+        if (missingLog && totalEntries === 0 && !hasMore && !limitReached && !eventPage.truncated) {
+          return {
+            entries: [],
+            revision: defaultRevision(input.run, "missing"),
+            availability: "missing",
+            completeness: "unknown",
+          };
+        }
         return transcriptResult(entries, {
           revision: eventPage.revision,
           itemOffset: state.totalItems,
@@ -447,6 +481,7 @@ export function createLegacyTranscriptReader(options: {
             skipEntries: 0,
             totalBytes: nextTotalBytes,
             totalItems: nextTotalItems,
+            totalEntries,
           }) : null,
           limitReached,
           truncated: eventPage.truncated,

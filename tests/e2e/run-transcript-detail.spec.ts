@@ -1013,7 +1013,7 @@ test.describe("Run transcript detail", () => {
           else await page.reload({ waitUntil: "domcontentloaded" });
           const detail = page.getByTestId("agent-runs-detail-pane");
           await expect(detail).toBeVisible();
-          const tabLabel = mode === "historical_alias" ? "Metadata" : "Instructions";
+          const tabLabel = "Metadata";
           if (state === "narrow-reload") await detail.locator("select").selectOption({ label: tabLabel });
           else await detail.getByRole("tab", { name: tabLabel, exact: true }).click();
           const renderedRead = await browserRead;
@@ -2515,6 +2515,82 @@ test.describe("Run transcript detail", () => {
     await expect(detailPane.getByText("0 entries", { exact: true })).toBeVisible();
     await expect(detailPane.getByText("No transcript for this run.", { exact: true })).toBeVisible();
     await expect(detailPane.getByRole("button", { name: "Expand transcript" })).toBeVisible();
+  });
+
+  test("recovers a retained Run transcript when its legacy log object is missing", async ({ page }) => {
+    const organization = await createOrganization(page, `Run-Detail-Missing-Log-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Retained Transcript Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const runId = randomUUID();
+    const startedAt = new Date();
+    const finishedAt = new Date(startedAt.getTime() + 1_000);
+    const marker = `Retained result transcript ${runId}`;
+
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "scheduled",
+      triggerDetail: "Retained transcript recovery fixture",
+      status: "succeeded",
+      startedAt,
+      finishedAt,
+      logStore: "local_file",
+      // Unique organization/agent/run scope means this path is isolated and absent.
+      logRef: `${organization.id}/${agent.id}/${runId}.ndjson`,
+      resultJson: {
+        transcript: [{ kind: "assistant", ts: finishedAt.toISOString(), text: marker }],
+      },
+      contextSnapshot: { transcriptSource: "legacy" },
+      createdAt: startedAt,
+      updatedAt: finishedAt,
+    });
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    const readerResponse = await page.request.get(
+      `/api/run-intelligence/runs/${runId}/transcript?output=full&order=oldest&turnLimit=50&includeOutput=false&maxChars=4000`,
+    );
+    expect(readerResponse.status()).toBe(200);
+    const readerBody = await readerResponse.json() as {
+      run?: { id?: string; orgId?: string };
+      availability?: string;
+      completeness?: string;
+      entries?: unknown[];
+      page?: { hasMore?: boolean; nextCursor?: string | null };
+    };
+    expect(readerBody).toMatchObject({
+      run: { id: runId, orgId: organization.id },
+      availability: "available",
+      completeness: "complete",
+      page: { hasMore: false, nextCursor: null },
+    });
+    expect(JSON.stringify(readerBody.entries)).toContain(marker);
+
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByText(marker, { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
+    await expect(detailPane.getByText("No transcript source is available for this run.", { exact: true })).toHaveCount(0);
+    await page.screenshot({
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-missing-log-recovered"),
+      fullPage: true,
+    });
   });
 
   test("renders mocked transcript availability and read errors once while preserving partial history", async ({ page }) => {

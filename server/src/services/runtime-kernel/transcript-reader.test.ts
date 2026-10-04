@@ -443,6 +443,112 @@ describe("transcript reader", () => {
     }]);
   });
 
+  it("falls back from a missing legacy log to retained result transcript entries", async () => {
+    const read = vi.fn().mockRejectedValue(Object.assign(new Error("missing object"), { status: 404 }));
+    const reader = createLegacyTranscriptReader({ logStore: { read } as never });
+    const result = await reader.readRun({
+      readonly: true,
+      run: databaseRun({
+        logStore: "local_file",
+        logRef: "missing.ndjson",
+        resultJson: {
+          entries: [{ kind: "assistant", ts: "2026-09-22T00:00:01.000Z", text: "retained answer", sourceEntryId: "result-1" }],
+        },
+      }) as never,
+      runtimeType: "process",
+      events: [],
+    });
+
+    expect(result).toMatchObject({
+      availability: "available",
+      completeness: "complete",
+      entries: [{ kind: "assistant", text: "retained answer", sourceEntryId: "result-1" }],
+    });
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("returns missing when a 404 has no retained transcript or durable events", async () => {
+    const read = vi.fn().mockRejectedValue(Object.assign(new Error("missing object"), { status: 404 }));
+    const reader = createLegacyTranscriptReader({ logStore: { read } as never });
+    const result = await reader.readRun({
+      readonly: true,
+      run: databaseRun({ logStore: "local_file", logRef: "missing.ndjson" }) as never,
+      runtimeType: "process",
+      events: [],
+    });
+
+    expect(result).toMatchObject({ entries: [], availability: "missing", completeness: "unknown" });
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("preserves missing-log provenance until malformed retained pages are exhausted", async () => {
+    const read = vi.fn().mockRejectedValue(Object.assign(new Error("missing object"), { status: 404 }));
+    const reader = createLegacyTranscriptReader({ logStore: { read } as never });
+    const input = {
+      readonly: true as const,
+      run: databaseRun({
+        logStore: "local_file",
+        logRef: "missing.ndjson",
+        resultJson: { entries: [null, { not: "a transcript entry" }, 42] },
+      }) as never,
+      runtimeType: "process",
+      events: [],
+      limit: 1,
+    };
+
+    const first = await reader.readRun(input) as { entries: readonly TranscriptEntry[]; nextCursor: string | null };
+    expect(first.entries).toEqual([]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const second = await reader.readRun({ ...input, cursor: first.nextCursor }) as {
+      entries: readonly TranscriptEntry[];
+      nextCursor: string | null;
+    };
+    expect(second.entries).toEqual([]);
+    expect(second.nextCursor).toEqual(expect.any(String));
+
+    const final = await reader.readRun({ ...input, cursor: second.nextCursor });
+    expect(final).toMatchObject({ entries: [], availability: "missing", completeness: "unknown" });
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("does not restart from retained data when a legacy log disappears mid-pagination", async () => {
+    const bytes = Buffer.from([
+      JSON.stringify({ ts: "2026-09-22T00:00:01.000Z", stream: "stdout", chunk: "first answer\n" }),
+      JSON.stringify({ ts: "2026-09-22T00:00:02.000Z", stream: "stdout", chunk: "second answer\n" }),
+    ].join("\n") + "\n", "utf8");
+    const fixture = makeUtf8LogStore(bytes);
+    const read = vi.fn(fixture.read)
+      .mockImplementationOnce(fixture.read)
+      .mockRejectedValueOnce(Object.assign(new Error("missing object"), { status: 404 }));
+    const reader = createLegacyTranscriptReader({ logStore: { read } as never });
+    const input = {
+      readonly: true as const,
+      run: databaseRun({
+        logStore: "local_file",
+        logRef: "paged.ndjson",
+        logBytes: bytes.length,
+        resultJson: {
+          entries: [{ kind: "assistant", ts: "2026-09-22T00:00:03.000Z", text: "must not duplicate" }],
+        },
+      }) as never,
+      runtimeType: "process",
+      events: [],
+      limit: 1,
+    };
+    const first = await reader.readRun(input) as { entries: readonly TranscriptEntry[]; nextCursor: string | null };
+    expect(first.entries).toMatchObject([{ kind: "stdout", text: "first answer" }]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const second = await reader.readRun({ ...input, cursor: first.nextCursor }) as {
+      entries: readonly TranscriptEntry[];
+      availability: string;
+      completeness: string;
+    };
+    expect(second).toMatchObject({ entries: [], availability: "missing", completeness: "unknown" });
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
   it("semantically decodes a successful historical Gemini CLI Run without registering an executable parser", async () => {
     const ts = "2026-09-30T00:00:00.000Z";
     const records = [
