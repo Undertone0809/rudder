@@ -42,6 +42,7 @@ export function createWorkflowDeadline({
   let cleaningUp = false;
   let disposed = false;
   let workTimer = null;
+  let externalCancellationReason = null;
 
   const abortWorkflow = (reason) => {
     if (!controller.signal.aborted) controller.abort(reason);
@@ -50,7 +51,8 @@ export function createWorkflowDeadline({
   const remainingWorkflowMs = () => Math.max(0, Math.floor(workflowDeadlineAt - performance.now()));
 
   const onProcessSignal = (signalName) => {
-    abortWorkflow(new Error(`received ${signalName}; entering owned-process teardown`));
+    externalCancellationReason ??= new Error(`received ${signalName}; entering owned-process teardown`);
+    abortWorkflow(externalCancellationReason);
   };
   const onSigint = () => onProcessSignal("SIGINT");
   const onSigterm = () => onProcessSignal("SIGTERM");
@@ -66,6 +68,7 @@ export function createWorkflowDeadline({
 
   return {
     signal: controller.signal,
+    get externalCancellationReason() { return externalCancellationReason; },
 
     remainingMs,
 
