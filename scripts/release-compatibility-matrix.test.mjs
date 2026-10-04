@@ -85,14 +85,23 @@ describe("release migration compatibility matrix", () => {
   it.each([
     ["0.7.24", "stable"],
     ["0.7.24-canary.0", "canary"],
-  ])("accepts %s with the current native-chat migration fingerprint", (candidateVersion, channel) => {
+  ])("accepts %s with the reconciled main and native-chat migration fingerprint", (candidateVersion, channel) => {
     const result = runCompatibilityPreflight({ candidateVersion, channel });
     expect(result.candidateFingerprint).toBe(
-      "1061b688ac7cae7a688723b39ea4113cc91edd1f26ca494f8ed6daac8cbbc72e",
+      "98cbc44ba2ffd1e12c6ce3d6a58db34d9e7b93934795d6629e8b37c3242fc121",
     );
-    expect(result.candidateMigrations).toBe(183);
-    expect(result.candidateSqlFiles).toBe(185);
-    expect(result.fixtures[0].version).toBe("0.7.23");
+    expect(result.candidateMigrations).toBe(186);
+    expect(result.candidateSqlFiles).toBe(188);
+    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.23",
+      "0.7.22",
+      "0.7.21",
+      "0.7.20",
+      "0.7.19",
+      "0.7.18",
+      "0.7.16",
+      "0.7.15",
+    ]);
   }, 60_000);
 
   it("accepts the frozen pre-D1 0.7.21 candidate against the previous stable fixtures", () => {

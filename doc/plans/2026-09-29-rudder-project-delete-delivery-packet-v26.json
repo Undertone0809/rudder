@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "rust-project-delete-v26",
-  "status": "acceptance_pending",
+  "status": "delivered",
   "owner": {
     "root_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3",
     "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
@@ -132,9 +132,11 @@
       "Rebased only successor commit onto 442203954; prior squash-merged member work excluded. No successor code conflict.",
       "9bc9 first CI planner failed on unchanged compatibility declaration; f416 synchronizes computed migration fingerprint, 176 journal /178SQL; historical declarations untouched.",
       "f416 native CI failure was stale exact manifest counts;82a test-only correction reviewed and14 validation tests PASS. All six f416 foundation artifact builds and D1 public-entry CI PASS.",
-      "26.4 rebinds build/runtime/data to independent normal six-target complete-package PASS, including actual CI host execution and upgrade; earlier author fixture remains separately attributed."
+      "26.4 rebinds build/runtime/data to independent normal six-target complete-package PASS, including actual CI host execution and upgrade; earlier author fixture remains separately attributed.",
+      "Protected PR235 merge89859a26b has identical full tree to967; no source drift or runtime replay implied."
     ],
-    "invalidated_receipts": [
+    "invalidated_receipts": [],
+    "historical_invalidated_receipts": [
       "Earlier small-fixture author result superseded for large response and outbox delivery."
     ]
   },
@@ -144,7 +146,7 @@
     "target_ref": "refs/heads/main",
     "base_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
+    "observed_remote_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
     "branch_refs": [
       "codex/d1-default-writer-20260929"
     ],
@@ -153,14 +155,14 @@
     "patch_tree_sha": "74e50c7b88f59dfeb3e1a1783e68864f070867f8",
     "expected_old_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": null,
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
+      "delivered_sha": "89859a26b002828a61faf7a542d8f07d3b522884"
     },
     "index_update_mode": "none",
     "pr": "https://github.com/Undertone0809/rudder/pull/235",
-    "published_head": "0cd278728871b78c27ffa3b9d6f5dab78a6b0b4c"
+    "published_head": "96708a708f57f83d0c44e0c60add26aa2b6835d7"
   },
   "preservation": {
     "checked": true,
@@ -176,11 +178,16 @@
     ]
   },
   "terminal": {
-    "delivered_ref": null,
-    "delivered_sha": null,
-    "delivered_tree_sha": null,
-    "timestamp": null,
-    "proof": []
+    "delivered_ref": "refs/heads/main",
+    "delivered_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
+    "delivered_tree_sha": "efaa57e836061344acc507abf592fa1586c644ef",
+    "timestamp": "2026-09-29T00:39:46Z",
+    "proof": [
+      "PR235 protected squash merge with exact-head96708a708 guard, no bypass.",
+      "Merged tree efaa57e836061344acc507abf592fa1586c644ef equals accepted published-head tree.",
+      "All applicable CI PASS: Test36499530815 attempt2 and D1 real-entry36499530738.",
+      "Stage accept, independent complete-package PASS and final accept bind source4353; source-to-published differences are delivery docs only."
+    ]
   },
   "author_evidence": {
     "log": "/tmp/rudder-project-delete-recovery.GM92Ny",
@@ -194,8 +201,9 @@
     "native_manifest_validation": "PASS_14_tests_separate_tmp_target_no_database",
     "db_upgrade_validation": "PASS_two_actual_PG_legacy0102_cases_isolated_globalSetup_disabled",
     "packaged_evidence": "doc/plans/artifacts/2026-09-29-rudder-project-delete-local-packaged-verification.json",
-    "prior_head_ci": "36496470013: Ubuntu stale migration arrays corrected; Windows watchdog cleanup failure unresolved; Desktop packaged macOS PASS",
-    "4353_equivalence": "Only two exact DB upgrade expectations added since82a, plus delivery docs; runtime content unchanged, independent PASS retained by content equivalence."
+    "prior_head_ci": "Prior0cd Ubuntu stale0175 arrays corrected at4353. Prior Windows watchdog failure passed at967 without code/assertion changes. Intel967 attempt1 log-store-offsets250 timed out at5000ms (112PASS1FAIL1skip); single failed-job rerun109196831677 passed unchanged. Both original failures retained.",
+    "4353_equivalence": "Only two exact DB upgrade expectations added since82a, plus delivery docs; runtime content unchanged, independent PASS retained by content equivalence.",
+    "exact_head_ci": "PASS_967_Test36499530815_attempt2_D1_36499530738"
   },
   "claims": {
     "implementation_complete": false,

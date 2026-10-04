@@ -368,7 +368,10 @@ export function loadConfig(): Config {
     "required",
   );
   const rustOrganizationBrandingMode = parseRustFoundationMode(process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE);
-  const rustProjectGoalSetMode = parseRustFoundationMode(process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE);
+  const rustProjectGoalSetMode = parseRustFoundationMode(
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE,
+    "required",
+  );
   const rustFoundationBinaryPath = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim() || undefined;
   const rustFoundationActorEnvelopeKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim() || undefined;
   const mcpDeploymentAllowlists = parseMcpDeploymentPolicyEnv(process.env);

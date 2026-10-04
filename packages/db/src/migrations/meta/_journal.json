@@ -1237,47 +1237,68 @@
     {
       "idx": 176,
       "version": "7",
+      "when": 1790638485790,
+      "tag": "0176_project_create_receipt_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "7",
+      "when": 1790697590321,
+      "tag": "0177_organization_import_receipt_activity_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "7",
+      "when": 1790761299843,
+      "tag": "0178_organization_resource_mutation_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "7",
       "when": 1790188369991,
       "tag": "0175_span_supplement_retention",
       "breakpoints": true
     },
     {
-      "idx": 177,
+      "idx": 180,
       "version": "7",
       "when": 1790190000000,
       "tag": "0176_side_chat_provider_cleanup_intents",
       "breakpoints": true
     },
     {
-      "idx": 178,
+      "idx": 181,
       "version": "7",
       "when": 1790191000000,
       "tag": "0177_side_chat_close_intents",
       "breakpoints": true
     },
     {
-      "idx": 179,
+      "idx": 182,
       "version": "7",
       "when": 1790192000000,
       "tag": "0178_side_chat_provider_cleanup_protection_refs",
       "breakpoints": true
     },
     {
-      "idx": 180,
+      "idx": 183,
       "version": "7",
       "when": 1790578815000,
       "tag": "0179_side_chat_first_inputs",
       "breakpoints": true
     },
     {
-      "idx": 181,
+      "idx": 184,
       "version": "7",
       "when": 1790591887000,
       "tag": "0180_native_resource_writer_fencing",
       "breakpoints": true
     },
     {
-      "idx": 182,
+      "idx": 185,
       "version": "7",
       "when": 1790700000000,
       "tag": "0181_side_chat_first_input_generation",

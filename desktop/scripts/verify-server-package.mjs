@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { verifyNativeReleaseVersion } from "../../scripts/native-release-version.mjs";
+import { repairEmbeddedPostgres } from "../../server/resources/postinstall-embedded-postgres.mjs";
 import { resolveNativeTarget } from "./native-target.mjs";
 import {
   EMBEDDED_POSTGRES_PLATFORM_PACKAGES,
@@ -541,6 +542,17 @@ async function verifyServerPackage(serverPackageDir) {
     }
   } else {
     ok(`all ${critical.length} critical dependencies present`);
+  }
+
+  try {
+    const postgresCopies = repairEmbeddedPostgres({
+      serverPackageDir,
+      allowedRoot: serverPackageDir,
+      checkOnly: true,
+    });
+    ok(`embedded-postgres initdb diagnostics verified (${postgresCopies.length} copies)`);
+  } catch (err) {
+    error(`embedded-postgres initdb diagnostics: ${err.message}`);
   }
 
   // 3. @rudderhq/* package exports

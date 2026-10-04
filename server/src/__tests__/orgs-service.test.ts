@@ -602,7 +602,7 @@ describe("organization service", () => {
       name: "Rust-Owned Project Removal",
       description: "",
       goalIds: [goal.id],
-    });
+    }, { lane: "node", caller: "import" });
     await db.execute(sql`
       UPDATE organization_branding_mutation_state
       SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()

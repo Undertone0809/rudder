@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { repairEmbeddedPostgres } from "../../server/resources/postinstall-embedded-postgres.mjs";
 import { optimizeServerPackage } from "./optimize-server-package.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -418,6 +419,7 @@ async function main() {
   await rewritePublishedManifest(targetDir);
   await rewriteInternalPackages(targetDir);
   await normalizeSelfReference(targetDir);
+  repairEmbeddedPostgres({ serverPackageDir: targetDir, allowedRoot: targetDir });
   await stagePostgresRuntimePayload();
   await optimizeServerPackage({
     arch: process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch,

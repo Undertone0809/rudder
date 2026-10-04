@@ -1,8 +1,10 @@
 mod support;
 
 use rudder_d1_persistence::{
-    MutationStore, Outcome, ProjectDeleteCommand, ProjectPatchCommand, Receipt, ResultState,
-    StoreError,
+    MutationStore, OrganizationResourceCommand, OrganizationResourceOperation, Outcome,
+    ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
+    ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
+    ProjectPatchMutationOrigin, Receipt, ResultState, StoreError,
 };
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
 use rudder_project_goal_link_core::{
@@ -19,6 +21,596 @@ use support::{
 };
 
 struct SeedTargets;
+
+#[derive(Default)]
+struct CreateProvisioner {
+    requests: std::sync::Mutex<Vec<ProjectCreateProvisionRequest>>,
+    fail: bool,
+    bind_first_intent: bool,
+}
+
+impl ProjectCreateProvisioner for CreateProvisioner {
+    fn provision<'a>(
+        &'a self,
+        request: &'a ProjectCreateProvisionRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<ProjectCreateProvisioned, StoreError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            let mut requests = self.requests.lock().unwrap();
+            let changed_intent = self.bind_first_intent
+                && requests.first().is_some_and(|original| original != request);
+            requests.push(request.clone());
+            if changed_intent {
+                return Err(StoreError::ProvisioningConflict);
+            }
+            if self.fail {
+                return Err(StoreError::Provisioning("synthetic failure".to_owned()));
+            }
+            Ok(ProjectCreateProvisioned {
+                organization_workspace_root: "/synthetic/library".to_owned(),
+            })
+        })
+    }
+}
+
+fn project_create_command(key: &str) -> ProjectCreateCommand {
+    ProjectCreateCommand {
+        organization_id: ORG.to_owned(),
+        actor_kind: "agent".to_owned(),
+        actor_id: CEO.to_owned(),
+        run_id: None,
+        idempotency_key: key.to_owned(),
+        data: json!({"name":"Synthetic project", "goalIds":[GOAL_TWO, GOAL], "goalId":FOREIGN_GOAL,
+            "newResources":[{"name":"Create source", "kind":"file", "locator":"https://example.test/create"}]}),
+        activity_details: json!({"source":"synthetic", "name":"unresolved"}),
+    }
+}
+
+fn created_response(receipt: &Receipt) -> &serde_json::Value {
+    let ResultState::ProjectCreated { response, .. } = &receipt.result else {
+        panic!("create receipt")
+    };
+    response
+}
+
+fn required_activity_id(receipt: &Receipt) -> &str {
+    receipt
+        .activity_id
+        .as_deref()
+        .expect("ordinary mutation activity id")
+}
+
+// This mock tests the SQL boundary when the host rejects a changed intent.
+// Durable filesystem binding, corruption handling, and directory reuse belong
+// to project_library's tests, not this in-memory provisioner.
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_changed_intent_rolls_back_and_committed_replay_skips_hook() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner {
+        bind_first_intent: true,
+        ..Default::default()
+    };
+    let command = project_create_command("create-intent-drift");
+    database.sql("CREATE FUNCTION fail_create_intent_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic audit failure'; END; $$;
+        CREATE TRIGGER fail_create_intent_audit_trigger BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION fail_create_intent_audit();").await;
+    assert!(matches!(
+        store.project_create(command.clone(), &provisioner).await,
+        Err(StoreError::Database(_))
+    ));
+    let original = provisioner.requests.lock().unwrap()[0].clone();
+    database.sql("DROP TRIGGER fail_create_intent_audit_trigger ON activity_log; DROP FUNCTION fail_create_intent_audit();").await;
+    let node_project = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let mut node_tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT org_id FROM organization_mutation_state WHERE org_id=$1::uuid FOR UPDATE")
+        .bind(ORG)
+        .fetch_one(&mut *node_tx)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO projects (id,org_id,name) VALUES ($1::uuid,$2::uuid,$3)")
+        .bind(node_project)
+        .bind(ORG)
+        .bind(&original.project_name)
+        .execute(&mut *node_tx)
+        .await
+        .unwrap();
+    node_tx.commit().await.unwrap();
+    assert!(matches!(
+        store.project_create(command.clone(), &provisioner).await,
+        Err(StoreError::ProvisioningConflict)
+    ));
+    let changed = provisioner.requests.lock().unwrap()[1].clone();
+    assert_eq!(changed.project_id, original.project_id);
+    assert_eq!(changed.request_fingerprint, original.request_fingerprint);
+    assert_ne!(changed.project_name, original.project_name);
+    assert_ne!(changed.project_url_key, original.project_url_key);
+    let counts: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM projects WHERE id=$1::uuid),
+         (SELECT count(*) FROM project_goal_mutation_state WHERE project_id=$1::uuid),
+         (SELECT count(*) FROM project_goals WHERE project_id=$1::uuid),
+         (SELECT count(*) FROM organization_resources),
+         (SELECT count(*) FROM organization_mutation_receipts),
+         (SELECT count(*) FROM organization_mutation_outbox), (SELECT count(*) FROM activity_log)",
+    )
+    .bind(&original.project_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (0, 0, 0, 0, 0, 0, 0));
+    let node_name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1::uuid")
+        .bind(node_project)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(node_name, original.project_name);
+    assert_eq!(
+        store.project_scope(node_project).await.unwrap().owner,
+        "node"
+    );
+    // Once the collision disappears, the identical intent can complete.
+    sqlx::query("DELETE FROM projects WHERE id=$1::uuid")
+        .bind(node_project)
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    let committed = store
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    assert_eq!(
+        created_response(&committed.receipt)["name"],
+        original.project_name
+    );
+    assert_eq!(provisioner.requests.lock().unwrap()[2], original);
+    let unavailable_hook = CreateProvisioner {
+        fail: true,
+        ..Default::default()
+    };
+    let replay = MutationStore::new(database.pool.clone())
+        .project_create(command, &unavailable_hook)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, committed.receipt);
+    assert!(unavailable_hook.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_goal_precedence_and_scalar_defaults_match_service() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner::default();
+    let uppercase_goal = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    sqlx::query(
+        "INSERT INTO goals (id,org_id,title) VALUES ($1::uuid,$2::uuid,'Case insensitive')",
+    )
+    .bind(uppercase_goal)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    for (index, (fields, expected)) in [
+        (json!({}), None),
+        (json!({"goalId":null}), None),
+        (json!({"goalId":GOAL}), Some(GOAL)),
+        (json!({"goalId":FOREIGN_GOAL,"goalIds":[]}), None),
+        (
+            json!({"goalId":FOREIGN_GOAL,"goalIds":[GOAL_TWO]}),
+            Some(GOAL_TWO),
+        ),
+        (
+            json!({"goalId":uppercase_goal.to_uppercase()}),
+            Some(uppercase_goal),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut command = project_create_command(&format!("scalar-parity-{index}"));
+        command.data = fields;
+        command.data["name"] = json!("Parity");
+        command.data["icon"] = serde_json::Value::Null;
+        let result = store.project_create(command, &provisioner).await.unwrap();
+        let response = created_response(&result.receipt);
+        let name = if index == 0 {
+            "Parity".to_owned()
+        } else {
+            format!("Parity {}", index + 1)
+        };
+        assert_eq!(response["name"], name);
+        assert_eq!(response["urlKey"], name.to_lowercase().replace(' ', "-"));
+        assert_eq!(response["goalId"], json!(expected));
+        assert_eq!(
+            response["goalIds"],
+            json!(expected.into_iter().collect::<Vec<_>>())
+        );
+        assert_eq!(
+            response["goals"].as_array().unwrap().len(),
+            usize::from(expected.is_some())
+        );
+        assert_eq!(response["status"], "backlog");
+        assert_eq!(response["icon"], "folder");
+        for key in [
+            "description",
+            "leadAgentId",
+            "targetDate",
+            "pauseReason",
+            "pausedAt",
+            "archivedAt",
+            "executionWorkspacePolicy",
+            "primaryWorkspace",
+        ] {
+            assert!(response[key].is_null(), "{key}");
+        }
+        assert_eq!(response["workspaces"], json!([]));
+        assert_eq!(response["resources"], json!([]));
+        assert_eq!(
+            response["codebase"],
+            json!({"configured":true,"scope":"organization","workspaceId":null,"repoUrl":null,"repoRef":null,"defaultRef":null,"repoName":null,"localFolder":"/synthetic/library","managedFolder":"/synthetic/library","effectiveLocalFolder":"/synthetic/library","origin":"local_folder"})
+        );
+        assert_eq!(response["id"].as_str().unwrap().as_bytes()[14], b'5');
+        if index == 0 {
+            assert_eq!(
+                response["color"],
+                "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)"
+            );
+        }
+        if index == 1 {
+            assert_eq!(
+                response["color"],
+                "linear-gradient(135deg, #7c3aed 0%, #d946ef 100%)"
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_resources_policy_and_codebase_preserve_enriched_service_response() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner::default();
+    let library: String = sqlx::query_scalar("INSERT INTO organization_resources (org_id,name,kind,source_type,locator,metadata) VALUES ($1::uuid,'Original resource','file','library','projects/parity/source.md','{\"preserved\":true}') RETURNING id::text")
+        .bind(ORG).fetch_one(&database.pool).await.unwrap();
+    let foreign: String = sqlx::query_scalar("INSERT INTO organization_resources (org_id,name,kind,locator) VALUES ($1::uuid,'Foreign','url','https://example.test/foreign') RETURNING id::text")
+        .bind(OTHER).fetch_one(&database.pool).await.unwrap();
+    let policy = json!({
+        "enabled":true,"defaultMode":"operator_branch","allowIssueOverride":false,
+        "defaultProjectWorkspaceId":null,
+        "workspaceStrategy":{"type":"git_worktree","baseRef":"main","branchTemplate":"work/{issue}","worktreeParentDir":null,"provisionCommand":"setup","teardownCommand":null},
+        "workspaceRuntime":{"nested":[1,null,{"anything":true}]},"branchPolicy":{},
+        "pullRequestPolicy":{"labels":["review"]},"runtimePolicy":{"timeout":42},"cleanupPolicy":null,
+    });
+    let mut command = project_create_command("enriched-parity");
+    command.data = json!({
+        "name":"  文档 Parity  ","description":"  retained description  ","status":"planned",
+        "leadAgentId":CEO,"targetDate":"2026-10-03","color":"#ABCDEF","icon":"folder",
+        "archivedAt":"2026-09-29T01:02:03.456Z","executionWorkspacePolicy":policy,
+        "resourceAttachments":[{"resourceId":library.to_uppercase(),"role":"working_set","note":"  original attachment  ","sortOrder":9,"isPrimary":true}],
+        "newResources":[
+            {"name":"Ignored replacement","kind":"file","sourceType":"library","locator":" projects/parity/source.md ","role":"background","sortOrder":0,"metadata":{"replacement":true}},
+            {"name":"  External  ","kind":"connector_object","locator":"  connector:object  ","description":"   ","metadata":{"deep":[false,null,{"x":"y"}]},"note":"  ","sortOrder":2},
+            {"name":"Directory","kind":"directory","sourceType":"library","locator":"projects/parity","description":" trimmed ","role":"deliverable","sortOrder":3},
+        ],
+    });
+    let created = store
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    let response = created_response(&created.receipt);
+    assert_eq!(response["name"], "  文档 Parity  ");
+    assert_eq!(response["urlKey"], "parity");
+    for key in [
+        "description",
+        "status",
+        "leadAgentId",
+        "targetDate",
+        "color",
+        "icon",
+        "archivedAt",
+    ] {
+        assert_eq!(response[key], command.data[key], "{key}");
+    }
+    let mut normalized = policy.clone();
+    normalized
+        .as_object_mut()
+        .unwrap()
+        .remove("defaultProjectWorkspaceId");
+    normalized.as_object_mut().unwrap().remove("cleanupPolicy");
+    normalized["workspaceStrategy"]
+        .as_object_mut()
+        .unwrap()
+        .remove("worktreeParentDir");
+    normalized["workspaceStrategy"]
+        .as_object_mut()
+        .unwrap()
+        .remove("teardownCommand");
+    assert_eq!(response["executionWorkspacePolicy"], normalized);
+    let resources = response["resources"].as_array().unwrap();
+    assert_eq!(resources.len(), 3);
+    assert_eq!(resources[0]["resource"]["name"], "External");
+    assert_eq!(resources[0]["resource"]["sourceType"], "external");
+    assert_eq!(resources[0]["resource"]["locator"], "connector:object");
+    assert_eq!(
+        resources[0]["resource"]["metadata"],
+        json!({"deep":[false,null,{"x":"y"}]})
+    );
+    assert!(resources[0]["resource"]["description"].is_null());
+    assert!(resources[0]["note"].is_null());
+    assert_eq!(resources[0]["role"], "reference");
+    assert_eq!(resources[1]["resource"]["description"], "trimmed");
+    assert_eq!(resources[2]["resourceId"], library);
+    assert_eq!(resources[2]["resource"]["name"], "Original resource");
+    assert_eq!(
+        resources[2]["resource"]["metadata"],
+        json!({"preserved":true})
+    );
+    assert_eq!(resources[2]["note"], "original attachment");
+    assert_eq!(resources[2]["role"], "working_set");
+    assert_eq!(resources[2]["isPrimary"], true);
+    for resource in [&resources[0]["resource"], &resources[1]["resource"]] {
+        let state = sqlx::query(
+            "SELECT owner, mutation_version, fence_epoch
+             FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+        )
+        .bind(resource["id"].as_str().unwrap())
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        assert_eq!(state.try_get::<String, _>("owner").unwrap(), "rust");
+        assert_eq!(state.try_get::<i64, _>("mutation_version").unwrap(), 0);
+        assert_eq!(state.try_get::<i64, _>("fence_epoch").unwrap(), 1);
+    }
+    for attachment in resources {
+        assert_eq!(attachment["projectId"], response["id"]);
+        assert_eq!(attachment["orgId"], ORG);
+        assert_eq!(attachment["resource"]["orgId"], ORG);
+        for key in ["createdAt", "updatedAt"] {
+            assert!(attachment[key].as_str().unwrap().ends_with('Z'));
+            assert!(attachment["resource"][key].as_str().unwrap().ends_with('Z'));
+        }
+    }
+    assert_eq!(
+        store
+            .project_create(command.clone(), &provisioner)
+            .await
+            .unwrap()
+            .receipt,
+        created.receipt
+    );
+    command.idempotency_key = "foreign-resource-parity".to_owned();
+    command.data["resourceAttachments"] = json!([{"resourceId":foreign}]);
+    assert!(matches!(
+        store.project_create(command, &provisioner).await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
+    let resource_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_resources WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(resource_count, 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_atomic_response_replay_authorization_and_deleted_incarnation() {
+    let database = Database::start().await;
+    database.sql("UPDATE organization_mutation_state SET owner='node', fence_epoch=fence_epoch+1, fence_token=gen_random_uuid(); UPDATE agents SET role='engineer';").await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner::default();
+    let mut command = project_create_command("create-replay");
+    command.data["description"] = json!("x".repeat(1024 * 1024 + 1));
+    let first = store
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    assert!(!first.replayed);
+    let response = created_response(&first.receipt);
+    let id = response["id"].as_str().unwrap();
+    assert_eq!(response["name"], "Synthetic project 2");
+    assert_eq!(response["goalId"], GOAL_TWO);
+    assert_eq!(response["goalIds"], json!([GOAL_TWO, GOAL]));
+    assert_eq!(
+        response["description"].as_str().unwrap().len(),
+        1024 * 1024 + 1
+    );
+    assert_eq!(response["resources"].as_array().unwrap().len(), 1);
+    assert_eq!(response["codebase"]["localFolder"], "/synthetic/library");
+    assert_eq!(response["icon"], "folder");
+    let scope = store.project_scope(id).await.unwrap();
+    assert_eq!(
+        (scope.owner.as_str(), scope.version, scope.fence_epoch),
+        ("rust", 1, 1)
+    );
+    let restarted = MutationStore::new(database.pool.clone());
+    let replay = restarted
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(first.receipt, replay.receipt);
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
+    let details: String =
+        sqlx::query_scalar("SELECT details::text FROM activity_log WHERE id=$1::uuid")
+            .bind(required_activity_id(&first.receipt))
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&details).unwrap(),
+        json!({"source":"synthetic", "name":"Synthetic project 2"})
+    );
+    let mut conflict = command.clone();
+    conflict.data["name"] = json!("Different");
+    assert!(matches!(
+        store.project_create(conflict, &provisioner).await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    let mut actor_conflict = command.clone();
+    actor_conflict.actor_kind = "board".to_owned();
+    actor_conflict.actor_id = "different-board".to_owned();
+    assert!(matches!(
+        store.project_create(actor_conflict, &provisioner).await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    database.sql("UPDATE agents SET status='terminated'").await;
+    assert!(matches!(
+        store.project_create(command.clone(), &provisioner).await,
+        Err(StoreError::Unauthorized)
+    ));
+    database.sql("UPDATE agents SET status='idle'").await;
+    let mut foreign = command.clone();
+    foreign.organization_id = OTHER.to_owned();
+    assert!(matches!(
+        store.project_create(foreign, &provisioner).await,
+        Err(StoreError::Unauthorized)
+    ));
+    let mut bad_run = command.clone();
+    bad_run.run_id = Some(GOAL.to_owned());
+    assert!(matches!(
+        store.project_create(bad_run, &provisioner).await,
+        Err(StoreError::InvalidInput)
+    ));
+    sqlx::query("DELETE FROM projects WHERE id=$1::uuid")
+        .bind(id)
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        restarted
+            .project_create(command.clone(), &provisioner)
+            .await
+            .unwrap()
+            .receipt,
+        first.receipt
+    );
+    sqlx::query(
+        "INSERT INTO projects (id,org_id,name) VALUES ($1::uuid,$2::uuid,'New incarnation')",
+    )
+    .bind(id)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        restarted
+            .project_create(command, &provisioner)
+            .await
+            .unwrap()
+            .receipt,
+        first.receipt
+    );
+    let name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1::uuid")
+        .bind(id)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(name, "New incarnation");
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
+    assert_eq!(store.project_scope(id).await.unwrap().owner, "node");
+    assert_eq!(database.counts().await, (0, 1, 1));
+    let outbox: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_rolls_back_hook_audit_and_receipt_failures_with_stable_retry_identity() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = project_create_command("create-rollback");
+    let failed_hook = CreateProvisioner {
+        fail: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        store.project_create(command.clone(), &failed_hook).await,
+        Err(StoreError::Provisioning(_))
+    ));
+    let id = failed_hook.requests.lock().unwrap()[0].project_id.clone();
+    let provisioner = CreateProvisioner::default();
+    for table in ["activity_log", "organization_mutation_receipts"] {
+        database.sql(&format!("CREATE FUNCTION fail_create_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic failure'; END; $$;
+            CREATE TRIGGER fail_create_write_trigger BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION fail_create_write();")).await;
+        assert!(matches!(
+            store.project_create(command.clone(), &provisioner).await,
+            Err(StoreError::Database(_))
+        ));
+        assert_eq!(database.counts().await, (0, 0, 0));
+        let counts: (i64,i64,i64,i64,i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM projects WHERE id=$1::uuid),
+             (SELECT count(*) FROM project_goal_mutation_state WHERE project_id=$1::uuid),
+             (SELECT count(*) FROM project_goals WHERE project_id=$1::uuid),
+             (SELECT count(*) FROM organization_resources), (SELECT count(*) FROM organization_mutation_outbox)")
+            .bind(&id).fetch_one(&database.pool).await.unwrap();
+        assert_eq!(counts, (0, 0, 0, 0, 0));
+        database.sql(&format!("DROP TRIGGER fail_create_write_trigger ON {table}; DROP FUNCTION fail_create_write();")).await;
+    }
+    let result = store.project_create(command, &provisioner).await.unwrap();
+    assert_eq!(created_response(&result.receipt)["id"], id);
+    let original = failed_hook.requests.lock().unwrap()[0].clone();
+    assert!(
+        provisioner
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| request == &original)
+    );
+    assert_eq!(database.counts().await, (1, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_serializes_duplicate_keys_and_mutable_defaults_without_adopting_existing_rows()
+ {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner::default();
+    let mut command = project_create_command("create-concurrent");
+    command.data = json!({"name":"Plan", "goalIds":[]});
+    let (a, b) = tokio::join!(
+        store.project_create(command.clone(), &provisioner),
+        store.project_create(command.clone(), &provisioner)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_ne!(a.replayed, b.replayed);
+    assert_eq!(a.receipt, b.receipt);
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
+    command.idempotency_key = "create-second".to_owned();
+    let second = store
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    assert_eq!(created_response(&second.receipt)["name"], "Plan 2");
+    assert_ne!(
+        created_response(&a.receipt)["color"],
+        created_response(&second.receipt)["color"]
+    );
+    command.idempotency_key = "create-existing-id".to_owned();
+    command.data["id"] = json!(PROJECT);
+    assert!(matches!(
+        store.project_create(command.clone(), &provisioner).await,
+        Err(StoreError::Database(_))
+    ));
+    assert_eq!(store.project_scope(PROJECT).await.unwrap().fence_epoch, 7);
+    command.data = json!({"name":"Foreign ref", "goalIds":[FOREIGN_GOAL]});
+    assert!(matches!(
+        store.project_create(command, &provisioner).await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 2);
+}
 
 impl TargetVerifier for SeedTargets {
     fn target_exists_in_organization(
@@ -179,6 +771,7 @@ fn project_patch_command(patch: serde_json::Value, version: u64, key: &str) -> P
         expected_version: version,
         fence_epoch: 7,
         patch,
+        mutation_origin: ProjectPatchMutationOrigin::Standard,
     }
 }
 
@@ -249,6 +842,24 @@ async fn seed_project_resource_attachment(database: &Database) {
     .execute(&database.pool)
     .await
     .unwrap();
+}
+
+fn organization_resource_command(
+    resource_id: &str,
+    key: &str,
+    operation: OrganizationResourceOperation,
+    data: serde_json::Value,
+) -> OrganizationResourceCommand {
+    OrganizationResourceCommand {
+        organization_id: ORG.to_owned(),
+        resource_id: resource_id.to_owned(),
+        actor_kind: "board".to_owned(),
+        actor_id: "resource-test-user".to_owned(),
+        idempotency_key: key.to_owned(),
+        run_id: None,
+        operation,
+        data,
+    }
 }
 
 async fn project_resource_attachment_snapshot(
@@ -705,7 +1316,7 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
     assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
     assert_eq!(project_goals(&database).await, vec![GOAL.to_owned()]);
     assert_eq!(
-        project_details(&database, &first.receipt.activity_id).await["goalIds"],
+        project_details(&database, required_activity_id(&first.receipt)).await["goalIds"],
         json!([GOAL])
     );
     let first_state = match &first.receipt.result {
@@ -727,7 +1338,7 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
         vec![GOAL.to_owned(), GOAL_TWO.to_owned()]
     );
     assert_eq!(
-        project_details(&database, &second.receipt.activity_id).await["goalIds"],
+        project_details(&database, required_activity_id(&second.receipt)).await["goalIds"],
         json!([GOAL, GOAL_TWO])
     );
     let second_state = match &second.receipt.result {
@@ -752,7 +1363,7 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
     assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
     assert_eq!(project_goals(&database).await, vec![GOAL_TWO.to_owned()]);
     assert_eq!(
-        project_details(&database, &detach_primary.receipt.activity_id).await["goalIds"],
+        project_details(&database, required_activity_id(&detach_primary.receipt)).await["goalIds"],
         json!([GOAL_TWO])
     );
 
@@ -786,7 +1397,7 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
     assert_eq!(project_primary(&database).await, None);
     assert!(project_goals(&database).await.is_empty());
     assert_eq!(
-        project_details(&database, &detach_last.receipt.activity_id).await["goalIds"],
+        project_details(&database, required_activity_id(&detach_last.receipt)).await["goalIds"],
         json!([])
     );
 }
@@ -811,7 +1422,7 @@ async fn project_goal_set_replacement_is_atomic_and_replays_its_original_receipt
         vec![GOAL.to_owned(), GOAL_TWO.to_owned()]
     );
     assert_eq!(
-        project_details(&database, &first.receipt.activity_id).await,
+        project_details(&database, required_activity_id(&first.receipt)).await,
         json!({"goalIds": [GOAL, GOAL_TWO], "primaryGoalId": GOAL})
     );
     match &first.receipt.result {
@@ -962,7 +1573,7 @@ async fn project_delete_large_response_survives_fence_cascade_restart_and_uuid_r
         "SELECT event_type, state, payload::text AS payload
          FROM organization_mutation_outbox WHERE activity_id=$1::uuid",
     )
-    .bind(&deleted.receipt.activity_id)
+    .bind(required_activity_id(&deleted.receipt))
     .fetch_one(&database.pool)
     .await
     .unwrap();
@@ -1340,7 +1951,7 @@ async fn mixed_project_patch_updates_project_goals_resources_and_activity_atomic
     assert_eq!(attached[1].3, 4);
     assert!(attached[1].4);
     assert_eq!(
-        project_details(&database, &committed.receipt.activity_id).await,
+        project_details(&database, required_activity_id(&committed.receipt)).await,
         patch
     );
     assert_eq!(database.counts().await, (1, 1, 1));
@@ -1661,7 +2272,7 @@ async fn dedicated_project_resource_operations_preserve_identity_and_replay_atom
              WHERE org_id=$1::uuid AND id=$2::uuid",
         )
         .bind(ORG)
-        .bind(&original.receipt.activity_id)
+        .bind(required_activity_id(&original.receipt))
         .fetch_one(&database.pool)
         .await
         .unwrap();
@@ -1674,7 +2285,7 @@ async fn dedicated_project_resource_operations_preserve_identity_and_replay_atom
              WHERE org_id=$1::uuid AND activity_id=$2::uuid",
         )
         .bind(ORG)
-        .bind(&original.receipt.activity_id)
+        .bind(required_activity_id(&original.receipt))
         .fetch_one(&database.pool)
         .await
         .unwrap();
@@ -1791,6 +2402,83 @@ async fn mixed_project_patch_replay_returns_original_receipt_without_reapplying_
             .unwrap();
     assert_eq!(resource_count, 1);
     assert_eq!(database.counts().await, (2, 2, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn organization_import_project_patch_keeps_fence_and_receipt_without_activity_or_outbox() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    seed_patch_agent(&database).await;
+    let mut command = project_patch_command(
+        json!({"name": "Imported project"}),
+        0,
+        "organization-import-project-patch",
+    );
+    command.mutation_origin = ProjectPatchMutationOrigin::OrganizationImport;
+
+    let committed = store.project_patch(command.clone()).await.unwrap();
+    assert!(!committed.replayed);
+    assert_eq!(committed.receipt.version, 1);
+    assert_eq!(committed.receipt.activity_id, None);
+    match &committed.receipt.result {
+        ResultState::ProjectPatch {
+            mutation_origin, ..
+        } => assert_eq!(
+            *mutation_origin,
+            Some(ProjectPatchMutationOrigin::OrganizationImport)
+        ),
+        result => panic!("unexpected project result: {result:?}"),
+    }
+
+    let persisted: (Option<String>, serde_json::Value) = sqlx::query_as(
+        "SELECT activity_id::text, result
+         FROM organization_mutation_receipts
+         WHERE org_id=$1::uuid AND idempotency_key=$2",
+    )
+    .bind(ORG)
+    .bind(&command.idempotency_key)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted.0, None);
+    assert_eq!(
+        persisted.1["result"]["mutation_origin"],
+        "organization_import"
+    );
+
+    let audit_counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid),
+           (SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid),
+           (SELECT count(*) FROM organization_mutation_receipts WHERE org_id=$1::uuid)",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_counts, (0, 0, 1));
+    let state: (i64, i64, String) = sqlx::query_as(
+        "SELECT mutation_version, fence_epoch, owner
+         FROM project_goal_mutation_state WHERE project_id=$1::uuid",
+    )
+    .bind(PROJECT)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(state, (1, 7, "rust".to_owned()));
+
+    let replay = store.project_patch(command.clone()).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, committed.receipt);
+    assert_eq!(database.counts().await, (1, 0, 1));
+
+    let mut different_actor = command;
+    different_actor.actor_id = CEO.to_owned();
+    assert!(matches!(
+        store.project_patch(different_actor).await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    assert_eq!(database.counts().await, (1, 0, 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2045,7 +2733,7 @@ async fn project_goal_replay_rejects_a_forked_history() {
         version: branch_state.version,
         fence_epoch: branch_state.fence_epoch,
         fingerprint: adapter_fingerprint(&core_fingerprint, primary_goal_after.as_deref()),
-        activity_id: activity_id.to_owned(),
+        activity_id: Some(activity_id.to_owned()),
         outcome: Outcome::Noop,
         result: ResultState::ProjectGoalLink {
             state: Box::new(branch_state.clone()),
@@ -2453,6 +3141,449 @@ async fn project_goal_rejects_the_1025th_link_without_partial_projection() {
         Some(first_goal.as_str())
     );
     assert_eq!(project_goals(&database).await.len(), 1024);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn organization_resource_update_claims_rust_authority_and_preserves_catalog_contract() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let resource = "60000000-0000-4000-8000-000000000001";
+    let duplicate = "60000000-0000-4000-8000-000000000002";
+    database
+        .sql(&format!(
+            "INSERT INTO organization_resources
+               (id, org_id, name, kind, source_type, locator, metadata)
+             VALUES
+               ('{resource}'::uuid, '{ORG}'::uuid, 'Before', 'file', 'library',
+                'projects/docs/original.md', '{{\"keep\":true}}'::jsonb),
+               ('{duplicate}'::uuid, '{ORG}'::uuid, 'Duplicate', 'file', 'library',
+                'projects/docs/duplicate.md', NULL);
+             INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+             VALUES ('{resource}'::uuid, '{ORG}'::uuid), ('{duplicate}'::uuid, '{ORG}'::uuid);
+             INSERT INTO project_resource_attachments (org_id, project_id, resource_id)
+             VALUES ('{ORG}'::uuid, '{PROJECT}'::uuid, '{resource}'::uuid);"
+        ))
+        .await;
+    let original_token: String = sqlx::query_scalar(
+        "SELECT fence_token::text FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+
+    let command = organization_resource_command(
+        resource,
+        "resource-update-claim",
+        OrganizationResourceOperation::Update,
+        json!({"name":"  Renamed  ","metadata":{"changed":true}}),
+    );
+    let updated = store
+        .organization_resource_mutate(command.clone())
+        .await
+        .unwrap();
+    let ResultState::OrganizationResourceMutated {
+        resource_id,
+        response,
+        operation,
+    } = &updated.receipt.result
+    else {
+        panic!("resource mutation receipt")
+    };
+    assert_eq!(resource_id, resource);
+    assert_eq!(*operation, OrganizationResourceOperation::Update);
+    assert_eq!(response["name"], "Renamed");
+    assert_eq!(response["kind"], "file");
+    assert_eq!(response["sourceType"], "library");
+    assert_eq!(response["locator"], "projects/docs/original.md");
+    assert_eq!(response["metadata"], json!({"changed":true}));
+    assert!(response["createdAt"].as_str().unwrap().ends_with('Z'));
+    assert!(response["updatedAt"].as_str().unwrap().ends_with('Z'));
+
+    let state = sqlx::query(
+        "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
+         FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(state.try_get::<String, _>("owner").unwrap(), "rust");
+    assert_eq!(state.try_get::<i64, _>("mutation_version").unwrap(), 1);
+    assert_eq!(state.try_get::<i64, _>("fence_epoch").unwrap(), 1);
+    assert_ne!(
+        state.try_get::<String, _>("fence_token").unwrap(),
+        original_token
+    );
+
+    let replay = store.organization_resource_mutate(command).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, updated.receipt);
+    let duplicate_error = store
+        .organization_resource_mutate(organization_resource_command(
+            resource,
+            "resource-update-duplicate",
+            OrganizationResourceOperation::Update,
+            json!({"locator":"projects/docs/duplicate.md"}),
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(duplicate_error, StoreError::ResourceConflict));
+    let invalid_library_error = store
+        .organization_resource_mutate(organization_resource_command(
+            resource,
+            "resource-update-invalid-library-kind",
+            OrganizationResourceOperation::Update,
+            json!({"kind":"url"}),
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(invalid_library_error, StoreError::InvalidResource));
+    let after_failure: (String, i64, String) = sqlx::query_as(
+        "SELECT r.locator, s.mutation_version, r.name
+         FROM organization_resources r
+         JOIN organization_resource_mutation_state s ON s.resource_id=r.id
+         WHERE r.id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        after_failure,
+        (
+            "projects/docs/original.md".to_owned(),
+            1,
+            "Renamed".to_owned()
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn organization_resource_without_component_state_can_be_claimed_from_rust_project() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let resource = "60000000-0000-4000-8000-000000000003";
+    database
+        .sql(&format!(
+            "INSERT INTO organization_resources
+               (id, org_id, name, kind, source_type, locator)
+             VALUES ('{resource}'::uuid, '{ORG}'::uuid, 'Unfenced', 'url', 'external',
+                     'https://example.test/unfenced');
+             INSERT INTO project_resource_attachments (org_id, project_id, resource_id)
+             VALUES ('{ORG}'::uuid, '{PROJECT}'::uuid, '{resource}'::uuid);"
+        ))
+        .await;
+    let before: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM organization_resource_mutation_state WHERE resource_id=$1::uuid)",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert!(!before);
+
+    let result = store
+        .organization_resource_mutate(organization_resource_command(
+            resource,
+            "resource-claim-missing-state",
+            OrganizationResourceOperation::Update,
+            json!({"name":"Claimed"}),
+        ))
+        .await
+        .unwrap();
+    let ResultState::OrganizationResourceMutated { response, .. } = result.receipt.result else {
+        panic!("resource mutation receipt")
+    };
+    assert_eq!(response["name"], "Claimed");
+    let state = sqlx::query(
+        "SELECT owner, mutation_version, fence_epoch
+         FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(state.try_get::<String, _>("owner").unwrap(), "rust");
+    assert_eq!(state.try_get::<i64, _>("mutation_version").unwrap(), 1);
+    assert_eq!(state.try_get::<i64, _>("fence_epoch").unwrap(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn organization_resource_delete_bumps_mixed_projects_and_replays_tombstone_after_recreation()
+{
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let resource = "60000000-0000-4000-8000-000000000004";
+    let node_project = "21000000-0000-4000-8000-000000000010";
+    database
+        .sql(&format!(
+            "INSERT INTO projects (id, org_id, name)
+             VALUES ('{node_project}'::uuid, '{ORG}'::uuid, 'Node project');
+             INSERT INTO organization_resources
+               (id, org_id, name, kind, source_type, locator, metadata)
+             VALUES ('{resource}'::uuid, '{ORG}'::uuid, 'Deleted snapshot', 'file',
+                     'external', 'https://example.test/delete', '{{\"snapshot\":true}}'::jsonb);
+             INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+             VALUES ('{resource}'::uuid, '{ORG}'::uuid);
+             INSERT INTO project_resource_attachments (org_id, project_id, resource_id)
+             VALUES ('{ORG}'::uuid, '{PROJECT}'::uuid, '{resource}'::uuid),
+                    ('{ORG}'::uuid, '{node_project}'::uuid, '{resource}'::uuid);"
+        ))
+        .await;
+    let resource_token_before: String = sqlx::query_scalar(
+        "SELECT fence_token::text FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    let node_fence_before: (i64, String) = sqlx::query_as(
+        "SELECT fence_epoch, fence_token::text FROM project_goal_mutation_state WHERE project_id=$1::uuid",
+    )
+    .bind(node_project)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    let rust_fence_before: (i64, String) = sqlx::query_as(
+        "SELECT fence_epoch, fence_token::text FROM project_goal_mutation_state WHERE project_id=$1::uuid",
+    )
+    .bind(PROJECT)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+
+    let command = organization_resource_command(
+        resource,
+        "resource-delete-tombstone",
+        OrganizationResourceOperation::Delete,
+        json!({}),
+    );
+    let deleted = store
+        .organization_resource_mutate(command.clone())
+        .await
+        .unwrap();
+    assert!(!deleted.replayed);
+    let ResultState::OrganizationResourceMutated {
+        response,
+        operation,
+        ..
+    } = &deleted.receipt.result
+    else {
+        panic!("resource delete receipt")
+    };
+    assert_eq!(*operation, OrganizationResourceOperation::Delete);
+    assert_eq!(response["name"], "Deleted snapshot");
+    assert_eq!(response["metadata"], json!({"snapshot":true}));
+
+    for (project_id, owner, fence_before) in [
+        (PROJECT, "rust", rust_fence_before),
+        (node_project, "node", node_fence_before),
+    ] {
+        let state = sqlx::query(
+            "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
+             FROM project_goal_mutation_state WHERE project_id=$1::uuid",
+        )
+        .bind(project_id)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        assert_eq!(state.try_get::<String, _>("owner").unwrap(), owner);
+        assert_eq!(state.try_get::<i64, _>("mutation_version").unwrap(), 1);
+        assert_eq!(
+            state.try_get::<i64, _>("fence_epoch").unwrap(),
+            fence_before.0
+        );
+        assert_eq!(
+            state.try_get::<String, _>("fence_token").unwrap(),
+            fence_before.1
+        );
+    }
+    let tombstone = sqlx::query(
+        "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
+         FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(tombstone.try_get::<String, _>("owner").unwrap(), "rust");
+    assert_eq!(tombstone.try_get::<i64, _>("mutation_version").unwrap(), 1);
+    assert_eq!(tombstone.try_get::<i64, _>("fence_epoch").unwrap(), 1);
+    assert_ne!(
+        tombstone.try_get::<String, _>("fence_token").unwrap(),
+        resource_token_before
+    );
+    let attached_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_resource_attachments WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(attached_count, 0);
+
+    // Explicit-ID recreation is not a public create path today, but the
+    // tombstone must still preserve old-key replay if recovery recreates it.
+    sqlx::query(
+        "INSERT INTO organization_resources
+           (id, org_id, name, kind, source_type, locator)
+         VALUES ($1::uuid, $2::uuid, 'Recreated row', 'url', 'external',
+                 'https://example.test/recreated')",
+    )
+    .bind(resource)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let replay = store
+        .organization_resource_mutate(command.clone())
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, deleted.receipt);
+    let recreated_name: String =
+        sqlx::query_scalar("SELECT name FROM organization_resources WHERE id=$1::uuid")
+            .bind(resource)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(recreated_name, "Recreated row");
+    let state_after_replay: (String, i64, String) = sqlx::query_as(
+        "SELECT owner, mutation_version, fence_token::text
+         FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(state_after_replay.0, "rust");
+    assert_eq!(state_after_replay.1, 1);
+    assert_eq!(
+        state_after_replay.2,
+        tombstone.try_get::<String, _>("fence_token").unwrap()
+    );
+
+    let stale_node_owner_match: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+           SELECT 1 FROM organization_resource_mutation_state
+           WHERE resource_id=$1::uuid AND owner='node' AND fence_token=$2::uuid
+         )",
+    )
+    .bind(resource)
+    .bind(resource_token_before)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert!(!stale_node_owner_match);
+    let receipt_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_receipts
+         WHERE org_id=$1::uuid AND idempotency_key='resource-delete-tombstone'",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(receipt_count, 1);
+
+    let conflict = store
+        .organization_resource_mutate(OrganizationResourceCommand {
+            actor_id: "different-user".to_owned(),
+            ..command
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(conflict, StoreError::IdempotencyConflict));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn organization_resource_rejects_node_only_and_foreign_ids_without_adoption() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let node_only = "60000000-0000-4000-8000-000000000005";
+    let foreign = "60000000-0000-4000-8000-000000000006";
+    database
+        .sql(&format!(
+            "INSERT INTO organization_resources (id, org_id, name, kind, locator)
+             VALUES ('{node_only}'::uuid, '{ORG}'::uuid, 'Node only', 'url', 'https://example.test/node'),
+                    ('{foreign}'::uuid, '{OTHER}'::uuid, 'Foreign', 'url', 'https://example.test/foreign');
+             INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+             VALUES ('{node_only}'::uuid, '{ORG}'::uuid), ('{foreign}'::uuid, '{OTHER}'::uuid);"
+        ))
+        .await;
+
+    let node_error = store
+        .organization_resource_mutate(organization_resource_command(
+            node_only,
+            "resource-node-only",
+            OrganizationResourceOperation::Update,
+            json!({"name":"Must remain Node-owned"}),
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(node_error, StoreError::NotOwned));
+    let foreign_error = store
+        .organization_resource_mutate(organization_resource_command(
+            foreign,
+            "resource-foreign-id",
+            OrganizationResourceOperation::Update,
+            json!({"name":"Must not adopt foreign resource"}),
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(foreign_error, StoreError::NotFound));
+    let actor_error = store
+        .organization_resource_mutate(OrganizationResourceCommand {
+            actor_kind: "agent".to_owned(),
+            ..organization_resource_command(
+                node_only,
+                "resource-agent-denied",
+                OrganizationResourceOperation::Update,
+                json!({"name":"Denied"}),
+            )
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(actor_error, StoreError::Unauthorized));
+
+    let local_state: (String, i64, i64) = sqlx::query_as(
+        "SELECT owner, mutation_version, fence_epoch
+         FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(node_only)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(local_state, ("node".to_owned(), 0, 0));
+    let target_adoption: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_resource_mutation_state
+         WHERE resource_id=$1::uuid AND org_id=$2::uuid",
+    )
+    .bind(foreign)
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(target_adoption, 0);
+    let foreign_owner: String = sqlx::query_scalar(
+        "SELECT owner FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(foreign)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(foreign_owner, "node");
+    let effects: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid),
+           (SELECT count(*) FROM organization_mutation_receipts WHERE org_id=$1::uuid),
+           (SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid)",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(effects, (0, 0, 0));
 }
 
 #[test]

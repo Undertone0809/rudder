@@ -13,12 +13,13 @@ export function restoreFoundationExecutableMode({
   resourcesDir = path.dirname(fileURLToPath(import.meta.url)),
   platform = process.platform,
   arch = process.arch,
+  binaryName = "rudder-server-foundation",
 } = {}) {
   if (platform === "win32") return { status: "not_required" };
   const target = HOST_TARGETS[`${platform}/${arch}`];
   if (!target) return { status: "unsupported" };
 
-  const binaryPath = path.join(resourcesDir, "native", target, "rudder-server-foundation");
+  const binaryPath = path.join(resourcesDir, "native", target, binaryName);
   let stat;
   try {
     stat = lstatSync(binaryPath);
@@ -32,3 +33,4 @@ export function restoreFoundationExecutableMode({
 }
 
 restoreFoundationExecutableMode();
+restoreFoundationExecutableMode({ binaryName: "migration-preflight" });

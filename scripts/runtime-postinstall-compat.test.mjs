@@ -168,7 +168,7 @@ describe("server runtime postinstall compatibility", () => {
     );
     assert.equal(
       packageJson.scripts.postinstall,
-      "node resources/postinstall-native-mode.mjs && node resources/postinstall-postgres-compat.mjs",
+      "node resources/postinstall-native-mode.mjs && node resources/postinstall-embedded-postgres.mjs && node resources/postinstall-postgres-compat.mjs",
     );
     assert.equal(packageJson.files.includes("resources"), true);
   });

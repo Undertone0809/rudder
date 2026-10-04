@@ -235,4 +235,149 @@ describe("organization portability routes", () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("Board access required");
   });
+
+  it("scopes aggregate import audit idempotency by route and actor", async () => {
+    const orgId = "11111111-1111-4111-8111-111111111111";
+    mockCompanyPortabilityService.importBundle.mockResolvedValue({
+      organization: { id: orgId, name: "Target", action: "updated" },
+      agents: [],
+      projects: [],
+      envInputs: [],
+      warnings: [],
+    });
+    const app = await createApp({
+      type: "board",
+      source: "local_implicit",
+      userId: "user-1",
+    });
+    const importInput = {
+      source: { type: "inline", files: { "ORGANIZATION.md": "---\nname: Target\n---\n" } },
+      include: { organization: false, agents: false, projects: true, issues: false, skills: false },
+      target: { mode: "existing_organization", orgId },
+      collisionStrategy: "replace",
+    };
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await request(app)
+        .post("/api/orgs/import")
+        .set("x-rudder-idempotency-key", "public-import-retry-key")
+        .send(importInput);
+      expect(res.status).toBe(200);
+    }
+
+    const safeImportInput = {
+      ...importInput,
+      collisionStrategy: "skip",
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await request(app)
+        .post(`/api/orgs/${orgId}/imports/apply`)
+        .set("x-rudder-idempotency-key", "public-import-retry-key")
+        .send(safeImportInput);
+      expect(res.status).toBe(200);
+    }
+
+    const otherActorApp = await createApp({
+      type: "board",
+      source: "local_implicit",
+      userId: "user-2",
+    });
+    const otherActorRes = await request(otherActorApp)
+      .post("/api/orgs/import")
+      .set("x-rudder-idempotency-key", "public-import-retry-key")
+      .send(importInput);
+    expect(otherActorRes.status).toBe(200);
+
+    const distinctKey = "public-import-distinct-key";
+    const distinctKeyRes = await request(app)
+      .post("/api/orgs/import")
+      .set("x-rudder-idempotency-key", distinctKey)
+      .send(importInput);
+    expect(distinctKeyRes.status).toBe(200);
+
+    const calls = mockCompanyPortabilityService.importBundle.mock.calls as unknown as Array<[
+      { target: { orgId: string } },
+      string | null,
+      unknown,
+      { header(name: string): string | undefined },
+    ]>;
+    expect(calls).toHaveLength(6);
+    expect(calls.map((call) => call[0].target.orgId)).toEqual([orgId, orgId, orgId, orgId, orgId, orgId]);
+    expect(calls.map((call) => call[3].header("x-rudder-idempotency-key"))).toEqual([
+      "public-import-retry-key",
+      "public-import-retry-key",
+      "public-import-retry-key",
+      "public-import-retry-key",
+      "public-import-retry-key",
+      distinctKey,
+    ]);
+
+    const auditCalls = mockLogActivity.mock.calls as unknown as Array<[
+      unknown,
+      { idempotencyKey?: string | null },
+    ]>;
+    const auditKeys = auditCalls.map(([, input]) => input.idempotencyKey);
+    expect(auditKeys).toHaveLength(6);
+    expect(auditKeys[0]).toBe(auditKeys[1]);
+    expect(auditKeys[2]).toBe(auditKeys[3]);
+    expect(auditKeys[0]).not.toBe(auditKeys[2]);
+    expect(auditKeys[0]).not.toBe(auditKeys[4]);
+    expect(auditKeys[0]).not.toBe(auditKeys[5]);
+    expect(auditKeys.every((key) => typeof key === "string"
+      && /^rudder:organization-import-audit:v1:[0-9a-f]{64}$/.test(key))).toBe(true);
+  });
+
+  it("leaves keyless import audit entries without an idempotency key", async () => {
+    const orgId = "11111111-1111-4111-8111-111111111111";
+    mockCompanyPortabilityService.importBundle.mockResolvedValue({
+      organization: { id: orgId, name: "Target", action: "updated" },
+      agents: [],
+      projects: [],
+      envInputs: [],
+      warnings: [],
+    });
+    const app = await createApp({
+      type: "board",
+      source: "local_implicit",
+      userId: "user-1",
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/import")
+      .send({
+        source: { type: "inline", files: { "ORGANIZATION.md": "---\nname: Target\n---\n" } },
+        include: { organization: false, agents: false, projects: true, issues: false, skills: false },
+        target: { mode: "existing_organization", orgId },
+        collisionStrategy: "replace",
+      });
+
+    expect(res.status).toBe(200);
+    const auditCall = mockLogActivity.mock.calls[0] as unknown as [unknown, { idempotencyKey?: string | null }];
+    expect(auditCall[1].idempotencyKey).toBeUndefined();
+  });
+
+  it.each([
+    { path: "/api/orgs/import", collisionStrategy: "replace" },
+    { path: "/api/orgs/11111111-1111-4111-8111-111111111111/imports/apply", collisionStrategy: "skip" },
+  ])("does not audit a failed import at $path", async ({ path, collisionStrategy }) => {
+    mockCompanyPortabilityService.importBundle.mockRejectedValue(new Error("import failed"));
+    const app = await createApp({
+      type: "board",
+      source: "local_implicit",
+      userId: "user-1",
+    });
+
+    const res = await request(app)
+      .post(path)
+      .set("x-rudder-idempotency-key", "failed-import-key")
+      .send({
+        source: { type: "inline", files: { "ORGANIZATION.md": "---\nname: Target\n---\n" } },
+        include: { organization: false, agents: false, projects: true, issues: false, skills: false },
+        target: { mode: "existing_organization", orgId: "11111111-1111-4111-8111-111111111111" },
+        collisionStrategy,
+      });
+
+    expect(res.status).toBe(500);
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
 });

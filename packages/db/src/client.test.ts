@@ -270,6 +270,52 @@ afterEach(async () => {
   }
 }, migrationTestTimeout(30_000));
 
+describe("migration catalog", () => {
+  it("preserves main migration indices and appends the native tail with linked SQL", () => {
+    const migrationsUrl = new URL("./migrations/", import.meta.url);
+    const journal = JSON.parse(
+      fs.readFileSync(new URL("meta/_journal.json", migrationsUrl), "utf8"),
+    ) as { entries: MigrationJournalEntry[] };
+    const latestEntry = journal.entries.at(-1);
+    if (!latestEntry) throw new Error("Migration journal must not be empty");
+
+    expect(latestEntry).toMatchObject({
+      idx: 185,
+      tag: "0181_side_chat_first_input_generation",
+    });
+    expect(journal.entries.map((entry) => entry.idx)).toEqual(
+      journal.entries.map((_entry, idx) => idx),
+    );
+    expect(new Set(journal.entries.map((entry) => entry.tag)).size).toBe(journal.entries.length);
+    for (const entry of journal.entries) {
+      expect(fs.existsSync(new URL(`${entry.tag}.sql`, migrationsUrl))).toBe(true);
+    }
+    expect(journal.entries.slice(175, 179).map(({ idx, tag }) => [idx, tag])).toEqual([
+      [175, "0175_project_delete_receipt_kind"],
+      [176, "0176_project_create_receipt_kind"],
+      [177, "0177_organization_import_receipt_activity_mode"],
+      [178, "0178_organization_resource_mutation_state"],
+    ]);
+    expect(journal.entries.slice(179).map(({ idx, tag }) => [idx, tag])).toEqual([
+      [179, "0175_span_supplement_retention"],
+      [180, "0176_side_chat_provider_cleanup_intents"],
+      [181, "0177_side_chat_close_intents"],
+      [182, "0178_side_chat_provider_cleanup_protection_refs"],
+      [183, "0179_side_chat_first_inputs"],
+      [184, "0180_native_resource_writer_fencing"],
+      [185, "0181_side_chat_first_input_generation"],
+    ]);
+
+    const latestMainSnapshot = JSON.parse(
+      fs.readFileSync(new URL("meta/0178_snapshot.json", migrationsUrl), "utf8"),
+    ) as { id: string; prevId: string };
+    const previousSnapshot = JSON.parse(
+      fs.readFileSync(new URL("meta/0177_snapshot.json", migrationsUrl), "utf8"),
+    ) as { id: string };
+    expect(latestMainSnapshot.prevId).toBe(previousSnapshot.id);
+  });
+});
+
 describe("applyPendingMigrations", () => {
   it.each(["main-prefix", "pr-checkpoint", "empty"])(
     "upgrades the merged migration history from %s without rewriting existing history",
@@ -278,11 +324,15 @@ describe("applyPendingMigrations", () => {
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
         if (source !== "empty") {
-          // Exact journal shapes of main 89859a26b and PR eb7e6b270. SQL
-          // filenames, bytes, and timestamps are preserved in the merge.
+          // Recreate the current main prefix or the pre-reconciliation native
+          // PR checkpoint without rewriting either branch's SQL or timestamps.
           const migrationsFolder = source === "main-prefix"
-            ? createCurrentMigrationsFolderThrough(175)
-            : createCurrentMigrationsFolderThrough(182, ["0175_project_delete_receipt_kind"]);
+            ? createCurrentMigrationsFolderThrough(178)
+            : createCurrentMigrationsFolderThrough(185, [
+              "0176_project_create_receipt_kind",
+              "0177_organization_import_receipt_activity_mode",
+              "0178_organization_resource_mutation_state",
+            ]);
           await migratePg(drizzlePg(sql), { migrationsFolder });
           await sql`INSERT INTO organizations (name, url_key, issue_prefix)
             VALUES ('Preserved merge fixture', 'preserved-merge-fixture', 'MRG')`;
@@ -295,17 +345,23 @@ describe("applyPendingMigrations", () => {
           expect(pending.status).toBe("needsMigrations");
           if (pending.status !== "needsMigrations") throw new Error("Expected pending merge migrations");
           expect(pending.pendingMigrations).toContain(source === "main-prefix"
-            ? "0175_span_supplement_retention.sql" : "0175_project_delete_receipt_kind.sql");
+            ? "0175_span_supplement_retention.sql" : "0176_project_create_receipt_kind.sql");
         }
         await applyPendingMigrations(connectionString);
         expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
         expect(await validatePostMigrationInvariants(connectionString)).toMatchObject({
-          valid: true, issues: [], expectedMigrationCount: 185,
-          manifestFingerprint: "1061b688ac7cae7a688723b39ea4113cc91edd1f26ca494f8ed6daac8cbbc72e",
+          valid: true, issues: [], expectedMigrationCount: 188,
+          manifestFingerprint: "98cbc44ba2ffd1e12c6ce3d6a58db34d9e7b93934795d6629e8b37c3242fc121",
         });
         const after = await sql`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`;
         expect(after.slice(0, before.length)).toEqual(before);
-        for (const file of ["0175_project_delete_receipt_kind.sql", "0175_span_supplement_retention.sql", "0181_side_chat_first_input_generation.sql"]) {
+        for (const file of [
+          "0175_project_delete_receipt_kind.sql",
+          "0176_project_create_receipt_kind.sql",
+          "0178_organization_resource_mutation_state.sql",
+          "0175_span_supplement_retention.sql",
+          "0181_side_chat_first_input_generation.sql",
+        ]) {
           const hash = await migrationHash(file);
           expect(after.filter(row => row.hash === hash)).toHaveLength(1);
         }
@@ -1025,6 +1081,9 @@ describe("applyPendingMigrations", () => {
           "0173_organization_branding_mutation_authority.sql",
           "0174_project_goal_mutation_authority.sql",
           "0175_project_delete_receipt_kind.sql",
+          "0176_project_create_receipt_kind.sql",
+          "0177_organization_import_receipt_activity_mode.sql",
+          "0178_organization_resource_mutation_state.sql",
           "0175_span_supplement_retention.sql",
           "0176_side_chat_provider_cleanup_intents.sql",
           "0177_side_chat_close_intents.sql",
@@ -1228,6 +1287,9 @@ describe("applyPendingMigrations", () => {
           "0173_organization_branding_mutation_authority.sql",
           "0174_project_goal_mutation_authority.sql",
           "0175_project_delete_receipt_kind.sql",
+          "0176_project_create_receipt_kind.sql",
+          "0177_organization_import_receipt_activity_mode.sql",
+          "0178_organization_resource_mutation_state.sql",
           "0175_span_supplement_retention.sql",
           "0176_side_chat_provider_cleanup_intents.sql",
           "0177_side_chat_close_intents.sql",
