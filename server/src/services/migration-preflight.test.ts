@@ -1,11 +1,11 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { resolveRudderNativeTarget } from "@rudderhq/shared";
 import type { MigrationState } from "@rudderhq/db";
+import { resolveRudderNativeTarget } from "@rudderhq/shared";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertMigrationPreflightAgreement,
