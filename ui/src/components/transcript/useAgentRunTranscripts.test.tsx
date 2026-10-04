@@ -893,6 +893,77 @@ describe("useAgentRunTranscripts", () => {
     act(() => rendered.root.unmount());
   });
 
+  it("restarts after a missing-log continuation revision and replaces entries with retained fallback", async () => {
+    let firstPageRead = 0;
+    transcriptMock.mockImplementation(async (_runId: string, { cursor }: { cursor?: string | null }) => {
+      if (cursor === "missing-log-next") {
+        // The Reader returns missing logs as a successful page; ApiError 404s remain access failures.
+        return {
+          entries: [],
+          source: "legacy",
+          revision: "missing-log-r2",
+          availability: "missing",
+          completeness: "unknown",
+          page: { cursor, hasMore: false, nextCursor: null, order: "oldest" },
+        };
+      }
+
+      firstPageRead += 1;
+      const fallback = firstPageRead > 1;
+      const entries = fallback
+        ? [
+          { id: "shared-entry", text: "retained shared entry" },
+          { id: "fallback-entry", text: "retained fallback entry" },
+        ]
+        : [
+          { id: "shared-entry", text: "retained shared entry" },
+          { id: "log-only-entry", text: "first log page only" },
+        ];
+      return {
+        entries: entries.map(({ id, text }) => ({
+          id,
+          entry: { kind: "assistant", ts: "2026-10-02T00:00:00.000Z", text },
+        })),
+        source: "legacy",
+        revision: "legacy-r1",
+        availability: "available",
+        completeness: fallback ? "complete" : "partial",
+        page: {
+          cursor: null,
+          hasMore: !fallback,
+          nextCursor: fallback ? null : "missing-log-next",
+          order: "oldest",
+        },
+      };
+    });
+    const rendered = renderNavigationProbe("run-missing-log");
+    try {
+      await act(async () => {
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("retained shared entry|first log page only"));
+      });
+
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[data-testid='navigation-next']")?.click());
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      await act(async () => {
+        await vi.waitFor(() => expect(transcriptMock).toHaveBeenCalledTimes(3));
+        await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("retained shared entry|retained fallback entry"));
+      });
+
+      expect(transcriptMock.mock.calls.map(([, request]) => request.cursor)).toEqual([
+        null,
+        "missing-log-next",
+        null,
+      ]);
+      expect(rendered.host.querySelector("[data-testid='navigation-page']")?.textContent).toBe("1");
+      expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+        .toBe("retained shared entry|retained fallback entry");
+      expect(rendered.host.textContent).not.toContain("first log page only");
+      expect(firstPageRead).toBe(2);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
   it("never uses a linked Run message transcript as a native source", () => {
     const readerEntry = { kind: "assistant" as const, ts: "2026-09-22T00:00:00.000Z", text: "Reader output" };
     const legacyEntry = { kind: "assistant" as const, ts: "2026-09-22T00:00:01.000Z", text: "Legacy output" };

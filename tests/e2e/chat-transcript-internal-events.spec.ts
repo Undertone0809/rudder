@@ -557,21 +557,64 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   const localFileMarker = `BROWSER_LOCAL_FILE_ONLY_${Date.now()}`;
   const localFileContents = `# Rudder transcript evidence\n\n${localFileMarker}\nRead from the browser-selected local file.\n`;
   const apiRequestCountBeforeSelection = apiRequests.length;
-  const fileChooserPromise = page.waitForEvent("filechooser");
-  await localFilePicker.getByRole("button", { name: "Choose local file" }).click();
-  const fileChooser = await fileChooserPromise;
-  await fileChooser.setFiles({
-    name: fileLabel,
-    mimeType: "text/markdown",
-    buffer: Buffer.from(localFileContents),
+  const grantedRootName = path.basename(path.dirname(filePath));
+  await page.evaluate(({ rootName, fileName, fileContents }) => {
+    const selectedFile = new File([fileContents], fileName, { type: "text/markdown" });
+    const harnessWindow = window as Window & {
+      __browserLocalDirectoryGrant?: { mode: string; rootName: string; fileName: string };
+      showDirectoryPicker?: (options: { mode: string }) => Promise<unknown>;
+    };
+    Object.defineProperty(harnessWindow, "showDirectoryPicker", {
+      configurable: true,
+      value: async (options: { mode: string }) => {
+        harnessWindow.__browserLocalDirectoryGrant = {
+          mode: options.mode,
+          rootName,
+          fileName: "",
+        };
+        return {
+          name: rootName,
+          getDirectoryHandle: async (name: string) => {
+            throw new DOMException(`Unexpected directory traversal: ${name}`, "NotFoundError");
+          },
+          getFileHandle: async (name: string, getOptions: { create?: boolean }) => {
+            if (getOptions.create !== false || name !== fileName) {
+              throw new DOMException(`Unexpected target file: ${name}`, "NotFoundError");
+            }
+            if (harnessWindow.__browserLocalDirectoryGrant) {
+              harnessWindow.__browserLocalDirectoryGrant.fileName = name;
+            }
+            return { getFile: async () => selectedFile };
+          },
+        };
+      },
+    });
+  }, { rootName: grantedRootName, fileName: fileLabel, fileContents: localFileContents });
+  await localFilePicker.getByRole("button", { name: "Choose workspace folder" }).click();
+  const directoryGrant = await page.evaluate(() => (
+    window as Window & {
+      __browserLocalDirectoryGrant?: { mode: string; rootName: string; fileName: string };
+    }
+  ).__browserLocalDirectoryGrant);
+  expect(directoryGrant).toEqual({
+    mode: "read",
+    rootName: grantedRootName,
+    fileName: fileLabel,
   });
   await expect(localFilePreview).toBeVisible();
   await expect(localFilePreview).toContainText("Rudder transcript evidence");
   await expect(localFilePreview).toContainText(localFileMarker);
   await expect(localFilePreview).toContainText("Read from the browser-selected local file.");
-  await expect(localFilePreview.getByRole("button", { name: "Choose file" })).toBeVisible();
+  await expect(localFilePreview.getByRole("button", { name: "Choose workspace folder" })).toBeVisible();
   const fileSelectionRequests = apiRequests.slice(apiRequestCountBeforeSelection);
   expect(fileSelectionRequests.filter((request) => !["GET", "HEAD"].includes(request.method))).toEqual([]);
+  expect(fileSelectionRequests.filter((request) => (
+    /\/workspace\/file(?:\?|$)|\/files?\/(?:preview|content|upload)(?:\?|$)|\/assets\/[^/]+\/content(?:\?|$)/iu.test(request.url)
+  ))).toEqual([]);
+  expect(fileSelectionRequests.filter((request) => (
+    ["POST", "PUT", "PATCH"].includes(request.method)
+    && /file|upload|asset/iu.test(request.url)
+  ))).toEqual([]);
   expect(fileSelectionRequests.some((request) => (
     request.url.includes(localFileMarker)
     || request.body?.includes(Buffer.from(localFileMarker)) === true

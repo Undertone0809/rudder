@@ -3,12 +3,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
+import { filterRenderableTranscriptEntries, isRudderInjectedAgentInstructionText } from "./RunTranscriptView.common";
 import { RunTranscriptView, normalizeTranscript } from "./RunTranscriptView";
 
 const ts = "2026-09-29T01:33:22Z";
 const input: TranscriptEntry = {
   kind: "user", ts,
   text: 'Conversation input:\n{"currentMessage":{"body":"what skills do you have?"}}\nFinal Rudder result reminder: internal instructions',
+};
+const injectedInstruction: TranscriptEntry = {
+  kind: "user",
+  ts,
+  sourceEntryId: "rudder-injected-instruction",
+  text: "<rudder_agent_instruction>\n<rudder_agent_operating_contract>\nRUDDER_INJECTED_INSTRUCTION_VISIBLE\n</rudder_agent_operating_contract>\n</rudder_agent_instruction>",
 };
 
 describe("native transcript presentation", () => {
@@ -35,7 +42,7 @@ describe("native transcript presentation", () => {
     expect(activeRawView).toContain("Please inspect the settings file.");
   });
 
-  it("preserves actual user messages in nice Run Detail", () => {
+  it("keeps actual user messages out of nice Run Detail activity", () => {
     const html = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
       presentation="detail" entries={[
         { kind: "user", ts, text: "Please inspect the settings file." },
@@ -43,14 +50,22 @@ describe("native transcript presentation", () => {
       ]}
     /></ThemeProvider>);
 
-    expect(html).toContain("Please inspect the settings file.");
+    expect(html).not.toContain("Please inspect the settings file.");
     expect(html).toContain("I will inspect it now.");
   });
 
-  it("hides Rudder structured inputs in nice Run Detail without hiding real user messages", () => {
+  it("hides Rudder structured inputs and user messages from nice Run Detail activity", () => {
+    expect(isRudderInjectedAgentInstructionText(injectedInstruction.text)).toBe(true);
+    expect(filterRenderableTranscriptEntries([injectedInstruction], { presentation: "detail" }))
+      .toEqual([injectedInstruction]);
+    const instructionBlocks = normalizeTranscript([injectedInstruction], false, { showAgentInstructions: true });
+    expect(instructionBlocks).toEqual([expect.objectContaining({ type: "event", label: "agent instruction" })]);
+    expect(instructionBlocks[0]).toMatchObject({ detail: expect.stringContaining("RUDDER_INJECTED_INSTRUCTION_VISIBLE") });
+
     const html = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
       presentation="detail" entries={[
         input,
+        injectedInstruction,
         { kind: "user", ts, text: "Please inspect the settings file." },
         { kind: "assistant", ts, text: "I will inspect it now." },
       ]}
@@ -59,7 +74,11 @@ describe("native transcript presentation", () => {
     expect(html).not.toContain("Conversation input:");
     expect(html).not.toContain("currentMessage");
     expect(html).not.toContain("Final Rudder result reminder");
-    expect(html).toContain("Please inspect the settings file.");
+    expect(html).not.toContain("Please inspect the settings file.");
+    expect(html).toContain("Agent Instruction");
+    expect(html).toContain("Runtime-loaded agent instruction");
+    expect(html).toContain('aria-label="Expand Agent Instruction details"');
+    expect(html).not.toContain("RUDDER_INJECTED_INSTRUCTION_VISIBLE");
     expect(html).toContain("I will inspect it now.");
   });
 
@@ -68,6 +87,7 @@ describe("native transcript presentation", () => {
       presentation="chat"
       entries={[
         input,
+        injectedInstruction,
         { kind: "user", ts, text: "what skills do you have?" },
         { kind: "assistant", ts, text: "Checking available skills.", phase: "commentary" },
         { kind: "tool_call", ts, name: "command_execution", toolUseId: "cmd-1", input: { command: "echo process evidence", cwd: "/tmp" } },
@@ -78,6 +98,7 @@ describe("native transcript presentation", () => {
     /></ThemeProvider>);
 
     expect(html).not.toContain("Conversation input:");
+    expect(html).not.toContain("RUDDER_INJECTED_INSTRUCTION_VISIBLE");
     expect(html).not.toContain("what skills do you have?");
     expect(html).not.toContain("currentMessage");
     expect(html).not.toContain("Available skills: browser.");
@@ -90,6 +111,7 @@ describe("native transcript presentation", () => {
     const html = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
       presentation="chat" entries={[
         input,
+        injectedInstruction,
         { kind: "user", ts, text: "what skills do you have?" },
         { kind: "user", source: "steer", ts, text: "Keep going with the same task." },
         { kind: "system", ts, text: "reasoning completed" },
@@ -134,14 +156,72 @@ describe("native transcript presentation", () => {
     expect(html).toContain("Available skills: browser.");
   });
 
-  it("retains tool and visible reasoning activity while omitting ordinary user input", () => {
-    const blocks = normalizeTranscript([
-      { kind: "user", ts, text: "Find the config" },
+  it("hides native user-input echoes from Nice while Raw retains source events and agent activity stays distinct", () => {
+    const providerInputEcho = {
+      kind: "cursor:acp:user_message_chunk",
+      ts,
+      sourceEntryId: "cursor-user-1",
+      text: "PROVIDER_USER_INPUT_ECHO",
+      payload: {
+        provider: "cursor_agent",
+        transport: "cursor-agent-acp-stdio",
+        method: "session/update",
+        sessionId: "cursor-session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "PROVIDER_USER_INPUT_ECHO" },
+        },
+      },
+    } as unknown as TranscriptEntry;
+    const entries: TranscriptEntry[] = [
+      input,
+      { kind: "user", ts, text: "ORDINARY_USER_INPUT_ECHO" },
+      providerInputEcho,
       { kind: "thinking", ts, text: "Inspect the project configuration." },
       { kind: "tool_call", ts, name: "read_file", toolUseId: "read-1", input: { path: "/tmp/config.json" } },
       { kind: "tool_result", ts, toolUseId: "read-1", content: "{}", isError: false },
-    ], false, { hideUserMessages: true });
-    expect(blocks.map((block) => block.type)).toEqual(["thinking", "tool"]);
+      { kind: "assistant", ts, text: "The config is present; I am checking its contents.", phase: "commentary" },
+      { kind: "assistant", ts, text: "The configuration is valid.", phase: "final_answer" },
+    ];
+    const niceHtml = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
+      presentation="detail" entries={entries}
+    /></ThemeProvider>);
+    const rawHtml = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
+      presentation="detail" mode="raw" entries={entries}
+    /></ThemeProvider>);
+    const hiddenNiceViewIndex = rawHtml.indexOf(' hidden="" aria-hidden="true"');
+    expect(hiddenNiceViewIndex).toBeGreaterThan(0);
+    const activeRawView = rawHtml.slice(0, hiddenNiceViewIndex);
+
+    expect(niceHtml).not.toContain("Conversation input:");
+    expect(niceHtml).not.toContain("ORDINARY_USER_INPUT_ECHO");
+    expect(niceHtml).not.toContain("PROVIDER_USER_INPUT_ECHO");
+    expect(niceHtml).toContain("Inspect the project configuration.");
+    expect(niceHtml).toContain("The config is present; I am checking its contents.");
+    expect(niceHtml).toContain("Final response");
+    expect(niceHtml).toContain("The configuration is valid.");
+
+    expect(activeRawView).not.toContain("Conversation input:");
+    expect(activeRawView).toContain("ORDINARY_USER_INPUT_ECHO");
+    expect(activeRawView).toContain("PROVIDER_USER_INPUT_ECHO");
+    expect(activeRawView).toContain("cursor-user-1");
+
+    const blocks = normalizeTranscript(entries, false, { hideUserMessages: true });
+    expect(blocks.map((block) => block.type)).toEqual(["thinking", "tool", "message", "message"]);
+    expect(blocks[0]).toMatchObject({ type: "thinking", text: "Inspect the project configuration." });
+    expect(blocks[1]).toMatchObject({ type: "tool", status: "completed", result: "{}" });
+    expect(blocks[2]).toMatchObject({
+      type: "message",
+      role: "assistant",
+      phase: "commentary",
+      text: "The config is present; I am checking its contents.",
+    });
+    expect(blocks[3]).toMatchObject({
+      type: "message",
+      role: "assistant",
+      phase: "final_answer",
+      text: "The configuration is valid.",
+    });
   });
 
   it("omits Steer user input when normalizing Agent Process activity", () => {

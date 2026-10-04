@@ -22,6 +22,17 @@ test.describe("gateway agent creation", () => {
     expect(hermes?.hermesLocalBackend).toMatch(/^(native_product_rpc|acp)$/);
     expect(hermes?.resolvedCommand).toBeTruthy();
 
+    for (const endpoint of ["agents", "agent-hires"]) {
+      const legacyCreate = await page.request.post(`/api/orgs/${organization.id}/${endpoint}`, {
+        data: {
+          name: `Retired Hermes ${endpoint}`,
+          agentRuntimeType: "hermes_local",
+          agentRuntimeConfig: {},
+        },
+      });
+      expect(legacyCreate.status()).toBe(400);
+    }
+
     const existingAgent = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: { name: "Existing Operator", role: "ceo", agentRuntimeType: "codex_local", agentRuntimeConfig: {} },
     });
@@ -35,16 +46,15 @@ test.describe("gateway agent creation", () => {
     await expect(page.getByRole("button", { name: /^Hermes\b/ })).toHaveCount(1);
     await page.getByRole("button", { name: /^Hermes\b/ }).click();
 
-    await expect(page.getByRole("heading", { name: "New Agent", exact: true })).toBeVisible();
-    await expect(page.getByTestId("hermes-local-availability")).toContainText("Hermes is installed and its local ACP setup check passed");
-    if (hermes?.hermesLocalBackend === "acp") {
-      await expect(page.getByTestId("hermes-local-availability")).toContainText("This agent will use ACP; native Product RPC is unavailable");
-    } else {
-      await expect(page.getByTestId("hermes-local-availability")).toContainText("Native Product RPC prerequisites were detected");
-    }
+    await expect(page.getByRole("heading", { name: "Create with Hermes", exact: true })).toBeVisible();
+    await expect(page.getByTestId("hermes-local-availability")).toContainText("Hermes is ready locally. Rudder will connect automatically.");
+    await expect(page.getByTestId("hermes-local-availability")).toContainText("You don't need to enter a server address or API key.");
+    await expect(page.getByTestId("hermes-local-availability")).not.toContainText("ACP");
+    await expect(page.getByTestId("hermes-local-availability")).not.toContainText("Product RPC");
     await expect(page.getByRole("button", { name: "Create agent", exact: true })).toBeEnabled();
     await page.getByPlaceholder("Agent name").fill("Hermes Local Operator");
     await page.getByPlaceholder("Title (e.g. VP of Engineering)").fill("Local Hermes Agent");
+    await page.locator('[data-testid="new-agent-advanced-settings"] > summary').click();
     await page.getByRole("button", { name: "Advanced options", exact: true }).click();
     await expect(page.getByRole("button", { name: "Connect a custom Hermes API Server", exact: true })).toBeVisible();
     await expect(page.getByText("Command", { exact: true })).toHaveCount(0);
@@ -131,7 +141,8 @@ test.describe("gateway agent creation", () => {
     await expect(page.getByRole("button", { name: /^Hermes\b/ })).toHaveCount(1);
     await page.getByRole("button", { name: /^Hermes\b/ }).click();
 
-    await expect(page.getByRole("heading", { name: "New Agent", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create with Hermes", exact: true })).toBeVisible();
+    await page.locator('[data-testid="new-agent-advanced-settings"] > summary').click();
     await page.getByRole("button", { name: "Advanced options", exact: true }).click();
     await page.getByRole("button", { name: "Connect a custom Hermes API Server", exact: true }).click();
     await expect(page.getByText("Hermes API Server URL", { exact: true })).toBeVisible();

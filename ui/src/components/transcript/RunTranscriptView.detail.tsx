@@ -126,7 +126,12 @@ export function TranscriptDetailTimeline({
   canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
 }) {
   const { preludeBlocks, turns } = useMemo(
-    () => normalizeChatTranscriptTurns(entries, streaming, { showDeveloperDiagnostics }),
+    () => normalizeChatTranscriptTurns(entries, streaming, {
+      showDeveloperDiagnostics,
+      // This timeline is only used by Run Detail. Keep Rudder's injected
+      // operating instructions inspectable without exposing echoed user input.
+      showAgentInstructions: true,
+    }),
     [entries, streaming, showDeveloperDiagnostics],
   );
   const rows = expandDetailTimelineBlocks(preludeBlocks);

@@ -1,4 +1,4 @@
-import type { AgentRuntimeControlHandle, AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
+import type { AgentRuntimeControlHandle, AgentRuntimeExecutionContext, AgentRuntimeInvocationMeta } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import os from "node:os";
@@ -763,10 +763,48 @@ process.stdin.on("data", (chunk) => {
       loadedSkills: [{ key: "org:org-hermes-1/selected", runtimeName: "selected" }],
       desiredSkills: [{ key: "org:org-hermes-1/selected", runtimeName: "selected" }],
       promptInjectedSkills: [{ key: "org:org-hermes-1/selected", runtimeName: "selected" }],
+      prompt: submittedInputs[0],
+      agentInstructionStack: submittedInputs[0],
       promptMetrics: { skillCount: 1 },
     });
-    expect(JSON.stringify(metas)).not.toContain(selectedMarker);
-    expect(JSON.stringify(metas)).not.toContain("# Selected");
+    expect(JSON.stringify(metas)).toContain(selectedMarker);
+    expect(JSON.stringify(metas)).not.toContain(unselectedMarker);
+  });
+
+  it("records the exact API prompt in invocation metadata without logging it", async () => {
+    const prompt = "Submitted API prompt: exact text\nwith a second line.";
+    const submittedInputs: string[] = [];
+    const metas: AgentRuntimeInvocationMeta[] = [];
+    const logs: string[] = [];
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        submittedInputs.push(String((await readJsonBody(req)).input ?? ""));
+        return json(res, 202, { run_id: "hermes-run-prompt-snapshot", status: "started" });
+      }
+      if (req.url === "/v1/runs/hermes-run-prompt-snapshot/events") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+        return;
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const result = await execute(context({
+      url: server.url,
+      hermesChatBackend: "native_runs_http",
+      timeoutMs: 1_000,
+    }, {
+      context: { chatMode: true, chatConversationId: "chat-hermes-prompt-snapshot", chatPrompt: prompt },
+      onMeta: async (meta) => { metas.push(meta); },
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+    }));
+
+    expect(result.exitCode).toBe(0);
+    expect(submittedInputs).toEqual([prompt]);
+    expect(metas).toHaveLength(1);
+    expect(metas[0]).toMatchObject({ prompt: submittedInputs[0], agentInstructionStack: submittedInputs[0] });
+    expect(logs.join("\n")).not.toContain(prompt);
   });
 
   it("uses the latest full skill selection on every run without stale material", async () => {

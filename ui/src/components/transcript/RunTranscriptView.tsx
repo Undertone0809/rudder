@@ -5,7 +5,7 @@ import { cn } from "../../lib/utils";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { filterChatAssistantTranscriptEntries } from "./RunTranscriptView.chat";
 import { TranscriptChatTimeline } from "./RunTranscriptView.chat-timeline";
-import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
+import { filterRenderableTranscriptEntries, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { cursorAcpDisplayEntry, normalizeTranscript, terminalAssistantResponseEntryIndexes } from "./RunTranscriptView.normalize";
 import { RudderMcpPresenterProvider } from "./RunTranscriptView.rudder-mcp";
@@ -131,20 +131,17 @@ function RunTranscriptViewContent({
     });
   }, [onOpenFile, toastContext]);
   const renderableEntries = useMemo(
-    () => {
-      const renderable = filterRenderableTranscriptEntries(entries, {
-        presentation,
-        showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
-      });
-      return presentation === "detail"
-        ? renderable.filter((entry) => !isRudderEchoedStructuredUserInput(entry))
-        : renderable;
-    },
+    () => filterRenderableTranscriptEntries(entries, {
+      presentation,
+      showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
+    }),
     [effectiveShowDeveloperDiagnostics, entries, presentation],
   );
   const displayEntries = useMemo(() => {
     if (presentation !== "detail") return renderableEntries;
-    const projected = renderableEntries.map((entry) => cursorAcpDisplayEntry(entry) ?? entry);
+    const projected = renderableEntries
+      .map((entry) => cursorAcpDisplayEntry(entry) ?? entry)
+      .filter((entry) => entry.kind !== "user" || isInternalAgentInstructionText(entry.text));
     if (!terminalRun) return projected;
     const terminalIndexes = terminalAssistantResponseEntryIndexes(projected);
     return projected.map((entry, index) => (
@@ -166,6 +163,7 @@ function RunTranscriptViewContent({
       })
       : displayEntries, streaming, {
       showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
+      showAgentInstructions: presentation === "detail",
       hideUserMessages: presentation === "chat",
     }),
     [displayEntries, effectiveShowDeveloperDiagnostics, hiddenAssistantMessageText, hideAssistantMessages, presentation, streaming],

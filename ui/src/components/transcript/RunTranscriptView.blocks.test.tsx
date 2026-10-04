@@ -2,7 +2,7 @@
 
 import type { ChatMessage } from "@rudderhq/shared";
 import type { ReactNode } from "react";
-import { act, useLayoutEffect, useRef, useState } from "react";
+import { act, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
@@ -771,6 +771,8 @@ describe("TranscriptRunAnnotationBlock", () => {
   it("does not save a selected draft after its Run source changes before passive cleanup", () => {
     const onAnnotate = vi.fn();
     let attemptedSaveBeforePassiveCleanup = false;
+    let selectedTextAtSave: string | null = null;
+    let currentSourceIdsAtSave: [string, string] | null = null;
     function SwitchingTranscriptSource() {
       const [source, setSource] = useState<"first" | "second">("first");
       useLayoutEffect(() => {
@@ -779,6 +781,10 @@ describe("TranscriptRunAnnotationBlock", () => {
           document.querySelectorAll<HTMLButtonElement>("[data-testid='chat-response-annotation-editor'] button"),
         ).find((button) => button.textContent === "Save");
         attemptedSaveBeforePassiveCleanup = Boolean(saveButton);
+        selectedTextAtSave = document.querySelector(
+          "[data-testid='chat-response-annotation-selected-text'] blockquote",
+        )?.textContent ?? null;
+        currentSourceIdsAtSave = ["run-2", "agent-2"];
         saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       }, [source]);
 
@@ -792,7 +798,7 @@ describe("TranscriptRunAnnotationBlock", () => {
             block={{
               type: "thinking",
               ts: "2026-10-03T00:00:00.000Z",
-              text: "Identical transcript text",
+              text: source === "first" ? "Old selected transcript text" : "New source transcript text",
               streaming: false,
               sourceEntryIds: [sourceMemberId],
             }}
@@ -803,14 +809,14 @@ describe("TranscriptRunAnnotationBlock", () => {
               onAnnotate,
             }}
           >
-            <span>Identical transcript text</span>
+            <span>{source === "first" ? "Old selected transcript text" : "New source transcript text"}</span>
           </TranscriptRunAnnotationBlock>
         </>
       );
     }
 
     const container = render(<SwitchingTranscriptSource />);
-    const textNode = container.querySelector("span")?.firstChild;
+    const textNode = container.querySelector("[data-run-transcript-block='true'] span")?.firstChild;
     expect(textNode).not.toBeNull();
     const range = document.createRange();
     range.selectNodeContents(textNode!);
@@ -830,7 +836,86 @@ describe("TranscriptRunAnnotationBlock", () => {
     act(() => container.querySelector<HTMLButtonElement>("[data-testid='switch-annotation-source']")?.click());
 
     expect(attemptedSaveBeforePassiveCleanup).toBe(true);
+    expect(selectedTextAtSave).toBe("Old selected transcript text");
+    expect(currentSourceIdsAtSave).toEqual(["run-2", "agent-2"]);
     expect(onAnnotate).not.toHaveBeenCalled();
+  });
+
+  it("hides a page selection from the previous conversation before passive cleanup", () => {
+    let pendingSelectionAtSwitch: string | null = null;
+    let previousEffectPassiveCleanupRan = false;
+    let passiveCleanupRanAtSwitch = true;
+
+    function SwitchingConversationSelection() {
+      const [conversationId, setConversationId] = useState("chat-old");
+      const seededSelection = useRef(false);
+      const activeDraftScopeRef = useRef("draft-scope");
+      const chatMainWorkspaceRef = useRef<HTMLDivElement>(null);
+      const selection = usePendingChatResponseAnnotationSelection({
+        rawMessages: [],
+        loadedTranscriptsByMessageId: {},
+        transcriptByRun: new Map(),
+        selectedConversationId: conversationId,
+        draftStorageScopeKey: "draft-scope",
+        activeDraftScopeRef,
+        chatMainWorkspaceRef,
+      });
+      useEffect(() => {
+        if (conversationId !== "chat-old" || seededSelection.current) return;
+        seededSelection.current = true;
+        selection.setPendingSelection({
+          source: "Old conversation evidence",
+          sourceContextIdentity: JSON.stringify(["chat-old", "draft-scope", "draft-scope"]),
+          sourceConversationId: "chat-old",
+          sourceMessageId: "message-old",
+          surface: "assistant_body",
+          anchor: {
+            surface: "assistant_body",
+            sourceConversationId: "chat-old",
+            sourceMessageId: "message-old",
+            sourceHash: "old-source-hash",
+            selectedText: "Old conversation evidence",
+            start: 0,
+            end: 25,
+            prefix: "",
+            suffix: "",
+          },
+          anchorRect: new DOMRect(20, 20, 120, 20),
+          sideChatEligible: true,
+          autoFocusToolbar: false,
+        } as NonNullable<typeof selection.pendingSelection>);
+      }, [conversationId, selection.setPendingSelection]);
+      useEffect(() => () => {
+        if (conversationId === "chat-old") previousEffectPassiveCleanupRan = true;
+      }, [conversationId]);
+      useLayoutEffect(() => {
+        if (conversationId === "chat-new") {
+          pendingSelectionAtSwitch = selection.pendingSelection?.sourceMessageId ?? null;
+          passiveCleanupRanAtSwitch = previousEffectPassiveCleanupRan;
+        }
+      }, [conversationId, selection.pendingSelection]);
+
+      return (
+        <div ref={chatMainWorkspaceRef}>
+          <button type="button" data-testid="switch-chat-selection-source" onClick={() => setConversationId("chat-new")}>
+            Switch conversation
+          </button>
+          <p>{conversationId === "chat-old" ? "Old conversation evidence" : "New conversation evidence"}</p>
+          <output data-testid="pending-chat-selection">
+            {selection.pendingSelection?.sourceMessageId ?? "none"}
+          </output>
+        </div>
+      );
+    }
+
+    const container = render(<SwitchingConversationSelection />);
+    expect(container.querySelector("[data-testid='pending-chat-selection']")?.textContent).toBe("message-old");
+
+    act(() => container.querySelector<HTMLButtonElement>("[data-testid='switch-chat-selection-source']")?.click());
+
+    expect(passiveCleanupRanAtSwitch).toBe(false);
+    expect(pendingSelectionAtSwitch).toBeNull();
+    expect(container.querySelector("[data-testid='pending-chat-selection']")?.textContent).toBe("none");
   });
 
   it("discards a transition annotation when the editor is cancelled", () => {

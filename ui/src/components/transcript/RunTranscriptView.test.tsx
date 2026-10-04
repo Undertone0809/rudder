@@ -73,6 +73,90 @@ describe("transcript file target resolution", () => {
 });
 
 describe("RunTranscriptView", () => {
+  it("keeps Run Detail Nice focused on activity and Raw free of Rudder's structured input envelope", () => {
+    const ts = "2026-10-04T12:00:00.000Z";
+    const rudderInputEcho: TranscriptEntry = {
+      kind: "user",
+      ts,
+      text: 'Conversation input: {"currentMessage":{"body":"RUDDER_INPUT_ECHO"}}',
+    };
+    const providerInputEcho = {
+      kind: "cursor:acp:user_message_chunk",
+      ts,
+      sourceEntryId: "provider-input-1",
+      text: "PROVIDER_INPUT_ECHO",
+      payload: {
+        provider: "cursor_agent",
+        transport: "cursor-agent-acp-stdio",
+        method: "session/update",
+        sessionId: "cursor-session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "PROVIDER_INPUT_ECHO" },
+        },
+      },
+    } as unknown as TranscriptEntry;
+    const entries: TranscriptEntry[] = [
+      { kind: "user", ts, text: "CURRENT_USER_INPUT" },
+      rudderInputEcho,
+      providerInputEcho,
+      { kind: "thinking", ts, text: "Genuine reasoning activity." },
+      { kind: "tool_call", ts, name: "read_file", toolUseId: "read-1", input: { path: "settings.json" } },
+      { kind: "tool_result", ts, toolUseId: "read-1", content: "TOOL_RESULT_EVIDENCE", isError: false },
+      { kind: "assistant", ts, text: "Intermediate progress.", phase: "commentary" },
+      { kind: "assistant", ts, text: "Terminal response." },
+    ];
+    const niceHtml = renderToStaticMarkup(
+      <ThemeProvider><RunTranscriptView presentation="detail" terminalRun entries={entries} /></ThemeProvider>,
+    );
+    const rawHtml = renderToStaticMarkup(
+      <ThemeProvider><RunTranscriptView presentation="detail" mode="raw" detailRawEntries={entries} entries={[]} /></ThemeProvider>,
+    );
+    const rawActiveView = rawHtml.slice(0, rawHtml.indexOf(' hidden="" aria-hidden="true"'));
+    const normalizedTool = normalizeTranscript(
+      entries.filter((entry) => entry.kind === "tool_call" || entry.kind === "tool_result"),
+      false,
+    ).find((block) => block.type === "tool");
+
+    expect(niceHtml).not.toContain("CURRENT_USER_INPUT");
+    expect(niceHtml).not.toContain("RUDDER_INPUT_ECHO");
+    expect(niceHtml).not.toContain("PROVIDER_INPUT_ECHO");
+    expect(niceHtml).toContain("Genuine reasoning activity.");
+    expect(niceHtml).toContain("Read settings.json");
+    expect(niceHtml).toContain("Intermediate progress.");
+    expect(niceHtml).toContain("Final response");
+    expect(niceHtml).toContain("Terminal response.");
+    expect(normalizedTool).toMatchObject({
+      type: "tool",
+      input: { path: "settings.json" },
+      result: "TOOL_RESULT_EVIDENCE",
+    });
+
+    expect(rawActiveView).toContain("CURRENT_USER_INPUT");
+    expect(rawActiveView).not.toContain("RUDDER_INPUT_ECHO");
+    expect(rawActiveView).not.toContain("Conversation input:");
+    expect(rawActiveView).toContain("CURRENT_USER_INPUT");
+    expect(rawActiveView).toContain("PROVIDER_INPUT_ECHO");
+    expect(rawActiveView).toContain("provider-input-1");
+  });
+
+  it("leaves the Chat process empty when only user echoes and the separate final answer remain", () => {
+    const ts = "2026-10-04T12:00:00.000Z";
+    const html = renderToStaticMarkup(
+      <ThemeProvider><RunTranscriptView
+        presentation="chat"
+        hideAssistantMessages
+        entries={[
+          { kind: "user", ts, text: "CURRENT_USER_INPUT" },
+          { kind: "user", ts, text: 'Conversation input: {"currentMessage":{"body":"RUDDER_INPUT_ECHO"}}' },
+          { kind: "assistant", ts, text: "Separate final answer.", phase: "final_answer" },
+        ]}
+      /></ThemeProvider>,
+    );
+
+    expect(html).toBe("");
+  });
+
   it("renders native Cursor ACP chunks as messages and tools rather than stdout", () => {
     const cursor = (sessionUpdate: string, sourceEntryId: string, update: Record<string, unknown>, text?: string) => ({
       kind: `cursor:acp:${sessionUpdate}`,
@@ -982,7 +1066,7 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Expand stderr details");
+    expect(html).toContain("Expand Stderr details");
     expect(html).toContain("Error: provider returned a long diagnostic");
     expect(html).not.toContain("stack frame 15");
   });

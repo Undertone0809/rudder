@@ -1200,6 +1200,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       agentRuntimeType: "hermes_gateway",
       command: "hermes-api",
       commandArgs: ["POST", endpoint(base, "/v1/runs").toString()],
+      prompt: input,
+      agentInstructionStack: input,
       loadedSkills: skillProjection.skills,
       desiredSkills: skillProjection.skills,
       promptInjectedSkills: skillProjection.skills,

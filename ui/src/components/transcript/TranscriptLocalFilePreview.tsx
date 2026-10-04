@@ -2,8 +2,13 @@ import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { ChevronRight, ExternalLink, FolderOpen, Loader2 } from "lucide-react";
 import type { ChangeEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBrowserLocalFilePreview } from "../../api/browserLocalFiles";
-import { readAuthorizedLocalFilePreview } from "../../api/localFiles";
+import {
+  browserLocalDirectoryPickerError,
+  createBrowserLocalFilePreview,
+  getBrowserLocalDirectoryPicker,
+  readBrowserLocalFileFromDirectory,
+  readBrowserLocalFileFromDirectorySelection,
+} from "../../api/browserLocalFiles";
 import { useOptionalOrganization } from "../../context/OrganizationContext";
 import {
   readDesktopShell,
@@ -362,14 +367,16 @@ export function TranscriptLocalFilePreview({
   sourceConversationId?: string | null;
 }) {
   const desktopShell = readDesktopShell();
-  const organizationId = useOptionalOrganization()?.selectedOrganizationId ?? null;
   const [preview, setPreview] = useState<TranscriptLocalFilePreviewState | null>(null);
   const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [launchTargetsDiscovered, setLaunchTargetsDiscovered] = useState(false);
   const [openingTargetId, setOpeningTargetId] = useState<WorkspaceOpenTargetId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(desktopShell));
-  const browserFileInputRef = useRef<HTMLInputElement | null>(null);
+  const browserDirectoryInputRef = useRef<HTMLInputElement | null>(null);
+  const browserRequestRef = useRef(0);
+  const currentTargetPathRef = useRef(targetPath);
+  currentTargetPathRef.current = targetPath;
   const previewRequestRef = useRef<{
     targetKey: string;
     promise: Promise<TranscriptLocalFilePreviewState>;
@@ -417,41 +424,90 @@ export function TranscriptLocalFilePreview({
   }, [desktopShell, label, targetPath]);
 
   useEffect(() => () => {
+    browserRequestRef.current += 1;
+  }, [targetPath]);
+
+  useEffect(() => () => {
     const contentPath = preview?.desktopPreview ? null : preview?.file.contentPath;
     if (contentPath?.startsWith("blob:")) URL.revokeObjectURL(contentPath);
   }, [preview]);
 
-  const handleBrowserFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const input = event.currentTarget;
-    const selectedFile = input.files?.[0] ?? null;
-    input.value = "";
-    if (!selectedFile) return;
+  const acceptBrowserDirectoryRead = async (
+    selected: Awaited<ReturnType<typeof readBrowserLocalFileFromDirectory>>,
+    requestedPath: string,
+    request: number,
+  ) => {
+    const browserFile = await createBrowserLocalFilePreview(selected.file, requestedPath);
+    if (request !== browserRequestRef.current || requestedPath !== currentTargetPathRef.current) {
+      if (browserFile.contentPath?.startsWith("blob:")) URL.revokeObjectURL(browserFile.contentPath);
+      return;
+    }
+    setPreview({
+      file: {
+        ...browserFile,
+        rootPath: `browser-local:${selected.rootName}`,
+        filePath: selected.relativePath,
+      },
+      desktopPreview: null,
+    });
+  };
 
+  const handleBrowserDirectoryChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const selectedFiles = Array.from(input.files ?? []);
+    input.value = "";
+    if (!selectedFiles.length) return;
+
+    const request = ++browserRequestRef.current;
+    const requestedPath = targetPath;
     setLoading(true);
     setError(null);
     try {
-      const file = await createBrowserLocalFilePreview(selectedFile, targetPath);
-      setPreview({ file, desktopPreview: null });
+      const selected = readBrowserLocalFileFromDirectorySelection(selectedFiles, requestedPath);
+      await acceptBrowserDirectoryRead(selected, requestedPath, request);
     } catch (cause) {
+      if (request !== browserRequestRef.current || requestedPath !== currentTargetPathRef.current) return;
       setPreview(null);
       setError(previewFailureMessage(cause, label));
     } finally {
-      setLoading(false);
+      if (request === browserRequestRef.current && requestedPath === currentTargetPathRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  const loadOrganizationWorkspaceCopy = async () => {
-    if (!organizationId) return;
-    setLoading(true);
+  const chooseBrowserWorkspaceFolder = async () => {
+    const picker = getBrowserLocalDirectoryPicker();
+    if (!picker) {
+      browserDirectoryInputRef.current?.click();
+      return;
+    }
+
+    const request = ++browserRequestRef.current;
+    const requestedPath = targetPath;
     setError(null);
+    let directoryGranted = false;
     try {
-      const file = await readAuthorizedLocalFilePreview(organizationId, targetPath);
-      setPreview({ file, desktopPreview: null });
+      const directory = await picker({ mode: "read" });
+      if (request !== browserRequestRef.current || requestedPath !== currentTargetPathRef.current) return;
+      directoryGranted = true;
+      setLoading(true);
+      const selected = await readBrowserLocalFileFromDirectory(directory, requestedPath);
+      await acceptBrowserDirectoryRead(selected, requestedPath, request);
     } catch (cause) {
+      if (request !== browserRequestRef.current || requestedPath !== currentTargetPathRef.current) return;
+      if (!directoryGranted) {
+        setError(cause instanceof DOMException && cause.name === "AbortError"
+          ? null
+          : browserLocalDirectoryPickerError(cause));
+        return;
+      }
       setPreview(null);
-      setError(previewFailureMessage(cause, label));
+      setError(browserLocalDirectoryPickerError(cause));
     } finally {
-      setLoading(false);
+      if (request === browserRequestRef.current && requestedPath === currentTargetPathRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -558,38 +614,33 @@ export function TranscriptLocalFilePreview({
       return (
         <div className="flex min-h-[16rem] items-center justify-center p-4">
           <input
-            ref={browserFileInputRef}
+            ref={(input) => {
+              browserDirectoryInputRef.current = input;
+              input?.setAttribute("webkitdirectory", "");
+            }}
             type="file"
+            multiple
             className="sr-only"
-            aria-label={`Choose ${label} from this device`}
-            onChange={(event) => void handleBrowserFileChange(event)}
+            aria-label={`Choose the folder containing ${label}`}
+            onChange={(event) => void handleBrowserDirectoryChange(event)}
           />
           <div className="w-full max-w-md space-y-3" data-testid="chat-side-panel-local-file-picker">
             {error ? (
               <div role="alert" className="text-sm text-destructive">{error}</div>
             ) : (
               <div className="text-sm text-foreground">
-                Choose a local file named {label}; its original workspace path cannot be verified. You can also explicitly read its organization workspace copy.
+                To preview {label}, grant read-only access to a folder whose name appears once in the recorded path. Rudder will resolve only the remaining relative path inside that folder. The browser cannot verify the selected folder&apos;s full system path.
               </div>
             )}
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                onClick={() => browserFileInputRef.current?.click()}
+                onClick={() => void chooseBrowserWorkspaceFolder()}
               >
                 <FolderOpen className="h-3.5 w-3.5" aria-hidden />
-                Choose local file
+                Choose workspace folder
               </button>
-              {organizationId ? (
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                  onClick={() => void loadOrganizationWorkspaceCopy()}
-                >
-                  Read workspace copy
-                </button>
-              ) : null}
             </div>
             <div className="text-xs text-muted-foreground">
               File contents stay in this browser and are not sent to Rudder.
@@ -614,11 +665,15 @@ export function TranscriptLocalFilePreview({
     >
       {!desktopShell ? (
         <input
-          ref={browserFileInputRef}
+          ref={(input) => {
+            browserDirectoryInputRef.current = input;
+            input?.setAttribute("webkitdirectory", "");
+          }}
           type="file"
+          multiple
           className="sr-only"
-          aria-label={`Choose another ${label} from this device`}
-          onChange={(event) => void handleBrowserFileChange(event)}
+          aria-label={`Choose another folder containing ${label}`}
+          onChange={(event) => void handleBrowserDirectoryChange(event)}
         />
       ) : null}
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
@@ -629,12 +684,12 @@ export function TranscriptLocalFilePreview({
           {!desktopShell && !preview.desktopPreview ? (
             <div
               className="text-xs text-muted-foreground"
-              data-testid={file.rootPath === "browser-local"
+              data-testid={file.rootPath?.startsWith("browser-local:")
                 ? "transcript-browser-file-source"
                 : "transcript-workspace-file-source"}
             >
-              {file.rootPath === "browser-local"
-                ? "Selected in browser by filename; original workspace path is not verified."
+              {file.rootPath?.startsWith("browser-local:")
+                ? `Read locally from ${file.rootPath.slice("browser-local:".length)} at relative path: ${file.filePath}. The browser cannot verify the selected folder's full system path.`
                 : "Loaded from the selected organization's authorized workspace."}
             </div>
           ) : null}
@@ -661,20 +716,11 @@ export function TranscriptLocalFilePreview({
               <button
                 type="button"
                 className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                onClick={() => browserFileInputRef.current?.click()}
+                onClick={() => void chooseBrowserWorkspaceFolder()}
               >
                 <FolderOpen className="h-3.5 w-3.5" aria-hidden />
-                Choose file
+                Choose workspace folder
               </button>
-              {organizationId ? (
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                  onClick={() => void loadOrganizationWorkspaceCopy()}
-                >
-                  Read workspace copy
-                </button>
-              ) : null}
             </div>
           ) : null
         )}

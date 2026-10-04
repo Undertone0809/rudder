@@ -803,6 +803,7 @@ async function readNativeSpan(
   options: TranscriptReaderOptions,
   input: NativeTranscriptReadInput,
   origin: "native" | "object",
+  sequenceOffset = 0,
 ): Promise<ResolvedSource> {
   const hook = origin === "object" ? options.objectReader : options.nativeReader;
   if (origin === "object" && input.span.supplementalRetentionExpiredAt) {
@@ -890,6 +891,7 @@ async function readNativeSpan(
     runId: input.run.id,
     spanId: input.span.id,
     origin,
+    sequenceOffset,
   });
   const revision = nonEmptyString(result.revision)
     ?? stableHash({ spanId: input.span.id, selector: input.selector, updatedAt: input.span.updatedAt });
@@ -942,6 +944,7 @@ type SupplementCursor = {
 async function readNativeWithSupplement(
   options: TranscriptReaderOptions,
   input: NativeTranscriptReadInput,
+  sequenceOffset = 0,
 ): Promise<ResolvedSource> {
   const scope = stableHash({ orgId: input.orgId, runId: input.run.id, spanId: input.span.id,
     selector: input.selector, objectRef: input.span.supplementalObjectRef,
@@ -964,7 +967,12 @@ async function readNativeWithSupplement(
     }
   }
   const nativeLimit = state?.phase === "object" ? state.nativeLimit : normalizeLimit(input.limit);
-  const native = await readNativeSpan(options, { ...input, limit: nativeLimit, cursor: state?.nativeCursor ?? null }, "native");
+  const native = await readNativeSpan(
+    options,
+    { ...input, limit: nativeLimit, cursor: state?.nativeCursor ?? null },
+    "native",
+    sequenceOffset,
+  );
   if (state && state.nativeRevision !== native.revision) {
     throw transcriptReaderError("cursor_revision_mismatch", "Transcript native revision is no longer current");
   }
@@ -1011,7 +1019,8 @@ async function readNativeWithSupplement(
   const objectBytes = (input.maxBytes ?? DEFAULT_NATIVE_READ_BYTES) - (native.readBytes ?? 0);
   if (objectBytes < 4) return limited(base, "page_bytes", input.maxBytes ?? DEFAULT_NATIVE_READ_BYTES);
   const object = await readNativeSpan(options, { ...input, cursor: state?.objectCursor ?? null,
-    maxBytes: objectBytes, maxItemBytes: Math.min(input.maxItemBytes ?? DEFAULT_NATIVE_ITEM_BYTES, objectBytes) }, "object");
+    maxBytes: objectBytes, maxItemBytes: Math.min(input.maxItemBytes ?? DEFAULT_NATIVE_ITEM_BYTES, objectBytes) }, "object",
+  sequenceOffset + (state?.phase === "object" ? 0 : nativeItems.length));
   if (state?.objectRevision && state.objectRevision !== object.revision) {
     throw transcriptReaderError("cursor_revision_mismatch", "Transcript supplement revision is no longer current");
   }
@@ -1181,16 +1190,16 @@ async function readNativeSources(
         signal: input.signal,
       })
       : cursorObjectSource
-      ? await readNativeSpan(options, hookInput, "object")
+      ? await readNativeSpan(options, hookInput, "object", providerOffset)
       : expiredSupplement
-      ? await readNativeSpan(options, hookInput, "object")
+      ? await readNativeSpan(options, hookInput, "object", providerOffset)
       : options.nativeReader && objectRef && options.objectReader
-      ? await readNativeWithSupplement(options, hookInput)
+      ? await readNativeWithSupplement(options, hookInput, providerOffset)
       : options.nativeReader
-      ? await readNativeSpan(options, hookInput, "native")
+      ? await readNativeSpan(options, hookInput, "native", providerOffset)
       : objectRef && options.objectReader
-        ? await readNativeSpan(options, hookInput, "object")
-        : await readNativeSpan(options, hookInput, "native");
+        ? await readNativeSpan(options, hookInput, "object", providerOffset)
+        : await readNativeSpan(options, hookInput, "native", providerOffset);
     let spanItems = itemsForSpan(result);
     // Native-bound spans may show only event copies carrying this exact span/Attempt identity.
     const allowLegacyFallback = input.allowLegacyFallback !== false && !nativeSourceContract;
@@ -1392,7 +1401,12 @@ async function readLegacySource(
   const revision = nonEmptyString(result.revision) ?? defaultRevision(input.run, "legacy");
   const itemOffset = result.itemOffset ?? 0;
   return {
-    items: normalizeItems(result.entries, { runId: input.run.id, spanId: input.spanId ?? null, origin: "legacy" }),
+    items: normalizeItems(result.entries, {
+      runId: input.run.id,
+      spanId: input.spanId ?? null,
+      origin: "legacy",
+      sequenceOffset: itemOffset,
+    }),
     source: "legacy",
     revision,
     providerRevision: revision,

@@ -2752,6 +2752,7 @@ export function ChatMessageItem({
           />
           {!isEmptyStreamingAssistant && !isFailedAssistantMessage ? (
             <div
+              data-testid="chat-assistant-message-toolbar"
               className={cn(
                 "mt-2 flex h-7 items-center gap-1 text-muted-foreground",
                 chatMessageHoverBarClass,
@@ -3070,6 +3071,7 @@ export function OptimisticUserDraftItem({
         ) : null}
         {askUserAnswer ? pendingAttachmentPreview : null}
         <div
+          data-testid="chat-user-message-toolbar"
           className={cn(
             "mt-1 flex h-7 items-center justify-end gap-1 text-muted-foreground",
             chatMessageHoverBarClass,

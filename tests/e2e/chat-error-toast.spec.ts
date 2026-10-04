@@ -38,32 +38,95 @@ exec "${E2E_CODEX_APP_SERVER_STUB}" "$@"
 async function createAskUserWithoutPayloadStub() {
   const dir = await mkdtemp(join(tmpdir(), "rudder-chat-ask-user-fallback-"));
   const scriptPath = join(dir, "codex-ask-user-without-payload.js");
+  const protocolLogPath = join(dir, "protocol.jsonl");
   await writeFile(scriptPath, `#!/usr/bin/env node
-let input = "";
-process.stdin.on("data", (chunk) => {
-  input += chunk.toString();
-});
-process.stdin.on("end", () => {
-  const match = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i);
-  const sentinel = match ? match[1] : "__RUDDER_RESULT_TEST__";
-  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "ask-user-fallback-e2e", model: "gpt-5.4" }) + "\\n");
-  process.stdout.write(JSON.stringify({
-    type: "turn.completed",
-    result: sentinel + JSON.stringify({
+const fs = require("node:fs");
+const path = require("node:path");
+const readline = require("node:readline");
+const args = process.argv.slice(2);
+const protocolLogPath = ${JSON.stringify(protocolLogPath)};
+const record = (entry) => fs.appendFileSync(protocolLogPath, JSON.stringify(entry) + "\\n", "utf8");
+record({ kind: "invocation", args });
+
+if (args.includes("--version")) {
+  process.stdout.write("codex-cli 0.155.0\\n");
+  process.exit(0);
+}
+if (args.includes("generate-json-schema")) {
+  const outputIndex = args.indexOf("--out");
+  const outputDir = args[outputIndex + 1];
+  if (!outputDir) process.exit(2);
+  fs.mkdirSync(outputDir, { recursive: true });
+  const methods = ["thread/start", "thread/resume", "thread/read", "turn/start", "turn/interrupt"];
+  fs.writeFileSync(path.join(outputDir, "ClientRequest.json"), JSON.stringify({
+    oneOf: methods.map((method) => ({ properties: { method: { const: method } } })),
+  }));
+  process.exit(0);
+}
+if (args[0] !== "app-server" || !args.includes("--stdio")) process.exit(2);
+
+const threadId = "ask-user-fallback-e2e";
+const turnId = "ask-user-fallback-turn-e2e";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  record({ kind: "request", method: request.method });
+  if (request.method === "initialized") return;
+  if (request.method === "initialize") {
+    send({ id: request.id, result: { userAgent: "rudder-ask-user-fallback-e2e" } });
+    return;
+  }
+  if (request.method === "thread/start" || request.method === "thread/resume") {
+    send({ id: request.id, result: { thread: { id: threadId } } });
+    return;
+  }
+  if (request.method === "thread/read") {
+    send({ id: request.id, result: { thread: { id: threadId, turns: [] } } });
+    return;
+  }
+  if (request.method === "turn/start") {
+    const input = (request.params?.input ?? [])
+      .filter((item) => item?.type === "text" && typeof item.text === "string")
+      .map((item) => item.text)
+      .join("\\n");
+    const sentinel = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+    const itemId = "ask-user-fallback-answer-e2e";
+    const finalText = sentinel + JSON.stringify({
       kind: "ask_user",
       body: "Which topic should I explore for the briefing?",
-      structuredPayload: null,
-    }),
-    usage: { input_tokens: 5, cached_input_tokens: 0, output_tokens: 8 },
-  }) + "\\n");
+    });
+    send({ id: request.id, result: { turn: { id: turnId } } });
+    send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    send({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId, delta: finalText } });
+    send({ method: "item/completed", params: {
+      threadId,
+      turnId,
+      item: { type: "agentMessage", id: itemId, text: finalText, phase: "final_answer", memoryCitation: null },
+    } });
+    send({ method: "turn/completed", params: { threadId, turn: {
+      id: turnId,
+      items: [],
+      itemsView: { type: "full" },
+      status: "completed",
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1,
+    } } });
+    return;
+  }
+  if (request.id !== undefined) {
+    send({ id: request.id, error: { code: -32601, message: "Unsupported fixture method: " + request.method } });
+  }
 });
 `, "utf8");
   await chmod(scriptPath, 0o755);
-  return scriptPath;
+  return { scriptPath, protocolLogPath };
 }
 
 test.describe("Chat error recovery", () => {
-  test("shows an ask-user reply as a normal message when structured questions are missing", async ({ page }) => {
+  test("shows an ask-user reply as a normal message when structured questions are missing", async ({ page }, testInfo) => {
     const askUserFallbackStub = await createAskUserWithoutPayloadStub();
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Ask-User-Fallback-${Date.now()}` },
@@ -72,7 +135,7 @@ test.describe("Chat error recovery", () => {
     const organization = await orgRes.json();
     const chatAgent = await createE2EChatAgent(page.request, organization.id, {
       name: "Ask User Fallback Agent",
-      command: askUserFallbackStub,
+      command: askUserFallbackStub.scriptPath,
     });
 
     await page.goto("/");
@@ -94,21 +157,66 @@ test.describe("Chat error recovery", () => {
 
     const chatId = page.url().match(/\/messenger\/chat\/([^/?#]+)/)?.[1];
     expect(chatId).toBeTruthy();
-    const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
-    expect(messagesRes.ok()).toBe(true);
-    const messages = await messagesRes.json() as Array<{
+    type ChatMessage = {
+      id: string;
       role: string;
       kind: string;
       status: string;
       body: string;
       structuredPayload: unknown;
-    }>;
+      runId: string | null;
+      chatTurnId: string | null;
+    };
+    const readMessages = async () => {
+      const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+      expect(messagesRes.ok()).toBe(true);
+      return await messagesRes.json() as ChatMessage[];
+    };
+    await expect.poll(async () => {
+      const messages = await readMessages();
+      return messages.find((message) =>
+        message.role === "assistant" && message.body === "Which topic should I explore for the briefing?") ?? null;
+    }, { timeout: 15_000 }).toMatchObject({
+      kind: "message",
+      status: "completed",
+      body: "Which topic should I explore for the briefing?",
+      structuredPayload: null,
+    });
+    const messages = await readMessages();
     const completedAssistant = messages.find((message) => message.role === "assistant");
     expect(completedAssistant).toMatchObject({
       kind: "message",
       status: "completed",
       body: "Which topic should I explore for the briefing?",
       structuredPayload: null,
+    });
+    expect(completedAssistant?.id).toBeTruthy();
+    expect(completedAssistant?.runId).toBeTruthy();
+    expect(completedAssistant?.chatTurnId).toBeTruthy();
+
+    const protocolLog = (await readFile(askUserFallbackStub.protocolLogPath, "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as { kind: string; args?: string[]; method?: string });
+    const invocations = protocolLog.filter((entry) => entry.kind === "invocation");
+    const requests = protocolLog.filter((entry) => entry.kind === "request");
+    const hasInvocation = (matches: (args: string[]) => boolean) => invocations.some((entry) =>
+      entry.args !== undefined && matches(entry.args));
+    expect(hasInvocation((args) => args[0] === "--version")).toBe(true);
+    expect(hasInvocation((args) => args.includes("generate-json-schema")
+      && args.includes("--out") && !args.includes("--experimental"))).toBe(true);
+    expect(hasInvocation((args) => args.includes("generate-json-schema") && args.includes("--experimental"))).toBe(true);
+    expect(hasInvocation((args) => args[0] === "app-server" && args.includes("--stdio"))).toBe(true);
+    expect(requests.map((entry) => entry.method)).toEqual(expect.arrayContaining([
+      "initialize",
+      "thread/start",
+      "turn/start",
+    ]));
+    await testInfo.attach("ask-user-fallback-runtime-evidence.json", {
+      body: Buffer.from(JSON.stringify({
+        invocations: invocations.map((entry) => entry.args),
+        appServerMethods: requests.map((entry) => entry.method),
+        persistedAssistant: completedAssistant,
+      }, null, 2)),
+      contentType: "application/json",
     });
   });
 
