@@ -46,15 +46,29 @@ export type AgentRunTranscriptSource = "native" | "native_plus_objects" | "legac
 export type AgentRunTranscriptAvailability = "available" | "pending" | "offline" | "missing" | "expired" | "incompatible";
 export type AgentRunTranscriptCompleteness = "complete" | "partial" | "terminal_only" | "unknown";
 
-export interface AgentRunTranscriptEntry {
+export interface AgentRunTranscriptLineage {
+  sourceEntryId: string;
+  runId: string | null;
+  attemptId: string | null;
+  spanId: string | null;
+}
+
+export interface AgentRunTranscriptEntry extends AgentRunTranscriptLineage {
   id: string;
   index?: number;
   turnIndex?: number | null;
   entry: TranscriptEntry | null;
 }
 
+export interface AgentRunTranscriptRow extends AgentRunTranscriptLineage {
+  id: string;
+  index: number;
+  turnIndex: number | null;
+}
+
 export interface AgentRunTranscriptPage {
   run?: Pick<AgentRun, "orgId" | "agentId">;
+  rows?: AgentRunTranscriptRow[];
   entries?: AgentRunTranscriptEntry[];
   page: {
     cursor?: string | null;

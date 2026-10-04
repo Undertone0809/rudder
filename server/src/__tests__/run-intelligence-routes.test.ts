@@ -47,7 +47,10 @@ vi.mock("../services/activity-log.js", () => ({
   logActivity: mockLogActivity,
 }));
 
-function createExpressApp(actorOverrides: Partial<Express.Request["actor"]> = {}, db: unknown = {}) {
+function createExpressApp(
+  actorOverrides: Partial<Express.Request["actor"]> = {},
+  db: unknown = createRouteReadDb([]),
+) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -75,14 +78,21 @@ type RouteReadQuery = {
 
 function createRouteReadDb(rows: unknown[]) {
   let rowIndex = 0;
+  const whereConditions: unknown[] = [];
   return {
+    whereConditions,
     select: vi.fn(() => {
       const row = rows[rowIndex++];
       const query: RouteReadQuery = {
         from: () => query,
         innerJoin: () => query,
-        where: () => query,
-        limit: async () => row === null || row === undefined ? [] : [row],
+        where: (condition) => {
+          whereConditions.push(condition);
+          return query;
+        },
+        limit: async () => row === null || row === undefined
+          ? []
+          : Array.isArray(row) ? row : [row],
       };
       return query;
     }),
@@ -830,13 +840,139 @@ describe("run intelligence routes", () => {
     expect(res.body.entries).toMatchObject([
       {
         sourceEntryId: "11",
+        runId: null,
+        attemptId: null,
+        spanId: null,
         entry: { kind: "user", ts: timestamp, text: "Question", sourceEntryId: "11" },
       },
       {
         sourceEntryId: "12",
+        runId: null,
+        attemptId: null,
+        spanId: null,
         entry: { kind: "assistant", ts: timestamp, text: "Answer", sourceEntryId: "12" },
       },
     ]);
+  });
+
+  it("projects each Reader source entry through its stored org-scoped span to its owning Run and Attempt", async () => {
+    const rows = [
+      {
+        id: "reader-item-a",
+        ordinal: 1,
+        runId: "run-1",
+        spanId: "span-a",
+        sourceEntryId: "native-member-a",
+        sourceRef: null,
+        kind: "assistant",
+        ts: "2026-09-24T08:00:00.000Z",
+        payload: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "first" },
+        visibility: "visible",
+        origin: "native",
+        entry: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "first" },
+      },
+      {
+        id: "reader-item-b",
+        ordinal: 2,
+        runId: "run-1",
+        spanId: "span-b",
+        sourceEntryId: "native-member-b",
+        sourceRef: null,
+        kind: "assistant",
+        ts: "2026-09-24T08:00:00.000Z",
+        payload: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "second" },
+        visibility: "visible",
+        origin: "native",
+        entry: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "second" },
+      },
+      {
+        id: "reader-item-foreign-org",
+        ordinal: 3,
+        runId: "run-1",
+        spanId: "span-foreign-org",
+        sourceEntryId: "foreign-org-member",
+        sourceRef: null,
+        kind: "assistant",
+        ts: "2026-09-24T08:00:00.000Z",
+        payload: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "foreign org" },
+        visibility: "visible",
+        origin: "native",
+        entry: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "foreign org" },
+      },
+      {
+        id: "reader-item-foreign-run-span",
+        ordinal: 4,
+        runId: "run-1",
+        spanId: "span-foreign-run",
+        sourceEntryId: "foreign-run-member",
+        sourceRef: null,
+        kind: "assistant",
+        ts: "2026-09-24T08:00:00.000Z",
+        payload: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "foreign run span" },
+        visibility: "visible",
+        origin: "native",
+        entry: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "foreign run span" },
+      },
+      {
+        id: "reader-item-mismatched-run",
+        ordinal: 5,
+        runId: "run-other",
+        spanId: "span-a",
+        sourceEntryId: "mismatched-run-member",
+        sourceRef: null,
+        kind: "assistant",
+        ts: "2026-09-24T08:00:00.000Z",
+        payload: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "wrong run" },
+        visibility: "visible",
+        origin: "native",
+        entry: { kind: "assistant", ts: "2026-09-24T08:00:00.000Z", text: "wrong run" },
+      },
+    ];
+    mockGetObservedRunTranscript.mockResolvedValueOnce({
+      orgId: "org-1",
+      run: {
+        run: { id: "run-1", orgId: "org-1", status: "succeeded" },
+        agentName: "Agent",
+        orgName: "Org",
+        issue: null,
+      },
+      page: {
+        items: rows,
+        nextCursor: null,
+        source: "native",
+        revision: "native-lineage-fixture",
+        availability: "available",
+        completeness: "complete",
+      },
+    } as never);
+
+    const lineageDb = createRouteReadDb([[
+      { spanId: "span-a", orgId: "org-1", runId: "run-1", attemptId: "attempt-a" },
+      { spanId: "span-b", orgId: "org-1", runId: "run-1", attemptId: "attempt-b" },
+      { spanId: "span-foreign-org", orgId: "org-2", runId: "run-1", attemptId: "attempt-foreign" },
+      { spanId: "span-foreign-run", orgId: "org-1", runId: "run-other", attemptId: "attempt-other" },
+    ]]);
+    await new Promise<void>((resolve, reject) => {
+      appServer.close((error) => error ? reject(error) : resolve());
+    });
+    appServer = createExpressApp({}, lineageDb).listen(0, "127.0.0.1");
+    await once(appServer, "listening");
+
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/run-1/transcript")
+      .query({ output: "full", order: "oldest" });
+
+    expect(res.status).toBe(200);
+    expect(lineageDb.whereConditions).toHaveLength(1);
+    const expectedLineage = [
+      { sourceEntryId: "native-member-a", runId: "run-1", attemptId: "attempt-a", spanId: "span-a" },
+      { sourceEntryId: "native-member-b", runId: "run-1", attemptId: "attempt-b", spanId: "span-b" },
+      { sourceEntryId: "foreign-org-member", runId: null, attemptId: null, spanId: null },
+      { sourceEntryId: "foreign-run-member", runId: null, attemptId: null, spanId: null },
+      { sourceEntryId: "mismatched-run-member", runId: null, attemptId: null, spanId: null },
+    ];
+    expect(res.body.rows).toMatchObject(expectedLineage);
+    expect(res.body.entries).toMatchObject(expectedLineage);
   });
 
   it("returns full transcript entries and page metadata when requested", async () => {
