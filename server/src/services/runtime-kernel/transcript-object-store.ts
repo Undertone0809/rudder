@@ -12,6 +12,7 @@ import {
 import {
   CODEX_GAP_ENCODING,
   CodexGapDictionary,
+  createCodexGapHandoffSelectorSha256,
   createCodexGapObjectMetadata,
   isCodexGapObjectMetadata,
 } from "./transcript-object-compact.js";
@@ -218,6 +219,8 @@ type StoredObjectMetadata = {
   updatedAt: string;
   encoding?: typeof CODEX_GAP_ENCODING;
   compactIdentitySha256?: string;
+  /** Stable selector lineage; excludes owner/epoch, which remain in compactIdentitySha256. */
+  compactHandoffSelectorSha256?: string;
   logicalBytes?: number;
   earlyHandoffEligible?: true;
   compactHandoffParentRef?: string;
@@ -226,6 +229,8 @@ type StoredObjectMetadata = {
     prefixEntryCount: number;
     prefixSha256: string;
     compactIdentitySha256: string;
+    /** Stable selector lineage used only to validate a fenced takeover. */
+    compactHandoffSelectorSha256?: string;
   };
 };
 
@@ -667,6 +672,12 @@ function parseStoredObjectMetadata(value: unknown): StoredObjectMetadata {
       throw new Error("Transcript object encoding is invalid");
     }
   }
+  if (metadata.compactHandoffSelectorSha256 !== undefined
+    && (typeof metadata.compactHandoffSelectorSha256 !== "string"
+      || !/^[a-f0-9]{64}$/u.test(metadata.compactHandoffSelectorSha256)
+      || metadata.compactHandoffParentRef === undefined)) {
+    throw new Error("Transcript compact handoff selector identity is invalid");
+  }
   if (metadata.earlyHandoffEligible !== undefined && metadata.earlyHandoffEligible !== true) {
     throw new Error("Transcript object handoff eligibility is invalid");
   }
@@ -684,6 +695,9 @@ function parseStoredObjectMetadata(value: unknown): StoredObjectMetadata {
       || !Number.isSafeInteger(handoff.prefixEntryCount) || handoff.prefixEntryCount < 0
       || typeof handoff.prefixSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(handoff.prefixSha256)
       || typeof handoff.compactIdentitySha256 !== "string" || !/^[a-f0-9]{64}$/u.test(handoff.compactIdentitySha256)
+      || (handoff.compactHandoffSelectorSha256 !== undefined
+        && (typeof handoff.compactHandoffSelectorSha256 !== "string"
+          || !/^[a-f0-9]{64}$/u.test(handoff.compactHandoffSelectorSha256)))
       || metadata.earlyHandoffEligible !== true || metadata.encoding !== undefined) {
       throw new Error("Transcript object handoff metadata is invalid");
     }
@@ -1067,6 +1081,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         ownerToken: requiredString(input.ownerToken, "owner"),
       };
       const compactMetadata = createCodexGapObjectMetadata(input.compactIdentity, binding);
+      const compactHandoffSelectorSha256 = createCodexGapHandoffSelectorSha256(input.compactIdentity, binding);
       if (input.earlyHandoffEligible && compactMetadata) {
         throw badRequest("A compact transcript object cannot be an early handoff root");
       }
@@ -1075,6 +1090,9 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         : undefined;
       if (compactHandoffParentRef && (!compactMetadata || compactHandoffParentRef === "")) {
         throw badRequest("A compact handoff child requires a compact identity");
+      }
+      if (compactHandoffParentRef && !compactHandoffSelectorSha256) {
+        throw badRequest("A compact handoff child requires a stable native selector");
       }
       await fs.mkdir(path.resolve(root, OBJECT_ROOT_NAME), { recursive: true, mode: 0o700 });
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1097,6 +1115,9 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
             createdAt: now,
             updatedAt: now,
             ...(compactMetadata ?? {}),
+            ...(compactHandoffParentRef && compactHandoffSelectorSha256
+              ? { compactHandoffSelectorSha256 }
+              : {}),
             ...(input.earlyHandoffEligible ? { earlyHandoffEligible: true as const } : {}),
             ...(compactHandoffParentRef ? { compactHandoffParentRef } : {}),
           } satisfies StoredObjectMetadata);
@@ -1152,7 +1173,10 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       };
       const rootPaths = objectPaths(root, handle.objectRef);
       const compactMetadata = createCodexGapObjectMetadata(input.compactIdentity, binding);
-      if (!compactMetadata) throw badRequest("Compact transcript identity is incomplete");
+      const compactHandoffSelectorSha256 = createCodexGapHandoffSelectorSha256(input.compactIdentity, binding);
+      if (!compactMetadata || !compactHandoffSelectorSha256) {
+        throw badRequest("Compact transcript identity is incomplete");
+      }
       return withObjectLock(rootPaths.payloadPath, async () => {
         const allowOwnerRecovery = ownerRecoveryHandles.has(handle);
         const rootMetadata = await loadMetadata(rootPaths.metadataPath, {
@@ -1189,9 +1213,18 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
             ...binding,
             objectRef: childPaths.ref,
           }, { allowOwnerRecovery: true });
+          const ownerBoundIdentityMatches = childMetadata.compactIdentitySha256
+            === rootMetadata.compactHandoff.compactIdentitySha256
+            && rootMetadata.compactHandoff.compactIdentitySha256 === compactMetadata.compactIdentitySha256;
+          const stableSelectorMatches = childMetadata.compactHandoffSelectorSha256
+            === compactHandoffSelectorSha256
+            && rootMetadata.compactHandoff.compactHandoffSelectorSha256 === compactHandoffSelectorSha256;
+          const legacySameOwnerIdentityMatches = childMetadata.compactHandoffSelectorSha256 === undefined
+            && rootMetadata.compactHandoff.compactHandoffSelectorSha256 === undefined
+            && ownerBoundIdentityMatches;
           if (childMetadata.compactHandoffParentRef !== rootPaths.ref
-            || childMetadata.compactIdentitySha256 !== compactMetadata.compactIdentitySha256
-            || rootMetadata.compactHandoff.compactIdentitySha256 !== compactMetadata.compactIdentitySha256
+            || childMetadata.compactIdentitySha256 !== rootMetadata.compactHandoff.compactIdentitySha256
+            || (!stableSelectorMatches && !legacySameOwnerIdentityMatches)
             || childMetadata.encoding !== CODEX_GAP_ENCODING
             || childMetadata.entryCount < rootMetadata.compactHandoff.prefixEntryCount) {
             throw conflict("Transcript compact handoff identity does not match its root");
@@ -1229,7 +1262,9 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
               && candidate.runId === binding.runId
               && candidate.spanId === binding.spanId
               && candidate.compactHandoffParentRef === rootPaths.ref
-              && candidate.compactIdentitySha256 === compactMetadata.compactIdentitySha256
+              && (candidate.compactHandoffSelectorSha256 === compactHandoffSelectorSha256
+                || (candidate.compactHandoffSelectorSha256 === undefined
+                  && candidate.compactIdentitySha256 === compactMetadata.compactIdentitySha256))
               && candidate.encoding === CODEX_GAP_ENCODING
               && candidate.state === "open"
               && candidate.entryCount <= rootMetadata.entryCount) {
@@ -1304,7 +1339,11 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
               objectRef: childHandle.objectRef,
               prefixEntryCount: rootMetadata.entryCount,
               prefixSha256: sourcePrefix.sha256,
-              compactIdentitySha256: compactMetadata.compactIdentitySha256,
+              // A recovered partial child keeps the owner-bound hash from the
+              // owner that created it. Link that exact hash; the stable
+              // selector hash separately authorizes fenced takeover reuse.
+              compactIdentitySha256: childMetadata.compactIdentitySha256!,
+              compactHandoffSelectorSha256,
             },
             updatedAt: new Date().toISOString(),
           } satisfies StoredObjectMetadata);
