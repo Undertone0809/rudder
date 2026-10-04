@@ -1,4 +1,5 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
+import { ApiError } from "@/api/client";
 import {
   agentRunsApi,
   type AgentRunTranscriptPage,
@@ -22,6 +23,12 @@ const TRANSCRIPT_QUERY_FILTER_KEY = JSON.stringify({
   turnLimit: TRANSCRIPT_PAGE_LIMIT,
   maxChars: 4_000,
 });
+
+function isTranscriptAccessFailure(error: unknown): boolean {
+  // These responses mean the current actor cannot read this Run's transcript;
+  // stale pages are not safe to present as a fallback, even during refresh.
+  return error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404);
+}
 
 export interface AgentRunTranscriptTarget {
   runId: string;
@@ -395,7 +402,7 @@ export function useAgentRunTranscripts(
       let changed = next.size !== current.size;
       normalizedTargets.forEach((target, index) => {
         const scopeKey = transcriptRetentionScopeKey(organizationId, target.runId, raw);
-        if (revisionMismatchByRun.get(target.runId)) {
+        if (revisionMismatchByRun.get(target.runId) || isTranscriptAccessFailure(queries[index]?.error)) {
           if (next.delete(scopeKey)) changed = true;
           return;
         }
@@ -414,7 +421,7 @@ export function useAgentRunTranscripts(
   const displayPageByRun = useMemo(() => {
     const result = new Map<string, DisplayTranscriptPage>();
     normalizedTargets.forEach((target, index) => {
-      if (revisionMismatchByRun.get(target.runId)) return;
+      if (revisionMismatchByRun.get(target.runId) || isTranscriptAccessFailure(queries[index]?.error)) return;
       const data = queries[index]?.data;
       if (data) {
         result.set(target.runId, {
@@ -530,23 +537,30 @@ export function useAgentRunTranscripts(
     const result = new Map<string, AgentRunTranscriptNavigation>();
     normalizedTargets.forEach((target, index) => {
       const runScopeKey = transcriptRunScopeKey(organizationId, target.runId);
-      const displayPage = displayPageByRun.get(target.runId);
-      const navigation = displayPage?.retained ? displayPage.navigation : navigationForRun(target.runId);
+      const accessFailure = isTranscriptAccessFailure(queries[index]?.error);
+      const displayPage = accessFailure ? undefined : displayPageByRun.get(target.runId);
+      const navigation = accessFailure
+        ? INITIAL_CURSOR_NAVIGATION
+        : displayPage?.retained ? displayPage.navigation : navigationForRun(target.runId);
       const page = displayPage?.data.page;
       const revisionMismatch = revisionMismatchByRun.get(target.runId) === true;
-      const canNext = !revisionMismatch && Boolean(page?.hasMore && page.nextCursor);
+      const canNext = !accessFailure && !revisionMismatch && Boolean(page?.hasMore && page.nextCursor);
       const retainedNavigation = displayPage?.retained ? navigation : undefined;
       result.set(target.runId, {
         cursor: navigation.cursor,
         pageNumber: navigation.droppedPreviousPages + navigation.previousCursors.length + 1,
         previousPageCount: navigation.previousCursors.length,
         historyTruncated: navigation.droppedPreviousPages > 0,
-        canPrevious: navigation.previousCursors.length > 0,
+        canPrevious: !accessFailure && navigation.previousCursors.length > 0,
         canNext,
-        hasMore: !revisionMismatch && Boolean(page?.hasMore),
-        revision: revisionMismatch ? null : displayPage?.data.revision ?? navigation.revision,
-        onPrevious: () => goToPreviousPage(runScopeKey, retainedNavigation),
-        onNext: () => goToNextPage(runScopeKey, page?.nextCursor ?? null, retainedNavigation),
+        hasMore: !accessFailure && !revisionMismatch && Boolean(page?.hasMore),
+        revision: accessFailure || revisionMismatch ? null : displayPage?.data.revision ?? navigation.revision,
+        onPrevious: () => {
+          if (!accessFailure) goToPreviousPage(runScopeKey, retainedNavigation);
+        },
+        onNext: () => {
+          if (!accessFailure) goToNextPage(runScopeKey, page?.nextCursor ?? null, retainedNavigation);
+        },
         onReset: () => resetRun(target.runId),
         resetting: manualResetGenerationByRun.current.has(runScopeKey)
           && Boolean(queries[index]?.isPending || queries[index]?.isFetching),
@@ -563,7 +577,7 @@ export function useAgentRunTranscripts(
     const query = queryByRun.get(runId);
     if (!query) return null;
     const result = await query.refetch();
-    if (!result.data) return null;
+    if (!result.data || isTranscriptAccessFailure(result.error)) return null;
     return { ...result.data, entries: raw ? result.data.entries : result.data.presentationEntries };
   }, [queryByRun, raw]);
 
