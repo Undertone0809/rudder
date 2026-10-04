@@ -36,6 +36,10 @@ vi.mock("@/lib/router", () => ({
 }));
 
 vi.mock("../context/OrganizationContext", () => ({
+  useOptionalOrganization: () => ({
+    organizations: contextOrganizations,
+    selectedOrganizationId: "org-1",
+  }),
   useOrganization: () => ({
     organizations: contextOrganizations,
     selectedOrganizationId: "org-1",
