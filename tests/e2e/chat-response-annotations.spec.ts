@@ -2974,11 +2974,13 @@ test.describe("Chat response annotations", () => {
     });
 
     const streamPath = `/api/chats/${seeded.conversationId}/messages/stream`;
-    const waitForTurnResponse = (body: string, editUserMessageId?: string) => page.waitForResponse((response) => {
-      if (response.request().method() !== "POST" || new URL(response.url()).pathname !== streamPath) return false;
-      const data = response.request().postDataJSON() as { body?: string; editUserMessageId?: string | null } | null;
-      return data?.body === body && (data.editUserMessageId ?? undefined) === editUserMessageId;
-    });
+    // Attachment sends use multipart, whose request body Playwright may not
+    // expose. Arm before each serial Send; correlate the returned ack/body,
+    // generation and edited turn below instead of parsing multipart as JSON.
+    const waitForTurnResponse = () => page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && new URL(response.url()).pathname === streamPath
+    ));
     async function completedNativeTurn(
       response: Response,
       body: string,
@@ -3041,7 +3043,7 @@ test.describe("Chat response annotations", () => {
     await installChatMutationCapture(page, messagesPath);
     const originalBody = "Original native annotated edit body";
     await composer(page).fill(originalBody);
-    const originalResponse = waitForTurnResponse(originalBody);
+    const originalResponse = waitForTurnResponse();
     await page.getByRole("button", { name: "Send" }).click();
     const original = await completedNativeTurn(await originalResponse, originalBody, "Native reply 2");
     const originalTurn = page.getByTestId("chat-user-message-turn").filter({ hasText: originalBody });
@@ -3144,7 +3146,7 @@ test.describe("Chat response annotations", () => {
     await expect(inlineEditor).toBeVisible();
     await inlineEditor.locator(".rudder-mdxeditor-content").fill("Edited native annotated edit body");
     const editedBody = "Edited native annotated edit body";
-    const editResponse = waitForTurnResponse(editedBody, original.user.id);
+    const editResponse = waitForTurnResponse();
     await inlineEditor.getByRole("button", { name: "Send" }).click();
     const edited = await completedNativeTurn(await editResponse, editedBody, "Native reply 3");
     expect(edited.user.id).not.toBe(original.user.id);
