@@ -48,17 +48,17 @@ describe("Run transcript empty-state lifecycle", () => {
     expect(getRunTranscriptEmptyMessage(missing, true)).toBe("Waiting for transcript...");
   });
 
-  it("keeps terminal missing explicit", () => {
-    expect(getRunTranscriptEmptyMessage(missing, false)).toBe("Transcript missing.");
+  it("leaves terminal source-unavailable messaging to the continuation status", () => {
+    expect(getRunTranscriptEmptyMessage(missing, false)).toBeUndefined();
   });
 
-  it.each(["offline", "expired"] as const)("does not mask %s while live", (availability) => {
-    expect(getRunTranscriptEmptyMessage({ ...missing, availability }, true)).toBe(`Transcript ${availability}.`);
+  it.each(["offline", "expired"] as const)("defers %s copy to the continuation status", (availability) => {
+    expect(getRunTranscriptEmptyMessage({ ...missing, availability }, true)).toBeUndefined();
   });
 
-  it("does not mask a read error behind live waiting", () => {
+  it("leaves read-error messaging to the continuation status instead of duplicating it", () => {
     expect(getRunTranscriptEmptyMessage({ ...missing, error: new Error("Read failed") }, true))
-      .toBe("Transcript unavailable: Read failed");
+      .toBeUndefined();
   });
 
   it("preserves pending, loading, and ordinary terminal-empty copy", () => {

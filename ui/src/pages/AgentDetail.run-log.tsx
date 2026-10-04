@@ -64,16 +64,23 @@ export function canPersistRunTranscriptAnnotations(
 export function getRunTranscriptEmptyMessage(
   state: Pick<AgentRunTranscriptState, "availability" | "loading" | "error"> | null | undefined,
   isLive: boolean,
-): string {
-  return state?.error
-    ? `Transcript unavailable: ${state.error.message}`
-    : state?.availability === "pending" || (isLive && state?.availability === "missing")
+): string | undefined {
+  // TranscriptContinuationControls owns source/read failures so they remain
+  // visible alongside any partial history without duplicating the empty state.
+  if (
+    state?.error
+    || (state?.availability
+      && state.availability !== "available"
+      && state.availability !== "pending"
+      && !(isLive && state.availability === "missing"))
+  ) {
+    return undefined;
+  }
+  return state?.availability === "pending" || (isLive && state?.availability === "missing")
+    ? "Waiting for transcript..."
+    : state?.loading || isLive
       ? "Waiting for transcript..."
-      : state?.availability && state.availability !== "available"
-        ? `Transcript ${state.availability}.`
-        : state?.loading || isLive
-          ? "Waiting for transcript..."
-          : "No transcript for this run.";
+      : "No transcript for this run.";
 }
 
 export function advancePersistedRunEventCursor(
@@ -653,7 +660,8 @@ export function LogViewer({
             <TranscriptContinuationControls
               navigation={transcriptNavigation}
               state={transcriptState}
-              emptyStateOwnedByTranscript={niceTranscript.length === 0}
+              isLive={isLive}
+              showAvailabilityDetails
             />
             <div ref={logEndRef} />
           </div>
@@ -846,7 +854,8 @@ export function LogViewer({
             <TranscriptContinuationControls
               navigation={transcriptNavigation}
               state={transcriptState}
-              emptyStateOwnedByTranscript={niceTranscript.length === 0}
+              isLive={isLive}
+              showAvailabilityDetails
             />
           </div>
         </DialogContent>

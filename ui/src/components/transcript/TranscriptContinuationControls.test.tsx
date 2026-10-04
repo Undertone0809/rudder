@@ -21,7 +21,7 @@ afterEach(() => {
 function renderControls(
   navigation: Partial<AgentRunTranscriptNavigation> = {},
   state: Partial<AgentRunTranscriptState> = {},
-  emptyStateOwnedByTranscript = false,
+  options: { isLive?: boolean; showAvailabilityDetails?: boolean } = {},
 ) {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -55,7 +55,8 @@ function renderControls(
       <TranscriptContinuationControls
         navigation={resolvedNavigation}
         state={resolvedState}
-        emptyStateOwnedByTranscript={emptyStateOwnedByTranscript}
+        isLive={options.isLive}
+        showAvailabilityDetails={options.showAvailabilityDetails}
       />,
     );
   });
@@ -83,10 +84,15 @@ describe("TranscriptContinuationControls", () => {
     act(() => refresh?.click());
     expect(onReset).not.toHaveBeenCalled();
   });
-  it("does not duplicate an unavailable empty state owned by the transcript view", () => {
-    renderControls({ canNext: false, hasMore: false }, { availability: "missing", completeness: "unknown" }, true);
-    expect(host?.querySelector("[role='alert']")).toBeNull();
-    expect(host?.textContent).not.toContain("Transcript missing");
+  it("explains a missing transcript source and keeps completeness uncertainty visible", () => {
+    renderControls(
+      { canNext: false, hasMore: false },
+      { availability: "missing", completeness: "unknown" },
+      { showAvailabilityDetails: true },
+    );
+    const alert = host?.querySelector("[role='alert']");
+    expect(alert?.textContent).toContain("No transcript source is available for this run.");
+    expect(alert?.textContent).toContain("Transcript completeness is unknown.");
   });
 
   it("does not report a pending execution as an error", () => {
@@ -123,5 +129,24 @@ describe("TranscriptContinuationControls", () => {
     );
     expect(host?.querySelector("[role='alert']")?.textContent).toContain("Transcript offline.");
     expect(host?.querySelector("[data-testid='transcript-continuation']")).not.toBeNull();
+  });
+
+  it("keeps partial history labeled when its source is unavailable", () => {
+    renderControls(
+      { canNext: false, hasMore: false },
+      { availability: "missing", completeness: "partial" },
+      { showAvailabilityDetails: true },
+    );
+    expect(host?.querySelector("[role='alert']")?.textContent).toContain("No transcript source is available for this run.");
+    expect(host?.querySelector("[role='alert']")?.textContent).toContain("Partial transcript");
+  });
+
+  it("waits instead of reporting a missing source while the run is live", () => {
+    renderControls(
+      { canNext: false, hasMore: false },
+      { availability: "missing", completeness: "unknown" },
+      { isLive: true, showAvailabilityDetails: true },
+    );
+    expect(host?.querySelector("[role='alert']")).toBeNull();
   });
 });
