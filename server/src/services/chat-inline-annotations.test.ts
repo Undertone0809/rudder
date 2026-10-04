@@ -19,6 +19,7 @@ import {
   organizationSkills,
   runRuntimeSpans,
   runtimeBindings,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import {
   buildIssueMentionHref,
@@ -141,6 +142,7 @@ describe("chatInlineAnnotationService", () => {
   }, 30_000);
 
   afterEach(async () => {
+    await db.delete(runtimeSourceAliases);
     await db.delete(runRuntimeSpans);
     await db.delete(nativeSegments);
     await db.delete(runtimeBindings);
@@ -519,6 +521,198 @@ describe("chatInlineAnnotationService", () => {
     ]).returning();
     return { agentId, runId, events: eventRows };
   }
+
+  async function seedForkRunAnnotation(input: {
+    source: Awaited<ReturnType<typeof seedSource>>;
+    run: Awaited<ReturnType<typeof seedAgentRunEvidence>>;
+    requesterUserId: string;
+    annotationOverrides?: Partial<Extract<ChatInlineAnnotationInput, { surface: "agent_run_transcript" }>>;
+  }) {
+    const [firstEvent, secondEvent] = input.run.events;
+    const attachmentId = randomUUID();
+    const annotatedMessageId = randomUUID();
+    const fileBytes = Buffer.from("forked annotation evidence file", "utf8");
+    const [asset] = await db.insert(assets).values({
+      orgId: input.source.orgId,
+      provider: "local",
+      objectKey: `fork-annotation-${randomUUID()}`,
+      contentType: "text/plain",
+      byteSize: fileBytes.byteLength,
+      sha256: sha256(fileBytes.toString("utf8")),
+      originalFilename: "fork-evidence.txt",
+      createdByUserId: input.requesterUserId,
+    }).returning();
+    const annotation: ChatInlineAnnotationInput = {
+      id: randomUUID(),
+      surface: "agent_run_transcript",
+      selectedText: "the docs before shipping.",
+      comment: "Keep this Run evidence.",
+      sourceRunId: input.run.runId,
+      sourceAgentId: input.run.agentId,
+      anchorKind: "text",
+      sourceEntryId: firstEvent!.id,
+      sourceMemberIds: [firstEvent!.id, secondEvent!.id],
+      sourceHash: sha256("Review the docs before shipping."),
+      attachmentIds: [attachmentId],
+      ...input.annotationOverrides,
+    } as ChatInlineAnnotationInput;
+    await db.insert(chatMessages).values({
+      id: annotatedMessageId,
+      orgId: input.source.orgId,
+      conversationId: input.source.conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Please explain this Run evidence.",
+      structuredPayload: { inlineAnnotations: [annotation] },
+    });
+    await db.insert(chatAttachments).values({
+      id: attachmentId,
+      orgId: input.source.orgId,
+      conversationId: input.source.conversationId,
+      messageId: annotatedMessageId,
+      assetId: asset!.id,
+    });
+    return { annotation, annotatedMessageId, attachmentId, asset: asset!, fileBytes };
+  }
+
+  it("copies a same-organization Run Detail annotation as immutable source evidence with child-owned attachment identity", async () => {
+    const source = await seedSource();
+    const requesterUserId = "fork-requester";
+    const run = await seedAgentRunEvidence(source);
+    const seeded = await seedForkRunAnnotation({ source, run, requesterUserId });
+    const chats = chatService(db);
+
+    const fork = await chats.forkConversation({
+      sourceConversationId: source.conversationId,
+      orgId: source.orgId,
+      userId: requesterUserId,
+      createdByUserId: requesterUserId,
+    });
+    if (!fork) throw new Error("Fork conversation was not returned");
+    const [forkedConversation] = await db.select().from(chatConversations)
+      .where(eq(chatConversations.id, fork.id));
+    const [forkedMessage] = await db.select().from(chatMessages)
+      .where(eq(chatMessages.conversationId, fork.id))
+      .then((messages) => messages.filter((message) => message.body === "Please explain this Run evidence."));
+    if (!forkedMessage) throw new Error("Forked annotation message was not copied");
+    const [copiedAnnotation] = (forkedMessage?.structuredPayload?.inlineAnnotations ?? []) as Array<
+      Extract<ChatInlineAnnotationInput, { surface: "agent_run_transcript" }>
+    >;
+    if (!copiedAnnotation) throw new Error("Forked Run annotation was not copied");
+    const [copiedAttachmentId] = copiedAnnotation.attachmentIds ?? [];
+    if (!copiedAttachmentId) throw new Error("Forked Run annotation attachment was not rebound");
+    const [copiedAttachment] = await db.select().from(chatAttachments)
+      .where(eq(chatAttachments.conversationId, fork.id));
+
+    expect(forkedConversation).toMatchObject({ status: "active", conversationKind: "chat" });
+    expect(forkedMessage).toBeDefined();
+    expect(copiedAnnotation).toMatchObject({
+      ...seeded.annotation,
+      attachmentIds: [expect.any(String)],
+    });
+    expect(copiedAttachmentId).not.toBe(seeded.attachmentId);
+    expect(copiedAnnotation).not.toHaveProperty("sourceConversationId");
+    expect(copiedAnnotation).not.toHaveProperty("sourceMessageId");
+    expect(copiedAttachment).toMatchObject({
+      id: copiedAttachmentId,
+      orgId: source.orgId,
+      conversationId: fork.id,
+      messageId: forkedMessage?.id,
+      assetId: seeded.asset.id,
+    });
+    const [copiedAsset] = await db.select().from(assets).where(eq(assets.id, seeded.asset.id));
+    expect(copiedAsset).toMatchObject({
+      byteSize: seeded.fileBytes.byteLength,
+      sha256: sha256(seeded.fileBytes.toString("utf8")),
+      originalFilename: "fork-evidence.txt",
+    });
+  });
+
+  it.each(["agent", "member", "hash", "terminal", "organization", "permission"] as const)(
+    "rejects a Fork copy with forged or inaccessible Run %s provenance and rolls back copied rows",
+    async (failure) => {
+      const source = await seedSource();
+      const requesterUserId = "fork-requester";
+      const run = await seedAgentRunEvidence(source);
+      let annotationOverrides: Partial<Extract<ChatInlineAnnotationInput, { surface: "agent_run_transcript" }>> = {};
+
+      if (failure === "agent") annotationOverrides = { sourceAgentId: randomUUID() };
+      if (failure === "member") annotationOverrides = { sourceMemberIds: [randomUUID()] };
+      if (failure === "hash") annotationOverrides = { sourceHash: "a".repeat(64) };
+      if (failure === "terminal") {
+        await db.update(heartbeatRuns).set({ status: "running" })
+          .where(eq(heartbeatRuns.id, run.runId));
+      }
+      if (failure === "organization") {
+        const foreign = await seedSource({ body: "Foreign annotation source" });
+        const foreignRun = await seedAgentRunEvidence(foreign);
+        run.runId = foreignRun.runId;
+        run.agentId = foreignRun.agentId;
+        run.events = foreignRun.events;
+      }
+      if (failure === "permission") {
+        const privateConversationId = randomUUID();
+        await db.insert(chatConversations).values({
+          id: privateConversationId,
+          orgId: source.orgId,
+          conversationKind: "side_chat",
+          createdByUserId: "different-side-chat-owner",
+          title: "Private Run Detail",
+        });
+        await db.update(heartbeatRuns).set({
+          chatConversationId: privateConversationId,
+          scene: "side_chat",
+          targetType: "chat_conversation",
+          targetId: privateConversationId,
+          idempotencyKey: `fork-permission-test:${run.runId}`,
+          sessionIntentJson: {
+            kind: "fresh",
+            reuseScope: "none",
+            sourceRunId: null,
+            sessionId: null,
+            sessionParams: null,
+          },
+        }).where(eq(heartbeatRuns.id, run.runId));
+      }
+
+      await seedForkRunAnnotation({
+        source,
+        run,
+        requesterUserId,
+        annotationOverrides,
+      });
+      const before = {
+        conversations: await db.select({ id: chatConversations.id }).from(chatConversations)
+          .where(eq(chatConversations.orgId, source.orgId)),
+        messages: await db.select({ id: chatMessages.id }).from(chatMessages)
+          .where(eq(chatMessages.orgId, source.orgId)),
+        attachments: await db.select({ id: chatAttachments.id }).from(chatAttachments)
+          .where(eq(chatAttachments.orgId, source.orgId)),
+        aliases: await db.select({ id: runtimeSourceAliases.id }).from(runtimeSourceAliases)
+          .where(eq(runtimeSourceAliases.orgId, source.orgId)),
+      };
+      const sortedIds = (rows: Array<{ id: string }>) => rows.map(({ id }) => id).sort();
+
+      await expect(chatService(db).forkConversation({
+        sourceConversationId: source.conversationId,
+        orgId: source.orgId,
+        userId: requesterUserId,
+        createdByUserId: requesterUserId,
+      })).rejects.toMatchObject({
+        status: failure === "permission" ? 404 : 422,
+      });
+
+      expect(sortedIds(await db.select({ id: chatConversations.id }).from(chatConversations)
+        .where(eq(chatConversations.orgId, source.orgId)))).toEqual(sortedIds(before.conversations));
+      expect(sortedIds(await db.select({ id: chatMessages.id }).from(chatMessages)
+        .where(eq(chatMessages.orgId, source.orgId)))).toEqual(sortedIds(before.messages));
+      expect(sortedIds(await db.select({ id: chatAttachments.id }).from(chatAttachments)
+        .where(eq(chatAttachments.orgId, source.orgId)))).toEqual(sortedIds(before.attachments));
+      expect(sortedIds(await db.select({ id: runtimeSourceAliases.id }).from(runtimeSourceAliases)
+        .where(eq(runtimeSourceAliases.orgId, source.orgId)))).toEqual(sortedIds(before.aliases));
+    },
+  );
 
   it("validates terminal Agent Run transcript text provenance and source identity", async () => {
     const source = await seedSource();

@@ -16,8 +16,10 @@ import {
   nativeSegments,
   runRuntimeSpans,
   runtimeBindings,
+  runtimeSourceAliases,
 } from "../../packages/db/src/index.ts";
 import type { ChatMessage } from "../../packages/shared/src/index.ts";
+import { nativeForkContentHash } from "../../server/src/services/chats.native-fork-aliases.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import {
   E2E_CODEX_APP_SERVER_STUB,
@@ -3055,14 +3057,21 @@ test.describe("Chat response annotations", () => {
       chatTurnId: string | null;
       turnVariant: number;
       structuredPayload: { inlineAnnotations?: NativeAnnotation[] } | null;
+      transcript?: Array<{
+        kind: string;
+        text?: string;
+        sourceEntryId?: string;
+      }>;
       attachments: Array<{
         id: string;
         originalFilename: string | null;
         contentPath: string;
       }>;
     };
-    async function getConversationMessages(id: string) {
-      const response = await page.request.get(`/api/chats/${id}/messages`);
+    async function getConversationMessages(id: string, includeTranscript = false) {
+      const response = await page.request.get(
+        `/api/chats/${id}/messages${includeTranscript ? "?includeTranscript=true" : ""}`,
+      );
       expect(response.ok(), await response.text()).toBe(true);
       return await response.json() as NativeAnnotationMessage[];
     }
@@ -3157,7 +3166,7 @@ test.describe("Chat response annotations", () => {
     await expect(forkedCard).toContainText(annotationComment);
     await expect(forkedCard.getByText("native-edit-fork-annotation.txt")).toBeVisible();
 
-    const forkMessages = await getConversationMessages(forkedConversation.id);
+    const forkMessages = await getConversationMessages(forkedConversation.id, true);
     const forkedAnnotatedMessage = forkMessages.find((message) => (
       message.role === "user" && message.body === editedBody
     ));
@@ -3177,17 +3186,65 @@ test.describe("Chat response annotations", () => {
     expect(forkedAttachment).toMatchObject({ originalFilename: "native-edit-fork-annotation.txt" });
     await expectAttachmentContent(forkedAttachment!.contentPath);
 
-    const childReaderPage = await readNativeReader(forkedAnnotation!.sourceRunId);
-    expect(childReaderPage).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
-    const childReaderMatches = childReaderPage.entries?.filter((candidate) => (
-      candidate.sourceEntryId === forkedAnnotation!.sourceEntryId
-      && candidate.entry?.sourceEntryId === forkedAnnotation!.sourceEntryId
+    const [forkedConversationRow] = await e2eDb.select().from(chatConversations)
+      .where(eq(chatConversations.id, forkedConversation.id));
+    expect(forkedConversationRow).toMatchObject({
+      id: forkedConversation.id,
+      orgId: organization.id,
+      status: "active",
+      conversationKind: "chat",
+    });
+    const nativeForkAliases = await e2eDb.select().from(runtimeSourceAliases).where(and(
+      eq(runtimeSourceAliases.orgId, organization.id),
+      eq(runtimeSourceAliases.conversationId, forkedConversation.id),
+      eq(runtimeSourceAliases.sourceKind, "chat_fork_native_span"),
+      eq(runtimeSourceAliases.runId, seeded.runId),
+    ));
+    expect(nativeForkAliases).toHaveLength(1);
+    const nativeForkAlias = nativeForkAliases[0]!;
+    expect(nativeForkAlias).toMatchObject({
+      orgId: organization.id,
+      conversationId: forkedConversation.id,
+      runId: seeded.runId,
+      bindingId: span.bindingId,
+      segmentId: span.segmentId,
+      sourceKind: "chat_fork_native_span",
+      principalScopeRef: `org:${organization.id}`,
+      readOnly: true,
+      expiresAt: null,
+      releasedAt: null,
+    });
+    expect(nativeForkAlias.contentSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(nativeForkAlias.sourceRangeJson).toMatchObject({
+      targetCopiedMessageId: expect.any(String),
+      sourceConversationId: seeded.conversationId,
+      sourceMessageId: seeded.assistantMessageId,
+      sourceRunId: seeded.runId,
+      sourceSpanId: span.id,
+      selectorJson: span.selectorJson,
+      selectorSha256: nativeForkContentHash(span.selectorJson),
+    });
+    const copiedNativeAssistant = forkMessages.find((message) => (
+      message.id === nativeForkAlias.sourceRangeJson.targetCopiedMessageId
+    ));
+    expect(copiedNativeAssistant).toMatchObject({
+      role: "assistant",
+      runId: null,
+    });
+    const childHistoryMatches = copiedNativeAssistant?.transcript?.filter((entry) => (
+      entry.sourceEntryId === forkedAnnotation!.sourceEntryId
     )) ?? [];
-    expect(childReaderMatches).toHaveLength(1);
-    expect(childReaderMatches[0]?.entry).toMatchObject({
+    expect(childHistoryMatches).toHaveLength(1);
+    expect(childHistoryMatches[0]).toMatchObject({
       kind: "thinking",
       text: forkedAnnotation!.selectedText,
+      sourceEntryId: forkedAnnotation!.sourceEntryId,
     });
+    expect(await e2eDb.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.orgId, organization.id),
+        eq(heartbeatRuns.chatConversationId, forkedConversation.id),
+      ))).toEqual([]);
 
     const organizationRuns = await e2eDb.select({ id: heartbeatRuns.id })
       .from(heartbeatRuns).where(eq(heartbeatRuns.orgId, organization.id));
