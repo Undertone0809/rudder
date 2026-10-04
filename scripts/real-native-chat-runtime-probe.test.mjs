@@ -6,9 +6,12 @@ import {
   assertLocalHermesConfiguration,
   assertNativeReaderBoundary,
   assertNativeRunContinuity,
+  publicReaderExecutionLineageGap,
   assertRuntimeLeaseHealth,
   assertRuntimeLeaseProof,
+  runProbe,
   sendChatStreamOnce,
+  sendResourcePostOnce,
 } from "./real-native-chat-runtime-probe.mjs";
 
 const sourceSha = "a".repeat(40);
@@ -38,6 +41,18 @@ function runtimeLeaseObservations(overrides = {}) {
     processCwd: checkout,
     listenerEndpoints: ["127.0.0.1:38001"],
     ...overrides,
+  };
+}
+
+function exactReaderEvidence(runId, spanId, attemptId, bindingId) {
+  return {
+    runId,
+    spanId,
+    attemptId,
+    bindingId,
+    rowCount: 1,
+    rowToSpanJoin: "exact_per_row_run_attempt_span_identity",
+    rowExecutionBindingsSha256: "c".repeat(64),
   };
 }
 
@@ -168,7 +183,7 @@ test("a post-dispatch HTTP 5xx is unknown and is never automatically resent", as
   assert.equal(fetchCount, 1);
 });
 
-test("native Reader evidence stays bound to the exact Run and exposes stable row IDs", () => {
+test("native Reader evidence binds every source entry to the exact Run, Attempt, and Span", () => {
   const evidence = assertNativeReaderBoundary({
     runId: "run-1",
     run: {
@@ -184,8 +199,8 @@ test("native Reader evidence stays bound to the exact Run and exposes stable row
       revision: "reader-revision-1",
       page: { hasMore: false },
       rows: [
-        { id: "step-1", index: 1, sourceEntryId: "entry-1" },
-        { id: "step-2", index: 2, sourceEntryId: "entry-2" },
+        { id: "step-1", index: 1, sourceEntryId: "entry-1", runId: "run-1", spanId: "span-1", attemptId: "attempt-1" },
+        { id: "step-2", index: 2, sourceEntryId: "entry-2", runId: "run-1", spanId: "span-1", attemptId: "attempt-1" },
       ],
     },
   });
@@ -194,30 +209,199 @@ test("native Reader evidence stays bound to the exact Run and exposes stable row
   assert.equal(evidence.runtimeType, "hermes_gateway");
   assert.equal(evidence.bindingId, "binding-1");
   assert.equal(evidence.segmentId, "segment-1");
-  assert.equal(evidence.rowToSpanJoin, "not_exposed_by_public_reader_projection");
+  assert.equal(evidence.rowToSpanJoin, "exact_per_row_run_attempt_span_identity");
+  assert.match(evidence.rowExecutionBindingsSha256, /^[a-f0-9]{64}$/u);
   assert.throws(() => assertNativeReaderBoundary({
     runId: "run-1",
     run: { id: "run-1", contextSnapshot: { runtimeBindingId: "binding-1", runtimeSegmentId: "segment-1" } },
     invocation: { runtimeType: "hermes_gateway", spanId: "span-1", attemptId: "attempt-1" },
-    reader: { run: { id: "run-2" }, source: "native", availability: "available", completeness: "complete", page: { hasMore: false }, rows: [{ id: "step-1", index: 1, sourceEntryId: "entry-1" }] },
+    reader: { run: { id: "run-2" }, source: "native", availability: "available", completeness: "complete", page: { hasMore: false }, rows: [{ id: "step-1", index: 1, sourceEntryId: "entry-1", runId: "run-1", spanId: "span-1", attemptId: "attempt-1" }] },
   }), (error) => error instanceof ProbeError && error.code === "reader_run_boundary_mismatch");
+  assert.throws(() => assertNativeReaderBoundary({
+    runId: "run-1",
+    run: { id: "run-1", contextSnapshot: { runtimeBindingId: "binding-1", runtimeSegmentId: "segment-1" } },
+    invocation: { runtimeType: "hermes_gateway", spanId: "span-1", attemptId: "attempt-1" },
+    reader: {
+      run: { id: "run-1" }, source: "native", availability: "available", completeness: "complete",
+      page: { hasMore: false }, rows: [{ id: "step-1", index: 1, sourceEntryId: "entry-1" }],
+    },
+  }), (error) => error instanceof ProbeError && error.code === "reader_execution_lineage_unavailable");
+  assert.throws(() => assertNativeReaderBoundary({
+    runId: "run-1",
+    run: { id: "run-1", contextSnapshot: { runtimeBindingId: "binding-1", runtimeSegmentId: "segment-1" } },
+    invocation: { runtimeType: "hermes_gateway", spanId: "span-1", attemptId: "attempt-1" },
+    reader: {
+      run: { id: "run-1" }, source: "native", availability: "available", completeness: "complete",
+      page: { hasMore: false }, rows: [{ id: "step-1", index: 1, sourceEntryId: "entry-1", runId: "run-1", spanId: "span-other", attemptId: "attempt-1" }],
+    },
+  }), (error) => error instanceof ProbeError && error.code === "reader_execution_lineage_mismatch");
 });
 
-test("two-turn continuity requires distinct exact Runs on one binding and the prior native session", () => {
+test("two consecutive Side Chat sends retain one logical session and own distinct exact executions", () => {
   assert.deepEqual(assertNativeRunContinuity({
-    runId: "run-1", bindingId: "binding-1", sessionIdAfter: "session-1", readerRunId: "run-1",
+    conversationId: "side-chat-1",
+    runId: "run-1",
+    bindingId: "binding-1",
+    sessionIdBefore: null,
+    sessionIdAfter: "session-1",
+    reader: exactReaderEvidence("run-1", "span-1", "attempt-1", "binding-1"),
   }, {
-    runId: "run-2", bindingId: "binding-1", sessionIdBefore: "session-1", readerRunId: "run-2",
+    conversationId: "side-chat-1",
+    runId: "run-2",
+    bindingId: "binding-1",
+    sessionIdBefore: "session-1",
+    sessionIdAfter: "session-1",
+    reader: exactReaderEvidence("run-2", "span-2", "attempt-2", "binding-1"),
   }), {
     distinctRuns: true,
+    sameConversation: true,
     stableBindingId: "binding-1",
+    distinctExecutionSpans: true,
+    firstExecution: { runId: "run-1", spanId: "span-1", attemptId: "attempt-1" },
+    secondExecution: { runId: "run-2", spanId: "span-2", attemptId: "attempt-2" },
     firstRunSessionIdAfter: "session-1",
     secondRunSessionIdBefore: "session-1",
-    readersBoundToExactRuns: true,
+    secondRunSessionIdAfter: "session-1",
+    readersBoundToExactRunAttemptSpans: true,
   });
   assert.throws(() => assertNativeRunContinuity({
-    runId: "run-1", bindingId: "binding-1", sessionIdAfter: "session-1", readerRunId: "run-1",
+    conversationId: "side-chat-1", runId: "run-1", bindingId: "binding-1",
+    sessionIdAfter: "session-1", reader: exactReaderEvidence("run-1", "span-1", "attempt-1", "binding-1"),
   }, {
-    runId: "run-2", bindingId: "binding-2", sessionIdBefore: "session-1", readerRunId: "run-2",
+    conversationId: "side-chat-1", runId: "run-2", bindingId: "binding-2",
+    sessionIdBefore: "session-1", sessionIdAfter: "session-1",
+    reader: exactReaderEvidence("run-2", "span-2", "attempt-2", "binding-2"),
   }), (error) => error instanceof ProbeError && error.code === "native_binding_continuity_mismatch");
+  assert.throws(() => assertNativeRunContinuity({
+    conversationId: "side-chat-1", runId: "run-1", bindingId: "binding-1",
+    sessionIdAfter: "session-1", reader: exactReaderEvidence("run-1", "span-1", "attempt-1", "binding-1"),
+  }, {
+    conversationId: "side-chat-1", runId: "run-2", bindingId: "binding-1",
+    sessionIdBefore: "session-1", sessionIdAfter: "session-2",
+    reader: exactReaderEvidence("run-2", "span-2", "attempt-2", "binding-1"),
+  }), (error) => error instanceof ProbeError && error.code === "native_session_continuity_mismatch");
+  assert.throws(() => assertNativeRunContinuity({
+    conversationId: "side-chat-1", runId: "run-1", bindingId: "binding-1",
+    sessionIdAfter: "session-1", reader: { runId: "run-1", spanId: "span-1", attemptId: "attempt-1" },
+  }, {
+    conversationId: "side-chat-1", runId: "run-2", bindingId: "binding-1",
+    sessionIdBefore: "session-1", sessionIdAfter: "session-1",
+    reader: exactReaderEvidence("run-2", "span-2", "attempt-2", "binding-1"),
+  }), (error) => error instanceof ProbeError && error.code === "native_execution_identity_incomplete");
+});
+
+test("the current public Reader projection blocks runtime dispatch with a concrete QUESTION", () => {
+  assert.deepEqual(publicReaderExecutionLineageGap(), {
+    endpoint: "GET /api/run-intelligence/runs/:runId/transcript",
+    source: "server/src/routes/run-intelligence.ts",
+    projectedRowIdentityFields: ["id", "index", "sourceEntryId"],
+    requiredRowIdentityFields: ["runId", "attemptId", "spanId"],
+    reason: "The public Reader projection omits per-row execution lineage; its internal TranscriptItem contract has runId/spanId but no attemptId.",
+    smallestProductApiProjection: "Expose runId, attemptId, and spanId on each projected row alongside sourceEntryId, with attemptId resolved from the owning span/attempt.",
+    missingRowIdentityFields: ["runId", "attemptId", "spanId"],
+  });
+});
+
+test("the Reader lineage blocker returns QUESTION before any API or runtime work", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  const checkpoints = [];
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    throw new Error("API calls must not be reached while projection lineage is missing");
+  };
+  try {
+    const receipt = await runProbe({
+      runtime: "hermes_gateway",
+      model: null,
+      apiBase: "http://127.0.0.1:3100",
+      expectedSourceSha: sourceSha,
+      timeoutMs: 10_000,
+    }, {
+      createEvidenceDirectory: async () => "/tmp/native-chat-lineage-gate-test",
+      saveCheckpoint: async (_directory, value) => { checkpoints.push(structuredClone(value)); },
+    });
+    assert.equal(receipt.verdict, "QUESTION");
+    assert.equal(receipt.failure.code, "public_reader_execution_lineage_unavailable");
+    assert.equal(receipt.runtimeLease, null);
+    assert.equal(receipt.health, null);
+    assert.equal(receipt.mutationLedger.length, 0);
+    assert.deepEqual(receipt.identities, {
+      organizationId: null,
+      agentId: null,
+      mainConversationId: null,
+      sideChatId: null,
+    });
+    assert.deepEqual(receipt.cleanup, {
+      performed: false,
+      retainedDisposableData: false,
+      note: "No disposable resource or native runtime was created.",
+    });
+    assert.equal(fetchCount, 0);
+    assert.equal(checkpoints.length, 2);
+    assert.equal(checkpoints[1].verdict, "QUESTION");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("resource POST redirects are unknown submissions and never retried", async () => {
+  let fetchCount = 0;
+  const checkpoints = [];
+  await assert.rejects(sendResourcePostOnce({
+    url: "http://127.0.0.1:3100/api/orgs",
+    endpoint: "/api/orgs",
+    kind: "organization_create",
+    body: { name: "redacted organization payload" },
+    timeoutMs: 1_000,
+    onCheckpoint: async (entry) => { checkpoints.push(entry); },
+    fetchImpl: async (_url, options) => {
+      fetchCount += 1;
+      assert.equal(checkpoints[0]?.status, "intent_checkpointed");
+      assert.equal(options.redirect, "manual");
+      assert.equal(options.method, "POST");
+      return new Response(null, { status: 302, headers: { location: "/redirected" } });
+    },
+  }), (error) => error instanceof UnknownSubmissionError
+    && error.code === "resource_post_outcome_unknown"
+    && error.details.status === "unknown_submission"
+    && error.details.httpStatus === 302
+    && error.details.replayed === false);
+  assert.equal(fetchCount, 1);
+  assert.deepEqual(checkpoints.map((entry) => entry.status), ["intent_checkpointed", "unknown_submission"]);
+  assert.equal(checkpoints[0].body, undefined);
+  assert.match(checkpoints[0].bodySha256, /^[a-f0-9]{64}$/u);
+  assert.ok(checkpoints[0].intentId);
+  assert.equal(checkpoints[1].intentId, checkpoints[0].intentId);
+  assert.equal(checkpoints[0].endpoint, "/api/orgs");
+});
+
+test("resource POSTs with no response are unknown and never retried", async () => {
+  let fetchCount = 0;
+  const checkpoints = [];
+  await assert.rejects(sendResourcePostOnce({
+    url: "http://127.0.0.1:3100/api/orgs/organization-1/agents",
+    endpoint: "/api/orgs/organization-1/agents",
+    kind: "agent_create",
+    intentIdentifiers: { organizationId: "organization-1" },
+    body: { name: "redacted agent payload" },
+    timeoutMs: 1_000,
+    onCheckpoint: async (entry) => { checkpoints.push(entry); },
+    fetchImpl: async (_url, options) => {
+      fetchCount += 1;
+      assert.equal(checkpoints[0]?.status, "intent_checkpointed");
+      assert.equal(options.redirect, "manual");
+      throw new Error("sensitive transport details must not escape");
+    },
+  }), (error) => error instanceof UnknownSubmissionError
+    && error.code === "resource_post_outcome_unknown"
+    && error.details.status === "unknown_submission"
+    && error.details.responseReceived === false
+    && error.details.replayed === false
+    && !error.message.includes("sensitive"));
+  assert.equal(fetchCount, 1);
+  assert.deepEqual(checkpoints.map((entry) => entry.status), ["intent_checkpointed", "unknown_submission"]);
+  assert.equal(checkpoints[1].body, undefined);
+  assert.equal(checkpoints[0].identifiers.organizationId, "organization-1");
+  assert.equal(checkpoints[1].identifiers.organizationId, "organization-1");
 });

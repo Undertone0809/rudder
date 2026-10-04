@@ -11,6 +11,14 @@ const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const PROBE_NAME = "real-native-chat-runtime";
 const DEFAULT_TIMEOUT_MS = 180_000;
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
+const PUBLIC_READER_EXECUTION_LINEAGE_GAP = Object.freeze({
+  endpoint: "GET /api/run-intelligence/runs/:runId/transcript",
+  source: "server/src/routes/run-intelligence.ts",
+  projectedRowIdentityFields: ["id", "index", "sourceEntryId"],
+  requiredRowIdentityFields: ["runId", "attemptId", "spanId"],
+  reason: "The public Reader projection omits per-row execution lineage; its internal TranscriptItem contract has runId/spanId but no attemptId.",
+  smallestProductApiProjection: "Expose runId, attemptId, and spanId on each projected row alongside sourceEntryId, with attemptId resolved from the owning span/attempt.",
+});
 
 export class ProbeError extends Error {
   constructor(code, details = {}) {
@@ -23,9 +31,13 @@ export class ProbeError extends Error {
 
 export class UnknownSubmissionError extends Error {
   constructor(details) {
-    super("chat_submission_outcome_unknown");
+    super(details?.submissionKind === "resource_post"
+      ? "resource_post_outcome_unknown"
+      : "chat_submission_outcome_unknown");
     this.name = "UnknownSubmissionError";
-    this.code = "chat_submission_outcome_unknown";
+    this.code = details?.submissionKind === "resource_post"
+      ? "resource_post_outcome_unknown"
+      : "chat_submission_outcome_unknown";
     this.details = details;
   }
 }
@@ -358,11 +370,26 @@ export function assertNativeReaderBoundary(input) {
 
   const rowIds = reader.rows.map((row) => nonEmptyString(row?.id));
   const sourceEntryIds = reader.rows.map((row) => nonEmptyString(row?.sourceEntryId));
+  const rowLineage = reader.rows.map((row) => ({
+    runId: nonEmptyString(row?.runId),
+    spanId: nonEmptyString(row?.spanId),
+    attemptId: nonEmptyString(row?.attemptId),
+  }));
   const indexes = reader.rows.map((row) => row?.index);
   if (rowIds.some((id) => !id) || new Set(rowIds).size !== rowIds.length) {
     throw new ProbeError("reader_stable_ids_invalid");
   }
   if (sourceEntryIds.some((id) => !id)) throw new ProbeError("reader_source_entry_ids_missing");
+  if (rowLineage.some((lineage) => !lineage.runId || !lineage.spanId || !lineage.attemptId)) {
+    throw new ProbeError("reader_execution_lineage_unavailable", {
+      requiredRowIdentityFields: ["runId", "attemptId", "spanId"],
+      missingRowCount: rowLineage.filter((lineage) => !lineage.runId || !lineage.spanId || !lineage.attemptId).length,
+    });
+  }
+  if (rowLineage.some((lineage) => lineage.runId !== runId
+    || lineage.spanId !== spanId || lineage.attemptId !== attemptId)) {
+    throw new ProbeError("reader_execution_lineage_mismatch");
+  }
   if (indexes.some((index, position) => !Number.isSafeInteger(index) || (position > 0 && index <= indexes[position - 1]))) {
     throw new ProbeError("reader_order_invalid");
   }
@@ -377,11 +404,17 @@ export function assertNativeReaderBoundary(input) {
     rowCount: reader.rows.length,
     stableRowIdsSha256: sha256(JSON.stringify(rowIds)),
     sourceEntryIdsSha256: sha256(JSON.stringify(sourceEntryIds)),
+    rowExecutionBindingsSha256: sha256(JSON.stringify(reader.rows.map((row, index) => ({
+      sourceEntryId: sourceEntryIds[index],
+      runId: rowLineage[index].runId,
+      spanId: rowLineage[index].spanId,
+      attemptId: rowLineage[index].attemptId,
+    })))),
     bindingId,
     segmentId,
     spanId,
     attemptId,
-    rowToSpanJoin: "not_exposed_by_public_reader_projection",
+    rowToSpanJoin: "exact_per_row_run_attempt_span_identity",
   };
 }
 
@@ -389,21 +422,64 @@ export function assertNativeRunContinuity(first, second) {
   if (!first?.runId || !second?.runId || first.runId === second.runId) {
     throw new ProbeError("run_identity_not_distinct");
   }
+  if (!first.conversationId || first.conversationId !== second.conversationId) {
+    throw new ProbeError("native_conversation_continuity_mismatch");
+  }
   if (!first.bindingId || first.bindingId !== second.bindingId) {
     throw new ProbeError("native_binding_continuity_mismatch");
   }
-  if (!first.sessionIdAfter || second.sessionIdBefore !== first.sessionIdAfter) {
-    throw new ProbeError("native_session_continuity_mismatch");
+  const firstReader = first.reader;
+  const secondReader = second.reader;
+  if (firstReader?.runId !== first.runId || secondReader?.runId !== second.runId
+    || !firstReader?.spanId || !firstReader?.attemptId
+    || !secondReader?.spanId || !secondReader?.attemptId
+    || firstReader.bindingId !== first.bindingId || secondReader.bindingId !== second.bindingId
+    || firstReader.rowToSpanJoin !== "exact_per_row_run_attempt_span_identity"
+    || secondReader.rowToSpanJoin !== "exact_per_row_run_attempt_span_identity"
+    || !Number.isSafeInteger(firstReader.rowCount) || firstReader.rowCount < 1
+    || !Number.isSafeInteger(secondReader.rowCount) || secondReader.rowCount < 1
+    || !/^[a-f0-9]{64}$/u.test(firstReader.rowExecutionBindingsSha256 ?? "")
+    || !/^[a-f0-9]{64}$/u.test(secondReader.rowExecutionBindingsSha256 ?? "")) {
+    throw new ProbeError("native_execution_identity_incomplete");
   }
-  if (first.readerRunId !== first.runId || second.readerRunId !== second.runId) {
-    throw new ProbeError("reader_run_boundary_mismatch");
+  if (firstReader.spanId === secondReader.spanId || firstReader.attemptId === secondReader.attemptId) {
+    throw new ProbeError("native_execution_identity_not_distinct");
+  }
+  if (!first.sessionIdAfter || second.sessionIdBefore !== first.sessionIdAfter
+    || second.sessionIdAfter !== first.sessionIdAfter) {
+    throw new ProbeError("native_session_continuity_mismatch");
   }
   return {
     distinctRuns: true,
+    sameConversation: true,
     stableBindingId: first.bindingId,
+    distinctExecutionSpans: true,
+    firstExecution: {
+      runId: first.runId,
+      spanId: firstReader.spanId,
+      attemptId: firstReader.attemptId,
+    },
+    secondExecution: {
+      runId: second.runId,
+      spanId: secondReader.spanId,
+      attemptId: secondReader.attemptId,
+    },
     firstRunSessionIdAfter: first.sessionIdAfter,
     secondRunSessionIdBefore: second.sessionIdBefore,
-    readersBoundToExactRuns: true,
+    secondRunSessionIdAfter: second.sessionIdAfter,
+    readersBoundToExactRunAttemptSpans: true,
+  };
+}
+
+export function publicReaderExecutionLineageGap() {
+  const missingRowIdentityFields = PUBLIC_READER_EXECUTION_LINEAGE_GAP.requiredRowIdentityFields
+    .filter((field) => !PUBLIC_READER_EXECUTION_LINEAGE_GAP.projectedRowIdentityFields.includes(field));
+  if (missingRowIdentityFields.length === 0) return null;
+  return {
+    ...PUBLIC_READER_EXECUTION_LINEAGE_GAP,
+    projectedRowIdentityFields: [...PUBLIC_READER_EXECUTION_LINEAGE_GAP.projectedRowIdentityFields],
+    requiredRowIdentityFields: [...PUBLIC_READER_EXECUTION_LINEAGE_GAP.requiredRowIdentityFields],
+    missingRowIdentityFields,
   };
 }
 
@@ -648,6 +724,7 @@ async function requestJson(apiBase, method, route, body, timeoutMs = 15_000) {
       headers: body === undefined ? undefined : { "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
+      redirect: "manual",
     });
   } catch {
     throw new ProbeError("api_transport_error", { method, route });
@@ -664,6 +741,129 @@ async function requestJson(apiBase, method, route, body, timeoutMs = 15_000) {
   if (!response.ok) {
     throw new ProbeError("api_http_error", { method, route, status: response.status });
   }
+  return payload;
+}
+
+/** Send one non-idempotent resource POST after its redacted intent is durable. */
+export async function sendResourcePostOnce({
+  fetchImpl = fetch,
+  url,
+  endpoint,
+  kind,
+  body,
+  intentIdentifiers = {},
+  intentId = randomUUID(),
+  timeoutMs = 15_000,
+  onCheckpoint = async () => {},
+}) {
+  const intent = {
+    submissionKind: "resource_post",
+    kind,
+    intentId,
+    endpoint,
+    clientMutationId: nonEmptyString(body?.clientMutationId),
+    bodySha256: sha256(JSON.stringify(body)),
+    identifiers: Object.fromEntries(["organizationId", "conversationId", "sourceConversationId", "sourceMessageId"]
+      .flatMap((key) => {
+        const value = nonEmptyString(intentIdentifiers[key]);
+        return value ? [[key, value]] : [];
+      })),
+    replayed: false,
+  };
+  await onCheckpoint({ ...intent, status: "intent_checkpointed" });
+
+  const unknown = async (failureCode, httpStatus = null, responseReceived = false) => {
+    const details = {
+      ...intent,
+      status: "unknown_submission",
+      dispatched: true,
+      responseReceived,
+      httpStatus,
+      failureCode,
+    };
+    await onCheckpoint(details);
+    throw new UnknownSubmissionError(details);
+  };
+
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: "manual",
+    });
+  } catch {
+    return unknown("resource_post_no_response");
+  }
+
+  if ((response.status >= 300 && response.status < 400) || response.status >= 500) {
+    return unknown("resource_post_ambiguous_http_response", response.status, true);
+  }
+  if (!response.ok) {
+    await onCheckpoint({
+      ...intent,
+      status: "rejected",
+      dispatched: true,
+      responseReceived: true,
+      httpStatus: response.status,
+    });
+    throw new ProbeError("resource_post_rejected", {
+      kind,
+      intentId,
+      httpStatus: response.status,
+    });
+  }
+
+  let payload;
+  try {
+    const text = await response.text();
+    if (!text.trim()) throw new Error("empty resource response");
+    payload = JSON.parse(text);
+  } catch {
+    return unknown("resource_post_success_response_unreadable", response.status, true);
+  }
+  if (!isRecord(payload) || !nonEmptyString(payload.id)) {
+    return unknown("resource_post_resource_id_missing", response.status, true);
+  }
+
+  await onCheckpoint({
+    ...intent,
+    status: "confirmed",
+    dispatched: true,
+    responseReceived: true,
+    httpStatus: response.status,
+    resourceId: payload.id,
+  });
+  return payload;
+}
+
+async function createResourceOnce({ receipt, evidenceDir, apiBase, route, body, timeoutMs, kind, intentIdentifiers }) {
+  const intentId = randomUUID();
+  const payload = await sendResourcePostOnce({
+    url: apiUrl(apiBase, route),
+    endpoint: route,
+    kind,
+    body,
+    intentIdentifiers,
+    intentId,
+    timeoutMs,
+    onCheckpoint: async (update) => {
+      const existing = receipt.mutationLedger.find((entry) => entry.intentId === intentId);
+      if (existing) Object.assign(existing, update);
+      else receipt.mutationLedger.push(update);
+      await checkpoint(evidenceDir, receipt);
+    },
+  });
+  const entry = receipt.mutationLedger.find((item) => item.intentId === intentId);
+  if (entry) Object.assign(entry, {
+    id: payload.id,
+    runtime: kind === "agent_create" ? body.agentRuntimeType : undefined,
+    connectionMode: kind === "agent_create" ? body.agentRuntimeConfig?.hermesConnectionMode : undefined,
+    configOverrides: kind === "agent_create" && body.agentRuntimeConfig?.model ? ["model"] : undefined,
+  });
+  await checkpoint(evidenceDir, receipt);
   return payload;
 }
 
@@ -811,9 +1011,15 @@ async function readNativeEvidence(apiBase, run) {
     requestJson(apiBase, "GET", `/api/heartbeat-runs/${runId}/events?limit=200`),
     requestJson(apiBase, "GET", `/api/run-intelligence/runs/${runId}/transcript?order=oldest&limit=200&includeOutputs=false`),
   ]);
-  const invocationEvent = Array.isArray(events)
-    ? events.find((event) => event.eventType === "adapter.invoke" && isRecord(event.payload))
-    : null;
+  const invocationEvents = Array.isArray(events)
+    ? events.filter((event) => event.eventType === "adapter.invoke" && isRecord(event.payload))
+    : [];
+  if (invocationEvents.length !== 1) {
+    throw new ProbeError("native_invocation_identity_ambiguous", {
+      invocationEventCount: invocationEvents.length,
+    });
+  }
+  const invocationEvent = invocationEvents[0];
   const invocation = invocationEvent?.payload ? {
     runtimeType: invocationEvent.payload.agentRuntimeType,
     spanId: invocationEvent.payload.invocationSpanId,
@@ -822,8 +1028,11 @@ async function readNativeEvidence(apiBase, run) {
   return assertNativeReaderBoundary({ runId, run, reader, invocation });
 }
 
-async function runProbe(config) {
-  const evidenceDir = await createEvidenceDir();
+export async function runProbe(config, {
+  createEvidenceDirectory = createEvidenceDir,
+  saveCheckpoint = checkpoint,
+} = {}) {
+  const evidenceDir = await createEvidenceDirectory();
   const receipt = {
     schemaVersion: 1,
     probe: PROBE_NAME,
@@ -835,19 +1044,39 @@ async function runProbe(config) {
     health: null,
     identities: { organizationId: null, agentId: null, mainConversationId: null, sideChatId: null },
     criteria: {},
-    turns: { first: { status: "not_run" }, second: { status: "not_run" }, sideChat: { status: "not_run" } },
+    turns: {
+      first: { status: "not_run" },
+      second: { status: "not_run" },
+      sideChatFirst: { status: "not_run" },
+      sideChatSecond: { status: "not_run" },
+    },
     mutationLedger: [],
     notCovered: [
       "full tool manifest or shell-fallback audit",
       "Fork, retention recovery, cleanup, process-loss recovery, other runtimes, and the full provider matrix",
-      "per-Reader-row span-to-binding join; the public Reader projection does not expose it",
       "UI rendering, screenshots, cross-runtime controls, and full W11/W12 acceptance",
     ],
     cleanup: { performed: false, retainedDisposableData: true },
     replayPolicy: "Each chat stream is sent once. Unknown submission outcomes are never resubmitted.",
     startedAt: new Date().toISOString(),
   };
-  await checkpoint(evidenceDir, receipt);
+  await saveCheckpoint(evidenceDir, receipt);
+
+  const readerLineageGap = publicReaderExecutionLineageGap();
+  if (readerLineageGap) {
+    receipt.notCovered.push("native runtime execution and resource creation blocked because public Reader rows omit exact Run/Attempt/Span lineage");
+    receipt.blockers = [{ code: "public_reader_execution_lineage_unavailable", ...readerLineageGap }];
+    receipt.failure = {
+      code: "public_reader_execution_lineage_unavailable",
+      status: "question",
+      details: readerLineageGap,
+    };
+    criteriaStatus(receipt, "publicReaderExecutionLineage", "question", readerLineageGap);
+    receipt.cleanup = { performed: false, retainedDisposableData: false, note: "No disposable resource or native runtime was created." };
+    receipt.finishedAt = new Date().toISOString();
+    await saveCheckpoint(evidenceDir, receipt);
+    return receipt;
+  }
 
   try {
     const runtimeLease = await readCapturedRuntimeLease(config);
@@ -880,13 +1109,20 @@ async function runProbe(config) {
     await checkpoint(evidenceDir, receipt);
 
     const marker = `NATIVE_CHAT_PROBE_${randomUUID().replaceAll("-", "").slice(0, 18)}`;
-    const org = await requestJson(config.apiBase, "POST", "/api/orgs", {
-      name: `Native Chat Probe ${marker}`,
-      description: "Disposable local Hermes native Chat probe data. Retain with this receipt.",
+    const org = await createResourceOnce({
+      receipt,
+      evidenceDir,
+      apiBase: config.apiBase,
+      route: "/api/orgs",
+      kind: "organization_create",
+      timeoutMs: 15_000,
+      body: {
+        name: `Native Chat Probe ${marker}`,
+        description: "Disposable local Hermes native Chat probe data. Retain with this receipt.",
+      },
     });
     if (!nonEmptyString(org?.id)) throw new ProbeError("organization_create_missing_id");
     receipt.identities.organizationId = org.id;
-    receipt.mutationLedger.push({ kind: "organization_create", id: org.id });
     criteriaStatus(receipt, "disposableOrganization", "pass", { organizationId: org.id });
     await checkpoint(evidenceDir, receipt);
 
@@ -894,15 +1130,23 @@ async function runProbe(config) {
       hermesConnectionMode: "local",
       ...(config.model ? { model: config.model } : {}),
     };
-    const agent = await requestJson(config.apiBase, "POST", `/api/orgs/${org.id}/agents`, {
-      name: `Native Chat Probe ${marker}`,
-      role: "engineer",
-      agentRuntimeType: config.runtime,
-      agentRuntimeConfig: runtimeConfig,
+    const agent = await createResourceOnce({
+      receipt,
+      evidenceDir,
+      apiBase: config.apiBase,
+      route: `/api/orgs/${org.id}/agents`,
+      kind: "agent_create",
+      intentIdentifiers: { organizationId: org.id },
+      timeoutMs: 15_000,
+      body: {
+        name: `Native Chat Probe ${marker}`,
+        role: "engineer",
+        agentRuntimeType: config.runtime,
+        agentRuntimeConfig: runtimeConfig,
+      },
     });
     if (!nonEmptyString(agent?.id)) throw new ProbeError("agent_create_missing_id");
     receipt.identities.agentId = agent.id;
-    receipt.mutationLedger.push({ kind: "agent_create", id: agent.id, runtime: config.runtime, connectionMode: "local", configOverrides: config.model ? ["model"] : [] });
     const localHermesConfig = assertLocalHermesConfiguration(agent, config.model);
     criteriaStatus(receipt, "localHermesAgent", "pass", { agentId: agent.id, ...localHermesConfig });
     await checkpoint(evidenceDir, receipt);
@@ -975,15 +1219,19 @@ async function runProbe(config) {
     });
     const secondNative = await readNativeEvidence(config.apiBase, secondReadback.run);
     const continuity = assertNativeRunContinuity({
+      conversationId: first.conversationId,
       runId: firstReadback.run.id,
       bindingId: firstNative.bindingId,
+      sessionIdBefore: firstReadback.run.sessionIdBefore,
       sessionIdAfter: firstReadback.run.sessionIdAfter,
-      readerRunId: firstNative.runId,
+      reader: firstNative,
     }, {
+      conversationId: first.conversationId,
       runId: secondReadback.run.id,
       bindingId: secondNative.bindingId,
+      sessionIdAfter: secondReadback.run.sessionIdAfter,
       sessionIdBefore: secondReadback.run.sessionIdBefore,
-      readerRunId: secondNative.runId,
+      reader: secondNative,
     });
     receipt.turns.second = {
       ...receipt.turns.second,
@@ -1009,19 +1257,24 @@ async function runProbe(config) {
     const sideChatMutationId = randomUUID();
     const sideChatRoute = `/api/chats/${first.conversationId}/side-chats`;
     try {
-      const sideChat = await requestJson(config.apiBase, "POST", sideChatRoute, {
-        sourceMessageId: secondReadback.assistantMessage.id,
-        clientMutationId: sideChatMutationId,
+      const sideChat = await createResourceOnce({
+        receipt,
+        evidenceDir,
+        apiBase: config.apiBase,
+        route: sideChatRoute,
+        kind: "side_chat_create",
+        intentIdentifiers: {
+          sourceConversationId: first.conversationId,
+          sourceMessageId: secondReadback.assistantMessage.id,
+        },
+        timeoutMs: 15_000,
+        body: {
+          sourceMessageId: secondReadback.assistantMessage.id,
+          clientMutationId: sideChatMutationId,
+        },
       });
       if (!nonEmptyString(sideChat?.id)) throw new ProbeError("side_chat_create_missing_id");
       receipt.identities.sideChatId = sideChat.id;
-      receipt.mutationLedger.push({
-        kind: "side_chat_create",
-        id: sideChat.id,
-        clientMutationId: sideChatMutationId,
-        sourceConversationId: first.conversationId,
-        sourceMessageId: secondReadback.assistantMessage.id,
-      });
       await checkpoint(evidenceDir, receipt);
       if (sideChat.conversationKind !== "side_chat"
         || sideChat.forkedFromConversationId !== first.conversationId
@@ -1029,51 +1282,106 @@ async function runProbe(config) {
         throw new ProbeError("side_chat_source_binding_mismatch");
       }
 
-      const sideBody = `Reply briefly to this Side Chat marker: ${marker}_SIDE.`;
-      const side = await sendTurn({
+      const sideFirstBody = `Reply briefly to this Side Chat first-turn marker: ${marker}_SIDE_FIRST.`;
+      const sideFirst = await sendTurn({
         receipt,
         evidenceDir,
         apiBase: config.apiBase,
         route: `/api/chats/${sideChat.id}/messages/stream`,
-        body: { body: sideBody, clientMutationId: randomUUID() },
+        body: { body: sideFirstBody, clientMutationId: randomUUID() },
         timeoutMs: config.timeoutMs,
-        turnName: "sideChat",
+        turnName: "sideChatFirst",
       });
-      const sideReadback = await verifyPersistedTurn({
+      const sideFirstReadback = await verifyPersistedTurn({
         apiBase: config.apiBase,
         conversationId: sideChat.id,
         agentId: agent.id,
-        runId: side.assistantMessage.runId,
-        userMessageId: side.userMessageId,
-        assistantMessage: side.assistantMessage,
-        userBody: sideBody,
+        runId: sideFirst.assistantMessage.runId,
+        userMessageId: sideFirst.userMessageId,
+        assistantMessage: sideFirst.assistantMessage,
+        userBody: sideFirstBody,
         timeoutMs: config.timeoutMs,
       });
-      const sideNative = await readNativeEvidence(config.apiBase, sideReadback.run);
-      receipt.turns.sideChat = {
-        ...receipt.turns.sideChat,
+      const sideFirstNative = await readNativeEvidence(config.apiBase, sideFirstReadback.run);
+      receipt.turns.sideChatFirst = {
+        ...receipt.turns.sideChatFirst,
         status: "passed",
         sourceConversationId: first.conversationId,
         sourceMessageId: secondReadback.assistantMessage.id,
-        userMessageId: sideReadback.userMessage.id,
-        assistantMessageId: sideReadback.assistantMessage.id,
-        runId: sideReadback.run.id,
-        runStatus: sideReadback.run.status,
-        sessionIdBefore: sideReadback.run.sessionIdBefore ?? null,
-        sessionIdAfter: sideReadback.run.sessionIdAfter ?? null,
-        reader: sideNative,
+        conversationId: sideChat.id,
+        userMessageId: sideFirstReadback.userMessage.id,
+        assistantMessageId: sideFirstReadback.assistantMessage.id,
+        runId: sideFirstReadback.run.id,
+        runStatus: sideFirstReadback.run.status,
+        sessionIdBefore: sideFirstReadback.run.sessionIdBefore ?? null,
+        sessionIdAfter: sideFirstReadback.run.sessionIdAfter ?? null,
+        reader: sideFirstNative,
       };
       criteriaStatus(receipt, "sideChatAnchoredNativeRun", "pass", {
         conversationId: sideChat.id,
         sourceMessageId: secondReadback.assistantMessage.id,
-        runId: sideReadback.run.id,
-        spanId: sideNative.spanId,
-        bindingId: sideNative.bindingId,
-        segmentId: sideNative.segmentId,
+        runId: sideFirstReadback.run.id,
+        spanId: sideFirstNative.spanId,
+        attemptId: sideFirstNative.attemptId,
+        bindingId: sideFirstNative.bindingId,
+        segmentId: sideFirstNative.segmentId,
       });
+
+      const sideSecondBody = `Reply briefly to this Side Chat continuity marker: ${marker}_SIDE_SECOND.`;
+      const sideSecond = await sendTurn({
+        receipt,
+        evidenceDir,
+        apiBase: config.apiBase,
+        route: `/api/chats/${sideChat.id}/messages/stream`,
+        body: { body: sideSecondBody, clientMutationId: randomUUID() },
+        timeoutMs: config.timeoutMs,
+        turnName: "sideChatSecond",
+      });
+      const sideSecondReadback = await verifyPersistedTurn({
+        apiBase: config.apiBase,
+        conversationId: sideChat.id,
+        agentId: agent.id,
+        runId: sideSecond.assistantMessage.runId,
+        userMessageId: sideSecond.userMessageId,
+        assistantMessage: sideSecond.assistantMessage,
+        userBody: sideSecondBody,
+        timeoutMs: config.timeoutMs,
+      });
+      const sideSecondNative = await readNativeEvidence(config.apiBase, sideSecondReadback.run);
+      const sideContinuity = assertNativeRunContinuity({
+        conversationId: sideChat.id,
+        runId: sideFirstReadback.run.id,
+        bindingId: sideFirstNative.bindingId,
+        sessionIdBefore: sideFirstReadback.run.sessionIdBefore,
+        sessionIdAfter: sideFirstReadback.run.sessionIdAfter,
+        reader: sideFirstNative,
+      }, {
+        conversationId: sideChat.id,
+        runId: sideSecondReadback.run.id,
+        bindingId: sideSecondNative.bindingId,
+        sessionIdBefore: sideSecondReadback.run.sessionIdBefore,
+        sessionIdAfter: sideSecondReadback.run.sessionIdAfter,
+        reader: sideSecondNative,
+      });
+      receipt.turns.sideChatSecond = {
+        ...receipt.turns.sideChatSecond,
+        status: "passed",
+        sourceConversationId: first.conversationId,
+        sourceMessageId: secondReadback.assistantMessage.id,
+        conversationId: sideChat.id,
+        userMessageId: sideSecondReadback.userMessage.id,
+        assistantMessageId: sideSecondReadback.assistantMessage.id,
+        runId: sideSecondReadback.run.id,
+        runStatus: sideSecondReadback.run.status,
+        sessionIdBefore: sideSecondReadback.run.sessionIdBefore ?? null,
+        sessionIdAfter: sideSecondReadback.run.sessionIdAfter ?? null,
+        reader: sideSecondNative,
+      };
+      criteriaStatus(receipt, "sideChatConsecutiveSendNativeSessionAndExecutionSpans", "pass", sideContinuity);
+      await checkpoint(evidenceDir, receipt);
     } catch (error) {
-      if (error instanceof ProbeError && error.details?.status === 404 && !receipt.identities.sideChatId) {
-        receipt.turns.sideChat = { status: "failed", replayed: false, reason: "public_side_chat_create_returned_404" };
+      if (error instanceof ProbeError && error.details?.httpStatus === 404 && !receipt.identities.sideChatId) {
+        receipt.turns.sideChatFirst = { status: "failed", replayed: false, reason: "public_side_chat_create_returned_404" };
         criteriaStatus(receipt, "sideChatAnchoredNativeRun", "fail", { reason: "public_side_chat_create_returned_404" });
         await checkpoint(evidenceDir, receipt);
       }
