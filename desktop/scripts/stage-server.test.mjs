@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -52,7 +53,9 @@ function createStageServerRepo() {
 
   mkdirSync(join(repo, "desktop", "scripts"), { recursive: true });
   mkdirSync(join(repo, "packages", "shared"), { recursive: true });
-  mkdirSync(join(repo, "server"), { recursive: true });
+  mkdirSync(join(repo, "server", "resources"), { recursive: true });
+  cpSync(join(scriptsDir, "../../server/resources/postinstall-embedded-postgres.mjs"), join(repo, "server/resources/postinstall-embedded-postgres.mjs"));
+  cpSync(join(scriptsDir, "../../scripts/fixtures/embedded-postgres-18.1.0-beta.16/index.js.txt"), join(repo, "embedded-postgres-original.txt"));
   const rootManifestPath = join(repo, "package.json");
   writeJson(rootManifestPath, {
     name: "rudder-stage-server-fixture",
@@ -165,6 +168,13 @@ function createStageServerRepo() {
     "fs.mkdirSync(path.join(target, 'dist'), { recursive: true });",
     "fs.writeFileSync(path.join(target, 'dist/index.js'), 'export {};\\n');",
     "fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name: '@rudderhq/server', publishConfig: { exports: { '.': { types: './dist/index.d.ts', import: './dist/index.js' } }, main: './dist/index.js', types: './dist/index.d.ts' } }, null, 2) + '\\n');",
+    "const postgresRoot = path.join(target, 'node_modules/embedded-postgres');",
+    "fs.mkdirSync(path.join(postgresRoot, 'dist'), { recursive: true });",
+    "fs.writeFileSync(path.join(postgresRoot, 'package.json'), JSON.stringify({ name: 'embedded-postgres', version: '18.1.0-beta.16', exports: './dist/index.js' }));",
+    "fs.copyFileSync(path.join(repo, 'embedded-postgres-original.txt'), path.join(postgresRoot, 'dist/index.js'));",
+    "const dbRoot = path.join(target, 'node_modules/@rudderhq/db');",
+    "fs.mkdirSync(dbRoot, { recursive: true });",
+    "fs.writeFileSync(path.join(dbRoot, 'package.json'), JSON.stringify({ name: '@rudderhq/db' }));",
     "const sharedStore = path.join(target, 'node_modules/.pnpm/@rudderhq+shared@file+packages+shared/node_modules/@rudderhq/shared');",
     "fs.mkdirSync(sharedStore, { recursive: true });",
     "fs.linkSync(path.join(repo, 'packages/shared/package.json'), path.join(sharedStore, 'package.json'));",
@@ -307,6 +317,10 @@ describe("desktop stage-server", () => {
       '"default": "./dist/index.js"',
     );
     expect(() => readFileSync(join(repo, "desktop/.packaged/postgres-18.4"))).toThrow();
+    const wrapper = readFileSync(join(repo, "desktop/.packaged/server-package/node_modules/embedded-postgres/dist/index.js"));
+    expect(createHash("sha256").update(wrapper).digest("hex")).toBe(
+      "2ea226713effef5d494fab8a7509d68784fbd86ce333fe463971f45320745941",
+    );
   });
 
   it.skipIf(process.platform === "win32")("optionally prepares PostgreSQL 18.4 payload when bundling is explicitly enabled", () => {

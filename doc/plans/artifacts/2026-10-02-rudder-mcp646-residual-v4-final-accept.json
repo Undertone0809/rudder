@@ -1,0 +1,54 @@
+{
+  "schema": "rudder.bounded-independent-final-handoff-review/v1",
+  "recordedAt": "2026-10-02T01:46:51Z",
+  "verdict": "accept",
+  "level": "final handoff verdict",
+  "scope": "Exact installed MCP residual646 v4 only: initialize, tools/list, agent-authenticated Project create, default members read, raw protocol integrity, and owned cleanup. No CLI replay or aggregate acceptance.",
+  "candidate": {
+    "sourceSha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "sourceTree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "artifactReceiptSha256": "14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49",
+    "packetSha256": "de42822ee053455ece77e67f007c84569f06e2925ebfe33d399450aea67299a4",
+    "runnerSha256": "acd2a6314fce3b7b8d832487b1379dfc04bbd7af8f7326cbd20c7783c8a6323a",
+    "testsSha256": "f8b4ac8f5fd54f35e24aa0d783a31c5ee5130633f739283f429fc4df3ad1632c",
+    "stageAcceptSha256": "8b1a708e3dd9ec9a985db70ac1a0072612fa9fa41d80abcb23d7edb39a0e7a45"
+  },
+  "verifier": {
+    "name": "Dalton",
+    "terminalVerdict": "PASS",
+    "receiptPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/independent-terminal-verdict-2026-10-02T01-40-32Z.json",
+    "receiptSha256": "580193f359465d9d386d3699459c587b5d26c0668e206e116a093cb3632df809",
+    "runEvidencePath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/installed-mcp-residual-e471550d-861f-4813-9955-d49b51af2c72.json",
+    "runEvidenceSha256": "2cfaebb38025a6e2f662aed66558451460ba455defef580c1219da2f46ee55ef",
+    "leaseSha256": "043ef571bc2e025e9d59ad1772427f9bf54ffd9661795f972f0065c597599faa",
+    "leaseDisposition": "Authorized exact run within expiry; independently recorded owned cleanup and release at 01:40:32Z. Reviewer did not acquire or grant a runtime lease."
+  },
+  "reviewerVerified": [
+    "On-disk terminal, packet, runner, tests, stage, artifact receipt, lease, run evidence, protocol stream and outer capture hashes match their exact bindings.",
+    "Full stdout is 94978 bytes, four complete JSON-RPC 2.0 responses with final newline and expected unique IDs matching raw stdin; no dropped noise, truncation or error frame. Stderr is empty; child exited zero without timeout or signal.",
+    "Initialize selects protocol 2025-11-25; 83-tool catalog includes both required tools.",
+    "Raw MCP Project result and content agree with recorded response; requested name, persisted Project/org IDs, Rust ownership/fence, applied project_create receipt, agent project.created audit and activity.logged outbox correlate.",
+    "Raw default-arguments members response identifies the authenticated agent. Preserved actual pretty receipt reports same organization, required mode, Rust invoked and authoritative, no fallback or old-authority invocation, status 200.",
+    "All six distinct verifier criteria PASS. Run cleanup records no errors; independent verifier terminal records server/Rust PIDs and PGID absent, both owned ports without listeners, disposable root absent.",
+    "Historical QUESTION terminal and raw evidence hashes remain unchanged; no historical MCP stdout reconstruction or CLI acceptance transfer."
+  ],
+  "firstPrinciplesJudgment": "The fresh public installed Node MCP front door now earns its narrowly requested create/read proof against the Rust backend; complete large-catalog capture resolves the earlier harness observation gap without weakening protocol validation.",
+  "intentAndCriteriaAlignment": "aligned: preserve full raw before parsing, fail closed on malformed/truncated output, observe real public MCP create/read and correlated backend evidence, verify owned cleanup, retain prior QUESTION and exclude aggregate acceptance",
+  "findings": [],
+  "blockingConditions": [],
+  "uiProductQuality": "No visible UI claim in this slice; browser/rendered review not applicable.",
+  "limitations": [
+    "Read-only saved-evidence review: no browser, DB/runtime, retry, source edit, install or new cleanup probe performed by reviewer.",
+    "Cleanup absence is independently observed by Dalton and inspected here, not newly observed live by this reviewer.",
+    "Member receipt requestId is null; proof uses the bounded fresh run, organization and default request, not a claimed request-ID correlation.",
+    "Installed MCP front door remains Node; Rust backend evidence does not establish a Rust MCP front door.",
+    "No whole CLI/MCP run, Board, negative/resource lane, aggregate v45, product-wide, merge or release acceptance."
+  ],
+  "preservedHistory": {
+    "priorTerminalVerdict": "QUESTION",
+    "priorTerminalSha256": "4e928067031eb11a47d4fc05b369a37489cf53fefc4005d4f7cccbea8e7952d1",
+    "priorRawEvidenceSha256": "b535db1a03102a3fca05a6b3e995e6baa1715a6cb2da3cc3823da8b417d87e8a",
+    "disposition": "Unchanged; new PASS and final accept apply only to fresh MCP residual v4."
+  },
+  "convergenceDirection": "Parent may reconcile this exact bounded MCP final handoff verdict with Dalton PASS; unrelated gates remain independent."
+}
