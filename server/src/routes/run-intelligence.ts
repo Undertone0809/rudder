@@ -6,7 +6,7 @@ import {
   type ObservedRunStep,
 } from "@rudderhq/run-intelligence-core";
 import { shortRefFor, toAgentRunOrigin, type RunInspectionHeader } from "@rudderhq/shared";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { logActivity } from "../services/activity-log.js";
@@ -525,6 +525,45 @@ async function readTranscriptPages(
   throw new Error("Transcript reader exceeded the route page limit");
 }
 
+type TranscriptStoredLineage = {
+  runId: string;
+  attemptId: string | null;
+  spanId: string;
+};
+
+async function readTranscriptStoredLineage(
+  db: Db,
+  orgId: string,
+  runId: string,
+  items: readonly TranscriptItem[],
+) {
+  const spanIds = [...new Set(items.flatMap((item) => item.spanId ? [item.spanId] : []))];
+  if (spanIds.length === 0) return new Map<string, TranscriptStoredLineage>();
+
+  const spans = await db
+    .select({
+      spanId: runRuntimeSpans.id,
+      orgId: runRuntimeSpans.orgId,
+      runId: runRuntimeSpans.runId,
+      attemptId: runRuntimeSpans.attemptId,
+    })
+    .from(runRuntimeSpans)
+    .where(and(
+      eq(runRuntimeSpans.orgId, orgId),
+      eq(runRuntimeSpans.runId, runId),
+      inArray(runRuntimeSpans.id, spanIds),
+    ))
+    .limit(spanIds.length);
+
+  return new Map(spans
+    .filter((span) => span.orgId === orgId && span.runId === runId && spanIds.includes(span.spanId))
+    .map((span) => [span.spanId, {
+      runId: span.runId,
+      attemptId: span.attemptId,
+      spanId: span.spanId,
+    }] as const));
+}
+
 function buildRunErrors(
   detail: ObservedRunDetail,
   maxChars: number,
@@ -807,6 +846,24 @@ export function runIntelligenceRoutes(db: Db) {
       throw badRequest("Transcript cursor source or revision is no longer current");
     }
 
+    const storedLineageBySpanId = await readTranscriptStoredLineage(
+      db,
+      pageResult.orgId,
+      runId,
+      chronologicalReaderEntries.map(({ item }) => item),
+    );
+    const lineageForItem = (item: TranscriptItem): TranscriptStoredLineage | {
+      runId: null;
+      attemptId: null;
+      spanId: null;
+    } => {
+      const stored = item.spanId ? storedLineageBySpanId.get(item.spanId) : undefined;
+      if (!stored || (item.runId !== null && item.runId !== stored.runId)) {
+        return { runId: null, attemptId: null, spanId: null };
+      }
+      return stored;
+    };
+
     const chronologicalTrace = buildObservedRunTrace(chronologicalReaderEntries.map((value) => value.entry));
     const stableTraceSteps = chronologicalTrace.steps.map((step, index) => ({
       ...step,
@@ -853,6 +910,7 @@ export function runIntelligenceRoutes(db: Db) {
       id: stepStableId(step),
       index: step.index,
       sourceEntryId: item.sourceEntryId ?? item.id,
+      ...lineageForItem(item),
     }));
     const rows = outputMode === "full" ? allRows : limitRowsByJsonBytes(allRows, 400_000);
     const responseItems = paged.rows.slice(0, rows.length);
@@ -903,6 +961,7 @@ export function runIntelligenceRoutes(db: Db) {
             turnIndex: step.turnIndex,
             entry,
             sourceEntryId: item.sourceEntryId ?? item.id,
+            ...lineageForItem(item),
             output: includeOutputs ? fullText(step.detailText) : null,
           })),
         }
