@@ -9,6 +9,16 @@ function waitForAbort(signal) {
 }
 
 describe("installed public ingress workflow deadline", () => {
+  it("retains external cancellation even after cleanup internally aborted the work signal", () => {
+    const signals = new EventEmitter();
+    const deadline = createWorkflowDeadline({ totalTimeoutMs: 2000, cleanupReserveMs: 500, signals });
+    try {
+      deadline.beginCleanup();
+      assert.equal(deadline.externalCancellationReason, null);
+      signals.emit("SIGTERM");
+      assert.match(deadline.externalCancellationReason.message, /SIGTERM/u);
+    } finally { deadline.dispose(); }
+  });
   it("aborts workflow work before the hard deadline and leaves cleanup time", async () => {
     const deadline = createWorkflowDeadline({
       totalTimeoutMs: 500,

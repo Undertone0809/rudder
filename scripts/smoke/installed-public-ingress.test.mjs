@@ -3,9 +3,13 @@ import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import http from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { createWorkflowDeadline } from "./installed-public-ingress-deadline.mjs";
+import { persistOwnedProcessHandoff, detachAfterRecordedHandoff, parseDarwinProcessWitness } from "./installed-public-ingress-handoff.mjs";
+import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { SMOKE_NATIVE_TARGETS, nativeBinaryName } from "./installed-member-directory.mjs";
 import {
@@ -20,6 +24,7 @@ import {
   canRemoveSmokeProfile,
   extractTarEntry,
   fetchJson,
+  finishWorkflowWork,
   isExpectedIssueCreatedFrame,
   packageArchiveDigest,
   parseArgs,
@@ -30,6 +35,7 @@ import {
   SmokePrerequisiteError,
   SmokeQuestionError,
   stopAndAssertRustListenerExited,
+  startServer,
   validateInstallReceipt,
   waitForIssueCreatedFrame,
   waitForExit,
@@ -37,6 +43,127 @@ import {
 } from "./installed-public-ingress.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
+
+it("the owning runner exits QUESTION while the exact held child and file logging survive", { skip: process.platform !== "darwin" }, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ingress-parent-exit-fixture."));
+  const entry = path.join(directory, "child.mjs");
+  const runnerEntry = path.join(directory, "runner.mjs");
+  const runnerModule = new URL("./installed-public-ingress.mjs", import.meta.url).href;
+  const handoffModule = new URL("./installed-public-ingress-handoff.mjs", import.meta.url).href;
+  await writeFile(entry, 'process.on("SIGTERM", () => {}); console.log("ready"); setInterval(() => console.log("owned-log"), 20);', { mode: 0o600 });
+  await writeFile(runnerEntry, `
+    import { startServer, stopAndAssertRustListenerExited } from ${JSON.stringify(runnerModule)};
+    import { persistOwnedProcessHandoff, detachAfterRecordedHandoff } from ${JSON.stringify(handoffModule)};
+    const runtime = startServer(${JSON.stringify(entry)}, ${JSON.stringify(directory)}, process.env, "fixture-runner");
+    console.log(JSON.stringify({ ownedPid: runtime.child.pid }));
+    const readyBy = Date.now() + 2000;
+    while (!runtime.logs.stdout.includes("ready") && Date.now() < readyBy) await new Promise(resolve => setTimeout(resolve, 20));
+    try { await stopAndAssertRustListenerExited(runtime, [], 30); } catch {}
+    runtime.stopObservingLogs();
+    const handoff = await persistOwnedProcessHandoff({
+      directory: ${JSON.stringify(directory)}, child: runtime.child, ownerId: runtime.ownerId, kind: "server",
+      sourceSha: ${JSON.stringify(sourceSha)}, supportSha256: ${JSON.stringify(digest("fixture"))}, reason: "shutdown_unverified"
+    });
+    await detachAfterRecordedHandoff(runtime.child, handoff);
+    console.log(JSON.stringify({ handoff, logPath: runtime.logPaths.stdout }));
+    process.exitCode = 2;
+  `, { mode: 0o600 });
+  const runner = spawn(process.execPath, [runnerEntry], { stdio: ["ignore", "pipe", "pipe"] });
+  let output = "";
+  let errors = "";
+  runner.stdout.setEncoding("utf8").on("data", chunk => { output += chunk; });
+  runner.stderr.setEncoding("utf8").on("data", chunk => { errors += chunk; });
+  let heldPid;
+  let record;
+  const observe = pid => parseDarwinProcessWitness(execFileSync("/bin/ps",
+    ["-p", String(pid), "-o", "pid=", "-o", "lstart=", "-o", "ppid=", "-o", "comm="],
+    { encoding: "utf8", timeout: 1000 }));
+  try {
+    const result = await waitForExit(runner, 4000);
+    assert.equal(result.code, 2, errors);
+    const terminal = output.trim().split("\n").map(line => JSON.parse(line)).find(row => row.handoff);
+    assert.ok(terminal?.handoff, errors);
+    record = terminal.handoff.record;
+    heldPid = record.pid;
+    assert.equal(record.originalParentPid, runner.pid);
+    assert.equal(record.state, "HELD_UNRESOLVED");
+    assert.equal(record.releaseAllowed, false);
+    const live = observe(heldPid);
+    assert.equal(live.startedAt, record.startBinding.osStartedAt);
+    const before = (await stat(terminal.logPath)).size;
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.ok((await stat(terminal.logPath)).size > before);
+  } finally {
+    heldPid ??= Number(output.match(/"ownedPid":(\d+)/u)?.[1]);
+    if (heldPid > 0) {
+      const witness = observe(heldPid);
+      assert.equal(path.basename(witness.comm), path.basename(process.execPath));
+      if (record) assert.equal(witness.startedAt, record.startBinding.osStartedAt);
+      else assert.equal(witness.parentPid, runner.pid);
+      process.kill(heldPid, "SIGKILL"); // Exact synthetic, no-PG fixture, identity rechecked.
+      const goneBy = Date.now() + 2000;
+      while (Date.now() < goneBy) {
+        try { process.kill(heldPid, 0); } catch (error) { if (error.code === "ESRCH") break; throw error; }
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.throws(() => process.kill(heldPid, 0), { code: "ESRCH" });
+    }
+    if (runner.exitCode === null && runner.signalCode === null) {
+      runner.kill("SIGKILL");
+      await waitForExit(runner, 2000);
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("cancellation during final WebSocket close cannot transition to PASS", async () => {
+  const signals = new EventEmitter();
+  const workflow = createWorkflowDeadline({ totalTimeoutMs: 1000, cleanupReserveMs: 500, signals });
+  const socket = new EventEmitter();
+  socket.readyState = 1; socket.CLOSED = 3;
+  socket.close = () => {
+    signals.emit("SIGTERM");
+    queueMicrotask(() => socket.emit("close"));
+  };
+  socket.terminate = () => socket.emit("close");
+  let pass = false;
+  try {
+    await assert.rejects(async () => { await finishWorkflowWork(workflow, socket); pass = true; }, /SIGTERM/u);
+    assert.equal(pass, false);
+  } finally { workflow.dispose(); }
+});
+
+it("an unresponsive owned supervisor gets a durable held handoff without pipe orphaning", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ingress-handoff-fixture."));
+  const entry = path.join(directory, "fixture.mjs");
+  await writeFile(entry, 'process.on("SIGTERM", () => {}); console.log("ready"); setInterval(() => console.log("owned-log"), 20);', { mode: 0o600 });
+  const runtime = startServer(entry, directory, process.env, "test-held-server");
+  try {
+    const readyBy = Date.now() + 2000;
+    while (!runtime.logs.stdout.includes("ready") && Date.now() < readyBy) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.match(runtime.logs.stdout, /ready/u);
+    await assert.rejects(stopAndAssertRustListenerExited(runtime, [], 30), /did not exit/u);
+    runtime.stopObservingLogs();
+    const receipt = await persistOwnedProcessHandoff({
+      directory, child: runtime.child, ownerId: runtime.ownerId, kind: "server",
+      sourceSha, supportSha256: digest("fixture"), reason: "shutdown_unverified",
+    });
+    await detachAfterRecordedHandoff(runtime.child, receipt);
+    assert.equal(runtime.child.stdout, null);
+    assert.equal(runtime.child.stderr, null);
+    assert.equal(canRemoveSmokeProfile({ runtime, serverStarted: true, shutdownVerified: false }), false);
+    const before = (await stat(runtime.logPaths.stdout)).size;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.ok((await stat(runtime.logPaths.stdout)).size > before, "recorded handoff must preserve child logging");
+  } finally {
+    runtime.stopObservingLogs();
+    if (runtime.child.exitCode === null && runtime.child.signalCode === null) {
+      runtime.child.kill("SIGKILL"); // Only this synthetic no-PG fixture.
+      await waitForExit(runtime.child, 2000);
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it("a work deadline enters owned teardown with a retained-profile QUESTION on missing Rust identity", async () => {
   const workflow = createWorkflowDeadline({ totalTimeoutMs: 200, cleanupReserveMs: 150, signals: null });

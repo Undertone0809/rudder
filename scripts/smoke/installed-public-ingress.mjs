@@ -2,9 +2,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createWorkflowDeadline } from "./installed-public-ingress-deadline.mjs";
+import { persistOwnedProcessHandoff, detachAfterRecordedHandoff } from "./installed-public-ingress-handoff.mjs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, openSync, closeSync, fstatSync, readSync } from "node:fs";
 import { access, lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, rm } from "node:fs/promises";
 import http from "node:http";
 import { createConnection, createServer } from "node:net";
@@ -724,19 +725,65 @@ function appendLog(logs, stream, chunk) {
   logs[stream] = `${logs[stream]}${chunk}`.slice(-MAX_LOG_BYTES);
 }
 
-function startServer(serverEntry, cwd, env, ownerId) {
-  const child = spawn(process.execPath, [serverEntry], {
-    cwd,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
+function logTail(filename) {
+  const descriptor = openSync(filename, "r");
+  try {
+    const size = fstatSync(descriptor).size;
+    const buffer = Buffer.alloc(Math.min(size, MAX_LOG_BYTES));
+    const count = readSync(descriptor, buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+    return buffer.subarray(0, count).toString("utf8");
+  } finally { closeSync(descriptor); }
+}
+
+export function startServer(serverEntry, cwd, env, ownerId) {
+  const safeId = ownerId.replace(/[^a-zA-Z0-9_-]/gu, "_");
+  const logPaths = {
+    stdout: path.join(cwd, `${safeId}.stdout.log`),
+    stderr: path.join(cwd, `${safeId}.stderr.log`),
+  };
+  // Child-owned file descriptors survive a recorded parent handoff. Do not
+  // leave pipe lifetimes attached to a runner that may finish with QUESTION.
+  const stdout = openSync(logPaths.stdout, "wx", 0o600);
+  let stderr;
+  let child;
+  try {
+    stderr = openSync(logPaths.stderr, "wx", 0o600);
+    child = spawn(process.execPath, [serverEntry], {
+      cwd, env, stdio: ["ignore", stdout, stderr], windowsHide: true,
+    });
+  } finally {
+    closeSync(stdout);
+    if (stderr !== undefined) closeSync(stderr);
+  }
   const logs = { stdout: "", stderr: "" };
-  child.stdout.setEncoding("utf8").on("data", (chunk) => appendLog(logs, "stdout", chunk));
-  child.stderr.setEncoding("utf8").on("data", (chunk) => appendLog(logs, "stderr", chunk));
+  const refreshLogs = () => {
+    try {
+      logs.stdout = logTail(logPaths.stdout);
+      logs.stderr = logTail(logPaths.stderr);
+    } catch (error) {
+      logs.observationError = error;
+    }
+  };
+  const poll = setInterval(refreshLogs, 50);
   child.on("error", (error) => appendLog(logs, "stderr", `${error.stack ?? error}\n`));
-  child.once("close", () => closedChildren.add(child));
-  return { owner: SMOKE_OWNER, ownerId, child, logs, termRequested: false, stopPromise: null };
+  child.once("close", () => {
+    clearInterval(poll);
+    refreshLogs();
+    closedChildren.add(child);
+  });
+  return { owner: SMOKE_OWNER, ownerId, child, logs, logPaths,
+    refreshLogs, stopObservingLogs: () => clearInterval(poll), termRequested: false, stopPromise: null };
+}
+
+async function recordUnresolvedChild(child, runRoot, ownerId, kind) {
+  const receipt = await persistOwnedProcessHandoff({
+    directory: runRoot, child, ownerId, kind,
+    sourceSha: EXPECTED_SOURCE_SHA, supportSha256: sha256(await readFile(SCRIPT_PATH)),
+    reason: "shutdown_unverified",
+  });
+  console.error(`[installed-public-ingress] HELD_UNRESOLVED handoff: ${JSON.stringify(receipt)}`);
+  await detachAfterRecordedHandoff(child, receipt);
+  return receipt;
 }
 
 export function waitForExit(child, timeoutMs) {
@@ -854,6 +901,7 @@ async function waitForHealth(runtime, publicUrl, timeoutMs, signal) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
+    if (runtime.logs.observationError) throw new SmokeQuestionError("owned runtime log observation failed", { cause: runtime.logs.observationError });
     if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
       throw new Error(`installed server exited before public health (${runtime.child.exitCode ?? runtime.child.signalCode})`);
     }
@@ -873,6 +921,7 @@ async function waitForPrivatePort(runtime, publicPort, timeoutMs, signal) {
   const listenPattern = /Server listening on 127\.0\.0\.1:(\d+)/gu;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
+    if (runtime.logs.observationError) throw new SmokeQuestionError("owned runtime log observation failed", { cause: runtime.logs.observationError });
     const logs = `${runtime.logs.stdout}\n${runtime.logs.stderr}`;
     const matches = [...logs.matchAll(listenPattern)];
     const port = Number(matches.at(-1)?.[1]);
@@ -923,7 +972,7 @@ async function createAgentKey(apiUrl, agentId, work) {
   return result.body.token;
 }
 
-export async function waitForCliClose(child, timeoutMs, signal) {
+export async function waitForCliClose(child, timeoutMs, signal, handoff) {
   const close = new Promise((resolve, reject) => {
     child.once("close", (code, terminationSignal) => { closedChildren.add(child); resolve({ code, signal: terminationSignal }); });
     child.once("error", reject);
@@ -947,8 +996,8 @@ export async function waitForCliClose(child, timeoutMs, signal) {
       if (!closedChildren.has(child)) child.kill("SIGKILL");
       try { await waitForExit(child, 2_000); }
       catch (error) {
-        child.stdout?.destroy(); child.stderr?.destroy(); child.unref?.();
-        throw new SmokeQuestionError("owned installed CLI shutdown unverified; retain profile", { cause: error });
+        if (handoff) await handoff(child);
+        throw new SmokeQuestionError(`owned installed CLI shutdown unverified pid=${child.pid}; retain profile and held lease`, { cause: error });
       }
     }
     throw cancellation;
@@ -971,7 +1020,8 @@ async function runInstalledCliMemberRead(cliEntry, runRoot, apiUrl, orgId, agent
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout = (stdout + chunk).slice(-MAX_LOG_BYTES); });
   child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr = (stderr + chunk).slice(-MAX_LOG_BYTES); });
-  const result = { ...await waitForCliClose(child, timeoutMs, signal), stdout, stderr };
+  const result = { ...await waitForCliClose(child, timeoutMs, signal,
+    (unresolved) => recordUnresolvedChild(unresolved, runRoot, `${path.basename(runRoot)}:cli`, "cli")), stdout, stderr };
   assert.equal(result.code, 0, `installed CLI member read failed: ${safeText(result.stderr, agentKey)} ${safeText(result.stdout, agentKey)}`);
   const page = JSON.parse(result.stdout);
   assert.ok(page.items.some((member) => member.name === agentName), "installed CLI did not return the disposable member through public ingress");
@@ -1131,6 +1181,14 @@ async function closeWebSocket(socket, timeoutMs) {
     });
     socket.close(1000, "installed smoke complete");
   });
+}
+
+export async function finishWorkflowWork(workflow, socket) {
+  workflow.signal.throwIfAborted();
+  await closeWebSocket(socket, workflow.stepTimeout(5_000));
+  // Cancellation while the final close is pending must never produce PASS.
+  workflow.signal.throwIfAborted();
+  workflow.stepTimeout(1);
 }
 
 async function createIssue(apiUrl, orgId, agentKey, title, work) {
@@ -1352,7 +1410,7 @@ async function runInstalledWorkflow(options, installed, workflow) {
     assertActivityLoggedFrame(firstEvent, { orgId, issueId: firstIssue.id });
     assert.equal(firstEvent.payload.action, "issue.created");
     console.log(`[installed-public-ingress] first event: ${JSON.stringify(firstEvent)}`);
-    await closeWebSocket(activeSocket, 5_000);
+    await finishWorkflowWork(workflow, activeSocket);
     activeSocket = null;
 
     // Live events expose a fresh organization subscription on reconnect; no replay cursor is defined.
@@ -1379,7 +1437,7 @@ async function runInstalledWorkflow(options, installed, workflow) {
     assertActivityLoggedFrame(secondEvent, { orgId, issueId: secondIssue.id });
     assertReconnectActivityAfter(firstEvent, secondEvent);
     console.log(`[installed-public-ingress] reconnect event: ${JSON.stringify(secondEvent)}`);
-    await closeWebSocket(activeSocket, 5_000);
+    await finishWorkflowWork(workflow, activeSocket);
     activeSocket = null;
 
     console.log("[installed-public-ingress] public health and installed CLI member read passed; foreign organization read denied");
@@ -1387,6 +1445,8 @@ async function runInstalledWorkflow(options, installed, workflow) {
     console.log("[installed-public-ingress] public Issue POST emitted organization-scoped activity.logged across an authenticated reconnect");
     console.log("[installed-public-ingress] foreign-organization WebSocket was denied at both public and private ingress");
 
+    signal.throwIfAborted();
+    step();
     finalVerdict = "PASS";
   } catch (error) {
     primaryError = error;
@@ -1409,6 +1469,10 @@ async function runInstalledWorkflow(options, installed, workflow) {
         cleanupError = error;
         console.error(`[installed-public-ingress] cleanup: ${safeText(error.stack ?? error)}`);
         console.error(`[installed-public-ingress] unresolved owned supervisor PID: ${runtime.child.pid}; profile retained; do not open another runtime lease`);
+        if (!closedChildren.has(runtime.child)) {
+          runtime.stopObservingLogs?.();
+          await recordUnresolvedChild(runtime.child, runRoot, runtime.ownerId, "server");
+        }
         finalVerdict = "QUESTION";
       }
     }
@@ -1426,6 +1490,8 @@ async function runInstalledWorkflow(options, installed, workflow) {
     throw new SmokeQuestionError(`owned server cleanup needs review; retained profile/database at ${runRoot}`, { cause: cleanupError });
   }
   if (primaryError) throw primaryError;
+  if (workflow.externalCancellationReason) throw workflow.externalCancellationReason;
+  if (workflow.remainingMs() <= 0) throw new Error("total workflow deadline exceeded after owned teardown");
   assert.equal(finalVerdict, "PASS", "installed public ingress workflow did not complete cleanly");
   console.log("[installed-public-ingress] PASS: exact receipt-bound installed CLI/server/native public workflow");
 }
