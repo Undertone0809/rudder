@@ -34,14 +34,14 @@ export function assertLoopbackListener(output, { port, pid }) {
   return { port, pid, address: `127.0.0.1:${port}` };
 }
 
-export async function observeListener(port, pid, execute = execFileAsync) {
+export async function observeListener(port, pid, execute = execFileAsync, signal) {
   assertValidIdentity(port, pid);
   let result;
   try {
     result = await execute(
       "lsof",
       ["-nP", "-a", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fpn"],
-      { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 },
+      { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, signal },
     );
   } catch (error) {
     // lsof exit 1 with empty output is a valid negative socket observation.
@@ -63,15 +63,15 @@ export function assertProcessObservation(textFiles, parentOutput, { pid, parentP
   return { pid, parentPid, executable };
 }
 
-async function observeProcess(pid, parentPid, executable) {
+async function observeProcess(pid, parentPid, executable, signal) {
   const canonicalExecutable = await realpath(executable);
   let textFiles;
   let parent;
   try {
     textFiles = await execFileAsync("lsof", ["-nP", "-a", "-p", String(pid), "-d", "txt", "-Fpn"],
-      { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 });
+      { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, signal });
     parent = await execFileAsync("ps", ["-p", String(pid), "-o", "ppid="],
-      { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 });
+      { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, signal });
   } catch (error) {
     if (error.code === 1 && !error.killed && !error.signal
       && !(error.stdout ?? "").trim() && !(error.stderr ?? "").trim()) {
@@ -85,13 +85,13 @@ async function observeProcess(pid, parentPid, executable) {
 
 export async function assertInstalledListenerOwnership({
   publicPort, privatePort, rustPid, nodePid, rustExecutable, nodeExecutable, nodeParentPid,
-}) {
+}, { signal } = {}) {
   assert.notEqual(publicPort, privatePort, "public and private sockets must be distinct");
   assert.notEqual(rustPid, nodePid, "Rust and Node process identities must be distinct");
   return {
-    public: await observeListener(publicPort, rustPid),
-    private: await observeListener(privatePort, nodePid),
-    rustProcess: await observeProcess(rustPid, nodePid, rustExecutable),
-    nodeProcess: await observeProcess(nodePid, nodeParentPid, nodeExecutable),
+    public: await observeListener(publicPort, rustPid, execFileAsync, signal),
+    private: await observeListener(privatePort, nodePid, execFileAsync, signal),
+    rustProcess: await observeProcess(rustPid, nodePid, rustExecutable, signal),
+    nodeProcess: await observeProcess(nodePid, nodeParentPid, nodeExecutable, signal),
   };
 }
