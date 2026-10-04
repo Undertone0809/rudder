@@ -12,6 +12,8 @@ export { resolveViteHmrPort } from "./bootstrap/create-http-app.js";
 export interface RudderAppHandle {
   app: express.Express;
   close(): Promise<void>;
+  readonly publicIngressBaseUrl?: string | null;
+  waitForPublicIngressReady?(): Promise<void>;
 }
 
 type RudderAppStartupOptions = Pick<
@@ -70,6 +72,8 @@ export async function createRudderApp(
 
     return {
       app: httpApp.app,
+      get publicIngressBaseUrl() { return httpApp.publicIngressBaseUrl; },
+      waitForPublicIngressReady: httpApp.waitForPublicIngressReady,
       close: () => supervisor.dispose(),
     } satisfies RudderAppHandle;
   });

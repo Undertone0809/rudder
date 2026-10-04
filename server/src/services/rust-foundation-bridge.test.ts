@@ -10,6 +10,7 @@ import {
   createRustActorEnvelope,
   createRustFoundationBridge,
   type RustFoundationBridge,
+  type RustPublicIngressOptions,
 } from "./rust-foundation-bridge.js";
 
 vi.mock("node:url", async (importOriginal) => {
@@ -17,7 +18,7 @@ vi.mock("node:url", async (importOriginal) => {
   return { ...actual, fileURLToPath: vi.fn(actual.fileURLToPath) };
 });
 
-type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term";
+type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term" | "public-ready";
 
 type Fixture = {
   binaryPath: string;
@@ -48,7 +49,10 @@ const mode = fs.readFileSync(${JSON.stringify(modePath)}, "utf8").trim();
 fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
 fs.writeFileSync(${JSON.stringify(envPath)}, JSON.stringify(process.env));
 let server = null;
+let publicServer = null;
 const shutdown = () => {
+  publicServer?.closeAllConnections?.();
+  publicServer?.close();
   if (!server) {
     process.exit(0);
     return;
@@ -90,11 +94,19 @@ if (mode === "invalid") {
   server.listen(0, "127.0.0.1", () => {
     const address = server.address();
     if (!address || typeof address === "string") process.exit(2);
-    process.stdout.write(JSON.stringify({
+    const receipt = {
       boundAddr: "127.0.0.1:" + address.port,
       publicListener: false,
       productWriteAuthority: false,
-    }) + "\\n");
+    };
+    const emit = () => process.stdout.write(JSON.stringify(receipt) + "\\n");
+    if (mode === "public-ready") {
+      publicServer = http.createServer((req, res) => res.end("ready"));
+      publicServer.listen(0, "127.0.0.1", () => {
+        receipt.publicIngress = { boundAddr: "127.0.0.1:" + publicServer.address().port, publicListener: true };
+        emit();
+      });
+    } else emit();
   });
 }
 setInterval(() => {}, 1000);
@@ -138,6 +150,7 @@ function createBridge(
     mode?: "off" | "shadow" | "required";
     organizationBrandingMode?: "off" | "shadow" | "required";
     projectGoalSetMode?: "off" | "shadow" | "required";
+    publicIngress?: RustPublicIngressOptions;
   } = {},
 ) {
   const bridge = createRustFoundationBridge({
@@ -148,6 +161,7 @@ function createBridge(
     binaryPath: fixture.binaryPath,
     actorEnvelopeKey: "bridge-test-secret",
     requestTimeoutMs: 25,
+    publicIngress: options.publicIngress,
   });
   activeBridges.add(bridge);
   return bridge;
@@ -194,6 +208,44 @@ afterEach(async () => {
 });
 
 describe("rust foundation bridge lifecycle", () => {
+  it("owns an explicitly requested public listener and clears its identity on shutdown", async () => {
+    const fixture = await createFixture("public-ready");
+    const publicIngress = {
+      listenAddr: "127.0.0.1:0",
+      nodeUpstream: "http://127.0.0.1:3101",
+      authorizationKey: "0123456789abcdef0123456789abcdef",
+      trustedProxies: "192.0.2.1,::1",
+    };
+    const bridge = createBridge(fixture, { mode: "off", publicIngress });
+    expect(bridge.requiresStartup).toBe(true);
+    await bridge.start();
+    expect(bridge.publicIngressBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    await expect(bridge.waitForPublicIngressReady!()).resolves.toBeUndefined();
+    expect(await fixture.readEnv()).toMatchObject({
+      RUDDER_NATIVE_PUBLIC_LISTEN: publicIngress.listenAddr,
+      RUDDER_NATIVE_NODE_UPSTREAM: publicIngress.nodeUpstream,
+      RUDDER_NATIVE_INGRESS_AUTH_KEY: publicIngress.authorizationKey,
+      RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: publicIngress.trustedProxies,
+    });
+    await bridge.close();
+    expect(bridge.publicIngressBaseUrl).toBeNull();
+    await expect(bridge.waitForPublicIngressReady!()).rejects.toMatchObject({ code: "not_ready" });
+  });
+
+  it("rejects a missing, unexpected or wrong public listener instead of accepting private readiness", async () => {
+    for (const [mode, listenAddr] of [["ready", "127.0.0.1:0"], ["public-ready", "127.0.0.1:1"]] as const) {
+      const fixture = await createFixture(mode);
+      const bridge = createBridge(fixture, { publicIngress: {
+        listenAddr, nodeUpstream: "http://127.0.0.1:3101",
+        authorizationKey: "0123456789abcdef0123456789abcdef",
+      } });
+      await expect(bridge.start()).rejects.toMatchObject({ code: "startup_failed" });
+      expect(bridge.publicIngressBaseUrl).toBeNull();
+    }
+    const fixture = await createFixture("public-ready");
+    await expect(createBridge(fixture).start()).rejects.toMatchObject({ code: "startup_failed" });
+  });
+
   it("defaults member reads and Project-Goal writes to required while Project reads always require startup", () => {
     const names = [
       "RUDDER_RUST_MEMBER_DIRECTORY_MODE",

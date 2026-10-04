@@ -45,7 +45,14 @@ use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
 mod project_reads;
+mod public_ingress;
+mod public_ingress_config;
+mod public_ingress_forwarding;
+pub mod public_ingress_proxy;
+pub mod public_ingress_websocket;
+pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
+pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
 
 pub use project_reads::PROJECT_READ_ACTION;
 
@@ -1240,6 +1247,33 @@ impl AppState {
             .get(ACTOR_ENVELOPE_REQUEST_ID_HEADER)
             .and_then(|value| value.to_str().ok())
             .ok_or(ActorEnvelopeVerificationError::Invalid)?;
+        self.verify_actor_envelope_parts(
+            key,
+            &envelope,
+            request,
+            org_id,
+            action,
+            idempotency_key,
+            body,
+            request_id,
+        )
+    }
+
+    // Both the private bridge and the public ingress use the same signature,
+    // request binding and nonce guard. Public ingress obtains its envelope from
+    // the private authorization adapter, never from a client trust header.
+    #[allow(clippy::too_many_arguments)]
+    fn verify_actor_envelope_parts(
+        &self,
+        key: &SigningKey,
+        envelope: &ActorEnvelope,
+        request: &HttpRequest,
+        org_id: &str,
+        action: &str,
+        idempotency_key: Option<&str>,
+        body: &[u8],
+        request_id: &str,
+    ) -> Result<VerifiedActor, ActorEnvelopeVerificationError> {
         let actor = envelope.actor.clone();
         if !matches!(actor.kind.as_str(), "user" | "agent") {
             return Err(ActorEnvelopeVerificationError::Invalid);
@@ -1301,6 +1335,15 @@ impl AppState {
                 return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
             }
         }
+        self.organization_member_directory_authorized(org_id, query)
+            .await
+    }
+
+    async fn organization_member_directory_authorized(
+        &self,
+        org_id: &str,
+        query: MemberDirectoryQuery,
+    ) -> HttpResponse {
         let Some(org_id) = parse_member_directory_org_id(org_id) else {
             return self.json_error(StatusCode::NOT_FOUND, "organization_not_found");
         };
@@ -2544,6 +2587,13 @@ pub struct ServerControl {
 }
 
 impl ServerRuntime {
+    pub fn bind_public_ingress(
+        &self,
+        config: PublicIngressConfig,
+    ) -> Result<PublicIngressRuntime, ServerError> {
+        PublicIngressRuntime::bind(config, self.control.state.clone())
+    }
+
     pub fn bind(config: ServerConfig) -> Result<Self, ServerError> {
         let state = Arc::new(AppState::new(config.clone())?);
         let app_state = web::Data::from(state.clone());
@@ -2707,6 +2757,82 @@ pub fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[actix_web::test]
+    async fn ingress_and_private_bridge_share_request_binding_and_nonce_ownership() {
+        let key = SigningKey::new(b"test-ingress-signing-key").unwrap();
+        let state = AppState::new(ServerConfig {
+            actor_envelope_key: Some(key.clone()),
+            ..ServerConfig::default()
+        })
+        .unwrap();
+        let org = "10000000-0000-0000-0000-000000000001";
+        let path = format!("/api/orgs/{org}/members/directory?limit=1");
+        let now = unix_time_seconds();
+        let envelope = ActorEnvelope::new(
+            ActorIdentity::new("user", "test-user").unwrap(),
+            org,
+            "test-session",
+            1,
+            ACTOR_ENVELOPE_AUDIENCE,
+            "GET",
+            &path,
+            MEMBER_DIRECTORY_ACTION,
+            b"",
+            "test-request",
+            "test-nonce",
+            now - 1,
+            now + 30,
+        )
+        .unwrap()
+        .sign_with_key(&key)
+        .unwrap();
+        let substituted = actix_web::test::TestRequest::get()
+            .uri(&path.replace("limit=1", "limit=2"))
+            .to_http_request();
+        assert!(
+            state
+                .verify_actor_envelope_parts(
+                    &key,
+                    &envelope,
+                    &substituted,
+                    org,
+                    MEMBER_DIRECTORY_ACTION,
+                    None,
+                    b"",
+                    "test-request",
+                )
+                .is_err()
+        );
+        let request = actix_web::test::TestRequest::get()
+            .uri(&path)
+            .insert_header((
+                ACTOR_ENVELOPE_HEADER,
+                serde_json::to_string(&envelope).unwrap(),
+            ))
+            .insert_header((ACTOR_ENVELOPE_REQUEST_ID_HEADER, "test-request"))
+            .to_http_request();
+        assert!(
+            state
+                .verify_actor_envelope_parts(
+                    &key,
+                    &envelope,
+                    &request,
+                    org,
+                    MEMBER_DIRECTORY_ACTION,
+                    None,
+                    b"",
+                    "test-request",
+                )
+                .is_ok()
+        );
+        // The same signed decision cannot be replayed through the other entry.
+        assert!(
+            state
+                .verify_member_directory_actor(&request, org, b"")
+                .is_err()
+        );
+    }
 
     #[test]
     fn defaults_are_local_and_bounded() {

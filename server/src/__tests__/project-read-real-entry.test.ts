@@ -123,13 +123,15 @@ async function closeServer(server: Server | undefined) {
   });
 }
 
-describe("Project reads through real public HTTP, Rust and PostgreSQL", () => {
+describe.each(["off", "required"] as const)("Project reads through real public HTTP, Rust and PostgreSQL (ingress %s)", (ingressMode) => {
   let db: ReturnType<typeof createDb> | undefined;
   let database: EmbeddedPostgresInstance | undefined;
   let dataDir = "";
   let home = "";
   let bridge: RustFoundationBridge | undefined;
   let server: Server | undefined;
+  let publicTarget: Server | string;
+  let nodeListenPort = 0;
   let connectionString = "";
   let nativeBinary = "";
   let expected: ProjectRead[];
@@ -202,18 +204,19 @@ describe("Project reads through real public HTTP, Rust and PostgreSQL", () => {
       ?.stopPolicy?.legacyNumbers).toEqual(expectedLegacyNumbers);
   }
 
-  async function startApp(selectedBridge?: RustFoundationBridge) {
+  async function startApp(selectedBridge?: RustFoundationBridge, listenPort = 0) {
     const app = express();
     app.use(express.json());
+    app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db!, { deploymentMode: "authenticated", authRequirement: "required" }));
     app.use("/api", projectRoutes(db!, selectedBridge));
     app.use(errorHandler);
-    const result = app.listen(0, "127.0.0.1");
+    const result = app.listen(listenPort, "127.0.0.1");
     await once(result, "listening");
     return result;
   }
 
-  function get(url: string, token = agentToken, target = server!) {
+  function get(url: string, token = agentToken, target: Server | string = publicTarget) {
     return request(target).get(url).set("authorization", `Bearer ${token}`);
   }
 
@@ -398,8 +401,25 @@ describe("Project reads through real public HTTP, Rust and PostgreSQL", () => {
     server = undefined;
     await bridge.close();
     // All three mutation/member switches off must still support all reads.
-    bridge = createRustFoundationBridge({ databaseUrl: connectionString, binaryPath: nativeBinary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10_000 });
-    server = await startApp(bridge);
+    nodeListenPort = ingressMode === "required" ? await getAvailablePort() : 0;
+    bridge = createRustFoundationBridge({
+      databaseUrl: connectionString, binaryPath: nativeBinary, mode: "off",
+      organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10_000,
+      ...(ingressMode === "required" ? { publicIngress: {
+        listenAddr: "127.0.0.1:0",
+        nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
+        authorizationKey: "project-read-ingress-fixture-authorization-key",
+      } } : {}),
+    });
+    server = await startApp(bridge, nodeListenPort);
+    await bridge.start();
+    publicTarget = server;
+    if (ingressMode === "required") {
+      expect(bridge.publicIngressBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      await bridge.waitForPublicIngressReady!();
+      publicTarget = bridge.publicIngressBaseUrl!;
+      expect(publicTarget).not.toBe(`http://127.0.0.1:${nodeListenPort}`);
+    }
   }, 60_000);
 
   afterAll(async () => {
@@ -505,11 +525,23 @@ describe("Project reads through real public HTTP, Rust and PostgreSQL", () => {
       expect((await get(`/api/projects/${foreignProjectId}${suffix}`)).status).toBe(403);
       expect((await get(`/api/projects/old-project${suffix}?orgId=${foreignOrgId}`)).status).toBe(403);
       expect((await get(`/api/projects/${foreignProjectId}${suffix}`, boardToken)).status).toBe(403);
-      expect((await request(server!).get(`/api/projects/${oldProjectId}${suffix}`)).status).toBe(401);
+      expect((await request(publicTarget).get(`/api/projects/${oldProjectId}${suffix}`)).status).toBe(401);
     }
     expect((await get(`/api/orgs/${foreignOrgId}/projects`)).status).toBe(403);
     expect((await get(`/api/orgs/${foreignOrgId}/projects`, boardToken)).status).toBe(403);
-    expect((await request(server!).get(`/api/orgs/${orgId}/projects`)).status).toBe(401);
+    expect((await request(publicTarget).get(`/api/orgs/${orgId}/projects`)).status).toBe(401);
+    const forgedHeaders = {
+      "x-rudder-actor-envelope": JSON.stringify({ actor: { type: "board", isInstanceAdmin: true } }),
+      "x-rudder-ingress-auth": "forged-client-key",
+      "x-rudder-request-id": "forged-client-request",
+    };
+    expect((await request(publicTarget).get(`/api/projects/${oldProjectId}`).set(forgedHeaders)).status).toBe(401);
+    expect((await get(`/api/projects/${foreignProjectId}`).set(forgedHeaders)).status).toBe(403);
+    const privateRead = await request(publicTarget)
+      .post(`/internal/orgs/${orgId}/project-reads`)
+      .set(forgedHeaders)
+      .send({ projectId: oldProjectId, resourcesOnly: false, organizationWorkspaceRoot: home });
+    expect(privateRead.status).toBe(404);
     await expectReadOnly();
   }, 20_000);
 
@@ -568,10 +600,16 @@ describe("Project reads through real public HTTP, Rust and PostgreSQL", () => {
       binaryPath: path.join(home, "foundation-does-not-exist"),
       mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off",
     });
-    const failingServer = await startApp(unavailable);
+    // Keep the real ingress process alive while replacing only its private
+    // Node target with an app whose Project foundation cannot start.
+    if (ingressMode === "required") {
+      await closeServer(server);
+      server = undefined;
+    }
+    const failingServer = await startApp(unavailable, nodeListenPort);
     try {
       for (const url of [`/api/orgs/${orgId}/projects`, `/api/projects/${oldProjectId}`, `/api/projects/${oldProjectId}/resources`]) {
-        const response = await get(url, agentToken, failingServer);
+        const response = await get(url, agentToken, ingressMode === "required" ? publicTarget : failingServer);
         expect(response.status).toBe(503);
         expect(response.body.code).toBe("rust_foundation_project_read_request_failed");
       }
@@ -579,6 +617,10 @@ describe("Project reads through real public HTTP, Rust and PostgreSQL", () => {
     } finally {
       await closeServer(failingServer);
       await unavailable.close();
+      if (ingressMode === "required") {
+        server = await startApp(bridge, nodeListenPort);
+        await bridge!.waitForPublicIngressReady!();
+      }
     }
   });
 });

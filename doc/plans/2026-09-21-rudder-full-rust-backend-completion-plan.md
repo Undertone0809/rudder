@@ -36,12 +36,101 @@ commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
   - 17c9613e3df39e2c67c07d455206312b7ac33a75
   - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
-updated_at: 2026-09-29
+updated_at: 2026-10-04
 ---
 
 # Purpose and terminal outcome
 
-## Active checkpoint (2026-09-29)
+## Current checkpoint (2026-10-04)
+
+Current published PR #245 head is `bdf2621e831d0a75fcc98617024b5d91474365a5`.
+Its D1 run `37202950941` passes. Test run `37202950944` has a Windows
+Native test failure: a forbidden request-PID substring coincidentally appeared
+in a permitted monotonic clock, rather than in leaked request data. The local
+test-only correction distinguishes sanctioned clock/hash values from actual
+request-PID leakage; all fourteen focused tests pass. Independent artifact
+review and successor CI are pending, so no protected merge is claimed.
+The default-ingress implementation is isolated at checkpoint `0ff234721e43f153db186f7f7146b67c679deb5d`;
+its effective-config versus health-identity boundary is being repaired before
+stage acceptance. These updates do not change installed source 755 or frozen
+v6 support 766, and do not widen the accepted explicit-ingress scope.
+
+PR #236 is merged at `bb785f029b0036652dc9012cd45f3ac8decafea6`.
+Its accepted fourteen-clause increment does not accept the whole authority
+inventory or alter historical FAIL/QUESTION receipts. PR #245 is the active
+Actix ingress lane, forward-integrated with that Main at source
+`755c273fe35fe28c36c37d598687d26dd09648d6`. Its installed candidate has a
+fresh normal npm installation and archive-content checks, not independent
+installed workflow acceptance. Ingress is still explicitly selected rather
+than default, and private Node auth/application authorities remain.
+
+Use the companion ledger/status current checkpoint for live CI, packet,
+installed-artifact identity, remaining gates, and the next executable step.
+PR #245 now targets protected Main; the published support head is
+`8d25940bbecbcb3c1f57988dff19a147a23f8db4`, while installed product bytes
+remain bound to source `755c273fe35fe28c36c37d598687d26dd09648d6`.
+Independent workflow-v2 stage review rejected secret CLI arguments and an
+unenforced cleanup-safe total deadline. The corrections are
+checkpointed at `21479b3a85fd8f10c6c8eb21e09dfa00f8b60186` with 34 focused
+checks passing and published to the same unaccepted Draft PR for early CI.
+Workflow-v3 stage review rejected cancellation during final close and the
+unresponsive-supervisor terminal boundary. Workflow-v4 corrections are frozen at
+support commit `8955597184bc409e3ab84244f1735f1e929a8c3e`: 43 focused tests
+pass, one platform-inapplicable case is skipped, and the packet validates.
+Independent v4 stage review is accepted, including a reviewer-run confirmation
+of the focused tests. Verifier preparation is complete and one separately
+admitted installed workflow returned `QUESTION` at C1: its private-listener
+log discovery timed out before the authenticated workflow. This is not product
+FAIL or installed acceptance. The local successor support checkpoint
+`8d25940bbecbcb3c1f57988dff19a147a23f8db4` records supervisor birth/ownership
+before readiness and its close event, and discovers the private loopback socket
+by its owned Node PID instead of the public address log. The installed artifact
+bytes match; the root cause is the runner, not a demonstrated product cutover
+failure. Workflow-v5 is frozen and validates; 54 focused tests pass with one
+platform skip. The same unaccepted Draft PR now publishes exact support8d for
+CI; predecessor b801 checks passed but do not qualify the new support candidate.
+Independent v5 stage review rejected one evidence-classification defect:
+reliable no-listener observations were reported as QUESTION at the deadline.
+Local v6 checkpoint `766cad626072077bfefc2e11e4a6984b8d2794d9` corrects
+confirmed absence to FAIL while retaining QUESTION for unavailable/no queries
+and respecting cancellation. Its 57 focused tests pass with one platform skip;
+the successor packet validates. Independent v6 stage accepts the bounded fix;
+changed-hash preparation and its additive digest correction are consumed.
+The root separately consumed resource-recovery accept and admitted one finite
+installed attempt. That single attempt ran at 12:02:59Z, before the start window
+ended, and returned independent PASS at 12:03:13Z. The root fully consumed its
+receipt and freshly verified resource closure. This accepts only explicit
+macOS installed API/CLI/WebSocket ingress and reconnect, not UI/MCP, default
+ingress, Node retirement, or whole-migration completion. Final review accepts
+this bounded slice. Main's two test/config changes are forward-integrated at
+`6514b0221dfe064a8497de15ebd567da0677ea56`, with an independently accepted
+preview-equivalent tree and 18 passing wrapper fixture checks. The final reviewer
+rebinds acceptance to that unchanged installed-product/support content. Exact
+successor CI and protected-PR gates still block a merge; prior 8d CI is historical.
+The finite twenty-minute work budget does not expire
+resource ownership. Unconfirmed shutdown records a durable, identity-bound
+`HELD_UNRESOLVED` parent handoff before detaching; only the root's verified
+recovery permits release. Identity or persistence failure retains ownership and
+fails closed, so that safety-failure branch cannot guarantee bounded exit.
+The old attempt is now CLOSED for resource ownership only: the reviewer checked
+the immutable runner's referenced-child/durable-detach control flow, and the
+root freshly confirmed no known Rust PID, logged-port listeners, exact-profile
+open handles, PostgreSQL PID file, or handoff. Historical supervisor identity
+remains unavailable; this does not retrofit C6 or upgrade the old QUESTION.
+The v6 attempt is CLOSED/SPENT with its profile retained; no automatic retry or
+new runtime is admitted. Unconfirmed cleanup would retain ownership rather than
+expire it.
+No final reviewer may accept the old QUESTION as installed PASS.
+Continue with one integration candidate; independent artifact review,
+focused smoke support, and exact-head CI run in parallel. Keep the exact frozen
+v6 identity and spent lease; no installed replay is required for the reviewed
+test/config and metadata-only successor. Publish the accepted content to the
+same Draft PR for exact-head CI, then recheck protected-merge gates. In parallel,
+one audited gpt-6-luna/xhigh implementer works on default ingress and managed
+attach identity in its isolated checkout, with no runtime or production actions.
+No production or whole-migration completion is claimed.
+
+## Historical checkpoint (2026-09-29)
 
 The bounded D1 private-bridge increment was accepted and merged through PR #225
 at `e2e603f07c7d4b7410fea7792b9a4d0667d3777e`. Delivery records followed in
@@ -1124,8 +1213,10 @@ local journey only when a relevant source, runtime, fixture, or criterion change
 
 Freeze product source independently from evidence records. Record content equivalence
 for documentation-only changes instead of restarting acceptance. The top-level
-`current_candidate` in the status file is authoritative; older checkpoints are
-historical evidence. Evaluate progress by accepted increments merged into Main and
+`current_delivery_checkpoint_2026_10_04` in the companion status and ledger is
+the sole authoritative current record; the status `current_candidate` is only
+a pointer to it. Older named candidates and checkpoints are historical evidence
+and cannot override it. Evaluate progress by accepted increments merged into Main and
 authority units actually transferred, not branches, agents, commits, or test counts.
 
 ### Convergence priority after the user's status review
@@ -1145,9 +1236,12 @@ server/CLI/MCP path, followed by D1 default writer ownership and old-writer nega
 proof. Existing private implementations are inputs to these slices, not completed
 authority transfers. Do not add a private-only capability merely to increase counts.
 
-In goal mode the parent coordinates scoped `gpt-6-luna` / `max` workers, reconciles
+In goal mode the parent coordinates scoped `gpt-6-luna` / `xhigh` workers, reconciles
 their evidence, owns the delivery records and Git integration, and assigns
-independent review and verification. Every worker has explicit file ownership and
+independent review and verification. The later user instruction supersedes the
+earlier max setting: every spawn must explicitly specify both exact model and
+effort parameters, then verify actual runtime records; no silent downgrade or
+replacement new thread is permitted. Every worker has explicit file ownership and
 a concrete terminal output. Required native CI runs collect all failing crates
 with `--no-fail-fast`, avoiding one new failure per full matrix cycle.
 

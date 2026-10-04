@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
   copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync,
-  rmSync, statSync, symlinkSync, writeFileSync,
+  realpathSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,7 +23,8 @@ const roots = [];
 const scriptName = "postinstall-embedded-postgres.mjs";
 
 function temporaryRoot() {
-  const root = mkdtempSync(path.join(tmpdir(), "rudder-wrapper-packaging-"));
+  // macOS aliases /var to /private/var; the runtime returns canonical paths.
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "rudder-wrapper-packaging-")));
   roots.push(root);
   return root;
 }

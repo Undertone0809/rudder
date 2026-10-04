@@ -11,6 +11,14 @@ import { fileURLToPath } from "node:url";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
+export type RustPublicIngressOptions = {
+  listenAddr: string;
+  nodeUpstream: string;
+  authorizationKey: string;
+  /** Explicit numeric proxy IP list; Rust validates and owns forwarding trust. */
+  trustedProxies?: string;
+};
+
 export type RustFoundationBridgeOptions = {
   databaseUrl: string;
   mode?: RustFoundationMode;
@@ -19,6 +27,7 @@ export type RustFoundationBridgeOptions = {
   binaryPath?: string;
   actorEnvelopeKey?: string;
   requestTimeoutMs?: number;
+  publicIngress?: RustPublicIngressOptions;
 };
 
 export type RustFoundationResponse = {
@@ -32,6 +41,8 @@ export interface RustFoundationBridge {
   readonly organizationBrandingMode: RustFoundationMode;
   readonly projectGoalSetMode: RustFoundationMode;
   readonly requiresStartup: boolean;
+  readonly publicIngressBaseUrl?: string | null;
+  waitForPublicIngressReady?(): Promise<void>;
   start(): Promise<void>;
   projectRead(
     actor: RustFoundationActor,
@@ -107,6 +118,7 @@ type StartupReceipt = {
   boundAddr?: unknown;
   publicListener?: unknown;
   productWriteAuthority?: unknown;
+  publicIngress?: { boundAddr?: unknown; publicListener?: unknown };
 };
 
 type RustFoundationChild = ChildProcessByStdio<null, Readable, Readable>;
@@ -297,12 +309,19 @@ function candidateBinaryPaths(configured: string | undefined) {
 function createFoundationChildEnvironment(input: {
   databaseUrl: string;
   actorEnvelopeKey: string;
+  publicIngress?: RustPublicIngressOptions;
 }): Record<string, string> {
   return {
     RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
     RUDDER_NATIVE_DATABASE_URL: input.databaseUrl,
     RUDDER_NATIVE_DATABASE_REQUIRED: "true",
     RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: input.actorEnvelopeKey,
+    ...(input.publicIngress ? {
+      RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
+      RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
+      RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
+    } : {}),
   };
 }
 
@@ -387,6 +406,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
   const requiresStartup = true;
   let child: RustFoundationChild | null = null;
   let baseUrl: string | null = null;
+  let publicIngressBaseUrl: string | null = null;
   let lifecycleState: BridgeLifecycleState = "idle";
   let lifecycleTail: Promise<void> = Promise.resolve();
   let lastStderr = "";
@@ -411,6 +431,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         env: createFoundationChildEnvironment({
           databaseUrl: options.databaseUrl,
           actorEnvelopeKey,
+          publicIngress: options.publicIngress,
         }),
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -427,6 +448,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         if (child === spawned) {
           child = null;
           baseUrl = null;
+          publicIngressBaseUrl = null;
           if (lifecycleState !== "closing") lifecycleState = "idle";
         }
       });
@@ -477,6 +499,25 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         throw new RustFoundationBridgeError("startup_failed", "Rust foundation startup receipt violated the private bridge contract");
       }
       baseUrl = `http://${boundAddr}`;
+      if (options.publicIngress) {
+        const publicAddr = receipt.publicIngress?.boundAddr;
+        const expected = options.publicIngress.listenAddr;
+        const expectedPort = expected.slice(expected.lastIndexOf(":") + 1);
+        const expectedHost = expected.slice(0, expected.lastIndexOf(":") + 1);
+        if (typeof publicAddr !== "string"
+          || receipt.publicIngress?.publicListener !== true
+          || !publicAddr.startsWith(expectedHost)
+          || (expectedPort !== "0" && publicAddr !== expected)
+          || !/^\d+$/.test(publicAddr.slice(publicAddr.lastIndexOf(":") + 1))
+          || Number(publicAddr.slice(publicAddr.lastIndexOf(":") + 1)) < 1
+          || Number(publicAddr.slice(publicAddr.lastIndexOf(":") + 1)) > 65535
+          || publicAddr === boundAddr) {
+          throw new RustFoundationBridgeError("startup_failed", "Rust public ingress binding did not match the requested listener");
+        }
+        publicIngressBaseUrl = `http://${publicAddr}`;
+      } else if (receipt.publicIngress !== undefined) {
+        throw new RustFoundationBridgeError("startup_failed", "Unexpected Rust public ingress listener");
+      }
       const deadline = Date.now() + DEFAULT_READY_TIMEOUT_MS;
       while (Date.now() < deadline) {
         try {
@@ -500,6 +541,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         ? error
         : new RustFoundationBridgeError("startup_failed", "Rust foundation startup failed", { cause: error });
       baseUrl = null;
+      publicIngressBaseUrl = null;
       if (spawned) await stopChild(spawned, spawnFailed);
       if (child === spawned) child = null;
       lifecycleState = "idle";
@@ -522,6 +564,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     lifecycleState = "closing";
     const current = child;
     baseUrl = null;
+    publicIngressBaseUrl = null;
     debugBridge(`close requested pid=${current?.pid ?? "none"}`);
     try {
       if (current) await stopChild(current);
@@ -538,6 +581,27 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     organizationBrandingMode,
     projectGoalSetMode,
     requiresStartup,
+    get publicIngressBaseUrl() { return publicIngressBaseUrl; },
+    async waitForPublicIngressReady() {
+      if (!options.publicIngress || !publicIngressBaseUrl || !child || childHasExited(child)) {
+        throw new RustFoundationBridgeError("not_ready", "Rust public ingress is not running");
+      }
+      // Called after the private Node listener binds: public readiness includes
+      // that upstream, whereas start() checks only the private Rust listener.
+      const probeUrl = publicIngressBaseUrl.replace("http://0.0.0.0:", "http://127.0.0.1:")
+        .replace("http://[::]:", "http://[::1]:");
+      const deadline = Date.now() + DEFAULT_READY_TIMEOUT_MS;
+      while (Date.now() < deadline && child && !childHasExited(child)) {
+        try {
+          const response = await fetch(`${probeUrl}/readyz`, {
+            signal: AbortSignal.timeout(Math.min(requestTimeoutMs, 1_000)),
+          });
+          if (response.status === 200) return;
+        } catch { /* Remain fail-closed while the upstream starts. */ }
+        await delay(50);
+      }
+      throw new RustFoundationBridgeError("not_ready", "Rust public ingress did not become ready");
+    },
     start: ensureStarted,
     async projectRead(actor, orgId, input) {
       await ensureStarted();
