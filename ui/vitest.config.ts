@@ -1,10 +1,16 @@
-import path from "path";
+import { realpathSync } from "node:fs";
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   server: {
     fs: {
-      allow: [path.resolve(__dirname, "..")],
+      // pnpm may resolve this worker through a dependency store outside the
+      // checkout. Allow only the PDF build assets, not the external workspace.
+      allow: [
+        path.resolve(__dirname, ".."),
+        realpathSync(path.resolve(__dirname, "node_modules/pdfjs-dist/build")),
+      ],
     },
   },
   resolve: {
