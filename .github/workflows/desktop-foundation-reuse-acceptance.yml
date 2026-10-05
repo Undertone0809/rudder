@@ -1,0 +1,225 @@
+name: Desktop foundation reuse acceptance
+
+# Qualification only. This workflow cannot promote, publish, or dispatch a release.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/desktop-foundation-reuse-acceptance.yml
+      - desktop/scripts/stage-native.mjs
+      - desktop/scripts/stage-native.test.mjs
+      - scripts/desktop-foundation-reuse-acceptance.mjs
+      - scripts/desktop-foundation-reuse-acceptance.test.mjs
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: desktop-foundation-reuse-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ACCEPTANCE_EVIDENCE_DIR: ${{ github.workspace }}/dist/foundation-reuse-evidence
+
+jobs:
+  readiness:
+    name: Exact Test artifact readiness
+    if: github.repository == 'Undertone0809/rudder' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    outputs:
+      run_id: ${{ steps.ready.outputs.run_id }}
+      artifact_ids: ${{ steps.ready.outputs.artifact_ids }}
+      source_sha: ${{ steps.ready.outputs.source_sha }}
+      tree_sha: ${{ steps.ready.outputs.tree_sha }}
+      version: ${{ steps.ready.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Test acceptance contracts without dependencies
+        run: node --test scripts/desktop-foundation-reuse-acceptance.test.mjs
+      - name: Wait for exact canonical Test qualification
+        id: ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/desktop-foundation-reuse-acceptance.mjs wait
+      - name: Upload bounded source receipt
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: foundation-reuse-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ACCEPTANCE_EVIDENCE_DIR }}/foundation-source.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  package:
+    name: macOS x64 package acceptance (25 minute ceiling)
+    needs: readiness
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
+      RELEASE_VERSION: ${{ needs.readiness.outputs.version }}
+      RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR: ${{ github.workspace }}/dist/server-foundation-artifacts
+      RUDDER_DESKTOP_TARGET_ARCH: x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.readiness.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Recheck exact producer identity and expiry before use
+        id: recheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOUNDATION_RUN_ID: ${{ needs.readiness.outputs.run_id }}
+        run: node scripts/desktop-foundation-reuse-acceptance.mjs recheck
+      - name: Download only the six validated foundation artifacts
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.recheck.outputs.artifact_ids }}
+          path: dist/server-foundation-artifacts
+          merge-multiple: true
+          run-id: ${{ needs.readiness.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Stage server foundation artifacts before Desktop build
+        run: node server/scripts/stage-native.mjs --artifact-dir "$RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR"
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      # Restore the same Release keys, but do not save qualification caches.
+      - name: Cache pnpm store
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-x64-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-x64-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint scoped imports with locked TypeScript
+        run: |
+          lint_root="$(mktemp -d "$RUNNER_TEMP/foundation-reuse-index.XXXXXX")"
+          trap 'rm -rf "$lint_root"' EXIT
+          export GIT_INDEX_FILE="$lint_root/index"
+          git read-tree --empty
+          git add -- \
+            desktop/scripts/stage-native.mjs \
+            desktop/scripts/stage-native.test.mjs \
+            scripts/desktop-foundation-reuse-acceptance.mjs \
+            scripts/desktop-foundation-reuse-acceptance.test.mjs
+          test "$(git ls-files | wc -l | tr -d '[:space:]')" = 4
+          node scripts/lint-imports.mjs
+      - name: Test frozen staging implementation
+        run: pnpm exec vitest run desktop/scripts/stage-native.test.mjs
+      - name: Verify historical migration compatibility
+        run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
+      - name: Cache Playwright Chromium
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-chromium-${{ runner.os }}-x64-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium
+      - name: Cache PostgreSQL runtime payload
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.rudder/runtime-payloads/postgres-18.4
+          key: postgres-runtime-18.4-${{ runner.os }}-x64-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs', '.github/workflows/release.yml') }}
+      - name: Prepare PostgreSQL runtime payload
+        run: |
+          bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
+          echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+      - name: Record runtime and explicitly disable diagnostic publishing
+        run: node scripts/desktop-foundation-reuse-acceptance.mjs prepare
+      - name: Apply and record the release-version mutation
+        run: |
+          node scripts/release-package-map.mjs set-version "$RELEASE_VERSION"
+          node scripts/native-release-version.mjs --expected-version="$RELEASE_VERSION"
+          node scripts/desktop-foundation-reuse-acceptance.mjs mutations
+      - name: Build final Desktop candidate
+        run: |
+          ulimit -n 65536 || ulimit -n 10240 || true
+          pnpm desktop:dist
+      - name: Verify actual staged and packaged native bytes and versions
+        run: node scripts/desktop-foundation-reuse-acceptance.mjs inspect
+      - name: Smoke packaged App Builder
+        run: node desktop/scripts/app-builder-smoke.mjs --packaged
+      - name: Smoke staged PostgreSQL runtime
+        run: |
+          staged_runtime="$GITHUB_WORKSPACE/desktop/.packaged/postgres-18.4/darwin-x64"
+          source_runtime="$(dirname "$RUDDER_POSTGRES_BIN_DIR")"
+          hidden_source_runtime="${source_runtime}.portable-smoke-hidden"
+          restore_runtime() { if [ -d "$hidden_source_runtime" ]; then mv "$hidden_source_runtime" "$source_runtime"; fi; }
+          trap restore_runtime EXIT
+          mv "$source_runtime" "$hidden_source_runtime"
+          smoke_data="$(mktemp -d "$RUNNER_TEMP/rudder-postgres-smoke.XXXXXX")"
+          "$staged_runtime/bin/initdb" --pgdata="$smoke_data" --no-locale --encoding=UTF8
+          "$staged_runtime/bin/pg_ctl" --pgdata="$smoke_data" --options="-h 127.0.0.1 -p 55432" --wait start
+          "$staged_runtime/bin/pg_ctl" --pgdata="$smoke_data" --mode=fast --wait stop
+          restore_runtime
+          trap - EXIT
+      - name: Collect verified Desktop assets
+        run: |
+          node scripts/collect-desktop-release-assets.mjs \
+            --version "$RELEASE_VERSION" --platform macos --arch x64 --out dist/desktop-assets
+          node scripts/desktop-foundation-reuse-acceptance.mjs assets
+      - name: Upload bounded package evidence only
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: foundation-reuse-package-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ACCEPTANCE_EVIDENCE_DIR }}/foundation-source.json
+            ${{ env.ACCEPTANCE_EVIDENCE_DIR }}/runtime-source.json
+            ${{ env.ACCEPTANCE_EVIDENCE_DIR }}/diagnostic-mutations.json
+            ${{ env.ACCEPTANCE_EVIDENCE_DIR }}/packaged-native.json
+            ${{ env.ACCEPTANCE_EVIDENCE_DIR }}/collected-assets.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  terminal:
+    # A separate runner can preserve the actual last phase even when macOS
+    # reaches its hard timeout before its own always() upload can execute.
+    name: Record terminal acceptance outcome
+    needs: [readiness, package]
+    if: always() && github.repository == 'Undertone0809/rudder' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Record terminal job outcomes and API phase timings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/desktop-foundation-reuse-acceptance.mjs terminal
+      - name: Upload bounded terminal evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: foundation-reuse-terminal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ACCEPTANCE_EVIDENCE_DIR }}/terminal-outcomes.json
+          if-no-files-found: error
+          retention-days: 7
