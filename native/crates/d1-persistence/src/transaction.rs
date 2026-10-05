@@ -1,7 +1,8 @@
 use crate::{
-    CommittedMutation, Outcome, ProjectCreateCommand, ProjectDeleteCommand,
-    ProjectPatchMutationOrigin, Receipt, ResultState, StoreError, branding_kind,
-    project_create_kind, project_delete_kind, project_goal_kind, project_goal_set_kind,
+    CommittedMutation, OrganizationBrandingActivityAction, Outcome, ProjectCreateCommand,
+    ProjectDeleteCommand, ProjectPatchMutationOrigin, Receipt, ResultState, StoreError,
+    branding_kind, project_create_kind, project_delete_kind, project_goal_kind,
+    project_goal_set_kind,
 };
 use rudder_organization_mutation_core::{
     OrganizationBrandingCommand, OrganizationSettingsSnapshot,
@@ -34,6 +35,7 @@ pub(crate) struct ActorMetadata {
 #[derive(Clone, Debug)]
 pub(crate) enum ExpectedReceipt {
     OrganizationBranding {
+        activity_action: OrganizationBrandingActivityAction,
         name: Option<String>,
         description: Option<Option<String>>,
         brand_color: Option<Option<String>>,
@@ -156,22 +158,22 @@ impl Metadata {
         })
     }
 
-    pub fn branding(command: &OrganizationBrandingCommand) -> Result<Self, StoreError> {
+    pub fn branding(
+        command: &OrganizationBrandingCommand,
+        activity_action: OrganizationBrandingActivityAction,
+    ) -> Result<Self, StoreError> {
         let view = command.as_integration_view()?;
-        // The first public Rust writer owns only the scalar brandColor slice.
-        // Names, descriptions, and logo storage remain on the fenced Node
-        // path until their own component handoffs are complete.
         if view.name().is_some()
             || view.description().is_some()
-            || view.logo_asset_id().is_some()
-            || view.brand_color().is_none()
+            || (view.brand_color().is_none() && view.logo_asset_id().is_none())
         {
             return Err(StoreError::InvalidInput);
         }
         let actor = actor_metadata(view.actor().kind(), view.actor().principal_id())?;
         let org = uuid(view.organization_id())?.to_owned();
         let key = bounded_text(view.idempotency_key(), false)?;
-        let fingerprint = adapter_fingerprint(branding_kind(), &view.fingerprint()?, None)?;
+        let core_fingerprint = view.fingerprint()?;
+        let fingerprint = branding_fingerprint(activity_action, &core_fingerprint)?;
         let body = json!({
             "organization_id": org,
             "actor_kind": actor.kind,
@@ -180,6 +182,7 @@ impl Metadata {
             "expected_version": view.expected_version(),
             "fence_epoch": view.fence_epoch(),
             "brand_color": view.brand_color(),
+            "logo_asset_id": view.logo_asset_id(),
         });
         ensure_json_size(&body, MAX_COMMAND_BYTES)?;
         signed(view.expected_version())?;
@@ -197,10 +200,11 @@ impl Metadata {
             goal_id: None,
             link_identifier: None,
             expected_receipt: ExpectedReceipt::OrganizationBranding {
+                activity_action,
                 name: None,
                 description: None,
                 brand_color: view.brand_color().map(|value| value.map(str::to_owned)),
-                logo_asset_id: None,
+                logo_asset_id: view.logo_asset_id().map(|value| value.map(str::to_owned)),
             },
             receipt_format: BRANDING_RECEIPT_FORMAT,
         })
@@ -1210,17 +1214,24 @@ pub(crate) async fn persist_branding(
     } else {
         "agent"
     };
+    let activity_action = match &metadata.expected_receipt {
+        ExpectedReceipt::OrganizationBranding {
+            activity_action, ..
+        } => activity_action.as_str(),
+        _ => return Err(StoreError::InvalidReceipt),
+    };
     let activity_id: String = sqlx::query_scalar(
         "INSERT INTO activity_log
           (org_id, actor_type, actor_id, action, entity_type, entity_id,
            agent_id, run_id, details, idempotency_key)
-         VALUES ($1::uuid, $2, $3, 'organization.branding_updated',
-                 'organization', $4, $5::uuid, $6::uuid, $7::jsonb, $8)
+         VALUES ($1::uuid, $2, $3, $4,
+                 'organization', $5, $6::uuid, $7::uuid, $8::jsonb, $9)
          RETURNING id::text",
     )
     .bind(&metadata.org)
     .bind(actor_type)
     .bind(&metadata.actor.principal_id)
+    .bind(activity_action)
     .bind(&effect.entity_id)
     .bind(metadata.actor.agent_id.as_deref())
     .bind(metadata.run_id.as_deref())
@@ -1256,7 +1267,7 @@ pub(crate) async fn persist_branding(
     let event_payload = json!({
         "actorType": actor_type,
         "actorId": metadata.actor.principal_id,
-        "action": "organization.branding_updated",
+        "action": activity_action,
         "entityType": "organization",
         "entityId": effect.entity_id,
         "agentId": metadata.actor.agent_id,
@@ -1477,6 +1488,7 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                 uuid(value)?;
             }
             let ExpectedReceipt::OrganizationBranding {
+                activity_action: _,
                 name,
                 description,
                 brand_color,
@@ -1972,6 +1984,26 @@ pub(crate) fn adapter_fingerprint(
         "kind": kind,
         "core_fingerprint": core_fingerprint,
         "primary_goal_after": primary_goal_after,
+    });
+    ensure_json_size(&identity, MAX_COMMAND_BYTES)?;
+    Ok(hex_digest(Sha256::digest(
+        serde_json::to_vec(&identity).map_err(|_| StoreError::InvalidInput)?,
+    )))
+}
+
+fn branding_fingerprint(
+    activity_action: OrganizationBrandingActivityAction,
+    core_fingerprint: &str,
+) -> Result<String, StoreError> {
+    if activity_action == OrganizationBrandingActivityAction::OrganizationBrandingUpdated {
+        // Keep existing dedicated-route receipts replayable across this slice.
+        return adapter_fingerprint(branding_kind(), core_fingerprint, None);
+    }
+    let identity = json!({
+        "adapter_format": 2,
+        "kind": branding_kind(),
+        "core_fingerprint": core_fingerprint,
+        "activity_action": activity_action.as_str(),
     });
     ensure_json_size(&identity, MAX_COMMAND_BYTES)?;
     Ok(hex_digest(Sha256::digest(

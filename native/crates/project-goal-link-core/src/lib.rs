@@ -84,6 +84,13 @@ impl Actor {
     fn can_mutate(&self) -> bool {
         matches!(self, Self::Board { .. } | Self::CeoAgent { .. })
     }
+
+    fn can_replace_goal_set(&self) -> bool {
+        matches!(
+            self,
+            Self::Board { .. } | Self::CeoAgent { .. } | Self::Agent { .. }
+        )
+    }
 }
 
 /// Untrusted actor identity plus an authority-issued proof.
@@ -256,7 +263,7 @@ impl ValidatedGoalSetContext {
         validate_goal_set(&goal_ids, primary_goal_after.as_deref())?;
 
         let actor = authority.verify(binding)?;
-        if actor.actor.organization_id() != organization_id || !actor.actor.can_mutate() {
+        if actor.actor.organization_id() != organization_id || !actor.actor.can_replace_goal_set() {
             return Err(if actor.actor.organization_id() != organization_id {
                 LinkMutationError::CrossOrganization
             } else {
@@ -305,7 +312,7 @@ impl ValidatedGoalSetContext {
                 organization_id: organization_id.clone(),
                 principal_id: verified_actor.actor().id.clone(),
             },
-            "agent" => Actor::CeoAgent {
+            "agent" => Actor::Agent {
                 organization_id: organization_id.clone(),
                 principal_id: verified_actor.actor().id.clone(),
             },
@@ -340,7 +347,7 @@ impl ValidatedGoalSetContext {
         if self.actor.actor.organization_id() != self.organization_id {
             return Err(LinkMutationError::CrossOrganization);
         }
-        if !self.actor.actor.can_mutate() {
+        if !self.actor.actor.can_replace_goal_set() {
             return Err(LinkMutationError::Unauthorized);
         }
         Ok(())
@@ -1519,12 +1526,20 @@ fn canonical_fingerprint_bytes(command: &ProjectGoalLinkCommand) -> Vec<u8> {
 
 fn canonical_goal_set_fingerprint_bytes(command: &ProjectGoalSetReplacementCommand) -> Vec<u8> {
     let context = &command.context;
+    // Before the signed-envelope path preserved the concrete Agent kind, Node
+    // Project PATCHes represented every agent as `ceo_agent`. Keep that
+    // historical fingerprint identity for idempotent receipt replay only;
+    // the validated view and persisted activity continue to expose `agent`.
+    let actor_kind = match context.actor.actor.kind() {
+        "agent" => "ceo_agent",
+        kind => kind,
+    };
     let mut output = Vec::new();
     append_domain_separator(&mut output, GOAL_SET_FINGERPRINT_SCHEMA);
     for field in [
         context.organization_id.as_str(),
         context.project_id.as_str(),
-        context.actor.actor.kind(),
+        actor_kind,
         context.actor.actor.principal_id(),
         command.idempotency_key.as_str(),
     ] {
@@ -1828,6 +1843,7 @@ fn hex_digest(digest: impl IntoIterator<Item = u8>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rudder_auth_core::{ActorEnvelope, ActorIdentity, NonceReplayGuard, RequestContext};
 
     struct ExistingTarget;
 
@@ -1871,6 +1887,57 @@ mod tests {
 
     fn binding(actor: Actor) -> ActorBinding {
         authority().issue(actor).unwrap()
+    }
+
+    fn verified_agent() -> VerifiedActor {
+        const SECRET: &[u8] = b"goal-set-agent-envelope-test-secret";
+        const ORGANIZATION_ID: &str = "org-a";
+        const SESSION_ID: &str = "agent-session";
+        const AUDIENCE: &str = "rudder-server-foundation";
+        const METHOD: &str = "PATCH";
+        const PATH: &str = "/api/orgs/org-a/projects/project-a/goal-set";
+        const ACTION: &str = "project.goal-set";
+        const BODY: &[u8] = br#"{"goalIds":["goal-a"]}"#;
+        const REQUEST_ID: &str = "agent-goal-set-request";
+        const NONCE: &str = "agent-goal-set-nonce";
+        const IDEMPOTENCY_KEY: &str = "agent-goal-set-key";
+        let actor = ActorIdentity::new("agent", "agent-a").unwrap();
+        let unsigned = ActorEnvelope::new(
+            actor.clone(),
+            ORGANIZATION_ID,
+            SESSION_ID,
+            1,
+            AUDIENCE,
+            METHOD,
+            PATH,
+            ACTION,
+            BODY,
+            REQUEST_ID,
+            NONCE,
+            1_000,
+            1_020,
+        )
+        .unwrap()
+        .with_idempotency_key(IDEMPOTENCY_KEY)
+        .unwrap();
+        let envelope = ActorEnvelope::from_unsigned(unsigned, SECRET).unwrap();
+        let request = RequestContext::new(
+            &actor,
+            ORGANIZATION_ID,
+            SESSION_ID,
+            1,
+            AUDIENCE,
+            METHOD,
+            PATH,
+            ACTION,
+            BODY,
+            REQUEST_ID,
+            1_010,
+        )
+        .with_idempotency_key(IDEMPOTENCY_KEY);
+        envelope
+            .verify_to_actor(SECRET, &request, &mut NonceReplayGuard::new())
+            .unwrap()
     }
 
     fn context(state: &ProjectGoalLinkState, actor: Actor) -> ValidatedLinkContext {
@@ -1979,6 +2046,83 @@ mod tests {
     }
 
     #[test]
+    fn complete_goal_set_replacement_preserves_authenticated_agent_identity() {
+        let verified_actor = verified_agent();
+        let context = ValidatedGoalSetContext::from_verified_actor(
+            &verified_actor,
+            &ExistingGoalSetTarget,
+            "org-a",
+            "project-a",
+            vec!["goal-a".to_owned()],
+            Some("goal-a".to_owned()),
+        )
+        .unwrap();
+        let actor = context.as_integration_view().unwrap().actor();
+
+        assert_eq!(actor.kind(), "agent");
+        assert_eq!(actor.organization_id(), "org-a");
+        assert_eq!(actor.principal_id(), "agent-a");
+    }
+
+    #[test]
+    fn goal_set_agent_fingerprint_replays_historical_ceo_agent_receipt() {
+        let verified_actor = verified_agent();
+        let agent_context = ValidatedGoalSetContext::from_verified_actor(
+            &verified_actor,
+            &ExistingGoalSetTarget,
+            "org-a",
+            "project-a",
+            vec!["goal-a".to_owned()],
+            Some("goal-a".to_owned()),
+        )
+        .unwrap();
+        let agent_command = ProjectGoalSetReplacementCommand::from_validated_context(
+            agent_context,
+            2,
+            4,
+            "legacy-goal-set-replay",
+        );
+
+        let authority = authority();
+        let historical_ceo_agent = authority
+            .issue(Actor::CeoAgent {
+                organization_id: "org-a".to_owned(),
+                principal_id: "agent-a".to_owned(),
+            })
+            .unwrap();
+        let historical_context = ValidatedGoalSetContext::from_target_snapshot(
+            &historical_ceo_agent,
+            &authority,
+            &ExistingGoalSetTarget,
+            "org-a",
+            "project-a",
+            vec!["goal-a".to_owned()],
+            Some("goal-a".to_owned()),
+        )
+        .unwrap();
+        let historical_command = ProjectGoalSetReplacementCommand::from_validated_context(
+            historical_context,
+            2,
+            4,
+            "legacy-goal-set-replay",
+        );
+
+        assert_eq!(
+            agent_command
+                .as_integration_view()
+                .unwrap()
+                .context()
+                .actor()
+                .kind(),
+            "agent"
+        );
+        assert_eq!(
+            agent_command.fingerprint().unwrap(),
+            historical_command.fingerprint().unwrap()
+        );
+    }
+
+    #[test]
     fn goal_set_fingerprint_excludes_rotating_request_envelope_proof() {
         let original = goal_set(
             vec!["goal-a".to_owned(), "goal-b".to_owned()],
@@ -2068,9 +2212,9 @@ mod tests {
 
         let authority = authority();
         let foreign_binding = authority
-            .issue(Actor::Board {
+            .issue(Actor::Agent {
                 organization_id: "org-b".to_owned(),
-                principal_id: "board-b".to_owned(),
+                principal_id: "agent-b".to_owned(),
             })
             .unwrap();
         assert_eq!(

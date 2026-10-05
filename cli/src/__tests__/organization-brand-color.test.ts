@@ -78,6 +78,51 @@ describe("organization brand color CLI command", () => {
     });
   });
 
+  it("links an existing logo asset and exposes nullable branding clears", async () => {
+    const fetchMock = vi.fn(async (..._args: Parameters<typeof fetch>) => new Response(JSON.stringify({ id: "organization-1" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+    const logoAssetId = "11111111-1111-4111-8111-111111111111";
+    const baseArgs = [
+      process.execPath,
+      "rudder",
+      "org",
+      "brand-color",
+      "update",
+      "--org-id",
+      "organization-1",
+      "--idempotency-key",
+      "branding-contract-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "runtime-key",
+      "--json",
+    ];
+
+    const logoArgs = [...baseArgs];
+    logoArgs.splice(logoArgs.indexOf("--idempotency-key") + 2, 0, "--logo-asset-id", logoAssetId);
+    process.argv = logoArgs;
+    const logoExitCode = await runCli(logoArgs);
+    expect(logoExitCode, output.stderrText()).toBe(0);
+
+    const clearArgs = [...baseArgs];
+    clearArgs.splice(clearArgs.indexOf("--idempotency-key") + 2, 0, "--clear-brand-color", "--clear-logo");
+    process.argv = clearArgs;
+    await expect(runCli(clearArgs)).resolves.toBe(0);
+
+    const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(requests).toEqual([
+      { logoAssetId },
+      { brandColor: null, logoAssetId: null },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(output.stderrText()).toBe("");
+  });
+
   it("reports API failures through the standard JSON error path", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "branding denied" }), {
       status: 403,

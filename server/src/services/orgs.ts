@@ -292,6 +292,15 @@ export function organizationService(db: Db) {
       return enrichCompany(hydrated, aliases.map((alias) => alias.prefix));
     },
 
+    getBrandingMutationOwner: async (id: string) => {
+      const state = await db
+        .select({ owner: organizationBrandingMutationState.owner })
+        .from(organizationBrandingMutationState)
+        .where(eq(organizationBrandingMutationState.orgId, id))
+        .then((rows) => rows[0] ?? null);
+      return state?.owner ?? null;
+    },
+
     create: (data: OrganizationCreateInput) =>
       db.transaction(async (tx) => {
         const { workspace, analytics, ...organizationData } = data as OrganizationCreateInput & {
@@ -360,8 +369,9 @@ export function organizationService(db: Db) {
       data: Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
     ) =>
       db.transaction(async (tx) => {
-        const writesBrandColor = Object.prototype.hasOwnProperty.call(data, "brandColor");
-        if (writesBrandColor) await lockNodeOrganizationBrandingAuthority(tx, id);
+        const writesBrandingField = ["brandColor", "logoAssetId"]
+          .some((field) => Object.prototype.hasOwnProperty.call(data, field));
+        if (writesBrandingField) await lockNodeOrganizationBrandingAuthority(tx, id);
         await lockNodeMutationAuthority(tx, id);
         const existing = await getCompanyQuery(tx)
           .where(eq(organizations.id, id))

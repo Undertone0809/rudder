@@ -15,6 +15,14 @@ type CliHelpers = {
   pushOptional: (args: string[], flag: string, value: unknown) => void;
 };
 
+function normalizedBrandingValue(field: "brandColor" | "logoAssetId", value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`Invalid branding argument: ${field}`);
+  }
+  const trimmed = value.trim();
+  return field === "logoAssetId" ? trimmed.toLowerCase() : trimmed;
+}
+
 export async function dispatchD1CapabilityDirectly(
   capabilityId: string,
   input: Record<string, unknown>,
@@ -26,9 +34,22 @@ export async function dispatchD1CapabilityDirectly(
   switch (capabilityId) {
     case "organization.brand_color.update": {
       const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
+      const patch: Record<string, unknown> = {};
+      for (const field of ["brandColor", "logoAssetId"] as const) {
+        if (!Object.prototype.hasOwnProperty.call(input, field) || input[field] === undefined) continue;
+        const value = input[field];
+        if (value === null) {
+          patch[field] = null;
+          continue;
+        }
+        patch[field] = normalizedBrandingValue(field, value);
+      }
+      if (Object.keys(patch).length === 0) {
+        throw new Error("Provide brandColor or logoAssetId to update");
+      }
       return { data: await api.patch(
         `/api/orgs/${encodeURIComponent(orgId)}/branding`,
-        { brandColor: requiredString(input, "brandColor") },
+        patch,
         { headers: {
           "x-rudder-idempotency-key": requiredString(input, "idempotencyKey"),
           "x-rudder-required-authority": "rust",
@@ -79,7 +100,18 @@ export function organizationBrandColorCliArgs(
 ): string[] {
   const args = ["org", "brand-color", "update"];
   pushOptional(args, "--org-id", env.RUDDER_ORG_ID);
-  args.push("--brand-color", requiredString(input, "brandColor"));
+  let hasPatch = false;
+  if (Object.prototype.hasOwnProperty.call(input, "brandColor") && input.brandColor !== undefined) {
+    hasPatch = true;
+    if (input.brandColor === null) args.push("--clear-brand-color");
+    else pushOptional(args, "--brand-color", normalizedBrandingValue("brandColor", input.brandColor));
+  }
+  if (Object.prototype.hasOwnProperty.call(input, "logoAssetId") && input.logoAssetId !== undefined) {
+    hasPatch = true;
+    if (input.logoAssetId === null) args.push("--clear-logo");
+    else pushOptional(args, "--logo-asset-id", normalizedBrandingValue("logoAssetId", input.logoAssetId));
+  }
+  if (!hasPatch) throw new Error("Provide brandColor or logoAssetId to update");
   args.push("--idempotency-key", requiredString(input, "idempotencyKey"));
   return args;
 }

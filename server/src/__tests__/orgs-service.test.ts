@@ -17,6 +17,7 @@ import {
   issueDocuments,
   issues,
   labels,
+  organizationBrandingMutationState,
   organizationSkills,
   organizations,
   projectWorkspaces,
@@ -737,6 +738,54 @@ describe("organization service", () => {
       else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
       fs.rmSync(rudderHome, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    ["brand color", { brandColor: "#abcdef" }],
+    ["logo", { logoAssetId: null }],
+  ])("fences Node %s updates after branding ownership moves to Rust", async (_field, patch) => {
+    const organization = await orgSvc.create({
+      name: "Rust Owned Branding Fence",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.execute(sql`
+      UPDATE organization_branding_mutation_state
+      SET owner = 'rust', fence_epoch = fence_epoch + 1, fence_token = gen_random_uuid()
+      WHERE org_id = ${organization.id}::uuid
+    `);
+
+    await expect(orgSvc.update(organization.id, patch)).rejects.toThrow("owned by Rust");
+    const unchanged = await orgSvc.getById(organization.id);
+    expect(unchanged?.name).toBe(organization.name);
+    expect(unchanged?.logoAssetId).toBe(organization.logoAssetId);
+    expect(unchanged?.updatedAt).toEqual(organization.updatedAt);
+  });
+
+  it.each([
+    ["name", { name: "Renamed while Rust owns branding" }],
+    ["description", { description: "Edited while Rust owns branding" }],
+  ])("keeps organization %s editable outside the Rust branding fence", async (_field, patch) => {
+    const organization = await orgSvc.create({
+      name: "Rust-Owned Branding With Node Settings",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.execute(sql`
+      UPDATE organization_branding_mutation_state
+      SET owner = 'rust', fence_epoch = fence_epoch + 1, fence_token = gen_random_uuid()
+      WHERE org_id = ${organization.id}::uuid
+    `);
+
+    const updated = await orgSvc.update(organization.id, patch);
+    expect(updated).toMatchObject(patch);
+    const stateRows = await db
+      .select({
+        owner: organizationBrandingMutationState.owner,
+        mutationVersion: organizationBrandingMutationState.mutationVersion,
+        fenceEpoch: organizationBrandingMutationState.fenceEpoch,
+      })
+      .from(organizationBrandingMutationState)
+      .where(eq(organizationBrandingMutationState.orgId, organization.id));
+    expect(stateRows).toEqual([{ owner: "rust", mutationVersion: 0n, fenceEpoch: 1n }]);
   });
 
   it("does not backfill labels for organizations created before the default seeding path", async () => {

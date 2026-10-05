@@ -101,13 +101,13 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "organization.brand_color.update",
     "name": "rudder_organization_brand_color_update",
-    "description": "Update the authenticated organization's brand color.",
-    "semanticDescription": "Update the authenticated organization's brand color. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "description": "Set or clear the authenticated organization's brand color and link or clear an existing same-organization logo asset.",
+    "semanticDescription": "Set or clear the authenticated organization's brand color and link or clear an existing same-organization logo asset. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
     "annotations": {
       "destructiveHint": false,
       "idempotentHint": true,
       "readOnlyHint": false,
-      "title": "Update the authenticated organization's brand color"
+      "title": "Update organization branding"
     },
     "mutating": true,
     "requiresOrgId": true,
@@ -115,22 +115,46 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true,
     "inputSchema": {
       "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "brandColor"
+          ]
+        },
+        {
+          "required": [
+            "logoAssetId"
+          ]
+        }
+      ],
       "properties": {
         "brandColor": {
-          "description": "Hex brand color, for example #123456.",
+          "description": "Hex brand color, for example #123456; null clears it. Omit to preserve it.",
           "maxLength": 7,
           "minLength": 7,
-          "type": "string"
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "idempotencyKey": {
           "description": "Required stable key for safe replay.",
           "maxLength": 255,
           "minLength": 1,
           "type": "string"
+        },
+        "logoAssetId": {
+          "description": "Existing asset UUID from this organization; null clears the logo. Omit to preserve it.",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "brandColor",
         "idempotencyKey"
       ],
       "type": "object"
@@ -1156,6 +1180,6 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   ...GENERATED_RUDDER_MCP_TOOL_DESCRIPTORS_003,
   ...GENERATED_RUDDER_MCP_TOOL_DESCRIPTORS_004
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "ab5f3638133b155f8637f5cc271ca8042ed238a420101a47ede2aaded8ca4a82";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "0c857b06fba2c6bbe65adb71e546e6fc8cadea28cf5d1a438d5fb37954e95120";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";
-export const GENERATED_RUDDER_AGENT_CONTRACT_HASH = "40640159976a63bd4971f8a5c4b29842eb95ffa769fac290d26abf2c24418bb4";
+export const GENERATED_RUDDER_AGENT_CONTRACT_HASH = "8c00738ede76c3057e9bb3d55273267530745e0d90fed4c373e2dbe1b685c8a1";

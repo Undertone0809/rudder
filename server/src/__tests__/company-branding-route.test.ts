@@ -11,6 +11,7 @@ const mockCompanyService = vi.hoisted(() => ({
   list: vi.fn(),
   stats: vi.fn(),
   getById: vi.fn(),
+  getBrandingMutationOwner: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
   archive: vi.fn(),
@@ -166,6 +167,7 @@ afterEach(async () => {
 describe("PATCH /api/orgs/:orgId/branding", () => {
   beforeEach(() => {
     mockCompanyService.update.mockReset();
+    mockCompanyService.getBrandingMutationOwner.mockReset().mockResolvedValue("node");
     mockAgentService.getById.mockReset();
     mockLogActivity.mockReset();
     mockOrganizationMemberService.list.mockReset();
@@ -499,14 +501,14 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
     const res = await request(app)
       .patch("/api/orgs/organization-1/branding")
       .set("x-rudder-idempotency-key", "branding-route-test")
-      .send({ brandColor: "#abcdef" });
+      .send({ brandColor: "#abcdef", logoAssetId: "11111111-1111-4111-8111-111111111111" });
 
     expect(res.status).toBe(200);
     expect(res.body.brandColor).toBe("#abcdef");
     expect(rustBridge.organizationBranding).toHaveBeenCalledWith(
       expect.objectContaining({ originalUrl: "/api/orgs/organization-1/branding" }),
       "organization-1",
-      Buffer.from(JSON.stringify({ brandColor: "#abcdef" }), "utf8"),
+      Buffer.from(JSON.stringify({ brandColor: "#abcdef", logoAssetId: "11111111-1111-4111-8111-111111111111" }), "utf8"),
       "/api/orgs/organization-1/branding",
     );
     expect(mockCompanyService.update).not.toHaveBeenCalled();
@@ -521,6 +523,90 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
       oldAuthorityInvoked: false,
       status: 200,
     }]);
+  });
+
+  it("routes a logo-only generic organization PATCH through Rust with its original route identity", async () => {
+    const organization = createOrganization();
+    const logoAssetId = "22222222-2222-4222-8222-222222222222";
+    mockCompanyService.getById.mockResolvedValue({ ...organization, logoAssetId });
+    const rustBridge = bridge("required", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ status: "applied" })),
+    }, "required");
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+      sessionId: "session-1",
+      authEpoch: 3,
+    }, rustBridge);
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1")
+      .set("x-rudder-idempotency-key", "branding-logo-generic")
+      .send({ logoAssetId });
+
+    expect(res.status).toBe(200);
+    expect(res.body.logoAssetId).toBe(logoAssetId);
+    expect(rustBridge.organizationBranding).toHaveBeenCalledWith(
+      expect.objectContaining({ originalUrl: "/api/orgs/organization-1" }),
+      "organization-1",
+      Buffer.from(JSON.stringify({ logoAssetId }), "utf8"),
+      "/api/orgs/organization-1",
+    );
+    expect(mockCompanyService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("routes a logo-only dedicated branding PATCH through Rust", async () => {
+    const organization = createOrganization();
+    const rustBridge = bridge("required", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ status: "applied" })),
+    }, "required");
+    mockCompanyService.getById.mockResolvedValue(organization);
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1/branding")
+      .set("x-rudder-idempotency-key", "branding-logo-dedicated")
+      .send({ logoAssetId: null });
+
+    expect(res.status).toBe(200);
+    expect(rustBridge.organizationBranding).toHaveBeenCalledWith(
+      expect.objectContaining({ originalUrl: "/api/orgs/organization-1/branding" }),
+      "organization-1",
+      Buffer.from(JSON.stringify({ logoAssetId: null }), "utf8"),
+      "/api/orgs/organization-1/branding",
+    );
+    expect(mockCompanyService.update).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for logo writes to a Rust-owned organization when Rust branding is unavailable", async () => {
+    mockCompanyService.getBrandingMutationOwner.mockResolvedValue("rust");
+    const rustBridge = bridge("required", null, "required");
+    vi.mocked(rustBridge.organizationBranding).mockRejectedValueOnce(new Error("bridge unavailable"));
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1")
+      .set("x-rudder-idempotency-key", "branding-logo-unavailable")
+      .send({ logoAssetId: null });
+
+    expect(res.status).toBe(503);
+    expect(rustBridge.organizationBranding).toHaveBeenCalledOnce();
+    expect(mockCompanyService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("fails closed when required Rust branding is unavailable", async () => {
@@ -613,6 +699,51 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
     expect(res.body.budgetMonthlyCents).toBe(1000);
     expect(rustBridge.organizationBranding).not.toHaveBeenCalled();
     expect(mockCompanyService.update).toHaveBeenCalledWith("organization-1", { budgetMonthlyCents: 1000 });
+  });
+
+  it("keeps name and description editable after Rust takes ownership of branding", async () => {
+    const organization = createOrganization();
+    mockCompanyService.getBrandingMutationOwner.mockResolvedValue("rust");
+    mockCompanyService.update
+      .mockResolvedValueOnce({ ...organization, name: "Renamed organization" })
+      .mockResolvedValueOnce({ ...organization, description: "Updated description" });
+    mockCompanyService.update.mockClear();
+    mockLogActivity.mockClear();
+    const rustBridge = bridge("required", null, "required");
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const name = await request(app)
+      .patch("/api/orgs/organization-1")
+      .send({ name: "Renamed organization" });
+    const description = await request(app)
+      .patch("/api/orgs/organization-1/branding")
+      .send({ description: "Updated description" });
+
+    expect(name.status).toBe(200);
+    expect(name.body.name).toBe("Renamed organization");
+    expect(description.status).toBe(200);
+    expect(description.body.description).toBe("Updated description");
+    expect(rustBridge.organizationBranding).not.toHaveBeenCalled();
+    expect(mockCompanyService.getBrandingMutationOwner).not.toHaveBeenCalled();
+    expect(mockCompanyService.update).toHaveBeenNthCalledWith(1, "organization-1", {
+      name: "Renamed organization",
+    });
+    expect(mockCompanyService.update).toHaveBeenNthCalledWith(2, "organization-1", {
+      description: "Updated description",
+    });
+    expect(mockLogActivity).toHaveBeenCalledTimes(2);
+    expect(mockLogActivity).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({
+      action: "organization.updated",
+      details: { name: "Renamed organization" },
+    }));
+    expect(mockLogActivity).toHaveBeenNthCalledWith(2, expect.anything(), expect.objectContaining({
+      action: "organization.branding_updated",
+      details: { description: "Updated description" },
+    }));
   });
 });
 

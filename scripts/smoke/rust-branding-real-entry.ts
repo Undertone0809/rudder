@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer as createNetServer } from "node:net";
@@ -152,6 +153,21 @@ async function main() {
     assert.equal(patch.status, 200);
     assert.equal((patch.body as { brandColor?: string }).brandColor, "#abcdef");
 
+    const renamed = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Rust branding real entry renamed" }),
+    }));
+    assert.equal(renamed.status, 200);
+    assert.equal((renamed.body as { name?: string }).name, "Rust branding real entry renamed");
+    const descriptionUpdated = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ description: "Node-owned organization profile field" }),
+    }));
+    assert.equal(descriptionUpdated.status, 200);
+    assert.equal((descriptionUpdated.body as { description?: string }).description, "Node-owned organization profile field");
+
     const unlistedPatch = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${unlistedOrganizationId}/branding`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -162,7 +178,7 @@ async function main() {
 
     sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     const organizationRows = await sql.unsafe(
-      "SELECT brand_color FROM organizations WHERE id = $1",
+      "SELECT name, description, brand_color FROM organizations WHERE id = $1",
       [organizationId],
     );
     const stateRows = await sql.unsafe(
@@ -176,15 +192,22 @@ async function main() {
       [organizationId, idempotencyKey],
     );
     const activityRows = await sql.unsafe(
-      "SELECT action FROM activity_log WHERE org_id = $1 AND action = $2",
-      [organizationId, "organization.branding_updated"],
+      "SELECT action, details FROM activity_log "
+        + "WHERE org_id = $1 AND entity_type = 'organization' AND entity_id = $1::text "
+        + "AND action IN ('organization.updated', 'organization.branding_updated') "
+        + "ORDER BY action, details::text",
+      [organizationId],
     );
     const outboxRows = await sql.unsafe(
       "SELECT state, attempts FROM organization_mutation_outbox "
         + "WHERE org_id = $1 ORDER BY created_at DESC LIMIT 1",
       [organizationId],
     );
-    assert.equal(organizationRows[0]?.brand_color, "#abcdef");
+    assert.deepEqual(organizationRows[0], {
+      name: "Rust branding real entry renamed",
+      description: "Node-owned organization profile field",
+      brand_color: "#abcdef",
+    });
     assert.deepEqual(stateRows[0], { owner: "rust", mutation_version: "1", fence_epoch: "1" });
     const unlistedStateRows = await sql.unsafe(
       "SELECT owner FROM organization_branding_mutation_state WHERE org_id = $1",
@@ -192,7 +215,11 @@ async function main() {
     );
     assert.deepEqual(Array.from(unlistedStateRows), [{ owner: "node" }]);
     assert.deepEqual(receiptRows[0], { outcome: "applied", resulting_version: "1", fence_epoch: "1" });
-    assert.deepEqual(Array.from(activityRows), [{ action: "organization.branding_updated" }]);
+    assert.deepEqual(Array.from(activityRows), [
+      { action: "organization.branding_updated", details: { brandColor: "#abcdef" } },
+      { action: "organization.branding_updated", details: { description: "Node-owned organization profile field" } },
+      { action: "organization.updated", details: { name: "Rust branding real entry renamed" } },
+    ]);
     assert.equal(outboxRows.length, 1);
     assert.ok(outboxRows[0]?.state === "pending" || outboxRows[0]?.state === "published");
 
@@ -303,6 +330,58 @@ async function main() {
     assert.equal(keyResponse.status, 201);
     const agentApiKey = String((keyResponse.body as { token?: string }).token);
     assert.match(agentApiKey, /^pcp_[a-f0-9]{48}$/u);
+    const logoAssetId = randomUUID();
+    const shortLogoAssetId = logoAssetId.replace(/-/gu, "").slice(0, 12);
+    const foreignLogoAssetId = randomUUID();
+    await sql?.unsafe(
+      "INSERT INTO assets (id, org_id, provider, object_key, content_type, byte_size, sha256) "
+        + "VALUES ($1::uuid, $2::uuid, 'test', $3, 'image/png', 1, $4)",
+      [logoAssetId, organizationId, `branding/${logoAssetId}`, "e".repeat(64)],
+    );
+    await sql?.unsafe(
+      "INSERT INTO assets (id, org_id, provider, object_key, content_type, byte_size, sha256) "
+        + "VALUES ($1::uuid, $2::uuid, 'test', $3, 'image/png', 1, $4)",
+      [foreignLogoAssetId, unlistedOrganizationId, `branding/${foreignLogoAssetId}`, "f".repeat(64)],
+    );
+    const invalidBrandingBefore = await sql?.unsafe(
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, "
+        + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
+        + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "WHERE o.id=$1::uuid",
+      [organizationId],
+    );
+    const missingLogoAssetId = "40000000-0000-4000-8000-000000000099";
+    const missingLogo = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": `missing-logo-${organizationId}`,
+      },
+      body: JSON.stringify({ brandColor: "#654321", logoAssetId: missingLogoAssetId }),
+    }));
+    assert.equal(missingLogo.status, 404);
+    const foreignLogo = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": `foreign-logo-${organizationId}`,
+      },
+      body: JSON.stringify({ brandColor: "#654321", logoAssetId: foreignLogoAssetId }),
+    }));
+    assert.equal(foreignLogo.status, 422);
+    const invalidBrandingAfter = await sql?.unsafe(
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, "
+        + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
+        + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "WHERE o.id=$1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(invalidBrandingAfter, invalidBrandingBefore,
+      "missing or foreign logo rejection changed branding state or side effects");
 
     const cliRuntimeEnv = {
       RUDDER_API_URL: current.apiUrl,
@@ -323,34 +402,86 @@ async function main() {
     const cliBody = JSON.parse(cliResult.stdout) as { brandColor?: string };
     assert.equal(cliBody.brandColor, "#bada55");
 
-    const mcpResult = await runChildProcess(
+    const cliLogoLink = await runChildProcess(
       process.execPath,
-      [tsxPath, cliEntryPath, "mcp-server"],
+      [tsxPath, cliEntryPath, "org", "brand-color", "update", "--org-id", organizationId,
+        "--logo-asset-id", logoAssetId, "--idempotency-key", `cli-logo-${organizationId}`, "--json"],
       repoRoot,
-      {
-        ...cliRuntimeEnv,
-        RUDDER_TOOL_TRANSPORT_SURFACE: "mcp",
-        RUDDER_MCP_RUDDER_BIN: path.join(home, "missing-rudder-cli"),
-      },
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: "branding-mcp",
-        method: "tools/call",
-        params: {
-          name: "rudder_organization_brand_color_update",
-          arguments: {
-            brandColor: "#c0ffee",
-            idempotencyKey: `mcp-${organizationId}`,
-          },
-        },
-      }) + "\n",
+      cliRuntimeEnv,
     );
-    assert.equal(mcpResult.exitCode, 0, mcpResult.stderr || mcpResult.stdout);
-    const mcpBody = JSON.parse(mcpResult.stdout.trim()) as {
-      result?: { isError?: boolean; structuredContent?: { brandColor?: string } };
+    assert.equal(cliLogoLink.exitCode, 0, cliLogoLink.stderr || cliLogoLink.stdout);
+    const cliLogoBody = JSON.parse(cliLogoLink.stdout) as { brandColor?: string; logoAssetId?: string };
+    assert.equal(cliLogoBody.brandColor, "#bada55", "logo-only CLI update changed the omitted brand color");
+    assert.equal(cliLogoBody.logoAssetId, shortLogoAssetId,
+      "CLI output did not preserve Rudder's stable short-ID display convention");
+    const cliLogoRows = await sql?.unsafe(
+      "SELECT asset_id::text AS asset_id FROM organization_logos WHERE org_id = $1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(Array.from(cliLogoRows ?? []), [{ asset_id: logoAssetId }]);
+
+    const runMcpBranding = async (requestId: string, input: Record<string, unknown>) => {
+      const result = await runChildProcess(
+        process.execPath,
+        [tsxPath, cliEntryPath, "mcp-server"],
+        repoRoot,
+        {
+          ...cliRuntimeEnv,
+          RUDDER_TOOL_TRANSPORT_SURFACE: "mcp",
+          RUDDER_MCP_RUDDER_BIN: path.join(home, "missing-rudder-cli"),
+        },
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "tools/call",
+          params: {
+            name: "rudder_organization_brand_color_update",
+            arguments: input,
+          },
+        }) + "\n",
+      );
+      assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+      const body = JSON.parse(result.stdout.trim()) as {
+        result?: { isError?: boolean; structuredContent?: { brandColor?: string | null; logoAssetId?: string | null } };
+      };
+      assert.equal(body.result?.isError, false);
+      return { result, body, organization: body.result?.structuredContent };
     };
-    assert.equal(mcpBody.result?.isError, false);
-    assert.equal(mcpBody.result?.structuredContent?.brandColor, "#c0ffee");
+
+    const mcpLogoLink = await runMcpBranding("branding-mcp-logo-link", {
+      logoAssetId: logoAssetId.toUpperCase(),
+      idempotencyKey: `mcp-logo-${organizationId}`,
+    });
+    assert.equal(mcpLogoLink.organization?.brandColor, "#bada55");
+    assert.equal(mcpLogoLink.organization?.logoAssetId, shortLogoAssetId,
+      "MCP logo link did not preserve omitted brand color or Rudder's short-ID output convention");
+    const mcpLogoRows = await sql?.unsafe(
+      "SELECT asset_id::text AS asset_id FROM organization_logos WHERE org_id = $1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(Array.from(mcpLogoRows ?? []), [{ asset_id: logoAssetId }],
+      "MCP uppercase UUID input was not normalized to the canonical stored logo asset ID");
+
+    const mcpLogoClear = await runMcpBranding("branding-mcp-logo-clear", {
+      logoAssetId: null,
+      idempotencyKey: `mcp-logo-clear-${organizationId}`,
+    });
+    assert.equal(mcpLogoClear.organization?.brandColor, "#bada55",
+      "nullable MCP logo clear changed the omitted brand color");
+    assert.equal(mcpLogoClear.organization?.logoAssetId, null);
+    const clearedLogoRows = await sql?.unsafe(
+      "SELECT asset_id::text AS asset_id FROM organization_logos WHERE org_id = $1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(Array.from(clearedLogoRows ?? []), [], "MCP logo clear left the organization logo link");
+
+    const mcpBrandColorClear = await runMcpBranding("branding-mcp-color-clear", {
+      brandColor: null,
+      idempotencyKey: `mcp-color-clear-${organizationId}`,
+    });
+    assert.equal(mcpBrandColorClear.organization?.brandColor, null);
+    assert.equal(mcpBrandColorClear.organization?.logoAssetId, null,
+      "nullable MCP color clear changed the omitted logo field");
 
     // Seed a delayed, previously claimed row so the live publisher cannot race
     // the simulated process interruption by finishing an in-flight delivery.
@@ -430,9 +561,17 @@ async function main() {
       auditFailureStatus: auditFailure.status,
       auditRetryStatus: auditRetry.status,
       cliStatus: cliResult.exitCode,
-      mcpStatus: mcpResult.exitCode,
+      cliLogoLinkStatus: cliLogoLink.exitCode,
+      missingLogoStatus: missingLogo.status,
+      foreignLogoStatus: foreignLogo.status,
+      mcpLogoLinkStatus: mcpLogoLink.result.exitCode,
+      mcpLogoClearStatus: mcpLogoClear.result.exitCode,
+      mcpBrandColorClearStatus: mcpBrandColorClear.result.exitCode,
       cliBrandColor: cliBody.brandColor,
-      mcpBrandColor: mcpBody.result?.structuredContent?.brandColor,
+      cliLogoAssetId: cliLogoBody.logoAssetId,
+      mcpLogoAssetId: mcpLogoLink.organization?.logoAssetId,
+      mcpBrandColorAfterLogoClear: mcpLogoClear.organization?.brandColor,
+      mcpBrandColorAfterClear: mcpBrandColorClear.organization?.brandColor,
       state: stateRows[0],
       unlistedOwnerAfterRestart: unlistedRestartStateRows[0]?.owner,
       receipt: receiptRows[0],

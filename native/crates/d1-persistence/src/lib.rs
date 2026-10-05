@@ -41,6 +41,21 @@ const COMMAND_KIND_PROJECT_DELETE: &str = "project_delete";
 const COMMAND_KIND_PROJECT_CREATE: &str = "project_create";
 const COMMAND_KIND_ORGANIZATION_RESOURCE: &str = "organization_resource";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OrganizationBrandingActivityAction {
+    OrganizationUpdated,
+    OrganizationBrandingUpdated,
+}
+
+impl OrganizationBrandingActivityAction {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::OrganizationUpdated => "organization.updated",
+            Self::OrganizationBrandingUpdated => "organization.branding_updated",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
@@ -450,7 +465,21 @@ impl MutationStore {
         &self,
         command: OrganizationBrandingCommand,
     ) -> Result<CommittedMutation, StoreError> {
-        let metadata = transaction::Metadata::branding(&command)?;
+        self.branding_with_activity_action(
+            command,
+            OrganizationBrandingActivityAction::OrganizationBrandingUpdated,
+        )
+        .await
+    }
+
+    /// Apply branding from a route whose legacy activity action is part of its
+    /// idempotency identity.
+    pub async fn branding_with_activity_action(
+        &self,
+        command: OrganizationBrandingCommand,
+        activity_action: OrganizationBrandingActivityAction,
+    ) -> Result<CommittedMutation, StoreError> {
+        let metadata = transaction::Metadata::branding(&command, activity_action)?;
         let mut tx = transaction::begin(&self.pool).await?;
         let result = branding::apply(&mut tx, command, &metadata).await;
         transaction::finish(tx, result).await

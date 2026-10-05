@@ -153,13 +153,19 @@ fn map_request(
                 None,
             )
         }
-        "organization.brand_color.update" => (
-            HttpMethod::Patch,
-            format!("/api/orgs/{}/branding", encode_path_segment(org())),
-            Some(json!({
-                "brandColor": s("brandColor")?
-            })),
-        ),
+        "organization.brand_color.update" => {
+            let mut branding = Map::new();
+            for key in ["brandColor", "logoAssetId"] {
+                if let Some(value) = input.get(key) {
+                    branding.insert(key.to_owned(), value.clone());
+                }
+            }
+            (
+                HttpMethod::Patch,
+                format!("/api/orgs/{}/branding", encode_path_segment(org())),
+                Some(Value::Object(branding)),
+            )
+        }
         "project.update" => {
             if let Some(org_id) = runtime_string(runtime.organization_id.as_deref()) {
                 query.push(("orgId".into(), org_id.into()));
@@ -1121,6 +1127,51 @@ pub fn query_string(query: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn organization_branding_maps_logo_only_and_nullable_clears_without_defaults() {
+        let runtime = ManagedRuntimeIdentity {
+            organization_id: Some("org/one".into()),
+            ..ManagedRuntimeIdentity::default()
+        };
+        let tool = "rudder_organization_brand_color_update";
+        let logo_asset_id = "11111111-1111-4111-8111-111111111111";
+
+        let PlanOutcome::Direct(logo_request) = plan_request(
+            tool,
+            json!({"logoAssetId": logo_asset_id, "idempotencyKey": "logo-link-1"}),
+            &runtime,
+        )
+        .unwrap() else {
+            panic!("branding capability should be direct");
+        };
+        assert_eq!(logo_request.path, "/api/orgs/org%2Fone/branding");
+        assert_eq!(
+            logo_request.body,
+            Some(json!({"logoAssetId": logo_asset_id}))
+        );
+        assert_eq!(
+            logo_request.headers,
+            vec![
+                ("x-rudder-idempotency-key".into(), "logo-link-1".into()),
+                ("x-rudder-required-authority".into(), "rust".into()),
+            ]
+        );
+
+        let PlanOutcome::Direct(clear_request) = plan_request(
+            tool,
+            json!({"brandColor": null, "logoAssetId": null, "idempotencyKey": "clear-1"}),
+            &runtime,
+        )
+        .unwrap() else {
+            panic!("branding capability should be direct");
+        };
+        assert_eq!(
+            clear_request.body,
+            Some(json!({"brandColor": null, "logoAssetId": null}))
+        );
+        assert!(plan_request(tool, json!({"idempotencyKey": "empty-1"}), &runtime).is_err());
+    }
 
     #[test]
     fn one_of_requires_exactly_one_matching_branch() {

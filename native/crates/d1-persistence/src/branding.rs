@@ -33,7 +33,26 @@ pub(crate) async fn apply(
     .bind(&metadata.org)
     .fetch_optional(&mut **tx)
     .await?;
-    let details = branding_details(command.as_integration_view()?);
+    let view = command.as_integration_view()?;
+    let requested_logo_asset_id = view.logo_asset_id().map(|value| value.map(str::to_owned));
+    if let Some(Some(asset_id)) = view.logo_asset_id() {
+        let asset_organization_id = sqlx::query_scalar::<_, String>(
+            "SELECT org_id::text
+             FROM assets
+             WHERE id=$1::uuid
+             FOR KEY SHARE",
+        )
+        .bind(asset_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let Some(asset_organization_id) = asset_organization_id else {
+            return Err(StoreError::NotFound);
+        };
+        if asset_organization_id != metadata.org {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    let details = branding_details(view);
 
     let mut state = OrganizationSettingsState::new(
         &metadata.org,
@@ -60,6 +79,40 @@ pub(crate) async fn apply(
     .bind(&next.brand_color)
     .execute(&mut **tx)
     .await?;
+
+    match requested_logo_asset_id.as_ref() {
+        Some(Some(asset_id)) => {
+            sqlx::query(
+                "INSERT INTO organization_logos (org_id, asset_id)
+                 VALUES ($1::uuid, $2::uuid)
+                 ON CONFLICT (org_id) DO UPDATE
+                 SET asset_id=EXCLUDED.asset_id, updated_at=now()",
+            )
+            .bind(&metadata.org)
+            .bind(asset_id)
+            .execute(&mut **tx)
+            .await?;
+        }
+        Some(None) => {
+            sqlx::query("DELETE FROM organization_logos WHERE org_id=$1::uuid")
+                .bind(&metadata.org)
+                .execute(&mut **tx)
+                .await?;
+        }
+        None => {}
+    }
+
+    if requested_logo_asset_id.is_some() && current_logo.as_deref() != next.logo_asset_id.as_deref()
+    {
+        if let Some(previous_logo) = current_logo.as_deref() {
+            // Keep the legacy replacement cleanup, constrained to this organization.
+            sqlx::query("DELETE FROM assets WHERE id=$1::uuid AND org_id=$2::uuid")
+                .bind(previous_logo)
+                .bind(&metadata.org)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
 
     transaction::persist_branding(
         tx,

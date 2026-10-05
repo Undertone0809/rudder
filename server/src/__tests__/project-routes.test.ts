@@ -560,6 +560,84 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
+  it("keeps authenticated same-org Agent identity for goal-only and mixed patches and rejects cross-org goal-only access", async () => {
+    const existing = createProject(RUST_OWNED_PROJECT_ID);
+    const goalIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const goalOnlyResult = { ...existing, goalId: goalIds[0], goalIds: [goalIds[0]] };
+    const mixedResult = { ...existing, name: "Agent mixed patch", goalId: goalIds[1], goalIds: [goalIds[1]] };
+    mockProjectService.getById
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(goalOnlyResult)
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(mixedResult)
+      .mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const actor = {
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      source: "agent_key",
+      runId: "run-1",
+    };
+    const projectGoalSet = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from("{}"),
+    });
+    const bridge = { projectGoalSetMode: "required", projectGoalSet } as unknown as RustFoundationBridge;
+    const app = await createApp(actor, bridge);
+
+    const goalOnly = await request(app)
+      .patch(`/api/projects/${existing.id}`)
+      .set("x-rudder-idempotency-key", "agent-goal-only-patch")
+      .send({ goalIds: [goalIds[0]] });
+    expect(goalOnly.status).toBe(200);
+    expect(projectGoalSet).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ actor }),
+      existing.orgId,
+      existing.id,
+      expect.any(Buffer),
+      `/api/orgs/${existing.orgId}/projects/${existing.id}/goal-set`,
+    );
+    expect(JSON.parse(projectGoalSet.mock.calls[0]![3].toString("utf8"))).toEqual({
+      goalIds: [goalIds[0]],
+      primaryGoalId: goalIds[0],
+      runId: "run-1",
+    });
+
+    const mixedPatch = { goalIds: [goalIds[1]], name: "Agent mixed patch" };
+    const mixed = await request(app)
+      .patch(`/api/projects/${existing.id}`)
+      .set("x-rudder-idempotency-key", "agent-mixed-patch")
+      .send(mixedPatch);
+    expect(mixed.status).toBe(200);
+    expect(projectGoalSet).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ actor }),
+      existing.orgId,
+      existing.id,
+      expect.any(Buffer),
+      `/api/orgs/${existing.orgId}/projects/${existing.id}/goal-set`,
+    );
+    expect(JSON.parse(projectGoalSet.mock.calls[1]![3].toString("utf8"))).toEqual({
+      projectPatch: mixedPatch,
+      runId: "run-1",
+    });
+    expect(mockProjectService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+
+    const foreignApp = await createApp({ ...actor, orgId: "organization-2" }, bridge);
+    const denied = await request(foreignApp)
+      .patch(`/api/projects/${existing.id}`)
+      .send({ goalIds: [] });
+    expect(denied.status).toBe(403);
+    expect(projectGoalSet).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps a Node-owned Project usable in required mode, even when it is allowlisted", async () => {
     const existing = createProject(RUST_OWNED_PROJECT_ID);
     const updated = { ...existing, goalId: null, goalIds: [] };
