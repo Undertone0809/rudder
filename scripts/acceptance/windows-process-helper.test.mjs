@@ -11,7 +11,7 @@ import {
   CAPTURE_DEADLINE_MS,
   IMPORT_DEADLINE_MS, STARTUP_STALL_DEADLINE_MS,
   TREE_DEADLINE_MS,
-  acceptancePlan, bounded, cleanupFixture, failureKind, helperScript, lifecycleSatisfied,
+  acceptancePlan, bounded, cleanupFixture, describeOwnedSnapshot, failureKind, helperScript, lifecycleSatisfied,
   minimalWatchdogEnvironment, missingImportSatisfied, observeOwnedChild, ownedSnapshot,
   runCampaign, runCase, runnerIdentity, sanitizedPhase, settleOwnedHelper, startFixture,
   startupImportsSatisfied, startupStallSatisfied,
@@ -207,10 +207,28 @@ test("snapshot authority is limited to our still-held root and one direct descen
   const rows = [{ ProcessId: 101, ParentProcessId: 1, CreationTime: "123" },
     { ProcessId: 102, ParentProcessId: 101, CreationTime: "456" }];
   assert.deepEqual(ownedSnapshot(rows, identity, ready, fixture), { root: identity, descendant: { pid: 102, createdAt: "456" } });
+  const extraRows = [...rows, { ProcessId: 103, ParentProcessId: 101, CreationTime: "789" },
+    { ProcessId: 104, ParentProcessId: 102, CreationTime: "987" }];
+  assert.deepEqual(ownedSnapshot(extraRows, identity, ready, fixture), ownedSnapshot(rows, identity, ready, fixture));
+  assert.deepEqual(describeOwnedSnapshot(extraRows, identity, ready, fixture), {
+    isArray: true, rowCount: 4, extraRowCount: 2, rootMatchCount: 1, descendantMatchCount: 1,
+    duplicateProcessIds: false, rootPidMatched: true, rootCreationTimeMatched: true,
+    directParentMatched: true, descendantCreationTimeValid: true, heldRootLive: true, heldDescendantLive: true,
+  });
+  assert.throws(() => ownedSnapshot(null, identity, ready, fixture), /identity_mismatch/);
+  assert.throws(() => ownedSnapshot([rows[0]], identity, ready, fixture), /identity_mismatch/);
+  assert.throws(() => ownedSnapshot([rows[1]], identity, ready, fixture), /identity_mismatch/);
+  assert.throws(() => ownedSnapshot([...rows, rows[0]], identity, ready, fixture), /identity_mismatch/);
+  assert.throws(() => ownedSnapshot([...rows, rows[1]], identity, ready, fixture), /identity_mismatch/);
+  assert.throws(() => ownedSnapshot([...extraRows, extraRows[2]], identity, ready, fixture), /identity_mismatch/);
+  assert.throws(() => ownedSnapshot(rows, { ...identity, pid: 999 }, ready, fixture), /identity_mismatch/);
   assert.throws(() => ownedSnapshot(rows, { ...identity, createdAt: "999" }, ready, fixture), /identity_mismatch/);
-  assert.throws(() => ownedSnapshot([...rows, { ProcessId: 103 }], identity, ready, fixture), /identity_mismatch/);
+  assert.throws(() => ownedSnapshot(rows, identity, ready, { ...fixture, exitObserved: true }), /identity_mismatch/);
   assert.throws(() => ownedSnapshot(rows, identity, ready, { ...fixture, descendantExitObserved: true }), /identity_mismatch/);
   assert.throws(() => ownedSnapshot([rows[0], { ...rows[1], ParentProcessId: 999 }], identity, ready, fixture), /identity_mismatch/);
+  for (const CreationTime of [null, 456, "", "not-a-token"]) {
+    assert.throws(() => ownedSnapshot([rows[0], { ...rows[1], CreationTime }], identity, ready, fixture), /identity_mismatch/);
+  }
 });
 
 test("lifecycle acceptance cannot pass on termination submission without both exact exits", () => {
@@ -285,6 +303,8 @@ test("full controller lifecycle snapshots and terminates only two proven fixture
       if (request.type === "snapshot") result = [
         { ProcessId: 501, ParentProcessId: 1, CreationTime: "111" },
         { ProcessId: 502, ParentProcessId: 501, CreationTime: "222" },
+        { ProcessId: 503, ParentProcessId: 501, CreationTime: "333" },
+        { ProcessId: 504, ParentProcessId: 502, CreationTime: "444" },
       ];
       if (request.type === "terminate") {
         const expected = requests.length === 3 ? { pid: 502, createdAt: "222" } : { pid: 501, createdAt: "111" };
@@ -307,6 +327,8 @@ test("full controller lifecycle snapshots and terminates only two proven fixture
   assert.equal(lifecycleSatisfied(result), true);
   assert.equal(result.fixtureCleanup.status, "verified");
   assert.equal(result.helperCleanup.exitObserved, true);
+  assert.equal(result.snapshotObservation.rowCount, 4);
+  assert.equal(result.snapshotObservation.extraRowCount, 2);
   // Reports contain boolean proofs, never the fixture's raw PID/creation tokens.
   assert.doesNotMatch(JSON.stringify(result), /"pid"|"createdAt"|"processes"/);
 });

@@ -180,13 +180,35 @@ export async function cleanupFixture(fixture, timeoutMs = 6_000) {
     descendantExitObserved: fixture.descendantExitObserved };
 }
 
+export function describeOwnedSnapshot(rows, rootIdentity, ready, fixture) {
+  const entries = Array.isArray(rows) ? rows : [];
+  const roots = entries.filter((row) => row?.ProcessId === ready.rootPid);
+  const descendants = entries.filter((row) => row?.ProcessId === ready.descendantPid);
+  const ids = entries.map((row) => row?.ProcessId);
+  return {
+    isArray: Array.isArray(rows), rowCount: Array.isArray(rows) ? rows.length : null,
+    extraRowCount: entries.length - roots.length - descendants.length,
+    rootMatchCount: roots.length, descendantMatchCount: descendants.length,
+    duplicateProcessIds: new Set(ids).size !== ids.length,
+    rootPidMatched: rootIdentity.pid === ready.rootPid,
+    rootCreationTimeMatched: roots.length === 1 && roots[0].CreationTime === rootIdentity.createdAt,
+    directParentMatched: descendants.length === 1 && descendants[0].ParentProcessId === ready.rootPid,
+    descendantCreationTimeValid: descendants.length === 1
+      && typeof descendants[0].CreationTime === "string" && /^\d+$/.test(descendants[0].CreationTime),
+    heldRootLive: fixture.exitObserved === false,
+    heldDescendantLive: fixture.descendantExitObserved === false,
+  };
+}
+
 export function ownedSnapshot(rows, rootIdentity, ready, fixture) {
-  check(!fixture.exitObserved && !fixture.descendantExitObserved, "identity_mismatch");
-  check(Array.isArray(rows) && rows.length === 2, "identity_mismatch");
-  const root = rows.find((row) => row?.ProcessId === ready.rootPid);
+  const proof = describeOwnedSnapshot(rows, rootIdentity, ready, fixture);
+  check(proof.isArray && proof.rootMatchCount === 1 && proof.descendantMatchCount === 1
+    && !proof.duplicateProcessIds && proof.rootPidMatched && proof.rootCreationTimeMatched
+    && proof.directParentMatched && proof.descendantCreationTimeValid
+    && proof.heldRootLive && proof.heldDescendantLive, "identity_mismatch");
   const descendant = rows.find((row) => row?.ProcessId === ready.descendantPid);
-  check(root?.CreationTime === rootIdentity.createdAt && descendant?.ParentProcessId === ready.rootPid
-    && typeof descendant?.CreationTime === "string" && /^\d+$/.test(descendant.CreationTime), "identity_mismatch");
+  // Extra snapshot rows are unclaimed. Only identities proven by our retained
+  // fixture handles are eligible for this acceptance campaign's termination.
   return { root: rootIdentity, descendant: { pid: ready.descendantPid, createdAt: descendant.CreationTime } };
 }
 
@@ -322,6 +344,7 @@ export async function runCase(probe, { environment = minimalWatchdogEnvironment(
       && /^\d+$/.test(rootIdentity.createdAt), "identity_mismatch");
     const rows = await controller.request("snapshot", { pid: ready.rootPid });
     active();
+    result.snapshotObservation = describeOwnedSnapshot(rows, rootIdentity, ready, fixture);
     const identities = ownedSnapshot(rows, rootIdentity, ready, fixture);
     result.snapshotRootMatched = true;
     result.snapshotDescendantMatched = true;
