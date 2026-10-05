@@ -5,15 +5,23 @@ import type {
   AgentRuntimeControlHandle,
 } from "@rudderhq/agent-runtime-utils";
 import { hasConfirmedNativeWriterQuiescence } from "@rudderhq/agent-runtime-utils";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesNativeRpcClient, HermesNativeProcessCloseError } from "./native-protocol.js";
 import {
+  HERMES_PRODUCT_RPC_SPAN_COMPUTE_HOST_SITE_CUSTOMIZE_SOURCE,
+  HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE,
   HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV,
   HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV,
+  HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH_ENV,
+  HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH_ENV,
+  HERMES_PRODUCT_RPC_SPAN_NONCE_ENV,
+  HERMES_PRODUCT_RPC_SPAN_ROLE_ENV,
+  HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV,
   waitForHermesProductRpcMcpReady,
 } from "./product-rpc-mcp-bootstrap.js";
 import {
@@ -25,6 +33,7 @@ import {
   HERMES_PRODUCT_RPC_TRANSPORT,
   HermesProductRpcForkError,
   prepareHermesProductRpcMcpOverlay,
+  readHermesProductRpcRangeRowIds,
   type HermesProductRpcClient,
   type HermesProductRpcClientFactory,
   type HermesProductRpcProfile,
@@ -37,7 +46,8 @@ const pythonCommand = (() => {
     return null;
   }
 })();
-const HISTORY_FENCE_SEED_SCRIPT = [
+const execFileAsync = promisify(execFile);
+const HISTORY_ROWS_SEED_SCRIPT = [
   "import sqlite3, sys",
   "connection = sqlite3.connect(sys.argv[1])",
   "connection.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY)')",
@@ -47,28 +57,10 @@ const HISTORY_FENCE_SEED_SCRIPT = [
   "connection.commit()",
   "connection.close()",
 ].join("\n");
-
-const HISTORY_FENCE_EMPTY_DB_SCRIPT = [
+const HISTORY_ROWS_INSERT_SCRIPT = [
   "import sqlite3, sys",
-  "connection = sqlite3.connect(sys.argv[1])",
-  "connection.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY)')",
-  "connection.execute('CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL)')",
-  "connection.commit()",
-  "connection.close()",
-].join("\n");
-
-const HISTORY_FENCE_PERSIST_SESSION_SCRIPT = [
-  "import sqlite3, sys",
-  "connection = sqlite3.connect(sys.argv[1])",
-  "connection.execute('INSERT INTO sessions (id) VALUES (?)', (sys.argv[2],))",
-  "connection.execute('INSERT INTO messages (id, session_id) VALUES (?, ?)', (1, sys.argv[2]))",
-  "connection.commit()",
-  "connection.close()",
-].join("\n");
-
-const HISTORY_FENCE_INSERT_SCRIPT = [
-  "import sqlite3, sys",
-  "connection = sqlite3.connect(sys.argv[1], timeout=0.05)",
+  "connection = sqlite3.connect(sys.argv[1], timeout=float(sys.argv[4]) if len(sys.argv) > 4 else 0.05)",
+  "if len(sys.argv) > 5: open(sys.argv[5], 'w').close()",
   "try:",
   "    connection.execute('BEGIN IMMEDIATE')",
   "    connection.execute('INSERT INTO messages (id, session_id) VALUES (?, ?)', (int(sys.argv[3]), sys.argv[2]))",
@@ -81,7 +73,7 @@ const HISTORY_FENCE_INSERT_SCRIPT = [
   "    connection.close()",
 ].join("\n");
 
-const HISTORY_FENCE_READ_TAIL_SCRIPT = [
+const HISTORY_ROWS_READ_TAIL_SCRIPT = [
   "import sqlite3, sys",
   "connection = sqlite3.connect(sys.argv[1])",
   "row = connection.execute('SELECT MAX(id) FROM messages WHERE session_id = ?', (sys.argv[2],)).fetchone()",
@@ -572,6 +564,328 @@ installedHermes021Describe("installed Hermes 0.21.0 SessionDB native Fork: " + i
   });
 });
 
+installedHermes021Describe("installed Hermes 0.21.0 Product RPC span-capture hook", () => {
+  it("captures the post-submit baseline and committed SessionDB append row IDs", async () => {
+    const fixture = await makeInstalledHermes021Fixture();
+    const sessionId = "hermes-fork-parent";
+    const nonce = "isolated-span-hook-test";
+    const configPath = path.join(fixture.root, "span-config.json");
+    const baselinePath = path.join(fixture.root, "span-baseline.jsonl");
+    const rowsPath = path.join(fixture.root, "span-rows.jsonl");
+    const evidencePath = path.join(fixture.root, "span-evidence.json");
+    try {
+      await fs.writeFile(configPath, JSON.stringify({ version: 1, nonce, sessionId }), { mode: 0o600 });
+      const marker = "\nfrom tui_gateway import entry\n";
+      const splitAt = HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE.indexOf(marker);
+      expect(splitAt).toBeGreaterThan(0);
+      const bootstrapPrelude = HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE.slice(0, splitAt);
+      expect(bootstrapPrelude.indexOf("hermes_bootstrap.harden_import_path()"))
+        .toBeLessThan(bootstrapPrelude.indexOf("from hermes_state import SessionDB"));
+      const script = [
+        `bootstrap_source = ${JSON.stringify(bootstrapPrelude)}`,
+        "exec(bootstrap_source, globals())",
+        "from pathlib import Path",
+        "from tui_gateway.host_supervisor import HostSupervisor",
+        "HostSupervisor._spawn_locked = lambda self, *args, **kwargs: dict(self.env or {})",
+        "from tui_gateway import server",
+        "_install_gateway_span_capture(server)",
+        "supervisor = object.__new__(HostSupervisor)",
+        "supervisor.env = {'preserved': 'yes'}",
+        "compute_host_env = HostSupervisor._spawn_locked(supervisor)",
+        "assert supervisor.env == {'preserved': 'yes'}",
+        "from hermes_state import SessionDB",
+        `session_id = ${JSON.stringify(sessionId)}`,
+        "persist_error = server._persist_session_row_for_submit(901, {'session_key': session_id})",
+        "assert persist_error is None, persist_error",
+        "db = SessionDB(db_path=Path(__import__('os').environ['HERMES_HOME']) / 'state.db')",
+        "single_id = db.append_message(session_id, 'user', content='single captured row')",
+        "batch = [{'role': 'assistant', 'content': 'batch captured row'}]",
+        "batch_count = db.append_messages_batch(session_id, batch)",
+        "db.close()",
+        "Path(__import__('os').environ['RUDDER_HERMES_PRODUCT_RPC_TEST_EVIDENCE_PATH']).write_text(json.dumps({'singleId': single_id, 'batchCount': batch_count, 'batchIds': [m.get('_row_id') for m in batch], 'baseline': Path(SPAN_BASELINE_PATH).read_text(), 'rows': Path(SPAN_ROWS_PATH).read_text(), 'computeHostEnv': compute_host_env, 'restoredHostEnv': supervisor.env}))",
+      ].join("\n");
+      const env = {
+        ...process.env,
+        HERMES_HOME: fixture.profile.hermesHome,
+        PYTHONPATH: installedHermes021SourcePath!,
+        PYTHONDONTWRITEBYTECODE: "1",
+        RUDDER_TEST_CWD: fixture.profile.cwd,
+        RUDDER_HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH: configPath,
+        RUDDER_HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH: baselinePath,
+        RUDDER_HERMES_PRODUCT_RPC_SPAN_ROWS_PATH: rowsPath,
+        RUDDER_HERMES_PRODUCT_RPC_SPAN_NONCE: nonce,
+        RUDDER_HERMES_PRODUCT_RPC_TEST_EVIDENCE_PATH: evidencePath,
+      };
+      await execFileAsync(installedHermes021PythonCommand!, ["-c", script], {
+        cwd: installedHermes021SourcePath,
+        env,
+        encoding: "utf8",
+      });
+      const evidence = JSON.parse(await fs.readFile(evidencePath, "utf8")) as {
+        singleId: number;
+        batchCount: number;
+        batchIds: number[];
+        baseline: string;
+        rows: string;
+        computeHostEnv: Record<string, string>;
+        restoredHostEnv: Record<string, string>;
+      };
+      const baseline = JSON.parse(evidence.baseline) as Record<string, unknown>;
+      const rowReceipts = evidence.rows.trim().split(/\r?\n/u).map((line) => JSON.parse(line) as { rowIds: number[] });
+      const capturedIds = rowReceipts.flatMap((receipt) => receipt.rowIds).sort((left, right) => left - right);
+
+      expect(baseline).toMatchObject({
+        version: 1,
+        kind: "baseline",
+        nonce,
+        sessionId,
+        status: "ready",
+        sessionExists: true,
+        pid: expect.any(Number),
+      });
+      expect(baseline.tailRowId).toBe(6);
+      expect(evidence.batchCount).toBe(1);
+      expect(evidence.batchIds).toHaveLength(1);
+      expect(evidence.computeHostEnv).toMatchObject({
+        preserved: "yes",
+        [HERMES_PRODUCT_RPC_SPAN_ROLE_ENV]: "compute_host",
+        [HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH_ENV]: configPath,
+        [HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH_ENV]: baselinePath,
+        [HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV]: rowsPath,
+        [HERMES_PRODUCT_RPC_SPAN_NONCE_ENV]: nonce,
+      });
+      expect(evidence.restoredHostEnv).toEqual({ preserved: "yes" });
+      expect(capturedIds).toEqual([evidence.singleId, ...evidence.batchIds].sort((left, right) => left - right));
+      expect(capturedIds.every((id) => id > Number(baseline.tailRowId))).toBe(true);
+    } finally {
+      await fixture.cleanup();
+      await fs.rm(configPath, { force: true });
+      await fs.rm(baselinePath, { force: true });
+      await fs.rm(rowsPath, { force: true });
+    }
+  });
+
+  it("reads every row of a native span across multiple Reader pages", async () => {
+    const fixture = await makeInstalledHermes021Fixture();
+    const sessionId = "hermes-fork-parent";
+    try {
+      const appendScript = [
+        "from pathlib import Path",
+        "import json, os",
+        "from hermes_state import SessionDB",
+        "home = Path(os.environ['HERMES_HOME'])",
+        "db = SessionDB(db_path=home / 'state.db')",
+        "messages = [{'role': 'assistant', 'content': f'page row {i}', 'timestamp': i} for i in range(205)]",
+        "db.append_messages_batch('hermes-fork-parent', messages)",
+        "print(json.dumps([message['_row_id'] for message in messages]))",
+        "db.close()",
+      ].join("\n");
+      const expectedRowIds = JSON.parse(execFileSync(installedHermes021PythonCommand!, ["-c", appendScript], {
+        cwd: installedHermes021SourcePath,
+        env: {
+          ...process.env,
+          HERMES_HOME: fixture.profile.hermesHome,
+          PYTHONPATH: installedHermes021SourcePath!,
+          PYTHONDONTWRITEBYTECODE: "1",
+        },
+        encoding: "utf8",
+      })) as number[];
+
+      const rowIds = await readHermesProductRpcRangeRowIds({
+        profile: fixture.profile,
+        sessionId,
+        startExclusive: 6,
+        endInclusive: expectedRowIds.at(-1) ?? null,
+        timeoutMs: 30_000,
+      });
+
+      expect(expectedRowIds).toHaveLength(205);
+      expect(rowIds).toEqual(expectedRowIds);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("captures SessionDB rows from Hermes compute-host child processes", async () => {
+    const fixture = await makeInstalledHermes021Fixture();
+    const nonce = "isolated-compute-host-span-test";
+    const sessionId = "hermes-fork-parent";
+    const configPath = path.join(fixture.root, "compute-host-span-config.json");
+    const baselinePath = path.join(fixture.root, "compute-host-span-baseline.jsonl");
+    const rowsPath = path.join(fixture.root, "compute-host-span-rows.jsonl");
+    const evidencePath = path.join(fixture.root, "compute-host-span-evidence.json");
+    const siteCustomizePath = path.join(fixture.root, "sitecustomize.py");
+    try {
+      await fs.writeFile(siteCustomizePath, HERMES_PRODUCT_RPC_SPAN_COMPUTE_HOST_SITE_CUSTOMIZE_SOURCE, { mode: 0o600 });
+      await fs.writeFile(configPath, JSON.stringify({ version: 1, nonce, sessionId }), { mode: 0o600 });
+      await fs.writeFile(baselinePath, `${JSON.stringify({
+        version: 1,
+        kind: "baseline",
+        nonce,
+        sessionId,
+        pid: 1234,
+        processRole: "gateway",
+        status: "ready",
+        tailRowId: 6,
+        sessionExists: true,
+      })}\n`, { mode: 0o600 });
+      const script = [
+        "import json, os",
+        "from pathlib import Path",
+        "from hermes_state import SessionDB",
+        "assert 'RUDDER_HERMES_PRODUCT_RPC_SPAN_ROLE' not in os.environ",
+        "home = Path(os.environ['HERMES_HOME'])",
+        "db = SessionDB(db_path=home / 'state.db')",
+        `single_id = db.append_message(${JSON.stringify(sessionId)}, 'user', content='child single row')`,
+        `batch = [{'role': 'assistant', 'content': 'child batch row'}]`,
+        `db.append_messages_batch(${JSON.stringify(sessionId)}, batch)`,
+        "db.close()",
+        "Path(os.environ['RUDDER_TEST_EVIDENCE_PATH']).write_text(json.dumps({'singleId': single_id, 'batchIds': [message.get('_row_id') for message in batch]}))",
+      ].join("\n");
+      await execFileAsync(installedHermes021PythonCommand!, ["-c", script], {
+        cwd: installedHermes021SourcePath,
+        env: {
+          ...process.env,
+          HERMES_HOME: fixture.profile.hermesHome,
+          PYTHONPATH: [fixture.root, installedHermes021SourcePath].join(path.delimiter),
+          PYTHONDONTWRITEBYTECODE: "1",
+          [HERMES_PRODUCT_RPC_SPAN_ROLE_ENV]: "compute_host",
+          [HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH_ENV]: configPath,
+          [HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH_ENV]: baselinePath,
+          [HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV]: rowsPath,
+          [HERMES_PRODUCT_RPC_SPAN_NONCE_ENV]: nonce,
+          RUDDER_TEST_EVIDENCE_PATH: evidencePath,
+        },
+        encoding: "utf8",
+      });
+      const evidence = JSON.parse(await fs.readFile(evidencePath, "utf8")) as { singleId: number; batchIds: number[] };
+      const receipts = (await fs.readFile(rowsPath, "utf8")).trim().split(/\r?\n/u).map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(receipts).toHaveLength(2);
+      expect(receipts.every((receipt) => receipt.processRole === "compute_host" && receipt.parentPid === process.pid)).toBe(true);
+      expect(receipts.flatMap((receipt) => receipt.rowIds as number[]).sort((left, right) => left - right))
+        .toEqual([evidence.singleId, ...evidence.batchIds].sort((left, right) => left - right));
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("captures an exact first-turn interval when Hermes 0.21 persists a fresh isolated session after dispatch", async () => {
+    const fixture = await makeInstalledHermes021Fixture();
+    const sessionId = "hermes-fresh-compute-host-session";
+    const nonce = "isolated-fresh-compute-host-span-test";
+    const configPath = path.join(fixture.root, "fresh-compute-span-config.json");
+    const baselinePath = path.join(fixture.root, "fresh-compute-span-baseline.jsonl");
+    const rowsPath = path.join(fixture.root, "fresh-compute-span-rows.jsonl");
+    const evidencePath = path.join(fixture.root, "fresh-compute-span-evidence.json");
+    const computeEvidencePath = path.join(fixture.root, "fresh-compute-span-host-evidence.json");
+    const siteCustomizePath = path.join(fixture.root, "sitecustomize.py");
+    try {
+      await fs.writeFile(siteCustomizePath, HERMES_PRODUCT_RPC_SPAN_COMPUTE_HOST_SITE_CUSTOMIZE_SOURCE, { mode: 0o600 });
+      await fs.writeFile(configPath, JSON.stringify({ version: 1, nonce, sessionId }), { mode: 0o600 });
+      const marker = "\nfrom tui_gateway import entry\n";
+      const splitAt = HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE.indexOf(marker);
+      expect(splitAt).toBeGreaterThan(0);
+      const bootstrapPrelude = HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE.slice(0, splitAt);
+      const hostScript = [
+        "import json, os",
+        "from pathlib import Path",
+        "from tui_gateway import server",
+        "from hermes_state import SessionDB",
+        `session = {"session_key": ${JSON.stringify(sessionId)}, "source": "acp", "history": [], "cwd": None}`,
+        "if server._ensure_session_db_row(session) is False: raise RuntimeError('fresh SessionDB row was not persisted')",
+        "db = SessionDB(db_path=Path(os.environ['HERMES_HOME']) / 'state.db')",
+        `single_id = db.append_message(${JSON.stringify(sessionId)}, 'user', content='first isolated input')`,
+        `batch = [{'role': 'assistant', 'content': 'first isolated response'}]`,
+        `db.append_messages_batch(${JSON.stringify(sessionId)}, batch)`,
+        "db.close()",
+        "Path(os.environ['RUDDER_HERMES_PRODUCT_RPC_COMPUTE_EVIDENCE_PATH']).write_text(json.dumps({'singleId': single_id, 'batchIds': [message.get('_row_id') for message in batch]}))",
+      ].join("\n");
+      const script = [
+        `bootstrap_source = ${JSON.stringify(bootstrapPrelude)}`,
+        "exec(bootstrap_source, globals())",
+        "import json, os, subprocess, sys",
+        "from pathlib import Path",
+        "from tui_gateway import server",
+        "from tui_gateway.host_supervisor import HostSupervisor",
+        `session = {"session_key": ${JSON.stringify(sessionId)}, "source": "acp", "history": [], "cwd": None}`,
+        "HostSupervisor._spawn_locked = lambda self, *args, **kwargs: dict(self.env or {})",
+        "server._submit_prompt_to_compute_host = lambda *args, **kwargs: {'result': {'status': 'streaming'}}",
+        "_install_gateway_span_capture(server)",
+        `dispatch = server._submit_prompt_to_compute_host(902, 'runtime-session', session, 'first isolated input')`,
+        "assert dispatch['result']['status'] == 'streaming'",
+        `host_script = ${JSON.stringify(hostScript)}`,
+        "host_env = os.environ.copy()",
+        "supervisor = object.__new__(HostSupervisor)",
+        "supervisor.env = {}",
+        "host_env.update(HostSupervisor._spawn_locked(supervisor))",
+        "child = subprocess.run([sys.executable, '-c', host_script], env=host_env, text=True, capture_output=True)",
+        "if child.returncode: raise RuntimeError(child.stderr or 'compute host failed')",
+        "Path(os.environ['RUDDER_HERMES_PRODUCT_RPC_TEST_EVIDENCE_PATH']).write_text(json.dumps({'baseline': Path(SPAN_BASELINE_PATH).read_text(), 'rows': Path(SPAN_ROWS_PATH).read_text(), 'hostResult': json.loads(Path(os.environ['RUDDER_HERMES_PRODUCT_RPC_COMPUTE_EVIDENCE_PATH']).read_text()), 'writerPid': os.getpid()}))",
+      ].join("\n");
+      const env = {
+        ...process.env,
+        HERMES_HOME: fixture.profile.hermesHome,
+        PYTHONPATH: [fixture.root, installedHermes021SourcePath].join(path.delimiter),
+        PYTHONDONTWRITEBYTECODE: "1",
+        RUDDER_TEST_CWD: fixture.profile.cwd,
+        RUDDER_HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH: configPath,
+        RUDDER_HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH: baselinePath,
+        RUDDER_HERMES_PRODUCT_RPC_SPAN_ROWS_PATH: rowsPath,
+        RUDDER_HERMES_PRODUCT_RPC_SPAN_NONCE: nonce,
+        RUDDER_HERMES_PRODUCT_RPC_TEST_EVIDENCE_PATH: evidencePath,
+        RUDDER_HERMES_PRODUCT_RPC_COMPUTE_EVIDENCE_PATH: computeEvidencePath,
+      };
+      await execFileAsync(installedHermes021PythonCommand!, ["-c", script], {
+        cwd: installedHermes021SourcePath,
+        env,
+        encoding: "utf8",
+      });
+      const evidence = JSON.parse(await fs.readFile(evidencePath, "utf8")) as {
+        baseline: string;
+        rows: string;
+        hostResult: { singleId: number; batchIds: number[] };
+        writerPid: number;
+      };
+      const baseline = JSON.parse(evidence.baseline) as Record<string, unknown>;
+      const receipts = evidence.rows.trim().split(/\r?\n/u).map((line) => JSON.parse(line) as Record<string, unknown>);
+      const capturedRowIds = receipts.flatMap((receipt) => receipt.rowIds as number[]).sort((left, right) => left - right);
+      const readerRowIds = await readHermesProductRpcRangeRowIds({
+        profile: fixture.profile,
+        sessionId,
+        startExclusive: null,
+        endInclusive: capturedRowIds.at(-1) ?? null,
+        timeoutMs: 30_000,
+      });
+
+      expect(baseline).toMatchObject({
+        kind: "baseline",
+        nonce,
+        sessionId,
+        status: "ready",
+        tailRowId: null,
+        sessionExists: false,
+      });
+      expect(baseline.pid).toBe(evidence.writerPid);
+      expect(receipts).toHaveLength(2);
+      expect(receipts.every((receipt) => (
+        receipt.processRole === "compute_host"
+        && receipt.parentPid === evidence.writerPid
+        && receipt.sessionId === sessionId
+      ))).toBe(true);
+      expect(capturedRowIds).toEqual([evidence.hostResult.singleId, ...evidence.hostResult.batchIds].sort((a, b) => a - b));
+      expect(readerRowIds).toEqual(capturedRowIds);
+    } finally {
+      await fixture.cleanup();
+      await fs.rm(configPath, { force: true });
+      await fs.rm(baselinePath, { force: true });
+      await fs.rm(rowsPath, { force: true });
+      await fs.rm(evidencePath, { force: true });
+      await fs.rm(computeEvidencePath, { force: true });
+      await fs.rm(siteCustomizePath, { force: true });
+    }
+  });
+});
+
 type GatewayEvent = (type: string, payload?: Record<string, unknown>, sessionId?: string | null) => void;
 type GatewayHandler = (
   method: string,
@@ -690,7 +1004,7 @@ function runInput(
   profile: HermesProductRpcProfile,
   createClient: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["createClient"]>,
   readHistoryTail?: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]>,
-  overrides: Pick<Parameters<typeof executeHermesProductRpcChat>[0], "acquireHistoryFence" | "waitForSessionLease"> = {},
+  overrides: Partial<Pick<Parameters<typeof executeHermesProductRpcChat>[0], "readHistoryRangeRowIds">> = {},
 ) {
   const tails = [40, 44];
   return {
@@ -707,9 +1021,51 @@ function runInput(
       relation: "none",
       successorSessionId: null,
     })),
-    acquireHistoryFence: async () => null,
     ...overrides,
   };
+}
+
+async function writeRunSpanCaptureReceipt(
+  runtimeEnv: Record<string, string> | undefined,
+  sessionId: string,
+  tailRowId: number | null,
+  rowIds: number[],
+  sessionExists = true,
+): Promise<void> {
+  const configPath = runtimeEnv?.[HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH_ENV];
+  const baselinePath = runtimeEnv?.[HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH_ENV];
+  const rowsPath = runtimeEnv?.[HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV];
+  const nonce = runtimeEnv?.[HERMES_PRODUCT_RPC_SPAN_NONCE_ENV];
+  if (!configPath || !baselinePath || !rowsPath || !nonce) {
+    throw new Error("Hermes Product RPC span-capture paths were not provided to the Gateway.");
+  }
+  const config = JSON.parse(await fs.readFile(configPath, "utf8")) as { version?: number; nonce?: string; sessionId?: string };
+  if (config.version !== 1 || config.nonce !== nonce || config.sessionId !== sessionId) {
+    throw new Error("Hermes Product RPC span-capture config did not bind the expected session and nonce.");
+  }
+  await fs.writeFile(baselinePath, `${JSON.stringify({
+    version: 1,
+    kind: "baseline",
+    nonce,
+    sessionId,
+    pid: process.pid,
+    processRole: "gateway",
+    status: "ready",
+    tailRowId,
+    sessionExists,
+  })}\n`, { mode: 0o600, flag: "wx" });
+  if (rowIds.length > 0) {
+    await fs.writeFile(rowsPath, `${JSON.stringify({
+      version: 1,
+      kind: "rows",
+      nonce,
+      sessionId,
+      pid: process.pid,
+      parentPid: process.ppid,
+      processRole: "gateway",
+      rowIds,
+    })}\n`, { mode: 0o600, flag: "wx" });
+  }
 }
 
 describe("Hermes Product Gateway RPC", () => {
@@ -760,6 +1116,7 @@ describe("Hermes Product Gateway RPC", () => {
       const firstAlias = firstEnv.RUDDER_API_KEY.match(/^\$\{(.+)\}$/u)?.[1];
       const secondAlias = secondEnv.RUDDER_API_KEY.match(/^\$\{(.+)\}$/u)?.[1];
       const firstBootstrap = await fs.readFile(path.join(first.home, "rudder_product_rpc_bootstrap.py"), "utf8");
+      const firstSiteCustomize = await fs.readFile(path.join(first.home, "sitecustomize.py"), "utf8");
 
       expect(first.home).not.toBe(second.home);
       expect(await fs.realpath(path.join(first.home, "state.db"))).toBe(await fs.realpath(statePath));
@@ -787,6 +1144,7 @@ describe("Hermes Product Gateway RPC", () => {
       expect(firstBootstrap).toContain("mcp_startup.set_mcp_server_filter([SERVER_NAME])");
       expect(firstBootstrap).toContain("mcp_tool_discovery.discover_mcp_tools = _discover_rudder_tools");
       expect(firstBootstrap).toContain("entry.main()");
+      expect(firstSiteCustomize).toContain('ROLE = os.environ.pop("RUDDER_HERMES_PRODUCT_RPC_SPAN_ROLE", "")');
       expect(firstBootstrap.indexOf("mcp_startup.set_mcp_server_filter([SERVER_NAME])"))
         .toBeLessThan(firstBootstrap.indexOf("entry.main()"));
       expect(firstBootstrap.indexOf("mcp_tool_discovery.discover_mcp_tools = _discover_rudder_tools"))
@@ -950,6 +1308,29 @@ describe("Hermes Product Gateway RPC", () => {
       expect(persisted).toBe("persisted");
       expect(await fs.readFile(configPath, "utf8")).toBe(originalConfig);
     } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("retries overlay cleanup after a transient removal failure", async () => {
+    const fixture = await makeProfile();
+    let overlay: Awaited<ReturnType<typeof prepareHermesProductRpcMcpOverlay>> | null = null;
+    const actualRm = fs.rm.bind(fs);
+    const rmSpy = vi.spyOn(fs, "rm")
+      .mockRejectedValueOnce(new Error("simulated cleanup failure"))
+      .mockImplementation(actualRm);
+    try {
+      overlay = await prepareHermesProductRpcMcpOverlay({ profile: fixture.profile, timeoutMs: 1_000 });
+      const overlayHome = overlay.home;
+
+      await expect(overlay.cleanup()).rejects.toThrow("simulated cleanup failure");
+      expect((await fs.stat(overlayHome)).isDirectory()).toBe(true);
+
+      await overlay.cleanup();
+      await expect(fs.stat(overlayHome)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      rmSpy.mockRestore();
+      await overlay?.cleanup().catch(() => undefined);
       await fixture.cleanup();
     }
   });
@@ -1147,85 +1528,48 @@ describe("Hermes Product Gateway RPC", () => {
     }
   });
 
-  it.skipIf(!pythonCommand)("proves an empty first-turn baseline from the native fence before Hermes persists the session", async () => {
+  it("does not infer an exact first-turn span from settled gateway events alone", async () => {
     const fixture = await makeProfile();
     try {
-      const sessionId = "hermes-product-session";
-      const statePath = path.join(fixture.profile.hermesHome, "state.db");
-      execFileSync(pythonCommand!, ["-c", HISTORY_FENCE_EMPTY_DB_SCRIPT, statePath], { encoding: "utf8" });
-      const profile = { ...fixture.profile, hermesPythonCommand: pythonCommand! };
-      let historyReadCount = 0;
-      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async (_profile, requestedSessionId) => {
-        expect(requestedSessionId).toBe(sessionId);
-        if (historyReadCount++ === 0) {
-          return { availability: "missing", tailRowId: null, relation: "unknown", successorSessionId: null };
-        }
-        const tailRowId = Number(execFileSync(pythonCommand!, [
-          "-c",
-          HISTORY_FENCE_READ_TAIL_SCRIPT,
-          statePath,
-          sessionId,
-        ], { encoding: "utf8" }).trim());
-        return { availability: "available", tailRowId, relation: "none", successorSessionId: null };
-      };
-      const gateway = mockGateway(async (method, _params, emit) => {
+      const tails = [40, 41];
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => ({
+        availability: "available",
+        tailRowId: tails.shift() ?? 41,
+        relation: "none",
+        successorSessionId: null,
+      });
+      const gateway = mockGateway((method, _params, emit) => {
         if (method !== "prompt.submit") return undefined;
-        const registryPath = path.join(profile.hermesHome, "runtime", "active_sessions.json");
-        await fs.mkdir(path.dirname(registryPath), { recursive: true });
-        await fs.writeFile(registryPath, JSON.stringify({ entries: [{
-          lease_id: "test-lease",
-          session_id: sessionId,
-          surface: "desktop",
-          pid: process.pid,
-          metadata: { live_session_id: "hermes-product-runtime-1" },
-        }] }), "utf8");
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        execFileSync(pythonCommand!, ["-c", HISTORY_FENCE_PERSIST_SESSION_SCRIPT, statePath, sessionId], { encoding: "utf8" });
         emit("message.start");
         emitTurnComplete(emit);
         return { status: "streaming" };
       });
 
       const result = await executeHermesProductRpcChat({
-        ...runInput(profile, gateway.createClient, readHistoryTail, { acquireHistoryFence: undefined }),
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail),
+        timeoutMs: 5_000,
       });
 
       expect(result).toMatchObject({
         exitCode: 0,
         resultJson: {
-          transcriptBoundary: {
-            status: "exact",
-            sessionId,
-            startExclusive: null,
-            endInclusive: 1,
-            sourceRangeRef: JSON.stringify({
-              version: 1,
-              status: "exact",
-              sessionId,
-              startExclusive: null,
-              endInclusive: 1,
-            }),
-          },
-          executionRef: `hermes:db:${sessionId}:1`,
+          transcriptBoundary: { status: "unknown", sourceRangeRef: null },
+          executionRef: null,
         },
       });
       expect(hasConfirmedNativeWriterQuiescence(result)).toBe(true);
-      expect(historyReadCount).toBe(2);
     } finally {
       await fixture.cleanup();
     }
   });
 
   it.each([
-    ["an older fence mock without the session flag", undefined],
-    ["a fence that reports a session row", true],
-  ] as const)("does not infer an empty first-turn baseline from %s", async (_case, sessionExists) => {
+    ["an unpersisted first-turn session", { availability: "missing" as const, tailRowId: null, relation: "unknown" as const, successorSessionId: null }],
+    ["a Reader tail without a Run receipt", { availability: "available" as const, tailRowId: 1, relation: "none" as const, successorSessionId: null }],
+  ] as const)("does not infer an exact span from %s", async (_case, tail) => {
     const fixture = await makeProfile();
     try {
-      const tails = [
-        { availability: "missing" as const, tailRowId: null, relation: "unknown" as const, successorSessionId: null },
-        { availability: "available" as const, tailRowId: 1, relation: "none" as const, successorSessionId: null },
-      ];
+      const tails = [tail, { availability: "available" as const, tailRowId: 2, relation: "none" as const, successorSessionId: null }];
       const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => tails.shift() ?? null;
       const gateway = mockGateway((method, _params, emit) => {
         if (method !== "prompt.submit") return undefined;
@@ -1234,14 +1578,7 @@ describe("Hermes Product Gateway RPC", () => {
         return { status: "streaming" };
       });
       const result = await executeHermesProductRpcChat({
-        ...runInput(fixture.profile, gateway.createClient, readHistoryTail, {
-          acquireHistoryFence: async () => ({
-            tailRowId: null,
-            ...(sessionExists === undefined ? {} : { sessionExists }),
-            isHeld: () => true,
-            release: async () => undefined,
-          }),
-        }),
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail),
       });
 
       expect(result).toMatchObject({ exitCode: 0, resultJson: { transcriptBoundary: { status: "unknown", sourceRangeRef: null } } });
@@ -1266,14 +1603,7 @@ describe("Hermes Product Gateway RPC", () => {
         return { status: "streaming" };
       });
       const result = await executeHermesProductRpcChat({
-        ...runInput(fixture.profile, gateway.createClient, readHistoryTail, {
-          acquireHistoryFence: async () => ({
-            tailRowId: null,
-            sessionExists: false,
-            isHeld: () => true,
-            release: async () => undefined,
-          }),
-        }),
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail),
         sessionId,
         sessionParams: buildHermesProductRpcSessionParams({ sessionId, profile: fixture.profile }),
       });
@@ -1285,7 +1615,7 @@ describe("Hermes Product Gateway RPC", () => {
     }
   });
 
-  it("keeps a fresh first-turn boundary unknown when the read-only tail disagrees with the fence", async () => {
+  it("keeps a fresh first-turn boundary unknown when no Run receipt is available", async () => {
     const fixture = await makeProfile();
     try {
       const tails = [
@@ -1300,14 +1630,7 @@ describe("Hermes Product Gateway RPC", () => {
         return { status: "streaming" };
       });
       const result = await executeHermesProductRpcChat({
-        ...runInput(fixture.profile, gateway.createClient, readHistoryTail, {
-          acquireHistoryFence: async () => ({
-            tailRowId: null,
-            sessionExists: false,
-            isHeld: () => true,
-            release: async () => undefined,
-          }),
-        }),
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail),
       });
 
       expect(result).toMatchObject({ exitCode: 0, resultJson: { transcriptBoundary: { status: "unknown", sourceRangeRef: null } } });
@@ -1316,44 +1639,7 @@ describe("Hermes Product Gateway RPC", () => {
     }
   });
 
-  it("keeps a fresh first-turn boundary unknown when the writer fence expires before lease proof", async () => {
-    const fixture = await makeProfile();
-    try {
-      let held = true;
-      const tails = [
-        { availability: "missing" as const, tailRowId: null, relation: "unknown" as const, successorSessionId: null },
-        { availability: "available" as const, tailRowId: 1, relation: "none" as const, successorSessionId: null },
-      ];
-      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => tails.shift() ?? null;
-      const gateway = mockGateway(async (method, _params, emit) => {
-        if (method !== "prompt.submit") return undefined;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        emit("message.start");
-        emitTurnComplete(emit);
-        return { status: "streaming" };
-      });
-      const result = await executeHermesProductRpcChat({
-        ...runInput(fixture.profile, gateway.createClient, readHistoryTail, {
-          acquireHistoryFence: async () => ({
-            tailRowId: null,
-            sessionExists: false,
-            isHeld: () => held,
-            release: async () => { held = false; },
-          }),
-          waitForSessionLease: async () => {
-            held = false;
-            return true;
-          },
-        }),
-      });
-
-      expect(result).toMatchObject({ exitCode: 0, resultJson: { transcriptBoundary: { status: "unknown", sourceRangeRef: null } } });
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("keeps the Product Gateway Run boundary unknown when the SessionDB writer fence is unavailable", async () => {
+  it("keeps the Product Gateway Run boundary unknown when its receipt is unavailable", async () => {
     const fixture = await makeProfile();
     try {
       const tails = [40, 44];
@@ -1390,14 +1676,136 @@ describe("Hermes Product Gateway RPC", () => {
           },
         },
       });
-      expect((result.resultJson?.transcriptBoundary as Record<string, unknown>).reason).toContain("could not hold a SessionDB writer fence");
+      expect((result.resultJson?.transcriptBoundary as Record<string, unknown>).reason).toContain("row receipt did not exactly match");
       expect(reads).toEqual(["hermes-product-session", "hermes-product-session"]);
     } finally {
       await fixture.cleanup();
     }
   });
 
-  it("keeps the span unknown when a foreign writer appends after the before-snapshot and releases before submit admission", async () => {
+  it("attaches an exact Hermes span only when its Run receipt equals every Reader row", async () => {
+    const fixture = await makeProfile();
+    try {
+      const sessionId = "hermes-product-session";
+      const tails = [40, 42];
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => ({
+        availability: "available",
+        tailRowId: tails.shift() ?? 42,
+        relation: "none",
+        successorSessionId: null,
+      });
+      let spanRuntimeEnv: Record<string, string> | undefined;
+      const gateway = mockGateway(async (method, _params, emit) => {
+        if (method !== "prompt.submit") return undefined;
+        await writeRunSpanCaptureReceipt(spanRuntimeEnv, sessionId, 40, [41, 42]);
+        emit("message.start");
+        emitTurnComplete(emit);
+        return { status: "streaming" };
+      });
+      const createClient: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["createClient"]> = async (input) => {
+        spanRuntimeEnv = input.profile.env;
+        return gateway.createClient(input);
+      };
+      const result = await executeHermesProductRpcChat({
+        ...runInput(fixture.profile, createClient, readHistoryTail, {
+          readHistoryRangeRowIds: async ({ sessionId: requestedSessionId, startExclusive, endInclusive }) => {
+            expect({ requestedSessionId, startExclusive, endInclusive }).toEqual({
+              requestedSessionId: sessionId,
+              startExclusive: 40,
+              endInclusive: 42,
+            });
+            return [41, 42];
+          },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 0,
+        resultJson: {
+          transcriptBoundary: {
+            status: "exact",
+            sessionId,
+            startExclusive: 40,
+            endInclusive: 42,
+            sourceRangeRef: JSON.stringify({
+              version: 1,
+              status: "exact",
+              sessionId,
+              startExclusive: 40,
+              endInclusive: 42,
+              captureVersion: 1,
+              capturedRowCount: 2,
+            }),
+          },
+          executionRef: `hermes:db:${sessionId}:42`,
+        },
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("attaches an exact first-turn span when the fresh Hermes SessionDB row is persisted by the compute host", async () => {
+    const fixture = await makeProfile();
+    try {
+      const sessionId = "hermes-product-session";
+      const tails = [
+        { availability: "missing" as const, tailRowId: null, relation: "unknown" as const, successorSessionId: null },
+        { availability: "available" as const, tailRowId: 2, relation: "none" as const, successorSessionId: null },
+      ];
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => tails.shift() ?? null;
+      let spanRuntimeEnv: Record<string, string> | undefined;
+      const gateway = mockGateway(async (method, _params, emit) => {
+        if (method !== "prompt.submit") return undefined;
+        await writeRunSpanCaptureReceipt(spanRuntimeEnv, sessionId, null, [1, 2], false);
+        emit("message.start");
+        emitTurnComplete(emit);
+        return { status: "streaming" };
+      });
+      const createClient: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["createClient"]> = async (input) => {
+        spanRuntimeEnv = input.profile.env;
+        return gateway.createClient(input);
+      };
+      const result = await executeHermesProductRpcChat({
+        ...runInput(fixture.profile, createClient, readHistoryTail, {
+          readHistoryRangeRowIds: async ({ sessionId: requestedSessionId, startExclusive, endInclusive }) => {
+            expect({ requestedSessionId, startExclusive, endInclusive }).toEqual({
+              requestedSessionId: sessionId,
+              startExclusive: null,
+              endInclusive: 2,
+            });
+            return [1, 2];
+          },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 0,
+        resultJson: {
+          transcriptBoundary: {
+            status: "exact",
+            sessionId,
+            startExclusive: null,
+            endInclusive: 2,
+            sourceRangeRef: JSON.stringify({
+              version: 1,
+              status: "exact",
+              sessionId,
+              startExclusive: null,
+              endInclusive: 2,
+              captureVersion: 1,
+              capturedRowCount: 2,
+            }),
+          },
+          executionRef: `hermes:db:${sessionId}:2`,
+        },
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("preserves the run-log supplement when Hermes emits no native row receipt", async () => {
     const fixture = await makeProfile();
     try {
       const order: string[] = [];
@@ -1410,10 +1818,7 @@ describe("Hermes Product Gateway RPC", () => {
       };
       const gateway = mockGateway((method, _params, emit) => {
         if (method === "prompt.submit") {
-          // Models an old owner writing after Rudder's snapshot, then releasing
-          // the runtime lease before this handler acquires it.
-          order.push("foreign-writer-appends-and-releases-lease");
-          order.push("prompt-submit-acquires-exclusive-lease");
+          order.push("prompt-submit");
           emit("message.start");
           emitTurnComplete(emit);
           return { status: "streaming" };
@@ -1428,8 +1833,7 @@ describe("Hermes Product Gateway RPC", () => {
 
       expect(order).toEqual([
         "before-history-snapshot",
-        "foreign-writer-appends-and-releases-lease",
-        "prompt-submit-acquires-exclusive-lease",
+        "prompt-submit",
         "after-history-snapshot",
       ]);
       expect(result).toMatchObject({
@@ -1449,52 +1853,51 @@ describe("Hermes Product Gateway RPC", () => {
       expect(runLogText).toContain('"event":"message.start"');
       expect(runLogText).toContain('"event":"message.complete"');
       expect(runLogText).toContain('"event":"session.info"');
-      expect(runLogText).not.toContain("foreign-writer");
       expect(result.resultJson).not.toHaveProperty("events");
     } finally {
       await fixture.cleanup();
     }
   });
 
-  it.skipIf(!pythonCommand)("attributes an accepted Product Gateway turn to the fenced native SessionDB row interval", async () => {
+  it.skipIf(!pythonCommand)("rejects a foreign native row interleaved into the accepted Run's span", async () => {
     const fixture = await makeProfile();
     try {
       const sessionId = "hermes-product-session";
       await fs.writeFile(path.join(fixture.profile.hermesHome, "config.yaml"), JSON.stringify({ model: "local-test" }), { mode: 0o600 });
       await addJsonYamlFixture(fixture.profile);
-      execFileSync(pythonCommand!, ["-c", HISTORY_FENCE_SEED_SCRIPT, path.join(fixture.profile.hermesHome, "state.db"), sessionId], {
+      execFileSync(pythonCommand!, ["-c", HISTORY_ROWS_SEED_SCRIPT, path.join(fixture.profile.hermesHome, "state.db"), sessionId], {
         encoding: "utf8",
       });
       const profile = { ...fixture.profile, hermesPythonCommand: pythonCommand! };
       const order: string[] = [];
       let historyReadCount = 0;
+      let resolveLeaseVisible!: () => void;
+      const leaseVisible = new Promise<void>((resolve) => { resolveLeaseVisible = resolve; });
+      let resolveSubmitAcknowledgement!: () => void;
+      const submitAcknowledgement = new Promise<void>((resolve) => { resolveSubmitAcknowledgement = resolve; });
+      let nativePromptWritePromise: Promise<string> | null = null;
+      let overlayHome: string | null = null;
+      let spanRuntimeEnv: Record<string, string> | undefined;
       const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => {
-        order.push(historyReadCount++ === 0 ? "before-history-tail" : "after-history-tail");
-        const tailRowId = historyReadCount === 1
-          ? 40
-          : Number(execFileSync(pythonCommand!, [
-            "-c",
-            HISTORY_FENCE_READ_TAIL_SCRIPT,
-            path.join(profile.hermesHome, "state.db"),
-            sessionId,
-          ], { encoding: "utf8" }).trim());
+        const isBefore = historyReadCount++ === 0;
+        order.push(isBefore ? "before-history-tail" : "after-history-tail");
+        if (isBefore) return { availability: "available", tailRowId: 40, relation: "none", successorSessionId: null };
+        if (!nativePromptWritePromise) throw new Error("Native prompt writer was not started after submit acknowledgement.");
+        await nativePromptWritePromise;
+        const tailRowId = Number(execFileSync(pythonCommand!, [
+          "-c",
+          HISTORY_ROWS_READ_TAIL_SCRIPT,
+          path.join(profile.hermesHome, "state.db"),
+          sessionId,
+        ], { encoding: "utf8" }).trim());
         return { availability: "available", tailRowId, relation: "none", successorSessionId: null };
       };
-      let interleavedWriterResult: string | null = null;
-      let nativePromptWriteResult: string | null = null;
-      let overlayHome: string | null = null;
       const gateway = mockGateway(async (method, _params, emit) => {
         if (method !== "prompt.submit") return undefined;
         order.push("prompt-submit");
-        interleavedWriterResult = execFileSync(pythonCommand!, [
-          "-c",
-          HISTORY_FENCE_INSERT_SCRIPT,
-          path.join(profile.hermesHome, "state.db"),
-          sessionId,
-          "41",
-        ], { encoding: "utf8" }).trim();
         if (!overlayHome) throw new Error("Hermes Run overlay was not created");
         const registryPath = path.join(overlayHome, "runtime", "active_sessions.json");
+        await fs.mkdir(path.dirname(registryPath), { recursive: true });
         await fs.writeFile(registryPath, JSON.stringify({ entries: [{
           lease_id: "test-lease",
           session_id: sessionId,
@@ -1502,56 +1905,68 @@ describe("Hermes Product Gateway RPC", () => {
           pid: process.pid,
           metadata: { live_session_id: "hermes-product-runtime-1" },
         }] }), "utf8");
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        nativePromptWriteResult = execFileSync(pythonCommand!, [
-          "-c",
-          HISTORY_FENCE_INSERT_SCRIPT,
-          path.join(profile.hermesHome, "state.db"),
-          sessionId,
-          "44",
-        ], { encoding: "utf8" }).trim();
+        resolveLeaseVisible();
+        await submitAcknowledgement;
+        await writeRunSpanCaptureReceipt(spanRuntimeEnv, sessionId, 40, [44]);
         emit("message.start");
         emitTurnComplete(emit);
         return { status: "streaming" };
       });
 
-      const result = await executeHermesProductRpcChat({
+      const executionPromise = executeHermesProductRpcChat({
         ...runInput(profile, async (input) => {
           overlayHome = input.profile.env?.HERMES_HOME ?? null;
+          spanRuntimeEnv = input.profile.env;
           return gateway.createClient(input);
         }, readHistoryTail, {
-          acquireHistoryFence: undefined,
+          readHistoryRangeRowIds: async (range) => {
+            expect(range).toMatchObject({ sessionId, startExclusive: 40, endInclusive: 44 });
+            return [41, 44];
+          },
         }),
         rudderMcp: {
           command: { command: process.execPath, args: ["mcp-server"], provenance: "repo" },
           identity: {
             RUDDER_API_URL: "http://127.0.0.1:3100",
-            RUDDER_API_KEY: "run-scoped-fence-secret",
-            RUDDER_ORG_ID: "org-fence-test",
-            RUDDER_AGENT_ID: "agent-fence-test",
-            RUDDER_RUN_ID: "run-fence-test",
+            RUDDER_API_KEY: "run-scoped-attribution-secret",
+            RUDDER_ORG_ID: "org-attribution-test",
+            RUDDER_AGENT_ID: "agent-attribution-test",
+            RUDDER_RUN_ID: "run-attribution-test",
           },
         },
       });
 
-      const expectedRangeRef = JSON.stringify({
-        version: 1,
-        status: "exact",
+      await leaseVisible;
+      const foreignWriterReady = path.join(fixture.profile.cwd, "foreign-writer-ready");
+      const foreignWriterPromise = execFileAsync(pythonCommand!, [
+        "-c",
+        HISTORY_ROWS_INSERT_SCRIPT,
+        path.join(profile.hermesHome, "state.db"),
         sessionId,
-        startExclusive: 40,
-        endInclusive: 44,
-      });
+        "41",
+        "0.5",
+        foreignWriterReady,
+      ], { encoding: "utf8" }).then(({ stdout }) => stdout.trim());
+      await vi.waitFor(() => fs.access(foreignWriterReady));
+      const interleavedWriterResult = await foreignWriterPromise;
+
+      nativePromptWritePromise = execFileAsync(pythonCommand!, [
+        "-c",
+        HISTORY_ROWS_INSERT_SCRIPT,
+        path.join(profile.hermesHome, "state.db"),
+        sessionId,
+        "44",
+        "5",
+      ], { encoding: "utf8" }).then(({ stdout }) => stdout.trim());
+      resolveSubmitAcknowledgement();
+      const result = await executionPromise;
+      const nativePromptWriteResult = await nativePromptWritePromise;
+
       expect(result).toMatchObject({
         exitCode: 0,
         resultJson: {
-          transcriptBoundary: {
-            status: "exact",
-            sessionId,
-            startExclusive: 40,
-            endInclusive: 44,
-            sourceRangeRef: expectedRangeRef,
-          },
-          executionRef: `hermes:db:${sessionId}:44`,
+          transcriptBoundary: { status: "unknown", sessionId, sourceRangeRef: null },
+          executionRef: null,
         },
       });
       expect(hasConfirmedNativeWriterQuiescence(result)).toBe(true);
@@ -1560,12 +1975,12 @@ describe("Hermes Product Gateway RPC", () => {
       expect(await fs.readFile(path.join(profile.hermesHome, "runtime", "active_sessions.json"), "utf8"))
         .toContain(sessionId);
       expect(await fs.readdir(profile.hermesHome)).not.toContain("rudder_product_rpc_bootstrap.py");
-      expect(interleavedWriterResult).toBe("blocked");
+      expect(interleavedWriterResult).toBe("inserted");
       expect(nativePromptWriteResult).toBe("inserted");
       expect(order).toEqual(["before-history-tail", "prompt-submit", "after-history-tail"]);
       expect(execFileSync(pythonCommand!, [
         "-c",
-        HISTORY_FENCE_INSERT_SCRIPT,
+        HISTORY_ROWS_INSERT_SCRIPT,
         path.join(profile.hermesHome, "state.db"),
         sessionId,
         "45",
@@ -1604,14 +2019,47 @@ describe("Hermes Product Gateway RPC", () => {
     }
   });
 
+  it("keeps queued prompt submissions unknown and settles both queued turns", async () => {
+    const fixture = await makeProfile();
+    try {
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => ({
+        availability: "available",
+        tailRowId: 40,
+        relation: "none",
+        successorSessionId: null,
+      });
+      const gateway = mockGateway((method, _params, emit) => {
+        if (method !== "prompt.submit") return undefined;
+        emit("message.complete", { text: "prior turn", status: "complete" });
+        emit("session.info", { running: true, model: "hermes-test-model" });
+        emit("message.start");
+        emitTurnComplete(emit);
+        return { status: "queued" };
+      });
+      const result = await executeHermesProductRpcChat({
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail),
+        timeoutMs: 1_000,
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 0,
+        timedOut: false,
+        resultJson: { transcriptBoundary: { status: "unknown", sourceRangeRef: null } },
+      });
+      expect(gateway.calls.filter(({ method }) => method === "prompt.submit")).toHaveLength(1);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("keeps the exact row interval unknown when native prompt acceptance is not proven", () => {
     const boundary = deriveHermesProductRpcTranscriptBoundary({
       sessionId: "hermes-product-session",
       historyProfileAvailable: true,
       before: { availability: "available", tailRowId: 40, relation: "none", successorSessionId: null },
       after: { availability: "available", tailRowId: 44, relation: "none", successorSessionId: null },
-      lockedTailRowId: 40,
-      historyFenceHeldThroughLease: true,
+      sourceRowsVerified: true,
+      capturedRowCount: 1,
       promptAcceptanceProven: false,
     });
 
@@ -2558,7 +3006,7 @@ process.stdin.on("data", chunk => {
           tailRowId: null,
           relation: "unknown",
           successorSessionId: null,
-        }), { waitForSessionLease: async () => false }),
+        })),
         timeoutMs: 45_000,
         signal: controller.signal,
         rudderMcp: {
