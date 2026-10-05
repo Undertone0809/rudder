@@ -724,10 +724,11 @@ process.stdin.on("data", (chunk) => {
   it("injects only the selected Rudder skills and records name-only projection evidence", async () => {
     const selectedMarker = "R6Z182_SELECTED_MARKER";
     const unselectedMarker = "R6Z182_UNSELECTED_MARKER";
+    const userPrompt = "R6Z182_USER_INPUT_SENTINEL";
     const selected = await createSkill("selected", `# Selected\n\n${selectedMarker}\n`);
     const unselected = await createSkill("unselected", `# Unselected\n\n${unselectedMarker}\n`);
     const submittedInputs: string[] = [];
-    const metas: unknown[] = [];
+    const metas: AgentRuntimeInvocationMeta[] = [];
     const server = await listen(async (req, res) => {
       if (sessionRoute(req, res)) return;
       if (req.url === "/v1/runs" && req.method === "POST") {
@@ -751,10 +752,14 @@ process.stdin.on("data", (chunk) => {
         { key: "org:org-hermes-1/unselected", runtimeName: "unselected", source: unselected },
       ],
       rudderSkillSync: { desiredSkills: ["org:org-hermes-1/selected"] },
-    }, { onMeta: async (meta) => { metas.push(meta); } }));
+    }, {
+      context: { chatMode: true, chatConversationId: "chat-hermes-skills", chatPrompt: userPrompt },
+      onMeta: async (meta) => { metas.push(meta); },
+    }));
 
     expect(result.exitCode).toBe(0);
     expect(submittedInputs).toHaveLength(1);
+    expect(submittedInputs[0]).toContain(userPrompt);
     expect(submittedInputs[0]).toContain(selectedMarker);
     expect(submittedInputs[0]).not.toContain(unselectedMarker);
     expect(submittedInputs[0]).toContain("Only skills listed in this section are enabled by Rudder");
@@ -764,9 +769,11 @@ process.stdin.on("data", (chunk) => {
       desiredSkills: [{ key: "org:org-hermes-1/selected", runtimeName: "selected" }],
       promptInjectedSkills: [{ key: "org:org-hermes-1/selected", runtimeName: "selected" }],
       prompt: submittedInputs[0],
-      agentInstructionStack: submittedInputs[0],
       promptMetrics: { skillCount: 1 },
     });
+    expect(metas[0]?.agentInstructionStack).toContain(selectedMarker);
+    expect(metas[0]?.agentInstructionStack).not.toContain(userPrompt);
+    expect(metas[0]?.agentInstructionStack).not.toContain(unselectedMarker);
     expect(JSON.stringify(metas)).toContain(selectedMarker);
     expect(JSON.stringify(metas)).not.toContain(unselectedMarker);
   });
@@ -803,8 +810,36 @@ process.stdin.on("data", (chunk) => {
     expect(result.exitCode).toBe(0);
     expect(submittedInputs).toEqual([prompt]);
     expect(metas).toHaveLength(1);
-    expect(metas[0]).toMatchObject({ prompt: submittedInputs[0], agentInstructionStack: submittedInputs[0] });
+    expect(metas[0]).toMatchObject({ prompt: submittedInputs[0], agentInstructionStack: "" });
     expect(logs.join("\n")).not.toContain(prompt);
+  });
+
+  it("keeps submitted chat input out of the Hermes ACP injected instruction stack", async () => {
+    const selectedMarker = "R6Z182_ACP_SELECTED_INSTRUCTION";
+    const userPrompt = "R6Z182_ACP_USER_INPUT";
+    const selected = await createSkill("acp-instruction-stack", `# Selected\n\n${selectedMarker}\n`);
+    const metas: AgentRuntimeInvocationMeta[] = [];
+    const result = await execute(context({
+      hermesChatBackend: "acp",
+      command: process.execPath,
+      args: ["-e", ACP_TIMEOUT_MOCK],
+      providerHostId: "host-hermes-instruction-stack",
+      providerProfileId: "profile-hermes-instruction-stack",
+      hermesProviderVersion: "0.21.0",
+      rudderRuntimeSkills: [
+        { key: "org:org-hermes-1/selected", runtimeName: "selected", source: selected },
+      ],
+      rudderSkillSync: { desiredSkills: ["org:org-hermes-1/selected"] },
+    }, {
+      context: { chatMode: true, chatConversationId: "chat-hermes-acp-instruction-stack", chatPrompt: userPrompt },
+      onMeta: async (meta) => { metas.push(meta); },
+    }));
+
+    expect(result.exitCode).toBe(0);
+    expect(metas).toHaveLength(1);
+    expect(metas[0]?.prompt).toContain(userPrompt);
+    expect(metas[0]?.agentInstructionStack).toContain(selectedMarker);
+    expect(metas[0]?.agentInstructionStack).not.toContain(userPrompt);
   });
 
   it("uses the latest full skill selection on every run without stale material", async () => {
