@@ -29,6 +29,19 @@ function Get-RudderCreationTime {
   Write-RudderHelperPhase $requestId "get_times_done"
   return ([long]$arguments[1]).ToString()
 }
+try {
+  Write-RudderHelperPhase 0 "startup_utility_import_start"
+  $utilityModulePath = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')
+  Import-Module -Name $utilityModulePath -ErrorAction Stop
+  Write-RudderHelperPhase 0 "startup_utility_import_done"
+  Write-RudderHelperPhase 0 "startup_management_import_start"
+  $managementModulePath = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1')
+  Import-Module -Name $managementModulePath -ErrorAction Stop
+  Write-RudderHelperPhase 0 "startup_management_import_done"
+} catch {
+  Write-RudderHelperPhase 0 "startup_import_failed"
+  exit 1
+}
 [Console]::Out.WriteLine('{"id":0,"ok":true}')
 [Console]::Out.Flush()
 Write-RudderHelperPhase 0 "ready_flush_done"
@@ -261,8 +274,25 @@ export function createWindowsProcessController(options = {}) {
     readyResolve = resolve;
     readyReject = reject;
   });
+  let startupTimedOut = false;
   const startTimeout = setTimeout(
-    () => readyReject(new Error("Windows process helper did not start in time")),
+    () => {
+      // Close readiness at the deadline; late output must never start a request.
+      startupTimedOut = true;
+      recordPhase("node", 0, "startup_timeout");
+      void (async () => {
+        let helperExit = "unverified";
+        try {
+          helperExit = await terminateWindowsChildProcessHandle(child, { timeoutMs: 2_000 });
+          recordPhase("node", 0, "startup_helper_exit_verified");
+        } catch {
+          recordPhase("node", 0, "startup_helper_exit_unverified");
+        }
+        readyReject(new Error(
+          `Windows process helper did not start in time (helperExit=${helperExit}, phases=${formatWindowsHelperTrace(phases, 0)})`,
+        ));
+      })();
+    },
     WINDOWS_HELPER_START_TIMEOUT_MS,
   );
   child.stderr.setEncoding("utf8");
@@ -294,6 +324,10 @@ export function createWindowsProcessController(options = {}) {
       return;
     }
     if (message?.id === 0 && message.ok === true) {
+      if (startupTimedOut) {
+        recordPhase("node", 0, "ready_frame_ignored_after_timeout");
+        return;
+      }
       recordPhase("node", 0, "ready_frame_parsed");
       clearTimeout(startTimeout);
       readyResolve();
@@ -312,12 +346,12 @@ export function createWindowsProcessController(options = {}) {
   });
   child.once("error", (error) => {
     clearTimeout(startTimeout);
-    readyReject(error);
+    if (!startupTimedOut) readyReject(error);
   });
   child.once("exit", (code) => {
     clearTimeout(startTimeout);
     const error = new Error(`Windows process helper exited (${code ?? "signal"})${stderr ? `: ${stderr.trim()}` : ""}`);
-    readyReject(error);
+    if (!startupTimedOut) readyReject(error);
     for (const entry of pending.values()) {
       clearTimeout(entry.timeout);
       entry.reject(error);

@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { spawnNativeProcessHost, type NativeProcessHost } from "./local-app-native-host.js";
 import { createLocalAppProcessPlatform } from "./local-app-process-platform.js";
+import { terminateWindowsChildProcessHandle } from "./local-app-windows-processes.mjs";
 import { LocalAppRegistry } from "./local-apps-registry.js";
 import {
   LocalAppRuntimeManager,
@@ -72,14 +73,26 @@ async function approvedFixture(options: {
   return { root, registry, definition };
 }
 
-async function assertWildcardPortCanBeRebound(port: number): Promise<void> {
+async function assertWildcardPortCanBeRebound(port: number, observe?: (result: {
+  listening: boolean; requestedPortMatched: boolean;
+}) => void): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
     server.listen(port, "0.0.0.0", () => {
+      const address = server.address();
+      observe?.({ listening: server.listening,
+        requestedPortMatched: address !== null && typeof address === "object" && address.port === port });
       server.close((error) => error ? reject(error) : resolve());
     });
   });
+}
+
+function observeProcessProbe(probe: () => void): "alive" | "ESRCH" | "EPERM" | "unknown_error" {
+  try { probe(); return "alive"; } catch (error) {
+    const code = error !== null && typeof error === "object" && "code" in error ? error.code : null;
+    return code === "ESRCH" || code === "EPERM" ? code : "unknown_error";
+  }
 }
 
 function deferred<T>() {
@@ -283,6 +296,12 @@ function nativeHostEmitting(onStart?: (message: Record<string, unknown>, helper:
 }
 
 describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs }, () => {
+  it("requires ESRCH rather than permission or unknown probe failures to prove an app is gone", () => {
+    expect(observeProcessProbe(() => undefined)).toBe("alive");
+    expect(observeProcessProbe(() => { throw Object.assign(new Error(), { code: "ESRCH" }); })).toBe("ESRCH");
+    expect(observeProcessProbe(() => { throw Object.assign(new Error(), { code: "EPERM" }); })).toBe("EPERM");
+    expect(observeProcessProbe(() => { throw new Error(); })).toBe("unknown_error");
+  });
   it("injects Electron Node mode for the managed host executable even when the parent env omits it", async () => {
     const { registry, definition } = await approvedFixture({
       inheritedEnvNames: ["ELECTRON_RUN_AS_NODE"],
@@ -494,11 +513,105 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       try {
         const running = await manager.start(definition.id);
         expect(running.status).toBe("running");
-        expect((await fetch(`${running.origin}/health`)).status).toBe(200);
-        await expect(manager.stop(definition.id)).resolves.toMatchObject({ status: "stopped" });
-        await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toBeNull();
+        const healthStatus = (await fetch(`${running.origin}/health`)).status;
+        expect(healthStatus).toBe(200);
+        const stopResult = await manager.stop(definition.id);
+        expect(stopResult.status).toBe("stopped");
+        const descriptor = await registry.getRuntimeDescriptor(definition.id);
+        expect(descriptor).toBeNull();
+        console.log(`RUDDER_WINDOWS_LIFECYCLE|${JSON.stringify({
+          case: "approved-local-app", node: process.versions.node, platform: process.platform, arch: process.arch,
+          runningStatus: running.status, healthStatus, stopStatus: stopResult.status, descriptorAbsent: descriptor === null,
+        })}`);
       } finally {
         await manager.shutdown().catch(() => undefined);
+      }
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "cleans a real Windows Local App after parent control-pipe EOF",
+    { timeout: 240_000 },
+    async () => {
+      const { root, definition } = await approvedFixture();
+      const port = await unusedLoopbackPort();
+      const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+      const temp = process.env.TEMP ?? process.env.TMP ?? path.win32.join(systemRoot, "Temp");
+      const watchdog = spawn(process.execPath, [watchdogPath], {
+        env: {
+          ELECTRON_RUN_AS_NODE: "1",
+          SystemRoot: systemRoot,
+          WINDIR: process.env.WINDIR ?? systemRoot,
+          TEMP: temp,
+          TMP: process.env.TMP ?? temp,
+        },
+        shell: false,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe", "ipc"],
+      });
+      watchdog.stdout?.resume();
+      watchdog.stderr?.resume();
+      let stopped = false;
+      let cleanupRequested = false;
+      const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+        watchdog.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      const spawned = new Promise<number>((resolve, reject) => {
+        watchdog.once("error", () => reject(new Error("Windows EOF watchdog failed to spawn")));
+        watchdog.once("exit", () => reject(new Error("Windows EOF watchdog exited before spawning its app")));
+        watchdog.on("message", (message: unknown) => {
+          const value = message as { type?: string; pid?: number };
+          if (value.type === "spawned" && Number.isSafeInteger(value.pid)) resolve(value.pid!);
+          if (value.type === "stopped") stopped = true;
+          if (value.type === "error") reject(new Error("Windows EOF watchdog startup failed"));
+        });
+      });
+      void spawned.catch(() => undefined);
+      const bounded = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([promise, new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Windows EOF watchdog exceeded its observation deadline")), timeoutMs);
+          })]);
+        } finally { clearTimeout(timeout); }
+      };
+      try {
+        const environment = await buildChildEnvironment(definition, port, process.execPath,
+          createLocalAppProcessPlatform({ platform: "win32" }));
+        watchdog.send?.({ type: "start", executable: definition.executable, argv: definition.argv,
+          cwd: root, env: environment });
+        const appPid = await bounded(spawned, 125_000);
+        let healthStatus: number | null = null;
+        await vi.waitFor(async () => {
+          const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(500) });
+          healthStatus = response.status;
+          expect(healthStatus).toBe(200);
+        }, { timeout: 30_000 });
+        cleanupRequested = true;
+        watchdog.stdin?.end();
+        const watchdogExit = await bounded(exited, 65_000);
+        expect(watchdogExit).toEqual({ code: 0, signal: null });
+        expect(stopped).toBe(true);
+        const appProbe = observeProcessProbe(() => process.kill(appPid, 0));
+        expect(appProbe).toBe("ESRCH");
+        let portRebind: { listening: boolean; requestedPortMatched: boolean } | null = null;
+        await assertWildcardPortCanBeRebound(port, (result) => { portRebind = result; });
+        expect(portRebind).toEqual({ listening: true, requestedPortMatched: true });
+        console.log(`RUDDER_WINDOWS_LIFECYCLE|${JSON.stringify({
+          case: "parent-control-pipe-eof", node: process.versions.node, platform: process.platform, arch: process.arch,
+          healthStatus, stoppedAcknowledgement: stopped, watchdogExit, appProbe, portRebind,
+        })}`);
+      } finally {
+        if (watchdog.exitCode === null && watchdog.signalCode === null) {
+          if (!cleanupRequested) {
+            watchdog.stdin?.end();
+            await bounded(exited, 65_000).catch(() => undefined);
+          }
+          if (watchdog.exitCode === null && watchdog.signalCode === null) {
+            await terminateWindowsChildProcessHandle(watchdog, { timeoutMs: 2_000 });
+            throw new Error("Windows EOF watchdog fixture cleanup remains unverified");
+          }
+        }
       }
     },
   );
