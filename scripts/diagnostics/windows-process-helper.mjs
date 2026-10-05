@@ -58,6 +58,16 @@ $rudderSerializer = [System.Web.Script.Serialization.JavaScriptSerializer]::new(
 [void]$rudderSerializer.DeserializeObject('{}')
 Write-RudderHelperPhase 0 "diag_serializer_init_done"
 `;
+const MANAGEMENT_INIT = `
+Write-RudderHelperPhase 0 "diag_management_import_start"
+$rudderManagementPath = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1')
+$rudderManagementModule = Import-Module -Name $rudderManagementPath -PassThru -ErrorAction Stop
+Write-RudderHelperPhase 0 "diag_management_import_done"
+$rudderExpectedManagementModule = $rudderManagementModule.Name -eq 'Microsoft.PowerShell.Management'
+[Console]::Error.WriteLine("RUDDER_DIAG|expected_management_module|$rudderExpectedManagementModule")
+[Console]::Error.Flush()
+if (-not $rudderExpectedManagementModule) { throw 'Unexpected diagnostic Management module identity' }
+`;
 
 export function minimalWatchdogEnvironment(source = process.env) {
   const systemRoot = source.SystemRoot ?? "C:\\Windows";
@@ -85,6 +95,7 @@ export function initialProbePlan() {
     { name: "baseline", instrumentation: "none", requests: 2 },
     { name: "resolution", instrumentation: "resolution", requests: 2 },
     { name: "trusted-initialization", instrumentation: "trusted", requests: 2 },
+    { name: "trusted-utility-management", instrumentation: "trusted-management", requests: 2 },
   ];
 }
 
@@ -95,9 +106,10 @@ function replaceOnce(script, needle, replacement) {
 
 export function instrumentHelper(script, mode) {
   if (mode === "none") return script;
-  if (!["resolution", "trusted"].includes(mode)) throw new Error("Unknown diagnostic instrumentation");
+  if (!["resolution", "trusted", "trusted-management"].includes(mode)) throw new Error("Unknown diagnostic instrumentation");
   const resolved = replaceOnce(script, PARSE, RESOLVE);
-  return replaceOnce(resolved, READY, `${META}${mode === "trusted" ? TRUSTED_INIT : ""}\n${READY}`);
+  const initialization = mode === "trusted-management" ? TRUSTED_INIT + MANAGEMENT_INIT : mode === "trusted" ? TRUSTED_INIT : "";
+  return replaceOnce(resolved, READY, `${META}${initialization}\n${READY}`);
 }
 
 // Never persist the controller error: it can contain raw PowerShell stderr.
@@ -119,7 +131,7 @@ export function parseMetadata(line) {
     && /^\d+(?:\.\d+){1,3}$/.test(value)) return [key, value];
   if (key === "stopwatch_frequency" && /^\d{1,15}$/.test(value)) return [key, value];
   if (["input_redirected", "env_PSModulePath", "env_USERPROFILE", "env_LOCALAPPDATA",
-    "expected_converter_type", "expected_converter_module"].includes(key)
+    "expected_converter_type", "expected_converter_module", "expected_management_module"].includes(key)
     && /^(True|False)$/.test(value)) return [key, value === "True"];
   return null;
 }

@@ -81,7 +81,7 @@ test("minimal environment preserves the watchdog allowlist and excludes caller s
 });
 
 test("plan is bounded and starts with two unchanged streaming requests", () => {
-  assert.deepEqual(initialProbePlan().map((probe) => probe.name), ["baseline", "resolution", "trusted-initialization"]);
+  assert.deepEqual(initialProbePlan().map((probe) => probe.name), ["baseline", "resolution", "trusted-initialization", "trusted-utility-management"]);
   assert.equal(initialProbePlan()[0].requests, 2);
   assert.equal(initialProbePlan()[0].instrumentation, "none");
   assert.ok(CASE_DEADLINE_MS >= 3 * 60_000);
@@ -119,6 +119,8 @@ test("metadata and failure output use an allowlist, never raw stderr or environm
   assert.deepEqual(parseMetadata("RUDDER_DIAG|powershell_version|5.1.26100.1"), ["powershell_version", "5.1.26100.1"]);
   assert.deepEqual(parseMetadata("RUDDER_DIAG|env_LOCALAPPDATA|False"), ["env_LOCALAPPDATA", false]);
   assert.deepEqual(parseMetadata("RUDDER_DIAG|expected_converter_type|True"), ["expected_converter_type", true]);
+  assert.deepEqual(parseMetadata("RUDDER_DIAG|expected_management_module|True"), ["expected_management_module", true]);
+  assert.deepEqual(parseMetadata("RUDDER_DIAG|expected_management_module|False"), ["expected_management_module", false]);
   for (const line of ["TOKEN=PRIVATE", "RUDDER_DIAG|TOKEN|PRIVATE", "RUDDER_DIAG|env_LOCALAPPDATA|PRIVATE",
     "RUDDER_DIAG|powershell_version|PRIVATE", "RUDDER_DIAG|converter_assembly_version|C:\\private"]) {
     assert.equal(parseMetadata(line), null);
@@ -126,6 +128,25 @@ test("metadata and failure output use an allowlist, never raw stderr or environm
   assert.equal(failureKind(new Error("Windows process helper exited (1): PRIVATE")), "helper_exited");
   assert.equal(failureKind(new Error("Windows process helper request timed out PRIVATE")), "request_timeout");
   assert.equal(failureKind(new Error("PRIVATE")), "operation_failed");
+});
+
+test("fourth comparison only adds trusted Management preload before readiness, leaving Get-Process unchanged", () => {
+  const script = `${SCRIPT}\n$candidate = Get-Process -Id ([int]$request.pid) -ErrorAction Stop`;
+  const result = instrumentHelper(script, "trusted-management");
+  const ready = result.indexOf("[Console]::Out.WriteLine");
+  assert.ok(result.includes("[IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1')"));
+  assert.ok(result.indexOf("diag_utility_import_done") < result.indexOf("diag_management_import_start"));
+  assert.ok(result.indexOf("diag_management_import_start") < result.indexOf("Import-Module -Name $rudderManagementPath"));
+  assert.ok(result.indexOf("Import-Module -Name $rudderManagementPath") < result.indexOf("diag_management_import_done"));
+  assert.ok(result.indexOf("diag_management_import_done") < ready);
+  assert.ok(result.indexOf("Unexpected diagnostic Management module identity") < ready);
+  assert.ok(result.includes("$candidate = Get-Process -Id ([int]$request.pid) -ErrorAction Stop"));
+  assert.ok(!result.includes("GetCommand('Get-Process'"));
+  const blockStart = result.lastIndexOf('\nWrite-RudderHelperPhase 0 "diag_management_import_start"', ready);
+  const blockEnd = result.indexOf("\n\n[Console]::Out.WriteLine", blockStart);
+  assert.equal(result.slice(0, blockStart) + result.slice(blockEnd + 1), instrumentHelper(script, "trusted"));
+  assert.ok(!result.includes("ExecutionPolicy"));
+  assert.deepEqual(initialProbePlan()[3], { name: "trusted-utility-management", instrumentation: "trusted-management", requests: 2 });
 });
 
 test("production controller seam sends only two captures of the harness PID and closes its own handle", async () => {
@@ -243,7 +264,7 @@ test("EOF interventions are conditional; apparent sensitivity gets one different
       events: [{ phase: "request_json_parse_done", elapsedMs: 15020 }], cleanup: { status: "exited" } };
     return { name: probe.name, events: [], cleanup: { status: "exited" } };
   } });
-  assert.equal(campaign.results.length, 5);
+  assert.equal(campaign.results.length, 6);
   assert.deepEqual(observed.slice(-2).map((probe) => probe.eofDelayMs), [15000, 30000]);
   assert.equal(eofFollowupNeeded({ eofAtMs: 100, events: [{ phase: "request_json_parse_done", elapsedMs: 3000 }] }), false);
   assert.equal(eofFollowupNeeded({ events: [] }), false);
@@ -270,7 +291,7 @@ test("campaign stops on unverified cleanup or deadline, and never retries a heal
   for (const status of ["unverified", "exited"]) {
     let calls = 0;
     const { results } = await runCampaign({ run: async () => { calls += 1; return { events: [], cleanup: { status } }; } });
-    assert.equal(calls, status === "unverified" ? 1 : 3);
+    assert.equal(calls, status === "unverified" ? 1 : 4);
     assert.equal(results.length, calls);
   }
   const abort = new AbortController();
