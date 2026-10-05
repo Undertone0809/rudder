@@ -476,6 +476,10 @@ type HermesSkillProjection = {
   bytes: number;
 };
 
+function hermesInjectedInstructionStack(skillProjection: HermesSkillProjection): string {
+  return skillProjection.prompt.trim() ? skillProjection.prompt : "";
+}
+
 async function buildHermesSkillProjection(
   config: Record<string, unknown>,
 ): Promise<HermesSkillProjection> {
@@ -745,6 +749,7 @@ async function executeHermesProductRpc(
     }
   }
   if (ctx.onMeta) {
+    const agentInstructionStack = hermesInjectedInstructionStack(skillProjection);
     await ctx.onMeta({
       agentRuntimeType: "hermes_gateway",
       command: profile.hermesPythonCommand,
@@ -757,7 +762,7 @@ async function executeHermesProductRpc(
       commandArgs: ["-m", rudderMcp ? HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE : "tui_gateway.entry"],
       env: redactEnvForLogs(profile.env ?? {}),
       prompt,
-      agentInstructionStack: prompt,
+      agentInstructionStack,
       promptMetrics: { promptChars: prompt.length, skillCount: skillProjection.skills.length, skillBytes: skillProjection.bytes },
       loadedSkills: skillProjection.skills,
       realizedSkills: skillProjection.skills,
@@ -848,6 +853,7 @@ async function executeHermesAcpChat(
   const prompt = runMessage(ctx, skillProjection.prompt, toolContext.text);
   const timeoutMs = positiveMs(config.timeoutMs ?? (asNumber(config.timeoutSec, 120) * 1000), 120_000);
   if (ctx.onMeta) {
+    const agentInstructionStack = hermesInjectedInstructionStack(skillProjection);
     await ctx.onMeta({
       agentRuntimeType: "hermes_gateway",
       command: profile.command,
@@ -859,7 +865,7 @@ async function executeHermesAcpChat(
       commandArgs: [...profile.args],
       env: redactEnvForLogs(profile.env ?? {}),
       prompt,
-      agentInstructionStack: prompt,
+      agentInstructionStack,
       promptMetrics: { promptChars: prompt.length, skillCount: skillProjection.skills.length, skillBytes: skillProjection.bytes },
       loadedSkills: skillProjection.skills,
       realizedSkills: skillProjection.skills,
@@ -1196,12 +1202,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   delete body.previous_response_id;
 
   if (ctx.onMeta) {
+    const agentInstructionStack = hermesInjectedInstructionStack(skillProjection);
     await ctx.onMeta({
       agentRuntimeType: "hermes_gateway",
       command: "hermes-api",
       commandArgs: ["POST", endpoint(base, "/v1/runs").toString()],
       prompt: input,
-      agentInstructionStack: input,
+      agentInstructionStack,
       loadedSkills: skillProjection.skills,
       desiredSkills: skillProjection.skills,
       promptInjectedSkills: skillProjection.skills,
