@@ -327,7 +327,7 @@ fn default_color(colors: &[Option<String>]) -> &'static str {
         .unwrap_or(COLORS[colors.len() % COLORS.len()])
 }
 
-fn normalize_key(name: &str) -> Option<String> {
+pub(crate) fn normalize_key(name: &str) -> Option<String> {
     let mut key = String::new();
     let mut separator = false;
     for ch in name.trim().to_lowercase().chars() {
@@ -499,7 +499,7 @@ async fn resource_response(
         .map(Value::Array)
 }
 
-fn normalize_policy(raw: &Value) -> Value {
+pub(crate) fn normalize_policy(raw: &Value) -> Value {
     let Some(source) = raw.as_object().filter(|object| !object.is_empty()) else {
         return Value::Null;
     };

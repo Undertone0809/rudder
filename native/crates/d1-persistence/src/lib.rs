@@ -1,18 +1,21 @@
-//! Private SQLx persistence for fenced D1 mutation contracts.
+//! Private SQLx persistence for fenced D1 mutations and Project read projections.
 //!
 //! This crate has no routes, listeners, or Node integration. A caller must
-//! supply a command that crossed the trusted core boundary. Existing entities
+//! supply input that crossed the trusted core boundary. Existing-entity mutations
 //! require their durable Rust ownership fence; creation assigns ownership only
-//! to the newly inserted Project under the shared organization mutex.
+//! to the newly inserted Project under the shared organization mutex. Project
+//! reads are pure, organization-scoped projections independent of ownership.
 
 mod branding;
 mod goal_sets;
+pub mod legacy_read_json;
 mod links;
 mod organization_resources;
 mod project_creations;
 mod project_deletions;
 pub mod project_library;
 mod project_patches;
+pub mod project_reads;
 mod transaction;
 
 use rudder_organization_mutation_core::{

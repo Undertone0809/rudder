@@ -72,7 +72,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
+    if (req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -83,7 +83,7 @@ if (mode === "invalid") {
           body: Buffer.concat(chunks).toString("utf8"),
         }));
         res.setHeader("content-type", "application/json");
-        if (req.method === "POST") res.statusCode = 201;
+        if (req.method === "POST" && !req.url?.includes("/project-reads")) res.statusCode = 201;
         res.end(JSON.stringify({ status: "accepted" }));
       });
       return;
@@ -246,7 +246,7 @@ describe("rust foundation bridge lifecycle", () => {
     await expect(createBridge(fixture).start()).rejects.toMatchObject({ code: "startup_failed" });
   });
 
-  it("defaults member reads and Project-Goal writes to required and preserves explicit off", () => {
+  it("defaults member reads and Project-Goal writes to required while Project reads always require startup", () => {
     const names = [
       "RUDDER_RUST_MEMBER_DIRECTORY_MODE",
       "RUDDER_RUST_ORGANIZATION_BRANDING_MODE",
@@ -270,7 +270,7 @@ describe("rust foundation bridge lifecycle", () => {
       });
       activeBridges.add(disabledBridge);
       expect(disabledBridge.mode).toBe("off");
-      expect(disabledBridge.requiresStartup).toBe(false);
+      expect(disabledBridge.requiresStartup).toBe(true);
     } finally {
       for (const name of names) {
         const value = previous[name];
@@ -689,6 +689,33 @@ describe("rust foundation bridge lifecycle", () => {
     await waitForProcessExit(pid);
   }, 10_000);
 
+  it.each([
+    { projectId: null, resourcesOnly: false },
+    { projectId: "old-node-owned-project", resourcesOnly: false },
+    { projectId: "new-rust-created-project", resourcesOnly: true },
+  ])("signs API-wide Project reads with mutation modes disabled: %j", async (selection) => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "off" });
+    const actor = { type: "agent", agentId: "agent-1", orgId: "org-1", source: "agent_key" } as const;
+    const input = { ...selection, organizationWorkspaceRoot: "/trusted/organization" };
+    const response = await bridge.projectRead(actor, "org-1", input);
+    expect(response.status).toBe(200);
+    expect(bridge.requiresStartup).toBe(true);
+    const captured = await fixture.readRequest();
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("/internal/orgs/org-1/project-reads");
+    expect(JSON.parse(captured.body)).toEqual(input);
+    expect(captured.headers["x-rudder-idempotency-key"]).toBeUndefined();
+    expectEnvelopeSignedWith(captured, {
+      actor,
+      organizationId: "org-1",
+      method: "POST",
+      path: captured.url,
+      action: "project.read",
+      body: Buffer.from(JSON.stringify(input)),
+    }, "bridge-test-secret");
+  });
+
   it("binds branding requests to the private Actix contract", async () => {
     const fixture = await createFixture("ready");
     const bridge = createBridge(fixture, { mode: "off", organizationBrandingMode: "required" });
@@ -926,7 +953,7 @@ describe("rust foundation bridge lifecycle", () => {
       });
       activeBridges.add(bridge);
       expect(bridge.projectGoalSetMode).toBe("off");
-      expect(bridge.requiresStartup).toBe(false);
+      expect(bridge.requiresStartup).toBe(true);
     } finally {
       if (previousMode === undefined) delete process.env.RUDDER_RUST_PROJECT_DELETE_MODE;
       else process.env.RUDDER_RUST_PROJECT_DELETE_MODE = previousMode;

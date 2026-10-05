@@ -41,6 +41,14 @@ Installed npm packages use the bundled foundation executable and do not need
 Rust or Cargo at install time. The six-target npm artifact layout and packaging
 checks are documented in [PUBLISHING.md](PUBLISHING.md#server-foundation-payload).
 
+Project list, detail, and resource-list APIs use the Rust foundation for all
+projects, including existing Node-owned projects. They read the same PostgreSQL
+tables without a data or ownership migration. These reads require foundation
+startup even when the remaining mutation pilot modes are `off`; a foundation
+failure is reported rather than falling back to Node hydration. Read APIs derive
+legacy workspace paths without creating directories. Project creation, import,
+and startup retain their existing Library provisioning responsibilities.
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.
