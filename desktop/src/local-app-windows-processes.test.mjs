@@ -48,7 +48,7 @@ function createHelperFixture(options = {}) {
     requestTimeoutMs: options.requestTimeoutMs ?? 10,
     observePhase: (event) => phases.push(event),
   });
-  stdout.write('{"id":0,"ok":true}\n');
+  if (options.ready !== false) stdout.write('{"id":0,"ok":true}\n');
   return { child, controller, stdout, stderr, writes, phases, getSpawnArguments: () => spawnArguments };
 }
 
@@ -63,6 +63,131 @@ function withoutAllowedDiagnosticNumbers(message) {
 }
 
 describe("Windows Local App process-instance authority", () => {
+  it("loads both trusted built-in modules before readiness without serializer warm-up or policy changes", () => {
+    const { child, stdout, stderr, getSpawnArguments } = createHelperFixture();
+    const [executable, args, options] = getSpawnArguments();
+    const helperScript = args[3];
+    expect(executable).toMatch(/WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+    expect(args.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-Command"]);
+    expect(options).not.toHaveProperty("env");
+    expect(helperScript).toContain("[IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')");
+    expect(helperScript).toContain("[IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1')");
+    expect(helperScript).toContain("Import-Module -Name $utilityModulePath -ErrorAction Stop");
+    expect(helperScript).toContain("Import-Module -Name $managementModulePath -ErrorAction Stop");
+    const ready = helperScript.indexOf('[Console]::Out.WriteLine(\'{"id":0,"ok":true}\')');
+    const utilityDone = helperScript.indexOf('Write-RudderHelperPhase 0 "startup_utility_import_done"');
+    const managementStart = helperScript.indexOf('Write-RudderHelperPhase 0 "startup_management_import_start"');
+    const managementDone = helperScript.indexOf('Write-RudderHelperPhase 0 "startup_management_import_done"');
+    expect(utilityDone).toBeGreaterThan(0);
+    expect(managementStart).toBeGreaterThan(utilityDone);
+    expect(managementDone).toBeGreaterThan(managementStart);
+    expect(ready).toBeGreaterThan(managementDone);
+    expect(helperScript).toContain('} catch {\n  Write-RudderHelperPhase 0 "startup_import_failed"\n  exit 1\n}\n[Console]::Out.WriteLine');
+    for (const forbidden of ["JavaScriptSerializer", "System.Web.Extensions", "PSModulePath", "PSModuleAutoLoadingPreference", "ExecutionPolicy"]) {
+      expect(helperScript).not.toContain(forbidden);
+    }
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+    stdout.end();
+    stderr.end();
+  });
+
+  it("rejects a pending capture without transmitting it when initialization exits before ready", async () => {
+    const { child, controller, stdout, stderr, writes, phases } = createHelperFixture({ ready: false });
+    const outcome = controller.request("capture", { pid: 76543 }).then(() => null, (error) => error);
+    await nextImmediate();
+    expect(writes).toEqual([]);
+    stderr.write("RUDDER_WINPROC|0|startup_import_failed|100\n");
+    child.exitCode = 1;
+    child.emit("exit", 1, null);
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("Windows process helper exited (1)");
+    expect(writes).toEqual([]);
+    expect(phases.some((phase) => phase.phase === "ready_frame_parsed")).toBe(false);
+    stdout.end();
+    stderr.end();
+  });
+
+  it("closes readiness at the original startup deadline and verifies owned-handle exit", async () => {
+    vi.useFakeTimers();
+    const { child, controller, stdout, stderr, writes, phases } = createHelperFixture({ ready: false });
+    const result = controller.request("capture", { pid: 76543 }).then(() => null, (error) => error);
+    child.kill.mockImplementation((signal) => {
+      // A Ready frame can arrive while the timed-out process is being stopped.
+      stdout.write('{"id":0,"ok":true}\n');
+      queueMicrotask(() => { child.signalCode = signal; child.emit("exit", null, signal); });
+      return true;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      const error = await result;
+      expect(error.message).toContain("did not start in time (helperExit=exit-after-signal");
+      expect(child.kill).toHaveBeenCalledOnce();
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+      expect(writes).toEqual([]);
+      expect(phases.map((event) => event.phase)).toEqual(expect.arrayContaining([
+        "startup_timeout", "ready_frame_ignored_after_timeout", "startup_helper_exit_verified",
+      ]));
+      await expect(controller.request("capture", { pid: 76543 })).rejects.toBe(error);
+      expect(writes).toEqual([]);
+    } finally { stdout.end(); stderr.end(); vi.useRealTimers(); }
+  });
+
+  it("bounds startup exit observation to two seconds and keeps refused or failed stops unverified", async () => {
+    for (const behavior of ["unobserved", "refused", "threw", "error"]) {
+      vi.useFakeTimers();
+      const { child, controller, stdout, stderr, writes, phases } = createHelperFixture({ ready: false });
+      let settled = false;
+      const result = controller.request("capture", { pid: 76543 }).then(() => null, (error) => { settled = true; return error; });
+      child.kill.mockImplementation(() => {
+        if (behavior === "threw") throw new Error("PRIVATE_STOP_ERROR");
+        if (behavior === "error") queueMicrotask(() => child.emit("error", new Error("PRIVATE_CHILD_ERROR")));
+        return behavior !== "refused";
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(60_000);
+        stdout.write('{"id":0,"ok":true}\n');
+        if (behavior === "unobserved") {
+          expect(settled).toBe(false);
+          await vi.advanceTimersByTimeAsync(1_999);
+          expect(settled).toBe(false);
+          await vi.advanceTimersByTimeAsync(1);
+        }
+        const error = await result;
+        expect(error.message).toContain("helperExit=unverified");
+        expect(error.message).not.toContain("PRIVATE");
+        expect(child.kill).toHaveBeenCalledOnce();
+        expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+        expect(writes).toEqual([]);
+        expect(phases.some((event) => event.phase === "startup_helper_exit_unverified")).toBe(true);
+        child.exitCode = 0;
+        child.emit("exit", 0, null);
+        await expect(controller.request("capture", { pid: 76543 })).rejects.toBe(error);
+      } finally { stdout.end(); stderr.end(); vi.useRealTimers(); }
+    }
+  });
+
+  it("does not replace startup timeout evidence when natural exit wins the cleanup race", async () => {
+    vi.useFakeTimers();
+    const { child, controller, stdout, stderr, writes } = createHelperFixture({ ready: false });
+    const result = controller.request("capture", { pid: 76543 }).then(() => null, (error) => error);
+    child.kill.mockImplementation(() => {
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      return false;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      const error = await result;
+      expect(error.message).toContain("Windows process helper did not start in time");
+      expect(error.message).not.toContain("helperExit=unverified");
+      expect(writes).toEqual([]);
+    } finally { stdout.end(); stderr.end(); vi.useRealTimers(); }
+  });
+
   it("distinguishes allowed clock/hash collisions from a leaked request PID", () => {
     const diagnostic = "stderr=redacted:272B:sha256=76543abcdef0, phases=1:node:request_timeout@2984765432700)";
     expect(withoutAllowedDiagnosticNumbers(diagnostic)).not.toContain("76543");

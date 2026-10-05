@@ -1,0 +1,53 @@
+name: Windows process helper acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-process-helper-acceptance.yml
+      - scripts/acceptance/windows-process-helper*.mjs
+      - desktop/src/local-app-windows-processes.mjs
+      - desktop/src/local-app-process-identity.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-helper-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  helper-acceptance:
+    name: Fresh Windows helper (${{ matrix.runner }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [fresh-a, fresh-b]
+    defaults:
+      run:
+        # Do not start a PowerShell shell before the first candidate helper.
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Run the actual candidate first on this fresh runner
+        timeout-minutes: 18
+        run: node scripts/acceptance/windows-process-helper.mjs --output acceptance-artifacts/windows-process-helper.json
+      - name: Test harness isolation, ownership, and redaction
+        if: always()
+        timeout-minutes: 1
+        run: node --test scripts/acceptance/windows-process-helper.test.mjs
+      - name: Keep sanitized acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-process-helper-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: acceptance-artifacts/windows-process-helper.json
+          if-no-files-found: error
+          retention-days: 3
