@@ -141,6 +141,7 @@ describe("server config env loading", () => {
     delete process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE;
     delete process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE;
     delete process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE;
+    delete process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE;
     delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
     delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
 
@@ -148,6 +149,7 @@ describe("server config env loading", () => {
     const config = loadConfig();
 
     expect(config.rustFoundationMode).toBe("required");
+    expect(config.rustPublicIngressMode).toBe("off");
     expect(config.rustOrganizationBrandingMode).toBe("off");
     expect(config.rustProjectGoalSetMode).toBe("required");
     expect(config.rustFoundationBinaryPath).toBeUndefined();

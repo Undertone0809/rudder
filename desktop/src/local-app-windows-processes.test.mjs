@@ -77,7 +77,19 @@ async function withCaptureDiagnostics(run) {
   }
 }
 
+function withoutAllowedDiagnosticNumbers(message) {
+  // Monotonic clocks and redaction hashes can coincidentally contain the PID.
+  // Keep every other field visible so a leaked request PID still fails.
+  return message.replace(/@[0-9]+(?=,|\))/g, "@CLOCK").replace(/sha256=[a-f0-9]{12}/g, "sha256=HASH");
+}
+
 describe("Windows Local App process-instance authority", () => {
+  it("distinguishes allowed clock/hash collisions from a leaked request PID", () => {
+    const diagnostic = "stderr=redacted:272B:sha256=76543abcdef0, phases=1:node:request_timeout@2984765432700)";
+    expect(withoutAllowedDiagnosticNumbers(diagnostic)).not.toContain("76543");
+    expect(withoutAllowedDiagnosticNumbers(`${diagnostic}, requestPid=76543`)).toContain("76543");
+  });
+
   it.each(["capture", "snapshot"])("reports bounded, payload-free %s timeout diagnostics", async (type) => {
     const { child, controller, stdout, stderr } = createHelperFixture();
     const request = controller.request(type, { pid: 76543 });
@@ -92,7 +104,7 @@ describe("Windows Local App process-instance authority", () => {
     expect(error.message).toContain("helperExit=unverified");
     expect(error.message).toMatch(/stderr=redacted:8192B:sha256=[a-f0-9]{12}/);
     expect(error.message).not.toContain("PRIVATE_COMMAND_AND_PAYLOAD");
-    expect(error.message).not.toContain("76543");
+    expect(withoutAllowedDiagnosticNumbers(error.message)).not.toContain("76543");
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
 
     child.exitCode = 0;
@@ -131,7 +143,7 @@ describe("Windows Local App process-instance authority", () => {
     expect(error.message).toContain("1:powershell:get_times_start@140");
     expect(error.message).toContain("request_timeout");
     expect(error.message).toContain("helperStop=signal-accepted");
-    expect(error.message).not.toContain("76543");
+    expect(withoutAllowedDiagnosticNumbers(error.message)).not.toContain("76543");
     expect(error.message).not.toContain("PRIVATE_REQUEST_SENTINEL");
     expect(phases.map((event) => event.phase)).toContain("helper_stop_signal_accepted");
     for (const source of ["node", "powershell"]) {
@@ -169,7 +181,7 @@ describe("Windows Local App process-instance authority", () => {
 
     expect(error.message).toContain("0:powershell:request_json_parse_done@120");
     expect(error.message).not.toContain("request_id_bound@");
-    expect(error.message).not.toContain("76543");
+    expect(withoutAllowedDiagnosticNumbers(error.message)).not.toContain("76543");
 
     child.exitCode = 0;
     child.emit("exit", 0, null);

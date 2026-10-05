@@ -978,7 +978,9 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
   it("allows a bounded slow Windows process snapshot to prove listener ownership", async () => {
     const owned = await approvedFixture({ readinessTimeoutMs: 30_000 });
     const verifyListenerOwnership = vi.fn(async (input: { timeoutMs: number }) => {
-      expect(input.timeoutMs).toBe(60_000);
+      // The deadline and the two subsequent clock reads consume two milliseconds.
+      // Prove that the verifier receives the remaining budget, not a fresh timeout.
+      expect(input.timeoutMs).toBe(59_998);
       await new Promise((resolve) => setTimeout(resolve, 900));
       return true;
     });
@@ -990,10 +992,13 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       verifyListenerOwnership,
       listenerOwnershipRetryTimeoutMs: 60_000,
     });
+    let clockTick = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => clockTick++);
     try {
       await expect(manager.start(owned.definition.id)).resolves.toMatchObject({ status: "running" });
       expect(verifyListenerOwnership).toHaveBeenCalledTimes(1);
     } finally {
+      clock.mockRestore();
       await manager.stop(owned.definition.id).catch(() => undefined);
     }
   });
