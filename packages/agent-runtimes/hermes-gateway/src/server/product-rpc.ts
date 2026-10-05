@@ -37,9 +37,14 @@ import {
 } from "./product-history.js";
 import {
   HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE,
+  HERMES_PRODUCT_RPC_SPAN_COMPUTE_HOST_SITE_CUSTOMIZE_SOURCE,
   HERMES_PRODUCT_RPC_MCP_ENV_KEYS_ENV,
   HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV,
   HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV,
+  HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH_ENV,
+  HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH_ENV,
+  HERMES_PRODUCT_RPC_SPAN_NONCE_ENV,
+  HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV,
   waitForHermesProductRpcMcpReady,
   type HermesProductRpcMcpOverlay,
 } from "./product-rpc-mcp-bootstrap.js";
@@ -55,7 +60,6 @@ const MAX_EVENT_BYTES = 64 * 1024;
 const MAX_EVENT_TOTAL_BYTES = 512 * 1024;
 const GATEWAY_READY_TIMEOUT_MS = 10_000;
 const STOP_RECONCILIATION_MS = 1_500;
-const HISTORY_FENCE_MAX_HOLD_MS = 2_000;
 const APPROVAL_OPTION_VALUES = new Set(["once", "session", "always", "deny"]);
 
 type JsonRecord = Record<string, unknown>;
@@ -65,19 +69,11 @@ type HermesProductRpcHistoryTail = {
   relation: HermesProductHistoryResult["metadata"]["lineage"]["relation"];
   successorSessionId: string | null;
 };
-type HermesProductRpcHistoryFence = {
+type HermesProductRpcSpanCapture = {
   tailRowId: number | null;
-  sessionExists?: boolean;
-  isHeld(): boolean;
-  release(): Promise<void>;
-};
-type HermesProductRpcLeaseIdentity = {
-  profile: HermesProductRpcProfile;
   sessionId: string;
-  gatewaySessionId: string;
-  gatewayPid: number;
-  timeoutMs: number;
-  signal?: AbortSignal;
+  writerPid: number;
+  rowIds: number[];
 };
 type HermesProductRpcTranscriptBoundary = {
   status: "exact" | "unknown";
@@ -381,13 +377,15 @@ async function writeRunScopedMcpConfig(input: {
 
 export async function prepareHermesProductRpcMcpOverlay(input: {
   profile: HermesProductRpcProfile;
-  mcp: HermesProductRpcRunMcp;
+  mcp?: HermesProductRpcRunMcp;
   timeoutMs?: number;
   signal?: AbortSignal;
 }): Promise<HermesProductRpcMcpOverlay> {
   if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
-  const identity = Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, input.mcp.identity[key]?.trim() ?? ""])) as Record<typeof MCP_ENV_KEYS[number], string>;
-  if (MCP_ENV_KEYS.some((key) => !identity[key])) {
+  const identity = input.mcp
+    ? Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, input.mcp?.identity[key]?.trim() ?? ""])) as Record<typeof MCP_ENV_KEYS[number], string>
+    : null;
+  if (identity && MCP_ENV_KEYS.some((key) => !identity[key])) {
     throw new Error("Hermes Product RPC requires a complete local Rudder Run identity.");
   }
 
@@ -401,15 +399,15 @@ export async function prepareHermesProductRpcMcpOverlay(input: {
   let cleaned = false;
   const cleanup = async () => {
     if (cleaned) return;
-    cleaned = true;
     await fs.rm(home, { recursive: true, force: true });
+    cleaned = true;
   };
 
   try {
     await fs.chmod(home, 0o700);
     for (const entry of await fs.readdir(originalHome, { withFileTypes: true })) {
       if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
-      if (["config.yaml", ".env", ".op.env"].includes(entry.name)
+      if (["config.yaml", ".env", ".op.env", "sitecustomize.py", `${HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE}.py`].includes(entry.name)
         || HERMES_PERSISTENT_HOME_ENTRIES.has(entry.name)) continue;
       await fs.symlink(path.join(originalHome, entry.name), path.join(home, entry.name));
     }
@@ -432,42 +430,71 @@ export async function prepareHermesProductRpcMcpOverlay(input: {
     }
 
     const suffix = randomUUID().replaceAll("-", "").toUpperCase();
-    const aliases = Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, `RUDDER_PRODUCT_RPC_${suffix}_${key}`])) as Record<typeof MCP_ENV_KEYS[number], string>;
+    const aliases = identity
+      ? Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, `RUDDER_PRODUCT_RPC_${suffix}_${key}`])) as Record<typeof MCP_ENV_KEYS[number], string>
+      : null;
     const readyNonce = randomUUID();
     const readyReceiptPath = path.join(home, "rudder-tools-ready.json");
-    const env = {
-      ...Object.fromEntries(MCP_ENV_KEYS.map((key) => [aliases[key], identity[key]])),
-      [HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV]: readyReceiptPath,
-      [HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV]: readyNonce,
-      [HERMES_PRODUCT_RPC_MCP_ENV_KEYS_ENV]: JSON.stringify(Object.values(aliases)),
+    const spanCaptureNonce = randomUUID();
+    const spanCaptureConfigPath = path.join(home, "rudder-span-capture-config.json");
+    const spanCaptureBaselinePath = path.join(home, "rudder-span-capture-baseline.jsonl");
+    const spanCaptureRowsPath = path.join(home, "rudder-span-capture-rows.jsonl");
+    const env: Record<string, string> = {
+      [HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH_ENV]: spanCaptureConfigPath,
+      [HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH_ENV]: spanCaptureBaselinePath,
+      [HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV]: spanCaptureRowsPath,
+      [HERMES_PRODUCT_RPC_SPAN_NONCE_ENV]: spanCaptureNonce,
     };
-    const serverEnv = {
-      ...(input.mcp.command.env ?? {}),
-      ...Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, `\u0024{${aliases[key]}}`])),
-      RUDDER_BROWSER_ENABLED: "false",
-    };
-    const server = {
-      type: "stdio",
-      command: input.mcp.command.command,
-      args: [...input.mcp.command.args],
-      env: serverEnv,
-    };
-    if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
-    await writeRunScopedMcpConfig({
-      profile: input.profile,
-      sourcePath: path.join(originalHome, "config.yaml"),
-      targetPath: path.join(home, "config.yaml"),
-      server,
-      timeoutMs: Math.min(input.timeoutMs ?? MCP_CONFIG_HELPER_TIMEOUT_MS, MCP_CONFIG_HELPER_TIMEOUT_MS),
-      signal: input.signal,
-    });
+    if (input.mcp && aliases && identity) {
+      Object.assign(env, Object.fromEntries(MCP_ENV_KEYS.map((key) => [aliases[key], identity[key]])));
+      env[HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV] = readyReceiptPath;
+      env[HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV] = readyNonce;
+      env[HERMES_PRODUCT_RPC_MCP_ENV_KEYS_ENV] = JSON.stringify(Object.values(aliases));
+      const serverEnv = {
+        ...(input.mcp.command.env ?? {}),
+        ...Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, `\u0024{${aliases[key]}}`])),
+        RUDDER_BROWSER_ENABLED: "false",
+      };
+      const server = {
+        type: "stdio",
+        command: input.mcp.command.command,
+        args: [...input.mcp.command.args],
+        env: serverEnv,
+      };
+      await writeRunScopedMcpConfig({
+        profile: input.profile,
+        sourcePath: path.join(originalHome, "config.yaml"),
+        targetPath: path.join(home, "config.yaml"),
+        server,
+        timeoutMs: Math.min(input.timeoutMs ?? MCP_CONFIG_HELPER_TIMEOUT_MS, MCP_CONFIG_HELPER_TIMEOUT_MS),
+        signal: input.signal,
+      });
+    } else {
+      const config = await fs.readFile(path.join(originalHome, "config.yaml")).catch(() => null);
+      if (config) await fs.writeFile(path.join(home, "config.yaml"), config, { mode: 0o600, flag: "wx" });
+    }
     if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
     await fs.writeFile(
       path.join(home, `${HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE}.py`),
       HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE,
       { mode: 0o600, flag: "wx" },
     );
-    return { home, env, readyReceiptPath, readyNonce, cleanup };
+    await fs.writeFile(
+      path.join(home, "sitecustomize.py"),
+      HERMES_PRODUCT_RPC_SPAN_COMPUTE_HOST_SITE_CUSTOMIZE_SOURCE,
+      { mode: 0o600, flag: "wx" },
+    );
+    return {
+      home,
+      env,
+      readyReceiptPath,
+      readyNonce,
+      spanCaptureConfigPath,
+      spanCaptureBaselinePath,
+      spanCaptureRowsPath,
+      spanCaptureNonce,
+      cleanup,
+    };
   } catch (error) {
     await cleanup();
     throw error;
@@ -1127,175 +1154,6 @@ function raceWithHermesProcessExit<T>(
   ]);
 }
 
-const HERMES_PRODUCT_RPC_HISTORY_FENCE_HELPER = String.raw`
-import json
-from pathlib import Path
-import sqlite3
-import sys
-
-connection = None
-try:
-    connection = sqlite3.connect(
-        Path(sys.argv[1]).resolve().as_uri() + "?mode=rw",
-        timeout=max(0.001, int(sys.argv[3]) / 1000), isolation_level=None, uri=True)
-    connection.execute("BEGIN IMMEDIATE")
-    row = connection.execute(
-        "SELECT MAX(id) FROM messages WHERE session_id = ?", (sys.argv[2],)).fetchone()
-    tail = row[0] if row else None
-    if tail is not None and (isinstance(tail, bool) or not isinstance(tail, int) or tail < 1):
-        raise RuntimeError("Hermes SessionDB returned an invalid message row ID")
-    session = connection.execute(
-        "SELECT 1 FROM sessions WHERE id = ? LIMIT 1", (sys.argv[2],)).fetchone()
-    session_exists = session is not None
-    print(json.dumps({"locked": True, "tailRowId": tail, "sessionExists": session_exists}), flush=True)
-    for line in sys.stdin:
-        if line.strip() == "release":
-            break
-    connection.rollback()
-except Exception as error:
-    print(json.dumps({"locked": False, "error": str(error)[:500]}), flush=True)
-finally:
-    if connection is not None:
-        connection.close()
-`;
-
-async function acquireHermesProductRpcHistoryFence(input: {
-  profile: HermesProductRpcProfile;
-  sessionId: string;
-  timeoutMs: number;
-  signal?: AbortSignal;
-}): Promise<HermesProductRpcHistoryFence | null> {
-  if (input.signal?.aborted) return null;
-  const timeoutMs = Math.max(100, Math.min(input.timeoutMs, 5_000));
-  let child: ChildProcessWithoutNullStreams;
-  try {
-    child = spawn(input.profile.hermesPythonCommand, [
-      "-c",
-      HERMES_PRODUCT_RPC_HISTORY_FENCE_HELPER,
-      path.join(input.profile.hermesHome, "state.db"),
-      input.sessionId,
-      String(timeoutMs),
-    ], {
-      cwd: input.profile.hermesSourcePath,
-      env: {
-        ...process.env,
-        HERMES_HOME: path.resolve(input.profile.hermesHome),
-        PYTHONPATH: [path.resolve(input.profile.hermesSourcePath), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
-        PYTHONDONTWRITEBYTECODE: "1",
-      },
-      stdio: "pipe",
-    });
-  } catch {
-    return null;
-  }
-
-  let closed = false;
-  let stdout = "";
-  let releasePromise: Promise<void> | null = null;
-  let releaseTimer: NodeJS.Timeout | undefined;
-  const closedPromise = new Promise<void>((resolve) => {
-    child.once("close", () => {
-      closed = true;
-      if (releaseTimer) clearTimeout(releaseTimer);
-      resolve();
-    });
-  });
-  const stopChild = async () => {
-    if (!closed) child.kill("SIGTERM");
-    try {
-      await withTimeout(closedPromise, 750, "Hermes history fence helper did not stop.");
-    } catch {
-      if (!closed) child.kill("SIGKILL");
-      await closedPromise;
-    }
-  };
-  const ready = new Promise<{ tailRowId: number | null; sessionExists?: boolean }>((resolve, reject) => {
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-      const newline = stdout.indexOf("\n");
-      if (newline < 0) return;
-      const line = stdout.slice(0, newline);
-      try {
-        const result = record(JSON.parse(line));
-        if (result?.locked !== true) throw new Error("Hermes SessionDB could not grant a history writer fence.");
-        const tailRowId = result.tailRowId;
-        if (tailRowId !== null && (!Number.isSafeInteger(tailRowId) || (tailRowId as number) < 1)) {
-          throw new Error("Hermes SessionDB returned an invalid message row ID.");
-        }
-        if (result.sessionExists !== undefined && typeof result.sessionExists !== "boolean") {
-          throw new Error("Hermes SessionDB returned an invalid session existence flag.");
-        }
-        resolve({
-          tailRowId: tailRowId as number | null,
-          ...(result.sessionExists === undefined ? {} : { sessionExists: result.sessionExists }),
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
-    child.once("error", reject);
-    child.once("close", (code) => reject(new Error(`Hermes history fence helper exited before locking (${code ?? "signal"}).`)));
-  });
-
-  let locked: { tailRowId: number | null; sessionExists?: boolean };
-  try {
-    locked = await withTimeout(ready, timeoutMs, "Hermes SessionDB history writer fence timed out.");
-  } catch {
-    child.stdin.end();
-    await stopChild();
-    return null;
-  }
-
-  const release = () => {
-    if (!releasePromise) {
-      if (releaseTimer) clearTimeout(releaseTimer);
-      releasePromise = (async () => {
-        if (!closed) child.stdin.end("release\n");
-        try {
-          await withTimeout(closedPromise, 1_000, "Hermes history fence did not release.");
-        } catch {
-          await stopChild();
-        }
-      })();
-    }
-    return releasePromise;
-  };
-  releaseTimer = setTimeout(() => { void release(); }, HISTORY_FENCE_MAX_HOLD_MS);
-  releaseTimer.unref();
-
-  return {
-    tailRowId: locked.tailRowId,
-    ...(locked.sessionExists === undefined ? {} : { sessionExists: locked.sessionExists }),
-    isHeld: () => !closed,
-    release,
-  };
-}
-
-async function hermesProductRpcLeaseMatches(input: HermesProductRpcLeaseIdentity): Promise<boolean> {
-  try {
-    const source = await fs.readFile(path.join(input.profile.hermesHome, "runtime", "active_sessions.json"), "utf8");
-    const registry = record(JSON.parse(source));
-    if (!registry || !Array.isArray(registry.entries)) return false;
-    const matchingSession = registry.entries.filter((entry) => record(entry)?.session_id === input.sessionId);
-    if (matchingSession.length !== 1) return false;
-    const entry = record(matchingSession[0]);
-    const metadata = record(entry?.metadata);
-    return entry?.pid === input.gatewayPid && metadata?.live_session_id === input.gatewaySessionId;
-  } catch {
-    return false;
-  }
-}
-
-async function waitForHermesProductRpcLease(input: HermesProductRpcLeaseIdentity): Promise<boolean> {
-  const deadline = Date.now() + Math.max(100, Math.min(input.timeoutMs, 5_000));
-  while (!input.signal?.aborted && Date.now() < deadline) {
-    if (await hermesProductRpcLeaseMatches(input)) return true;
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-  }
-  return false;
-}
-
 function providerVersionSupported(profile: HermesProductRpcProfile): boolean {
   return HERMES_PRODUCT_RPC_VERIFIED_VERSIONS.includes(profile.providerVersion as (typeof HERMES_PRODUCT_RPC_VERIFIED_VERSIONS)[number]);
 }
@@ -1343,6 +1201,122 @@ async function readProductRpcHistoryTail(
   }
 }
 
+async function readHermesProductRpcSpanCapture(
+  overlay: HermesProductRpcMcpOverlay,
+  sessionId: string,
+  writerPid: number | null,
+  allowUnpersistedFreshSession = false,
+): Promise<HermesProductRpcSpanCapture | null> {
+  if (writerPid === null) return null;
+  try {
+    const [baselineText, rowText] = await Promise.all([
+      fs.readFile(overlay.spanCaptureBaselinePath, "utf8"),
+      fs.readFile(overlay.spanCaptureRowsPath, "utf8").catch((error: unknown) => {
+        if (record(error)?.code === "ENOENT") return "";
+        throw error;
+      }),
+    ]);
+    if (Buffer.byteLength(baselineText) > 16_384 || Buffer.byteLength(rowText) > 8 * 1024 * 1024) return null;
+    const baselineLines = baselineText.split(/\r?\n/u).filter(Boolean);
+    if (baselineLines.length !== 1) return null;
+    const baseline = record(JSON.parse(baselineLines[0]!));
+    const hasPersistedSession = baseline?.sessionExists === true;
+    // Hermes 0.21 creates ordinary sessions lazily: session.create returns the
+    // stable key, but the isolated compute host persists the row only after this
+    // pre-dispatch baseline. Accept that one empty baseline only after we created
+    // the session in this Run; a resumed/missing SessionDB row stays untrusted.
+    const hasFreshUnpersistedSession = allowUnpersistedFreshSession
+      && baseline?.sessionExists === false
+      && baseline.tailRowId === null;
+    if (
+      baseline?.version !== 1
+      || baseline.kind !== "baseline"
+      || baseline.status !== "ready"
+      || baseline.nonce !== overlay.spanCaptureNonce
+      || baseline.sessionId !== sessionId
+      || baseline.pid !== writerPid
+      || baseline.processRole !== "gateway"
+      || (!hasPersistedSession && !hasFreshUnpersistedSession)
+      || (baseline.tailRowId !== null && (!Number.isSafeInteger(baseline.tailRowId) || (baseline.tailRowId as number) < 1))
+    ) return null;
+
+    const rowIds = new Set<number>();
+    for (const line of rowText.split(/\r?\n/u).filter(Boolean)) {
+      const receipt = record(JSON.parse(line));
+      if (
+        receipt?.version !== 1
+        || receipt.kind !== "rows"
+        || receipt.nonce !== overlay.spanCaptureNonce
+        || receipt.sessionId !== sessionId
+        || !(
+          (receipt.processRole === "gateway" && receipt.pid === writerPid)
+          || (receipt.processRole === "compute_host" && receipt.parentPid === writerPid
+            && Number.isSafeInteger(receipt.pid) && (receipt.pid as number) > 0)
+        )
+        || !Array.isArray(receipt.rowIds)
+      ) return null;
+      for (const rowId of receipt.rowIds) {
+        if (!Number.isSafeInteger(rowId) || (rowId as number) < 1 || rowIds.size >= 100_000) return null;
+        if (baseline.tailRowId === null || (rowId as number) > (baseline.tailRowId as number)) rowIds.add(rowId as number);
+      }
+    }
+    return {
+      tailRowId: baseline.tailRowId as number | null,
+      sessionId,
+      writerPid,
+      rowIds: [...rowIds].sort((left, right) => left - right),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function readHermesProductRpcRangeRowIds(input: {
+  profile: HermesProductRpcProfile;
+  sessionId: string;
+  startExclusive: number | null;
+  endInclusive: number | null;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}): Promise<number[] | null> {
+  const profile = historyProfile(input.profile);
+  if (!profile || input.endInclusive === null) return null;
+  const deadline = Date.now() + Math.max(1, Math.min(input.timeoutMs, 60_000));
+  const rowIds: number[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let lastRowId = input.startExclusive;
+  try {
+    while (Date.now() < deadline) {
+      const remainingMs = Math.max(1, deadline - Date.now());
+      const result = await readHermesProductHistory({
+        runtimeType: "hermes_gateway",
+        sessionId: input.sessionId,
+        profile,
+        range: { startExclusive: input.startExclusive, endInclusive: input.endInclusive },
+        ...(cursor ? { cursor } : {}),
+        limit: 200,
+        timeoutMs: remainingMs,
+        signal: input.signal,
+      });
+      if (result.availability !== "available" || result.completeness !== "complete") return null;
+      for (const item of result.items) {
+        if (!Number.isSafeInteger(item.rowId) || item.rowId < 1 || (lastRowId !== null && item.rowId <= lastRowId)) return null;
+        rowIds.push(item.rowId);
+        lastRowId = item.rowId;
+        if (rowIds.length > 100_000) return null;
+      }
+      if (!result.nextCursor) return rowIds;
+      if (seenCursors.has(result.nextCursor)) return null;
+      seenCursors.add(result.nextCursor);
+      cursor = result.nextCursor;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function unknownTranscriptBoundary(sessionId: string, reason: string): HermesProductRpcTranscriptBoundary {
   return { status: "unknown", sessionId, startExclusive: null, endInclusive: null, sourceRangeRef: null, reason };
 }
@@ -1367,8 +1341,8 @@ export function deriveHermesProductRpcTranscriptBoundary(input: {
   historyProfileAvailable: boolean;
   before: HermesProductRpcHistoryTail | null;
   after: HermesProductRpcHistoryTail | null;
-  lockedTailRowId: number | null;
-  historyFenceHeldThroughLease: boolean;
+  sourceRowsVerified: boolean;
+  capturedRowCount: number;
   promptAcceptanceProven: boolean;
 }): HermesProductRpcTranscriptBoundary {
   if (!input.historyProfileAvailable) return unknownTranscriptBoundary(input.sessionId, "Hermes host history profile is unavailable.");
@@ -1381,11 +1355,8 @@ export function deriveHermesProductRpcTranscriptBoundary(input: {
   if (!input.promptAcceptanceProven) {
     return unknownTranscriptBoundary(input.sessionId, "Hermes Product Gateway did not positively acknowledge this prompt as an active streaming turn.");
   }
-  if (!input.historyFenceHeldThroughLease) {
-    return unknownTranscriptBoundary(input.sessionId, "Rudder could not hold a SessionDB writer fence from the exact pre-prompt row tail until this Gateway process acquired its per-session lease.");
-  }
-  if (input.before.tailRowId !== input.lockedTailRowId) {
-    return unknownTranscriptBoundary(input.sessionId, "Hermes history reader tail did not match the row ID captured under the SessionDB writer fence.");
+  if (!input.sourceRowsVerified || !Number.isSafeInteger(input.capturedRowCount) || input.capturedRowCount < 1) {
+    return unknownTranscriptBoundary(input.sessionId, "Hermes Product Gateway's per-Run SessionDB row receipt did not exactly match the native execution interval.");
   }
   if (input.before.relation !== "none" || input.after.relation !== "none") {
     return unknownTranscriptBoundary(
@@ -1403,7 +1374,15 @@ export function deriveHermesProductRpcTranscriptBoundary(input: {
     sessionId: input.sessionId,
     startExclusive,
     endInclusive,
-    sourceRangeRef: JSON.stringify({ version: 1, status: "exact", sessionId: input.sessionId, startExclusive, endInclusive }),
+    sourceRangeRef: JSON.stringify({
+      version: 1,
+      status: "exact",
+      sessionId: input.sessionId,
+      startExclusive,
+      endInclusive,
+      captureVersion: 1,
+      capturedRowCount: input.capturedRowCount,
+    }),
   };
 }
 
@@ -1525,13 +1504,7 @@ type ExecuteInput = {
   secrets?: readonly string[];
   createClient?: HermesProductRpcClientFactory;
   readHistoryTail?: typeof readProductRpcHistoryTail;
-  acquireHistoryFence?: (input: {
-    profile: HermesProductRpcProfile;
-    sessionId: string;
-    timeoutMs: number;
-    signal?: AbortSignal;
-  }) => Promise<HermesProductRpcHistoryFence | null>;
-  waitForSessionLease?: typeof waitForHermesProductRpcLease;
+  readHistoryRangeRowIds?: typeof readHermesProductRpcRangeRowIds;
 };
 
 export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<AgentRuntimeExecutionResult> {
@@ -1544,10 +1517,6 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
   let sessionId = input.sessionId;
   let sessionParams = input.sessionParams;
   let historyBefore: HermesProductRpcHistoryTail | null = null;
-  let historyFence: HermesProductRpcHistoryFence | null = null;
-  let historyFenceTailRowId: number | null = null;
-  let historyFenceTailMatches = false;
-  let historyFenceLeaseProven = false;
   let createdFreshSession = false;
   let gatewayPid: number | null = null;
   let client: HermesProductRpcClient | null = null;
@@ -2100,16 +2069,48 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
     args.onSpawn,
   ));
   const readHistoryTail = input.readHistoryTail ?? readProductRpcHistoryTail;
+  const readHistoryRangeRowIds = input.readHistoryRangeRowIds ?? readHermesProductRpcRangeRowIds;
   const readBoundary = async (): Promise<HermesProductRpcTranscriptBoundary> => {
     if (!sessionId) return unknownTranscriptBoundary("", "Hermes Product Gateway did not establish a native session.");
     const after = await readHistoryTail(profile, sessionId, input.timeoutMs, input.signal).catch(() => null);
+    const capture = mcpOverlay
+      ? await readHermesProductRpcSpanCapture(mcpOverlay, sessionId, gatewayPid, createdFreshSession)
+      : null;
+    const before = capture && (createdFreshSession || historyBefore?.availability === "available")
+      ? {
+        availability: "available" as const,
+        tailRowId: capture.tailRowId,
+        relation: createdFreshSession ? "none" as const : historyBefore!.relation,
+        successorSessionId: createdFreshSession ? null : historyBefore!.successorSessionId,
+      }
+      : historyBefore?.availability === "available"
+        ? historyBefore
+        : null;
+    const observedRowIds = capture && after?.availability === "available"
+      ? await readHistoryRangeRowIds({
+        profile,
+        sessionId,
+        startExclusive: capture.tailRowId,
+        endInclusive: after.tailRowId,
+        timeoutMs: input.timeoutMs,
+        signal: input.signal,
+      })
+      : null;
+    const sourceRowsVerified = Boolean(
+      capture
+      && observedRowIds
+      && observedRowIds.length === capture.rowIds.length
+      && observedRowIds.length > 0
+      && observedRowIds.every((rowId, index) => rowId === capture.rowIds[index])
+      && observedRowIds.at(-1) === after?.tailRowId,
+    );
     return deriveHermesProductRpcTranscriptBoundary({
       sessionId,
       historyProfileAvailable: historyProfile(profile) !== null,
-      before: historyBefore,
+      before,
       after,
-      lockedTailRowId: historyFenceTailRowId,
-      historyFenceHeldThroughLease: historyFenceTailMatches && historyFenceLeaseProven,
+      sourceRowsVerified,
+      capturedRowCount: capture?.rowIds.length ?? 0,
       promptAcceptanceProven,
     });
   };
@@ -2126,14 +2127,12 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
     }
     if (input.signal?.aborted) throw new Error("Hermes Product Gateway execution was cancelled before session submission.");
 
-    if (input.rudderMcp) {
-      mcpOverlay = await prepareHermesProductRpcMcpOverlay({
-        profile,
-        mcp: input.rudderMcp,
-        timeoutMs: input.timeoutMs,
-        signal: input.signal,
-      });
-    }
+    mcpOverlay = await prepareHermesProductRpcMcpOverlay({
+      profile,
+      mcp: input.rudderMcp,
+      timeoutMs: input.timeoutMs,
+      signal: input.signal,
+    });
     const launchProfile = rpcProfile(profile, mcpOverlay);
     let activeClient: HermesProductRpcClient;
     try {
@@ -2171,7 +2170,7 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
       throw new Error("Hermes Product Gateway must confirm per_session_exclusive_submit=true before accepting session ownership.");
     }
 
-    if (mcpOverlay) {
+    if (input.rudderMcp && mcpOverlay) {
       const admissionTimeoutMs = Math.max(1, input.timeoutMs - (Date.now() - executionStartedAt));
       const readiness = waitForHermesProductRpcMcpReady({
         overlay: mcpOverlay,
@@ -2214,43 +2213,18 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
     if (!sessionId) throw new Error("Hermes Product Gateway has no persisted session ID for this turn.");
     const controlSessionId = sessionId;
     sessionParams ??= buildHermesProductRpcSessionParams({ sessionId, profile, workspace: input.workspace });
-    historyFence = await (input.acquireHistoryFence ?? acquireHermesProductRpcHistoryFence)({
-      profile,
+    if (!mcpOverlay) throw new Error("Hermes Product Gateway run overlay was not prepared.");
+    await fs.writeFile(mcpOverlay.spanCaptureConfigPath, JSON.stringify({
+      version: 1,
+      nonce: mcpOverlay.spanCaptureNonce,
       sessionId,
-      timeoutMs: input.timeoutMs,
-      signal: input.signal,
-    }).catch(() => null);
-    historyFenceTailRowId = historyFence?.tailRowId ?? null;
+    }), { mode: 0o600, flag: "wx" });
     historyBefore = await readHistoryTail(
       profile,
       sessionId,
-      Math.min(input.timeoutMs, HISTORY_FENCE_MAX_HOLD_MS),
+      input.timeoutMs,
       input.signal,
     ).catch(() => null);
-    if (
-      createdFreshSession
-      && historyFence?.isHeld()
-      && historyFence.sessionExists === false
-      && historyFence.tailRowId === null
-      && historyBefore?.availability === "missing"
-      && historyBefore.tailRowId === null
-    ) {
-      historyBefore = {
-        availability: "available",
-        tailRowId: null,
-        relation: "none",
-        successorSessionId: null,
-      };
-    }
-    historyFenceTailMatches = Boolean(
-      historyFence?.isHeld()
-      && historyBefore?.availability === "available"
-      && historyBefore.tailRowId === historyFence.tailRowId,
-    );
-    if (historyFence && !historyFenceTailMatches) {
-      await historyFence.release().catch(() => {});
-      historyFence = null;
-    }
 
     const turnId = randomUUID();
     let controlActive = true;
@@ -2305,70 +2279,9 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
         (value) => ({ ok: true as const, value }),
         (error: unknown) => ({ ok: false as const, error }),
       );
-      const leaseWaitController = new AbortController();
-      let submission = await Promise.race([
-        submissionPromise.then((outcome) => ({ kind: "response" as const, outcome })),
-        (async () => {
-          if (!historyFence || !historyFenceTailMatches || gatewayPid === null || !sessionId || !gatewaySessionId) {
-            return { kind: "lease" as const, proven: false };
-          }
-          const abortWait = () => leaseWaitController.abort();
-          if (input.signal?.aborted) leaseWaitController.abort();
-          else input.signal?.addEventListener("abort", abortWait, { once: true });
-          try {
-            const proven = await (input.waitForSessionLease ?? waitForHermesProductRpcLease)({
-              profile,
-              sessionId,
-              gatewaySessionId,
-              gatewayPid,
-              timeoutMs: Math.min(input.timeoutMs, HISTORY_FENCE_MAX_HOLD_MS),
-              signal: leaseWaitController.signal,
-            });
-            return { kind: "lease" as const, proven };
-          } finally {
-            input.signal?.removeEventListener("abort", abortWait);
-          }
-        })(),
-      ]);
-      if (submission.kind === "response") leaseWaitController.abort();
-      if (submission.kind === "lease" && submission.proven && historyFence?.isHeld()) {
-        historyFenceLeaseProven = true;
-        await historyFence.release();
-        historyFence = null;
-        submission = await submissionPromise.then((outcome) => ({ kind: "response" as const, outcome }));
-      } else if (submission.kind === "response") {
-        if (
-          submission.outcome.ok
-          && historyFence?.isHeld()
-          && historyFenceTailMatches
-          && gatewayPid !== null
-          && sessionId
-          && gatewaySessionId
-        ) {
-          const response = record(submission.outcome.value);
-          historyFenceLeaseProven = Boolean(
-            ["streaming", "queued"].includes(text(response?.status))
-            && await hermesProductRpcLeaseMatches({
-              profile,
-              sessionId,
-              gatewaySessionId,
-              gatewayPid,
-              timeoutMs: Math.min(input.timeoutMs, 100),
-              signal: input.signal,
-            })
-            && historyFence.isHeld(),
-          );
-        }
-        await historyFence?.release().catch(() => {});
-        historyFence = null;
-      } else {
-        await historyFence?.release().catch(() => {});
-        historyFence = null;
-        submission = await submissionPromise.then((outcome) => ({ kind: "response" as const, outcome }));
-      }
-      if (submission.kind !== "response") throw new Error("Hermes Product Gateway submission state was not reconciled.");
-      if (!submission.outcome.ok) throw submission.outcome.error;
-      const accepted = record(submission.outcome.value);
+      const submissionOutcome = await submissionPromise;
+      if (!submissionOutcome.ok) throw submissionOutcome.error;
+      const accepted = record(submissionOutcome.value);
       if (!accepted || !["streaming", "queued"].includes(text(accepted.status))) {
         throw new Error(`Hermes Product Gateway prompt.submit returned unexpected status ${text(accepted?.status) || "unknown"}.`);
       }
@@ -2587,7 +2500,6 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
     };
   } finally {
     secrets.splice(configuredSecretCount);
-    await historyFence?.release().catch(() => {});
     try {
       await client?.close();
       const diagnostics = client?.getProcessDiagnostics?.();
