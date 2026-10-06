@@ -730,7 +730,7 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(chatProcessTranscriptEntries([entries[0]!, entries[3]!])).toEqual([]);
   });
 
-  it("strips only this turn's Rudder currentMessage envelope and preserves the following answer", () => {
+  it("strips recognized Rudder envelopes and preserves following assistant prose", () => {
     const ts = "2026-07-23T10:00:00.000Z";
     const currentUserBody = "What is the result?";
     const envelope = `Conversation input: ${JSON.stringify({ currentMessage: {
@@ -764,16 +764,67 @@ describe("StreamTranscriptItem controlled disclosure", () => {
       role: "user", kind: "message", status: "completed", body: "EXPLANATION_SCHEMA",
       attachments: [], structuredPayload: null,
     } })}\nThis example explains how Rudder structures a message.`;
+    const schemaExplanation = "This example explains how Rudder structures a message.";
     const explanation = "Explain this Rudder message schema.";
     expect(chatStreamingAssistantBody(
       [{ kind: "user", ts, text: explanation }],
       schemaExample,
-    )).toBe(schemaExample);
+    )).toBe(schemaExplanation);
     expect(chatProcessTranscriptEntries([
       { kind: "user", ts, text: explanation },
       { kind: "assistant", ts, phase: "commentary", text: schemaExample },
     ])).toEqual([
-      { kind: "assistant", ts, phase: "commentary", text: schemaExample },
+      { kind: "assistant", ts, phase: "commentary", text: schemaExplanation },
+    ]);
+
+    const historyEnvelope = `Conversation input: ${JSON.stringify({ recentMessages: [{
+      role: "assistant", kind: "message", status: "completed", body: "A prior assistant answer",
+      attachments: [], structuredPayload: null,
+    }] })}`;
+    const historyExplanation = "The earlier response is available above.";
+    expect(chatProcessTranscriptEntries([
+      { kind: "assistant", ts, phase: "commentary", text: `${historyEnvelope}\n${historyExplanation}` },
+    ])).toEqual([
+      { kind: "assistant", ts, phase: "commentary", text: historyExplanation },
+    ]);
+  });
+
+  it("strips current and recentMessages envelopes from tool-result Process entries", () => {
+    const ts = "2026-07-23T10:00:00.000Z";
+    const promptMessage = (body: string) => ({
+      role: "user", kind: "message", status: "completed", body,
+      attachments: [], structuredPayload: null,
+    });
+    const currentProse = "The current request was inspected.";
+    const historyProse = "The earlier conversation was inspected.";
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "tool_result",
+        ts,
+        toolUseId: "current-input-echo",
+        content: `Conversation input: ${JSON.stringify({ currentMessage: promptMessage("CURRENT_PRIVATE_INPUT") })}\n${currentProse}`,
+        isError: false,
+      },
+      {
+        kind: "tool_result",
+        ts,
+        toolUseId: "history-input-echo",
+        content: `Conversation input: ${JSON.stringify({ recentMessages: [promptMessage("HISTORY_PRIVATE_INPUT")] })}\n${historyProse}`,
+        isError: false,
+      },
+      {
+        kind: "tool_result",
+        ts,
+        toolUseId: "ordinary-explanation",
+        content: 'Schema example: {"currentMessage":{"body":"VISIBLE_NON_ENVELOPE_TEXT"}}',
+        isError: false,
+      },
+    ];
+
+    expect(chatProcessTranscriptEntries(entries)).toEqual([
+      { ...entries[0]!, content: currentProse },
+      { ...entries[1]!, content: historyProse },
+      entries[2],
     ]);
   });
 

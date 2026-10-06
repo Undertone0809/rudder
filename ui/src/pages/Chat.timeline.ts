@@ -284,10 +284,14 @@ export function chatProcessTranscriptEntries(
     if (isRudderEchoedStructuredConversationInputEntry(entry)) return [];
     if (entry.kind === "assistant" && entry.phase === "final_answer") return [];
     if (isInternalTranscriptLifecycleEntry(entry)) return [];
-    if (entry.kind === "assistant") {
-      const strippedText = stripChatStructuredInputEcho(entry.text, userMessageBodies);
+    if (entry.kind === "assistant" || entry.kind === "tool_result") {
+      const text = entry.kind === "assistant" ? entry.text : entry.content;
+      const strippedText = stripChatStructuredInputEcho(text, userMessageBodies);
       if (strippedText !== null) {
-        return strippedText.trim() ? [{ ...entry, text: strippedText }] : [];
+        if (!strippedText.trim()) return [];
+        return entry.kind === "assistant"
+          ? [{ ...entry, text: strippedText }]
+          : [{ ...entry, content: strippedText }];
       }
     }
     return [entry];

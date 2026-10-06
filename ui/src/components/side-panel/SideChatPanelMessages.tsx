@@ -232,12 +232,6 @@ export function SideChatPanelMessages({
                 onOpenFile={onOpenFile}
               />
             ) : null}
-            {message.role === "assistant" && message.runId ? (
-              <TranscriptContinuationControls
-                navigation={transcriptNavigationByRun.get(message.runId)}
-                state={transcriptStateByRun.get(message.runId)}
-              />
-            ) : null}
             <ChatMessageItem
               key={messageRowKey}
               conversation={conversation}
@@ -267,6 +261,12 @@ export function SideChatPanelMessages({
               onSelectResponseAnnotation={onSelectResponseAnnotation}
               skillReferences={skillReferences}
             />
+            {message.role === "assistant" && message.runId ? (
+              <TranscriptContinuationControls
+                navigation={transcriptNavigationByRun.get(message.runId)}
+                state={transcriptStateByRun.get(message.runId)}
+              />
+            ) : null}
           </div>
         );
       }) : null}

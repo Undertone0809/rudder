@@ -691,62 +691,69 @@ function parseRudderEchoedStructuredConversationInput(text: string) {
       && record.recentMessages.every(isRudderPromptMessage);
   if (!isRudderEnvelope) return null;
 
-  const currentMessage = asRecord(record.currentMessage);
-  return {
-    trailingText,
-    currentMessageBody: typeof currentMessage?.body === "string" ? currentMessage.body : null,
-  };
+  return { trailingText };
 }
 
 export function isRudderEchoedStructuredConversationInput(text: string): boolean {
-  const parsed = parseRudderEchoedStructuredConversationInput(text);
-  if (!parsed) return false;
-  // A native prompt echo may append Rudder's fixed result-protocol reminder.
-  // Arbitrary prose after a schema-shaped object is not part of that envelope:
-  // keep it visible so an agent explanation is not mistaken for private input.
-  return !parsed.trailingText || isRudderFinalResultReminderText(parsed.trailingText);
+  return parseRudderEchoedStructuredConversationInput(text) !== null;
 }
 
-export function stripRudderEchoedStructuredConversationInput(
-  text: string,
-  expectedCurrentMessageBodies: readonly string[],
-): string | null {
-  const parsed = parseRudderEchoedStructuredConversationInput(text);
-  if (
-    !parsed
-    || parsed.currentMessageBody === null
-    || !expectedCurrentMessageBodies.includes(parsed.currentMessageBody)
-  ) {
-    return null;
-  }
-
-  const trailingLines = parsed.trailingText.split(/\r?\n/u);
+function stripRudderFinalResultReminder(trailingText: string): string {
+  const trailingLines = trailingText.split(/\r?\n/u);
   for (let lineCount = 1; lineCount <= Math.min(4, trailingLines.length); lineCount += 1) {
     if (!isRudderFinalResultReminderText(trailingLines.slice(0, lineCount).join("\n"))) continue;
     return trailingLines.slice(lineCount).join("\n").trimStart();
   }
-  return parsed.trailingText;
+  return trailingText;
+}
+
+export function stripRudderEchoedStructuredConversationInput(
+  text: string,
+  _expectedCurrentMessageBodies?: readonly string[],
+): string | null {
+  // Kept for existing Chat callers; recognition now depends on the envelope shape, not the turn body.
+  const parsed = parseRudderEchoedStructuredConversationInput(text);
+  if (!parsed) return null;
+  return stripRudderFinalResultReminder(parsed.trailingText);
 }
 
 export function isRudderEchoedStructuredConversationInputEntry(entry: TranscriptEntry): boolean {
-  // The exact Rudder envelope is private turn input, even if a Runtime echoes
-  // it back as commentary, thinking, or a tool result. Filter the recognizable
-  // wrapper, not arbitrary JSON or prose that explains the schema.
+  // This predicate identifies entries made entirely of private input. Entries
+  // with trailing prose still need the envelope stripped, but must keep that
+  // explanatory text visible.
   const text = entry.kind === "tool_result"
     ? entry.content
     : "text" in entry
       ? entry.text
       : null;
-  return typeof text === "string" && isRudderEchoedStructuredConversationInput(text);
+  if (typeof text !== "string" || !isRudderEchoedStructuredConversationInput(text)) return false;
+  return stripRudderEchoedStructuredConversationInput(text)?.trim() === "";
+}
+
+function stripRudderEchoFromEntry(entry: TranscriptEntry): TranscriptEntry | null {
+  const text = entry.kind === "tool_result"
+    ? entry.content
+    : "text" in entry
+      ? entry.text
+      : null;
+  if (typeof text !== "string") return entry;
+
+  const strippedText = stripRudderEchoedStructuredConversationInput(text);
+  if (strippedText === null) return entry;
+  if (!strippedText.trim()) return null;
+  if (entry.kind === "tool_result") return { ...entry, content: strippedText };
+  return "text" in entry ? { ...entry, text: strippedText } : entry;
 }
 
 export function filterRunDetailRawEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
-  return entries.filter((entry) => {
+  return entries.flatMap((sourceEntry) => {
+    const entry = stripRudderEchoFromEntry(sourceEntry);
+    if (!entry) return [];
     const kind = (entry as { kind: string }).kind;
     const isUserInput = entry.kind === "user"
       ? !isNativeSteerTranscriptEntry(entry) && !isRudderInjectedAgentInstructionText(entry.text)
       : kind.startsWith("cursor:acp:user_message");
-    return !isRudderEchoedStructuredConversationInputEntry(entry) && !isUserInput;
+    return isUserInput ? [] : [entry];
   });
 }
 
@@ -870,9 +877,10 @@ export function filterRenderableTranscriptEntries(
       return projected ? [projected] : [];
     })
     : entries;
-  const operatorSafeEntries = presentationEntries.filter((entry) => (
-    !isRudderEchoedStructuredConversationInputEntry(entry)
-  ));
+  const operatorSafeEntries = presentationEntries.flatMap((entry) => {
+    const strippedEntry = stripRudderEchoFromEntry(entry);
+    return strippedEntry ? [strippedEntry] : [];
+  });
   if (options?.showDeveloperDiagnostics) return operatorSafeEntries;
   let suppressingWarningHtml = false;
   const result: TranscriptEntry[] = [];

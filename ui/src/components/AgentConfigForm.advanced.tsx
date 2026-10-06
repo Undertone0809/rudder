@@ -201,11 +201,19 @@ export function AdapterTypeDropdown({
             </div>
             {group.items.map((item) => {
               const entry = availabilityByType.get(item.value);
+              const hermes = item.value === "hermes_gateway";
               const unavailable = entry?.status === "unavailable";
+              const title = hermes
+                ? entry?.status === "available"
+                  ? "Hermes is ready on this machine and will use its existing provider setup."
+                  : entry?.status === "unavailable"
+                    ? "Hermes isn't ready on this machine yet. Install or finish setting it up, then retry."
+                    : "Rudder hasn't confirmed whether Hermes is ready on this machine."
+                : entry?.hint ?? entry?.message;
               return (
                 <button
                   key={item.value}
-                  title={entry?.hint ?? entry?.message}
+                  title={title}
                   disabled={disabled || item.comingSoon || (item.value === "hermes_gateway" && entry?.status !== "available")}
                   className={cn(
                     "flex items-center justify-between gap-2 w-full px-2 py-1.5 text-sm rounded",
@@ -223,11 +231,11 @@ export function AdapterTypeDropdown({
                     <RuntimeLogoIcon runtimeType={item.value} />
                     <span className="truncate">{item.label}</span>
                   </span>
-                  {item.value === "hermes_gateway" && unavailable ? (
-                    <span className="shrink-0 text-[10px] text-amber-700 dark:text-amber-300">Install/setup</span>
-                  ) : item.value === "hermes_gateway" && entry?.status === "available" ? (
+                  {hermes && unavailable ? (
+                    <span className="shrink-0 text-[10px] text-amber-700 dark:text-amber-300">Set up</span>
+                  ) : hermes && entry?.status === "available" ? (
                     <span className="shrink-0 text-[10px] text-green-700 dark:text-green-300">
-                      {entry.hermesLocalBackend === "acp" ? "ACP selected" : "RPC prerequisites"}
+                      Ready
                     </span>
                   ) : item.comingSoon ? (
                     <span className="shrink-0 text-[10px] text-muted-foreground">Coming soon</span>

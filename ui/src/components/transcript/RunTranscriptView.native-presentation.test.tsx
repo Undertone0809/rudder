@@ -55,13 +55,13 @@ describe("native transcript presentation", () => {
     )).toBe(true);
     expect(isRudderEchoedStructuredConversationInput(
       `Conversation input: ${JSON.stringify({ currentMessage: rudderPromptMessage("EXPLANATION_SCHEMA") })}\nThis example explains how Rudder structures a message.`,
-    )).toBe(false);
+    )).toBe(true);
     expect(isRudderEchoedStructuredConversationInput(
       `${rudderPromptEcho({ currentMessage: rudderPromptMessage("EXPLANATION_SCHEMA") })}\n\n${rudderPromptReminder}\nAn extra explanation is not part of the prompt.`,
-    )).toBe(false);
+    )).toBe(true);
   });
 
-  it("strips a recognized currentMessage envelope only when it matches this turn's input", () => {
+  it("strips recognized current and historical envelopes while preserving prose and reminders", () => {
     const envelope = rudderPromptEcho({ currentMessage: rudderPromptMessage("the actual request") });
     const answer = "Here is the answer.";
 
@@ -72,21 +72,79 @@ describe("native transcript presentation", () => {
     expect(stripRudderEchoedStructuredConversationInput(
       `${envelope}\n\n${answer}`,
       ["a different request"],
-    )).toBeNull();
+    )).toBe(answer);
+    expect(stripRudderEchoedStructuredConversationInput(
+      `${rudderPromptEcho({ recentMessages: [rudderPromptMessage("historical request")] })}\nHistorical context remains useful.`,
+      ["a different request"],
+    )).toBe("Historical context remains useful.");
+    expect(stripRudderEchoedStructuredConversationInput(
+      rudderPromptEchoWithReminder({ currentMessage: rudderPromptMessage("the actual request") }),
+    )).toBe("");
+    expect(stripRudderEchoedStructuredConversationInput(
+      `${rudderPromptEchoWithReminder({ currentMessage: rudderPromptMessage("the actual request") })}\n\n${answer}`,
+    )).toBe(answer);
 
     const explanation = `${rudderPromptEcho({ currentMessage: rudderPromptMessage("EXPLANATION_SCHEMA") })}\nThis example explains how Rudder structures a message.`;
     expect(stripRudderEchoedStructuredConversationInput(explanation, ["Explain the schema."]))
-      .toBeNull();
+      .toBe("This example explains how Rudder structures a message.");
+    expect(stripRudderEchoedStructuredConversationInput(
+      'Conversation input: {"currentMessage":{"body":"an ordinary JSON example"}}\nThis is a schema explanation.',
+    )).toBeNull();
   });
 
-  it("keeps an agent explanation that demonstrates a complete Rudder message schema", () => {
-    const explanation = `Conversation input: ${JSON.stringify({ currentMessage: rudderPromptMessage("EXPLANATION_SCHEMA") })}\nThis example explains how Rudder structures a message.`;
+  it("keeps an agent explanation that is not a recognized Conversation input envelope", () => {
+    const explanation = `Conversation input: ${JSON.stringify({ currentMessage: { body: "EXPLANATION_SCHEMA" } })}\nThis example explains how Rudder structures a message.`;
+    expect(isRudderEchoedStructuredConversationInput(explanation)).toBe(false);
     const html = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
       presentation="detail" entries={[{ kind: "assistant", ts, text: explanation, phase: "commentary" }]}
     /></ThemeProvider>);
 
     expect(html).toContain("This example explains how Rudder structures a message.");
     expect(html).toContain("EXPLANATION_SCHEMA");
+  });
+
+  it("removes a recognized envelope from assistant and tool-result entries but keeps following prose", () => {
+    const assistantProse = "The previous turn is shown above.";
+    const toolProse = "The retrieved history is available for context.";
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "assistant",
+        ts,
+        phase: "commentary",
+        text: `${rudderPromptEcho({ currentMessage: rudderPromptMessage("CURRENT_PRIVATE_INPUT") })}\n${assistantProse}`,
+      },
+      {
+        kind: "tool_result",
+        ts,
+        toolUseId: "history-echo",
+        content: `${rudderPromptEcho({ recentMessages: [rudderPromptMessage("HISTORICAL_PRIVATE_INPUT")] })}\n${toolProse}`,
+        isError: false,
+      },
+    ];
+    const processEntries = filterRenderableTranscriptEntries(entries, { presentation: "chat" });
+
+    expect(processEntries).toEqual([
+      { ...entries[0], text: assistantProse },
+      { ...entries[1], content: toolProse },
+    ]);
+    const processHtml = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
+      presentation="chat" entries={entries}
+    /></ThemeProvider>);
+    for (const secret of ["CURRENT_PRIVATE_INPUT", "HISTORICAL_PRIVATE_INPUT", "Conversation input:", "currentMessage", "recentMessages"]) {
+      expect(processHtml).not.toContain(secret);
+    }
+    expect(processHtml).toContain(assistantProse);
+    expect(processHtml).toContain(toolProse);
+
+    const rawHtml = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
+      presentation="detail" mode="raw" entries={entries}
+    /></ThemeProvider>);
+    const activeRawView = rawHtml.slice(0, rawHtml.indexOf(' hidden="" aria-hidden="true"'));
+    for (const secret of ["CURRENT_PRIVATE_INPUT", "HISTORICAL_PRIVATE_INPUT", "Conversation input:", "currentMessage", "recentMessages"]) {
+      expect(activeRawView).not.toContain(secret);
+    }
+    expect(activeRawView).toContain(assistantProse);
+    expect(activeRawView).toContain(toolProse);
   });
 
   it("hides an exact structured conversation-input echo returned as assistant commentary", () => {
