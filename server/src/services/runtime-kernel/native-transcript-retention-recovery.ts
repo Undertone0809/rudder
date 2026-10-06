@@ -44,7 +44,10 @@ function parseRecovery(value: unknown): NativeTranscriptRecoveryLocation[] | nul
     }
     if (item?.kind === "transcript_object"
       && nonEmpty(item.objectRef) && nonEmpty(item.spanId) && nonEmpty(item.stageId)) {
-      parsed.push({ kind: "transcript_object", objectRef: item.objectRef, spanId: item.spanId, stageId: item.stageId });
+      if (item.entryDigest !== undefined && (typeof item.entryDigest !== "string"
+        || !/^[a-f0-9]{64}$/u.test(item.entryDigest))) return null;
+      parsed.push({ kind: "transcript_object", objectRef: item.objectRef, spanId: item.spanId, stageId: item.stageId,
+        ...(typeof item.entryDigest === "string" ? { entryDigest: item.entryDigest } : {}) });
       continue;
     }
     if (item?.kind === "run_log"
@@ -196,6 +199,7 @@ async function retryCleanupFromPrimary(input: {
     readerFactory: (database) => createHistoricalTranscriptReader(database, { includeObjects: false }),
     retainResultJson: retainNativeHeartbeatResultJson,
     compactAdapterInvokePayload: compactHeartbeatAdapterInvokePayload,
+    cleanupLeaseToken: input.token,
   });
   if (!result.cleaned) {
     await markNativeTranscriptRetentionIncomplete({
@@ -276,6 +280,7 @@ async function retryStagedRecovery(input: {
             ownerToken: span.ownerToken,
             allowOwnerRecovery: true,
             stageId: item.stageId,
+            ...(item.entryDigest ? { expectedEntriesSha256: item.entryDigest } : {}),
           });
           continue;
         }
@@ -304,6 +309,9 @@ async function retryStagedRecovery(input: {
         if (!span || !objectStore.purgeStagedRemoval) {
           return { completed: false as const, reason: "cleanup_recovery_object_identity_changed" };
         }
+        if (!item.entryDigest) {
+          return { completed: false as const, reason: "cleanup_recovery_exact_entry_digest_missing" };
+        }
         await objectStore.purgeStagedRemoval({
           objectRef: item.objectRef,
           orgId: run.orgId,
@@ -312,6 +320,7 @@ async function retryStagedRecovery(input: {
           ownerToken: span.ownerToken,
           allowOwnerRecovery: true,
           stageId: item.stageId,
+          expectedEntriesSha256: item.entryDigest,
         });
         continue;
       }

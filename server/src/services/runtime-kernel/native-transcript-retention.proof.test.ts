@@ -1,13 +1,21 @@
 import { readPiNativeTranscript } from "@rudderhq/agent-runtime-pi-local/server";
-import { heartbeatRunAttempts } from "@rudderhq/db";
+import { heartbeatRunAttempts, heartbeatRunEvents, heartbeatRuns, runRuntimeSpans } from "@rudderhq/db";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { cleanSealedNativeTranscriptMirrors, proveSealedNativeRunTranscript } from "./native-transcript-retention.js";
-import { createTranscriptObjectStore } from "./transcript-object-store.js";
+import { createTranscriptObjectReader, createTranscriptObjectStore } from "./transcript-object-store.js";
 import { createTranscriptReader, type NativeTranscriptReadInput, type TranscriptPage, type TranscriptReader } from "./transcript-reader.js";
+import type { TranscriptObjectStore } from "./transcript-object-store.js";
+import { stableJson } from "../chat-agent-runs.helpers.js";
 import { databaseBinding, databaseRun, databaseSegment, databaseSpan, mockDatabase } from "./transcript-reader.test-support.js";
+
+type RemovalCapableTranscriptObjectStore = TranscriptObjectStore & {
+  stageSealedRemoval: NonNullable<TranscriptObjectStore["stageSealedRemoval"]>;
+  purgeStagedRemoval: NonNullable<TranscriptObjectStore["purgeStagedRemoval"]>;
+};
 
 async function fixture(count: number, budgets: { maxNativeReadBytes?: number; maxNativeItemBytes?: number } = {}) {
   // A synthetic Pi session file, read by the production indexed native reader.
@@ -204,4 +212,237 @@ describe("sealed native retention exact-range proof", () => {
       } };
       await expect(f.prove(reader)).resolves.toMatchObject({ ok: false, reason: "native_range_read_incomplete" });
     });
+});
+
+describe("proof-gated exact Codex supplement reclaim", () => {
+  const ts = "2026-10-01T00:00:00.000Z";
+
+  async function cleanupFixture(input: { completeness?: "complete" | "partial"; mismatch?: boolean } = {}) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-exact-supplement-cleanup-"));
+    const store = createTranscriptObjectStore(path.join(root, "objects")) as RemovalCapableTranscriptObjectStore;
+    const identity = {
+      orgId: "org-exact", runId: "run-exact", spanId: "span-exact", attemptId: "attempt-exact",
+      attemptEpoch: 7, ownerToken: "synthetic-exact-owner",
+      selector: { kind: "codex_turn" as const, runId: "run-exact", threadId: "thread-exact", turnId: "turn-exact" },
+    };
+    const entries = [
+      { kind: "user" as const, ts, text: "synthetic request", messageId: "user-exact", sourceEntryId: "user-exact" },
+      { kind: "assistant" as const, ts, text: "synthetic response", phase: "final_answer" as const,
+        segmentId: "assistant-exact", sourceEntryId: "assistant-exact" },
+    ];
+    const objectEntries = entries.map(entry => ({ ...entry }));
+    if (input.mismatch) objectEntries[1]!.text = "changed supplement";
+    const handle = await store.begin(identity);
+    await store.append(handle, objectEntries);
+    const objectRef = handle.objectRef;
+    await store.finalize(handle, { completeness: input.completeness ?? "complete" });
+
+    const revision = "codex-native-revision-exact";
+    const baseRun = databaseRun({ orgId: identity.orgId, id: identity.runId, status: "succeeded",
+      executionOwnerToken: null, terminalEffectsPending: false, processExitedAt: new Date(ts),
+      contextSnapshot: { transcriptSource: "native" } });
+    const span = databaseSpan(identity.spanId, { orgId: identity.orgId, runId: identity.runId,
+      attemptId: identity.attemptId, attemptEpoch: identity.attemptEpoch, ownerToken: identity.ownerToken,
+      sourceRevision: revision, selectorJson: identity.selector, state: "sealed", completeness: "complete",
+      writerLeaseReleasedAt: new Date(ts), supplementalObjectRef: objectRef });
+    const attempt = { id: identity.attemptId, orgId: identity.orgId, runId: identity.runId,
+      ownerToken: identity.ownerToken, attemptEpoch: identity.attemptEpoch,
+      status: "succeeded", finishedAt: new Date(ts) };
+    const db = mockDatabase({ run: baseRun, spans: [span],
+      bindings: [databaseBinding(identity.spanId, { orgId: identity.orgId, runtimeType: "codex_local", continuity: "native" })],
+      segments: [databaseSegment(identity.spanId, { orgId: identity.orgId, runtimeType: "codex_local", nativeSessionId: identity.selector.threadId })] });
+    const nativeOnlyReader = createTranscriptReader(db as never, {
+      nativeReader: { readRange: async () => ({ entries: entries.map(entry => ({ entry })), source: "native",
+        revision, availability: "available", completeness: "complete" }) },
+    });
+    const nativePage = await nativeOnlyReader.readRun({ orgId: identity.orgId, runId: identity.runId,
+      spanId: identity.spanId, principal: { type: "board", orgId: identity.orgId, authorized: true }, limit: 200 });
+    span.sourceRevision = nativePage.revision;
+    const nativeReadSha256 = createHash("sha256")
+      .update(nativePage.items.map(item => `${stableJson(item)}\n`).join(""))
+      .digest("hex");
+    const proof = {
+      orgId: identity.orgId,
+      runId: identity.runId,
+      itemCount: entries.length,
+      spans: [{ spanId: identity.spanId, ownerToken: identity.ownerToken, attemptEpoch: identity.attemptEpoch,
+        attemptId: identity.attemptId, sourceRevision: nativePage.revision, itemCount: entries.length, nativeReadSha256,
+        selectorJson: identity.selector, supplementalObjectRef: objectRef }],
+    };
+
+    const rows = new Map<unknown, Record<string, unknown>[]>([
+      [heartbeatRuns, [baseRun]], [runRuntimeSpans, [span]], [heartbeatRunAttempts, [attempt]], [heartbeatRunEvents, []],
+    ]);
+    const tx = {
+      execute: vi.fn(async () => undefined),
+      select: vi.fn(() => {
+        let table: unknown;
+        const query: any = {
+          from(value: unknown) { table = value; return query; },
+          where() { return query; },
+          for() { return query; },
+          orderBy() { return query; },
+          limit() { return query; },
+          then(resolve: (value: Record<string, unknown>[]) => unknown, reject?: (reason: unknown) => unknown) {
+            return Promise.resolve(rows.get(table) ?? []).then(resolve, reject);
+          },
+        };
+        return query;
+      }),
+      update: vi.fn((table: unknown) => {
+        let values: Record<string, unknown> = {};
+        const query: any = {
+          set(next: Record<string, unknown>) { values = next; return query; },
+          where() { return query; },
+          returning: async () => {
+            const target = rows.get(table)?.[0];
+            if (target) Object.assign(target, values);
+            return target ? [{ id: target.id }] : [];
+          },
+        };
+        return query;
+      }),
+      delete: vi.fn(() => { throw new Error("unexpected SQL delete"); }),
+    };
+    const database = { transaction: vi.fn(async (operation: (value: typeof tx) => Promise<unknown>) => operation(tx)) };
+    const readerFactory = () => nativeOnlyReader;
+    const publicReader = createTranscriptReader(db as never, {
+      nativeReader: { readRange: async () => ({ entries: entries.map(entry => ({ entry })), source: "native",
+        revision, availability: "available", completeness: "complete" }) },
+      objectReader: createTranscriptObjectReader(store),
+    });
+    const fallbackReader = createTranscriptReader(db as never, {
+      nativeReader: { readRange: async () => ({ entries: [], source: "native", revision: "offline-native",
+        availability: "offline", completeness: "unknown" }) },
+      objectReader: createTranscriptObjectReader(store),
+    });
+    return { root, store, objectRef, identity, entries, span, proof, tx, database, readerFactory,
+      publicReader, fallbackReader, run: baseRun };
+  }
+
+  it("stages and purges only a complete exact supplement, leaving native-only readback", async () => {
+    const f = await cleanupFixture();
+    const stageOriginal = f.store.stageSealedRemoval!.bind(f.store);
+    const stage = vi.spyOn(f.store, "stageSealedRemoval").mockImplementation(async input => {
+      expect(f.tx.update).toHaveBeenCalledTimes(1);
+      expect(f.span.supplementalObjectRef).toBe(f.objectRef);
+      expect((f.run.contextSnapshot as any).nativeTranscriptRetention).toMatchObject({
+        status: "cleanup_pending",
+        recovery: [{ kind: "transcript_object", objectRef: f.objectRef, spanId: f.identity.spanId,
+          entryDigest: input.expectedEntriesSha256, stageId: input.stageId }],
+      });
+      return stageOriginal(input);
+    });
+    const purge = vi.spyOn(f.store, "purgeStagedRemoval");
+    try {
+      await expect(cleanSealedNativeTranscriptMirrors({ db: f.database as never, proof: f.proof,
+        runLogStore: {} as never, transcriptObjectStore: f.store, readerFactory: f.readerFactory,
+        retainResultJson: value => value ?? {} })).resolves.toEqual({ cleaned: true });
+      expect(stage).toHaveBeenCalledTimes(1);
+      expect(purge).toHaveBeenCalledTimes(1);
+      expect(f.span.supplementalObjectRef).toBeNull();
+      await expect(f.store.readRange({ ...f.identity, objectRef: f.objectRef })).rejects.toThrow();
+      const readback = await f.publicReader.readRun({ orgId: f.identity.orgId, runId: f.identity.runId,
+        spanId: f.identity.spanId, principal: { type: "board", orgId: f.identity.orgId, authorized: true } });
+      expect(readback).toMatchObject({ source: "native", completeness: "complete" });
+      expect(readback.items.map(item => item.entry)).toEqual(f.entries);
+    } finally {
+      stage.mockRestore();
+      purge.mockRestore();
+      await fs.rm(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["partial supplement", { completeness: "partial" as const }],
+    ["complete but changed entry", { mismatch: true }],
+  ])("preserves a %s before any staging or SQL mutation", async (_name, options) => {
+    const f = await cleanupFixture(options);
+    const stage = vi.spyOn(f.store, "stageSealedRemoval");
+    const purge = vi.spyOn(f.store, "purgeStagedRemoval");
+    try {
+      await expect(cleanSealedNativeTranscriptMirrors({ db: f.database as never, proof: f.proof,
+        runLogStore: {} as never, transcriptObjectStore: f.store, readerFactory: f.readerFactory,
+        retainResultJson: value => value ?? {} })).resolves.toEqual({ cleaned: false,
+        reason: "supplement_native_coverage_unproven" });
+      expect(stage).not.toHaveBeenCalled();
+      expect(purge).not.toHaveBeenCalled();
+      expect(f.tx.update).not.toHaveBeenCalled();
+      expect(f.tx.delete).not.toHaveBeenCalled();
+      expect(f.span.supplementalObjectRef).toBe(f.objectRef);
+      const objectPage = await f.store.readRange({ ...f.identity, objectRef: f.objectRef });
+      expect(objectPage.entries).toHaveLength(2);
+      if ("completeness" in options && options.completeness === "partial") expect(objectPage.completeness).toBe("partial");
+      const readback = await f.fallbackReader.readRun({ orgId: f.identity.orgId, runId: f.identity.runId,
+        spanId: f.identity.spanId, principal: { type: "board", orgId: f.identity.orgId, authorized: true } });
+      expect(readback.source).toBe("native_plus_objects");
+    } finally {
+      stage.mockRestore();
+      purge.mockRestore();
+      await fs.rm(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses staging when a same-size supplement rewrite races after its exact proof", async () => {
+    const f = await cleanupFixture();
+    const payload = path.join(f.root, "objects", "transcript-objects", `${f.objectRef}.ndjson`);
+    const stageOriginal = f.store.stageSealedRemoval!.bind(f.store);
+    const stage = vi.spyOn(f.store, "stageSealedRemoval").mockImplementation(async (input) => {
+      const before = await fs.readFile(payload, "utf8");
+      const replaced = before.replace("synthetic request", "synthetic requess");
+      expect(replaced).not.toBe(before);
+      expect(Buffer.byteLength(replaced, "utf8")).toBe(Buffer.byteLength(before, "utf8"));
+      await fs.writeFile(payload, replaced);
+      return stageOriginal(input);
+    });
+    const purge = vi.spyOn(f.store, "purgeStagedRemoval");
+    try {
+      const result = await cleanSealedNativeTranscriptMirrors({ db: f.database as never, proof: f.proof,
+        runLogStore: {} as never, transcriptObjectStore: f.store, readerFactory: f.readerFactory,
+        retainResultJson: value => value ?? {} });
+      expect(result).toMatchObject({ cleaned: false });
+      expect(stage).toHaveBeenCalledTimes(1);
+      expect(purge).not.toHaveBeenCalled();
+      expect(f.tx.update.mock.calls.some(([table]) => table === runRuntimeSpans)).toBe(false);
+      expect(f.tx.delete).not.toHaveBeenCalled();
+      expect(f.span.supplementalObjectRef).toBe(f.objectRef);
+      const objectPage = await f.store.readRange({ ...f.identity, objectRef: f.objectRef });
+      expect(objectPage.entries[0]).toMatchObject({ text: "synthetic requess" });
+      expect(await fs.readdir(path.join(f.root, "objects", "transcript-objects"))).toEqual([
+        `${f.objectRef}.json`, `${f.objectRef}.ndjson`,
+      ]);
+    } finally {
+      stage.mockRestore();
+      purge.mockRestore();
+      await fs.rm(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the committed recovery identity and Run/span reference when staging fails after moving files", async () => {
+    const f = await cleanupFixture();
+    const stageOriginal = f.store.stageSealedRemoval!.bind(f.store);
+    const stage = vi.spyOn(f.store, "stageSealedRemoval").mockImplementation(async input => {
+      const staged = await stageOriginal(input);
+      throw new Error(`injected_ack_loss_after_stage:${staged.stageId}`);
+    });
+    try {
+      const result = await cleanSealedNativeTranscriptMirrors({ db: f.database as never, proof: f.proof,
+        runLogStore: {} as never, transcriptObjectStore: f.store, readerFactory: f.readerFactory,
+        retainResultJson: value => value ?? {} });
+      expect(result).toMatchObject({ cleaned: false, reason: expect.stringContaining("injected_ack_loss_after_stage") });
+      expect(f.span.supplementalObjectRef).toBe(f.objectRef);
+      expect(f.tx.update.mock.calls.some(([table]) => table === runRuntimeSpans)).toBe(false);
+      const retention = (f.run.contextSnapshot as any).nativeTranscriptRetention;
+      expect(retention).toMatchObject({ status: "cleanup_pending", recovery: [
+        { kind: "transcript_object", objectRef: f.objectRef, spanId: f.identity.spanId },
+      ] });
+      await expect(f.store.readRange({ ...f.identity, objectRef: f.objectRef })).resolves.toMatchObject({
+        entries: f.entries,
+        completeness: "complete",
+      });
+    } finally {
+      stage.mockRestore();
+      await fs.rm(f.root, { recursive: true, force: true });
+    }
+  });
 });

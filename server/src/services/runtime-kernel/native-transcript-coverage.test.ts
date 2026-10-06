@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  CODEX_EXACT_SUPPLEMENT_MAX_BYTES,
   buildCodexByteTimeline,
   type CodexMixedCoverageInput,
+  proveCodexExactSupplementEquivalence,
   proveCodexMixedSupplementCoverage,
   reconstructCodexByteTimeline,
 } from "./native-transcript-coverage.js";
@@ -272,5 +274,77 @@ describe("reversible byte-exact Codex timeline, no cleanup authority", () => {
     if (!result.ok) return;
     mutate(input, result.timeline);
     expect(reconstruct(input, result.timeline)).toMatchObject({ ok: false, authorizesOldObjectDelete: false });
+  });
+});
+
+describe("Codex exact supplement cleanup proof", () => {
+  const objectRef = "tobj_v1_00000000-0000-0000-0000-000000000099";
+  const entries = [
+    { kind: "user", ts, text: "synthetic request", messageId: "user-1", sourceEntryId: "user-1" },
+    { kind: "assistant", ts, text: "synthetic response", phase: "final_answer", segmentId: "assistant-1",
+      sourceEntryId: "assistant-1" },
+  ];
+  const readSha256 = sha(Buffer.from("complete native Reader item snapshot"));
+
+  function input() {
+    return {
+      expected: structuredClone(identity),
+      expectedObjectRef: objectRef,
+      expectedSourceRevision: "native-revision-1",
+      expectedNativeItemCount: entries.length,
+      expectedNativeReadSha256: readSha256,
+      supplement: {
+        identity: structuredClone(identity), objectRef, source: "native_plus_objects" as const,
+        availability: "available" as const, completeness: "complete" as const,
+        revisionBefore: "object-revision-1", revisionAfter: "object-revision-1",
+        entryCount: entries.length, entries: structuredClone(entries),
+      },
+      native: {
+        identity: structuredClone(identity), source: "native" as const,
+        availability: "available" as const, completeness: "complete" as const,
+        revisionBefore: "native-revision-1", revisionAfter: "native-revision-1",
+        itemCount: entries.length, readSha256, entries: structuredClone(entries),
+      },
+    };
+  }
+
+  it("authorizes only exact complete entry identity/count/digest equivalence", () => {
+    const result = proveCodexExactSupplementEquivalence(input());
+    expect(result).toMatchObject({ ok: true, version: "codex-exact-supplement-v1", objectRef,
+      sourceRevision: "native-revision-1", entryCount: 2, authorizesOldObjectDelete: true });
+    if (result.ok) {
+      expect(result.identityDigest).toMatch(/^[a-f0-9]{64}$/u);
+      expect(result.entryDigest).toMatch(/^[a-f0-9]{64}$/u);
+      expect(result.nativeReadSha256).toBe(readSha256);
+      expect(result.bindingSha256).toMatch(/^[a-f0-9]{64}$/u);
+    }
+  });
+
+  it.each([
+    ["partial supplement", (x: ReturnType<typeof input>) => { x.supplement.completeness = "partial" as never; }],
+    ["changed supplement revision", (x: ReturnType<typeof input>) => { x.supplement.revisionAfter = "changed"; }],
+    ["changed native revision", (x: ReturnType<typeof input>) => { x.native.revisionAfter = "changed"; }],
+    ["changed source revision", (x: ReturnType<typeof input>) => { x.native.revisionBefore = "stale"; x.native.revisionAfter = "stale"; }],
+    ["changed attempt identity", (x: ReturnType<typeof input>) => { x.supplement.identity.attemptId = "other-attempt"; }],
+    ["changed selector identity", (x: ReturnType<typeof input>) => { x.native.identity.selector.turnId = "other-turn"; }],
+    ["supplement count mismatch", (x: ReturnType<typeof input>) => { x.supplement.entryCount += 1; }],
+    ["native read digest mismatch", (x: ReturnType<typeof input>) => { x.native.readSha256 = sha(Buffer.from("other native read")); }],
+    ["changed entry content", (x: ReturnType<typeof input>) => { x.supplement.entries[1].text = "changed"; }],
+    ["changed entry identity", (x: ReturnType<typeof input>) => { x.supplement.entries[1].sourceEntryId = "other-id"; }],
+    ["unsupported entry", (x: ReturnType<typeof input>) => { x.supplement.entries[1].kind = "todo_list"; }],
+    ["changed object reference", (x: ReturnType<typeof input>) => { x.supplement.objectRef = "tobj_v1_00000000-0000-0000-0000-000000000001"; }],
+  ] as const)("refuses deletion for %s", (_name, change) => {
+    const value = input();
+    change(value);
+    expect(proveCodexExactSupplementEquivalence(value)).toMatchObject({ ok: false, authorizesOldObjectDelete: false });
+  });
+
+  it("refuses exact cleanup when the supplement exceeds its bounded proof size", () => {
+    const value = input();
+    value.supplement.entries[0]!.text = "x".repeat(CODEX_EXACT_SUPPLEMENT_MAX_BYTES + 1);
+    value.native.entries[0]!.text = value.supplement.entries[0]!.text;
+    expect(proveCodexExactSupplementEquivalence(value)).toMatchObject({
+      ok: false, reason: "supplement_size_limit", authorizesOldObjectDelete: false,
+    });
   });
 });

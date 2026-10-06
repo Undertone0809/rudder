@@ -3,6 +3,8 @@ import { isDeepStrictEqual } from "node:util";
 
 /** Pure classification only. No persistence, cleanup, or provider authority. */
 export const CODEX_MIXED_COVERAGE_VERSION = "codex-mixed-supplement-v2" as const;
+export const CODEX_EXACT_SUPPLEMENT_MAX_BYTES = 2 * 1024 * 1024;
+export const CODEX_EXACT_SUPPLEMENT_MAX_ENTRIES = 256;
 
 export type CoverageIdentity = {
   orgId: string;
@@ -56,7 +58,59 @@ export type CodexMixedCoverageResult = {
   authorizesOldObjectDelete: false;
 };
 
+export type CodexExactSupplementEvidence = {
+  identity: CoverageIdentity;
+  objectRef: string;
+  source: "native_plus_objects";
+  availability: "available";
+  completeness: "complete";
+  revisionBefore: string;
+  revisionAfter: string;
+  entryCount: number;
+  entries: readonly Entry[];
+};
+
+export type CodexExactNativeEvidence = {
+  identity: CoverageIdentity;
+  source: "native";
+  availability: "available";
+  completeness: "complete";
+  revisionBefore: string;
+  revisionAfter: string;
+  itemCount: number;
+  /** Digest over the full Transcript Reader items, including their source identity. */
+  readSha256: string;
+  entries: readonly Entry[];
+};
+
+export type CodexExactSupplementProof =
+  | { ok: false; reason: string; authorizesOldObjectDelete: false }
+  | {
+      ok: true;
+      version: "codex-exact-supplement-v1";
+      bindingSha256: string;
+      objectRef: string;
+      sourceRevision: string;
+      entryCount: number;
+      identityDigest: string;
+      entryDigest: string;
+      nativeReadSha256: string;
+      authorizesOldObjectDelete: true;
+    };
+
 const sha = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+export function stableCodexJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableCodexJson).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, child]) => `${JSON.stringify(key)}:${stableCodexJson(child)}`)
+    .join(",")}}`;
+}
+const stableJson = stableCodexJson;
+export function codexExactSupplementEntriesSha256(entries: readonly unknown[]): string {
+  return sha(stableCodexJson(entries));
+}
 const string = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 const record = (v: unknown): v is Entry => Boolean(v && typeof v === "object" && !Array.isArray(v));
 const fail = (reason: string): Extract<CodexMixedCoverageResult, { ok: false }> => ({ ok: false, reason, authorizesOldObjectDelete: false });
@@ -91,6 +145,84 @@ function validEntry(e: Entry): boolean {
   if (e.kind === "tool_result" && (!string(e.toolName) || !string(e.toolUseId)
     || typeof e.content !== "string" || typeof e.isError !== "boolean")) return false;
   return true;
+}
+
+/**
+ * Exact cleanup authority for one Codex supplement only. The caller must bind
+ * both ranges to the sealed span/attempt and read each source to exhaustion.
+ * Unlike mixed semantic coverage, this requires every supported supplement
+ * entry, in order and without projection, to equal the complete native entries.
+ */
+export function proveCodexExactSupplementEquivalence(input: {
+  expected: CoverageIdentity;
+  expectedObjectRef: string;
+  expectedSourceRevision: string;
+  expectedNativeItemCount: number;
+  expectedNativeReadSha256: string;
+  supplement: CodexExactSupplementEvidence;
+  native: CodexExactNativeEvidence;
+}): CodexExactSupplementProof {
+  const fail = (reason: string): CodexExactSupplementProof => ({
+    ok: false, reason, authorizesOldObjectDelete: false,
+  });
+  try {
+    const { expected, supplement: s, native: n } = input;
+    if (!validIdentity(expected) || !isDeepStrictEqual(expected, s.identity)
+      || !isDeepStrictEqual(expected, n.identity)) return fail("identity_mismatch");
+    if (s.objectRef !== input.expectedObjectRef
+      || !/^tobj_v1_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(s.objectRef)
+      || s.source !== "native_plus_objects" || s.availability !== "available" || s.completeness !== "complete"
+      || !string(s.revisionBefore) || s.revisionBefore !== s.revisionAfter) return fail("supplement_boundary_or_revision_mismatch");
+    if (n.source !== "native" || n.availability !== "available" || n.completeness !== "complete"
+      || !string(n.revisionBefore) || n.revisionBefore !== n.revisionAfter
+      || n.revisionBefore !== input.expectedSourceRevision) return fail("native_boundary_or_revision_mismatch");
+    if (!/^[a-f0-9]{64}$/u.test(input.expectedNativeReadSha256) || n.readSha256 !== input.expectedNativeReadSha256
+      || !Number.isSafeInteger(input.expectedNativeItemCount) || input.expectedNativeItemCount < 1
+      || n.itemCount !== input.expectedNativeItemCount) return fail("native_read_proof_mismatch");
+    if (!Number.isSafeInteger(s.entryCount) || s.entryCount < 1 || s.entryCount > CODEX_EXACT_SUPPLEMENT_MAX_ENTRIES
+      || s.entries.length !== s.entryCount || s.entryCount !== n.itemCount
+      || n.entries.length !== n.itemCount || n.itemCount > CODEX_EXACT_SUPPLEMENT_MAX_ENTRIES) return fail("entry_count_mismatch");
+    if ([...s.entries, ...n.entries].some((entry) => !validEntry(entry))) return fail("unsupported_entry");
+    const supplementJson = stableJson(s.entries);
+    if (Buffer.byteLength(supplementJson, "utf8") > CODEX_EXACT_SUPPLEMENT_MAX_BYTES) return fail("supplement_size_limit");
+    const identityKeys = (entries: readonly Entry[]) => entries.map((entry) => `${entry.kind}:${entry.sourceEntryId}`);
+    const supplementIds = identityKeys(s.entries);
+    const nativeIds = identityKeys(n.entries);
+    if (new Set(supplementIds).size !== supplementIds.length || new Set(nativeIds).size !== nativeIds.length) {
+      return fail("duplicate_entry_identity");
+    }
+    const identityDigest = sha(stableJson(supplementIds));
+    const nativeIdentityDigest = sha(stableJson(nativeIds));
+    const entryDigest = codexExactSupplementEntriesSha256(s.entries);
+    const nativeEntryDigest = codexExactSupplementEntriesSha256(n.entries);
+    if (identityDigest !== nativeIdentityDigest || entryDigest !== nativeEntryDigest
+      || !isDeepStrictEqual(s.entries, n.entries)) return fail("entry_identity_or_digest_mismatch");
+    const bindingSha256 = sha(stableJson({
+      version: "codex-exact-supplement-v1",
+      identity: expected,
+      objectRef: s.objectRef,
+      supplementRevision: s.revisionBefore,
+      sourceRevision: n.revisionBefore,
+      entryCount: s.entryCount,
+      identityDigest,
+      entryDigest,
+      nativeReadSha256: n.readSha256,
+    }));
+    return {
+      ok: true,
+      version: "codex-exact-supplement-v1",
+      bindingSha256,
+      objectRef: s.objectRef,
+      sourceRevision: n.revisionBefore,
+      entryCount: s.entryCount,
+      identityDigest,
+      entryDigest,
+      nativeReadSha256: n.readSha256,
+      authorizesOldObjectDelete: true,
+    };
+  } catch {
+    return fail("malformed_or_ambiguous_evidence");
+  }
 }
 
 function callCovered(a: Entry, b: Entry): boolean {

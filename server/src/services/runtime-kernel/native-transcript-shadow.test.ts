@@ -61,7 +61,8 @@ async function fixture(root: string) {
     revision: "raw-provider-revision", availability: "available", completeness: "complete" }) } });
   const proof: NativeTranscriptRunProof = { orgId: "org-1", runId: "run-1", itemCount: 1,
     spans: [{ spanId: "span-1", attemptId: "attempt-1", attemptEpoch: 1, ownerToken: "owner-1",
-      sourceRevision: span.sourceRevision as string, itemCount: 1, selectorJson: identity.selector, supplementalObjectRef: handle.objectRef }] };
+      sourceRevision: span.sourceRevision as string, itemCount: 1, nativeReadSha256: stableHash(["native-read"]),
+      selectorJson: identity.selector, supplementalObjectRef: handle.objectRef }] };
   return { store, db, proof, readerFactory, identity, native, span, attempt, run, objectRef: handle.objectRef };
 }
 

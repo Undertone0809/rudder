@@ -4,6 +4,12 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
 import type { RunLogStore } from "../run-log-store.js";
+import {
+  CODEX_EXACT_SUPPLEMENT_MAX_BYTES,
+  CODEX_EXACT_SUPPLEMENT_MAX_ENTRIES,
+  proveCodexExactSupplementEquivalence,
+  type CoverageIdentity,
+} from "./native-transcript-coverage.js";
 import type { TranscriptObjectStore } from "./transcript-object-store.js";
 import type { TranscriptReader } from "./transcript-reader.js";
 
@@ -14,6 +20,7 @@ export type NativeTranscriptSpanProof = {
   attemptId: string;
   sourceRevision: string;
   itemCount: number;
+  nativeReadSha256: string;
   selectorJson: Record<string, unknown>;
   supplementalObjectRef: string | null;
 };
@@ -26,7 +33,7 @@ export type NativeTranscriptRunProof = {
 };
 
 export type NativeTranscriptRecoveryLocation =
-  | { kind: "transcript_object"; objectRef: string; spanId: string; stageId: string }
+  | { kind: "transcript_object"; objectRef: string; spanId: string; stageId: string; entryDigest?: string }
   | { kind: "transcript_supplement"; objectRef: string; spanId: string }
   | { kind: "run_log"; store: "local_file"; logRef: string; sha256?: string; stageId: string };
 
@@ -53,6 +60,7 @@ export function nativeTranscriptProofSnapshot(proof: NativeTranscriptRunProof) {
       selectorHash: createHash("sha256").update(stableJson(span.selectorJson)).digest("hex"),
       sourceRevision: span.sourceRevision,
       itemCount: span.itemCount,
+      nativeReadSha256: span.nativeReadSha256,
       ...(span.supplementalObjectRef ? { objectRef: span.supplementalObjectRef } : {}),
     })),
   };
@@ -78,6 +86,7 @@ export function matchesNativeTranscriptProofSnapshot(
       && saved.attemptId === span.attemptId
       && saved.sourceRevision === span.sourceRevision
       && saved.itemCount === span.itemCount
+      && saved.nativeReadSha256 === span.nativeReadSha256
       && saved.attemptEpoch === span.attemptEpoch
       && saved.ownerTokenHash === ownerTokenHash(span.ownerToken)
       && saved.selectorHash === createHash("sha256").update(stableJson(span.selectorJson)).digest("hex")
@@ -175,12 +184,14 @@ function selectorBoundaryIsExact(value: unknown): boolean {
 async function readExactSpanPass(
   reader: TranscriptReader,
   input: { orgId: string; runId: string; spanId: string },
-): Promise<{ sourceRevision: string; itemCount: number; itemDigest: string } | null> {
+  captureEntries = false,
+): Promise<{ sourceRevision: string; itemCount: number; itemDigest: string; entries: Array<Record<string, unknown>> } | null> {
   const pageLimit = 200;
   let cursor: string | null = null;
   let revision: string | null = null;
   let itemCount = 0;
   const digest = createHash("sha256");
+  const entries: Array<Record<string, unknown>> = [];
   const seenCursors = new Set<string>();
 
   for (let pageCount = 0; pageCount < 100_000; pageCount += 1) {
@@ -214,8 +225,15 @@ async function readExactSpanPass(
       return null;
     }
     revision ??= page.revision;
-    for (const item of page.items) digest.update(stableJson(item)).update("\n");
+    for (const item of page.items) {
+      digest.update(stableJson(item)).update("\n");
+      if (captureEntries) {
+        const entry = record(item.entry);
+        if (entry) entries.push(entry);
+      }
+    }
     itemCount += page.items.length;
+    if (captureEntries && itemCount > 256) return null;
     if (!page.nextCursor) break;
     if (page.nextCursor === cursor || seenCursors.has(page.nextCursor) || page.items.length === 0) return null;
     seenCursors.add(page.nextCursor);
@@ -224,22 +242,82 @@ async function readExactSpanPass(
   }
 
   if (!revision || itemCount === 0) return null;
-  return { sourceRevision: revision, itemCount, itemDigest: digest.digest("hex") };
+  return { sourceRevision: revision, itemCount, itemDigest: digest.digest("hex"), entries };
 }
 
 async function readExactSpan(
   reader: TranscriptReader,
   input: { orgId: string; runId: string; spanId: string },
-): Promise<{ sourceRevision: string; itemCount: number } | null> {
-  const first = await readExactSpanPass(reader, input);
+  captureEntries = false,
+): Promise<{ sourceRevision: string; itemCount: number; itemDigest: string; entries: Array<Record<string, unknown>> } | null> {
+  const first = await readExactSpanPass(reader, input, captureEntries);
   if (!first) return null;
   // Confirm the same complete selected range, not a one-item page that can
   // honestly hit its own item budget. Two bounded traversals also detect a
   // pruned tail or changed projection even if a provider reuses its revision.
-  const confirmation = await readExactSpanPass(reader, input);
+  const confirmation = await readExactSpanPass(reader, input, captureEntries);
   if (!confirmation || confirmation.sourceRevision !== first.sourceRevision
     || confirmation.itemCount !== first.itemCount || confirmation.itemDigest !== first.itemDigest) return null;
-  return { sourceRevision: first.sourceRevision, itemCount: first.itemCount };
+  return confirmation;
+}
+
+async function readExactSupplementPass(input: {
+  store: TranscriptObjectStore;
+  proof: NativeTranscriptRunProof;
+  span: NativeTranscriptSpanProof;
+}): Promise<{ revision: string; entryCount: number; entries: Array<Record<string, unknown>> } | null> {
+  if (!input.span.supplementalObjectRef) return null;
+  let cursor: string | null = null;
+  let revision: string | null = null;
+  const entries: Array<Record<string, unknown>> = [];
+  let canonicalBytes = 2;
+  const seenCursors = new Set<string>();
+  for (let pageIndex = 0; pageIndex < 2; pageIndex += 1) {
+    const page = await input.store.readRange({
+      objectRef: input.span.supplementalObjectRef,
+      orgId: input.proof.orgId,
+      runId: input.proof.runId,
+      spanId: input.span.spanId,
+      ownerToken: input.span.ownerToken,
+      allowOwnerRecovery: true,
+      cursor,
+      limit: 200,
+      maxBytes: CODEX_EXACT_SUPPLEMENT_MAX_BYTES,
+    });
+    if (page.source !== "native_plus_objects" || page.availability !== "available"
+      || page.completeness !== "complete" || !nonEmpty(page.revision)
+      || (revision !== null && page.revision !== revision)
+      || page.entries.some((entry) => !record(entry))) return null;
+    revision ??= page.revision;
+    for (const value of page.entries) {
+      const entry = value as unknown as Record<string, unknown>;
+      canonicalBytes += Buffer.byteLength(stableJson(entry), "utf8") + (entries.length > 0 ? 1 : 0);
+      if (canonicalBytes > CODEX_EXACT_SUPPLEMENT_MAX_BYTES) return null;
+      entries.push(entry);
+      if (entries.length > CODEX_EXACT_SUPPLEMENT_MAX_ENTRIES) return null;
+    }
+    if (!page.nextCursor) break;
+    if (page.nextCursor === cursor || seenCursors.has(page.nextCursor) || page.entries.length === 0
+      || pageIndex === 1) return null;
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+  if (!revision || entries.length === 0 || entries.length > CODEX_EXACT_SUPPLEMENT_MAX_ENTRIES) return null;
+  return { revision, entryCount: entries.length, entries };
+}
+
+async function readExactSupplement(input: {
+  store: TranscriptObjectStore;
+  proof: NativeTranscriptRunProof;
+  span: NativeTranscriptSpanProof;
+}): Promise<{ revisionBefore: string; revisionAfter: string; entryCount: number; entries: Array<Record<string, unknown>> } | null> {
+  const first = await readExactSupplementPass(input);
+  const confirmation = await readExactSupplementPass(input);
+  if (!first || !confirmation || first.revision !== confirmation.revision
+    || first.entryCount !== confirmation.entryCount
+    || stableJson(first.entries) !== stableJson(confirmation.entries)) return null;
+  return { revisionBefore: first.revision, revisionAfter: confirmation.revision,
+    entryCount: confirmation.entryCount, entries: confirmation.entries };
 }
 
 export async function proveSealedNativeRunTranscript(input: {
@@ -301,6 +379,7 @@ export async function proveSealedNativeRunTranscript(input: {
       attemptId: attempt.id,
       sourceRevision: read.sourceRevision,
       itemCount: read.itemCount,
+      nativeReadSha256: read.itemDigest,
       selectorJson: span.selectorJson,
       supplementalObjectRef: span.supplementalObjectRef,
     });
@@ -362,15 +441,16 @@ function transcriptEventIdentities(proof: NativeTranscriptRunProof) {
 }
 
 function recoveryLocations(input: {
-  objects: Array<{ span: NativeTranscriptSpanProof; stageId: string }>;
+  objects: Array<{ span: NativeTranscriptSpanProof; stageId: string; entryDigest?: string }>;
   runLog: Awaited<ReturnType<NonNullable<RunLogStore["stageRunRemoval"]>>> | null;
 }): NativeTranscriptRecoveryLocation[] {
   return [
-    ...input.objects.map(({ span, stageId }) => ({
+    ...input.objects.map(({ span, stageId, entryDigest }) => ({
       kind: "transcript_object" as const,
       objectRef: span.supplementalObjectRef!,
       spanId: span.spanId,
       stageId,
+      ...(entryDigest ? { entryDigest } : {}),
     })),
     ...(input.runLog ? [{
       kind: "run_log" as const,
@@ -455,6 +535,75 @@ export async function selectAndVerifyNativeTranscriptCleanupState(tx: any, proof
   return { run, transcriptEvents, invocationEvents };
 }
 
+async function proveExactCodexSupplements(input: {
+  proof: NativeTranscriptRunProof;
+  database: Pick<Db, "select">;
+  readerFactory: (database: Pick<Db, "select">) => TranscriptReader;
+  transcriptObjectStore: TranscriptObjectStore;
+}) {
+  const digests = new Map<string, string>();
+  const supplements = input.proof.spans.filter((span) => span.supplementalObjectRef);
+  if (supplements.length === 0) return digests;
+  const reader = input.readerFactory(input.database);
+  for (const span of supplements) {
+    if (span.selectorJson.kind !== "codex_turn" || !span.supplementalObjectRef) {
+      throw new Error("supplement_native_coverage_unproven");
+    }
+    const [native, supplement] = await Promise.all([
+      readExactSpan(reader, { orgId: input.proof.orgId, runId: input.proof.runId, spanId: span.spanId }, true)
+        .catch(() => null),
+      readExactSupplement({ store: input.transcriptObjectStore, proof: input.proof, span }).catch(() => null),
+    ]);
+    if (!native || !supplement || native.sourceRevision !== span.sourceRevision
+      || native.itemCount !== span.itemCount || native.itemDigest !== span.nativeReadSha256) {
+      throw new Error("supplement_native_coverage_unproven");
+    }
+    const identity: CoverageIdentity = {
+      orgId: input.proof.orgId,
+      runId: input.proof.runId,
+      spanId: span.spanId,
+      attemptId: span.attemptId,
+      attemptEpoch: span.attemptEpoch,
+      ownerToken: span.ownerToken,
+      selector: span.selectorJson as CoverageIdentity["selector"],
+    };
+    const equivalence = proveCodexExactSupplementEquivalence({
+      expected: identity,
+      expectedObjectRef: span.supplementalObjectRef,
+      expectedSourceRevision: span.sourceRevision,
+      expectedNativeItemCount: span.itemCount,
+      expectedNativeReadSha256: span.nativeReadSha256,
+      supplement: {
+        identity,
+        objectRef: span.supplementalObjectRef,
+        source: "native_plus_objects",
+        availability: "available",
+        completeness: "complete",
+        revisionBefore: supplement.revisionBefore,
+        revisionAfter: supplement.revisionAfter,
+        entryCount: supplement.entryCount,
+        entries: supplement.entries,
+      },
+      native: {
+        identity,
+        source: "native",
+        availability: "available",
+        completeness: "complete",
+        revisionBefore: native.sourceRevision,
+        revisionAfter: native.sourceRevision,
+        itemCount: native.itemCount,
+        readSha256: native.itemDigest,
+        entries: native.entries,
+      },
+    });
+    if (!equivalence.ok || !equivalence.authorizesOldObjectDelete) {
+      throw new Error("supplement_native_coverage_unproven");
+    }
+    digests.set(span.spanId, equivalence.entryDigest);
+  }
+  return digests;
+}
+
 export async function cleanSealedNativeTranscriptMirrors(input: {
   db: Db;
   proof: NativeTranscriptRunProof;
@@ -463,25 +612,50 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
   readerFactory: (database: Pick<Db, "select">) => TranscriptReader;
   retainResultJson: (value: Record<string, unknown> | null, spanId: string) => Record<string, unknown>;
   compactAdapterInvokePayload?: (payload: Record<string, unknown>) => Record<string, unknown>;
+  cleanupLeaseToken?: string;
 }): Promise<
   | { cleaned: true }
   | { cleaned: false; reason: string; recovery?: NativeTranscriptRecoveryLocation[] }
 > {
-  const stagedObjects: Array<{ span: NativeTranscriptSpanProof; stageId: string }> = [];
+  const stagedObjects: Array<{ span: NativeTranscriptSpanProof; stageId: string; entryDigest: string }> = [];
+  const exactSupplementDigests = new Map<string, string>();
   let stagedRunLog: Awaited<ReturnType<NonNullable<RunLogStore["stageRunRemoval"]>>> | null = null;
+  const cleanupLease = {
+    token: input.cleanupLeaseToken ?? randomUUID(),
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  };
+  const recovery = () => recoveryLocations({ objects: stagedObjects, runLog: stagedRunLog });
+  const finalizedProof: NativeTranscriptRunProof = {
+    ...input.proof,
+    spans: input.proof.spans.map((span) => ({ ...span, supplementalObjectRef: null })),
+  };
+  let cutoverStarted = false;
+  let cutoverCommitted = false;
   try {
-    const committed = await input.db.transaction(async (tx) => {
+    await input.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.proof.runId}))`);
       const prepared = await selectAndVerifyNativeTranscriptCleanupState(tx, input.proof);
       if (!prepared) throw new Error("cleanup_identity_mismatch");
 
-      // The proof covers only the selected native range, not the retained
-      // supplements, events or raw log. Until an independently verifiable
-      // coverage/equivalence contract exists, preserve every such mirror.
-      // Keep this gate before staging, compaction and all SQL mutations.
-      if (input.proof.spans.some((span) => span.supplementalObjectRef)) {
-        throw new Error("supplement_native_coverage_unproven");
+      const runContext = record(prepared.run.contextSnapshot) ?? {};
+      const oldRetention = record(runContext.nativeTranscriptRetention);
+      const oldLease = record(oldRetention?.cleanupLease);
+      const leaseExpiresAt = typeof oldLease?.expiresAt === "string" ? Date.parse(oldLease.expiresAt) : 0;
+      if (oldLease && oldLease.token !== cleanupLease.token
+        && (!Number.isFinite(leaseExpiresAt) || leaseExpiresAt > Date.now())) {
+        throw new Error("cleanup_already_leased");
       }
+      if (input.cleanupLeaseToken && oldLease?.token !== input.cleanupLeaseToken) {
+        throw new Error("cleanup_lease_identity_changed");
+      }
+
+      // Verify exact source equivalence before persisting any cleanup intent.
+      for (const [spanId, digest] of await proveExactCodexSupplements({
+        proof: input.proof,
+        database: tx as unknown as Pick<Db, "select">,
+        readerFactory: input.readerFactory,
+        transcriptObjectStore: input.transcriptObjectStore,
+      })) exactSupplementDigests.set(spanId, digest);
       if (prepared.transcriptEvents.length > 0) {
         throw new Error("transcript_events_native_coverage_unproven");
       }
@@ -505,29 +679,62 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
 
       for (const span of input.proof.spans) {
         if (!span.supplementalObjectRef) continue;
-        const staged = await input.transcriptObjectStore.stageSealedRemoval!({
-          objectRef: span.supplementalObjectRef,
-          orgId: input.proof.orgId,
-          runId: input.proof.runId,
-          spanId: span.spanId,
-          ownerToken: span.ownerToken,
-          allowOwnerRecovery: true,
-        });
-        stagedObjects.push({ span, stageId: staged.stageId });
+        const entryDigest = exactSupplementDigests.get(span.spanId);
+        if (!entryDigest) throw new Error("supplement_native_coverage_unproven");
+        stagedObjects.push({ span, stageId: randomUUID(), entryDigest });
       }
 
-      const run = prepared.run;
-      if (run.logRef || run.logStore) {
-        if (run.logStore !== "local_file" || !run.logRef || !run.logSha256) {
-          throw new Error("run_log_identity_unavailable");
-        }
-        stagedRunLog = await input.runLogStore.stageRunRemoval!({
-          orgId: input.proof.orgId,
-          agentId: run.agentId,
-          runId: input.proof.runId,
-          handle: { store: run.logStore, logRef: run.logRef },
-          expectedSha256: run.logSha256,
-        });
+      const [intentSaved] = await tx.update(heartbeatRuns).set({
+        contextSnapshot: {
+          ...runContext,
+          nativeTranscriptRetention: {
+            status: "cleanup_pending",
+            itemCount: input.proof.itemCount,
+            ...nativeTranscriptProofSnapshot(input.proof),
+            recovery: recovery(),
+            proofedAt: new Date().toISOString(),
+            cleanupLease,
+          },
+        },
+        updatedAt: new Date(),
+      }).where(and(
+        eq(heartbeatRuns.orgId, input.proof.orgId),
+        eq(heartbeatRuns.id, input.proof.runId),
+        eq(heartbeatRuns.status, "succeeded"),
+        isNull(heartbeatRuns.executionOwnerToken),
+      )).returning({ id: heartbeatRuns.id });
+      if (!intentSaved) throw new Error("cleanup_intent_not_committed");
+    });
+
+    // An interrupted move is now discoverable via the committed recovery rows.
+    for (const item of stagedObjects) {
+      const staged = await input.transcriptObjectStore.stageSealedRemoval!({
+        objectRef: item.span.supplementalObjectRef!,
+        orgId: input.proof.orgId,
+        runId: input.proof.runId,
+        spanId: item.span.spanId,
+        ownerToken: item.span.ownerToken,
+        allowOwnerRecovery: true,
+        stageId: item.stageId,
+        expectedEntriesSha256: item.entryDigest,
+      });
+      if (staged.stageId !== item.stageId) throw new Error("cleanup_stage_identity_changed");
+    }
+
+    cutoverStarted = true;
+    const committed = await input.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.proof.runId}))`);
+      const prepared = await selectAndVerifyNativeTranscriptCleanupState(tx, input.proof);
+      if (!prepared) throw new Error("cleanup_identity_changed_before_cutover");
+      const currentContext = record(prepared.run.contextSnapshot) ?? {};
+      const currentRetention = record(currentContext.nativeTranscriptRetention);
+      if (record(currentRetention?.cleanupLease)?.token !== cleanupLease.token
+        || stableJson(currentRetention?.recovery) !== stableJson(recovery())) {
+        throw new Error("cleanup_intent_identity_changed");
+      }
+      if (prepared.transcriptEvents.length > 0) throw new Error("transcript_events_native_coverage_unproven");
+      if (prepared.run.logRef || prepared.run.logStore || prepared.run.stdoutExcerpt || prepared.run.stderrExcerpt) {
+        throw new Error("run_log_native_coverage_unproven");
       }
 
       const allowedInvocations = new Set(input.proof.spans.map((span) => `${span.spanId}:${span.attemptId}`));
@@ -556,12 +763,7 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
           inArray(heartbeatRunEvents.id, prepared.transcriptEvents.map((event: { id: number }) => event.id)),
         ));
       }
-      const retained = input.retainResultJson(run.resultJson, input.proof.spans.at(-1)!.spanId);
-      const context = record(run.contextSnapshot) ?? {};
-      const cleanupLease = {
-        token: randomUUID(),
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      };
+      const retained = input.retainResultJson(prepared.run.resultJson, input.proof.spans.at(-1)!.spanId);
       const [updated] = await tx.update(heartbeatRuns).set({
         resultJson: retained,
         resultSummaryJson: summarizeHeartbeatRunResultJson(retained),
@@ -571,7 +773,7 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
         stderrExcerpt: null,
         terminalEffectsJson: null,
         contextSnapshot: {
-          ...context,
+          ...currentContext,
           nativeTranscriptRetention: {
             status: "cleanup_pending",
             itemCount: input.proof.itemCount,
@@ -614,13 +816,15 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
           runId: input.proof.runId,
           spanId: span.spanId,
         });
-        if (!verified || verified.sourceRevision !== span.sourceRevision || verified.itemCount !== span.itemCount) {
+        if (!verified || verified.sourceRevision !== span.sourceRevision || verified.itemCount !== span.itemCount
+          || verified.itemDigest !== span.nativeReadSha256) {
           throw new Error("post_cleanup_native_read_incomplete_or_changed");
         }
       }
       return true;
     });
     if (!committed) throw new Error("cleanup_transaction_not_committed");
+    cutoverCommitted = true;
 
     const purgeFailures: Array<{ message: string; recovery: NativeTranscriptRecoveryLocation }> = [];
     if (stagedRunLog) {
@@ -654,6 +858,7 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
           ownerToken: item.span.ownerToken,
           allowOwnerRecovery: true,
           stageId: item.stageId,
+          expectedEntriesSha256: item.entryDigest,
         });
       } catch (error) {
         purgeFailures.push({
@@ -670,10 +875,6 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
       };
     }
 
-    const finalizedProof: NativeTranscriptRunProof = {
-      ...input.proof,
-      spans: input.proof.spans.map((span) => ({ ...span, supplementalObjectRef: null })),
-    };
     const markedReferenceOnly = await input.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.proof.runId}))`);
       const prepared = await selectAndVerifyNativeTranscriptCleanupState(tx, finalizedProof);
@@ -693,22 +894,52 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
         eq(heartbeatRuns.status, "succeeded"),
         isNull(heartbeatRuns.executionOwnerToken),
         sql`${heartbeatRuns.contextSnapshot}->'nativeTranscriptRetention'->>'status' = 'cleanup_pending'`,
+        sql`${heartbeatRuns.contextSnapshot}->'nativeTranscriptRetention'->'cleanupLease'->>'token' = ${cleanupLease.token}`,
       )).returning({ id: heartbeatRuns.id });
       return Boolean(updated);
     });
     if (!markedReferenceOnly) {
-      return { cleaned: false, reason: "cleanup_completion_identity_changed", recovery: [] };
+      return { cleaned: false, reason: "cleanup_completion_identity_changed", recovery: recovery() };
     }
     return { cleaned: true };
   } catch (error) {
+    if (cutoverStarted) {
+      try {
+        const cutoverIsDurable = await input.db.transaction(async (tx) => {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.proof.runId}))`);
+          const prepared = await selectAndVerifyNativeTranscriptCleanupState(tx, finalizedProof);
+          if (!prepared) return false;
+          const context = record(prepared.run.contextSnapshot) ?? {};
+          const retention = record(context.nativeTranscriptRetention);
+          return retention?.status === "cleanup_pending"
+            && record(retention.cleanupLease)?.token === cleanupLease.token
+            && stableJson(retention.recovery) === stableJson(recovery());
+        });
+        if (cutoverCommitted || cutoverIsDurable) {
+          return {
+            cleaned: false,
+            reason: error instanceof Error ? error.message.slice(0, 180) : "cleanup_cutover_committed",
+            recovery: recovery(),
+          };
+        }
+      } catch {
+        // The transaction outcome is unknown. Do not compensate by restoring an
+        // object until a read proves the references were not detached.
+        return {
+          cleaned: false,
+          reason: "cleanup_cutover_state_unknown",
+          recovery: recovery(),
+        };
+      }
+    }
     const restoreErrors: string[] = [];
-    const recovery: NativeTranscriptRecoveryLocation[] = [];
+    const recoveryAfterRestore: NativeTranscriptRecoveryLocation[] = [];
     if (stagedRunLog && input.runLogStore.restoreStagedRunRemoval) {
       try {
         await input.runLogStore.restoreStagedRunRemoval(stagedRunLog);
       } catch (restoreError) {
         restoreErrors.push(restoreError instanceof Error ? restoreError.message : "run_log_restore_failed");
-        recovery.push(...recoveryLocations({ objects: [], runLog: stagedRunLog }));
+        recoveryAfterRestore.push(...recoveryLocations({ objects: [], runLog: stagedRunLog }));
       }
     }
     for (const item of [...stagedObjects].reverse()) {
@@ -722,17 +953,18 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
           ownerToken: item.span.ownerToken,
           allowOwnerRecovery: true,
           stageId: item.stageId,
+          expectedEntriesSha256: item.entryDigest,
         });
       } catch (restoreError) {
         restoreErrors.push(restoreError instanceof Error ? restoreError.message : "transcript_object_restore_failed");
-        recovery.push(...recoveryLocations({ objects: [item], runLog: null }));
+        recoveryAfterRestore.push(...recoveryLocations({ objects: [item], runLog: null }));
       }
     }
     return {
       cleaned: false,
       reason: [error instanceof Error ? error.message.slice(0, 180) : "cleanup_failed", ...restoreErrors]
         .join("; ").slice(0, 240),
-      ...(recovery.length > 0 ? { recovery } : {}),
+      ...(recoveryAfterRestore.length > 0 ? { recovery: recoveryAfterRestore } : {}),
     };
   }
 }

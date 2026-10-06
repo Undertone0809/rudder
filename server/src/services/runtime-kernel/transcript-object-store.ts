@@ -1,11 +1,16 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
+import { hostname } from "node:os";
 import path from "node:path";
 import { badRequest, conflict, forbidden, notFound } from "../../errors.js";
 import { syncDirectory, syncFileHandle } from "../../file-system-durability.js";
 import { resolveDefaultStorageDir } from "../../home-paths.js";
 import {
+  CODEX_EXACT_SUPPLEMENT_MAX_BYTES,
+  CODEX_EXACT_SUPPLEMENT_MAX_ENTRIES,
+  codexExactSupplementEntriesSha256,
+  stableCodexJson,
   type CodexMixedCoverageInput,
   type CoverageIdentity,
 } from "./native-transcript-coverage.js";
@@ -95,6 +100,10 @@ export interface TranscriptObjectReadRangeInput {
   ownerToken: string;
   cursor?: string | null;
   limit?: number;
+  /** Bound a proof read before materializing an untrusted large page. */
+  maxBytes?: number;
+  /** Bind staging/restoration to the exact proven supplement entries. */
+  expectedEntriesSha256?: string;
   signal?: AbortSignal;
   /**
    * Reader-only recovery path: the database span already owns this exact ref,
@@ -156,11 +165,12 @@ export interface TranscriptObjectStore {
   }>;
   finalize(handle: TranscriptObjectHandle, options?: TranscriptObjectFinalizeOptions): Promise<TranscriptObjectFinalizeReceipt>;
   removeSealed(input: TranscriptObjectReadRangeInput): Promise<void>;
-  stageSealedRemoval?(input: TranscriptObjectReadRangeInput): Promise<{ objectRef: string; stageId: string }>;
+  stageSealedRemoval?(input: TranscriptObjectReadRangeInput & { stageId?: string }): Promise<{ objectRef: string; stageId: string }>;
   restoreStagedRemoval?(input: TranscriptObjectReadRangeInput & { stageId: string }): Promise<void>;
   purgeStagedRemoval?(input: TranscriptObjectBeginInput & {
     objectRef: string;
     stageId: string;
+    expectedEntriesSha256?: string;
     allowOwnerRecovery?: boolean;
   }): Promise<void>;
   write(input: TranscriptObjectBeginInput & { entries: readonly TranscriptEntry[] }): Promise<string>;
@@ -735,9 +745,82 @@ async function loadMetadata(
   return metadata;
 }
 
+type ObjectFileLockOwner = { pid: number; host: string; token: string };
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function acquireCrossProcessObjectLock(key: string): Promise<{
+  lockPath: string;
+  ownerPath: string;
+  owner: ObjectFileLockOwner;
+}> {
+  const lockPath = `${key}.rudder-lock`;
+  const ownerPath = path.join(lockPath, "owner.json");
+  const owner: ObjectFileLockOwner = { pid: process.pid, host: hostname(), token: randomUUID() };
+  for (;;) {
+    try {
+      await fs.mkdir(lockPath, { mode: 0o700 });
+      try {
+        await fs.writeFile(ownerPath, `${JSON.stringify(owner)}\n`, { flag: "wx", mode: 0o600 });
+      } catch (error) {
+        await fs.rmdir(lockPath).catch(() => undefined);
+        throw error;
+      }
+      return { lockPath, ownerPath, owner };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+
+    const lockStat = await fs.lstat(lockPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!lockStat) continue;
+    if (lockStat.isSymbolicLink() || !lockStat.isDirectory()) throw forbidden("Transcript object lock path is invalid");
+    const lockOwner = await fs.readFile(ownerPath, "utf8").then((raw) => {
+      try { return JSON.parse(raw) as Partial<ObjectFileLockOwner>; } catch { return null; }
+    }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    const ownerlessStale = lockOwner === null && Date.now() - lockStat.mtimeMs > 2_000;
+    const deadLocalOwner = Boolean(lockOwner && lockOwner.host === hostname()
+      && Number.isSafeInteger(lockOwner.pid) && Number(lockOwner.pid) > 0
+      && !isProcessAlive(Number(lockOwner.pid)));
+    if (ownerlessStale || deadLocalOwner) {
+      const stalePath = `${lockPath}.stale-${randomUUID()}`;
+      await fs.rename(lockPath, stalePath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT" && error.code !== "EEXIST") throw error;
+      });
+      await fs.rm(stalePath, { recursive: true, force: true });
+      continue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 async function withObjectLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const previous = appendLocks.get(key) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(operation);
+  const current = previous.catch(() => undefined).then(async () => {
+    const distributed = await acquireCrossProcessObjectLock(key);
+    try {
+      return await operation();
+    } finally {
+      const currentOwner = await fs.readFile(distributed.ownerPath, "utf8").then((raw) => {
+        try { return JSON.parse(raw) as Partial<ObjectFileLockOwner>; } catch { return null; }
+      }).catch(() => null);
+      if (currentOwner?.token === distributed.owner.token) {
+        await fs.rm(distributed.lockPath, { recursive: true, force: true });
+      }
+    }
+  });
   appendLocks.set(key, current);
   try {
     return await current;
@@ -746,21 +829,49 @@ async function withObjectLock<T>(key: string, operation: () => Promise<T>): Prom
   }
 }
 
-async function scanObjectFile(filePath: string, compact = false, codec = new CodexGapDictionary()): Promise<{ entryCount: number; sha256: string; bytes: number }> {
+async function scanObjectFile(
+  filePath: string,
+  compact = false,
+  codec = new CodexGapDictionary(),
+  options: { expectedEntriesSha256?: string; maxEntries?: number; maxBytes?: number } = {},
+): Promise<{ entryCount: number; sha256: string; bytes: number }> {
   await assertRegularFile(filePath, "Transcript object not found");
   const stat = await fs.stat(filePath);
   const hash = createHash("sha256");
+  const entriesHash = options.expectedEntriesSha256 ? createHash("sha256") : null;
+  if (options.expectedEntriesSha256 && !/^[a-f0-9]{64}$/u.test(options.expectedEntriesSha256)) {
+    throw new Error("Transcript object expected entry digest is invalid");
+  }
+  let canonicalBytes = 2;
+  entriesHash?.update("[");
   const stream = createReadStream(filePath);
   let entryCount = 0;
   try {
     for await (const line of readBoundedLines(stream, MAX_ENTRY_BYTES, (chunk) => hash.update(chunk))) {
       if (line.length === 0) continue;
-      parseStoredLine(line, codec, compact);
+      const entry = parseStoredLine(line, codec, compact);
+      if (entriesHash) {
+        const canonical = stableCodexJson(entry);
+        const entryBytes = Buffer.byteLength(canonical, "utf8") + (entryCount > 0 ? 1 : 0);
+        canonicalBytes += entryBytes;
+        if (canonicalBytes > (options.maxBytes ?? CODEX_EXACT_SUPPLEMENT_MAX_BYTES)) {
+          throw new Error("Transcript object exceeds the exact supplement byte limit");
+        }
+        if (entryCount >= (options.maxEntries ?? CODEX_EXACT_SUPPLEMENT_MAX_ENTRIES)) {
+          throw new Error("Transcript object exceeds the exact supplement entry limit");
+        }
+        if (entryCount > 0) entriesHash.update(",");
+        entriesHash.update(canonical);
+      }
       entryCount += 1;
       if (entryCount > MAX_OBJECT_ENTRIES) throw new Error("Transcript object entry limit exceeded");
     }
   } finally {
     stream.destroy();
+  }
+  entriesHash?.update("]");
+  if (entriesHash && entriesHash.digest("hex") !== options.expectedEntriesSha256) {
+    throw new Error("Transcript object entries changed after native coverage proof");
   }
   return { entryCount, sha256: hash.digest("hex"), bytes: stat.size };
 }
@@ -1508,9 +1619,15 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         ownerToken: requiredString(input.ownerToken, "owner"),
       };
       const paths = objectPaths(root, ref);
-      const stageId = randomUUID();
+      const stageId = input.stageId ?? randomUUID();
+      if (!/^[0-9a-f-]{36}$/iu.test(stageId)) throw forbidden("Transcript object staging identity is invalid");
       const stageDir = resolveWithin(paths.root, `.retention-${ref}-${stageId}`);
       await withObjectLock(paths.payloadPath, async () => {
+        const existingStage = await fs.lstat(stageDir).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (existingStage) throw conflict("Transcript object removal is already staged");
         const metadataStat = await fs.lstat(paths.metadataPath).catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return null;
           throw error;
@@ -1528,14 +1645,12 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         });
         if (metadata.compactHandoff) throw conflict("Transcript handoff removal requires both references");
         if (metadata.state !== "sealed") throw conflict("Transcript object is not sealed");
-        if (payloadStat) {
-          if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
-          const summary = await scanObjectFile(paths.payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
-          if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
-            throw new Error("Transcript object does not match its committed metadata");
-          }
+        if (input.expectedEntriesSha256 && !payloadStat) {
+          throw new Error("Transcript object payload is missing for the exact coverage proof");
         }
+        if (payloadStat && (payloadStat.isSymbolicLink() || !payloadStat.isFile())) throw forbidden("Transcript object access denied");
         await fs.mkdir(stageDir, { mode: 0o700 });
+        await syncDirectory(paths.root);
         let movedMetadata = false;
         let movedPayload = false;
         try {
@@ -1545,11 +1660,24 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
             await fs.rename(paths.payloadPath, path.join(stageDir, `${ref}.ndjson`));
             movedPayload = true;
           }
+          const stagedMetadata = await loadMetadata(path.join(stageDir, `${ref}.json`), { ...binding, objectRef: ref }, {
+            allowOwnerRecovery: input.allowOwnerRecovery,
+          });
+          if (stagedMetadata.state !== "sealed") throw conflict("Transcript object is not sealed");
+          if (payloadStat) {
+            const summary = await scanObjectFile(path.join(stageDir, `${ref}.ndjson`), stagedMetadata.encoding === CODEX_GAP_ENCODING,
+              undefined, input.expectedEntriesSha256 ? { expectedEntriesSha256: input.expectedEntriesSha256 } : undefined);
+            if (summary.bytes !== stagedMetadata.bytes || summary.entryCount !== stagedMetadata.entryCount) {
+              throw new Error("Transcript object does not match its committed metadata");
+            }
+          }
+          await syncDirectory(stageDir);
           await syncDirectory(paths.root);
         } catch (error) {
           if (movedPayload) await fs.rename(path.join(stageDir, `${ref}.ndjson`), paths.payloadPath).catch(() => undefined);
           if (movedMetadata) await fs.rename(path.join(stageDir, `${ref}.json`), paths.metadataPath).catch(() => undefined);
           await fs.rmdir(stageDir).catch(() => undefined);
+          await syncDirectory(paths.root).catch(() => undefined);
           throw error;
         }
       });
@@ -1576,44 +1704,69 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         if (stageStat.isSymbolicLink() || !stageStat.isDirectory()) throw forbidden("Transcript object access denied");
         const metadataPath = path.join(stageDir, `${ref}.json`);
         const payloadPath = path.join(stageDir, `${ref}.ndjson`);
-        const metadataStat = await fs.lstat(metadataPath).catch((error: NodeJS.ErrnoException) => {
+        const stagedMetadataStat = await fs.lstat(metadataPath).catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return null;
           throw error;
         });
-        const payloadStat = await fs.lstat(payloadPath).catch((error: NodeJS.ErrnoException) => {
+        const sourceMetadataStat = await fs.lstat(paths.metadataPath).catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return null;
           throw error;
         });
-        if (!metadataStat || metadataStat.isSymbolicLink() || !metadataStat.isFile()) {
-          throw new Error("Staged transcript metadata is missing");
+        const stagedPayloadStat = await fs.lstat(payloadPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        const sourcePayloadStat = await fs.lstat(paths.payloadPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (Boolean(stagedMetadataStat) === Boolean(sourceMetadataStat)) {
+          throw new Error("Transcript object metadata state is ambiguous during staged recovery");
         }
-        await loadMetadata(metadataPath, { ...binding, objectRef: ref }, { allowOwnerRecovery: input.allowOwnerRecovery });
-        if (payloadStat) {
-          if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
-          const metadata = await loadMetadata(metadataPath, { ...binding, objectRef: ref }, { allowOwnerRecovery: input.allowOwnerRecovery });
-          const summary = await scanObjectFile(payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
+        if (stagedMetadataStat && (stagedMetadataStat.isSymbolicLink() || !stagedMetadataStat.isFile())) {
+          throw forbidden("Transcript object access denied");
+        }
+        if (sourceMetadataStat && (sourceMetadataStat.isSymbolicLink() || !sourceMetadataStat.isFile())) {
+          throw forbidden("Transcript object access denied");
+        }
+        if (stagedPayloadStat && (stagedPayloadStat.isSymbolicLink() || !stagedPayloadStat.isFile())) {
+          throw forbidden("Transcript object access denied");
+        }
+        if (sourcePayloadStat && (sourcePayloadStat.isSymbolicLink() || !sourcePayloadStat.isFile())) {
+          throw forbidden("Transcript object access denied");
+        }
+        const metadata = await loadMetadata(stagedMetadataStat ? metadataPath : paths.metadataPath,
+          { ...binding, objectRef: ref }, { allowOwnerRecovery: input.allowOwnerRecovery });
+        if (metadata.state !== "sealed") throw conflict("Staged transcript object is not sealed");
+        const payloadToVerify = stagedPayloadStat ? payloadPath : paths.payloadPath;
+        const payloadExists = Boolean(stagedPayloadStat || sourcePayloadStat);
+        if (input.expectedEntriesSha256 && !payloadExists) {
+          throw new Error("Staged transcript payload is missing for the exact coverage proof");
+        }
+        if (payloadExists) {
+          const summary = await scanObjectFile(payloadToVerify, metadata.encoding === CODEX_GAP_ENCODING,
+            undefined, input.expectedEntriesSha256 ? { expectedEntriesSha256: input.expectedEntriesSha256 } : undefined);
           if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
             throw new Error("Staged transcript object does not match its committed metadata");
           }
         }
-        if (await fs.lstat(paths.metadataPath).catch(() => null) || await fs.lstat(paths.payloadPath).catch(() => null)) {
-          throw conflict("Transcript object destination already exists");
-        }
-        let restoredMetadata = false;
-        let restoredPayload = false;
         try {
-          await fs.rename(metadataPath, paths.metadataPath);
-          restoredMetadata = true;
-          if (payloadStat) {
+          if (stagedMetadataStat) await fs.rename(metadataPath, paths.metadataPath);
+          if (stagedPayloadStat) {
             await fs.rename(payloadPath, paths.payloadPath);
-            restoredPayload = true;
           }
+          await syncDirectory(stageDir);
+          await syncDirectory(paths.root);
           await fs.rmdir(stageDir);
           await syncDirectory(paths.root);
         } catch (error) {
           await fs.mkdir(stageDir, { mode: 0o700 }).catch(() => undefined);
-          if (restoredPayload) await fs.rename(paths.payloadPath, payloadPath).catch(() => undefined);
-          if (restoredMetadata) await fs.rename(paths.metadataPath, metadataPath).catch(() => undefined);
+          if (stagedMetadataStat && await fs.lstat(paths.metadataPath).catch(() => null)) {
+            await fs.rename(paths.metadataPath, metadataPath).catch(() => undefined);
+          }
+          if (stagedPayloadStat && await fs.lstat(paths.payloadPath).catch(() => null)) {
+            await fs.rename(paths.payloadPath, payloadPath).catch(() => undefined);
+          }
           throw error;
         }
       });
@@ -1630,47 +1783,91 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       };
       const paths = objectPaths(root, ref);
       const stageDir = resolveWithin(paths.root, `.retention-${ref}-${input.stageId}`);
+      const purgeDir = resolveWithin(paths.root, `.retention-purge-${ref}-${input.stageId}`);
+      const approvalPath = resolveWithin(paths.root, `.retention-purge-${ref}-${input.stageId}.approved`);
       await withObjectLock(paths.payloadPath, async () => {
         const stageStat = await fs.lstat(stageDir).catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return null;
           throw error;
         });
-        if (!stageStat) return;
-        if (stageStat.isSymbolicLink() || !stageStat.isDirectory()) throw forbidden("Transcript object access denied");
-        const payloadPath = path.join(stageDir, `${ref}.ndjson`);
-        const metadataPath = path.join(stageDir, `${ref}.json`);
+        const purgeStat = await fs.lstat(purgeDir).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        const approvalStat = await fs.lstat(approvalPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (approvalStat && (approvalStat.isSymbolicLink() || !approvalStat.isFile())) {
+          throw forbidden("Transcript object purge marker is invalid");
+        }
+        const expectedApproval = `${input.stageId}:${input.expectedEntriesSha256 ?? "unbound"}\n`;
+        let alreadyApproved = false;
+        if (approvalStat) {
+          alreadyApproved = (await fs.readFile(approvalPath, "utf8")) === expectedApproval;
+          if (!alreadyApproved) throw conflict("Transcript object purge marker does not match its recovery identity");
+        }
+        if (!stageStat && !purgeStat) {
+          if (alreadyApproved) {
+            await fs.unlink(approvalPath);
+            await syncDirectory(paths.root);
+          }
+          return;
+        }
+        if (stageStat && (stageStat.isSymbolicLink() || !stageStat.isDirectory())) {
+          throw forbidden("Transcript object access denied");
+        }
+        if (purgeStat && (purgeStat.isSymbolicLink() || !purgeStat.isDirectory())) {
+          throw forbidden("Transcript object purge path is invalid");
+        }
+        if (stageStat && purgeStat) throw conflict("Transcript object has conflicting staged purge state");
+        if (stageStat) {
+          await fs.rename(stageDir, purgeDir);
+          await syncDirectory(paths.root);
+        }
+        const payloadPath = path.join(purgeDir, `${ref}.ndjson`);
+        const metadataPath = path.join(purgeDir, `${ref}.json`);
         const [payloadStat, metadataStat] = await Promise.all([payloadPath, metadataPath].map(async (filePath) =>
           await fs.lstat(filePath).catch((error: NodeJS.ErrnoException) => {
             if (error.code === "ENOENT") return null;
             throw error;
           })
         ));
-        if (!payloadStat && !metadataStat) {
-          await fs.rmdir(stageDir);
-          await syncDirectory(paths.root);
-          return;
-        }
-        if (!metadataStat || metadataStat.isSymbolicLink() || !metadataStat.isFile()) {
-          throw new Error("Staged transcript metadata is missing or invalid");
-        }
-        const metadata = await loadMetadata(metadataPath, { ...binding, objectRef: ref }, {
-          allowOwnerRecovery: input.allowOwnerRecovery,
-        });
-        if (metadata.state !== "sealed") throw conflict("Staged transcript object is not sealed");
-        if (payloadStat) {
-          if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
-          const summary = await scanObjectFile(payloadPath, metadata.encoding === CODEX_GAP_ENCODING);
-          if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
-            throw new Error("Staged transcript object does not match its committed metadata");
+        if (!alreadyApproved) {
+          try {
+            if (!metadataStat || metadataStat.isSymbolicLink() || !metadataStat.isFile()) {
+              throw new Error("Staged transcript metadata is missing or invalid");
+            }
+            const metadata = await loadMetadata(metadataPath, { ...binding, objectRef: ref }, {
+              allowOwnerRecovery: input.allowOwnerRecovery,
+            });
+            if (metadata.state !== "sealed") throw conflict("Staged transcript object is not sealed");
+            if (input.expectedEntriesSha256 && !payloadStat) {
+              throw new Error("Staged transcript payload is missing for the exact coverage proof");
+            }
+            if (payloadStat) {
+              if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
+              const summary = await scanObjectFile(payloadPath, metadata.encoding === CODEX_GAP_ENCODING,
+                undefined, input.expectedEntriesSha256 ? { expectedEntriesSha256: input.expectedEntriesSha256 } : undefined);
+              if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
+                throw new Error("Staged transcript object does not match its committed metadata");
+              }
+            }
+            await fs.writeFile(approvalPath, expectedApproval, { flag: "wx", mode: 0o600 });
+            await syncDirectory(paths.root);
+          } catch (error) {
+            if (!await fs.lstat(stageDir).catch(() => null)) {
+              await fs.rename(purgeDir, stageDir).catch(() => undefined);
+              await syncDirectory(paths.root).catch(() => undefined);
+            }
+            throw error;
           }
         }
-        await fs.unlink(payloadPath).catch((error: NodeJS.ErrnoException) => {
+        await fs.rm(purgeDir, { recursive: true, force: false });
+        await syncDirectory(paths.root);
+        await fs.unlink(approvalPath).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== "ENOENT") throw error;
         });
-        await fs.unlink(metadataPath).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== "ENOENT") throw error;
-        });
-        await fs.rmdir(stageDir);
         await syncDirectory(paths.root);
       });
     },
@@ -1694,6 +1891,10 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
         ownerToken: requiredString(input.ownerToken, "owner"),
       };
       const paths = objectPaths(root, ref);
+      if (input.maxBytes !== undefined && (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 1
+        || input.maxBytes > MAX_OBJECT_BYTES)) {
+        throw badRequest("Transcript object read byte limit is invalid");
+      }
       const metadata = await loadMetadata(paths.metadataPath, { ...binding, objectRef: ref }, {
         allowOwnerRecovery: input.allowOwnerRecovery,
       });
@@ -1731,6 +1932,7 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       }
       const start = parseCursor(input.cursor, ref);
       const limit = normalizeLimit(input.limit);
+      let pageBytes = 2;
       if (metadata.bytes === 0) {
         if (start !== 0) throw badRequest("Transcript object cursor is past the end");
         return {
@@ -1769,6 +1971,15 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
           if (entries.length >= limit) {
             hasMore = true;
             break;
+          }
+          if (input.maxBytes !== undefined) {
+            const entryBytes = Buffer.byteLength(stableCodexJson(entry), "utf8") + (entries.length > 0 ? 1 : 0);
+            if (pageBytes + entryBytes > input.maxBytes) {
+              if (entries.length === 0) throw new Error("Transcript object entry exceeds the requested read byte limit");
+              hasMore = true;
+              break;
+            }
+            pageBytes += entryBytes;
           }
           entries.push(entry);
           validEntries += 1;

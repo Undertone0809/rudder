@@ -14,6 +14,7 @@ import {
   runRuntimeSpans,
   runtimeBindings,
 } from "@rudderhq/db";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { desc, eq, sql } from "drizzle-orm";
 import express from "express";
@@ -36,6 +37,7 @@ const fakeNativeProvider = vi.hoisted(() => {
   type Fixture = {
     sessionId: string;
     turnId: string;
+    sourceEntryId?: string;
     rawTranscript: string;
     decoy: string;
     readProofFault?: "partial" | "throw";
@@ -90,6 +92,7 @@ const fakeNativeProvider = vi.hoisted(() => {
             kind: "assistant",
             ts: "2026-09-24T00:00:01.000Z",
             text: fixture.rawTranscript,
+            ...(fixture.sourceEntryId ? { sourceEntryId: fixture.sourceEntryId } : {}),
           },
         },
       ]);
@@ -967,6 +970,94 @@ describe("heartbeat native transcript retention integration", () => {
       expect(after.sourceRevision).toBeNull();
       expect(after.supplementalObjectRef).toBeNull();
     } finally { for (const spy of spies) spy.mockRestore(); }
+  }, 60_000);
+
+  it("recovers a real PostgreSQL cleanup intent after an object was staged but its acknowledgement was lost", async () => {
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    const { orgId, agentId } = await seedAgent();
+    const native = await queueRun(agentId);
+    const sessionId = `w12-stage-crash-${randomUUID()}`;
+    const turnId = `turn-${native.run.id}`;
+    const text = `W12_DURABLE_STAGE_INTENT_${randomUUID()}`;
+    fakeNativeProvider.register(native.run.id, { sessionId, turnId, sourceEntryId: `assistant:${turnId}`, rawTranscript: text,
+      decoy: "OUT_OF_SCOPE", emitLog: false });
+    const objects = getTranscriptObjectStore() as Required<ReturnType<typeof getTranscriptObjectStore>>;
+    let stageId: string | null = null;
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await waitForTerminalEffectsComplete(native.run.id);
+      await waitForNativeRetentionComplete(native.run.id);
+      const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+      expect(span?.selectorJson).toMatchObject({ kind: "codex_turn", threadId: sessionId, turnId, runId: native.run.id });
+      const reader = createTranscriptReader(db, {
+        nativeReader: { readRange: input => fakeNativeProvider.readRange(input) },
+      });
+      const nativePage = await reader.readRun({ orgId, runId: native.run.id, spanId: span!.id,
+        principal: { type: "board", orgId, authorized: true }, limit: 200 });
+      expect(nativePage).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+      const entries = nativePage.items.flatMap(item => item.entry ? [item.entry] : []) as TranscriptEntry[];
+      expect(entries).toHaveLength(1);
+      const handle = await objects.begin({ orgId, runId: native.run.id, spanId: span!.id, ownerToken: span!.ownerToken });
+      await objects.append(handle, entries);
+      await objects.finalize(handle, { completeness: "complete" });
+      await db.update(runRuntimeSpans).set({ supplementalObjectRef: handle.objectRef }).where(eq(runRuntimeSpans.id, span!.id));
+
+      const proofResult = await proveSealedNativeRunTranscript({ db, reader, orgId, runId: native.run.id });
+      if (!proofResult.ok) throw new Error(proofResult.reason);
+      const originalStage = objects.stageSealedRemoval.bind(objects);
+      const stage = vi.spyOn(objects, "stageSealedRemoval").mockImplementation(async input => {
+        if (input.objectRef !== handle.objectRef) return originalStage(input);
+        const [runBeforeMove] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+        const [spanBeforeMove] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, span!.id));
+        expect((runBeforeMove?.contextSnapshot as Record<string, any>).nativeTranscriptRetention).toMatchObject({
+          status: "cleanup_pending",
+          recovery: [{ kind: "transcript_object", objectRef: handle.objectRef, spanId: span!.id,
+            stageId: input.stageId, entryDigest: input.expectedEntriesSha256 }],
+        });
+        expect(spanBeforeMove?.supplementalObjectRef).toBe(handle.objectRef);
+        const staged = await originalStage(input);
+        stageId = staged.stageId;
+        throw new Error("simulated_process_stop_after_durable_stage");
+      });
+      const originalRestore = objects.restoreStagedRemoval.bind(objects);
+      const restore = vi.spyOn(objects, "restoreStagedRemoval").mockImplementation(async input => {
+        if (input.objectRef !== handle.objectRef) return originalRestore(input);
+        throw new Error("simulated_process_stop_before_compensation");
+      });
+      let cleanup: Awaited<ReturnType<typeof cleanSealedNativeTranscriptMirrors>>;
+      try {
+        cleanup = await cleanSealedNativeTranscriptMirrors({
+          db,
+          proof: proofResult.proof,
+          runLogStore: getRunLogStore(),
+          transcriptObjectStore: objects,
+          readerFactory: () => reader,
+          retainResultJson: value => value ?? {},
+        });
+      } finally {
+        stage.mockRestore();
+        restore.mockRestore();
+      }
+      expect(cleanup).toMatchObject({ cleaned: false, reason: expect.stringContaining("simulated_process_stop") });
+      expect(stageId).toEqual(expect.any(String));
+      const [interruptedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      const [interruptedSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, span!.id));
+      const intent = (interruptedRun?.contextSnapshot as Record<string, any>).nativeTranscriptRetention;
+      expect(intent).toMatchObject({ status: "cleanup_pending", recovery: [
+        { kind: "transcript_object", objectRef: handle.objectRef, spanId: span!.id, stageId },
+      ] });
+      expect(interruptedSpan?.supplementalObjectRef).toBe(handle.objectRef);
+      await expect(objects.readRange({ orgId, runId: native.run.id, spanId: span!.id, ownerToken: span!.ownerToken,
+        objectRef: handle.objectRef })).rejects.toThrow();
+      expect(await readAllFiles(transcriptObjectRoot)).toContain(text);
+
+    const recovered = await runRuntimeRetentionMaintenance(db, { now: new Date(Date.now() + 31 * 60 * 1000) });
+    expect(recovered.nativeTranscriptRecovery).toMatchObject({ attempted: 1, recovered: 1 });
+    const [finishedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    const [finishedSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+    expect((finishedRun?.contextSnapshot as Record<string, any>).nativeTranscriptRetention)
+      .toMatchObject({ status: "reference_only", recovery: [] });
+    expect(finishedSpan?.supplementalObjectRef).toBeNull();
+    expect(await readAllFiles(transcriptObjectRoot)).not.toContain(text);
   }, 60_000);
 
   it("retains unproven supplements for a verified native profile and keeps native read-back authority", async () => {

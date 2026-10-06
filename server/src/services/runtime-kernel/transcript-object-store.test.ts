@@ -1,9 +1,10 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promises as fs, constants as fsConstants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CodexMixedCoverageInput, CoverageIdentity } from "./native-transcript-coverage.js";
 import { CodexGapDictionary } from "./transcript-object-compact.js";
@@ -12,6 +13,7 @@ import {
   createTranscriptObjectStore,
   type TranscriptObjectBeginInput,
 } from "./transcript-object-store.js";
+import { codexExactSupplementEntriesSha256 } from "./native-transcript-coverage.js";
 import type { NativeTranscriptReadInput } from "./transcript-reader.js";
 
 const roots: string[] = [];
@@ -357,6 +359,98 @@ describe("first-write compact gap object, legacy compatibility and safe retentio
     const restaged = await reopened.stageSealedRemoval!(input(handle.objectRef));
     await reopened.purgeStagedRemoval!({ ...input(handle.objectRef), stageId: restaged.stageId });
     expect(await fs.readdir(path.join(f.root, "transcript-objects"))).toEqual([]);
+  });
+
+  it("refuses to purge a staged supplement whose entries changed after exact proof", async () => {
+    const f = await fixture();
+    const entries: TranscriptEntry[] = [
+      { kind: "assistant", ts: "2026-10-03T00:00:01.000Z", text: "first", sourceEntryId: "entry-1" },
+      { kind: "assistant", ts: "2026-10-03T00:00:02.000Z", text: "second", sourceEntryId: "entry-2" },
+    ];
+    const handle = await f.store.begin(binding);
+    await f.store.append(handle, entries);
+    await f.store.finalize(handle, { completeness: "complete" });
+    const expectedEntriesSha256 = codexExactSupplementEntriesSha256(entries);
+    const staged = await f.store.stageSealedRemoval!({ ...input(handle.objectRef), expectedEntriesSha256 });
+    const stageDir = path.join(f.root, "transcript-objects", `.retention-${handle.objectRef}-${staged.stageId}`);
+    const payload = path.join(stageDir, `${handle.objectRef}.ndjson`);
+    const before = await fs.readFile(payload, "utf8");
+    const rewritten = before.replace('"text":"first"', '"text":"other"');
+    expect(rewritten).not.toBe(before);
+    expect(Buffer.byteLength(rewritten, "utf8")).toBe(Buffer.byteLength(before, "utf8"));
+    await fs.writeFile(payload, rewritten);
+
+    await expect(f.store.purgeStagedRemoval!({ ...binding, objectRef: handle.objectRef, stageId: staged.stageId,
+      expectedEntriesSha256 })).rejects.toThrow("changed after native coverage proof");
+    expect(await fs.readFile(payload, "utf8")).toBe(rewritten);
+    expect(await fs.readdir(stageDir)).toEqual([`${handle.objectRef}.json`, `${handle.objectRef}.ndjson`]);
+  });
+
+  it("restores a stage interrupted between the metadata and payload renames", async () => {
+    const f = await fixture();
+    const handle = await f.store.begin(binding);
+    await f.store.append(handle, entries);
+    await f.store.finalize(handle, { completeness: "complete" });
+    const stageId = randomUUID();
+    const objectDir = path.join(f.root, "transcript-objects");
+    const stageDir = path.join(objectDir, `.retention-${handle.objectRef}-${stageId}`);
+    await fs.mkdir(stageDir, { mode: 0o700 });
+    await fs.rename(path.join(objectDir, `${handle.objectRef}.json`), path.join(stageDir, `${handle.objectRef}.json`));
+
+    await f.store.restoreStagedRemoval!({ ...binding, objectRef: handle.objectRef, stageId });
+    expect((await f.store.readRange({ ...binding, objectRef: handle.objectRef, limit: entries.length })).entries).toMatchObject(entries);
+    expect(await fs.lstat(stageDir).catch(() => null)).toBeNull();
+  });
+
+  it("serializes two real processes on one object and executes each append exactly once", async () => {
+    const f = await fixture();
+    const handle = await f.store.begin(binding);
+    const workerPath = fileURLToPath(new URL("./transcript-object-store.lock-worker.ts", import.meta.url));
+    const runWorker = (entry: TranscriptEntry) => new Promise<void>((resolve, reject) => {
+      const child = spawn("pnpm", ["exec", "tsx", workerPath, f.root, JSON.stringify(handle), JSON.stringify(entry)], {
+        cwd: process.cwd(),
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", chunk => { stderr += chunk; });
+      child.once("error", reject);
+      child.once("close", code => code === 0 ? resolve() : reject(new Error(stderr || `lock_worker_exit_${code}`)));
+    });
+    const workerEntries: TranscriptEntry[] = [
+      { kind: "assistant", ts: "2026-10-03T00:00:03.000Z", text: "worker one", sourceEntryId: "worker-one" },
+      { kind: "assistant", ts: "2026-10-03T00:00:04.000Z", text: "worker two", sourceEntryId: "worker-two" },
+    ];
+    await Promise.all(workerEntries.map(runWorker));
+    await f.store.finalize(handle, { completeness: "complete" });
+    const page = await f.store.readRange({ ...binding, objectRef: handle.objectRef, limit: 10 });
+    expect(page.entries.map(entry => entry.kind === "assistant" ? entry.text : null)).toEqual(["worker one", "worker two"]);
+    expect(page.completeness).toBe("complete");
+  });
+
+  it("finishes purging a validated tombstone after an interrupted partial unlink", async () => {
+    const f = await fixture();
+    const handle = await f.store.begin(binding);
+    const exactEntries: TranscriptEntry[] = [
+      { kind: "user", ts: "2026-10-03T00:00:01.000Z", text: "exact user", messageId: "user-1", sourceEntryId: "user-1" },
+      { kind: "assistant", ts: "2026-10-03T00:00:02.000Z", text: "exact answer", phase: "final_answer",
+        segmentId: "assistant-1", sourceEntryId: "assistant-1" },
+    ];
+    await f.store.append(handle, exactEntries);
+    await f.store.finalize(handle, { completeness: "complete" });
+    const digest = codexExactSupplementEntriesSha256(exactEntries);
+    const staged = await f.store.stageSealedRemoval!({ ...input(handle.objectRef), expectedEntriesSha256: digest });
+    const objectDir = path.join(f.root, "transcript-objects");
+    const stageDir = path.join(objectDir, `.retention-${handle.objectRef}-${staged.stageId}`);
+    const purgeDir = path.join(objectDir, `.retention-purge-${handle.objectRef}-${staged.stageId}`);
+    const approvalPath = path.join(objectDir, `.retention-purge-${handle.objectRef}-${staged.stageId}.approved`);
+    await fs.rename(stageDir, purgeDir);
+    await fs.writeFile(approvalPath, `${staged.stageId}:${digest}\n`, { mode: 0o600 });
+    await fs.unlink(path.join(purgeDir, `${handle.objectRef}.ndjson`));
+
+    await f.store.purgeStagedRemoval!({ ...binding, objectRef: handle.objectRef, stageId: staged.stageId,
+      expectedEntriesSha256: digest });
+    expect(await fs.readdir(objectDir)).toEqual([]);
   });
 
   it("retains corrupted compact evidence instead of staging or deleting it", async () => {
