@@ -307,8 +307,10 @@ report the missing gate. Do not relabel self-review as independent acceptance.
 ## 9.2 Codex Subagent Model Gate
 
 When a user request or goal calls for Codex subagents, explicitly set
-`model="gpt-6-luna"` and `reasoning_effort="xhigh"` (or `"max"` when
-appropriate) for every execution, exploration, review, and verification agent.
+`model="gpt-6-luna"` and `reasoning_effort="xhigh"` for every execution,
+exploration, review, and verification agent. `max` is not an acceptable
+substitute. The spawn interface defaults omitted reasoning effort to medium, so
+never omit the explicit `reasoning_effort="xhigh"` argument.
 Do not omit either parameter or rely on a role name or inherited defaults.
 Before spawning, inspect the actual call arguments. After spawning, verify the
 actual model and reasoning effort from available session metadata before
