@@ -46,8 +46,8 @@ describe("unified delivery workflows", () => {
 
   it("binds Test and manual Release to one immutable source SHA", () => {
     expect(releaseWorkflow).toContain('workflows: ["Test"]');
-    expect(releaseWorkflow).toContain('description: "Full commit SHA to promote as stable"');
-    expect(releaseWorkflow).toContain("Require immutable stable source SHA");
+    expect(releaseWorkflow).toContain('description: "Full commit SHA from main history to release"');
+    expect(releaseWorkflow).toContain("Require immutable release source SHA");
     expect(releaseWorkflow).toContain("Resolve exact successful Test qualification");
     expect(releaseWorkflow).toContain("Qualification summary");
     expect(releaseWorkflow).toContain("Download exact Test impact plan");
@@ -461,7 +461,7 @@ describe("unified delivery workflows", () => {
     expect(stablePublish).toContain("github.event_name == 'workflow_dispatch'");
     expect(stablePublish).toContain("github.event.inputs.mirror_recovery != 'true'");
     expect(stablePublish).toContain("github.event.inputs.dry_run == 'false'");
-    expect(stablePublish).not.toContain("needs.preflight.outputs.channel");
+    expect(stablePublish).toContain("github.event.inputs.release_channel == '' || github.event.inputs.release_channel == 'stable'");
     expect(stablePublish).not.toContain("needs.preflight.outputs.publish");
     expect(releaseResult).toContain("always()");
     expect(releaseResult).toContain("github.event.inputs.mirror_recovery != 'true'");
