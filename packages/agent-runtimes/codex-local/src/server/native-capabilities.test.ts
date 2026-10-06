@@ -212,6 +212,54 @@ describe("Codex native history and fork capabilities", () => {
     return { state, statePath, transport, read: createCodexLocalProviderCapabilities(transport).transcript!.readRange! };
   }
 
+  it("omits empty Codex agent messages while preserving commentary, tools, and the final answer", async () => {
+    const { state, statePath, read } = await fixedRangeFixture(false);
+    state.turns[0].items.splice(
+      2,
+      1,
+      {
+        type: "agentMessage",
+        id: "empty-commentary",
+        text: "",
+        phase: "commentary",
+        memoryCitation: null,
+        delivery: null,
+        questions: null,
+      },
+      { type: "agentMessage", id: "commentary-1", text: "Checking the tool result.", phase: "commentary" },
+      { type: "agentMessage", id: "assistant-1", text: "Answer", phase: "final_answer" },
+    );
+    await fs.writeFile(statePath, JSON.stringify(state), "utf8");
+
+    const result = await read({
+      ...pageInput,
+      readerInput: { ...pageInput.readerInput, limit: 10 },
+    }) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    const records = resultItems(result);
+    const entries = records.map((record) => record.entry as {
+      kind: string;
+      text?: string;
+      phase?: string;
+    });
+
+    expect(result).toMatchObject({ availability: "available", completeness: "complete" });
+    expect(entries.map((entry) => entry.kind)).toEqual([
+      "user", "tool_call", "tool_result", "assistant", "assistant",
+    ]);
+    expect(entries).toContainEqual(expect.objectContaining({
+      kind: "assistant",
+      text: "Checking the tool result.",
+      phase: "commentary",
+    }));
+    expect(entries).toContainEqual(expect.objectContaining({
+      kind: "assistant",
+      text: "Answer",
+      phase: "final_answer",
+    }));
+    expect(records.some((record) => JSON.stringify(record).includes("empty-commentary"))).toBe(false);
+    expect(records.some((record) => JSON.stringify(record).includes('"memoryCitation":null'))).toBe(false);
+  });
+
   it.each([false, true])("fixed-range revision survives a later turn appended to native FS (paged=%s)", async (paged) => {
     const { state, statePath, read } = await fixedRangeFixture(paged);
     const first = await read(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;

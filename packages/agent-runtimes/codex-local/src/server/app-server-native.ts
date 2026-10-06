@@ -622,6 +622,7 @@ function recordsForTurns(
         .filter((entry) => entry.kind === "tool_call"
           && !completed.some((candidate) => candidate.kind === "tool_call" && candidate.toolUseId === entry.toolUseId));
       const parsed = [...calls, ...completed];
+      if (canonicalType === "agent_message" && !text) continue;
       const entries: TranscriptEntry[] = parsed.length > 0 ? parsed : [{
         kind: "system", ts, text: text ?? `Codex ${canonicalType}: ${JSON.stringify(item)}`,
       }];
