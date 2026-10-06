@@ -79,6 +79,14 @@ jobs:
             src/__tests__/project-read-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+      - name: Verify API-wide Rust Activity reads through both ingress modes
+        env:
+          RUDDER_SERVER_FOUNDATION_PATH: ${{ github.workspace }}/native/target/debug/rudder-server-foundation
+        run: |
+          set -o pipefail
+          node scripts/test-activity-read-real-entry.mjs \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Smoke Rust organization branding real entry
         run: |
           set -o pipefail

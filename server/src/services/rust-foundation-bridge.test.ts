@@ -72,7 +72,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
+    if (req.url?.includes("/activity-reads") || req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -83,7 +83,7 @@ if (mode === "invalid") {
           body: Buffer.concat(chunks).toString("utf8"),
         }));
         res.setHeader("content-type", "application/json");
-        if (req.method === "POST" && !req.url?.includes("/project-reads")) res.statusCode = 201;
+        if (req.method === "POST" && !req.url?.includes("/project-reads") && !req.url?.includes("/activity-reads")) res.statusCode = 201;
         res.end(JSON.stringify({ status: "accepted" }));
       });
       return;
@@ -713,6 +713,29 @@ describe("rust foundation bridge lifecycle", () => {
       path: captured.url,
       action: "project.read",
       body: Buffer.from(JSON.stringify(input)),
+    }, "bridge-test-secret");
+  });
+
+  it.each([
+    { operation: "organization", filters: {} },
+    { operation: "organization", filters: { actorType: "user", userId: "user-1" }, page: { limit: 30, cursor: "opaque-cursor" } },
+    { operation: "issue_activity", issueId: "old-issue" },
+    { operation: "issue_runs", issueId: "new-issue" },
+    { operation: "run_issues", runId: "resolved-run" },
+  ] as const)("signs all Activity read operations with mutation modes disabled: %j", async (input) => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "off" });
+    const actor = { type: "agent", agentId: "agent-1", orgId: "org-1", source: "agent_key" } as const;
+    const response = await bridge.activityRead!(actor, "org-1", input);
+    expect(response.status).toBe(200);
+    const captured = await fixture.readRequest();
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("/internal/orgs/org-1/activity-reads");
+    expect(JSON.parse(captured.body)).toEqual(input);
+    expect(captured.headers["x-rudder-idempotency-key"]).toBeUndefined();
+    expectEnvelopeSignedWith(captured, {
+      actor, organizationId: "org-1", method: "POST", path: captured.url,
+      action: "activity.read", body: Buffer.from(JSON.stringify(input)),
     }, "bridge-test-secret");
   });
 

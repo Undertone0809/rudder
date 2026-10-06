@@ -55,6 +55,29 @@ pilot switches. Node keeps authentication, organization authorization, and
 issue identifier/alias resolution. A missing or failed native read returns an
 error instead of executing the former Node live-run query.
 
+Activity list (including cursor pages), issue activity, issue runs, and both
+run-to-issues aliases likewise use Rust for every historical and current row.
+Node retains authentication, organization authorization, and reference resolution.
+The user activity ledger and activity POST remain on Node. Rust reads retain the
+legacy filters, post-limit visibility filtering, microsecond cursors, public run
+context projection, and JavaScript-compatible JSON serialization. A missing read
+capability or unavailable process fails closed without the former Node query.
+
+The real Activity API parity fixture needs a freshly built candidate foundation
+and an isolated checkout with no copied `.env`. Its launcher establishes a fresh
+home/config/log/storage/workspace root before Vitest imports server modules:
+
+```sh
+RUDDER_SERVER_FOUNDATION_PATH=/absolute/path/to/candidate/rudder-server-foundation \
+  node scripts/test-activity-read-real-entry.mjs
+```
+
+The fixture is opt-in under the launcher; an ordinary suite skip is not an
+acceptance result. It exercises both Node and experimental Actix public ingress with a disposable
+PostgreSQL database, source parity, pagination, legacy payloads, auth failures,
+cross-organization associations, and read-only snapshots. It does not start or
+modify an installed Desktop or production instance.
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.

@@ -1,5 +1,4 @@
 import { heartbeatRuns, type Db } from "@rudderhq/db";
-import { toPublicHeartbeatRunContextSnapshot } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
@@ -9,6 +8,8 @@ import { sanitizeRecord } from "../redaction.js";
 import { activityService } from "../services/activity.js";
 import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import { issueService } from "../services/index.js";
+import type { RustActivityReadInput } from "../services/rust-activity-read.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getAuthorizedOrgScope } from "./authz.js";
 
 const USER_ACTIVITY_INCLUDES = new Set(["chat", "comments", "issues", "approvals", "activity"]);
@@ -23,10 +24,23 @@ const createActivitySchema = z.object({
   details: z.record(z.unknown()).optional().nullable(),
 });
 
-export function activityRoutes(db: Db) {
+export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = activityService(db);
   const issueSvc = issueService(db);
+
+  async function forwardActivityRead(req: Request, res: Response, orgId: string, input: RustActivityReadInput) {
+    if (!rustFoundationBridge?.activityRead) {
+      res.status(503).json({ error: "Rust Activity reads are unavailable", code: "rust_foundation_activity_read_unavailable" });
+      return;
+    }
+    try {
+      const response = await rustFoundationBridge.activityRead(req.actor, orgId, input);
+      res.status(response.status).set("content-type", response.contentType).send(response.body);
+    } catch {
+      res.status(503).json({ error: "Rust Activity reads are unavailable", code: "rust_foundation_activity_read_request_failed" });
+    }
+  }
 
   function stringQueryParam(value: unknown): string | undefined {
     return typeof value === "string" && value.trim() ? value : undefined;
@@ -97,7 +111,6 @@ export function activityRoutes(db: Db) {
     assertCompanyAccess(req, orgId);
 
     const filters = {
-      orgId,
       agentId: stringQueryParam(req.query.agentId),
       userId: stringQueryParam(req.query.userId),
       actorType: actorTypeQueryParam(req.query.actorType),
@@ -107,17 +120,11 @@ export function activityRoutes(db: Db) {
     };
     const limit = positiveIntegerQueryParam(req.query.limit);
     const cursor = stringQueryParam(req.query.cursor);
-    if (limit !== undefined || cursor !== undefined) {
-      const result = await svc.listPage({
-        ...filters,
-        limit,
-        cursor,
-      });
-      res.json(result);
-      return;
-    }
-    const result = await svc.list(filters);
-    res.json(result);
+    await forwardActivityRead(req, res, orgId, {
+      operation: "organization",
+      filters,
+      ...(limit !== undefined || cursor !== undefined ? { page: { limit, cursor } } : {}),
+    });
   });
 
   router.get("/orgs/:orgId/users/:userId/activity-ledger", async (req, res) => {
@@ -158,8 +165,7 @@ export function activityRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const result = await svc.forIssue(issue.id);
-    res.json(result);
+    await forwardActivityRead(req, res, issue.orgId, { operation: "issue_activity", issueId: issue.id });
   });
 
   router.get("/issues/:id/runs", async (req, res) => {
@@ -170,11 +176,7 @@ export function activityRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const result = await svc.runsForIssue(issue.orgId, issue.id);
-    res.json(result.map((run) => ({
-      ...run,
-      contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),
-    })));
+    await forwardActivityRead(req, res, issue.orgId, { operation: "issue_runs", issueId: issue.id });
   });
 
   async function handleIssuesForRun(req: Request, res: Response, notFoundMessage: string) {
@@ -190,8 +192,7 @@ export function activityRoutes(db: Db) {
     if (!run) throw notFound(notFoundMessage);
     assertCompanyAccess(req, run.orgId);
 
-    const result = await svc.issuesForRun(runId);
-    res.json(result);
+    await forwardActivityRead(req, res, run.orgId, { operation: "run_issues", runId });
   }
 
   router.get("/heartbeat-runs/:runId/issues", (req, res) =>

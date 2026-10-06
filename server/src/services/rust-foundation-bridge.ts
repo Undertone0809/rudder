@@ -10,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
+import { createRustActivityReadTransport, type RustActivityReadInput } from "./rust-activity-read.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -51,6 +52,7 @@ export interface RustFoundationBridge {
     orgId: string,
     input: LiveRunReadInput,
   ): Promise<RustFoundationResponse>;
+  activityRead?(actor: RustFoundationActor, orgId: string, input: RustActivityReadInput): Promise<RustFoundationResponse>;
   projectRead(
     actor: RustFoundationActor,
     orgId: string,
@@ -610,6 +612,14 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       throw new RustFoundationBridgeError("not_ready", "Rust public ingress did not become ready");
     },
     start: ensureStarted,
+    activityRead: createRustActivityReadTransport({
+      ensureStarted,
+      getBaseUrl: () => baseUrl,
+      actorEnvelopeKey,
+      requestTimeoutMs,
+      sign: createRustActorEnvelope,
+      requestFailed: (message, cause) => new RustFoundationBridgeError("request_failed", message, { cause }),
+    }),
     async projectRead(actor, orgId, input) {
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
