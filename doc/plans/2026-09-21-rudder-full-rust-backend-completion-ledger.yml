@@ -1445,21 +1445,21 @@ historical_integration_checkpoint_2026_09_28:
   next_executable: obtain_fresh_stage_review_for_v23_candidate_then_freeze_and_run_independent_verifier
 
 current_delivery_checkpoint_2026_10_06:
-  status: bounded_D1_candidate_all_three_acceptance_receipts_passed_commit_identity_rebind_and_PR_CI_pending
+  status: bounded_D1_candidate_all_three_acceptance_receipts_rebound_content_equivalent_commit_new_PR_and_exact_head_CI_pending
   candidate:
     branch: codex/d1-resource-compat-real-entry-20261005
     base_sha: b5a07310328ea3826aeb96df4422976aff280300
-    source_sha: cde6b5f80c1cf9b4581840a8b265da620c449236
-    source_tree: 90465d8fdd4611b3dcdf3870a19c51765e0cb66c
+    source_sha: 1fcd45bc7c9604ef1852e6571bdbbd6580287152
+    source_tree: 178cff61be756502fddf9bd6589a0750ff2e3311
     source_diff_fingerprint: 83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095
     source_patch_tree: 4d86861645f45cde8b0ec6d2fe5fb09c3141f158
     packet: doc/plans/2026-10-06-rudder-full-rust-backend-completion-delivery-packet-v25.6.json
     packet_version: v25.6
     packet_fingerprint: a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349
   receipts:
-    stage_review: {agent_id: 01a1109e-37ae-7633-8519-8d4b8446c045, verdict: accept, checked_at_utc: '2026-10-06T09:56:58.069Z', requested_model: gpt-6-luna, requested_reasoning_effort: xhigh}
-    independent_verifier: {agent_id: 01a110a9-b4a3-7e52-8ff1-b9ab0abc415c, verdict: PASS, terminal_at_utc: '2026-10-06T10:23:58.257Z', requested_model: gpt-6-luna, requested_reasoning_effort: xhigh, scope: all_v25_6_criteria_scoped_Node_public_entry_to_private_Actix_SQLx}
-    final_review: {agent_id: 01a110c9-c5f9-7a53-b0de-da3dc7341cb8, state: accept, verdict: accept, checked_at_utc: '2026-10-06T10:55:57Z', required_level: final_handoff_verdict, requested_model: gpt-6-luna, requested_reasoning_effort: xhigh}
+    stage_review: {agent_id: 01a1109e-37ae-7633-8519-8d4b8446c045, verdict: accept, checked_at_utc: '2026-10-06T09:56:58.069Z', rebound_at_utc: '2026-10-06T11:30:30Z', requested_model: gpt-6-luna, requested_reasoning_effort: xhigh, source_sha: 1fcd45bc7c9604ef1852e6571bdbbd6580287152}
+    independent_verifier: {agent_id: 01a110a9-b4a3-7e52-8ff1-b9ab0abc415c, verdict: PASS, terminal_at_utc: '2026-10-06T10:23:58.257Z', rebound_at_utc: '2026-10-06T11:30:30Z', requested_model: gpt-6-luna, requested_reasoning_effort: xhigh, scope: all_v25_6_criteria_scoped_Node_public_entry_to_private_Actix_SQLx, source_sha: 1fcd45bc7c9604ef1852e6571bdbbd6580287152}
+    final_review: {agent_id: 01a110c9-c5f9-7a53-b0de-da3dc7341cb8, state: accept, verdict: accept, checked_at_utc: '2026-10-06T10:55:57Z', rebound_at_utc: '2026-10-06T11:30:30Z', required_level: final_handoff_verdict, requested_model: gpt-6-luna, reasoning_effort: xhigh, source_sha: 1fcd45bc7c9604ef1852e6571bdbbd6580287152}
     exact_head_ci: not_started
   authority_boundary:
     Node_public_listener_auth_session_and_Drizzle_migration_authority_remain: true
@@ -1472,4 +1472,4 @@ current_delivery_checkpoint_2026_10_06:
   current_candidate_remote_branch: absent
   current_candidate_PR: not_created
   CI_preflight: main_pr_only_ruleset_requires_PR_no_required_status_checks; ci_yml_planner_selects_full_qualification_for_native_and_other_changes; expected_plan_architecture_docs_Verify_Linux_macOS_Windows_Native_four_targets_macOS_arm64_packaged_smoke_summary; affected_job_skipped; no_candidate_CI_until_PR
-  next_executable: commit_reviewed_source_and_durable_records_rebind_all_three_receipts_push_candidate_branch_create_new_protected_PR_run_exact_head_CI_then_integrate_only_after_all_required_gates
+  next_executable: finish_durable_rebind_records_refresh_origin_main_then_push_candidate_branch_create_new_protected_PR_run_exact_head_CI_then_integrate_only_after_all_required_gates

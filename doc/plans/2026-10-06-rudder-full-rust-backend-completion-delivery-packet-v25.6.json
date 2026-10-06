@@ -24,8 +24,8 @@
   "candidate": {
     "branch": "codex/d1-resource-compat-real-entry-20261005",
     "source_ref": "refs/heads/codex/d1-resource-compat-real-entry-20261005",
-    "source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
-    "source_tree": "90465d8fdd4611b3dcdf3870a19c51765e0cb66c",
+    "source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
+    "source_tree": "178cff61be756502fddf9bd6589a0750ff2e3311",
     "dirty_fingerprint": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
     "dirty_fingerprint_method": "SHA-256 of git diff --binary origin/main -- . with doc/plans excluded; includes D1 receipt-compatibility source/tests and public branding smoke changes; ignored build output excluded.",
     "patch_tree_sha": "4d86861645f45cde8b0ec6d2fe5fb09c3141f158",
@@ -63,7 +63,7 @@
     ],
     "build": {
       "id": "v25.6-main-b5a07310-foundation-0f2d15c1-preflight-ce698e0d-cli-995c4694",
-      "source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
+      "source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
       "source_diff_fingerprint": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
       "artifacts": {
         "rudder-server-foundation_sha256": "0f2d15c14ee8262510abbdf77c5ccd184ad8a54882154cdf013dfeae743ce3bf",
@@ -73,7 +73,7 @@
     },
     "runtime": {
       "id": "macOS-arm64 26.6.2; Node v22.23.1; Rust/Cargo 1.93.0; Actix foundation sha256 0f2d15c14ee8262510abbdf77c5ccd184ad8a54882154cdf013dfeae743ce3bf; migration-preflight sha256 ce698e0dcbc7679ad48020df4e58d85de2d3c3974322d9485742b47fe7b8fa70; CLI dist sha256 995c4694451641adbb170c3fc1ee9a3275ef34a739665d1ae49037ec98f23e39; embedded PostgreSQL 18.1.0-beta.16; loopback-only disposable instances",
-      "source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
+      "source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
       "source_diff_fingerprint": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
       "network": "loopback-only public Node API with private Actix foundation",
       "database": "fresh disposable embedded PostgreSQL per v25.5 run; 181 SQL migrations; no shared or production records; fixture removed at teardown",
@@ -165,7 +165,10 @@
   "receipts": {
     "reviewer": {
       "verdict": "accept",
-      "state": "stage_accept_v25_6",
+      "state": "stage_accept_v25_6_rebound_content_equivalent_commit",
+      "rebound_at_utc": "2026-10-06T11:30:30Z",
+      "rebind_evidence": "Issuer confirmed stage accept applies to HEAD 1fcd45bc7c9604ef1852e6571bdbbd6580287152/tree 178cff61be756502fddf9bd6589a0750ff2e3311 after independently confirming source fingerprint 83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095, patch tree 4d86861645f45cde8b0ec6d2fe5fb09c3141f158, and acceptance packet fingerprint a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349; no source or acceptance criteria changed.",
+      "previous_current_verdict": "accept",
       "previous_verdict": "reject",
       "previous_checked_at_utc": "2026-10-05T20:56:22Z",
       "previous_source_sha": "2d9a7d74351360a700e3f1fd2ab290799764ee4f",
@@ -182,7 +185,7 @@
       "previous_finding": "v25.4 rebased stage review found the public branding negative-state smoke did not seed/read back an existing organization_logos link or compare affected asset rows; no Rust implementation defect was identified.",
       "finding": "No blocking findings. Non-blocking: refresh final-review patch-tree and stale v25.5 verifier note; verifier should exercise same-key changed-payload conflict through authenticated generic PATCH.",
       "candidate_fingerprint": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
-      "source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
+      "source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
       "build_id": "v25.6-main-b5a07310-foundation-0f2d15c1-preflight-ce698e0d-cli-995c4694",
       "runtime_id": "macOS-arm64 26.6.2; Node v22.23.1; Rust/Cargo 1.93.0; Actix foundation sha256 0f2d15c14ee8262510abbdf77c5ccd184ad8a54882154cdf013dfeae743ce3bf; migration-preflight sha256 ce698e0dcbc7679ad48020df4e58d85de2d3c3974322d9485742b47fe7b8fa70; CLI dist sha256 995c4694451641adbb170c3fc1ee9a3275ef34a739665d1ae49037ec98f23e39; embedded PostgreSQL 18.1.0-beta.16; loopback-only disposable instances",
       "data_id": "Fresh disposable embedded PostgreSQL and generated organization/project fixtures; independent verifier allocates new IDs; no shared or production records.",
@@ -192,7 +195,10 @@
     },
     "verifier": {
       "verdict": "PASS",
-      "state": "terminal_pass_v25_6_exact_candidate",
+      "state": "terminal_pass_v25_6_rebound_content_equivalent_commit",
+      "rebound_at_utc": "2026-10-06T11:30:30Z",
+      "rebind_evidence": "Issuer confirmed the prior terminal PASS applies to the content-equivalent commit after checking base, tree, 30-path canonical source fingerprint, patch tree, acceptance packet fingerprint, build/runtime/data identities, and saved real-entry evidence under /tmp/rudder-v25.6-verifier.98cO2l/; no workflow, runtime, or data was rerun or changed.",
+      "previous_current_verdict": "PASS",
       "previous_verdict": "PASS",
       "previous_checked_at_utc": "2026-10-05T21:21:17Z",
       "previous_source_sha": "bb27b56e7af21ae54e2ee56f6a662c4b3bc9e615",
@@ -209,7 +215,7 @@
       "tool_role_configuration": "luna_worker_is_pinned_to_gpt-6-luna_xhigh_by_tool_definition",
       "effective_runtime_metadata": "not_exposed_by_spawn_or_read_thread_tools",
       "candidate_fingerprint": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
-      "source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
+      "source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
       "patch_tree_sha": "4d86861645f45cde8b0ec6d2fe5fb09c3141f158",
       "build_id": "v25.6-main-b5a07310-foundation-0f2d15c1-preflight-ce698e0d-cli-995c4694",
       "runtime_id": "macOS-arm64 26.6.2; Node v22.23.1; Rust/Cargo 1.93.0; Actix foundation sha256 0f2d15c14ee8262510abbdf77c5ccd184ad8a54882154cdf013dfeae743ce3bf; migration-preflight sha256 ce698e0dcbc7679ad48020df4e58d85de2d3c3974322d9485742b47fe7b8fa70; CLI dist sha256 995c4694451641adbb170c3fc1ee9a3275ef34a739665d1ae49037ec98f23e39; embedded PostgreSQL 18.1.0-beta.16; loopback-only disposable instances",
@@ -254,7 +260,10 @@
     },
     "final_review": {
       "verdict": "accept",
-      "state": "terminal_accept_v25_6_exact_candidate",
+      "state": "terminal_accept_v25_6_rebound_content_equivalent_commit",
+      "rebound_at_utc": "2026-10-06T11:30:30Z",
+      "rebind_evidence": "Final reviewer confirmed source SHA/tree, base, canonical 30-path fingerprint, patch tree, packet fingerprint, build/runtime/data identity, and verifier PASS are unchanged for the content-equivalent commit; this rebind covers final handoff review only.",
+      "previous_current_verdict": "accept",
       "previous_verdict": "accept",
       "previous_checked_at_utc": "2026-10-05T21:36:53Z",
       "previous_source_sha": "bb27b56e7af21ae54e2ee56f6a662c4b3bc9e615",
@@ -269,7 +278,7 @@
       "tool_role_configuration": "luna_worker_is_pinned_to_gpt-6-luna_xhigh_by_tool_definition",
       "effective_runtime_metadata": "not_exposed_by_spawn_or_read_thread_tools",
       "candidate_fingerprint": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
-      "source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
+      "source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
     "patch_tree_sha": "4d86861645f45cde8b0ec6d2fe5fb09c3141f158",
       "packet_fingerprint": "a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349",
       "build_id": "v25.6-main-b5a07310-foundation-0f2d15c1-preflight-ce698e0d-cli-995c4694",
@@ -583,6 +592,39 @@
         "source_content_changed": true,
         "patch_tree_sha": "4d86861645f45cde8b0ec6d2fe5fb09c3141f158",
         "detail": "P1 fix accepts exact-payload legacy v1 branding receipt replay on generic route; adds PostgreSQL regression and authenticated public generic PATCH before/after effect snapshot. No default-path, global Node retirement, or production claim."
+      },
+      {
+        "at_utc": "2026-10-06T11:06:17Z",
+        "kind": "v25_6_candidate_commit_content_equivalence_rebind_requested",
+        "from_source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
+        "to_source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
+        "from_source_tree": "90465d8fdd4611b3dcdf3870a19c51765e0cb66c",
+        "to_source_tree": "178cff61be756502fddf9bd6589a0750ff2e3311",
+        "base_sha": "b5a07310328ea3826aeb96df4422976aff280300",
+        "candidate_fingerprint": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
+        "patch_tree_sha": "4d86861645f45cde8b0ec6d2fe5fb09c3141f158",
+        "changed_source_paths": 30,
+        "source_content_changed": false,
+        "verification": "git_diff_binary_origin_main_excluding_doc_plans_sha256_reproduced_83140a67; changed source path count remains 30; only the reviewed source delta and task-owned delivery records were committed; all three receipts invalidated pending issuer rebind"
+      },
+      {
+        "at_utc": "2026-10-06T11:30:30Z",
+        "kind": "all_three_receipts_rebound_to_content_equivalent_candidate_commit",
+        "from_source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
+        "to_source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
+        "source_tree_sha": "178cff61be756502fddf9bd6589a0750ff2e3311",
+        "base_sha": "b5a07310328ea3826aeb96df4422976aff280300",
+        "source_diff_sha256": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
+        "patch_tree_sha": "4d86861645f45cde8b0ec6d2fe5fb09c3141f158",
+        "changed_source_paths": 30,
+        "acceptance_packet_fingerprint": "a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349",
+        "source_content_changed": false,
+        "receipt_issuers": [
+          {"agent_id": "01a1109e-37ae-7633-8519-8d4b8446c045", "level": "stage", "verdict": "accept"},
+          {"agent_id": "01a110a9-b4a3-7e52-8ff1-b9ab0abc415c", "level": "independent_verifier", "verdict": "PASS"},
+          {"agent_id": "01a110c9-c5f9-7a53-b0de-da3dc7341cb8", "level": "final_handoff_review", "verdict": "accept"}
+        ],
+        "verification": "each_issuer_independently_recomputed_content_identity_and_confirmed_its_own_receipt; verifier_reused_saved_real_entry_evidence_without_rerunning_workflows; no_runtime_or_data_mutation"
       }
     ],
     "invalidated_receipts": [
@@ -592,7 +634,10 @@
       "v25.4_precommit_receipt_identities_superseded_by_content_equivalent_bb27b56_commit",
       "v25_4_rebased_stage_needs_more_evidence_on_logo_link_asset_readback",
       "v25_4_rebased_source_receipts_superseded_by_Main_b5a07310_and_branding_smoke_amendment",
-      "v25_4_verifier_and_final_review_pending_for_predecessor_candidate"
+      "v25_4_verifier_and_final_review_pending_for_predecessor_candidate",
+      "v25.6_stage_accept_cde6b5f80c1cf9b4581840a8b265da620c449236_invalidated_pending_01a1109e_rebind",
+      "v25.6_verifier_PASS_cde6b5f80c1cf9b4581840a8b265da620c449236_invalidated_pending_01a110a9_rebind",
+      "v25.6_final_accept_cde6b5f80c1cf9b4581840a8b265da620c449236_invalidated_pending_01a110c9_rebind"
     ]
   },
   "integration": {
@@ -603,7 +648,7 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "b5a07310328ea3826aeb96df4422976aff280300",
     "branch_refs": [
-      "refs/heads/codex/d1-resource-compat-real-entry-20261005@cde6b5f80c1cf9b4581840a8b265da620c449236+diff-83140a67",
+      "refs/heads/codex/d1-resource-compat-real-entry-20261005@1fcd45bc7c9604ef1852e6571bdbbd6580287152+diff-83140a67",
       "refs/remotes/origin/main@b5a07310328ea3826aeb96df4422976aff280300"
     ],
     "isolation_trigger": "independent_runtime",
@@ -801,6 +846,20 @@
       "verifier_agent_id": "01a110a9-b4a3-7e52-8ff1-b9ab0abc415c",
       "verifier_verdict": "PASS",
       "finding": "No blockers for this bounded D1 handoff. The verifier PASS applies to scoped Node public listener/auth -> private Actix/SQLx only. Default Rust ingress, global Node retirement, full migration, release readiness, production verification, and exact-head CI are not claimed."
+    },
+    {
+      "at_utc": "2026-10-06T11:06:17Z",
+      "event": "v25_6_candidate_commit_content_equivalence_rebind_requested",
+      "from_source_sha": "cde6b5f80c1cf9b4581840a8b265da620c449236",
+      "to_source_sha": "1fcd45bc7c9604ef1852e6571bdbbd6580287152",
+      "from_source_tree": "90465d8fdd4611b3dcdf3870a19c51765e0cb66c",
+      "to_source_tree": "178cff61be756502fddf9bd6589a0750ff2e3311",
+      "base_sha": "b5a07310328ea3826aeb96df4422976aff280300",
+      "candidate_fingerprint": "83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095",
+      "patch_tree_sha": "4d86861645f45cde8b0ec6d2fe5fb09c3141f158",
+      "changed_source_paths": 30,
+      "source_content_changed": false,
+      "receipts_invalidated_pending_issuer_rebind": ["01a1109e-37ae-7633-8519-8d4b8446c045", "01a110a9-b4a3-7e52-8ff1-b9ab0abc415c", "01a110c9-c5f9-7a53-b0de-da3dc7341cb8"]
     }
   ]
 }

@@ -71,10 +71,10 @@ successor_slice_audit_2026_10_06:
   gate: after_current_D1_verifier_final_review_and_protected_PR_integration_refresh_Main_again
 current_delivery_checkpoint_2026_10_06:
   authoritative_current_candidate: true
-  observation_scope: Main_b5a07310_rebased_D1_candidate_v25_6_with_legacy_generic_branding_v1_receipt_replay_fix;_v25_5_stage_reject_recorded;_v25_6_stage_accept;_independent_verifier_terminal_PASS;_final_review_accept;_commit_rebind_and_PR_CI_pending
-  observed_at_utc: '2026-10-06T11:06:17Z'
-  remote_main_rechecked_at_utc: '2026-10-06T11:06:17Z'
-  origin_main_fetched_at_utc: '2026-10-06T11:06:17Z'
+  observation_scope: Main_b5a07310_rebased_D1_candidate_v25_6_with_legacy_generic_branding_v1_receipt_replay_fix;_all_three_receipts_rebound_to_content_equivalent_commit;_new_protected_PR_and_exact_head_CI_pending
+  observed_at_utc: '2026-10-06T11:38:38Z'
+  remote_main_rechecked_at_utc: '2026-10-06T11:38:38Z'
+  origin_main_fetched_at_utc: '2026-10-06T11:38:38Z'
   source_ref: origin/main
   source_sha: b5a07310328ea3826aeb96df4422976aff280300
   source_tree: ae78a3d4e5c1d27aede870393cc40b88aa572fce
@@ -86,8 +86,8 @@ current_delivery_checkpoint_2026_10_06:
   candidate:
     branch: codex/d1-resource-compat-real-entry-20261005
     base_sha: b5a07310328ea3826aeb96df4422976aff280300
-    source_sha: cde6b5f80c1cf9b4581840a8b265da620c449236
-    source_tree_sha: 90465d8fdd4611b3dcdf3870a19c51765e0cb66c
+    source_sha: 1fcd45bc7c9604ef1852e6571bdbbd6580287152
+    source_tree_sha: 178cff61be756502fddf9bd6589a0750ff2e3311
     source_diff_sha256_excluding_doc_plans: 83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095
     prior_v25_4_precommit_fingerprint: edc01eec6c1994dca66fb8f8c22e5bbd6b299a5a74e6e6691d852ea8ad03150d
     source_patch_tree_sha_excluding_doc_plans: 4d86861645f45cde8b0ec6d2fe5fb09c3141f158
@@ -95,7 +95,7 @@ current_delivery_checkpoint_2026_10_06:
     acceptance_packet: doc/plans/2026-10-06-rudder-full-rust-backend-completion-delivery-packet-v25.6.json
     acceptance_packet_version: v25.6
     acceptance_packet_fingerprint: a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349
-    state: fresh_v25_6_candidate_stage_accept_verifier_PASS_final_review_accept_pending_commit_identity_rebind_and_PR_CI
+    state: fresh_v25_6_candidate_stage_accept_verifier_PASS_final_review_accept_all_rebound_commit_identity_CI_pending
     artifact_hashes: {rudder_server_foundation: 0f2d15c14ee8262510abbdf77c5ccd184ad8a54882154cdf013dfeae743ce3bf, migration_preflight: ce698e0dcbc7679ad48020df4e58d85de2d3c3974322d9485742b47fe7b8fa70, cli_dist_index: 995c4694451641adbb170c3fc1ee9a3275ef34a739665d1ae49037ec98f23e39}
     artifact_rebind_observed: foundation_0f2d15c1_rebuilt_after_P1_fix;_migration_preflight_and_CLI_hashes_match;_12_of_12_branding_Postgres_tests_author_claimed;_stage_reviewer_accept;_independent_public_v25_6_verifier_PASS_all_criteria
   author_checks:
@@ -114,11 +114,13 @@ current_delivery_checkpoint_2026_10_06:
   independent_receipts: {v25_1_stage_reviewer: historical_reject_fixed_in_v25_2, v25_2_stage_reviewer: needs_more_evidence_packet_alignment_finding_resolved_in_v25_3, v25_3_stage_reviewer: historical_accept_not_reusable_for_new_packet, v25_3_verifier: stopped_artifact_binding_mismatch_no_terminal_verdict, v25_4_pre_rebase_stage_accept_and_verifier_PASS_historical_for_bb27b56_only, v25_4_post_rebase_stage: needs_more_evidence_logo_link_asset_readback, v25_5_stage: reject_P1_legacy_generic_v1_receipt_same_key_replay_and_packet_gap, current_v25_6_stage: accept_agent_01a1109e, verifier: PASS_agent_01a110a9_all_packet_criteria, final_reviewer: accept_agent_01a110c9, candidate_ci: not_started}
   historical_verifier_attempt2_progress_v25_4_pre_rebase: {branding_real_entry: PASS, project_resource_import_real_entry: PASS, postgres_handoff_race: PASS_2_of_2, terminal_verdict: PASS_for_bb27b56_only}
   final_review: {state: accept, agent_id: 01a110c9-c5f9-7a53-b0de-da3dc7341cb8, checked_at_utc: '2026-10-06T10:55:57Z', prior_verdict: accept_historical_for_bb27b56_only, current_source_sha: cde6b5f80c1cf9b4581840a8b265da620c449236, candidate_fingerprint: 83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095, source_tree_sha: 90465d8fdd4611b3dcdf3870a19c51765e0cb66c, patch_tree_sha: 4d86861645f45cde8b0ec6d2fe5fb09c3141f158, packet_version: v25.6, packet_fingerprint: a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349, findings: none}
+  final_review: {state: accept, agent_id: 01a110c9-c5f9-7a53-b0de-da3dc7341cb8, checked_at_utc: '2026-10-06T10:55:57Z', rebound_at_utc: '2026-10-06T11:30:30Z', prior_verdict: accept_historical_for_bb27b56_only, current_source_sha: 1fcd45bc7c9604ef1852e6571bdbbd6580287152, candidate_fingerprint: 83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095, source_tree_sha: 178cff61be756502fddf9bd6589a0750ff2e3311, patch_tree_sha: 4d86861645f45cde8b0ec6d2fe5fb09c3141f158, packet_version: v25.6, packet_fingerprint: a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349, findings: none}
+  receipt_rebind: {observed_at_utc: '2026-10-06T11:30:30Z', candidate_source_sha: 1fcd45bc7c9604ef1852e6571bdbbd6580287152, source_tree_sha: 178cff61be756502fddf9bd6589a0750ff2e3311, source_fingerprint: 83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095, patch_tree_sha: 4d86861645f45cde8b0ec6d2fe5fb09c3141f158, packet_fingerprint: a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349, source_content_changed: false, stage: accept_by_01a1109e, verifier: PASS_by_01a110a9_saved_evidence_reused, final_review: accept_by_01a110c9, exact_head_CI: pending}
   publication: not_pushed_no_PR_created_no_Main_merge
-  integration_reconciliation: {PR225: merged_historical_head_948929b25251183bd552fc8e893a121fa878d860_base_66b500aef009a0554ebf658de4fca6ddfa8466f1, current_candidate_branch_remote: absent, current_candidate_PR: not_created, next: create_new_PR_after_current_candidate_final_accept}
+  integration_reconciliation: {PR225: merged_historical_head_948929b25251183bd552fc8e893a121fa878d860_base_66b500aef009a0554ebf658de4fca6ddfa8466f1, current_candidate_branch_remote: absent, candidate_remote_checked_at_utc: '2026-10-06T11:38:38Z', current_candidate_PR: not_created, next: push_candidate_and_create_new_protected_PR_for_exact_head_CI}
   parallel_C07_handoff: {existing_task: Audit_Rust_migration_goal, thread_id: 01a0fdef-79ba-764f-b98a-20d01a8d109a, authorization: user_authorized_local_CI_runner_repair_only_no_production_scope, handoff_state: existing_task_final_rechecked_no_new_or_duplicate_source_changes, worktree: /Users/zeeland/.codex/worktrees/actix-c07-race-successor-20261005/rudder-oss, candidate_head: 749d5bde355a893f99dbc878a5845c320d09e6de, runner_dirty_fingerprint: d085b5dca849cf7f7e59dfe938a8c1d3fef2b690d30e18ba79e2c7fff55031fd, report: /Users/zeeland/Documents/Codex/2026-10-03/task/c07-auto-update-smoke-repair-749d5/report.json, checks: existing_Node_12_of_12_Vitest_9_of_9_and_current_diff_check_PASS, packaged_workflow: not_run_C07_acceptance_pending, final_task_result: existing_runner_patch_matches_byte_for_byte_no_change_or_merge, duplicate_message_discovered_after_send: true}
   claims: {implementation_complete: false, release_ready: false, production_verified: false, default_path_verified: false, old_authority_retired: false}
-  next_executable: commit_exact_reviewed_candidate_and_records_rebind_all_three_receipts_to_content_equivalent_commit_push_candidate_branch_create_new_protected_PR_run_exact_head_CI_then_integrate_after_all_required_gates
+  next_executable: finish_and_validate_durable_rebind_records_refresh_origin_main_then_push_candidate_branch_create_new_protected_PR_run_exact_head_CI_then_integrate_after_all_required_gates
 pull_request_ci_preflight_2026_10_06:
   agent_id: 01a110d3-aca2-7312-ad4a-24c5e7dbcced
   state: completed_read_only

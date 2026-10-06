@@ -1464,7 +1464,7 @@ resource inserts require explicit reconciliation with the two-request detail
 flow. Merge this successor only through its exact protected PR checks, then
 continue the remaining authority units; this D1 slice does not close Phases 0–7.
 
-## Current D1 checkpoint after Main PR #274 (2026-10-06 09:42 UTC)
+## Current D1 checkpoint after Main PR #274 (2026-10-06 11:30 UTC)
 
 Main is `b5a07310328ea3826aeb96df4422976aff280300`. PR #274 moved the two
 live-run list-selection queries (`GET /api/orgs/:orgId/live-runs` and
@@ -1480,8 +1480,8 @@ and rebuilt as part of the exact candidate.
 Current D1 v25.6 candidate identity:
 
 - Base: `b5a07310328ea3826aeb96df4422976aff280300`.
-- Commit: `cde6b5f80c1cf9b4581840a8b265da620c449236`; tree
-  `90465d8fdd4611b3dcdf3870a19c51765e0cb66c`.
+- Source commit: `1fcd45bc7c9604ef1852e6571bdbbd6580287152`; tree
+  `178cff61be756502fddf9bd6589a0750ff2e3311`.
 - Source-diff fingerprint: `83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095`.
 - Patch tree: `4d86861645f45cde8b0ec6d2fe5fb09c3141f158`.
 - Packet: v25.6, fingerprint
@@ -1503,8 +1503,13 @@ writer-handoff races. Evidence is recorded in
 and `/tmp/rudder-v25.6-verifier.98cO2l/`. The proof remains scoped to the
 Node public listener/auth entry forwarding to private Actix/SQLx; it does not
 prove default Rust ingress, global Node writer retirement, release readiness,
-or production verification. Final review and exact-head CI are pending. No
-push or PR exists for v25.6. PR #225 is already merged historical work and
+or production verification. All three issuers have now rebound stage `accept`,
+verifier `PASS`, and final-review `accept` to the content-equivalent committed
+candidate after independently rechecking source SHA/tree, 30-path source
+fingerprint, patch tree, packet fingerprint, and build/runtime/data identity.
+The verifier reused saved real-entry evidence without rerunning or mutating
+runtime/data. Exact-head CI is still pending. No push or PR exists for v25.6.
+PR #225 is already merged historical work and
 does not contain this successor; after final acceptance, publish this candidate
 through a new protected PR. Keep
 `implementation_complete=false`, `release_ready=false`, and
