@@ -12,6 +12,7 @@ test("copies a Messenger chat link and renders it as a New Chat composer token",
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: {
       title: "Reference planning chat",
+      initialMessage: { body: "Please keep this chat easy to find." },
       issueCreationMode: "manual_approval",
       planMode: false,
     },
