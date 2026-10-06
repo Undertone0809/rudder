@@ -15,6 +15,13 @@ import {
 
 const E2E_CODEX_IGNORE_TERM_STUB = path.resolve(E2E_ROOT, "fixtures", "codex-ignore-term");
 const e2eDb = createDb(E2E_DATABASE_URL);
+const generatedStubDirectories = new Set<string>();
+
+test.afterEach(async () => {
+  const directories = [...generatedStubDirectories];
+  generatedStubDirectories.clear();
+  await Promise.all(directories.map((directory) => fs.rm(directory, { recursive: true, force: true })));
+});
 
 async function expectTranscriptBetweenUserAndAssistant(page: Page) {
   const userBubble = page.getByTestId("chat-user-message-bubble").last();
@@ -81,8 +88,9 @@ async function createStreamingOrgThatIgnoresStop(page: Page, name: string) {
 }
 
 async function createMissingSentinelCodexStub() {
-  const stubPath = path.resolve(E2E_ROOT, "fixtures", `codex-missing-sentinel-${Date.now()}`);
-  await fs.mkdir(path.dirname(stubPath), { recursive: true });
+  const stubDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-missing-sentinel-"));
+  generatedStubDirectories.add(stubDirectory);
+  const stubPath = path.join(stubDirectory, "codex");
   await fs.writeFile(stubPath, `#!/usr/bin/env node
 let input = "";
 process.stdin.on("data", (chunk) => {
@@ -1221,6 +1229,9 @@ test.describe("Chat streaming", () => {
     await processToggle.click();
     await expect(processToggle).toHaveAttribute("aria-expanded", "false");
     await expect(completedTranscript.getByTestId("chat-transcript-content")).toBeHidden();
+    const collapsedBubbleGap = await assistantBubbleGap(completedBubble, userBubble);
+    const collapsedAssistantBox = await completedBubble.boundingBox();
+    expect(collapsedAssistantBox).not.toBeNull();
 
     await page.reload({ waitUntil: "domcontentloaded" });
     const refreshedTimeline = page.getByTestId("chat-virtual-timeline");
@@ -1230,7 +1241,19 @@ test.describe("Chat streaming", () => {
     await expect(refreshedAssistantBubble).toHaveCount(1);
     await expect(refreshedUserBubble).toContainText(userPrompt);
     expect(await refreshedTimeline.evaluate((element, value) => element.innerText.split(value).length - 1, finalBody)).toBe(1);
-    await expect(refreshedTimeline.getByTestId("chat-transcript-item").last()).not.toContainText(finalBody);
+    const refreshedTranscript = refreshedTimeline.getByTestId("chat-transcript-item").last();
+    await expect(refreshedTranscript).not.toContainText(finalBody);
+    const refreshedProcessToggle = refreshedTranscript.locator("button").first();
+    if (await refreshedProcessToggle.getAttribute("aria-expanded") !== "false") {
+      await refreshedProcessToggle.click();
+    }
+    await expect(refreshedProcessToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(refreshedTranscript.getByTestId("chat-transcript-content")).toBeHidden();
+    const refreshedBubbleGap = await assistantBubbleGap(refreshedAssistantBubble, refreshedUserBubble);
+    expect(Math.abs(refreshedBubbleGap - collapsedBubbleGap)).toBeLessThanOrEqual(2);
+    const refreshedAssistantBox = await refreshedAssistantBubble.boundingBox();
+    expect(refreshedAssistantBox).not.toBeNull();
+    expect(Math.abs(refreshedAssistantBox!.x - collapsedAssistantBox!.x)).toBeLessThanOrEqual(2);
     const refreshedUserTop = (await refreshedUserBubble.boundingBox())?.y;
     const refreshedAssistantTop = (await refreshedAssistantBubble.boundingBox())?.y;
     expect(refreshedUserTop).not.toBeNull();
@@ -1303,6 +1326,11 @@ test.describe("Chat streaming", () => {
     const completedBubbleTop = (await completedBubble.locator(".group.w-full.max-w-3xl").boundingBox())?.y;
     expect(completedBubbleTop).not.toBeNull();
     expect(streamingTranscriptTop!).toBeLessThan(completedBubbleTop!);
+    const transcriptContinuation = timeline.getByTestId("transcript-continuation");
+    await expect(transcriptContinuation).toBeVisible();
+    const transcriptContinuationTop = (await transcriptContinuation.boundingBox())?.y;
+    expect(transcriptContinuationTop).not.toBeNull();
+    expect(completedBubbleTop!).toBeLessThan(transcriptContinuationTop!);
     expect(Math.abs(await assistantBubbleGap(completedBubble, userBubble) - streamingBubbleGap)).toBeLessThanOrEqual(2);
 
     await page.reload({ waitUntil: "domcontentloaded" });

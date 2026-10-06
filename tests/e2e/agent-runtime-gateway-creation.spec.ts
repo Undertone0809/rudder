@@ -47,7 +47,7 @@ test.describe("gateway agent creation", () => {
     await page.getByRole("button", { name: /^Hermes\b/ }).click();
 
     await expect(page.getByRole("heading", { name: "Create with Hermes", exact: true })).toBeVisible();
-    await expect(page.getByTestId("hermes-local-availability")).toContainText("Hermes is ready locally. Rudder will connect automatically.");
+    await expect(page.getByTestId("hermes-local-availability")).toContainText("Hermes was found on this machine. Rudder will use its existing provider setup.");
     await expect(page.getByTestId("hermes-local-availability")).toContainText("You don't need to enter a server address or API key.");
     await expect(page.getByTestId("hermes-local-availability")).not.toContainText("ACP");
     await expect(page.getByTestId("hermes-local-availability")).not.toContainText("Product RPC");

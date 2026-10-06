@@ -345,7 +345,12 @@ export function TranscriptMessageBlock({
         {showRoleLabel && (
           <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">
             {isUser && <User className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />}
-            <span data-transcript-message-label={roleLabel}>{roleLabel}</span>
+            <span
+              data-transcript-message-label={roleLabel}
+              data-transcript-event-category={block.phase === "final_answer" ? "final-response" : undefined}
+            >
+              {roleLabel}
+            </span>
           </div>
         )}
         {body}
@@ -450,7 +455,12 @@ export function TranscriptThinkingBlock({
           <DisclosureChevron open={open} className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         )}
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-medium tracking-wide text-muted-foreground">{localizeText("Thinking")}</div>
+          <div
+            className="text-[11px] font-medium tracking-wide text-muted-foreground"
+            data-transcript-event-category={presentation === "detail" ? "reasoning" : undefined}
+          >
+            {presentation === "detail" ? "Reasoning" : localizeText("Thinking")}
+          </div>
           {!open && !block.streaming ? (
             <div className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-foreground/55">{preview || "…"}</div>
           ) : null}
@@ -769,6 +779,14 @@ export function TranscriptToolCard({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            {detail ? (
+              <span
+                className="text-[10px] font-semibold tracking-[0.06em] text-muted-foreground"
+                data-transcript-event-category="tool-call"
+              >
+                Tool call
+              </span>
+            ) : null}
             <span className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">
               {semantic.label}
             </span>

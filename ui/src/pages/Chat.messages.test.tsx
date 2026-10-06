@@ -20,8 +20,11 @@ import {
   OptimisticUserDraftItem,
   StreamTranscriptItem,
 } from "./Chat.messages";
+import { findRetrySourceUserMessage } from "./Chat.parts";
+import { ChatSidePanelActions } from "./Chat.side-panel-actions";
 import {
   buildChatTimelineRows,
+  buildFailedChatRetryInput,
   chatAssistantMessageRowKey,
   chatAssistantStreamRowKey,
   chatFinalAnswerFromTranscript,
@@ -29,6 +32,7 @@ import {
   chatStreamDraftAssistantMessage,
   chatStreamingAssistantBody,
   rememberChatAssistantStreamRowIdentity,
+  shouldShowOptimisticChatUserMessage,
 } from "./Chat.timeline";
 
 const markdownMentionsMock = vi.hoisted(() => ({
@@ -102,6 +106,11 @@ Object.defineProperty(window, "matchMedia", {
 });
 
 let cleanupFn: (() => void) | null = null;
+function cleanupCurrentRender() {
+  const cleanup = cleanupFn;
+  cleanupFn = null;
+  cleanup?.();
+}
 let previousCreateObjectURL: typeof URL.createObjectURL | undefined;
 let previousRevokeObjectURL: typeof URL.revokeObjectURL | undefined;
 const queryClient = new QueryClient({
@@ -594,7 +603,7 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(timeline).not.toBeNull();
     expect(bubble?.textContent).toContain(partialAnswer);
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      entries: shortEntries.slice(1, 3),
+      entries: chatProcessTranscriptEntries(shortEntries),
       presentation: "chat",
     }));
 
@@ -602,7 +611,7 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(container.querySelector(".group.w-full.max-w-3xl.px-1.py-1")).toBe(bubble);
     expect(container.textContent).toContain(longerAnswer);
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      entries: shortEntries.slice(1, 3),
+      entries: chatProcessTranscriptEntries(shortEntries),
       presentation: "chat",
     }));
 
@@ -611,20 +620,24 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(container.textContent).toContain(completeAnswer);
     expect(container.textContent).not.toContain(longerAnswer);
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      entries: shortEntries.slice(1, 3),
+      entries: chatProcessTranscriptEntries(shortEntries),
       presentation: "chat",
     }));
-    const activeBubbleRow = bubble?.parentElement;
-    const activePosition = Array.from(timeline!.children).indexOf(activeBubbleRow!);
+    const timelineRowContaining = (element: Element | null) => {
+      let row = element;
+      while (row?.parentElement && row.parentElement !== timeline) row = row.parentElement;
+      return row;
+    };
+    const activePosition = Array.from(timeline!.children).indexOf(timelineRowContaining(bubble)!);
 
     rerender(renderTimeline(finalEntries, true));
 
     const completedBubble = container.querySelector('[data-testid="chat-assistant-message"]');
     expect(completedBubble?.textContent).toContain(completeAnswer);
     expect((completedBubble?.textContent?.match(/The complete final answer\./g) ?? [])).toHaveLength(1);
-    expect(Array.from(timeline!.children).indexOf(completedBubble!)).toBe(activePosition);
+    expect(Array.from(timeline!.children).indexOf(timelineRowContaining(completedBubble)!)).toBe(activePosition);
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      entries: shortEntries.slice(1, 3),
+      entries: chatProcessTranscriptEntries(shortEntries),
       presentation: "chat",
     }));
   });
@@ -691,8 +704,11 @@ describe("StreamTranscriptItem controlled disclosure", () => {
 
   it("uses only an explicit final-answer channel for the streamed response body", () => {
     const ts = "2026-07-23T10:00:00.000Z";
+    const promptEcho = (body: string) => `Conversation input: ${JSON.stringify({ currentMessage: {
+      role: "user", kind: "message", status: "completed", body, attachments: [], structuredPayload: null,
+    } })}`;
     const entries: TranscriptEntry[] = [
-      { kind: "user", ts, text: "Conversation input: {\"currentMessage\":{\"body\":\"Inspect this\"}}" },
+      { kind: "user", ts, text: promptEcho("Inspect this") },
       { kind: "assistant", ts, text: "Commentary stays in Process.", phase: "commentary" },
       { kind: "assistant", ts, text: "Unphased assistant text stays in Process." },
       { kind: "assistant", ts, text: "Final answer", delta: true, phase: "final_answer" },
@@ -706,6 +722,92 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(chatStreamingAssistantBody([entries[2]!], "unphased fallback", true)).toBe("");
     expect(chatProcessTranscriptEntries(entries)).toEqual(entries.slice(1, 3));
     expect(chatProcessTranscriptEntries([entries[0]!, entries[3]!])).toEqual([]);
+  });
+
+  it("keeps structured conversation-input echoes out of Process while retaining real agent activity", () => {
+    const ts = "2026-07-23T10:00:00.000Z";
+    const promptMessage = (body: string) => ({
+      role: "user", kind: "message", status: "completed", body,
+      attachments: [], structuredPayload: null,
+    });
+    const resultReminder = "Final Rudder result reminder: for an ordinary message reply, the native runtime final message is authoritative and must contain only the final answer body. Only use RUDDER_RESULT_BEGIN plus JSON when the result kind is ask_user, issue_proposal, operation_proposal, or automation_create. Do not write progress text after the final message or after the structured JSON object.";
+    const generatedPromptEcho = (payload: unknown) => (
+      `Conversation input: ${JSON.stringify(payload)}\n\n${resultReminder}`
+    );
+    const currentMessageEcho = generatedPromptEcho({
+      currentMessage: promptMessage("The currentMessage field carries this request."),
+    });
+    const recentMessagesEcho = generatedPromptEcho({
+      recentMessages: [promptMessage("The recentMessages field carries this request.")],
+    });
+    const steerMessage = message({
+      id: "steer-prompt-quote",
+      role: "user",
+      status: "completed",
+      body: recentMessagesEcho,
+      structuredPayload: {
+        source: "steer",
+        deliveryDisposition: "accepted_current",
+        targetGenerationId: "generation-1",
+        afterTranscriptEntryCount: 1,
+        generationSeq: 2,
+        controlActionId: "control-1",
+      },
+    });
+    const steerEntry = {
+      kind: "user" as const,
+      source: "steer",
+      ts,
+      text: recentMessagesEcho,
+      messageId: steerMessage.id,
+      controlActionId: "control-1",
+      steerMessage,
+    } as unknown as TranscriptEntry;
+    const reasoningEntry: TranscriptEntry = {
+      kind: "assistant",
+      ts,
+      text: "Check the repository state before proposing a change.",
+      phase: "commentary",
+    };
+    const toolCallEntry: TranscriptEntry = {
+      kind: "tool_call",
+      ts,
+      name: "read_file",
+      toolUseId: "read-1",
+      input: { path: "/workspace/README.md" },
+    };
+    const toolResultEntry: TranscriptEntry = {
+      kind: "tool_result",
+      ts,
+      toolUseId: "read-1",
+      content: "The README describes the project.",
+      isError: false,
+    };
+    const entries: TranscriptEntry[] = [
+      { kind: "user", ts, text: currentMessageEcho },
+      { kind: "assistant", ts, text: currentMessageEcho, phase: "commentary" },
+      { kind: "tool_result", ts, toolUseId: "input-echo", content: recentMessagesEcho, isError: false },
+      steerEntry,
+      reasoningEntry,
+      toolCallEntry,
+      toolResultEntry,
+    ];
+    const container = render(
+      <ThemeProvider>
+        <StreamTranscriptItem
+          entries={entries}
+          state="streaming"
+          streamStartedAt={new Date(ts)}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(chatProcessTranscriptEntries(entries)).toEqual(entries.slice(4));
+    expect(container.querySelector('[data-testid="chat-transcript-item"]')).not.toBeNull();
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: entries.slice(4),
+      presentation: "chat",
+    }));
   });
 
   it("keeps an active stream attached to its assistant message row through completion", () => {
@@ -737,6 +839,13 @@ describe("StreamTranscriptItem controlled disclosure", () => {
       status: "completed",
       body: "The complete final answer.",
       generationId: "generation-1",
+    });
+    const persistedUserMessage = message({
+      id: "user-1",
+      role: "user",
+      status: "completed",
+      body: "The prompt",
+      chatTurnId: "turn-1",
     });
     const streamRowKey = chatAssistantStreamRowKey(activeStream);
     const rowIdentities = new Map<string, string>();
@@ -779,13 +888,32 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(buildChatTimelineRows([projectedCompletedMessage], activeStream, true, "assistant-1")).toEqual([
       { kind: "message", message: projectedCompletedMessage, messageIndex: 0 },
     ]);
+
+    const streamingRows = buildChatTimelineRows(
+      [streamingMessage, persistedUserMessage],
+      activeStream,
+      true,
+    );
+    const completedRows = buildChatTimelineRows(
+      [completedMessage, persistedUserMessage],
+      activeStream,
+      true,
+    );
+    expect(streamingRows.map((row) => row.kind === "message" ? row.message.id : "active_stream"))
+      .toEqual(["user-1", "assistant-1"]);
+    expect(completedRows.map((row) => row.kind === "message" ? row.message.id : "active_stream"))
+      .toEqual(["user-1", "assistant-1"]);
+    expect(chatAssistantMessageRowKey(streamingRows[1]!.kind === "message" ? streamingRows[1]!.message : streamingMessage, activeStream))
+      .toBe(streamRowKey);
+    expect(chatAssistantMessageRowKey(completedRows[1]!.kind === "message" ? completedRows[1]!.message : completedMessage, null, null, rowIdentities))
+      .toBe(streamRowKey);
   });
 
-  it("keeps the assistant row identity from pre-ack through completion and reconstructs it after remount", () => {
+  it("keeps the assistant row identity from pre-ack through completion and refresh", () => {
     const preAckStream = {
       streamKey: "stream-1",
       generationId: null,
-      chatTurnId: "turn-1",
+      chatTurnId: null,
       turnVariant: 0,
     };
     const rowIdentities = new Map<string, string>();
@@ -794,12 +922,13 @@ describe("StreamTranscriptItem controlled disclosure", () => {
       id: "stream-draft:stream-1",
       status: "streaming",
       body: "The answer prefix",
-      chatTurnId: "turn-1",
+      chatTurnId: null,
       generationId: null,
     });
     const acknowledgedStream = {
       ...preAckStream,
       generationId: "generation-1",
+      chatTurnId: "turn-1",
     };
     const streamingMessage = message({
       id: "assistant-1",
@@ -849,9 +978,54 @@ describe("StreamTranscriptItem controlled disclosure", () => {
 
     const completedNode = rendered.container.querySelector('[data-testid="chat-assistant-message"]');
     expect(chatAssistantMessageRowKey(persistedMessage, null, null, rowIdentities)).toBe(rowKey);
-    expect(chatAssistantMessageRowKey(persistedMessage, null, null, new Map())).toBe(rowKey);
+    expect(chatAssistantMessageRowKey(persistedMessage, null, null, new Map()))
+      .toBe("assistant-turn:turn-1:variant:0");
     expect(completedNode).toBe(initialNode);
     expect(completedNode?.getAttribute("data-message-id")).toBe("assistant-1");
+
+    const refreshedStream = {
+      ...acknowledgedStream,
+      streamKey: "stream-2",
+      generationId: "generation-2",
+      turnVariant: 1,
+    };
+    const refreshedMessage = message({
+      id: "assistant-refresh",
+      status: "streaming",
+      body: "Refreshed answer prefix",
+      chatTurnId: "turn-1",
+      turnVariant: 1,
+      generationId: "generation-2",
+    });
+    const refreshedCompletedMessage = message({
+      ...refreshedMessage,
+      status: "completed",
+      body: "Refreshed answer completed",
+    });
+    const refreshedRowKey = chatAssistantStreamRowKey(refreshedStream);
+    expect(refreshedRowKey).not.toBe(rowKey);
+    rememberChatAssistantStreamRowIdentity(rowIdentities, refreshedStream);
+    rendered.rerender(chatMessageItemElement(
+      refreshedMessage,
+      [],
+      {},
+      undefined,
+      undefined,
+      chatAssistantMessageRowKey(refreshedMessage, refreshedStream, null, rowIdentities),
+    ));
+    const refreshedNode = rendered.container.querySelector('[data-testid="chat-assistant-message"]');
+    rendered.rerender(chatMessageItemElement(
+      refreshedCompletedMessage,
+      [],
+      {},
+      undefined,
+      undefined,
+      chatAssistantMessageRowKey(refreshedCompletedMessage, null, null, rowIdentities),
+    ));
+    expect(rendered.container.querySelector('[data-testid="chat-assistant-message"]')).toBe(refreshedNode);
+    expect(chatAssistantMessageRowKey(refreshedCompletedMessage, null, null, rowIdentities)).toBe(refreshedRowKey);
+    expect(chatAssistantMessageRowKey(refreshedCompletedMessage, null, null, new Map()))
+      .toBe("assistant-turn:turn-1:variant:1");
   });
   it("preserves the historical assistant node while the current assistant is acknowledged", () => {
     const historical = message({
@@ -892,6 +1066,163 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(rendered.container.textContent).toContain("Current reply");
     rendered.rerender(rows(null));
     expect(rendered.container.querySelector('[data-message-id="assistant-history"]')).toBe(node);
+  });
+
+  it("restores message identity and order from persisted history after a full remount", () => {
+    const persistedHistory = [
+      message({
+        id: "user-turn-1",
+        role: "user",
+        status: "completed",
+        body: "First prompt",
+        chatTurnId: "turn-1",
+        createdAt: new Date("2026-04-30T10:00:00.000Z"),
+      }),
+      message({
+        id: "assistant-turn-1",
+        role: "assistant",
+        status: "completed",
+        body: "First reply",
+        chatTurnId: "turn-1",
+        generationId: "generation-1",
+        createdAt: new Date("2026-04-30T10:00:01.000Z"),
+      }),
+      message({
+        id: "user-turn-2",
+        role: "user",
+        status: "completed",
+        body: "Second prompt",
+        chatTurnId: "turn-2",
+        createdAt: new Date("2026-04-30T10:01:00.000Z"),
+      }),
+      message({
+        id: "assistant-turn-2",
+        role: "assistant",
+        status: "failed",
+        body: "The assistant response failed.",
+        chatTurnId: "turn-2",
+        generationId: "generation-2",
+        createdAt: new Date("2026-04-30T10:01:01.000Z"),
+      }),
+    ];
+    const renderPersistedHistory = (snapshot: ChatMessage[]) => (
+      <div data-testid="chat-history">
+        {snapshot.map((persistedMessage) => {
+          const rowKey = chatAssistantMessageRowKey(persistedMessage, null, null, new Map());
+          return (
+            <div
+              key={rowKey}
+              data-testid="chat-history-row"
+              data-row-key={rowKey}
+              data-message-id={persistedMessage.id}
+            >
+              {chatMessageItemElement(persistedMessage)}
+            </div>
+          );
+        })}
+      </div>
+    );
+
+    const firstMount = renderWithRerender(renderPersistedHistory(persistedHistory));
+    const beforeReload = Array.from(firstMount.container.querySelectorAll<HTMLElement>("[data-testid=chat-history-row]"))
+      .map((row) => ({ id: row.dataset.messageId, key: row.dataset.rowKey }));
+    expect(beforeReload.map((row) => row.id)).toEqual([
+      "user-turn-1",
+      "assistant-turn-1",
+      "user-turn-2",
+      "assistant-turn-2",
+    ]);
+
+    cleanupCurrentRender();
+
+    const reloadedHistory = persistedHistory.map((persistedMessage) => ({
+      ...persistedMessage,
+      createdAt: new Date(persistedMessage.createdAt),
+      updatedAt: new Date(persistedMessage.updatedAt),
+    }));
+    const secondMount = renderWithRerender(renderPersistedHistory(reloadedHistory));
+    const afterReload = Array.from(secondMount.container.querySelectorAll<HTMLElement>("[data-testid=chat-history-row]"))
+      .map((row) => ({ id: row.dataset.messageId, key: row.dataset.rowKey }));
+    expect(afterReload).toEqual(beforeReload);
+    expect(secondMount.container.textContent).toContain("First reply");
+    expect(secondMount.container.textContent).toContain("Second prompt");
+    expect(secondMount.container.textContent).toContain("This assistant response failed before it completed.");
+  });
+
+  it("retries a persisted failed turn after refresh without duplicating its accepted prompt", () => {
+    const acceptedPrompt = message({
+      id: "accepted-user-message",
+      role: "user",
+      status: "completed",
+      body: "Continue the native session",
+      chatTurnId: "failed-turn",
+      turnVariant: 2,
+      createdAt: new Date("2026-04-30T10:00:00.000Z"),
+    });
+    const failedReply = message({
+      id: "failed-assistant-message",
+      role: "assistant",
+      status: "failed",
+      body: "The assistant response failed.",
+      chatTurnId: "failed-turn",
+      turnVariant: 2,
+    });
+    const refreshedMessages = [
+      { ...acceptedPrompt, createdAt: new Date(acceptedPrompt.createdAt) },
+      { ...failedReply, createdAt: new Date(failedReply.createdAt) },
+    ];
+    const refreshedFailure = refreshedMessages[1]!;
+    const retrySource = findRetrySourceUserMessage(refreshedMessages, refreshedFailure);
+
+    expect(retrySource?.id).toBe("accepted-user-message");
+    const retryInput = buildFailedChatRetryInput(retrySource!, { id: "chat-1" });
+    expect(retryInput).toMatchObject({
+      bodyOverride: "Continue the native session",
+      editUserMessageIdOverride: "accepted-user-message",
+      editIntent: "retry",
+    });
+    expect(shouldShowOptimisticChatUserMessage({
+      userBody: retryInput.bodyOverride,
+      userFiles: retryInput.filesOverride,
+      userMessageId: retryInput.editUserMessageIdOverride,
+    }, refreshedMessages)).toBe(false);
+  });
+
+  it("does not duplicate an accepted user bubble after its optimistic attachments persist", () => {
+    const createdAt = new Date("2026-06-15T10:00:00.000Z");
+    const file = new File(["Keep this file through failure"], "recovered-note.txt", { type: "text/plain" });
+    const acceptedUserMessage = message({
+      id: "accepted-user-message",
+      role: "user",
+      status: "completed",
+      body: "Recover the original failed turn with its attachment",
+      attachments: [{
+        id: "attachment-1",
+        orgId: "org-1",
+        conversationId: "chat-1",
+        messageId: "accepted-user-message",
+        assetId: "asset-1",
+        contentType: "text/plain",
+        byteSize: file.size,
+        sha256: "a".repeat(64),
+        originalFilename: file.name,
+        createdByAgentId: null,
+        createdByUserId: null,
+        createdAt,
+        updatedAt: createdAt,
+        contentPath: "/api/attachments/attachment-1/content",
+      }],
+    });
+    const activeStream = {
+      userBody: acceptedUserMessage.body,
+      userFiles: [file],
+      userMessageId: acceptedUserMessage.id,
+    };
+
+    expect(shouldShowOptimisticChatUserMessage(activeStream, [acceptedUserMessage])).toBe(false);
+    expect(shouldShowOptimisticChatUserMessage(activeStream, [
+      { ...acceptedUserMessage, attachments: [] },
+    ])).toBe(true);
   });
 
   it("responds to an external open request after the transcript mounts", () => {
@@ -1330,7 +1661,7 @@ describe("assistant chat message rendering", () => {
     expect(streaming.querySelector("[data-chat-annotation-source]")).toBeNull();
   });
 
-  it("opens Side Chat from the completed assistant reply context menu", () => {
+  it("opens Side Chat from the visible More menu without an inline reply icon", () => {
     const sourceMessage = message({
       id: "assistant-side-chat-source",
       role: "assistant",
@@ -1341,13 +1672,17 @@ describe("assistant chat message rendering", () => {
     const onOpenSideChat = vi.fn();
     const container = renderChatMessageItem(sourceMessage, [], {}, undefined, onOpenSideChat);
 
-    expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Copy message"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label*="Side Chat"]')).toBeNull();
+    const contextTrigger = container.querySelector<HTMLElement>('[data-slot="context-menu-trigger"]');
+    expect(contextTrigger?.tabIndex).toBe(0);
     const actionTriggers = Array.from(container.querySelectorAll<HTMLButtonElement>(
       'button[data-testid="chat-message-actions-trigger"]',
     ));
     expect(actionTriggers).toHaveLength(2);
     expect(actionTriggers.every((trigger) => trigger.getAttribute("aria-label") === "More message actions")).toBe(true);
+    expect(actionTriggers[1]?.className).toContain("inline-flex");
+    expect(actionTriggers[1]?.parentElement?.className).toContain("md:hidden");
     expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
 
     act(() => actionTriggers[1]?.dispatchEvent(new MouseEvent("pointerdown", {
@@ -1355,15 +1690,18 @@ describe("assistant chat message rendering", () => {
       button: 0,
       ctrlKey: false,
     })));
-    const moreMenuAction = document.body.querySelector<HTMLElement>(
+    const moreMenu = document.body.querySelector<HTMLElement>(
+      '[data-testid="chat-message-actions-menu"]',
+    );
+    const moreMenuAction = moreMenu?.querySelector<HTMLElement>(
       '[data-testid="chat-open-side-chat-more-action"]',
     );
     expect(moreMenuAction?.textContent).toContain("Open Side Chat");
     expect(document.body.querySelector('[data-testid="chat-fork-more-action"]')?.textContent).toContain("Fork from here");
     act(() => moreMenuAction?.click());
+    expect(onOpenSideChat).toHaveBeenCalledExactlyOnceWith(sourceMessage);
 
-    cleanupFn?.();
-    cleanupFn = null;
+    cleanupCurrentRender();
     const contextMenuContainer = renderChatMessageItem(sourceMessage, [], {}, undefined, onOpenSideChat);
     act(() => contextMenuContainer.querySelector('[data-testid="chat-assistant-message"]')?.dispatchEvent(
       new MouseEvent("contextmenu", { button: 2, bubbles: true, cancelable: true }),
@@ -1374,11 +1712,38 @@ describe("assistant chat message rendering", () => {
     expect(contextAction?.textContent).toContain("Open Side Chat");
     act(() => contextAction?.click());
 
-    expect(onOpenSideChat).toHaveBeenNthCalledWith(1, sourceMessage);
     expect(onOpenSideChat).toHaveBeenNthCalledWith(2, sourceMessage);
+
+    cleanupCurrentRender();
+    const keyboardContainer = renderChatMessageItem(sourceMessage, [], {}, undefined, onOpenSideChat);
+    const keyboardTrigger = keyboardContainer.querySelector<HTMLElement>('[data-slot="context-menu-trigger"]');
+    act(() => keyboardTrigger?.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "F10",
+      code: "F10",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })));
+    const keyboardAction = document.body.querySelector<HTMLElement>(
+      '[data-testid="chat-open-side-chat-context-action"]',
+    );
+    expect(keyboardAction?.textContent).toContain("Open Side Chat");
+    act(() => keyboardAction?.click());
+    expect(onOpenSideChat).toHaveBeenNthCalledWith(3, sourceMessage);
   });
 
-  it("keeps Side Chat in message actions and preserves speaker alignment after sending", () => {
+  it("keeps the global Side Panel trigger out of chat header actions", () => {
+    const container = render(
+      <ChatSidePanelActions
+        organizationId={null}
+        sourceConversationId={null}
+        onOpenSideChat={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-testid="chat-side-panel-trigger"]')).toBeNull();
+  });
+
+  it("preserves speaker alignment after sending without a Side Chat reply button", () => {
     const agentReply = message({
       id: "agent-reply",
       role: "assistant",
@@ -1414,24 +1779,7 @@ describe("assistant chat message rendering", () => {
       '[data-testid="chat-assistant-message"]',
     );
     expect(agentMessageElement?.classList.contains("justify-start")).toBe(true);
-    act(() => agentMessageElement?.dispatchEvent(new MouseEvent("contextmenu", {
-      button: 2,
-      bubbles: true,
-      cancelable: true,
-    })));
-    expect(document.body.querySelector('[data-testid="chat-open-side-chat-context-action"]')?.textContent)
-      .toContain("Open Side Chat");
-    expect(agentMessageElement?.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
-    const actionTrigger = agentMessageElement?.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-message-actions-trigger"]',
-    );
-    act(() => actionTrigger?.dispatchEvent(new MouseEvent("pointerdown", {
-      bubbles: true,
-      button: 0,
-      ctrlKey: false,
-    })));
-    expect(document.body.querySelector('[data-testid="chat-open-side-chat-more-action"]')?.textContent)
-      .toContain("Open Side Chat");
+    expect(agentMessageElement?.querySelector('button[aria-label*="Side Chat"]')).toBeNull();
     expect(
       container.querySelector('[data-testid="chat-assistant-message-toolbar"]')?.classList.contains("justify-end"),
     ).toBe(false);

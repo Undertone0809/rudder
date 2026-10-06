@@ -24,6 +24,7 @@ import {
   HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV,
   waitForHermesProductRpcMcpReady,
 } from "./product-rpc-mcp-bootstrap.js";
+import { readHermesProductHistoryExecutionSpan } from "./product-history.js";
 import {
   buildHermesProductRpcSessionParams,
   deriveHermesProductRpcTranscriptBoundary,
@@ -1859,7 +1860,7 @@ describe("Hermes Product Gateway RPC", () => {
     }
   });
 
-  it.skipIf(!pythonCommand)("rejects a foreign native row interleaved into the accepted Run's span", async () => {
+  it.skipIf(!pythonCommand)("rejects a foreign native row interleaved after prompt acceptance and before the Run terminal row", async () => {
     const fixture = await makeProfile();
     try {
       const sessionId = "hermes-product-session";
@@ -1878,6 +1879,7 @@ describe("Hermes Product Gateway RPC", () => {
       let nativePromptWritePromise: Promise<string> | null = null;
       let overlayHome: string | null = null;
       let spanRuntimeEnv: Record<string, string> | undefined;
+      let completeAcceptedTurn: (() => Promise<void>) | null = null;
       const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => {
         const isBefore = historyReadCount++ === 0;
         order.push(isBefore ? "before-history-tail" : "after-history-tail");
@@ -1906,10 +1908,13 @@ describe("Hermes Product Gateway RPC", () => {
           metadata: { live_session_id: "hermes-product-runtime-1" },
         }] }), "utf8");
         resolveLeaseVisible();
-        await submitAcknowledgement;
-        await writeRunSpanCaptureReceipt(spanRuntimeEnv, sessionId, 40, [44]);
         emit("message.start");
-        emitTurnComplete(emit);
+        completeAcceptedTurn = async () => {
+          if (!nativePromptWritePromise) throw new Error("Native prompt writer was not started after submit acknowledgement.");
+          await nativePromptWritePromise;
+          await writeRunSpanCaptureReceipt(spanRuntimeEnv, sessionId, 40, [44]);
+          emitTurnComplete(emit);
+        };
         return { status: "streaming" };
       });
 
@@ -1917,7 +1922,15 @@ describe("Hermes Product Gateway RPC", () => {
         ...runInput(profile, async (input) => {
           overlayHome = input.profile.env?.HERMES_HOME ?? null;
           spanRuntimeEnv = input.profile.env;
-          return gateway.createClient(input);
+          const client = await gateway.createClient(input);
+          return {
+            ...client,
+            async request(method, params) {
+              const response = await client.request(method, params);
+              if (method === "prompt.submit") resolveSubmitAcknowledgement();
+              return response;
+            },
+          };
         }, readHistoryTail, {
           readHistoryRangeRowIds: async (range) => {
             expect(range).toMatchObject({ sessionId, startExclusive: 40, endInclusive: 44 });
@@ -1937,6 +1950,7 @@ describe("Hermes Product Gateway RPC", () => {
       });
 
       await leaseVisible;
+      await submitAcknowledgement;
       const foreignWriterReady = path.join(fixture.profile.cwd, "foreign-writer-ready");
       const foreignWriterPromise = execFileAsync(pythonCommand!, [
         "-c",
@@ -1958,7 +1972,8 @@ describe("Hermes Product Gateway RPC", () => {
         "44",
         "5",
       ], { encoding: "utf8" }).then(({ stdout }) => stdout.trim());
-      resolveSubmitAcknowledgement();
+      if (!completeAcceptedTurn) throw new Error("Accepted Gateway turn did not expose its terminal-event continuation.");
+      await completeAcceptedTurn();
       const result = await executionPromise;
       const nativePromptWriteResult = await nativePromptWritePromise;
 
@@ -1968,6 +1983,37 @@ describe("Hermes Product Gateway RPC", () => {
           transcriptBoundary: { status: "unknown", sessionId, sourceRangeRef: null },
           executionRef: null,
         },
+      });
+      const boundary = result.resultJson?.transcriptBoundary as Record<string, unknown>;
+      const sharedReader = await readHermesProductHistoryExecutionSpan({
+        runtimeType: "hermes_gateway",
+        sessionId,
+        profile: {
+          pythonCommand: profile.hermesPythonCommand!,
+          sourcePath: profile.hermesSourcePath,
+          hermesHome: profile.hermesHome,
+          providerVersion: profile.providerVersion,
+          hostId: profile.binding.hostId,
+          profileId: profile.binding.profileId,
+        },
+        proof: {
+          version: 1,
+          orgId: "org-attribution-test",
+          runId: "run-attribution-test",
+          spanId: "span-attribution-test",
+          bindingId: "binding-attribution-test",
+          segmentId: "segment-attribution-test",
+          sessionId,
+          providerExecutionRef: "run-attribution-test",
+          sourceRangeRef: boundary.sourceRangeRef as string | null,
+          freshSessionVerified: false,
+        },
+      });
+      expect(sharedReader).toMatchObject({
+        completeness: "unknown",
+        revision: "execution-boundary-unknown",
+        items: [],
+        nextCursor: null,
       });
       expect(hasConfirmedNativeWriterQuiescence(result)).toBe(true);
       expect(overlayHome).toBeTruthy();

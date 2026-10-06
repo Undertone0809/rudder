@@ -2,7 +2,7 @@ import { useToolCallFailureIndicators } from "@/context/ThemeContext";
 import { Fragment, createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
-import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
+import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, TranscriptThinkingBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, transcriptBlockStableKey, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
@@ -882,6 +882,20 @@ function transcriptBlockForChatAction(action: ChatTranscriptAction): TranscriptB
   };
 }
 
+function withTranscriptToolCallLabel(content: ReactNode, label: string) {
+  return (
+    <div className="space-y-0.5">
+      <div
+        className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+        data-transcript-event-category="tool-call"
+      >
+        {label}
+      </div>
+      {content}
+    </div>
+  );
+}
+
 export type ChatTranscriptTurnSegment =
   | {
       type: "block";
@@ -1051,7 +1065,7 @@ export function TranscriptChatActionGroup({
   ) : content;
 
   const renderActionRow = (action: ChatTranscriptAction) => {
-    const row = (
+    const actionContent = (
       <TranscriptChatActionRow
         action={action}
         density={density}
@@ -1063,6 +1077,9 @@ export function TranscriptChatActionGroup({
         quiet={!detailVariant}
       />
     );
+    const row = detailVariant && action.type === "tool" ? (
+      withTranscriptToolCallLabel(actionContent, localizeText("Tool call"))
+    ) : actionContent;
     if (!detailVariant || !runAnnotationContext) {
       return <Fragment key={action.key}>{row}</Fragment>;
     }
@@ -1117,20 +1134,26 @@ export function TranscriptChatActionGroup({
   }
 
   if (shouldRenderSingleToolAction) {
+    const actionRow = (
+      <TranscriptChatActionRow
+        action={singleAction}
+        density={density}
+        defaultOpenOnError={false}
+        highlightError={!detailVariant}
+        onOpenFile={onOpenFile}
+        onOpenSkill={onOpenSkill}
+        canOpenSkill={canOpenSkill}
+        agentInspections={agentInspections}
+        onOpenAgent={onOpenAgent}
+        quiet={!detailVariant}
+      />
+    );
+
     return wrapSingleActionAnnotation(
       <div className="divide-y divide-border/30">
-        <TranscriptChatActionRow
-          action={singleAction}
-          density={density}
-          defaultOpenOnError={false}
-          highlightError={!detailVariant}
-          onOpenFile={onOpenFile}
-          onOpenSkill={onOpenSkill}
-          canOpenSkill={canOpenSkill}
-          agentInspections={agentInspections}
-          onOpenAgent={onOpenAgent}
-          quiet={!detailVariant}
-        />
+        {detailVariant
+          ? withTranscriptToolCallLabel(actionRow, localizeText("Tool call"))
+          : actionRow}
       </div>
       ,
     );
@@ -1171,6 +1194,14 @@ export function TranscriptChatActionGroup({
         )}
       </span>
       <span className="min-w-0 flex-1">
+        {detailVariant && toolEntries.length > 0 ? (
+          <span
+            className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+            data-transcript-event-category="tool-call"
+          >
+            {localizeText(toolEntries.length === 1 ? "Tool call" : "Tool calls")}
+          </span>
+        ) : null}
         <span className={cn(
           "block truncate text-foreground/82",
           compact ? "text-xs" : "text-sm",
@@ -1254,20 +1285,38 @@ export function TranscriptChatTurn({
         if (detailVariant) {
           return segment.type === "block" ? (
             <Fragment key={segment.key}>
-              {renderTranscriptBlock({
-                block: segment.block,
-                index,
-                density,
-                presentation: "detail",
-                collapseStdout: true,
-                thinkingClassName,
-                onMarkdownLinkClick,
-                annotationSource,
-                sentAnnotationContext,
-                runAnnotationContext,
-                localizeText,
-                streaming,
-              })}
+              {segment.block.type === "thinking" ? (
+                <TranscriptRunAnnotationBlock
+                  block={segment.block}
+                  presentation="detail"
+                  context={runAnnotationContext}
+                  streaming={streaming}
+                >
+                  <TranscriptThinkingBlock
+                    block={segment.block}
+                    density={density}
+                    presentation="detail"
+                    className={thinkingClassName}
+                    collapsibleSummary
+                    onMarkdownLinkClick={onMarkdownLinkClick}
+                    annotationSource={annotationSource}
+                    localizeText={localizeText}
+                  />
+                </TranscriptRunAnnotationBlock>
+              ) : renderTranscriptBlock({
+                  block: segment.block,
+                  index,
+                  density,
+                  presentation: "detail",
+                  collapseStdout: true,
+                  thinkingClassName,
+                  onMarkdownLinkClick,
+                  annotationSource,
+                  sentAnnotationContext,
+                  runAnnotationContext,
+                  localizeText,
+                  streaming,
+                })}
             </Fragment>
           ) : (
             <TranscriptChatActionGroup

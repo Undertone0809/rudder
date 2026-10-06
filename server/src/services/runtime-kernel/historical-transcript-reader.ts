@@ -20,6 +20,7 @@ export function createHistoricalTranscriptReader(
     nativeReader: {
       async read(input) {
         const [agent] = await db.select({
+          agentWorkspaceKey: agents.workspaceKey,
           agentRuntimeType: agents.agentRuntimeType,
           agentRuntimeConfig: agents.agentRuntimeConfig,
           runtimeConfig: agents.runtimeConfig,

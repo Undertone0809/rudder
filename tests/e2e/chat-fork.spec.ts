@@ -1,4 +1,7 @@
 import { expect, test, type Page, type Request, type Response } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
@@ -11,14 +14,92 @@ import {
   heartbeatRuns,
   messengerCustomGroupEntries,
   messengerCustomGroups,
+  nativeSegments,
   runRuntimeSpans,
+  runtimeBindings,
   runtimeSourceAliases,
 } from "../../packages/db/src/index.ts";
 import { MESSENGER_FORK_GROUP_DEFAULT_ICON } from "../../packages/shared/src/index.ts";
+import { resolveDefaultAgentWorkspaceDir } from "../../server/src/home-paths.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_CODEX_STUB, E2E_DATABASE_URL, E2E_ROOT } from "./support/e2e-env";
+import { E2E_CODEX_STUB, E2E_DATABASE_URL, E2E_HOME, E2E_INSTANCE_ID, E2E_ROOT } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
+
+// Read-only SessionDB stand-in for historical Hermes Reader coverage. It has
+// no Hermes package, provider, or authentication dependency.
+const HERMES_HISTORY_SESSION_DB = String.raw`
+import json
+from pathlib import Path
+
+class SessionDB:
+    def __init__(self, db_path=None, read_only=False):
+        if not read_only:
+            raise AssertionError("history reader must open SessionDB read-only")
+        self.state = json.loads(Path(db_path).read_text(encoding="utf-8"))
+
+    def _read_ctx(self):
+        import sqlite3
+        from contextlib import contextmanager
+        @contextmanager
+        def context():
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            sessions = list(self.state.get("sessions", {}).values())
+            messages = [row for rows in self.state.get("messages", {}).values() for row in rows]
+            for table, rows, required in [
+                ("sessions", sessions, ["id", "source", "parent_session_id", "profile_name", "cwd", "started_at", "ended_at", "end_reason", "message_count", "tool_call_count"]),
+                ("messages", messages, ["id", "session_id", "role", "content"]),
+            ]:
+                columns = list(dict.fromkeys(required + [key for row in rows for key in row]))
+                conn.execute("CREATE TABLE " + table + " (" + ",".join('"' + col + '"' for col in columns) + ")")
+                for row in rows:
+                    values = [json.dumps(row.get(col), ensure_ascii=False) if isinstance(row.get(col), (dict, list)) else row.get(col) for col in columns]
+                    conn.execute("INSERT INTO " + table + " VALUES (" + ",".join("?" for _ in columns) + ")", values)
+            conn.commit()
+            try:
+                yield conn
+            finally:
+                conn.close()
+        return context()
+
+    def _row_to_message_dict(self, row, **kwargs):
+        result = dict(row)
+        for key in ["content", "tool_calls", "display_metadata"]:
+            if isinstance(result.get(key), str):
+                try:
+                    result[key] = json.loads(result[key])
+                except ValueError:
+                    pass
+        return result
+
+    def get_session(self, session_id):
+        return self.state.get("sessions", {}).get(session_id)
+
+    def get_messages(self, session_id, include_inactive=False, include_compacted=False,
+                     limit=None, offset=0, latest=False, after_id=None):
+        rows = list(self.state.get("messages", {}).get(session_id, []))
+        if not include_inactive:
+            rows = [row for row in rows if row.get("active", 1) == 1]
+        if after_id is not None:
+            rows = [row for row in rows if row["id"] > after_id]
+        if latest:
+            rows.reverse()
+        if limit is not None:
+            rows = rows[offset:offset + limit]
+        if latest:
+            rows.reverse()
+        return rows
+
+    def get_compression_tip(self, session_id):
+        return self.state.get("tips", {}).get(session_id, session_id)
+
+    def resolve_resume_session_id(self, session_id):
+        return self.state.get("resume", {}).get(session_id, session_id)
+
+    def close(self):
+        return None
+`;
 
 async function createOrganization(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
@@ -502,6 +583,294 @@ test("ordinary Main native fork keeps exact alias history and its child session 
   expect(childRuns.every((run) => run.status === "succeeded" && run.sessionIdAfter === childRun.sessionIdAfter)).toBe(true);
   expect(await e2eDb.select().from(chatMessageTranscriptEntries).where(eq(chatMessageTranscriptEntries.orgId, organization.id))).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("native-main-fork-after-source-delete.png"), fullPage: true });
+});
+
+test("forks Hermes historical Reader history from the managed agent workspace key", async ({ page }) => {
+  test.setTimeout(120_000);
+  const pythonCommand = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).trim();
+  const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-e2e-hermes-history-fork-"));
+  try {
+    const sourcePath = path.join(fixtureRoot, "source");
+    const hermesHome = path.join(fixtureRoot, "home");
+    const sessionId = `hermes-e2e-${randomUUID()}`;
+    const providerExecutionRef = `execution-${randomUUID()}`;
+    await fs.mkdir(sourcePath);
+    await fs.mkdir(hermesHome);
+    await fs.writeFile(path.join(sourcePath, "hermes_state.py"), HERMES_HISTORY_SESSION_DB, "utf8");
+    const hermesState = {
+      sessions: {
+        [sessionId]: {
+          id: sessionId,
+          source: "acp",
+          parent_session_id: null,
+          profile_name: "rudder-e2e",
+          cwd: "/historical/hermes/workspace",
+          started_at: 1,
+          ended_at: 3,
+          end_reason: null,
+          message_count: 2,
+          tool_call_count: 0,
+        },
+      },
+      messages: {
+        [sessionId]: [
+          { id: 1, session_id: sessionId, role: "user", content: "Hermes historical question", timestamp: 2, active: 1, compacted: 0 },
+          { id: 2, session_id: sessionId, role: "assistant", content: "Hermes historical answer", timestamp: 3, active: 1, compacted: 0, finish_reason: "stop" },
+        ],
+      },
+    };
+    const hermesStatePath = path.join(hermesHome, "state.db");
+    await fs.writeFile(hermesStatePath, JSON.stringify(hermesState), "utf8");
+
+    const organization = await createOrganization(page, `Hermes historical Fork ${randomUUID()}`);
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Hermes historical Fork Agent" }) as { id: string };
+    const workspaceKey = `hermes-history-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const managedCwd = (() => {
+      const previousRudderHome = process.env.RUDDER_HOME;
+      const previousRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+      process.env.RUDDER_HOME = E2E_HOME;
+      process.env.RUDDER_INSTANCE_ID = E2E_INSTANCE_ID;
+      try {
+        return resolveDefaultAgentWorkspaceDir(organization.id, workspaceKey);
+      } finally {
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        if (previousRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+        else process.env.RUDDER_INSTANCE_ID = previousRudderInstanceId;
+      }
+    })();
+    const profileHostId = `e2e-host-${randomUUID()}`;
+    const profileId = `e2e-profile-${randomUUID()}`;
+    const capabilityRevision = "hermes-history-fixture-v1";
+    const conversationId = randomUUID();
+    const runId = randomUUID();
+    const bindingId = randomUUID();
+    const segmentId = randomUUID();
+    const spanId = randomUUID();
+    const userMessageId = randomUUID();
+    const assistantMessageId = randomUUID();
+    const sourceRangeRef = JSON.stringify({ version: 1, status: "exact", sessionId, startExclusive: 0, endInclusive: 2 });
+    const selectorJson = {
+      kind: "hermes_execution",
+      sessionRef: sessionId,
+      providerExecutionRef,
+      sourceRangeRef,
+      boundaryStatus: "exact",
+    };
+    const sessionParams = {
+      sessionId,
+      sessionDisplayId: sessionId,
+      hermesSessionId: sessionId,
+      transport: "hermes-tui-gateway-stdio",
+      hermesProviderVersion: "0.21.0",
+      hermesPythonCommand: pythonCommand,
+      hermesSourcePath: sourcePath,
+      hermesHome,
+      profileHostId,
+      profileId,
+      profileBindingId: bindingId,
+      profileOrgId: organization.id,
+      capabilityRevision,
+      cwd: managedCwd,
+      workspaceBindingId: managedCwd,
+    };
+    const runtimeProviderProfile = {
+      runtimeType: "hermes_gateway",
+      cwd: "/historical/hermes/source-checkout",
+      providerVersion: "0.21.0",
+      hermesPythonCommand: pythonCommand,
+      hermesSourcePath: sourcePath,
+      hermesHome,
+    };
+    const createdAt = new Date("2026-10-01T10:00:00.000Z");
+    const spanOpenedAt = new Date("2026-10-01T10:01:00.000Z");
+    const spanClosedAt = new Date("2026-10-01T10:02:00.000Z");
+
+    await e2eDb.update(agents).set({
+      agentRuntimeType: "hermes_gateway",
+      agentRuntimeConfig: {
+        hermesPythonCommand: pythonCommand,
+        hermesSourcePath: sourcePath,
+        hermesHome,
+        providerVersion: "0.21.0",
+      },
+      workspaceKey,
+    }).where(eq(agents.id, agent.id));
+    await e2eDb.insert(chatConversations).values({
+      id: conversationId,
+      orgId: organization.id,
+      title: "Hermes historical source",
+      preferredAgentId: agent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: "local-board",
+      createdAt,
+      updatedAt: createdAt,
+      lastMessageAt: createdAt,
+    });
+    await e2eDb.insert(runtimeBindings).values({
+      id: bindingId,
+      orgId: organization.id,
+      conversationId,
+      principalScopeRef: `org:${organization.id}`,
+      agentId: agent.id,
+      runtimeType: "hermes_gateway",
+      hostId: profileHostId,
+      profileId,
+      workspaceBindingId: managedCwd,
+      capabilityRevision,
+      continuity: "native",
+      currentSegmentId: null,
+      status: "active",
+    });
+    await e2eDb.insert(nativeSegments).values({
+      id: segmentId,
+      orgId: organization.id,
+      bindingId,
+      runtimeType: "hermes_gateway",
+      segmentOrdinal: 0,
+      nativeSessionId: sessionId,
+      rootSessionId: sessionId,
+      providerStateJson: sessionParams,
+      state: "open",
+      sealedAt: null,
+      createdAt: spanOpenedAt,
+      updatedAt: spanOpenedAt,
+    });
+    await e2eDb.update(runtimeBindings).set({ currentSegmentId: segmentId }).where(eq(runtimeBindings.id, bindingId));
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      startedAt: spanOpenedAt,
+      finishedAt: spanClosedAt,
+      exitCode: 0,
+      sessionIdBefore: sessionId,
+      sessionIdAfter: sessionId,
+      sessionParamsBeforeJson: sessionParams,
+      sessionParamsAfterJson: sessionParams,
+      sessionReuseScope: "explicit",
+      chatConversationId: conversationId,
+      contextSnapshot: {
+        transcriptSource: "native",
+        agentRuntimeType: "hermes_gateway",
+        runtimeBindingId: bindingId,
+        runtimeProviderProfile,
+      },
+      createdAt,
+      updatedAt: spanClosedAt,
+    });
+    const [persistedAgent] = await e2eDb.select().from(agents).where(eq(agents.id, agent.id));
+    const [persistedRun] = await e2eDb.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    expect(persistedAgent?.workspaceKey).toBe(workspaceKey);
+    expect(persistedRun?.contextSnapshot).not.toHaveProperty("rudderWorkspace");
+    await e2eDb.insert(runRuntimeSpans).values({
+      id: spanId,
+      orgId: organization.id,
+      runId,
+      bindingId,
+      segmentId,
+      attemptRef: `attempt-${runId}`,
+      ownerToken: `owner-${runId}`,
+      ordinal: 0,
+      selectorJson,
+      state: "sealed",
+      completeness: "complete",
+      writerLeaseReleasedAt: spanClosedAt,
+      openedAt: spanOpenedAt,
+      closedAt: spanClosedAt,
+      updatedAt: spanClosedAt,
+    });
+    await e2eDb.insert(chatMessages).values([
+      {
+        id: userMessageId,
+        orgId: organization.id,
+        conversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Hermes historical question",
+        createdAt: spanOpenedAt,
+        updatedAt: spanOpenedAt,
+      },
+      {
+        id: assistantMessageId,
+        orgId: organization.id,
+        conversationId,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: "Hermes historical answer",
+        replyingAgentId: agent.id,
+        runId,
+        createdAt: spanClosedAt,
+        updatedAt: spanClosedAt,
+      },
+    ]);
+
+    const runHistoryResponse = await page.request.get(
+      `/api/run-intelligence/runs/${runId}/transcript?output=full&order=oldest&turnLimit=50&includeOutput=false&maxChars=4000`,
+    );
+    expect(runHistoryResponse.ok(), await runHistoryResponse.text()).toBe(true);
+    const runHistory = await runHistoryResponse.json() as {
+      source: string;
+      availability: string;
+      completeness: string;
+      entries?: Array<{ entry?: { kind?: string; text?: string } }>;
+    };
+    expect(runHistory, JSON.stringify(runHistory)).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    expect(runHistory.entries?.map(({ entry }) => [entry?.kind, entry?.text])).toEqual([
+      ["user", "Hermes historical question"],
+      ["assistant", "Hermes historical answer"],
+    ]);
+
+    const forkResponse = await page.request.post(`/api/chats/${conversationId}/fork`, {
+      data: { sourceMessageId: assistantMessageId },
+    });
+    expect(forkResponse.status(), await forkResponse.text()).toBe(201);
+    const child = await forkResponse.json() as { id: string };
+    const [alias] = await e2eDb.select().from(runtimeSourceAliases).where(eq(runtimeSourceAliases.conversationId, child.id));
+    expect(alias).toMatchObject({
+      runId,
+      bindingId,
+      segmentId,
+      sourceKind: "chat_fork_native_span",
+      readOnly: true,
+      sourceRangeJson: {
+        sourceRunId: runId,
+        sourceSpanId: spanId,
+        sourceConversationId: conversationId,
+        sourceMessageId: assistantMessageId,
+        targetCopiedMessageId: expect.any(String),
+        selectorJson,
+      },
+    });
+    expect(alias?.contentSha256).toMatch(/^[a-f0-9]{64}$/u);
+    const copiedMessageId = String(alias?.sourceRangeJson.targetCopiedMessageId);
+    const resolvedHistoryResponse = await page.request.get(
+      `/api/chats/${child.id}/messages/${copiedMessageId}/transcript`,
+    );
+    expect(resolvedHistoryResponse.ok(), await resolvedHistoryResponse.text()).toBe(true);
+
+    await e2eDb.update(runRuntimeSpans).set({ completeness: "partial" }).where(eq(runRuntimeSpans.id, spanId));
+    const incompleteResponse = await page.request.get(
+      `/api/chats/${child.id}/messages/${copiedMessageId}/transcript`,
+    );
+    expect(incompleteResponse.status()).toBe(422);
+    await e2eDb.update(runRuntimeSpans).set({ completeness: "complete" }).where(eq(runRuntimeSpans.id, spanId));
+
+    hermesState.messages[sessionId]![1]!.content = "Changed Hermes source answer";
+    await fs.writeFile(hermesStatePath, JSON.stringify(hermesState), "utf8");
+    const mismatchedResponse = await page.request.get(
+      `/api/chats/${child.id}/messages/${copiedMessageId}/transcript`,
+    );
+    expect(mismatchedResponse.status()).toBe(422);
+    expect(await mismatchedResponse.text()).toContain("Native Fork alias content no longer matches its sealed source range");
+  } finally {
+    await fs.rm(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test("forks from an earlier assistant message while a later reply is streaming", async ({ page }) => {

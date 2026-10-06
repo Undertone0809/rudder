@@ -1415,6 +1415,7 @@ function renderChat({
           <ImagePreviewProvider>
             <SidePanelProvider>
               <SidePanelTestContextBinder />
+              <GlobalSidePanelTestTrigger />
               {stableRuntime ? <DesktopBrowserLinkBridge /> : null}
               <Chat />
               <ChatSidePanel
@@ -1459,6 +1460,22 @@ function SidePanelTestContextBinder() {
   }, [contextKey, setContextKey]);
 
   return null;
+}
+
+function GlobalSidePanelTestTrigger() {
+  const sidePanel = useSidePanel();
+  if (sidePanel.open) return null;
+
+  return (
+    <button
+      type="button"
+      data-testid="global-side-panel-trigger"
+      aria-label="Open Side Panel"
+      title="Open Side Panel"
+      className="h-11 w-7"
+      onClick={sidePanel.showPanel}
+    />
+  );
 }
 
 function dispatchPasteFiles(target: Element, files: File[], options: { clipboardFiles?: File[] } = {}) {
@@ -1884,6 +1901,29 @@ describe("Chat mention sources", () => {
 });
 
 describe("Chat Side Panel link handling", () => {
+  it("keeps Side Panel access global and outside the conversation header", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "assistant-panel-placement",
+        role: "assistant",
+        status: "completed",
+        body: "The agent response.",
+      })],
+    };
+    const { container } = renderChat();
+
+    const chatActions = container.querySelector<HTMLElement>("[data-testid='chat-desktop-toolbar-actions']");
+    expect(chatActions).not.toBeNull();
+    expect(chatActions?.querySelector("[data-testid='chat-side-panel-trigger']")).toBeNull();
+    expect(container.querySelector("[data-testid='global-side-panel-trigger']")).not.toBeNull();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='global-side-panel-trigger']")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel']")).not.toBeNull();
+  });
+
   async function openIssueReferenceSidePanel(container: HTMLElement) {
     await act(async () => {
       await Promise.resolve();
@@ -2385,7 +2425,7 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
     const closeItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
-      .find((candidate) => candidate.textContent?.trim() === "Close Side Chat");
+      .find((candidate) => candidate.textContent?.trim() === "End and delete Side Chat");
     expect(closeItem).toBeDefined();
     expect(closeItem?.getAttribute("aria-disabled")).toBe("true");
     const inlineClose = container.querySelector<HTMLButtonElement>("[data-testid='chat-side-panel-tab-close']");
@@ -2452,7 +2492,7 @@ describe("Chat Side Panel link handling", () => {
     });
     const menuItems = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"));
     const moveItem = menuItems.find((candidate) => candidate.textContent?.trim() === "Move to Messenger");
-    const closeItem = menuItems.find((candidate) => candidate.textContent?.trim() === "Close Side Chat");
+    const closeItem = menuItems.find((candidate) => candidate.textContent?.trim() === "End and delete Side Chat");
     expect(closeItem).toBeDefined();
     expect(moveItem?.getAttribute("aria-disabled")).toBe("true");
     expect(closeItem?.getAttribute("aria-disabled")).toBe("true");
@@ -2624,7 +2664,7 @@ describe("Chat Side Panel link handling", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 350));
     });
     expect(document.querySelector<HTMLElement>("[role='tooltip']")?.textContent).toContain(
-      "This Side Chat can no longer be moved. Close it instead.",
+      "This Side Chat can no longer be moved. End and delete it instead.",
     );
   });
 
@@ -2746,7 +2786,7 @@ describe("Chat Side Panel link handling", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 350));
     });
     expect(document.querySelector<HTMLElement>("[role='tooltip']")?.textContent).toContain(
-      "This Side Chat can no longer be moved. Close it instead.",
+      "This Side Chat can no longer be moved. End and delete it instead.",
     );
   });
 
@@ -4576,12 +4616,12 @@ describe("Chat Side Panel link handling", () => {
       container.querySelector<HTMLButtonElement>("[data-testid='chat-side-panel-collapse']")?.click();
       await Promise.resolve();
     });
-    expect(container.querySelector("[data-testid='chat-side-panel-trigger']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='global-side-panel-trigger']")).not.toBeNull();
     expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
     expect(container.querySelector(`webview[data-browser-tab-id="${secondTabId}"]`)).toBe(secondWebview);
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>("[data-testid='chat-side-panel-trigger']")?.click();
+      container.querySelector<HTMLButtonElement>("[data-testid='global-side-panel-trigger']")?.click();
       await Promise.resolve();
     });
     expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(secondWebview);
@@ -5006,7 +5046,7 @@ describe("Chat Side Panel link handling", () => {
     };
 
     const { container } = renderChat();
-    const sidePanelTrigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-side-panel-trigger"]');
+    const sidePanelTrigger = container.querySelector<HTMLButtonElement>('[data-testid="global-side-panel-trigger"]');
     expect(sidePanelTrigger).not.toBeNull();
     expect(sidePanelTrigger?.textContent?.trim()).toBe("");
     expect(sidePanelTrigger?.className).toContain("w-7");
@@ -5034,7 +5074,7 @@ describe("Chat Side Panel link handling", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 220));
     });
     expect(document.body.querySelector("[data-testid='chat-side-panel']")).toBeNull();
-    expect(sidePanelTrigger?.getAttribute("aria-pressed")).toBe("false");
+    expect(container.querySelector('[data-testid="global-side-panel-trigger"]')).not.toBeNull();
     expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();
   });
 
@@ -6787,7 +6827,7 @@ describe("Chat streaming controls", () => {
     expect(mockState.pushToast).not.toHaveBeenCalled();
   });
 
-  it("keeps accepted Steer feedback at its Work Transcript timestamp when the response completes", async () => {
+  it("keeps accepted Steer feedback out of the Work Transcript while the response completes", async () => {
     const originalUserMessage = message({
       id: "user-message-before-steer",
       body: "Please draft a plan.",
@@ -6868,23 +6908,18 @@ describe("Chat streaming controls", () => {
     const { container, rerender } = renderChat();
     const content = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']");
     expect(content).not.toBeNull();
-    const assertSteerIsEmbeddedAtItsTranscriptTime = async () => {
+    const assertSteerIsNotRepeatedInTheProcess = async () => {
       await vi.waitFor(() => {
         expect(content!.textContent).toContain(activeAssistantMessage.body);
       });
-      const text = content!.textContent!;
-      const embeddedSteer = container.querySelector<HTMLElement>("[data-testid='chat-transcript-steer-message']");
-      expect(embeddedSteer).not.toBeNull();
-      expect(embeddedSteer!.textContent).toContain(steerUserMessage.body);
-      expect(embeddedSteer!.closest("[data-testid='chat-transcript-item']")?.firstElementChild?.classList)
-        .not.toContain("max-w-3xl");
-      expect([...container.querySelectorAll("[data-testid='chat-user-message-bubble']")]
-        .filter((bubble) => bubble.textContent?.includes(steerUserMessage.body))).toHaveLength(1);
-      expect(text.indexOf(transcriptBeforeSteer.text)).toBeLessThan(text.indexOf(steerUserMessage.body));
-      expect(text.indexOf(steerUserMessage.body)).toBeLessThan(text.indexOf(transcriptAfterSteer.text));
-      expect(text.indexOf(transcriptAfterSteer.text)).toBeLessThan(text.indexOf(activeAssistantMessage.body));
+      const process = container.querySelector<HTMLElement>("[data-testid='chat-transcript-content']");
+      expect(process).not.toBeNull();
+      expect(process!.textContent).toContain(transcriptBeforeSteer.text);
+      expect(process!.textContent).toContain(transcriptAfterSteer.text);
+      expect(process!.textContent).not.toContain(steerUserMessage.body);
+      expect(process!.querySelector("[data-testid='chat-transcript-steer-message']")).toBeNull();
     };
-    await assertSteerIsEmbeddedAtItsTranscriptTime();
+    await assertSteerIsNotRepeatedInTheProcess();
 
     mockState.messagesByChatId = {
       "chat-1": [
@@ -6897,10 +6932,10 @@ describe("Chat streaming controls", () => {
     mockState.streamDrafts = {};
     rerender();
 
-    await assertSteerIsEmbeddedAtItsTranscriptTime();
+    await assertSteerIsNotRepeatedInTheProcess();
   });
 
-  it("keeps a Steer before the first runtime event visible when the completed transcript is empty", () => {
+  it("does not create a process transcript from Steer input when the completed transcript is empty", () => {
     const originalUserMessage = message({
       id: "user-message-before-empty-transcript",
       body: "Start without runtime evidence.",
@@ -6940,16 +6975,13 @@ describe("Chat streaming controls", () => {
     };
 
     const { container } = renderChat();
-    const text = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']")!.textContent!;
-
-    expect(container.querySelector("[data-testid='chat-transcript-steer-message']")?.textContent)
-      .toContain(steerUserMessage.body);
-    expect(text.indexOf(steerUserMessage.body)).toBeLessThan(text.indexOf(assistantMessage.body));
-    expect([...container.querySelectorAll("[data-testid='chat-user-message-bubble']")]
-      .filter((bubble) => bubble.textContent?.includes(steerUserMessage.body))).toHaveLength(1);
+    expect(container.querySelector("[data-testid='chat-transcript-item']")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-messages-content']")?.textContent)
+      .toContain(assistantMessage.body);
+    expect(container.querySelector("[data-testid='chat-transcript-steer-message']")).toBeNull();
   });
 
-  it("keeps accepted Steer feedback visible while an edited message response is active", async () => {
+  it("keeps edited-response reasoning visible without repeating accepted Steer input", async () => {
     const editedUserMessage = message({
       id: "edited-user-message",
       body: "Edited plan request",
@@ -7019,12 +7051,12 @@ describe("Chat streaming controls", () => {
     await vi.waitFor(() => {
       expect(content!.textContent).toContain("Edited response still in progress");
     });
-    const text = content!.textContent!;
-    expect(container.querySelector("[data-testid='chat-transcript-steer-message']")?.textContent)
-      .toContain(steerUserMessage.body);
-    expect(text.indexOf("Edited reasoning before Steer")).toBeLessThan(text.indexOf(steerUserMessage.body));
-    expect(text.indexOf(steerUserMessage.body)).toBeLessThan(text.indexOf("Edited reasoning after Steer"));
-    expect(text.indexOf("Edited reasoning after Steer")).toBeLessThan(text.indexOf("Edited response still in progress"));
+    const process = container.querySelector<HTMLElement>("[data-testid='chat-transcript-content']");
+    expect(process).not.toBeNull();
+    expect(process!.textContent).toContain("Edited reasoning before Steer");
+    expect(process!.textContent).toContain("Edited reasoning after Steer");
+    expect(process!.textContent).not.toContain(steerUserMessage.body);
+    expect(process!.querySelector("[data-testid='chat-transcript-steer-message']")).toBeNull();
   });
 
   it("locks Steer immediately and applies the durable response item without waiting for refetch", async () => {
@@ -7731,7 +7763,7 @@ describe("Feishu-backed chat controls", () => {
     };
 
     const { container } = renderChat();
-    const sidePanelTrigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-side-panel-trigger"]');
+    const sidePanelTrigger = container.querySelector<HTMLButtonElement>('[data-testid="global-side-panel-trigger"]');
     expect(sidePanelTrigger).not.toBeNull();
 
     await act(async () => {

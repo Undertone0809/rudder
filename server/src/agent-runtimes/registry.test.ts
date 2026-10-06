@@ -26,4 +26,23 @@ describe("server agent runtime registry", () => {
     expect(AGENT_RUNTIME_TYPES).toContain("openclaw_gateway");
     expect(getServerAdapter("openclaw_gateway").type).toBe("openclaw_gateway");
   });
+
+  it("fails closed for legacy Hermes execution while retaining its historical codec", async () => {
+    const adapter = getServerAdapter("hermes_local");
+
+    expect(adapter.type).toBe("hermes_local");
+    expect(adapter.sessionCodec).toBeDefined();
+    expect(adapter.supportsLocalAgentJwt).toBe(false);
+    await expect(adapter.execute({} as never)).resolves.toMatchObject({
+      exitCode: 1,
+      errorCode: "hermes_local_migration_required",
+      nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      errorMessage: expect.stringContaining("hermes_gateway"),
+    });
+    await expect(adapter.testEnvironment({ agentRuntimeType: "hermes_local" } as never)).resolves.toMatchObject({
+      agentRuntimeType: "hermes_local",
+      status: "fail",
+      checks: [{ code: "hermes_local_migration_required", level: "error" }],
+    });
+  });
 });

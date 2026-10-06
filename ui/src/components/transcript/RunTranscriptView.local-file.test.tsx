@@ -78,6 +78,15 @@ const roots: Root[] = [];
 const restoreFns: Array<() => void> = [];
 const localSkillFilePath = "/tmp/org-skills/review-helper/references/guide.md";
 
+function directorySelectionFile(content: string, name: string) {
+  const file = new File([content], name, { type: "text/markdown" });
+  Object.defineProperty(file, "webkitRelativePath", {
+    configurable: true,
+    value: `org-skills/review-helper/references/${name}`,
+  });
+  return file;
+}
+
 function LocalFilePreviewFlow({
   onOpenFile,
 }: {
@@ -156,7 +165,7 @@ describe("RunTranscriptView local-file links", () => {
     expect(fileInput).not.toBeNull();
     Object.defineProperty(fileInput, "files", {
       configurable: true,
-      value: [new File(["# Local Skill guide"], "guide.md", { type: "text/markdown" })],
+      value: [directorySelectionFile("# Local Skill guide", "guide.md")],
     });
 
     await act(async () => {
@@ -188,7 +197,7 @@ describe("RunTranscriptView local-file links", () => {
     expect(fileInput).not.toBeNull();
     Object.defineProperty(fileInput, "files", {
       configurable: true,
-      value: [new File(["wrong file"], "other.md", { type: "text/markdown" })],
+      value: [directorySelectionFile("wrong file", "other.md")],
     });
 
     await act(async () => {
@@ -197,6 +206,6 @@ describe("RunTranscriptView local-file links", () => {
     });
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("guide.md");
-    expect(container.querySelector("button")?.textContent).toContain("Choose local file");
+    expect(container.querySelector("button")?.textContent).toContain("Choose workspace folder");
   });
 });

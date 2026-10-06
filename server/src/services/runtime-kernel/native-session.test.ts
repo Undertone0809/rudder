@@ -339,4 +339,9 @@ describe("native session runtime identity", () => {
     expect(runtimeTypeFromSelector({ kind: "native_execution", runtimeType: "custom_local" })).toBe("custom_local");
     expect(runtimeTypeFromSelector({ kind: "pending" })).toBeNull();
   });
+
+  it("preserves the legacy Hermes runtime identity when decoding historical selectors", () => {
+    expect(runtimeTypeFromSelector({ kind: "hermes_execution", runtimeType: "hermes_local" }))
+      .toBe("hermes_local");
+  });
 });

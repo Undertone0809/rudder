@@ -41,6 +41,7 @@ const existingOrganization: Organization = {
 vi.mock("@/api/agents", () => ({
   agentsApi: {
     adapterModels: vi.fn(),
+    adapterAvailability: vi.fn(),
     suggestName: vi.fn(),
     testEnvironment: vi.fn(),
     create: vi.fn(),
@@ -200,6 +201,16 @@ describe("OnboardingWizard runtime config", () => {
       { id: "kimi-coding/kimi-for-coding", label: "Kimi for Coding" },
       { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
     ]);
+    vi.mocked(agentsApi.adapterAvailability).mockResolvedValue([{
+      agentRuntimeType: "hermes_gateway",
+      status: "available",
+      command: "hermes",
+      resolvedCommand: "/opt/hermes/bin/hermes",
+      hermesLocalBackend: "acp",
+      hermesProductRpcCapabilityGap: "yaml_missing",
+      message: "Hermes local provider setup is available.",
+      checkedAt: "2026-06-18T00:00:00.000Z",
+    }]);
     vi.mocked(agentsApi.suggestName).mockResolvedValue({ name: "DeepSeek Agent" });
     vi.mocked(agentsApi.testEnvironment).mockResolvedValue({
       agentRuntimeType: "pi_local",
@@ -434,5 +445,151 @@ describe("OnboardingWizard runtime config", () => {
     }));
     const createdPayload = vi.mocked(agentsApi.create).mock.calls[0]?.[1];
     expect(JSON.stringify(createdPayload)).not.toContain("test-deepseek-key");
+  }, 15_000);
+
+  it("creates Hermes from detected local setup without asking for runtime or provider details", async () => {
+    const { OnboardingWizard } = await import("./OnboardingWizard");
+    await render(<OnboardingWizard />);
+    const surface = document.body;
+
+    await vi.waitFor(() => {
+      expect(surface.textContent).toContain("Create your first agent");
+    });
+    await act(async () => {
+      click(findButton(surface, "More Agent Runtime Types"));
+      await flush();
+    });
+    await act(async () => {
+      click(findButton(surface, "Hermes"));
+      await flush();
+    });
+
+    await vi.waitFor(() => {
+      expect(agentsApi.adapterAvailability).toHaveBeenCalledWith("org-1");
+      expect(surface.textContent).toContain(
+        "Hermes was found on this machine. Rudder will use its existing provider setup.",
+      );
+    });
+    await vi.waitFor(() => {
+      expect(surface.querySelector<HTMLInputElement>("input[placeholder='Agent name']")?.value)
+        .toBe("DeepSeek Agent");
+    });
+
+    expect(surface.textContent).not.toMatch(/Hermes API Server|API Server key|Extra args|Environment variables|Paste .*API_KEY/i);
+    expect(surface.textContent).not.toContain("Hermes (legacy local)");
+    expect(surface.querySelector("[data-testid='onboarding-hermes-create-disclosure']")?.textContent)
+      .toContain("use the Hermes and provider setup on this machine and run with the access permissions of the current user on this machine");
+    const createButton = findButton(surface, "Create");
+    expect(createButton.disabled).toBe(false);
+
+    await act(async () => {
+      click(createButton);
+      await flush();
+    });
+
+    await vi.waitFor(() => {
+      expect(agentsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
+        agentRuntimeType: "hermes_gateway",
+        agentRuntimeConfig: expect.objectContaining({
+          hermesConnectionMode: "local",
+          hermesChatBackend: "acp",
+          hermesProductRpcCapabilityGap: "yaml_missing",
+          hermesAcpCommand: "/opt/hermes/bin/hermes",
+        }),
+      }));
+    });
+    const createdConfig = vi.mocked(agentsApi.create).mock.calls[0]?.[1]
+      .agentRuntimeConfig as Record<string, unknown>;
+    for (const key of ["url", "apiKey", "model", "command", "args", "env"]) {
+      expect(createdConfig).not.toHaveProperty(key);
+    }
+    expect(agentsApi.testEnvironment).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it("blocks first-agent creation when local Hermes detection reports setup unavailable", async () => {
+    vi.mocked(agentsApi.adapterAvailability).mockResolvedValue([{
+      agentRuntimeType: "hermes_gateway",
+      status: "unavailable",
+      command: "hermes",
+      resolvedCommand: null,
+      message: "Hermes local provider setup is unavailable.",
+      checkedAt: "2026-06-18T00:00:00.000Z",
+    }]);
+    const { OnboardingWizard } = await import("./OnboardingWizard");
+    await render(<OnboardingWizard />);
+    const surface = document.body;
+
+    await act(async () => {
+      click(findButton(surface, "More Agent Runtime Types"));
+      await flush();
+    });
+    await act(async () => {
+      click(findButton(surface, "Hermes"));
+      await flush();
+    });
+
+    await vi.waitFor(() => {
+      expect(surface.textContent).toContain(
+        "Hermes isn't ready on this machine yet. Install or finish setting it up, then try again.",
+      );
+    });
+    expect(findButton(surface, "Create").disabled).toBe(true);
+    expect(findButton(surface, "Retry").disabled).toBe(false);
+    expect(surface.textContent).not.toContain("Hermes (legacy local)");
+    expect(agentsApi.create).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it("retries rejected Hermes detection and enables Create only after fresh availability", async () => {
+    vi.mocked(agentsApi.adapterAvailability)
+      .mockRejectedValueOnce(new Error("API Server key and provider details"))
+      .mockResolvedValueOnce([{
+        agentRuntimeType: "hermes_gateway",
+        status: "available",
+        command: "hermes",
+        resolvedCommand: "/opt/hermes/bin/hermes",
+        hermesLocalBackend: "acp",
+        message: "Hermes local provider setup is available.",
+        checkedAt: "2026-06-18T00:00:00.000Z",
+      }]);
+
+    const { OnboardingWizard } = await import("./OnboardingWizard");
+    await render(<OnboardingWizard />);
+    const surface = document.body;
+
+    await act(async () => {
+      click(findButton(surface, "More Agent Runtime Types"));
+      await flush();
+    });
+    await act(async () => {
+      click(findButton(surface, "Hermes"));
+      await flush();
+    });
+
+    await vi.waitFor(() => {
+      expect(surface.textContent).toContain(
+        "Couldn't check Hermes on this machine. Restart Rudder, then retry.",
+      );
+    });
+    expect(findButton(surface, "Create").disabled).toBe(true);
+    expect(findButton(surface, "Retry").disabled).toBe(false);
+    expect(surface.textContent).not.toContain("API Server key and provider details");
+    expect(surface.textContent).not.toMatch(/Hermes API Server|API Server key|Extra args|Environment variables|Paste .*API_KEY/i);
+
+    await act(async () => {
+      click(findButton(surface, "Retry"));
+      await flush();
+    });
+
+    await vi.waitFor(() => {
+      expect(agentsApi.adapterAvailability).toHaveBeenCalledTimes(2);
+      expect(surface.textContent).toContain(
+        "Hermes was found on this machine. Rudder will use its existing provider setup.",
+      );
+    });
+    expect(findButton(surface, "Create").disabled).toBe(false);
+    expect(agentsApi.adapterModels).not.toHaveBeenCalledWith("org-1", "hermes_gateway");
+    expect(agentsApi.testEnvironment).not.toHaveBeenCalled();
+    expect(agentsApi.create).not.toHaveBeenCalled();
+    expect(secretsApi.create).not.toHaveBeenCalled();
   }, 15_000);
 });

@@ -79,13 +79,14 @@ export function clearPendingChatSendMutation(
 
 export function preparePendingChatSendMutation(input: {
   orgId: string;
-  conversationId: string;
+  conversationId: string | null;
   editUserMessageId?: string | null;
   body: string;
   files: readonly Pick<File, "name" | "size" | "type" | "lastModified">[];
   inlineAnnotations: unknown;
   modelOverride?: string | null;
   effortOverride?: string | null;
+  mutationContext?: unknown;
 }) {
   const mutationFingerprint = JSON.stringify({
     body: input.body,
@@ -99,6 +100,7 @@ export function preparePendingChatSendMutation(input: {
     inlineAnnotations: input.inlineAnnotations,
     modelOverride: input.modelOverride ?? null,
     effortOverride: input.effortOverride ?? null,
+    ...(input.mutationContext === undefined ? {} : { mutationContext: input.mutationContext }),
   });
   const retainedMutation = readPendingChatSendMutation(
     input.orgId,

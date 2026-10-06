@@ -223,7 +223,7 @@ import {
   useChatComposerPasteAttachments,
 } from "./Chat.file-drop";
 import { ChatPendingFirstTurn, firstChatTurnRecoveryToast } from "./Chat.first-turn";
-import { useChatInitialBottomScroll } from "./Chat.initial-scroll";
+import { useChatInitialBottomScroll, useChatStreamBottomScroll } from "./Chat.initial-scroll";
 import { AskUserPanel, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import {
   ChatAgentMenuContent,
@@ -242,12 +242,14 @@ import { ChatSideChatSlashCommandMenu } from "./Chat.side-chat-slash-command";
 import { ChatSidePanelActions } from "./Chat.side-panel-actions";
 import {
   buildChatTimelineRows,
+  buildFailedChatRetryInput,
   chatAgentUsesCodexAppServer,
   chatAssistantMessageRowKey,
   chatAssistantStreamRowKey,
   chatStreamDraftAssistantMessage,
   chatStreamingAssistantBody,
   rememberChatAssistantStreamRowIdentity,
+  shouldShowOptimisticChatUserMessage,
 } from "./Chat.timeline";
 import {
   chatRunAnnotationContextForMessage,
@@ -267,6 +269,7 @@ function chatAssistantStreamRowIdentity(stream: ChatStreamDraft) {
   return {
     streamKey: stream.streamKey,
     generationId: stream.generationId,
+    chatTurnId: stream.chatTurnId,
     turnVariant: stream.turnVariant,
   };
 }
@@ -1457,6 +1460,26 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           setResponseAnnotationsExpanded(false);
           responseAnnotationEditor.close();
         }
+        const firstTurnContextLinks = buildDraftChatContextLinks(
+          draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
+          draftIssueContextId,
+        );
+        const firstTurnMutation = preparePendingChatSendMutation({
+          orgId: selectedOrganizationId,
+          conversationId: null,
+          body,
+          files: filesToUpload,
+          inlineAnnotations: serializedAnnotations.inlineAnnotations,
+          modelOverride: draftRuntimeOverrides.modelOverride,
+          effortOverride: draftRuntimeOverrides.effortOverride,
+          mutationContext: {
+            preferredAgentId: selectedDraftAgentId,
+            groupId: pendingGroupId || null,
+            issueCreationMode: "manual_approval",
+            planMode: draftPlanMode,
+            contextLinks: firstTurnContextLinks,
+          },
+        });
         await chatsApi.sendFirstMessageStream(selectedOrganizationId, body, {
           preferredAgentId: selectedDraftAgentId,
           groupId: pendingGroupId || undefined,
@@ -1464,10 +1487,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           effortOverride: draftRuntimeOverrides.effortOverride,
           issueCreationMode: "manual_approval",
           planMode: draftPlanMode,
-          contextLinks: buildDraftChatContextLinks(
-            draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
-            draftIssueContextId,
-          ),
+          contextLinks: firstTurnContextLinks,
+          clientMutationId: firstTurnMutation.clientMutationId,
           signal: abortController.signal,
           files: filesToUpload,
           inlineAnnotations: serializedAnnotations.inlineAnnotations,
@@ -1477,6 +1498,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 throw new Error("First chat acknowledgement did not include the accepted conversation");
               }
               userMessageAcknowledged = true;
+              firstTurnMutation.settle();
               const ownsFirstTurn = firstTurnStore.owns(firstTurnOwner, streamKey);
               conversation = event.conversation;
               acceptedConversation.current = event.conversation;
@@ -1656,9 +1678,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         streamKey,
         userBody: body,
         userFiles: regularFilesToUpload,
-        userCreatedAt: startedAt,
-        userMessageId: null,
-        chatTurnId: null,
+        userCreatedAt: editTargetMessage ? new Date(editTargetMessage.createdAt) : startedAt,
+        userMessageId: editTargetMessage?.id ?? null,
+        chatTurnId: editTargetMessage?.chatTurnId ?? null,
         turnVariant: editTargetMessage ? editTargetMessage.turnVariant + 1 : 0,
         editedFromCreatedAt: editTargetMessage ? new Date(editTargetMessage.createdAt) : null,
         body: "",
@@ -2386,9 +2408,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     hasMessages: rawMessages.length > 0,
     hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight,
   });
-  const activeEditCutoffMs = activeStream?.editedFromCreatedAt
-    ? activeStream.editedFromCreatedAt.getTime()
-    : null;
   const activeAssistantMessageId = activeChatStreamAssistantMessageId(rawMessages, activeStream);
   useChatStreamTerminalReconciliation({
     orgId: selectedOrganizationId,
@@ -2547,6 +2566,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     scrolledConversationRef: initialScrolledConversationRef,
     scrollToBottom: scrollChatMessagesToBottom,
   });
+  useChatStreamBottomScroll({
+    conversationId: selectedConversation?.id ?? null,
+    streamKey: activeStream?.streamKey ?? null,
+    scrollElementRef: chatMessagesScrollElementRef,
+    scrollToBottom: scrollChatMessagesToBottom,
+  });
   useEffect(() => { if (!conversationId || !pendingTargetMessageId || showMessagesLoading) return; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; const target = findChatMessageElement(scrollElement, pendingTargetMessageId); if (!target) return; revealChatMessageElement(target); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("messageId"); nextSearch.delete("targetMessageId"); navigate({
         pathname: chatConversationPath(conversationId),
         search: nextSearch.toString() ? `?${nextSearch.toString()}` : "",
@@ -2568,10 +2593,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryClient,
     selectedConversation,
     selectedOrganizationId,
-  ]); const showActiveStreamDraft = Boolean(activeStream && !activeStreamPreviewHidden); const showOptimisticUserMessage = Boolean(
-    activeStream && (
-      activeEditCutoffMs !== null
-      || !activeStream.userMessageId || !rawMessages.some((message) => message.id === activeStream.userMessageId) ), );
+  ]); const showActiveStreamDraft = Boolean(activeStream && !activeStreamPreviewHidden); const showOptimisticUserMessage = shouldShowOptimisticChatUserMessage(
+    activeStream,
+    rawMessages,
+  );
   const nativeSteerAnchors = useMemo(
     () => visibleMessages
       .map(nativeSteerTranscriptAnchor)
@@ -2916,13 +2941,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           title: "Retry unavailable",
           body: "The original user message for this failed reply could not be found.", tone: "error", });
         return; }
-      void sendMessage({
-        bodyOverride: sourceUserMessage.body,
-        filesOverride: [],
-        conversationOverride: selectedConversation,
-        editUserMessageIdOverride: sourceUserMessage.id,
-        editIntent: "retry",
-      }); }, [pushToast, rawMessages, selectedConversation, sendMessage], ); const refreshAssistantMessage = useCallback(
+      void sendMessage(buildFailedChatRetryInput(sourceUserMessage, selectedConversation)); }, [pushToast, rawMessages, selectedConversation, sendMessage], ); const refreshAssistantMessage = useCallback(
     (message: ChatMessage) => { if (!selectedConversation) return; if (!canRefreshAssistantChatMessage(message)) return; const sourceUserMessage = findRetrySourceUserMessage(rawMessages, message);
       if (selectedConversationHasActiveReply) {
         pushToast({
@@ -3604,12 +3623,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     />
                   ) : null}
                   <ChatSidePanelActions
-                    isMobile={isMobile}
-                    sidePanelOpen={sidePanelOpen}
-                    hasSideChatTargets={sidePanelTabs.some((target) => target.kind === "side_chat")}
                     organizationId={selectedOrganizationId}
                     sourceConversationId={selectedConversation?.id ?? null}
-                    onOpenPanel={() => showSidePanelForContext(resolveCurrentSidePanelChatContextKey())}
                     onOpenSideChat={(target) => openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), target)}
                   />
                   <DropdownMenu>
@@ -4069,7 +4084,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     localizeText={localizeChatProcessText}
                                     onLoad={() => void loadMessageTranscript(message.conversationId, message.id, message)}
                                   /> ) : null}
-                                {renderChatRunTranscriptContinuation(message, messageCanShowProcess, readerTranscriptNavigation, readerTranscriptState)}
                                 <ChatMessageItem
                                   key={assistantRowKey}
                                   localizeText={localizeChatProcessText}
@@ -4133,7 +4147,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   } : null}
                                   answered={activeStreamUserTurnVisible || isAskUserMessageAnswered(message, visibleMessages)}
                                   askUserAnswer={askUserAnswerFromMessage(message, visibleMessages)}
-                                  animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); }}
+                                  animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} />
+                                {renderChatRunTranscriptContinuation(message, messageCanShowProcess, readerTranscriptNavigation, readerTranscriptState)}
+                              </Fragment> ); }}
                           </VirtualizedActivityTimeline> </>
                       )} </div> </div> </div> </div>
                 {runtimeSensitiveInputRequest ? (

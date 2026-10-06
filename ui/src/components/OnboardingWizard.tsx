@@ -296,8 +296,33 @@ export function OnboardingWizard() {
       ? queryKeys.agents.adapterModels(createdCompanyId, agentRuntimeType)
       : ["agents", "none", "adapter-models", agentRuntimeType],
     queryFn: () => agentsApi.adapterModels(createdCompanyId!, agentRuntimeType),
-    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 2
+    enabled:
+      Boolean(createdCompanyId) &&
+      effectiveOnboardingOpen &&
+      step === 2 &&
+      agentRuntimeType !== "hermes_gateway"
   });
+  const {
+    data: adapterAvailability,
+    isPending: adapterAvailabilityPending,
+    isFetching: adapterAvailabilityFetching,
+    isError: adapterAvailabilityError,
+    refetch: refetchAdapterAvailability,
+  } = useQuery({
+    queryKey: createdCompanyId
+      ? queryKeys.agents.adapterAvailability(createdCompanyId)
+      : ["agents", "none", "adapter-availability"],
+    queryFn: () => agentsApi.adapterAvailability(createdCompanyId!),
+    enabled: Boolean(
+      createdCompanyId
+      && effectiveOnboardingOpen
+      && step === 2
+      && agentRuntimeType === "hermes_gateway"
+    ),
+  });
+  const hermesAvailability = adapterAvailability?.find(
+    (item) => item.agentRuntimeType === "hermes_gateway",
+  );
   const { data: nameSuggestion } = useQuery({
     queryKey: createdCompanyId
       ? queryKeys.agents.nameSuggestion(createdCompanyId)
@@ -320,6 +345,15 @@ export function OnboardingWizard() {
     agentRuntimeType === "opencode_local" ||
     agentRuntimeType === "pi_local" ||
     agentRuntimeType === "cursor";
+  const isLocalHermes = agentRuntimeType === "hermes_gateway";
+  const hermesDetectionFailed = !adapterAvailabilityFetching && (
+    adapterAvailabilityError || (!adapterAvailabilityPending && !hermesAvailability)
+  );
+  const hermesDetectionBlocked =
+    adapterAvailabilityPending ||
+    adapterAvailabilityFetching ||
+    hermesDetectionFailed ||
+    hermesAvailability?.status !== "available";
   const effectiveAdapterCommand =
     command.trim() ||
     (agentRuntimeType === "codex_local"
@@ -492,6 +526,18 @@ export function OnboardingWizard() {
           : defaultCreateValues.dangerouslyBypassSandbox,
       envBindings,
     });
+    if (isLocalHermes) {
+      config.hermesConnectionMode = "local";
+      if (hermesAvailability?.hermesLocalBackend) {
+        config.hermesChatBackend = hermesAvailability.hermesLocalBackend;
+      }
+      if (hermesAvailability?.hermesProductRpcCapabilityGap) {
+        config.hermesProductRpcCapabilityGap = hermesAvailability.hermesProductRpcCapabilityGap;
+      }
+      if (hermesAvailability?.resolvedCommand) {
+        config.hermesAcpCommand = hermesAvailability.resolvedCommand;
+      }
+    }
     if (agentRuntimeType === "claude_local" && forceUnsetAnthropicApiKey) {
       const env =
         typeof config.env === "object" &&
@@ -649,6 +695,14 @@ export function OnboardingWizard() {
       const trimmedAgentName = agentName.trim();
       if (!trimmedAgentName) {
         setError("Agent name is required.");
+        return;
+      }
+      if (isLocalHermes && hermesDetectionBlocked) {
+        setError(hermesDetectionFailed
+          ? "Couldn't check Hermes on this machine. Restart Rudder, then retry."
+          : adapterAvailabilityPending || adapterAvailabilityFetching
+            ? "Still checking for Hermes on this machine. Try again once it is ready."
+            : "Hermes isn't ready on this machine yet. Install or finish setting it up, then try again.");
         return;
       }
       if (requiresProviderModel) {
@@ -975,6 +1029,12 @@ export function OnboardingWizard() {
                             desc: "Local Cursor agent"
                           },
                           {
+                            value: "hermes_gateway" as const,
+                            label: "Hermes",
+                            icon: Bot,
+                            desc: "Use the Hermes installation and provider setup on this machine"
+                          },
+                          {
                             value: "openclaw_gateway" as const,
                             label: "OpenClaw Gateway",
                             icon: Bot,
@@ -1004,6 +1064,45 @@ export function OnboardingWizard() {
                                 : opt.desc} </span> </button>
                         ))} </div>
                     )} </div>
+                  {isLocalHermes && (
+                    <div
+                      data-testid="onboarding-hermes-availability"
+                      role={hermesDetectionFailed || hermesAvailability?.status === "unavailable" ? "alert" : "status"}
+                      className={hermesDetectionFailed || hermesAvailability?.status === "unavailable"
+                        ? "rounded-md border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
+                        : "rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"}
+                    >
+                      {adapterAvailabilityPending || adapterAvailabilityFetching
+                        ? "Checking for Hermes on this machine…"
+                        : hermesDetectionFailed
+                          ? <div className="flex items-center justify-between gap-3">
+                              <span>Couldn't check Hermes on this machine. Restart Rudder, then retry.</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={adapterAvailabilityFetching}
+                                onClick={() => { void refetchAdapterAvailability(); }}
+                              >
+                                Retry
+                              </Button>
+                            </div>
+                        : hermesAvailability?.status === "available"
+                          ? "Hermes was found on this machine. Rudder will use its existing provider setup."
+                          : <div className="flex items-center justify-between gap-3">
+                              <span>Hermes isn't ready on this machine yet. Install or finish setting it up, then try again.</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={adapterAvailabilityFetching}
+                                onClick={() => { void refetchAdapterAvailability(); }}
+                              >
+                                Retry
+                              </Button>
+                            </div>}
+                    </div>
+                  )}
                   {(agentRuntimeType === "claude_local" ||
                     agentRuntimeType === "codex_local" ||
                     agentRuntimeType === "opencode_local" ||
@@ -1151,6 +1250,14 @@ export function OnboardingWizard() {
                         } value={url} onChange={(e) => setUrl(e.target.value)} /> </div>
                   )} </div>
               )}
+              {isLocalHermes && (
+                <p
+                  data-testid="onboarding-hermes-create-disclosure"
+                  className="mt-4 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+                >
+                  This agent will use the Hermes and provider setup on this machine and run with the access permissions of the current user on this machine.
+                </p>
+              )}
               {creationPhase && (
                 <OnboardingCreationProgress phase={creationPhase} />
               )}
@@ -1183,7 +1290,11 @@ export function OnboardingWizard() {
                     </Button>
                   )}
                   {step === 2 && (
-                    <Button size="sm" disabled={loading || adapterEnvLoading} onClick={handleStep2Next} >
+                    <Button
+                      size="sm"
+                      disabled={loading || adapterEnvLoading || (isLocalHermes && hermesDetectionBlocked)}
+                      onClick={handleStep2Next}
+                    >
                       {loading ? (
                         <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                       ) : (

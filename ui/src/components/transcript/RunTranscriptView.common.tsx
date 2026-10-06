@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { stripBenignStderr } from "../../lib/benign-stderr";
+import { isNativeSteerTranscriptEntry } from "../../lib/chat-stream-state";
 import { cn } from "../../lib/utils";
 import { type MarkdownLinkClickHandler } from "../MarkdownBody";
 
@@ -626,17 +627,151 @@ export function isRudderInjectedAgentInstructionText(text: string): boolean {
     || (
     normalized.includes("your home directory is $agent_home")
     && normalized.includes("use these paths consistently")
+  );
+}
+
+function isRudderFinalResultReminderText(text: string): boolean {
+  const normalized = compactWhitespace(text).toLowerCase();
+  return /^final rudder result reminder: for an ordinary message reply, the native runtime final message is authoritative and must contain only the final answer body\. only use [a-z0-9_-]+ plus json when the result kind is ask_user, issue_proposal, operation_proposal, or automation_create\. do not write progress text after the final message or after the structured json object\.$/u.test(normalized);
+}
+
+export function isRudderEchoedStructuredConversationInput(text: string): boolean {
+  const trimmed = text.trimStart().replace(/^(?:```(?:json)?\s*)/iu, "");
+  const prefix = trimmed.match(/^[`"'“”‘’]*conversation input\s*:\s*/iu);
+  if (!prefix) return false;
+
+  const payload = trimmed.slice(prefix[0].length).trim()
+    .replace(/^```(?:json)?\s*/iu, "")
+    .replace(/\s*```\s*$/u, "")
+    .trim();
+  if (!payload) return false;
+
+  let parsed: unknown;
+  let trailingText = "";
+  try {
+    parsed = JSON.parse(payload) as unknown;
+  } catch {
+    const jsonValue = firstBalancedJsonObject(payload) ?? firstJsonStringValue(payload);
+    if (!jsonValue) return false;
+    const objectStart = payload.indexOf(jsonValue);
+    trailingText = payload.slice(objectStart + jsonValue.length).trim();
+    try {
+      parsed = JSON.parse(jsonValue) as unknown;
+    } catch {
+      return false;
+    }
+  }
+  // A native prompt echo may append Rudder's fixed result-protocol reminder.
+  // Arbitrary prose after a schema-shaped object is not part of that envelope:
+  // keep it visible so an agent explanation is not mistaken for private input.
+  if (trailingText && !isRudderFinalResultReminderText(trailingText)) return false;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed) as unknown;
+    } catch {
+      return false;
+    }
+  }
+
+  const record = asRecord(parsed);
+  if (!record) return false;
+  const isRudderPromptMessage = (value: unknown) => {
+    const message = asRecord(value);
+    return Boolean(
+      message
+      && (message.role === "user" || message.role === "assistant")
+      && message.kind === "message"
+      && typeof message.status === "string"
+      && typeof message.body === "string"
+      && Array.isArray(message.attachments)
+      && Object.hasOwn(message, "structuredPayload"),
     );
+  };
+
+  if (Object.hasOwn(record, "currentMessage")) {
+    return record.currentMessage === null || isRudderPromptMessage(record.currentMessage);
+  }
+  return Array.isArray(record.recentMessages)
+    && record.recentMessages.length > 0
+    && record.recentMessages.every(isRudderPromptMessage);
+}
+
+export function isRudderEchoedStructuredConversationInputEntry(entry: TranscriptEntry): boolean {
+  // The exact Rudder envelope is private turn input, even if a Runtime echoes
+  // it back as commentary, thinking, or a tool result. Filter the recognizable
+  // wrapper, not arbitrary JSON or prose that explains the schema.
+  const text = entry.kind === "tool_result"
+    ? entry.content
+    : "text" in entry
+      ? entry.text
+      : null;
+  return typeof text === "string" && isRudderEchoedStructuredConversationInput(text);
+}
+
+export function filterRunDetailRawEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
+  return entries.filter((entry) => {
+    const kind = (entry as { kind: string }).kind;
+    const isUserInput = entry.kind === "user"
+      ? !isNativeSteerTranscriptEntry(entry) && !isRudderInjectedAgentInstructionText(entry.text)
+      : kind.startsWith("cursor:acp:user_message");
+    return !isRudderEchoedStructuredConversationInputEntry(entry) && !isUserInput;
+  });
+}
+
+function firstBalancedJsonObject(payload: string): string | null {
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < payload.length; index += 1) {
+    const character = payload[index];
+    if (!character) continue;
+    if (start < 0) {
+      if (/\s/u.test(character)) continue;
+      if (character !== "{") return null;
+      start = index;
+      depth = 1;
+      continue;
+    }
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === "{") depth += 1;
+    else if (character === "}" && --depth === 0) return payload.slice(start, index + 1);
+  }
+  return null;
+}
+
+function firstJsonStringValue(payload: string): string | null {
+  if (!payload.startsWith('"')) return null;
+  let escaped = false;
+  for (let index = 1; index < payload.length; index += 1) {
+    const character = payload[index];
+    if (!character) continue;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') return payload.slice(0, index + 1);
+  }
+  return null;
 }
 
 export function isInternalAgentInstructionText(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
-  const firstLine = trimmed.split(/\r?\n/, 1)[0]?.replace(/^#+\s*/, "").trim().toLowerCase() ?? "";
   const normalized = compactWhitespace(trimmed).toLowerCase();
 
   return isRudderInjectedAgentInstructionText(trimmed)
-    || (firstLine === "conversation input:" && /"currentMessage"\s*:/.test(trimmed))
+    || isRudderEchoedStructuredConversationInput(trimmed)
     || normalized.includes("rudder protocol by delivering a progress update");
 }
 
@@ -674,16 +809,48 @@ export function isAnalyticsForbiddenHtmlStart(line: string): boolean {
   return /WARN\s+codex_analytics::analytics_client:\s+events failed with status 403 Forbidden:\s+<html>/i.test(line.trim());
 }
 
+function projectChatHermesTranscriptEntry(entry: TranscriptEntry): TranscriptEntry | null {
+  if (entry.kind !== "system") return entry;
+
+  const text = entry.text.trim();
+  if (/^Hermes (?:thinking\.delta|reasoning\.available):/u.test(text)) return null;
+
+  const reasoningDelta = /^Hermes reasoning\.delta:\s*(.*)$/su.exec(text);
+  if (!reasoningDelta) return entry;
+  const reasoningText = reasoningDelta[1]!.trim();
+  if (!reasoningText) return null;
+
+  return {
+    kind: "thinking",
+    ts: entry.ts,
+    text: reasoningText,
+    ...(entry.sourceEntryId ? { sourceEntryId: entry.sourceEntryId } : {}),
+  };
+}
+
 export function filterRenderableTranscriptEntries(
   entries: TranscriptEntry[],
   options?: { showDeveloperDiagnostics?: boolean; presentation?: TranscriptPresentation },
 ): TranscriptEntry[] {
-  if (options?.showDeveloperDiagnostics) return entries;
+  const presentationEntries = options?.presentation === "chat"
+    ? entries.flatMap((entry) => {
+      const projected = projectChatHermesTranscriptEntry(entry);
+      return projected ? [projected] : [];
+    })
+    : entries;
+  const operatorSafeEntries = presentationEntries.filter((entry) => (
+    !isRudderEchoedStructuredConversationInputEntry(entry)
+  ));
+  if (options?.showDeveloperDiagnostics) return operatorSafeEntries;
   let suppressingWarningHtml = false;
   const result: TranscriptEntry[] = [];
 
-  for (const entry of entries) {
+  for (const entry of operatorSafeEntries) {
     if (entry.kind === "init") continue;
+    if (isNativeSteerTranscriptEntry(entry)) {
+      result.push(entry);
+      continue;
+    }
     if (entry.kind === "user" && isInternalAgentInstructionText(entry.text)
       && !(options?.presentation === "detail" && isRudderInjectedAgentInstructionText(entry.text))) continue;
 

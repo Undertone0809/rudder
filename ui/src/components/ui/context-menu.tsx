@@ -36,14 +36,15 @@ function ContextMenuTrigger({
         event.preventDefault()
         event.stopPropagation()
         const trigger = event.currentTarget
+        const view = trigger.ownerDocument.defaultView
+        if (!view) return
         const bounds = trigger.getBoundingClientRect()
-        trigger.dispatchEvent(new MouseEvent("contextmenu", {
+        trigger.dispatchEvent(new view.MouseEvent("contextmenu", {
           bubbles: true,
           cancelable: true,
           button: 2,
           clientX: bounds.left + Math.min(16, bounds.width / 2),
           clientY: bounds.bottom,
-          view: window,
         }))
       }}
     />

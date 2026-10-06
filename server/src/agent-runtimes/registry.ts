@@ -81,59 +81,35 @@ import {
   agentConfigurationDoc as hermesAgentConfigurationDoc,
   models as hermesModels,
 } from "hermes-paperclip-adapter";
-import {
-  execute as hermesExecute,
-  sessionCodec as hermesSessionCodec,
-  testEnvironment as hermesTestEnvironment,
-} from "hermes-paperclip-adapter/server";
+import { sessionCodec as hermesSessionCodec } from "hermes-paperclip-adapter/server";
 import { listCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
 import { httpAdapter } from "./http/index.js";
 import { processAdapter } from "./process/index.js";
 import type { ServerAgentRuntimeModule } from "./types.js";
 
-const hermesExecuteCompat: ServerAgentRuntimeModule["execute"] = async (ctx) => {
-  const chatPrompt = ctx.context.chatMode === true && typeof ctx.context.chatPrompt === "string"
-    ? ctx.context.chatPrompt
-    : null;
-  const compatConfig = chatPrompt === null
-    ? ctx.config
-    : { ...ctx.config, promptTemplate: chatPrompt };
-  const result = await hermesExecute({
-    ...ctx,
-    config: compatConfig,
-    agent: {
-      ...ctx.agent,
-      companyId: ctx.agent.orgId,
-      adapterConfig: compatConfig,
-    },
-  } as any);
-  if (chatPrompt === null) return result as Awaited<ReturnType<ServerAgentRuntimeModule["execute"]>>;
-  const resultJson = result.resultJson && typeof result.resultJson === "object" && !Array.isArray(result.resultJson)
-    ? result.resultJson as Record<string, unknown>
-    : null;
-  const fullResult = typeof resultJson?.result === "string" && resultJson.result.trim().length > 0
-    ? resultJson.result.trim()
-    : null;
-  return {
-    ...result,
-    ...(fullResult ? { summary: fullResult } : {}),
-  } as Awaited<ReturnType<ServerAgentRuntimeModule["execute"]>>;
-};
+const HERMES_LOCAL_MIGRATION_MESSAGE =
+  "The legacy hermes_local runtime cannot safely reuse its CLI configuration or session identity with hermes_gateway. Reconfigure this agent to use Hermes (hermes_gateway) and confirm the detected local Hermes setup before retrying. Its saved configuration and history have not been changed.";
 
-const hermesTestEnvironmentCompat: ServerAgentRuntimeModule["testEnvironment"] = async (ctx) => {
-  const result = await hermesTestEnvironment({
-    ...ctx,
-    companyId: ctx.orgId,
-  } as any);
-  return {
-    ...result,
-    agentRuntimeType:
-      typeof (result as { adapterType?: unknown }).adapterType === "string"
-        ? (result as { adapterType: string }).adapterType
-        : ctx.agentRuntimeType,
-  };
-};
+const hermesLocalRetiredExecute: ServerAgentRuntimeModule["execute"] = async () => ({
+  exitCode: 1,
+  signal: null,
+  timedOut: false,
+  nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+  errorCode: "hermes_local_migration_required",
+  errorMessage: HERMES_LOCAL_MIGRATION_MESSAGE,
+});
+
+const hermesLocalRetiredTestEnvironment: ServerAgentRuntimeModule["testEnvironment"] = async (ctx) => ({
+  agentRuntimeType: ctx.agentRuntimeType,
+  status: "fail",
+  checks: [{
+    code: "hermes_local_migration_required",
+    level: "error",
+    message: HERMES_LOCAL_MIGRATION_MESSAGE,
+  }],
+  testedAt: new Date().toISOString(),
+});
 
 const claudeLocalAdapter: ServerAgentRuntimeModule = {
   type: "claude_local",
@@ -237,11 +213,13 @@ const piLocalAdapter: ServerAgentRuntimeModule = {
 
 const hermesLocalAdapter: ServerAgentRuntimeModule = {
   type: "hermes_local",
-  execute: hermesExecuteCompat,
-  testEnvironment: hermesTestEnvironmentCompat,
+  // Keep the legacy codec and metadata for already-persisted records, but do
+  // not execute the retired CLI adapter or silently reinterpret its config.
+  execute: hermesLocalRetiredExecute,
+  testEnvironment: hermesLocalRetiredTestEnvironment,
   sessionCodec: hermesSessionCodec,
   models: hermesModels,
-  supportsLocalAgentJwt: true,
+  supportsLocalAgentJwt: false,
   agentConfigurationDoc: hermesAgentConfigurationDoc,
 };
 

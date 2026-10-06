@@ -687,8 +687,8 @@ export function normalizeTranscript(
       const steerMessage = isNativeSteerMessage ? entry.steerMessage : undefined;
       if (entry.kind === "user" && !isNativeSteerMessage) {
         if (isInternalAgentInstructionText(entry.text)) {
-          if (options?.showDeveloperDiagnostics
-            || (options?.showAgentInstructions && isRudderInjectedAgentInstructionText(entry.text))) {
+          const isRudderInstruction = isRudderInjectedAgentInstructionText(entry.text);
+          if (isRudderInstruction ? options?.showAgentInstructions : options?.showDeveloperDiagnostics) {
             blocks.push({
               type: "event",
               ts: entry.ts,
@@ -696,7 +696,9 @@ export function normalizeTranscript(
               tone: "info",
               text: "Runtime-loaded agent instruction",
               detail: entry.text,
-              collapseByDefault: true,
+              // The full injected snapshot is opt-in; Run Detail exposes its
+              // provenance and contents in Metadata instead of the timeline.
+              collapseByDefault: !options?.showAgentInstructions,
               sourceEntryIds: transcriptEntrySourceIds(entry),
             });
           }
