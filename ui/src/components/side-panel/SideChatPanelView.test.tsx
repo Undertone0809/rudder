@@ -177,6 +177,7 @@ vi.mock("@/pages/Chat.messages", () => ({
     return (
       <div
         data-testid={draftPresentation ? "side-chat-assistant-draft" : undefined}
+        data-message-id={message.id}
         data-stream-state={draftPresentation ? draftState : undefined}
       >
         {assistantBody.trim()
@@ -581,6 +582,13 @@ describe("SideChatPanelView composer controls", () => {
       } as never);
     await renderView({ viewTarget: { ...target, conversationId: sideConversation.id } });
     await vi.waitFor(() => expect(host.textContent).toContain("Partial transcript"));
+    const assistantResponse = host.querySelector('[data-message-id="assistant-paged"]');
+    const continuation = host.querySelector('[data-testid="transcript-continuation"]');
+    expect(assistantResponse).not.toBeNull();
+    expect(continuation).not.toBeNull();
+    expect(
+      assistantResponse!.compareDocumentPosition(continuation!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
     clickButton("Next");
     await vi.waitFor(() => expect(host.textContent).toContain("Transcript offline."));
     expect(vi.mocked(agentRunsApi.transcript).mock.calls.at(-1)?.[1]).toMatchObject({ cursor: "page-2" });
