@@ -44,6 +44,7 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
+mod activity_reads;
 mod live_run_reads;
 pub use live_run_reads::LIVE_RUN_READ_ACTION;
 
@@ -57,6 +58,7 @@ pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
 pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
 
+pub use activity_reads::ACTIVITY_READ_ACTION;
 pub use project_reads::PROJECT_READ_ACTION;
 
 use workspace_backup_files::{
@@ -117,6 +119,7 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "organization_member_directory",
     "project_read",
     "live_run_read",
+    "activity_read",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -2614,6 +2617,10 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/live-run-reads",
                     web::post().to(live_run_reads::live_run_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/activity-reads",
+                    web::post().to(activity_reads::activity_reads),
                 )
                 .route(
                     "/internal/orgs/{org_id}/project-reads",

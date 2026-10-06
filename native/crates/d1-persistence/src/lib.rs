@@ -6,6 +6,7 @@
 //! to the newly inserted Project under the shared organization mutex. Project
 //! reads are pure, organization-scoped projections independent of ownership.
 
+pub mod activity_reads;
 mod branding;
 mod goal_sets;
 pub mod legacy_read_json;

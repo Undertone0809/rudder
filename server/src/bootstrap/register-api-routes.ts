@@ -126,7 +126,7 @@ export function registerApiRoutes(
   api.use(requestRoutes(db));
   api.use(secretRoutes(db));
   api.use(costRoutes(db));
-  api.use(activityRoutes(db));
+  api.use(activityRoutes(db, rustFoundationBridge));
   api.use(runIntelligenceRoutes(db));
   api.use(dashboardRoutes(db));
   api.use(sidebarBadgeRoutes(db));

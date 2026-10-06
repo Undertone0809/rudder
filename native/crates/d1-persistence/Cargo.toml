@@ -8,7 +8,7 @@ publish.workspace = true
 rudder-organization-mutation-core = { path = "../organization-mutation-core" }
 rudder-project-goal-link-core = { path = "../project-goal-link-core" }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["unbounded_depth"] }
+serde_json = { version = "1.0", features = ["unbounded_depth", "raw_value"] }
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2.0"
