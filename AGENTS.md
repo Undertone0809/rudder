@@ -304,6 +304,22 @@ states. Include current final screenshots in the handoff.
 When a required agent is unavailable, complete independent preparation and
 report the missing gate. Do not relabel self-review as independent acceptance.
 
+## 9.2 Codex Subagent Model Gate
+
+When a user request or goal calls for Codex subagents, explicitly set
+`model="gpt-6-luna"` and `reasoning_effort="xhigh"` for every execution,
+exploration, review, and verification agent. `max` is not an acceptable
+substitute. The spawn interface defaults omitted reasoning effort to medium, so
+never omit the explicit `reasoning_effort="xhigh"` argument.
+Do not omit either parameter or rely on a role name or inherited defaults.
+Before spawning, inspect the actual call arguments. After spawning, verify the
+actual model and reasoning effort from available session metadata before
+assigning follow-up work. If the pair mismatches or cannot be verified, stop
+and close that agent when possible, then report the limitation; do not silently
+retry at another model or create a thread as a substitute. This gate governs
+Codex orchestration subagents only; it does not change Rudder product Agent
+Runtime behavior or the parent thread's model.
+
 ## 10. Definition of Done
 
 A change is done when all are true:
