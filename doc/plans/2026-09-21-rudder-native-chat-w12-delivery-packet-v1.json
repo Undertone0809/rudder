@@ -1,0 +1,212 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-native-chat-w12-exact-supplement-20261006",
+  "status": "in_progress",
+  "owner": {
+    "root_id": "01a0c4ff-6e4e-71e2-b38f-0dd2ec0ef004",
+    "agent_id": "01a0c4ff-6e4e-71e2-b38f-0dd2ec0ef004"
+  },
+  "intent": {
+    "raw_request": "完成 /Users/zeeland/Downloads/2026-09-21-rudder-native-chat-complete-plan.md 的全部实现。两个目标必须同时交付：主 Chat 和 Side Chat 使用各 Agent Runtime 的原生连续会话及完整交互；以共同 Agent Run 底座驱动执行，每个 Run 精确关联原生执行区间，通过统一 Transcript Reader 减少重复原始数据存储。按 W00–W13 持续实施、测试、修复和分阶段提交。完整保留 Side Chat，完成 Codex、Claude Code、Hermes、OpenCode、Pi、Cursor 的适配；复用当前 TS/Rust 权威实现，保护现有数据和无关修改；本地测试真实环境；持续 commit、PR 并按门禁合并；使用并发 subagent review/verify；最终准确报告实现、实际验证、PR 和阻塞，未验证能力不得标记完成，不新增无关进度模板或管理文件。",
+    "corrections": [
+      "先将权威计划放入 doc/plans；已存在并继续以 doc/plans/2026-09-21-rudder-native-chat-complete-plan.md 为基线。",
+      "Gemini 可不适配并可从系统移除；相应计划已更新，Gemini 不属于本验收范围。",
+      "Hermes 使用本机 Hermes/provider 配置验收，不以 Hermes 网关认证作为本地路径阻塞。",
+      "每个 Codex subagent 必须在调用参数显式指定 model=gpt-6-luna 与 reasoning_effort=xhigh；max 不可替代，漏传时的 medium 默认值不可接受。",
+      "用户陆续反馈的 Chat/Side Chat/Run Detail/UI 和失败重试问题都属于同一总目标验收，不能因本 W12 子切片而遗忘或标完成。"
+    ],
+    "non_goals": [
+      "本 packet 只签收 W12 Codex exact-supplement reclaim 的摘要绑定竞态修复，不代表 W12 全 Runtime 完成，也不代表 W00–W13 总目标完成。",
+      "不删除、迁移或改写现存用户 transcript、partial supplement、真实 Run 或 3311 用户试用服务。",
+      "不直接推送 protected main，不绕过 PR 检查，不把 fixture/CI 证据说成六 Runtime 真实验收。"
+    ],
+    "authorization": "implementation and local verification are authorized by the active goal; staged commits, PR updates, and merges through required branch protection are explicitly requested. No direct main push or user-data deletion is authorized."
+  },
+  "candidate": {
+    "branch": "codex/native-chat-pr226-curated-28",
+    "source_ref": "refs/heads/codex/native-chat-pr226-curated-28",
+    "source_sha": "713f8c22e636f3dedfb26d7297e327b6f85f899d",
+    "dirty_fingerprint": "d12d67ee5f1949ab7229fccd1daa53305db2a47dd7e17df2a87b85c685e89f97",
+    "changed_paths": [
+      "server/src/services/runtime-kernel/heartbeat-transcript-retention.integration.test.ts",
+      "server/src/services/runtime-kernel/native-transcript-coverage.ts",
+      "server/src/services/runtime-kernel/native-transcript-coverage.test.ts",
+      "server/src/services/runtime-kernel/native-transcript-retention.ts",
+      "server/src/services/runtime-kernel/native-transcript-retention.proof.test.ts",
+      "server/src/services/runtime-kernel/native-transcript-retention-recovery.ts",
+      "server/src/services/runtime-kernel/native-transcript-shadow.test.ts",
+      "server/src/services/runtime-kernel/transcript-object-store.lock-worker.ts",
+      "server/src/services/runtime-kernel/transcript-object-store.ts",
+      "server/src/services/runtime-kernel/transcript-object-store.test.ts"
+    ],
+    "build": {
+      "id": "Vitest W12 suites: transcript-object-store 58/58; native-transcript-retention.proof 30/30; heartbeat-transcript-retention.integration 21/21; native-transcript-shadow 6/6; @rudderhq/server typecheck",
+      "source_sha": "713f8c22e636f3dedfb26d7297e327b6f85f899d"
+    },
+    "runtime": {
+      "id": "Vitest worker pid 28082; disposable PostgreSQL port 52656 (both exited/released); temporary transcript/run-log stores removed by test teardown",
+      "source_sha": "713f8c22e636f3dedfb26d7297e327b6f85f899d"
+    },
+    "organization_data": {
+      "organization_id": "randomized isolated integration-test organization",
+      "data_id": "disposable PostgreSQL and temporary transcript/run-log stores; existing partial supplement preserved"
+    },
+    "workload_fixture": "synthetic complete two-entry Codex supplement; equal-byte rewrite injected after proof before stage; separate equal-byte rewrite after stage before purge; isolated heartbeat retention failure fixture",
+    "budget_lease": {
+      "id": "active-goal-01a0c4ff-6e4e-71e2-b38f-0dd2ec0ef004-w12-candidate-v2",
+      "fingerprint": "d12d67ee5f1949ab7229fccd1daa53305db2a47dd7e17df2a87b85c685e89f97",
+      "expires_at": "2026-10-06T17:00:00Z"
+    },
+    "acceptance_packet": {
+      "version": "2",
+      "fingerprint": "857a07a3ca06e664273a6d6b0882f927dcc18d6b64cfa010328226ccbb054f93",
+      "fingerprint_method": "SHA256 jq -cS '.candidate.acceptance_packet | del(.fingerprint)' including jq terminal newline",
+      "criteria": [
+        "Only a complete, bounded, exact Codex Reader/object equivalence proof may authorize this supplement cleanup; the proof binds organization, Run, span, attempt, selector, object reference, native revision, entry identity/count, and entry digest.",
+        "Exact supplement reads are bounded to at most 256 entries and 2 MiB before page accumulation/materialization.",
+        "The object store recomputes and compares the expected canonical entry digest under the object lock before staging; a same-size rewrite after proof leaves the original object reference and Run/span rows intact.",
+        "The final purge and staged recovery recompute the same expected digest; a same-size rewrite after staging is retained for recovery and is never unlinked as proven data.",
+        "Partial, changed, incomplete, oversized, unsupported, or unbound evidence fails closed without clearing Run/span references or deleting the supplement.",
+        "New verified native Codex profiles emit no duplicate raw Run log; unresolved/unsupported profiles keep their legacy fallback log and excerpts because Reader coverage is not proven. Supplement equivalence alone never authorizes deletion of unrelated stdout/stderr/system evidence.",
+        "Validation is bound to the frozen source/diff, disposable test data, and the specific integration/reader build; unrelated dirty paths, live index, existing data, and port 3311 remain untouched."
+      ],
+      "state_inventory": [
+        "Exact complete two-entry Codex supplement and unchanged object: stage/purge may reclaim only after native-only readback succeeds.",
+        "Same-size content replacement after proof and immediately before stage: reject stage; preserve supplement object and SQL Run/span references.",
+        "Same-size content replacement after stage and immediately before purge: reject purge; preserve staged bytes and durable recovery identity/digest.",
+        "Partial or semantically different supplement: no stage, purge, SQL mutation, or reference clearing.",
+        "Real isolated heartbeat retention path with raw log plus an unproven supplement: preserve Run, span, events, file object, and Run log.",
+        "Unresolved/unsupported Codex profile with raw output: maintenance retry retains the legacy Run log and database fields; no stage/purge is attempted."
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "pending",
+      "candidate_fingerprint": "d12d67ee5f1949ab7229fccd1daa53305db2a47dd7e17df2a87b85c685e89f97",
+      "source_sha": "713f8c22e636f3dedfb26d7297e327b6f85f899d",
+      "build_id": "Vitest W12 suites: transcript-object-store 58/58; native-transcript-retention.proof 30/30; heartbeat-transcript-retention.integration 21/21; native-transcript-shadow 6/6; @rudderhq/server typecheck",
+      "runtime_id": "Vitest worker pid 28082; disposable PostgreSQL port 52656 (both exited/released); temporary transcript/run-log stores removed by test teardown",
+      "data_id": "disposable PostgreSQL and temporary transcript/run-log stores; existing partial supplement preserved",
+      "packet_version": "2",
+      "agent_id": "01a11113-82cc-7c82-bea0-7e9d97585e06",
+      "model_requested": "gpt-6-luna",
+      "reasoning_effort_requested": "xhigh",
+      "model_metadata_readback": "unavailable for this prior pending review; no verdict accepted"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "d12d67ee5f1949ab7229fccd1daa53305db2a47dd7e17df2a87b85c685e89f97",
+      "source_sha": "713f8c22e636f3dedfb26d7297e327b6f85f899d",
+      "build_id": "Vitest W12 suites: transcript-object-store 58/58; native-transcript-retention.proof 30/30; heartbeat-transcript-retention.integration 21/21; native-transcript-shadow 6/6; @rudderhq/server typecheck",
+      "runtime_id": "Vitest worker pid 28082; disposable PostgreSQL port 52656 (both exited/released); temporary transcript/run-log stores removed by test teardown",
+      "data_id": "disposable PostgreSQL and temporary transcript/run-log stores; existing partial supplement preserved",
+      "packet_version": "2"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "d12d67ee5f1949ab7229fccd1daa53305db2a47dd7e17df2a87b85c685e89f97",
+      "source_sha": "713f8c22e636f3dedfb26d7297e327b6f85f899d",
+      "build_id": "Vitest W12 suites: transcript-object-store 58/58; native-transcript-retention.proof 30/30; heartbeat-transcript-retention.integration 21/21; native-transcript-shadow 6/6; @rudderhq/server typecheck",
+      "runtime_id": "Vitest worker pid 28082; disposable PostgreSQL port 52656 (both exited/released); temporary transcript/run-log stores removed by test teardown",
+      "data_id": "disposable PostgreSQL and temporary transcript/run-log stores; existing partial supplement preserved",
+      "packet_version": "2"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      {
+        "at": "2026-10-06T13:04:58Z",
+        "type": "candidate_packet_reconciled",
+        "previous_fingerprint": "6f75d6f5a6dfc539a824563eacd607c05942cd1cce5ad4b32b2fe7695b68c788",
+        "current_fingerprint": "592b37b5e96e8546dd719d41a2bd38f5cc5ba046686479604ce50c50222d4e45",
+        "reason": "The prior packet fingerprint did not validate and its changed_paths omitted the heartbeat PostgreSQL integration test and the object-lock worker. No passing reviewer, verifier, or final-review receipt existed to carry forward."
+      },
+      {
+        "at": "2026-10-06T13:06:00Z",
+        "type": "independent_review_unavailable",
+        "agent_id": "01a1114f-71e2-7510-b228-37077ee654e7",
+        "model_requested": "gpt-6-luna",
+        "reasoning_effort_requested": "xhigh",
+        "actual_metadata_readback": "unavailable; agent closed without further work per user instruction"
+      },
+      {
+        "at": "2026-10-06T13:27:13Z",
+        "type": "candidate_scope_reclassified",
+        "previous_fingerprint": "592b37b5e96e8546dd719d41a2bd38f5cc5ba046686479604ce50c50222d4e45",
+        "current_fingerprint": "d36dbb6caeaa6e3c8a2255cbeb441aeeca552585a1e2ce515dcafc4616b51791",
+        "reason": "Included native-transcript-shadow.test.ts because its fixture constructs the W12 NativeTranscriptRunProof with the required nativeReadSha256 binding and exercises native cleanup/readback; focused suite passed 6/6."
+      },
+      {
+        "at": "2026-10-06T13:31:14Z",
+        "type": "local_checkpoint_commit",
+        "previous_fingerprint": "d36dbb6caeaa6e3c8a2255cbeb441aeeca552585a1e2ce515dcafc4616b51791",
+        "current_fingerprint": "d12d67ee5f1949ab7229fccd1daa53305db2a47dd7e17df2a87b85c685e89f97",
+        "source_sha": "713f8c22e636f3dedfb26d7297e327b6f85f899d",
+        "reason": "Committed exactly the ten W12 paths previously staged and checked. The clean commit patch digest is recorded; no reviewer or verifier receipt had passed and none was carried forward."
+      }
+    ],
+    "invalidated_receipts": []
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "isolated_conflict",
+    "target_ref": "refs/heads/main",
+    "base_sha": "b5a07310328ea3826aeb96df4422976aff280300",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "b5a07310328ea3826aeb96df4422976aff280300",
+    "branch_refs": [
+      "refs/heads/codex/native-chat-pr226-curated-28=713f8c22e636f3dedfb26d7297e327b6f85f899d",
+      "refs/remotes/origin/codex/rudder-native-chat=90235d64f4f702f7d88e0f10cc71ca72a8070309",
+      "refs/heads/codex/rudder-native-chat=4fbe40b49e5415dda27b3ccf4eefc26e9cdcfd5f",
+      "refs/heads/main=b5a07310328ea3826aeb96df4422976aff280300"
+    ],
+    "isolation_trigger": "conflict",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/native-chat-pr226/rudder-oss",
+    "patch_tree_sha": "fd747afe7812bb3b0173246f5cb19c5178092b92",
+    "expected_old_sha": "b5a07310328ea3826aeb96df4422976aff280300",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "alternate_index"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "packages/agent-runtimes/codex-local/src/server/app-server-native.ts",
+      "packages/agent-runtimes/codex-local/src/server/native-capabilities.test.ts",
+      "packages/run-intelligence-core/src/cli/common.ts",
+      "packages/run-intelligence-core/src/loaders/filesystem.ts",
+      "packages/run-intelligence-core/src/cli/common.test.ts",
+      "packages/run-intelligence-core/src/loaders/filesystem.test.ts",
+      "packages/run-intelligence-core/src/loaders/fixtures/",
+      "server/src/__tests__/generic-chat-runtime-adapters.test.ts",
+      "server/src/services/chat-assistant.finalization-hook.test.ts"
+    ],
+    "index_fingerprint_before": "fd747afe7812bb3b0173246f5cb19c5178092b92",
+    "index_fingerprint_after": "fd747afe7812bb3b0173246f5cb19c5178092b92",
+    "worktree_fingerprint_before": "30abf33c6ac866e3a8a81c26f1ed48a5867b2cee12cb9ad1a57138b13a016bee",
+    "worktree_fingerprint_after": "30abf33c6ac866e3a8a81c26f1ed48a5867b2cee12cb9ad1a57138b13a016bee",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "The W12 scoped fingerprint is SHA-256 over the binary commit diff 0e9b7e537814787fabdb9630916ae3c4eff5250e..713f8c22e636f3dedfb26d7297e327b6f85f899d across the ten listed paths; the packet does not include itself in that fingerprint.",
+      "The current source worktree fingerprint is SHA-256 over the binary diff against HEAD plus per-file SHA-256 records for untracked source files, excluding the self-referential packet; unrelated Chat/Runtime paths remain present.",
+      "After checkpoint, the live index tree equals HEAD (fd747afe7812bb3b0173246f5cb19c5178092b92) and no staged entries remain. The integration patch tree was computed using an explicit alternate GIT_INDEX_FILE.",
+      "The original shared checkout /Users/zeeland/.codex/worktrees/4e5f/rudder-oss remained untouched.",
+      "Existing 28-entry/12,103-byte partial supplement was only read for prior context and was not modified or deleted.",
+      "PID 55204 / 127.0.0.1:3311 remains running and was not restarted."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}
