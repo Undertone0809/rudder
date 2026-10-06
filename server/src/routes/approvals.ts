@@ -281,7 +281,22 @@ export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
       if (pendingApproval.decidedByUserId && pendingApproval.decidedByUserId !== actorId) {
         throw forbidden("Only the authenticated approver can resume this Rust-backed Chat branding change");
       }
-      await chatsSvc.applyApprovedApproval(pendingApproval, actorId, req.actor, { recoveryOnly: true });
+      const recovered = await chatsSvc.applyApprovedApproval(pendingApproval, actorId, req.actor, { recoveryOnly: true });
+      if (recovered) {
+        await logActivity(db, {
+          orgId: pendingApproval.orgId,
+          actorType: "user",
+          actorId,
+          action: "approval.approved",
+          entityType: "approval",
+          entityId: pendingApproval.id,
+          details: {
+            type: pendingApproval.type,
+            requestedByAgentId: pendingApproval.requestedByAgentId,
+          },
+          idempotencyKey: `approval-approved:${pendingApproval.id}`,
+        });
+      }
       res.json(redactApprovalPayload(pendingApproval));
       return;
     }
@@ -344,6 +359,12 @@ export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     if (approvalForValidation?.type === "chat_issue_creation") {
       await assertCanApproveChatIssueConversion(req, approvalForValidation);
       await assertChatIssueProposalLabelsIfNeeded(approvalForValidation);
+    }
+    if (
+      pendingApproval?.status === "pending"
+      && isOrganizationBrandingChatOperationApproval(pendingApproval)
+    ) {
+      await chatsSvc.validateApprovedApproval(pendingApproval, req.actor);
     }
     const { approval, applied } = await svc.approve(
       id,
@@ -493,6 +514,7 @@ export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
           linkedIssueIds,
           reactivatedLinkedIssueIds,
         },
+        idempotencyKey: `approval-approved:${approval.id}`,
       });
 
       if (approval.requestedByAgentId) {

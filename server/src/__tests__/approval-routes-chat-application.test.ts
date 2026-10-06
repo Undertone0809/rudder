@@ -21,6 +21,7 @@ const mockApprovalService = vi.hoisted(() => ({
 
 const mockChatService = vi.hoisted(() => ({
   applyApprovedApproval: vi.fn(),
+  validateApprovedApproval: vi.fn(),
 }));
 
 const mockAccessService = vi.hoisted(() => ({
@@ -107,6 +108,7 @@ describe("approval routes chat application", () => {
     mockLogActivity.mockResolvedValue(undefined);
     mockIssueService.update.mockResolvedValue(null);
     mockChatService.applyApprovedApproval.mockResolvedValue(null);
+    mockChatService.validateApprovedApproval.mockResolvedValue(undefined);
     mockAccessService.canUser.mockResolvedValue(true);
     mockApprovalService.getById.mockResolvedValue({
       id: "approval-1",
@@ -368,7 +370,7 @@ describe("approval routes chat application", () => {
     });
     mockChatService.applyApprovedApproval
       .mockRejectedValueOnce(new Error("Branding application failed"))
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce({ id: "organization-1" });
 
     const app = await createApp();
     const firstResponse = await request(app)
@@ -393,6 +395,13 @@ describe("approval routes chat application", () => {
       expect.objectContaining({ type: "board", userId: "user-1" }),
       { recoveryOnly: true },
     );
+    expect(mockLogActivity).toHaveBeenCalledTimes(1);
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "approval.approved",
+      entityType: "approval",
+      entityId: "approval-1",
+      idempotencyKey: "approval-approved:approval-1",
+    }));
   });
 
   it("uses the authenticated actor for Rust-backed chat branding instead of decidedByUserId from the body", async () => {
@@ -446,6 +455,18 @@ describe("approval routes chat application", () => {
       undefined,
       undefined,
     );
+    expect(mockChatService.validateApprovedApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "approval-1", type: "chat_operation", status: "pending" }),
+      expect.objectContaining({ type: "board", userId: "user-1" }),
+    );
+    expect(mockChatService.validateApprovedApproval.mock.invocationCallOrder[0])
+      .toBeLessThan(mockApprovalService.approve.mock.invocationCallOrder[0]);
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "approval.approved",
+      entityType: "approval",
+      entityId: "approval-1",
+      idempotencyKey: "approval-approved:approval-1",
+    }));
   });
 
   it("reactivates blocked linked issues and wakes their assignee after approval is applied", async () => {

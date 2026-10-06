@@ -164,22 +164,14 @@ export function chatService(
     return (await organizationsSvc.getBrandingMutationOwner(orgId)) === "rust";
   }
 
-  async function updateOrganizationFromChatProposal(input: {
+  async function validateOrganizationBrandingForRust(input: {
     orgId: string;
     patch: Record<string, unknown>;
-    source: "chat-proposal" | "chat-approval";
-    sourceId: string;
     actor?: RustFoundationActor | null;
   }) {
-    const hasBranding = hasOrganizationBrandingPatch(input.patch);
-    const rustOwned = hasBranding && await organizationBrandingIsRustOwned(input.orgId);
-    if (!rustOwned) {
-      const updated = await organizationsSvc.update(
-        input.orgId,
-        input.patch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
-      );
-      return { updated, rustOwned: false };
-    }
+    const rustOwned = hasOrganizationBrandingPatch(input.patch)
+      && await organizationBrandingIsRustOwned(input.orgId);
+    if (!rustOwned) return { rustOwned: false as const };
 
     if (Object.keys(input.patch).some((key) => !RUST_ORGANIZATION_BRANDING_FIELDS.has(key))) {
       throw unprocessable("Rust-owned Chat branding changes cannot be combined with other organization fields");
@@ -208,18 +200,38 @@ export function chatService(
       throw forbidden("Authenticated board or CEO agent actor required for organization branding");
     }
 
+    return { rustOwned: true as const, parsed: parsed.data, actor, bridge: rustFoundationBridge };
+  }
+
+  async function updateOrganizationFromChatProposal(input: {
+    orgId: string;
+    patch: Record<string, unknown>;
+    source: "chat-proposal" | "chat-approval";
+    sourceId: string;
+    actor?: RustFoundationActor | null;
+  }) {
+    const validated = await validateOrganizationBrandingForRust(input);
+    if (!validated.rustOwned) {
+      const updated = await organizationsSvc.update(
+        input.orgId,
+        input.patch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
+      );
+      return { updated, rustOwned: false };
+    }
+    const { parsed, actor, bridge } = validated;
+
     if (
-      rustFoundationBridge.organizationBrandingMode === "required"
+      bridge.organizationBrandingMode === "required"
       && organizationBrandingOrgIsSelected(input.orgId)
     ) {
       await handoffOrganizationBrandingAuthority(db, input.orgId);
     }
 
     const idempotencyKey = organizationBrandingIdempotencyKey(input.source, input.sourceId);
-    const response = await rustFoundationBridge.organizationBrandingForActor(
+    const response = await bridge.organizationBrandingForActor(
       actor,
       input.orgId,
-      Buffer.from(JSON.stringify(parsed.data), "utf8"),
+      Buffer.from(JSON.stringify(parsed), "utf8"),
       idempotencyKey,
     );
     if (response.status < 200 || response.status >= 300) {
@@ -5331,6 +5343,24 @@ export function chatService(
       return updated;
   }
 
+  async function validateApprovedApproval(approval: ApprovalRow, actor?: RustFoundationActor | null) {
+    if (approval.type !== "chat_operation") return;
+    const payload = approval.payload as Record<string, unknown>;
+    const proposal = operationProposalFromPayload(
+      (payload.operationProposal as Record<string, unknown> | null | undefined) ?? payload,
+    );
+    if (!proposal || proposal.targetType !== "organization") return;
+    if (proposal.targetId !== approval.orgId) {
+      throw unprocessable("Organization approvals can only update the same organization");
+    }
+    if (!hasOrganizationBrandingPatch(proposal.patch)) return;
+    await validateOrganizationBrandingForRust({
+      orgId: proposal.targetId,
+      patch: proposal.patch,
+      actor,
+    });
+  }
+
   async function createProposalApproval(
       orgId: string,
       input: {
@@ -5426,6 +5456,7 @@ export function chatService(
     getMessage,
     getUserMessageMutationByClientMutationId,
     applyApprovedApproval,
+    validateApprovedApproval,
     createProposalApproval,
     resolveOperationProposal,
   };

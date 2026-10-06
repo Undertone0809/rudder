@@ -1,7 +1,7 @@
 import {
   activityLog,
-  approvals,
   applyPendingMigrations,
+  approvals,
   authUsers,
   boardApiKeys,
   chatConversations,
@@ -29,11 +29,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { approvalRoutes } from "../routes/approvals.js";
-import { chatRoutes } from "../routes/chats.js";
 import { createChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
-import type { StorageService } from "../storage/types.js";
+import { chatRoutes } from "../routes/chats.js";
 import { handoffOrganizationBrandingAuthority } from "../services/organization-branding-fence.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import type { StorageService } from "../storage/types.js";
 
 // This suite crosses the authenticated public Node API, the signed private
 // Actix/SQLx bridge, and disposable PostgreSQL. It intentionally fails closed
@@ -348,6 +348,88 @@ describe("Chat organization branding through authenticated Node API and Rust", (
       .where(eq(organizationBrandingMutationReceipts.orgId, orgId))).toHaveLength(1);
     bridge!.organizationBrandingForActor = directBridge;
 
+    const mixedApprovalConversationId = randomUUID();
+    const mixedApprovalId = randomUUID();
+    await db!.insert(chatConversations).values({
+      id: mixedApprovalConversationId,
+      orgId,
+      title: "Reject mixed Rust-owned Chat approval",
+      createdByUserId: boardUserId,
+    });
+    await db!.insert(approvals).values({
+      id: mixedApprovalId,
+      orgId,
+      type: "chat_operation",
+      status: "pending",
+      payload: {
+        chatConversationId: mixedApprovalConversationId,
+        operationProposal: {
+          targetType: "organization",
+          targetId: orgId,
+          summary: "Reject a mixed organization patch",
+          patch: { brandColor: "#fedcba", name: "must-not-be-written" },
+        },
+      },
+    });
+    const beforeMixedApproval = await db!.select({ name: organizations.name, brandColor: organizations.brandColor })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .then((rows) => rows[0]);
+    const mixedApprovalMutationKey = idempotencyKey("chat-approval", mixedApprovalId);
+    const mixedApprovalAuditKey = `approval-approved:${mixedApprovalId}`;
+    const mixedApprovalOrganizationAuditKey = `chat-approval:${mixedApprovalId}:organization-activity`;
+    let mixedApprovalBridgeCalls = 0;
+    bridge!.organizationBrandingForActor = async (...args) => {
+      mixedApprovalBridgeCalls += 1;
+      return directBridge(...args);
+    };
+    const mixedApprovalResponse = await request(server!)
+      .post(`/api/approvals/${mixedApprovalId}/approve`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .send({ decisionNote: "This mixed patch must remain pending" });
+    expect(mixedApprovalResponse.status).toBe(422);
+    expect(mixedApprovalBridgeCalls).toBe(0);
+    expect(await db!.select().from(approvals)
+      .where(eq(approvals.id, mixedApprovalId))
+      .then((rows) => rows[0])).toMatchObject({
+      status: "pending",
+      decidedByUserId: null,
+      decidedAt: null,
+      decisionNote: null,
+    });
+    expect(await db!.select({ name: organizations.name, brandColor: organizations.brandColor })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .then((rows) => rows[0])).toEqual(beforeMixedApproval);
+    expect(await db!.select().from(organizationBrandingMutationReceipts)
+      .where(and(
+        eq(organizationBrandingMutationReceipts.orgId, orgId),
+        eq(organizationBrandingMutationReceipts.idempotencyKey, mixedApprovalMutationKey),
+      ))).toHaveLength(0);
+    expect(await db!.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, mixedApprovalConversationId),
+      eq(chatMessages.kind, "system_event"),
+    ))).toHaveLength(0);
+    expect(await db!.select().from(activityLog).where(and(
+      eq(activityLog.orgId, orgId),
+      eq(activityLog.entityId, mixedApprovalId),
+      eq(activityLog.action, "approval.approved"),
+    ))).toHaveLength(0);
+    expect(await db!.select().from(activityLog).where(eq(activityLog.idempotencyKey, mixedApprovalOrganizationAuditKey)))
+      .toHaveLength(0);
+    expect(await db!.select().from(activityLog).where(eq(activityLog.idempotencyKey, mixedApprovalAuditKey)))
+      .toHaveLength(0);
+
+    const mixedApprovalReject = await request(server!)
+      .post(`/api/approvals/${mixedApprovalId}/reject`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .send({ decidedByUserId: boardUserId, decisionNote: "Reject the invalid mixed patch" });
+    expect(mixedApprovalReject.status).toBe(200);
+    expect(await db!.select().from(approvals)
+      .where(eq(approvals.id, mixedApprovalId))
+      .then((rows) => rows[0])).toMatchObject({ status: "rejected" });
+    bridge!.organizationBrandingForActor = directBridge;
+
     const approvalConversationId = randomUUID();
     const approvalId = randomUUID();
     await db!.insert(chatConversations).values({
@@ -373,6 +455,7 @@ describe("Chat organization branding through authenticated Node API and Rust", (
     });
     const approvalKey = idempotencyKey("chat-approval", approvalId);
     const approvalNodeAuditKey = `chat-approval:${approvalId}:organization-activity`;
+    const approvalAuditKey = `approval-approved:${approvalId}`;
     let loseApprovalResponse = true;
     bridge!.organizationBrandingForActor = async (...args) => {
       const response = await directBridge(...args);
@@ -403,6 +486,7 @@ describe("Chat organization branding through authenticated Node API and Rust", (
       eq(chatMessages.kind, "system_event"),
     ))).toHaveLength(0);
     expect(await db!.select().from(activityLog).where(eq(activityLog.idempotencyKey, approvalNodeAuditKey))).toHaveLength(0);
+    expect(await db!.select().from(activityLog).where(eq(activityLog.idempotencyKey, approvalAuditKey))).toHaveLength(0);
 
     const approvalRetry = await request(server!)
       .post(approvalPath)
@@ -420,9 +504,31 @@ describe("Chat organization branding through authenticated Node API and Rust", (
       eq(chatMessages.kind, "system_event"),
     ))).toHaveLength(1);
     expect(await db!.select().from(activityLog).where(eq(activityLog.idempotencyKey, approvalNodeAuditKey))).toHaveLength(1);
+    const recoveredApprovalAudit = await db!.select().from(activityLog)
+      .where(eq(activityLog.idempotencyKey, approvalAuditKey));
+    expect(recoveredApprovalAudit).toHaveLength(1);
+    expect(recoveredApprovalAudit[0]).toMatchObject({
+      action: "approval.approved",
+      actorType: "user",
+      actorId: boardUserId,
+      entityType: "approval",
+      entityId: approvalId,
+    });
     expect(await db!.select().from(activityLog).where(and(
       eq(activityLog.orgId, orgId),
       eq(activityLog.action, "organization.branding_updated"),
     ))).toHaveLength(2);
+
+    const approvalRepeatedRetry = await request(server!)
+      .post(approvalPath)
+      .set("authorization", `Bearer ${boardToken}`)
+      .send({ decidedByUserId: "spoofed-user", decisionNote: "Approved" });
+    expect(approvalRepeatedRetry.status).toBe(200);
+    expect(await db!.select().from(activityLog).where(eq(activityLog.idempotencyKey, approvalAuditKey)))
+      .toHaveLength(1);
+    expect(await db!.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, approvalConversationId),
+      eq(chatMessages.kind, "system_event"),
+    ))).toHaveLength(1);
   }, 60_000);
 });
