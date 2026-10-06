@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
+import { ApiError } from "@/api/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "@/api/client";
 import { TranscriptContinuationControls } from "./TranscriptContinuationControls";
 import {
   agentRunTranscriptQueryKey,

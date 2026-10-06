@@ -7,9 +7,9 @@ import { conflict, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { assignChatToExistingMessengerGroup } from "./chat-family-groups.js";
 import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
-import { isPostgresError } from "./postgres-errors.js";
 import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
+import { isPostgresError } from "./postgres-errors.js";
 import {
   ensureProductAnalyticsWorkCycle,
   recordProductAnalyticsChatCreated,

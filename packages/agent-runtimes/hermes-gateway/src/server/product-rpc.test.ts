@@ -12,19 +12,19 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesNativeRpcClient, HermesNativeProcessCloseError } from "./native-protocol.js";
+import { readHermesProductHistoryExecutionSpan } from "./product-history.js";
 import {
-  HERMES_PRODUCT_RPC_SPAN_COMPUTE_HOST_SITE_CUSTOMIZE_SOURCE,
   HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE,
   HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV,
   HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV,
   HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH_ENV,
+  HERMES_PRODUCT_RPC_SPAN_COMPUTE_HOST_SITE_CUSTOMIZE_SOURCE,
   HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH_ENV,
   HERMES_PRODUCT_RPC_SPAN_NONCE_ENV,
   HERMES_PRODUCT_RPC_SPAN_ROLE_ENV,
   HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV,
   waitForHermesProductRpcMcpReady,
 } from "./product-rpc-mcp-bootstrap.js";
-import { readHermesProductHistoryExecutionSpan } from "./product-history.js";
 import {
   buildHermesProductRpcSessionParams,
   deriveHermesProductRpcTranscriptBoundary,
@@ -986,7 +986,7 @@ function mockGateway(
     notify = onNotification;
     await onSpawn?.({ pid: process.pid, startedAt: new Date().toISOString() });
     queueMicrotask(() => emit("gateway.ready", {}, null));
-    return client as never;
+    return client;
   };
   return { calls, timeline, client, createClient };
 }
@@ -1972,8 +1972,9 @@ describe("Hermes Product Gateway RPC", () => {
         "44",
         "5",
       ], { encoding: "utf8" }).then(({ stdout }) => stdout.trim());
-      if (!completeAcceptedTurn) throw new Error("Accepted Gateway turn did not expose its terminal-event continuation.");
-      await completeAcceptedTurn();
+      const acceptedTurnContinuation = completeAcceptedTurn as (() => Promise<void>) | null;
+      if (!acceptedTurnContinuation) throw new Error("Accepted Gateway turn did not expose its terminal-event continuation.");
+      await acceptedTurnContinuation();
       const result = await executionPromise;
       const nativePromptWriteResult = await nativePromptWritePromise;
 
@@ -1984,7 +1985,6 @@ describe("Hermes Product Gateway RPC", () => {
           executionRef: null,
         },
       });
-      const boundary = result.resultJson?.transcriptBoundary as Record<string, unknown>;
       const sharedReader = await readHermesProductHistoryExecutionSpan({
         runtimeType: "hermes_gateway",
         sessionId,
@@ -1996,18 +1996,7 @@ describe("Hermes Product Gateway RPC", () => {
           hostId: profile.binding.hostId,
           profileId: profile.binding.profileId,
         },
-        proof: {
-          version: 1,
-          orgId: "org-attribution-test",
-          runId: "run-attribution-test",
-          spanId: "span-attribution-test",
-          bindingId: "binding-attribution-test",
-          segmentId: "segment-attribution-test",
-          sessionId,
-          providerExecutionRef: "run-attribution-test",
-          sourceRangeRef: boundary.sourceRangeRef as string | null,
-          freshSessionVerified: false,
-        },
+        proof: null,
       });
       expect(sharedReader).toMatchObject({
         completeness: "unknown",

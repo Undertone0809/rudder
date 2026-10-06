@@ -53,8 +53,8 @@ import { chatProviderResultIds } from "./chat-assistant.runtime-result.js";
 import {
   chatSessionForCurrentProviderProfile,
   deriveSideChatContextHandoff,
-  deriveSideChatNativeForkBoundary,
   deriveSideChatForkSourceForCurrentProfile,
+  deriveSideChatNativeForkBoundary,
   loadSideChatForkSource,
   resolveChatContinuationSession,
   sideChatForkBindingMatchesTarget,

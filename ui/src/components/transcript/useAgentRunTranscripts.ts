@@ -1,11 +1,11 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
-import { ApiError } from "@/api/client";
 import {
   agentRunsApi,
   type AgentRunTranscriptPage,
   type AgentRunTranscriptResult,
 } from "@/api/agent-runs";
 import { chatsApi } from "@/api/chats";
+import { ApiError } from "@/api/client";
 import { useOptionalOrganization } from "@/context/OrganizationContext";
 import type { ChatMessage } from "@rudderhq/shared";
 import { useQueries } from "@tanstack/react-query";

@@ -2,8 +2,8 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { RawTranscriptView } from "../components/transcript/RunTranscriptView.detail";
 import { filterRunDetailRawEntries } from "../components/transcript/RunTranscriptView.common";
+import { RawTranscriptView } from "../components/transcript/RunTranscriptView.detail";
 import { normalizeTranscript } from "../components/transcript/RunTranscriptView.normalize";
 import { projectHermesSupplementEntries, projectNativeRunDetailEntries } from "./AgentDetail.run-log.native";
 

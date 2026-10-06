@@ -4,13 +4,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { nativeExecutionSpanCompleteness, selectorForRuntime } from "../services/runtime-kernel/native-session.js";
 import {
   HERMES_PRODUCT_RPC_SPAN_BASELINE_PATH_ENV,
   HERMES_PRODUCT_RPC_SPAN_CONFIG_PATH_ENV,
   HERMES_PRODUCT_RPC_SPAN_NONCE_ENV,
   HERMES_PRODUCT_RPC_SPAN_ROWS_PATH_ENV,
 } from "../../../packages/agent-runtimes/hermes-gateway/src/server/product-rpc-mcp-bootstrap.js";
+import { nativeExecutionSpanCompleteness, selectorForRuntime } from "../services/runtime-kernel/native-session.js";
 
 async function writeSpanCaptureReceipt(
   runtimeEnv: Record<string, string> | undefined,
