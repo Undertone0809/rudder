@@ -49,6 +49,12 @@ failure is reported rather than falling back to Node hydration. Read APIs derive
 legacy workspace paths without creating directories. Project creation, import,
 and startup retain their existing Library provisioning responsibilities.
 
+Organization and issue live-run GETs also select and project every legacy and
+current run through the Rust foundation, regardless of mutation ownership or
+pilot switches. Node keeps authentication, organization authorization, and
+issue identifier/alias resolution. A missing or failed native read returns an
+error instead of executing the former Node live-run query.
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.

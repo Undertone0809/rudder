@@ -9,6 +9,8 @@ import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import type { LiveRunReadInput } from "./live-run-read-bridge.js";
+
 export type RustFoundationMode = "off" | "shadow" | "required";
 
 export type RustPublicIngressOptions = {
@@ -44,6 +46,11 @@ export interface RustFoundationBridge {
   readonly publicIngressBaseUrl?: string | null;
   waitForPublicIngressReady?(): Promise<void>;
   start(): Promise<void>;
+  liveRunRead?(
+    actor: RustFoundationActor,
+    orgId: string,
+    input: LiveRunReadInput,
+  ): Promise<RustFoundationResponse>;
   projectRead(
     actor: RustFoundationActor,
     orgId: string,
@@ -401,8 +408,8 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
   const actorEnvelopeKey = options.actorEnvelopeKey?.trim()
     || process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim()
     || randomBytes(32).toString("hex");
-  // Project reads are an API-wide Rust capability, independent of each
-  // Project's mutation owner and the remaining mutation pilot switches.
+  // Project and live-run reads are API-wide Rust capabilities, independent
+  // of entity mutation ownership and the remaining mutation pilot switches.
   const requiresStartup = true;
   let child: RustFoundationChild | null = null;
   let baseUrl: string | null = null;
@@ -637,6 +644,42 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         } satisfies RustFoundationResponse;
       } catch (error) {
         throw new RustFoundationBridgeError("request_failed", "Rust Project read request failed", { cause: error });
+      }
+    },
+    async liveRunRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/live-run-reads`;
+      const body = Buffer.from(JSON.stringify(input));
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({
+        actor,
+        organizationId: orgId,
+        method: "POST",
+        path: requestPath,
+        action: "live_run.read",
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+      });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+          },
+          body: body as unknown as BodyInit,
+          signal: AbortSignal.timeout(requestTimeoutMs),
+        });
+        return {
+          status: response.status,
+          contentType: response.headers.get("content-type") ?? "application/json",
+          body: Buffer.from(await response.arrayBuffer()),
+        } satisfies RustFoundationResponse;
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
       }
     },
     async projectCreate(actor, orgId, data, idempotencyKey, activityDetails, roots) {
