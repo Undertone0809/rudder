@@ -1462,6 +1462,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       const resolved = await svc.resolveOperationProposal(conversation.id, messageId, {
         action: req.body.action,
         actorUserId: actor.actorType === "user" ? actor.actorId : null,
+        actor: req.actor,
         decisionNote: req.body.decisionNote ?? null,
       });
       res.status(201).json(resolved);

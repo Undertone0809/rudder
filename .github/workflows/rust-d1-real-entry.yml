@@ -79,6 +79,13 @@ jobs:
             src/__tests__/project-read-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+      - name: Verify Chat branding recovery through authenticated API and Rust
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/chat-branding-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Smoke Rust organization branding real entry
         run: |
           set -o pipefail

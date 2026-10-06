@@ -84,6 +84,7 @@ import {
   NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
   NETWORK_WAIT_UNSAFE_ERROR_CODE,
 } from "../services/runtime-kernel/heartbeat.core.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import {
   runtimeResultText,
   sanitizeGeneratedTitle,
@@ -129,9 +130,10 @@ export function chatRoutes(
   storage: StorageService,
   backgroundRuntime: ChatBackgroundRuntime = createChatBackgroundRuntime(),
   registerNetworkWaitingRunHandler?: (handler: (run: NetworkWaitingRun) => Promise<boolean>) => void,
+  rustFoundationBridge?: RustFoundationBridge,
 ) {
   const router = Router();
-  const svc = chatService(db, storage);
+  const svc = chatService(db, storage, rustFoundationBridge);
   const organizationsSvc = organizationService(db);
   const issuesSvc = issueService(db, storage);
   const projectsSvc = projectService(db);

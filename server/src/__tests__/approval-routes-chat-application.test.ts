@@ -304,6 +304,7 @@ describe("approval routes chat application", () => {
         type: "chat_issue_creation",
       }),
       "user-1",
+      expect.objectContaining({ type: "board", userId: "user-1" }),
     );
     expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
       "agent-1",
@@ -336,6 +337,114 @@ describe("approval routes chat application", () => {
           approvalId: "approval-1",
         }),
       }),
+    );
+  });
+
+  it("retries chat operation application when approval persisted but its first application failed", async () => {
+    let persistedApproval: any = {
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_operation",
+      status: "pending",
+      payload: {
+        chatConversationId: "chat-1",
+        chatMessageId: "message-1",
+        operationProposal: {
+          targetType: "organization",
+          targetId: "organization-1",
+          summary: "Update organization branding",
+          patch: { brandColor: "#123456" },
+        },
+      },
+    };
+    mockApprovalService.getById.mockImplementation(async () => persistedApproval);
+    mockApprovalService.approve.mockImplementation(async () => {
+      if (persistedApproval.status === "approved") {
+        return { approval: persistedApproval, applied: false };
+      }
+
+      persistedApproval = { ...persistedApproval, status: "approved" };
+      return { approval: persistedApproval, applied: true };
+    });
+    mockChatService.applyApprovedApproval
+      .mockRejectedValueOnce(new Error("Branding application failed"))
+      .mockResolvedValueOnce(null);
+
+    const app = await createApp();
+    const firstResponse = await request(app)
+      .post("/api/approvals/approval-1/approve")
+      .send({ decisionNote: "Apply the reviewed branding" });
+
+    expect(firstResponse.status).toBe(500);
+    expect(persistedApproval).toMatchObject({ status: "approved" });
+    expect(mockChatService.applyApprovedApproval).toHaveBeenCalledTimes(1);
+
+    const retryResponse = await request(app)
+      .post("/api/approvals/approval-1/approve")
+      .send({ decisionNote: "Apply the reviewed branding" });
+
+    expect(retryResponse.status).toBe(200);
+    expect(mockApprovalService.approve).toHaveBeenCalledTimes(1);
+    expect(mockChatService.applyApprovedApproval).toHaveBeenCalledTimes(2);
+    expect(mockChatService.applyApprovedApproval).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: "approval-1", type: "chat_operation", status: "approved" }),
+      "user-1",
+      expect.objectContaining({ type: "board", userId: "user-1" }),
+      { recoveryOnly: true },
+    );
+  });
+
+  it("uses the authenticated actor for Rust-backed chat branding instead of decidedByUserId from the body", async () => {
+    const approvedApproval = {
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_operation",
+      status: "approved",
+      payload: {
+        chatConversationId: "chat-1",
+        chatMessageId: "message-1",
+        operationProposal: {
+          targetType: "organization",
+          targetId: "organization-1",
+          summary: "Update organization branding",
+          patch: { brandColor: "#123456" },
+        },
+      },
+    };
+    mockApprovalService.getById.mockResolvedValue({ ...approvedApproval, status: "pending" });
+    mockApprovalService.approve.mockResolvedValue({ approval: approvedApproval, applied: true });
+    mockChatService.applyApprovedApproval.mockResolvedValue({
+      id: "organization-1",
+      orgId: "organization-1",
+      brandColor: "#123456",
+    });
+
+    const res = await request(await createApp())
+      .post("/api/approvals/approval-1/approve")
+      .send({ decidedByUserId: "body-user-999" });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.applyApprovedApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "approval-1",
+        type: "chat_operation",
+        payload: expect.objectContaining({
+          operationProposal: expect.objectContaining({
+            targetType: "organization",
+            targetId: "organization-1",
+            patch: expect.objectContaining({ brandColor: "#123456" }),
+          }),
+        }),
+      }),
+      "user-1",
+      expect.objectContaining({ type: "board", userId: "user-1" }),
+    );
+    expect(mockApprovalService.approve).toHaveBeenCalledWith(
+      "approval-1",
+      "user-1",
+      undefined,
+      undefined,
     );
   });
 
@@ -584,6 +693,7 @@ describe("approval routes chat application", () => {
     expect(mockChatService.applyApprovedApproval).toHaveBeenCalledWith(
       expect.objectContaining({ payload }),
       "user-1",
+      expect.objectContaining({ type: "board", userId: "user-1" }),
     );
   });
 

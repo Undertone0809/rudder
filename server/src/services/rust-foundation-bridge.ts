@@ -71,6 +71,13 @@ export interface RustFoundationBridge {
     body: Buffer,
     requestPath?: string,
   ): Promise<RustFoundationResponse>;
+  organizationBrandingForActor(
+    actor: RustFoundationActor,
+    orgId: string,
+    body: Buffer,
+    idempotencyKey: string,
+    requestPath?: string,
+  ): Promise<RustFoundationResponse>;
   organizationResourceMutation?(
     req: Request,
     orgId: string,
@@ -583,6 +590,56 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     }
   });
 
+  async function sendOrganizationBranding(
+    actor: RustFoundationActor,
+    orgId: string,
+    body: Buffer,
+    idempotencyKey: string,
+    requestPath: string,
+    contentType = "application/json",
+  ): Promise<RustFoundationResponse> {
+    if (organizationBrandingMode === "off") {
+      throw new RustFoundationBridgeError("request_failed", "Rust foundation organization branding bridge is disabled");
+    }
+    await ensureStarted();
+    if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+    const requestId = randomUUID();
+    const envelope = createRustActorEnvelope({
+      actor,
+      organizationId: orgId,
+      method: "PATCH",
+      path: requestPath,
+      action: ORGANIZATION_BRANDING_ACTION,
+      body,
+      secret: actorEnvelopeKey,
+      requestId,
+      idempotencyKey,
+    });
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${requestPath}`, {
+        method: "PATCH",
+        headers: {
+          "content-type": contentType,
+          "x-rudder-actor-envelope": JSON.stringify(envelope),
+          "x-rudder-request-id": requestId,
+          "x-rudder-idempotency-key": idempotencyKey,
+        },
+        body: body as unknown as BodyInit,
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+    } catch (error) {
+      throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
+    }
+    const responseBody = Buffer.from(await response.arrayBuffer());
+    debugBridge(`organization-branding response status=${response.status} body=${responseBody.toString("utf8").slice(0, 512)}`);
+    return {
+      status: response.status,
+      contentType: response.headers.get("content-type") ?? "application/json",
+      body: responseBody,
+    } satisfies RustFoundationResponse;
+  }
+
   return {
     mode,
     organizationBrandingMode,
@@ -772,50 +829,22 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       } satisfies RustFoundationResponse;
     },
     async organizationBranding(req, orgId, body, requestPath = req.originalUrl) {
-      if (organizationBrandingMode === "off") {
-        throw new RustFoundationBridgeError("request_failed", "Rust foundation organization branding bridge is disabled");
-      }
-      await ensureStarted();
-      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
-      const requestId = randomUUID();
       const idempotencyKey = req.header("x-rudder-idempotency-key")?.trim();
       if (!idempotencyKey) {
         throw new RustFoundationBridgeError("request_failed", "Rust organization branding requires x-rudder-idempotency-key");
       }
-      const envelope = createRustActorEnvelope({
-        actor: req.actor,
-        organizationId: orgId,
-        method: "PATCH",
-        path: requestPath,
-        action: ORGANIZATION_BRANDING_ACTION,
+      return sendOrganizationBranding(
+        req.actor,
+        orgId,
         body,
-        secret: actorEnvelopeKey,
-        requestId,
         idempotencyKey,
-      });
-      let response: Response;
-      try {
-        response = await fetch(`${baseUrl}${requestPath}`, {
-          method: "PATCH",
-          headers: {
-            "content-type": req.header("content-type") ?? "application/json",
-            "x-rudder-actor-envelope": JSON.stringify(envelope),
-            "x-rudder-request-id": requestId,
-            "x-rudder-idempotency-key": idempotencyKey,
-          },
-          body: body as unknown as BodyInit,
-          signal: AbortSignal.timeout(requestTimeoutMs),
-        });
-      } catch (error) {
-        throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
-      }
-      const responseBody = Buffer.from(await response.arrayBuffer());
-      debugBridge(`organization-branding response status=${response.status} body=${responseBody.toString("utf8").slice(0, 512)}`);
-      return {
-        status: response.status,
-        contentType: response.headers.get("content-type") ?? "application/json",
-        body: responseBody,
-      } satisfies RustFoundationResponse;
+        requestPath,
+        req.header("content-type") ?? "application/json",
+      );
+    },
+    async organizationBrandingForActor(actor, orgId, body, idempotencyKey, requestPath) {
+      const path = requestPath ?? `/api/orgs/${encodeURIComponent(orgId)}/branding`;
+      return sendOrganizationBranding(actor, orgId, body, idempotencyKey, path);
     },
     async projectGoalSet(
       req,

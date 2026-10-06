@@ -761,6 +761,44 @@ describe("rust foundation bridge lifecycle", () => {
     expect(captured.headers["x-rudder-request-id"]).toBe(envelope.requestId);
   });
 
+  it("signs Chat branding with the authenticated actor and stable idempotency key", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", organizationBrandingMode: "required" });
+    const actor = {
+      type: "board" as const,
+      source: "local_implicit" as const,
+      userId: "user-1",
+      sessionId: "chat-approval-session",
+      authEpoch: 9,
+    };
+    const body = Buffer.from(JSON.stringify({ brandColor: "#123456" }), "utf8");
+    const idempotencyKey = "approval-stable-key";
+
+    const response = await bridge.organizationBrandingForActor(
+      actor,
+      "org-1",
+      body,
+      idempotencyKey,
+    );
+
+    expect(response.status).toBe(200);
+    expect(bridge.requiresStartup).toBe(true);
+    const captured = await fixture.readRequest();
+    expect(captured.method).toBe("PATCH");
+    expect(captured.url).toBe("/api/orgs/org-1/branding");
+    expect(captured.body).toBe(body.toString("utf8"));
+    expect(captured.headers["x-rudder-idempotency-key"]).toBe(idempotencyKey);
+    expectEnvelopeSignedWith(captured, {
+      actor,
+      organizationId: "org-1",
+      method: "PATCH",
+      path: "/api/orgs/org-1/branding",
+      action: "organization.branding.update",
+      body,
+      idempotencyKey,
+    }, "bridge-test-secret");
+  });
+
   it("identifies an invalid organization branding mode with its own environment variable", () => {
     expect(() => createRustFoundationBridge({
       databaseUrl: "postgres://bridge-test",
