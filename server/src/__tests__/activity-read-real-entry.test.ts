@@ -178,7 +178,7 @@ describe.runIf(Boolean(qaRoot)).each([false, true])("Activity read public HTTP/R
     nodeListenPort = ingress ? await port() : 0;
     bridge = createRustFoundationBridge({ databaseUrl: connectionString, binaryPath: process.env.RUDDER_SERVER_FOUNDATION_PATH,
       actorEnvelopeKey: "activity-read-test-actor-key", mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 15_000,
-      ...(ingress ? { publicIngress: { listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${nodeListenPort}`, authorizationKey: "activity-read-ingress-test-key" } } : {}),
+      ...(ingress ? { publicIngress: { listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${nodeListenPort}`, authorizationKey: "activity-read-ingress-fixture-key-32-bytes-minimum" } } : {}),
     });
     server = await startApp(bridge, nodeListenPort);
     await bridge.start();
@@ -289,4 +289,92 @@ describe.runIf(Boolean(qaRoot)).each([false, true])("Activity read public HTTP/R
       if (ingress) { server = await startApp(bridge, nodeListenPort); await bridge!.waitForPublicIngressReady!(); }
     }
   });
+
+  if (!ingress) it("boots the normal API app and serves all five GETs with all pilots off", async () => {
+    // The two ingress matrices above mount activityRoutes directly. This
+    // separate observation exercises production bridge injection and startup.
+    const pilotNames = ["RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS", "RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS"];
+    const previousPilots = Object.fromEntries(pilotNames.map((name) => [name, process.env[name]]));
+    for (const name of pilotNames) delete process.env[name];
+    let handle: import("../app.js").RudderAppHandle | undefined;
+    let bootstrapServer: Server | undefined;
+    const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+    async function databaseSnapshot() {
+      const result: Record<string, string> = {};
+      const tables = await db!.execute<{ tablename: string }>(sql`SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`);
+      for (const { tablename } of tables) {
+        // Authentication updates key-use timestamps; domain reads must not
+        // change any other data, including mutation ownership/outbox tables.
+        const row = ["agent_api_keys", "board_api_keys"].includes(tablename) ? "to_jsonb(t) - 'last_used_at'" : "to_jsonb(t)";
+        const rows = await db!.execute<{ value: string }>(sql.raw(`SELECT coalesce(jsonb_agg(${row} ORDER BY (${row})::text), '[]'::jsonb)::text AS value FROM "${tablename.replaceAll('"', '""')}" t`));
+        result[tablename] = sha256(rows[0]!.value);
+      }
+      return result;
+    }
+    try {
+      const { createRudderApp } = await import("../app.js");
+      const { createStorageService } = await import("../storage/service.js");
+      const { createLocalDiskStorageProvider } = await import("../storage/local-disk-provider.js");
+      await close(server); server = undefined;
+      await bridge!.close();
+      const beforeStartup = await databaseSnapshot();
+      const listenPort = await port();
+      handle = await createRudderApp(db!, {
+        uiMode: "none", serverPort: listenPort,
+        storageService: createStorageService(createLocalDiskStorageProvider(path.join(qaRoot!, "storage"))),
+        deploymentMode: "authenticated", deploymentExposure: "private", authRequirement: "required",
+        localRuntimeTrust: "untrusted", allowedHostnames: ["127.0.0.1", "localhost"], bindHost: "127.0.0.1",
+        authReady: true, companyDeletionEnabled: false, databaseUrl: connectionString,
+        rustFoundationBinaryPath: process.env.RUDDER_SERVER_FOUNDATION_PATH, rustFoundationMode: "off",
+        rustOrganizationBrandingMode: "off", rustProjectGoalSetMode: "off",
+        instanceId: "activity-read-normal-bootstrap-test", localEnv: "e2e", mcpHostEnv: {},
+        mcpDeploymentAllowlists: { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [] },
+      });
+      bootstrapServer = handle.app.listen(listenPort, "127.0.0.1");
+      await once(bootstrapServer, "listening");
+      // Startup can synchronize plugin projections. Freeze that state before
+      // proving the read boundary, and disclose any startup-only table changes.
+      const afterStartup = await databaseSnapshot();
+      const filesAfterStartup = fileSnapshot();
+      const cases = [
+        { url: `/api/orgs/${orgId}/activity`, foreign: `/api/orgs/${foreignOrgId}/activity`, expected: wire(await oracle.list({ orgId })) },
+        { url: `/api/issues/${issueId}/activity`, foreign: `/api/issues/${foreignIssueId}/activity`, expected: wire(await oracle.forIssue(issueId)) },
+        { url: `/api/issues/${issueId}/runs`, foreign: `/api/issues/${foreignIssueId}/runs`, expected: wire(await oracle.runsForIssue(orgId, issueId)) },
+        { url: `/api/agent-runs/${runId}/issues`, foreign: `/api/agent-runs/${foreignRunId}/issues`, expected: wire(await oracle.issuesForRun(runId)) },
+        { url: `/api/heartbeat-runs/${runId}/issues`, foreign: `/api/heartbeat-runs/${foreignRunId}/issues`, expected: wire(await oracle.issuesForRun(runId)) },
+      ];
+      const requests: Array<{ path: string; actor: string; status: number; sha256: string }> = [];
+      for (const { url, foreign, expected } of cases) {
+        for (const token of [agentToken, boardToken]) {
+          const response = await get(url, token, bootstrapServer);
+          expect(response.status, response.text.slice(0, 300)).toBe(200);
+          expect(response.headers["content-type"]).toBe("application/json; charset=utf-8");
+          expect(response.body).toEqual(expected);
+          expect(response.text).not.toMatch(/FOREIGN_\w+_MUST_NOT_LEAK|PRIVATE_SESSION|PRIVATE_FOLLOWUP/);
+          requests.push({ path: url, actor: token === agentToken ? "agent" : "board", status: response.status, sha256: sha256(response.text) });
+          expect((await get(foreign, token, bootstrapServer)).status).toBe(403);
+        }
+        expect((await request(bootstrapServer).get(url)).status).toBe(401);
+        expect((await request(bootstrapServer).get(url).set("x-rudder-actor-envelope", '{"actor":{"type":"board"}}')).status).toBe(401);
+      }
+      expect(await databaseSnapshot()).toEqual(afterStartup);
+      expect(fileSnapshot()).toEqual(filesAfterStartup);
+      console.info("ACTIVITY_NORMAL_BOOTSTRAP_RECEIPT", JSON.stringify({
+        binaryPath: process.env.RUDDER_SERVER_FOUNDATION_PATH,
+        binarySha256: sha256(fs.readFileSync(process.env.RUDDER_SERVER_FOUNDATION_PATH!)),
+        entry: "createRudderApp -> createHttpApp -> registerApiRoutes -> activityRoutes",
+        databaseKind: "disposable-migrated-embedded-postgres", allPilotModes: "off", readOnly: true,
+        renderedUiObserved: false, electronObserved: false,
+        startupChangedTables: Object.keys(afterStartup).filter((name) => afterStartup[name] !== beforeStartup[name]),
+        domainFingerprint: sha256(JSON.stringify(afterStartup)), requests,
+      }));
+    } finally {
+      try { await close(bootstrapServer); await handle?.close(); }
+      finally {
+        for (const [name, value] of Object.entries(previousPilots)) {
+          if (value === undefined) delete process.env[name]; else process.env[name] = value;
+        }
+      }
+    }
+  }, 45_000);
 });

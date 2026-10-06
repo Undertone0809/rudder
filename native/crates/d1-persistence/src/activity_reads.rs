@@ -73,7 +73,7 @@ fn object(value: &str) -> Result<Object, StoreError> {
     serde_json::from_str(value).map_err(|_| StoreError::InvalidReceipt)
 }
 
-fn string(value: Option<&Box<RawValue>>) -> Option<String> {
+fn string(value: Option<&RawValue>) -> Option<String> {
     value.and_then(|value| serde_json::from_str::<String>(value.get()).ok())
 }
 
@@ -110,7 +110,7 @@ fn spread(value: &str) -> Result<Object, StoreError> {
 }
 
 fn low_signal(event: &Object) -> Result<bool, StoreError> {
-    if string(event.get("action")).as_deref() != Some("issue.updated") {
+    if string(event.get("action").map(Box::as_ref)).as_deref() != Some("issue.updated") {
         return Ok(false);
     }
     let Some(details) = event.get("details").filter(|v| v.get().starts_with('{')) else {
@@ -149,7 +149,7 @@ fn low_signal(event: &Object) -> Result<bool, StoreError> {
 }
 
 fn visible(event: &Object, issue: bool) -> Result<bool, StoreError> {
-    let action = string(event.get("action"));
+    let action = string(event.get("action").map(Box::as_ref));
     Ok(action.as_deref() != Some("issue.execution_released")
         && !(issue && action.as_deref() == Some("issue.document_updated"))
         && !low_signal(event)?)
@@ -162,7 +162,7 @@ fn enrich_issue(
 ) -> Result<(), StoreError> {
     let identifier = identifier.filter(|s| !s.is_empty());
     let title = title.filter(|s| !s.is_empty());
-    if string(event.get("entityType")).as_deref() != Some("issue")
+    if string(event.get("entityType").map(Box::as_ref)).as_deref() != Some("issue")
         || (identifier.is_none() && title.is_none())
     {
         return Ok(());
@@ -174,7 +174,7 @@ fn enrich_issue(
     ] {
         if let Some(value) = value {
             details.insert(enriched.to_owned(), raw(&value)?);
-            if string(details.get(fallback)).is_none() {
+            if string(details.get(fallback).map(Box::as_ref)).is_none() {
                 details.insert(fallback.to_owned(), raw(&value)?);
             }
         }
@@ -262,7 +262,7 @@ async fn organization(
         let mut event = object(&row.try_get::<String, _>("event")?)?;
         last_cursor = Some(ActivityCursor {
             created_at: row.try_get("cursor_created_at")?,
-            id: string(event.get("id")).ok_or(StoreError::InvalidReceipt)?,
+            id: string(event.get("id").map(Box::as_ref)).ok_or(StoreError::InvalidReceipt)?,
         });
         enrich_issue(
             &mut event,
@@ -340,7 +340,7 @@ async fn issue_activity(
     // Stable millisecond ordering matches the old merge: issue rows precede chat
     // rows at equal JS timestamps, preserving each SQL source's microsecond order.
     events.sort_by_cached_key(|event| {
-        std::cmp::Reverse(string(event.get("createdAt")).unwrap_or_default())
+        std::cmp::Reverse(string(event.get("createdAt").map(Box::as_ref)).unwrap_or_default())
     });
     serialize(&events)
 }
@@ -389,7 +389,7 @@ fn project_run(mut run: Object) -> Result<Object, StoreError> {
     if let Some(usage) = run.get("usageJson").filter(|v| v.get().starts_with('{')) {
         let usage = object(usage.get())?;
         for key in ["provider", "biller", "model", "billingType"] {
-            if let Some(value) = string(usage.get(key)).filter(|v| !v.is_empty()) {
+            if let Some(value) = string(usage.get(key).map(Box::as_ref)).filter(|v| !v.is_empty()) {
                 result.insert(
                     key.to_owned(),
                     slice_utf16(&value, if key == "billingType" { 100 } else { 500 })?,
