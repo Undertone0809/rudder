@@ -530,5 +530,144 @@ describe("Chat organization branding through authenticated Node API and Rust", (
       eq(chatMessages.conversationId, approvalConversationId),
       eq(chatMessages.kind, "system_event"),
     ))).toHaveLength(1);
+
+    bridge!.organizationBrandingForActor = directBridge;
+    const successfulApprovalConversationId = randomUUID();
+    const successfulApprovalId = randomUUID();
+    await db!.insert(chatConversations).values({
+      id: successfulApprovalConversationId,
+      orgId,
+      title: "Approve branding through the real bridge",
+      createdByUserId: boardUserId,
+    });
+    await db!.insert(approvals).values({
+      id: successfulApprovalId,
+      orgId,
+      type: "chat_operation",
+      status: "pending",
+      payload: {
+        chatConversationId: successfulApprovalConversationId,
+        operationProposal: {
+          targetType: "organization",
+          targetId: orgId,
+          summary: "Apply a real-bridge branding approval",
+          patch: { brandColor: "#778899" },
+        },
+      },
+    });
+    const successfulApprovalKey = idempotencyKey("chat-approval", successfulApprovalId);
+    const successfulApprovalNodeAuditKey = `chat-approval:${successfulApprovalId}:organization-activity`;
+    const successfulApprovalAuditKey = `approval-approved:${successfulApprovalId}`;
+    const successfulApprovalPath = `/api/approvals/${successfulApprovalId}/approve`;
+    const successfulApprovalFirst = await request(server!)
+      .post(successfulApprovalPath)
+      .set("authorization", `Bearer ${boardToken}`)
+      .send({ decidedByUserId: "spoofed-user", decisionNote: "Approved through the real bridge" });
+    expect(successfulApprovalFirst.status, JSON.stringify(successfulApprovalFirst.body)).toBe(200);
+
+    const successfulApproval = await db!.select().from(approvals)
+      .where(eq(approvals.id, successfulApprovalId)).then((rows) => rows[0]);
+    expect(successfulApproval).toMatchObject({
+      status: "approved",
+      decidedByUserId: boardUserId,
+      decisionNote: "Approved through the real bridge",
+    });
+    expect(await readBrandColor()).toBe("#778899");
+    const successfulApprovalReceipts = await db!.select().from(organizationBrandingMutationReceipts)
+      .where(and(
+        eq(organizationBrandingMutationReceipts.orgId, orgId),
+        eq(organizationBrandingMutationReceipts.idempotencyKey, successfulApprovalKey),
+      ));
+    expect(successfulApprovalReceipts).toHaveLength(1);
+    expect(successfulApprovalReceipts[0]).toMatchObject({
+      orgId,
+      idempotencyKey: successfulApprovalKey,
+      outcome: "applied",
+    });
+    const successfulRustActivity = await db!.select().from(activityLog)
+      .where(eq(activityLog.id, successfulApprovalReceipts[0]!.activityId));
+    expect(successfulRustActivity).toHaveLength(1);
+    expect(successfulRustActivity[0]).toMatchObject({
+      orgId,
+      actorType: "user",
+      actorId: boardUserId,
+      action: "organization.branding_updated",
+      entityType: "organization",
+      entityId: orgId,
+    });
+    const successfulApprovalAudit = await db!.select().from(activityLog)
+      .where(eq(activityLog.idempotencyKey, successfulApprovalAuditKey));
+    expect(successfulApprovalAudit).toHaveLength(1);
+    expect(successfulApprovalAudit[0]).toMatchObject({
+      orgId,
+      actorType: "user",
+      actorId: boardUserId,
+      action: "approval.approved",
+      entityType: "approval",
+      entityId: successfulApprovalId,
+    });
+    expect(await db!.select().from(activityLog)
+      .where(eq(activityLog.idempotencyKey, successfulApprovalNodeAuditKey))).toHaveLength(1);
+    const successfulApprovalMessages = await db!.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, successfulApprovalConversationId),
+      eq(chatMessages.kind, "system_event"),
+    ));
+    expect(successfulApprovalMessages).toHaveLength(1);
+    expect(successfulApprovalMessages[0]).toMatchObject({
+      role: "system",
+      body: "Applied approved organization change: Apply a real-bridge branding approval.",
+      structuredPayload: expect.objectContaining({
+        eventType: "operation_applied",
+        approvalId: successfulApprovalId,
+        targetType: "organization",
+        targetId: orgId,
+      }),
+    });
+
+    const successfulApprovalRetry = await request(server!)
+      .post(successfulApprovalPath)
+      .set("authorization", `Bearer ${boardToken}`)
+      .send({ decidedByUserId: "spoofed-user", decisionNote: "Approved through the real bridge" });
+    expect(successfulApprovalRetry.status, JSON.stringify(successfulApprovalRetry.body)).toBe(200);
+    expect(await db!.select().from(approvals)
+      .where(eq(approvals.id, successfulApprovalId)).then((rows) => rows[0])).toMatchObject({
+      status: "approved",
+      decidedByUserId: boardUserId,
+      decisionNote: "Approved through the real bridge",
+    });
+    expect(await readBrandColor()).toBe("#778899");
+    expect(await db!.select().from(organizationBrandingMutationReceipts)
+      .where(and(
+        eq(organizationBrandingMutationReceipts.orgId, orgId),
+        eq(organizationBrandingMutationReceipts.idempotencyKey, successfulApprovalKey),
+      ))).toHaveLength(1);
+    expect(await db!.select().from(activityLog)
+      .where(eq(activityLog.id, successfulApprovalReceipts[0]!.activityId))).toMatchObject([
+      expect.objectContaining({
+        actorType: "user",
+        actorId: boardUserId,
+        action: "organization.branding_updated",
+        entityId: orgId,
+      }),
+    ]);
+    expect(await db!.select().from(activityLog)
+      .where(eq(activityLog.idempotencyKey, successfulApprovalAuditKey))).toMatchObject([
+      expect.objectContaining({
+        actorType: "user",
+        actorId: boardUserId,
+        action: "approval.approved",
+        entityId: successfulApprovalId,
+      }),
+    ]);
+    expect(await db!.select().from(activityLog)
+      .where(eq(activityLog.idempotencyKey, successfulApprovalNodeAuditKey))).toHaveLength(1);
+    expect(await db!.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, successfulApprovalConversationId),
+      eq(chatMessages.kind, "system_event"),
+    ))).toHaveLength(1);
+    expect(await db!.select().from(activityLog).where(and(
+      eq(activityLog.orgId, orgId),
+      eq(activityLog.action, "organization.branding_updated"),
+    ))).toHaveLength(3);
   }, 60_000);
 });
