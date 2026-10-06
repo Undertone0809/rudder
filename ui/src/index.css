@@ -1324,6 +1324,14 @@
     backdrop-filter: blur(38px) saturate(138%);
   }
 
+  /* Native macOS vibrancy supplies the window blur. Keep the tint here, but
+     avoid a second full-window backdrop filter on the ancestor of every
+     scrolling work surface. */
+  html.desktop-shell-macos.desktop-shell-glass .app-shell-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
   /* Windows transparent BrowserWindows do not provide macOS-style vibrancy.
      Keep the shell translucent, but prevent readable windows behind Rudder
      from bleeding through the navigation and workspace gutters. */

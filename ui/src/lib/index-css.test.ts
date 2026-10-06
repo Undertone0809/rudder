@@ -493,6 +493,17 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
+  it("uses native macOS vibrancy without filtering the scrolling workspace ancestor", () => {
+    const macBackdrop = cssBlock("html.desktop-shell-macos.desktop-shell-glass .app-shell-backdrop");
+
+    expect(macBackdrop).toContain("-webkit-backdrop-filter: none");
+    expect(macBackdrop).toContain("backdrop-filter: none");
+    expect(macBackdrop).not.toContain("background:");
+    expect(indexCss.indexOf("html.desktop-shell-macos.desktop-shell-glass .app-shell-backdrop")).toBeGreaterThan(
+      indexCss.indexOf("html.dark.desktop-shell-glass .app-shell-backdrop"),
+    );
+  });
+
   it("keeps cross-platform desktop glass on the app backdrop and active Chat header without adding a workspace wash", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-glass .app-shell-backdrop");
     const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-glass .app-shell-backdrop");
