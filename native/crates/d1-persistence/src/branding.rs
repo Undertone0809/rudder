@@ -102,16 +102,16 @@ pub(crate) async fn apply(
         None => {}
     }
 
-    if requested_logo_asset_id.is_some() && current_logo.as_deref() != next.logo_asset_id.as_deref()
+    if requested_logo_asset_id.is_some()
+        && current_logo.as_deref() != next.logo_asset_id.as_deref()
+        && let Some(previous_logo) = current_logo.as_deref()
     {
-        if let Some(previous_logo) = current_logo.as_deref() {
-            // Keep the legacy replacement cleanup, constrained to this organization.
-            sqlx::query("DELETE FROM assets WHERE id=$1::uuid AND org_id=$2::uuid")
-                .bind(previous_logo)
-                .bind(&metadata.org)
-                .execute(&mut **tx)
-                .await?;
-        }
+        // Keep the legacy replacement cleanup, constrained to this organization.
+        sqlx::query("DELETE FROM assets WHERE id=$1::uuid AND org_id=$2::uuid")
+            .bind(previous_logo)
+            .bind(&metadata.org)
+            .execute(&mut **tx)
+            .await?;
     }
 
     transaction::persist_branding(
