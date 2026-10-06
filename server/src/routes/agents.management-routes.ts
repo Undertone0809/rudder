@@ -1,6 +1,6 @@
 import { runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
 import type { Db } from "@rudderhq/db";
-import { agents as agentsTable, heartbeatRuns, organizations } from "@rudderhq/db";
+import { agents as agentsTable, organizations } from "@rudderhq/db";
 import {
   createAgentHireSchema,
   createAgentKeySchema,
@@ -17,7 +17,7 @@ import {
   upsertAgentInstructionsFileSchema,
   wakeAgentSchema
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, inArray, not, or, sql } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
@@ -34,6 +34,7 @@ import {
   logActivity,
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
+import { sendLiveRunRead } from "../services/live-run-read-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
 
@@ -54,6 +55,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     router,
     db,
     storage,
+    rustFoundationBridge,
     svc,
     assets,
     access,
@@ -1311,63 +1313,11 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const minCountParam = req.query.minCount as string | undefined;
     const minCount = minCountParam ? Math.max(0, Math.min(20, parseInt(minCountParam, 10) || 0)) : 0;
 
-    const columns = {
-      id: heartbeatRuns.id,
-      status: heartbeatRuns.status,
-      executionPhase: heartbeatRuns.runningSubstate,
-      invocationSource: heartbeatRuns.invocationSource,
-      triggerDetail: heartbeatRuns.triggerDetail,
-      startedAt: heartbeatRuns.startedAt,
-      finishedAt: heartbeatRuns.finishedAt,
-      createdAt: heartbeatRuns.createdAt,
-      stdoutExcerpt: heartbeatRuns.stdoutExcerpt,
-      resultJson: heartbeatRuns.resultSummaryJson,
-      agentId: heartbeatRuns.agentId,
-      agentName: agentsTable.name,
-      agentRuntimeType: agentsTable.agentRuntimeType,
-      goalId: heartbeatRuns.goalId,
-      issueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`.as("issueId"),
-    };
-
-    const liveRuns = await db
-      .select(columns)
-      .from(heartbeatRuns)
-      .innerJoin(agentsTable, eq(heartbeatRuns.agentId, agentsTable.id))
-      .where(
-        and(
-          eq(heartbeatRuns.orgId, orgId),
-          ...(goalId ? [eq(heartbeatRuns.goalId, goalId)] : []),
-          or(
-            inArray(heartbeatRuns.status, ["queued", "running"]),
-            eq(heartbeatRuns.terminalEffectsPending, true),
-          ),
-        ),
-      )
-      .orderBy(desc(heartbeatRuns.createdAt));
-
-    if (minCount > 0 && liveRuns.length < minCount) {
-      const activeIds = liveRuns.map((r: any) => r.id);
-      const recentRuns = await db
-        .select(columns)
-        .from(heartbeatRuns)
-        .innerJoin(agentsTable, eq(heartbeatRuns.agentId, agentsTable.id))
-        .where(
-          and(
-            eq(heartbeatRuns.orgId, orgId),
-            ...(goalId ? [eq(heartbeatRuns.goalId, goalId)] : []),
-            not(inArray(heartbeatRuns.status, ["queued", "running"])),
-            eq(heartbeatRuns.terminalEffectsPending, false),
-            ...(activeIds.length > 0 ? [not(inArray(heartbeatRuns.id, activeIds))] : []),
-          ),
-        )
-        .orderBy(desc(heartbeatRuns.createdAt))
-        .limit(minCount - liveRuns.length);
-
-      res.json([...liveRuns, ...recentRuns]);
-      return;
-    }
-
-    res.json(liveRuns);
+    await sendLiveRunRead(res, rustFoundationBridge, req.actor, orgId, {
+      issueId: null,
+      goalId: goalId ?? null,
+      minCount,
+    });
   });
 
   router.get("/heartbeat-runs/:runId", async (req, res) => {
@@ -1616,37 +1566,13 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     }
     assertCompanyAccess(req, issue.orgId);
 
-    const liveRuns = await db
-      .select({
-        id: heartbeatRuns.id,
-        status: heartbeatRuns.status,
-        executionPhase: heartbeatRuns.runningSubstate,
-        invocationSource: heartbeatRuns.invocationSource,
-        triggerDetail: heartbeatRuns.triggerDetail,
-        startedAt: heartbeatRuns.startedAt,
-        finishedAt: heartbeatRuns.finishedAt,
-        createdAt: heartbeatRuns.createdAt,
-        stdoutExcerpt: heartbeatRuns.stdoutExcerpt,
-        resultJson: heartbeatRuns.resultSummaryJson,
-        agentId: heartbeatRuns.agentId,
-        agentName: agentsTable.name,
-        agentRuntimeType: agentsTable.agentRuntimeType,
-      })
-      .from(heartbeatRuns)
-      .innerJoin(agentsTable, eq(heartbeatRuns.agentId, agentsTable.id))
-      .where(
-        and(
-          eq(heartbeatRuns.orgId, issue.orgId),
-          or(
-            inArray(heartbeatRuns.status, ["queued", "running"]),
-            eq(heartbeatRuns.terminalEffectsPending, true),
-          ),
-          sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
-        ),
-      )
-      .orderBy(desc(heartbeatRuns.createdAt));
-
-    res.json(liveRuns);
+    // Keep the existing identifier/alias resolution and access check above at
+    // the authenticated boundary; selection and response projection are native.
+    await sendLiveRunRead(res, rustFoundationBridge, req.actor, issue.orgId, {
+      issueId: issue.id,
+      goalId: null,
+      minCount: 0,
+    });
   });
 
   router.get("/issues/:issueId/active-run", async (req, res) => {
