@@ -2,6 +2,7 @@ import type { HeartbeatRun } from "@rudderhq/shared";
 import fs from "node:fs";
 import path from "node:path";
 import { diagnoseRun } from "../diagnosis.js";
+import { parseNdjsonLog } from "../transcript.js";
 import type { RunDiagnosis, RunDiagnosisMode } from "../types.js";
 import { observedRunFromFilesystem } from "./rudder.js";
 
@@ -51,12 +52,38 @@ export function loadRunLogContent(logPath: string): string {
   return fs.readFileSync(logPath, "utf8");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCodexThreadStartedEvent(line: string): boolean {
+  let event: unknown;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return false;
+  }
+  return isRecord(event)
+    && event.type === "thread.started"
+    && typeof event.thread_id === "string"
+    && event.thread_id.trim().length > 0;
+}
+
+function inferFilesystemRuntimeType(logContent: string): string | null {
+  const stdout = parseNdjsonLog(logContent)
+    .filter((chunk) => chunk.stream === "stdout")
+    .map((chunk) => chunk.chunk)
+    .join("");
+  return stdout.split(/\r?\n/).some(isCodexThreadStartedEvent) ? "codex_local" : null;
+}
+
 export function loadFilesystemRunDetail(input: {
   match: FilesystemRunMatch;
   agentRuntimeType?: string;
   agentName?: string | null;
 }) {
   const logContent = loadRunLogContent(input.match.logPath);
+  const agentRuntimeType = input.agentRuntimeType?.trim() || inferFilesystemRuntimeType(logContent) || "process";
   const now = new Date();
   const run: HeartbeatRun = {
     id: input.match.runId,
@@ -91,7 +118,7 @@ export function loadFilesystemRunDetail(input: {
     processStartedAt: null,
     retryOfRunId: null,
     processLossRetryCount: 0,
-    contextSnapshot: { agentRuntimeType: input.agentRuntimeType ?? "process" },
+    contextSnapshot: { agentRuntimeType },
     createdAt: now,
     updatedAt: now,
   };
@@ -100,7 +127,7 @@ export function loadFilesystemRunDetail(input: {
     agentName: input.agentName ?? input.match.agentId,
     logContent,
     bundle: {
-      agentRuntimeType: input.agentRuntimeType ?? "process",
+      agentRuntimeType,
       agentConfigRevisionId: null,
       agentConfigRevisionCreatedAt: null,
       agentConfigFingerprint: null,

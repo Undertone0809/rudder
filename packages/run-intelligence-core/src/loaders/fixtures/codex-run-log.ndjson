@@ -1,0 +1,5 @@
+{"ts":"2026-10-06T01:00:00.000Z","stream":"stdout","chunk":"{\"type\":\"thread.started\",\"thread_id\":\"thread-fixture\",\"model\":\"codex\"}\n"}
+{"ts":"2026-10-06T01:00:01.000Z","stream":"stdout","chunk":"{\"type\":\"turn.started\"}\n"}
+{"ts":"2026-10-06T01:00:02.000Z","stream":"stdout","chunk":"{\"type\":\"item.completed\",\"item\":{\"id\":\"message-1\",\"type\":\"agent_message\",\"text\":\"Fixture response.\"}}\n"}
+{"ts":"2026-10-06T01:00:03.000Z","stream":"stdout","chunk":"{\"type\":\"item.started\",\"item\":{\"id\":\"tool-1\",\"type\":\"command_execution\",\"command\":\"pwd\"}}\n"}
+{"ts":"2026-10-06T01:00:04.000Z","stream":"stdout","chunk":"{\"type\":\"turn.completed\",\"result\":\"done\"}\n"}
