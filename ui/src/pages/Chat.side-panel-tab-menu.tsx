@@ -64,10 +64,10 @@ export function ChatSidePanelTabContextMenu({
       ? "Checking whether this Side Chat can be moved…"
       : canMoveSideChat
         ? "Make this Side Chat a regular Messenger chat. This tab will close."
-        : "This Side Chat can no longer be moved. Close it instead.";
+        : "This Side Chat can no longer be moved. End and delete it instead.";
   const closeLabel = sideChat
     ? sideChat.conversationId
-      ? "Close Side Chat"
+      ? "End and delete Side Chat"
       : "Discard Side Chat Draft"
     : "Close";
 

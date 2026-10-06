@@ -1,9 +1,10 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
-import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import {
-  activeChatStreamTimelineInsertionIndex,
-  isNativeSteerTranscriptEntry,
-} from "@/lib/chat-stream-state";
+  isInternalTranscriptLifecycleEntry,
+  isRudderEchoedStructuredConversationInputEntry,
+} from "@/components/transcript/RunTranscriptView.common";
+import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
+import { activeChatStreamTimelineInsertionIndex } from "@/lib/chat-stream-state";
 import type { Agent, ChatConversation, ChatMessage } from "@rudderhq/shared";
 
 export type ChatTimelineRow =
@@ -24,9 +25,6 @@ export function chatAssistantStreamRowKey(
   stream: Pick<ChatStreamDraft, "generationId" | "streamKey">
     & Partial<Pick<ChatStreamDraft, "chatTurnId" | "turnVariant">>,
 ) {
-  if (stream.chatTurnId) {
-    return chatAssistantTurnRowIdentityKey(stream.chatTurnId, stream.turnVariant);
-  }
   return `assistant-stream:${stream.streamKey}:variant:${stream.turnVariant ?? 0}`;
 }
 
@@ -35,11 +33,16 @@ export function rememberChatAssistantStreamRowIdentity(
   stream: Pick<ChatStreamDraft, "generationId" | "streamKey">
     & Partial<Pick<ChatStreamDraft, "chatTurnId" | "turnVariant">>,
 ) {
-  if (!stream.generationId) return;
-  identities.set(
-    chatAssistantGenerationRowIdentityKey(stream.generationId, stream.turnVariant),
-    chatAssistantStreamRowKey(stream),
-  );
+  const rowKey = chatAssistantStreamRowKey(stream);
+  if (stream.generationId) {
+    identities.set(
+      chatAssistantGenerationRowIdentityKey(stream.generationId, stream.turnVariant),
+      rowKey,
+    );
+  }
+  if (stream.chatTurnId) {
+    identities.set(chatAssistantTurnRowIdentityKey(stream.chatTurnId, stream.turnVariant), rowKey);
+  }
 }
 
 export function chatAssistantMessageRowKey(
@@ -52,7 +55,8 @@ export function chatAssistantMessageRowKey(
   rowIdentities?: ReadonlyMap<string, string>,
 ) {
   if (message.role !== "assistant") return message.id;
-  const sameTurnVariant = activeStream && message.turnVariant === activeStream.turnVariant;
+  const sameTurnVariant = activeStream
+    && (message.turnVariant ?? 0) === (activeStream.turnVariant ?? 0);
   if (activeStream && (
     message.id === `stream-draft:${activeStream.streamKey}`
     || message.id === activeAssistantMessageId
@@ -61,13 +65,22 @@ export function chatAssistantMessageRowKey(
       && message.generationId === activeStream.generationId
       && sameTurnVariant
     )
+    || Boolean(
+      activeStream.chatTurnId
+      && message.chatTurnId === activeStream.chatTurnId
+      && sameTurnVariant
+    )
   )) {
     return chatAssistantStreamRowKey(activeStream);
   }
-  const rememberedRowKey = message.generationId
+  const rememberedGenerationRowKey = message.generationId
     ? rowIdentities?.get(chatAssistantGenerationRowIdentityKey(message.generationId, message.turnVariant))
     : undefined;
-  if (rememberedRowKey) return rememberedRowKey;
+  if (rememberedGenerationRowKey) return rememberedGenerationRowKey;
+  const rememberedTurnRowKey = message.chatTurnId
+    ? rowIdentities?.get(chatAssistantTurnRowIdentityKey(message.chatTurnId, message.turnVariant))
+    : undefined;
+  if (rememberedTurnRowKey) return rememberedTurnRowKey;
   if (message.chatTurnId) {
     return chatAssistantTurnRowIdentityKey(message.chatTurnId, message.turnVariant);
   }
@@ -75,6 +88,51 @@ export function chatAssistantMessageRowKey(
     return `assistant-generation:${message.generationId}:variant:${message.turnVariant ?? 0}`;
   }
   return message.id;
+}
+
+export function buildFailedChatRetryInput<TConversation extends Pick<ChatConversation, "id">>(
+  sourceUserMessage: Pick<ChatMessage, "id" | "body">,
+  conversation: TConversation,
+) {
+  return {
+    bodyOverride: sourceUserMessage.body,
+    filesOverride: [] as File[],
+    conversationOverride: conversation,
+    editUserMessageIdOverride: sourceUserMessage.id,
+    editIntent: "retry" as const,
+  };
+}
+
+export function shouldShowOptimisticChatUserMessage(
+  activeStream: Pick<ChatStreamDraft, "userBody" | "userFiles" | "userMessageId">
+    | null,
+  messages: ChatMessage[],
+) {
+  if (!activeStream) return false;
+  const userFiles = activeStream.userFiles ?? [];
+  if (!activeStream.userMessageId) return true;
+  const existingUserMessage = messages.find((message) => message.id === activeStream.userMessageId);
+  if (!existingUserMessage) return true;
+  const matchingPersistedAttachments = [...existingUserMessage.attachments];
+  const optimisticFilesArePersisted = userFiles.every((file) => {
+    const attachmentIndex = matchingPersistedAttachments.findIndex((attachment) => (
+      attachment.originalFilename === file.name
+      && attachment.byteSize === file.size
+    ));
+    if (attachmentIndex < 0) return false;
+    matchingPersistedAttachments.splice(attachmentIndex, 1);
+    return true;
+  });
+  if (
+    existingUserMessage.role === "user"
+    && existingUserMessage.body === activeStream.userBody
+    && optimisticFilesArePersisted
+  ) {
+    return false;
+  }
+  return existingUserMessage.role !== "user"
+    || existingUserMessage.body !== activeStream.userBody
+    || userFiles.length > 0;
 }
 
 export function chatStreamDraftAssistantMessage(
@@ -180,9 +238,26 @@ export function chatStreamingAssistantBody(
 }
 
 export function chatProcessTranscriptEntries(entries: TranscriptEntry[]) {
-  return entries.filter((entry) => entry.kind === "user"
-    ? isNativeSteerTranscriptEntry(entry)
-    : !(entry.kind === "assistant" && entry.phase === "final_answer"));
+  return entries.filter((entry) => {
+    // Process is for agent work, not a second copy of user-authored input.
+    if (entry.kind === "user") return false;
+    if (isRudderEchoedStructuredConversationInputEntry(entry)) return false;
+    if (entry.kind === "assistant" && entry.phase === "final_answer") return false;
+    return !isInternalTranscriptLifecycleEntry(entry);
+  });
+}
+
+function anchorChatTimelineRowAfterActiveUser(
+  rows: ChatTimelineRow[],
+  rowIndex: number,
+  activeStream: ChatStreamDraft,
+) {
+  const [row] = rows.splice(rowIndex, 1);
+  if (!row) return rows;
+  const messages = rows.flatMap((candidate) => candidate.kind === "message" ? [candidate.message] : []);
+  const insertionIndex = activeChatStreamTimelineInsertionIndex(messages, activeStream);
+  rows.splice(insertionIndex, 0, row);
+  return rows;
 }
 
 export function buildChatTimelineRows(
@@ -197,32 +272,22 @@ export function buildChatTimelineRows(
     messageIndex,
   }));
   if (!showActiveStreamDraft || !activeStream) return rows;
-  const terminalMessageExists = Boolean(
-    messages.some((message) => (
-      message.role === "assistant"
-      && message.id === activeAssistantMessageId
-      && message.status !== "streaming"
-    ))
-    || (activeStream.generationId && messages.some((message) => (
-      message.role === "assistant"
-      && message.generationId === activeStream.generationId
-      && message.status !== "streaming"
-    ))),
-  );
-  if (terminalMessageExists) return rows;
   const activeMessageIndex = rows.findIndex((row) => (
     row.kind === "message"
     && row.message.role === "assistant"
-    && row.message.status === "streaming"
-    && (activeAssistantMessageId
-      ? row.message.id === activeAssistantMessageId
-      : Boolean(activeStream.generationId && row.message.generationId === activeStream.generationId))
+    && (row.message.id === activeAssistantMessageId
+      || (activeStream.generationId && row.message.generationId === activeStream.generationId)
+      || (activeStream.chatTurnId
+        && row.message.chatTurnId === activeStream.chatTurnId
+        && (row.message.turnVariant ?? 0) === (activeStream.turnVariant ?? 0)))
   ));
   if (activeMessageIndex >= 0) {
     const row = rows[activeMessageIndex];
     if (row?.kind === "message") {
-      rows[activeMessageIndex] = { ...row, activeStream };
-      return rows;
+      if (row.message.status === "streaming") {
+        rows[activeMessageIndex] = { ...row, activeStream };
+      }
+      return anchorChatTimelineRowAfterActiveUser(rows, activeMessageIndex, activeStream);
     }
   }
   rows.splice(activeChatStreamTimelineInsertionIndex(messages, activeStream), 0, {

@@ -116,7 +116,13 @@ export function NewAgent() {
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
-  const { data: runtimeAvailability, isPending: runtimeAvailabilityPending } = useQuery({
+  const {
+    data: runtimeAvailability,
+    isPending: runtimeAvailabilityPending,
+    isFetching: runtimeAvailabilityFetching,
+    isError: runtimeAvailabilityError,
+    refetch: refetchRuntimeAvailability,
+  } = useQuery({
     queryKey: selectedOrganizationId
       ? queryKeys.agents.adapterAvailability(selectedOrganizationId)
       : ["agents", "none", "adapter-availability"],
@@ -126,6 +132,11 @@ export function NewAgent() {
   const hermesAvailability = runtimeAvailability?.find((item) => item.agentRuntimeType === "hermes_gateway");
   const isLocalHermes = configValues.agentRuntimeType === "hermes_gateway"
     && configValues.hermesConnectionMode !== "custom";
+  const hermesDetectionFailed = !runtimeAvailabilityFetching && (
+    runtimeAvailabilityError || (!runtimeAvailabilityPending && !hermesAvailability)
+  );
+  const hermesDetectionBlocked = runtimeAvailabilityPending || runtimeAvailabilityFetching
+    || hermesDetectionFailed || hermesAvailability?.status !== "available";
 
   const {
     data: adapterModels,
@@ -251,10 +262,12 @@ export function NewAgent() {
   function handleSubmit() {
     if (!selectedOrganizationId || !hasLoadedAgents) return;
     setFormError(null);
-    if (isLocalHermes && (runtimeAvailabilityPending || hermesAvailability?.status !== "available")) {
-      setFormError(runtimeAvailabilityPending || !hermesAvailability
-        ? "Still checking for Hermes on this machine. Try again once it is ready."
-        : "Hermes isn't ready on this machine yet. Install or finish setting it up, then try again.");
+    if (isLocalHermes && hermesDetectionBlocked) {
+      setFormError(runtimeAvailabilityError
+        ? "Couldn't check Hermes on this machine. Restart Rudder, then retry."
+        : runtimeAvailabilityPending || runtimeAvailabilityFetching || !hermesAvailability
+          ? "Still checking for Hermes on this machine. Try again once it is ready."
+          : "Hermes isn't ready on this machine yet. Install or finish setting it up, then retry.");
       return;
     }
     if (configValues.agentRuntimeType === "hermes_gateway"
@@ -322,16 +335,40 @@ export function NewAgent() {
       {isLocalHermes && (
         <div
           data-testid="hermes-local-availability"
-          role={hermesAvailability?.status === "unavailable" ? "alert" : "status"}
-          className={hermesAvailability?.status === "unavailable"
+          role={hermesDetectionFailed || hermesAvailability?.status === "unavailable"
+            ? "alert"
+            : "status"}
+          className={hermesDetectionFailed || hermesAvailability?.status === "unavailable"
             ? "rounded-md border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
             : "rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"}
         >
-          {runtimeAvailabilityPending || !hermesAvailability
+          {runtimeAvailabilityPending || runtimeAvailabilityFetching
             ? "Checking for Hermes on this machine…"
-            : hermesAvailability.status === "available"
-              ? "Hermes is ready locally. Rudder will connect automatically."
-              : "Hermes isn't ready on this machine yet. Install or finish setting it up, then try again."}
+            : runtimeAvailabilityError || hermesDetectionFailed
+              ? <div className="flex items-center justify-between gap-3">
+                  <span>Couldn't check Hermes on this machine. Restart Rudder, then retry.</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => { void refetchRuntimeAvailability(); }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+            : hermesAvailability?.status === "available"
+              ? "Hermes was found on this machine. Rudder will use its existing provider setup."
+              : <div className="flex items-center justify-between gap-3">
+                  <span>Hermes isn't ready on this machine yet. Install or finish setting it up, then retry.</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => { void refetchRuntimeAvailability(); }}
+                  >
+                    Retry
+                  </Button>
+                </div>}
           <p className="mt-1">
             You don't need to enter a server address or API key. This agent uses the Hermes setup and access permissions already configured on this machine.
           </p>
@@ -533,7 +570,7 @@ export function NewAgent() {
             <Button
               size="sm"
               disabled={createAgent.isPending || !hasLoadedAgents
-                || (isLocalHermes && (runtimeAvailabilityPending || hermesAvailability?.status !== "available"))}
+                || (isLocalHermes && hermesDetectionBlocked)}
               onClick={handleSubmit}
             >
               {createAgent.isPending ? "Creating…" : "Create agent"}

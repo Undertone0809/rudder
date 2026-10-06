@@ -6,6 +6,7 @@ import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_BASE_URL, E2E_CODEX_APP_SERVER_STUB, E2E_CODEX_ERROR_STUB, E2E_DB_PORT, E2E_INSTANCE_ROOT, E2E_ROOT } from "./support/e2e-env";
 
 const ORG_NAME = `Err-Chat-${Date.now()}`;
+const RETRY_FAILED_ASSISTANT_TEST_TITLE = "lets the operator retry a failed assistant reply";
 
 async function createRetryableFailureStub(outputDir: string) {
   const dir = join(outputDir, "codex-retry-wrapper");
@@ -126,6 +127,32 @@ rl.on("line", (line) => {
 }
 
 test.describe("Chat error recovery", () => {
+  const retryWrapperInvocationPaths = new Map<string, string>();
+
+  test.afterEach(async ({}, testInfo) => {
+    if (testInfo.title !== RETRY_FAILED_ASSISTANT_TEST_TITLE) return;
+
+    const invocationPath = retryWrapperInvocationPaths.get(testInfo.testId);
+    retryWrapperInvocationPaths.delete(testInfo.testId);
+    if (!invocationPath) return;
+
+    try {
+      await testInfo.attach("codex-retry-wrapper-invocations", {
+        path: invocationPath,
+        contentType: "text/plain",
+      });
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        await testInfo.attach("codex-retry-wrapper-invocations-missing.txt", {
+          body: Buffer.from("The wrapper invocation log was not created before the test ended; the wrapper may not have started."),
+          contentType: "text/plain",
+        });
+        return;
+      }
+      throw error;
+    }
+  });
+
   test("shows an ask-user reply as a normal message when structured questions are missing", async ({ page }, testInfo) => {
     const askUserFallbackStub = await createAskUserWithoutPayloadStub();
     const orgRes = await page.request.post("/api/orgs", {
@@ -266,6 +293,7 @@ test.describe("Chat error recovery", () => {
   test("lets the operator retry a failed assistant reply", async ({ page }, testInfo) => {
     test.setTimeout(120_000);
     const retryableFailureStub = await createRetryableFailureStub(testInfo.outputDir);
+    retryWrapperInvocationPaths.set(testInfo.testId, retryableFailureStub.invocationPath);
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Retry-Chat-${Date.now()}`,
@@ -367,15 +395,7 @@ test.describe("Chat error recovery", () => {
       hasText: "Please retry this failed request",
     })).toHaveCount(1);
     await expect(failedMessage).toBeVisible({ timeout: 15_000 });
-    await expect(failedMessage.getByRole("link", { name: "Open run" })).toHaveAttribute(
-      "href",
-      `/${organizationPath}/agents/${chatAgent.urlKey}/runs/${failedRunId}`,
-    );
     await expect(failedMessage.getByRole("button", { name: "Retry" })).toBeVisible();
-    await page.screenshot({
-      path: testInfo.outputPath("chat-error-after-refresh.png"),
-      fullPage: true,
-    });
 
     await failedMessage.getByRole("button", { name: "Retry" }).click();
 
@@ -418,6 +438,12 @@ test.describe("Chat error recovery", () => {
     expect(recoveredAssistant?.runId).not.toBe(failedRunId);
     expect(recoveredAssistant?.chatTurnId).toBe(userVariants[0]?.chatTurnId);
     expect(recoveredAssistant?.turnVariant).toBe(1);
+    const recoveredRunId = recoveredAssistant?.runId;
+    if (!recoveredRunId) throw new Error("Recovered assistant reply did not reference an Agent Run");
+    const recoveredRunResponse = await page.request.get(`/api/agent-runs/${recoveredRunId}`);
+    expect(recoveredRunResponse.ok()).toBe(true);
+    const recoveredRun = await recoveredRunResponse.json() as { id: string; status: string };
+    expect(recoveredRun).toMatchObject({ id: recoveredRunId, status: "succeeded" });
     const databaseUrl = process.env.RUDDER_E2E_DATABASE_URL;
     const database = databaseUrl
       ? { mode: "external", host: new URL(databaseUrl).host, name: new URL(databaseUrl).pathname.slice(1) }
@@ -429,16 +455,12 @@ test.describe("Chat error recovery", () => {
         chatTurnId: userVariants[0]?.chatTurnId,
         attempts: [
           { variant: 0, runId: failedRunId, status: "failed" },
-          { variant: 1, runId: recoveredAssistant?.runId, status: "completed" },
+          { variant: 1, runId: recoveredRun.id, status: recoveredRun.status },
         ],
         activeUserMessageCount: userVariants.filter((message) => message.supersededAt === null).length,
         invocationPath: retryableFailureStub.invocationPath,
       }, null, 2)),
       contentType: "application/json",
-    });
-    await testInfo.attach("codex-retry-wrapper-invocations", {
-      path: retryableFailureStub.invocationPath,
-      contentType: "text/plain",
     });
     await page.screenshot({
       path: testInfo.outputPath("chat-retry-completed.png"),

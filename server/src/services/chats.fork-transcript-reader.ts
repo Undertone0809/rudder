@@ -4,18 +4,36 @@ import { unprocessable } from "../errors.js";
 import { chatTranscriptEntryFromReaderItem } from "./chat-transcript-reader-item.js";
 import { loadNativeChatForkSource, nativeForkContentHash, nativeForkReaderContent, type NativeChatForkSource } from "./chats.native-fork-aliases.js";
 import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
-import type { TranscriptAvailability, TranscriptSource } from "./runtime-kernel/transcript-reader.js";
+import type { TranscriptAvailability, TranscriptCompleteness, TranscriptSource } from "./runtime-kernel/transcript-reader.js";
 
 type MessageRow = typeof chatMessages.$inferSelect;
 const CHAT_TRANSCRIPT_READER_PAGE_LIMIT = 200;
 const CHAT_TRANSCRIPT_READER_MAX_PAGES = 25;
 const CHAT_TRANSCRIPT_READER_MAX_ITEMS = 5000;
 const CHAT_TRANSCRIPT_READER_MAX_BYTES = 2 * 1024 * 1024;
+const CHAT_TRANSCRIPT_READER_LIMITS = {
+  pageSize: CHAT_TRANSCRIPT_READER_PAGE_LIMIT,
+  maxPages: CHAT_TRANSCRIPT_READER_MAX_PAGES,
+  maxItems: CHAT_TRANSCRIPT_READER_MAX_ITEMS,
+  maxBytes: CHAT_TRANSCRIPT_READER_MAX_BYTES,
+} as const;
+type RunTranscriptReadOptions = {
+  // Lazy message reads skip hash work while retaining all reader safety limits.
+  calculateContentHash?: boolean;
+};
 export type RunTranscriptRead = {
   entries: ChatStreamTranscriptEntry[];
   source: TranscriptSource;
   availability: TranscriptAvailability;
   complete?: boolean;
+  completeness?: TranscriptCompleteness;
+  hasMore?: boolean;
+  limit?: {
+    pageSize: number;
+    maxPages: number;
+    maxItems: number;
+    maxBytes: number;
+  };
   contentSha256?: string;
 };
 
@@ -26,18 +44,29 @@ export function createChatForkTranscriptReader(db: Db, readConversationMessageTr
   const transcriptReader = createHistoricalTranscriptReader(db);
   async function readRunTranscriptThroughReader(
     run: Pick<MessageRow, "orgId" | "runId">,
+    options: RunTranscriptReadOptions = {},
   ): Promise<RunTranscriptRead> {
     if (!run.runId) {
-      return { entries: [], source: "legacy", availability: "missing" };
+      return {
+        entries: [], source: "legacy", availability: "missing", complete: false,
+        completeness: "unknown", hasMore: false,
+        limit: { ...CHAT_TRANSCRIPT_READER_LIMITS },
+      };
     }
+    const byteBudget = CHAT_TRANSCRIPT_READER_MAX_BYTES;
+    const calculateContentHash = options.calculateContentHash !== false;
     const entries: ChatStreamTranscriptEntry[] = [];
     const sourceContent: unknown[] = [];
     let sourceBytes = 2;
+    let readerItemCount = 0;
     let cursor: string | null = null;
     let bytes = 2;
     let source: TranscriptSource = "legacy";
     let availability: TranscriptAvailability = "missing";
     let complete = true;
+    let completeness: TranscriptCompleteness = "complete";
+    let hasMore = false;
+    const limit = { ...CHAT_TRANSCRIPT_READER_LIMITS };
     for (let pageCount = 0; pageCount < CHAT_TRANSCRIPT_READER_MAX_PAGES; pageCount += 1) {
       const page = await transcriptReader.readRun({
         orgId: run.orgId,
@@ -49,24 +78,32 @@ export function createChatForkTranscriptReader(db: Db, readConversationMessageTr
       source = page.source;
       availability = page.availability;
       complete = complete && page.completeness === "complete";
+      if (page.completeness !== "complete") completeness = page.completeness;
+      hasMore = Boolean(page.nextCursor);
       for (const item of page.items) {
-        const content = nativeForkReaderContent(item);
-        sourceBytes += Buffer.byteLength(JSON.stringify(content), "utf8") + 1;
-        if (sourceContent.length >= CHAT_TRANSCRIPT_READER_MAX_ITEMS || sourceBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES) {
-          return { entries, source, availability, complete: false };
+        if (readerItemCount >= CHAT_TRANSCRIPT_READER_MAX_ITEMS) {
+          return { entries, source, availability, complete: false, completeness: "partial", hasMore: true, limit };
         }
-        sourceContent.push(content);
+        readerItemCount += 1;
+        if (calculateContentHash) {
+          const content = nativeForkReaderContent(item);
+          sourceBytes += Buffer.byteLength(JSON.stringify(content), "utf8") + 1;
+          if (sourceBytes > byteBudget) {
+            return { entries, source, availability, complete: false, completeness: "partial", hasMore: true, limit };
+          }
+          sourceContent.push(content);
+        }
         const entry = chatTranscriptEntryFromReaderItem(item);
         if (!entry) continue;
         const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
         if (
           entries.length >= CHAT_TRANSCRIPT_READER_MAX_ITEMS
-          || (entries.length > 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES)
+          || (entries.length > 0 && bytes + entryBytes > byteBudget)
         ) {
-          return { entries, source, availability, complete: false };
+          return { entries, source, availability, complete: false, completeness: "partial", hasMore: true, limit };
         }
-        if (entries.length === 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES) {
-          return { entries, source, availability, complete: false };
+        if (entries.length === 0 && bytes + entryBytes > byteBudget) {
+          return { entries, source, availability, complete: false, completeness: "partial", hasMore: true, limit };
         }
         entries.push(entry);
         bytes += entryBytes + (entries.length > 1 ? 1 : 0);
@@ -77,13 +114,16 @@ export function createChatForkTranscriptReader(db: Db, readConversationMessageTr
           source,
           availability,
           complete,
-          ...(complete ? { contentSha256: nativeForkContentHash(sourceContent) } : {}),
+          completeness,
+          hasMore: false,
+          limit,
+          ...(complete && calculateContentHash ? { contentSha256: nativeForkContentHash(sourceContent) } : {}),
         };
       }
       if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
       cursor = page.nextCursor;
     }
-    return { entries, source, availability, complete: false };
+    return { entries, source, availability, complete: false, completeness: "partial", hasMore, limit };
   }
 
   async function loadForkTranscripts(

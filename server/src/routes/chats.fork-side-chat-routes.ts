@@ -89,7 +89,31 @@ export function registerChatForkSideChatRoutes(input: {
       userId: boardUserId(req),
       ...parseSideChatHistoryQuery(req.query),
     });
-    res.json({ items: sideChatPage.items, nextCursor: sideChatPage.nextCursor });
+    const summarizedSideChats = await svc.listSummariesByIds(
+      source.orgId,
+      sideChatPage.items.map((sideChat) => sideChat.id),
+      boardUserId(req),
+    );
+    const summariesById = new Map(summarizedSideChats.map((sideChat) => [sideChat.id, sideChat]));
+    const items = await assistantSvc.enrichConversations(
+      sideChatPage.items.map((sideChat) => {
+        const summary = summariesById.get(sideChat.id);
+        return {
+          ...sideChat,
+          latestReplyPreview: summary?.latestReplyPreview ?? sideChat.latestReplyPreview,
+          latestUserMessagePreview: summary?.latestUserMessagePreview ?? sideChat.latestUserMessagePreview,
+          userMessageCount: summary?.userMessageCount ?? sideChat.userMessageCount,
+          sourceMetadata: summary?.sourceMetadata ?? sideChat.sourceMetadata,
+          mutability: summary?.mutability ?? sideChat.mutability,
+          lastReadAt: summary?.lastReadAt ?? sideChat.lastReadAt,
+          isPinned: summary?.isPinned ?? sideChat.isPinned,
+          unreadCount: summary?.unreadCount ?? sideChat.unreadCount,
+          isUnread: summary?.isUnread ?? sideChat.isUnread,
+          needsAttention: summary?.needsAttention ?? sideChat.needsAttention,
+        };
+      }),
+    );
+    res.json({ items, nextCursor: sideChatPage.nextCursor });
   });
 
   router.post("/chats/:id/fork", validate(forkChatConversationSchema), async (req, res) => {

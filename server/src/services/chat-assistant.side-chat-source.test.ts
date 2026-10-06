@@ -5,6 +5,7 @@ import {
   chatContinuationTransportProfile,
   chatSessionForCurrentProviderProfile,
   deriveSideChatContextHandoff,
+  deriveSideChatNativeForkBoundary,
   deriveSideChatForkSourceForCurrentProfile,
   loadSideChatForkSource,
   resolveChatContinuationSession,
@@ -131,6 +132,33 @@ describe("Side Chat visible context handoff", () => {
       ],
     });
     expect(deriveSideChatContextHandoff(input, null, "native")).toBeNull();
+  });
+});
+
+describe("provider-native Side Chat boundary prompt", () => {
+  it("maps the parent source ID to the copied assistant reply instead of relying on ID equality", () => {
+    const input = {
+      conversation: {
+        id: "child-chat",
+        conversationKind: "side_chat",
+        forkedFromConversationId: "parent-chat",
+        forkedFromMessageId: "parent-selected-reply",
+      },
+      userMessageId: "new-user",
+      messages: [
+        { id: "copied-old-reply", role: "assistant", kind: "message", status: "completed", body: "Older answer", structuredPayload: { sideChatSource: { conversationId: "parent-chat", messageId: "parent-old-reply" } } },
+        { id: "copied-selected-reply", role: "assistant", kind: "message", status: "completed", body: "Selected answer", structuredPayload: { sideChatSource: { conversationId: "parent-chat", messageId: "parent-selected-reply" } } },
+        { id: "new-user", role: "user", kind: "message", status: "completed", body: "New input" },
+      ],
+    } as unknown as StreamChatAssistantReplyInput;
+
+    expect(deriveSideChatNativeForkBoundary(input, { continuity: "native" })).toEqual({
+      sourceConversationId: "parent-chat",
+      sourceMessageId: "parent-selected-reply",
+      copiedMessageId: "copied-selected-reply",
+      selectedAssistantReply: "Selected answer",
+    });
+    expect(deriveSideChatNativeForkBoundary(input, { continuity: "context_handoff" })).toBeNull();
   });
 });
 

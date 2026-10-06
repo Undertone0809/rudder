@@ -550,6 +550,12 @@ describe("sideChatService", () => {
       },
     });
     expect(copiedAnchor?.structuredPayload).not.toHaveProperty("privateRuntimeData");
+    const branchEvent = copied.find((message) => message.structuredPayload?.eventType === "side_chat_started");
+    expect(branchEvent?.body).toBe(`Side Chat branched from the selected assistant reply in [Source answer](chat://${source.sourceConversationId}).`);
+    expect(branchEvent?.structuredPayload).toMatchObject({
+      sourceMessageId: source.anchorMessageId,
+      copiedSourceMessageId: copiedAnchor?.id,
+    });
     const copiedContextLinks = await db
       .select()
       .from(chatContextLinks)

@@ -2477,7 +2477,11 @@ export function ChatSidePanel({
                       type="button"
                       draggable={false}
                       data-testid="chat-side-panel-tab-close"
-                      aria-label={`Close ${tab.label} tab`}
+                      aria-label={tab.kind === "side_chat"
+                        ? tab.conversationId
+                          ? "End and delete Side Chat"
+                          : "Discard Side Chat Draft"
+                        : `Close ${tab.label} tab`}
                       disabled={closeDisabled}
                       className="pointer-events-none inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[color,background-color,opacity] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={(event) => {

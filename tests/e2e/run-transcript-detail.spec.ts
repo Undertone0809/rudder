@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
-import { chatConversations, createDb, heartbeatRunAttempts, heartbeatRunEvents, heartbeatRuns, runRuntimeSpans } from "../../packages/db/src/index.ts";
+import { chatConversations, createDb, heartbeatRunAttempts, heartbeatRunEvents, heartbeatRuns, nativeSegments, runRuntimeSpans, runtimeBindings } from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_CONFIG_PATH, E2E_DATABASE_URL, E2E_INSTANCE_ROOT } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -860,6 +860,216 @@ test.describe("Run transcript detail", () => {
       path: isolatedE2EScreenshotPath("agent-run-detail-tabs"),
       fullPage: true,
     });
+  });
+
+  test("keeps native transcript fidelity and the retained instruction snapshot on the same Run", async ({ page }) => {
+    test.setTimeout(90_000);
+    const { storeRunInstructionSnapshot } = await import("../../server/src/services/run-instruction-snapshots.ts");
+    const { createStorageService } = await import("../../server/src/storage/service.ts");
+    const { createLocalDiskStorageProvider } = await import("../../server/src/storage/local-disk-provider.ts");
+    const config = JSON.parse(await readFile(E2E_CONFIG_PATH, "utf8"));
+    const storage = createStorageService(createLocalDiskStorageProvider(config.storage.localDisk.baseDir));
+    const organization = await createOrganization(page, `Run-Raw-Fidelity-${Date.now()}`);
+    const agentResponse = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Native Transcript Fidelity",
+        role: "engineer",
+        agentRuntimeType: "hermes_gateway",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(agentResponse.ok(), await agentResponse.text()).toBe(true);
+    const agent = await agentResponse.json() as { id: string };
+
+    const runId = randomUUID();
+    const attemptId = randomUUID();
+    const spanId = randomUUID();
+    const bindingId = randomUUID();
+    const segmentId = randomUUID();
+    const sessionId = `native-transcript-${runId}`;
+    const startedAt = new Date(Date.now() - 60_000);
+    const finishedAt = new Date(startedAt.getTime() + 30_000);
+    const instructionStack = [
+      "<rudder_agent_instruction>",
+      "<rudder_agent_operating_contract>",
+      "NATIVE_INSTRUCTION_ECHO_MUST_STAY_OUT_OF_NICE",
+      "</rudder_agent_operating_contract>",
+      "</rudder_agent_instruction>",
+    ].join("\n");
+    const snapshot = await storeRunInstructionSnapshot({ storage, orgId: organization.id, text: instructionStack });
+
+    await e2eDb.insert(runtimeBindings).values({
+      id: bindingId,
+      orgId: organization.id,
+      targetType: "manual",
+      targetId: runId,
+      principalScopeRef: `org:${organization.id}`,
+      agentId: agent.id,
+      runtimeType: "hermes_gateway",
+      continuity: "native",
+      status: "closed",
+    });
+    await e2eDb.insert(nativeSegments).values({
+      id: segmentId,
+      orgId: organization.id,
+      bindingId,
+      runtimeType: "hermes_gateway",
+      segmentOrdinal: 0,
+      nativeSessionId: sessionId,
+      rootSessionId: sessionId,
+      state: "sealed",
+      sealedAt: finishedAt,
+      createdAt: startedAt,
+      updatedAt: finishedAt,
+    });
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "on_demand",
+      triggerDetail: "Native transcript fidelity fixture",
+      status: "succeeded",
+      startedAt,
+      finishedAt,
+      exitCode: 0,
+      sessionIdBefore: sessionId,
+      sessionIdAfter: sessionId,
+      sessionReuseScope: "explicit",
+      contextSnapshot: {
+        transcriptSource: "native",
+        agentRuntimeType: "hermes_gateway",
+        runtimeBindingId: bindingId,
+        runtimeSegmentId: segmentId,
+        runtimeProviderProfile: { runtimeType: "hermes_gateway" },
+      },
+      createdAt: startedAt,
+      updatedAt: finishedAt,
+    });
+    await e2eDb.insert(heartbeatRunAttempts).values({
+      id: attemptId,
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      attemptIndex: 1,
+      runtimeType: "hermes_gateway",
+      status: "succeeded",
+      submissionPhase: "accepted",
+      providerThreadId: sessionId,
+      startedAt,
+      finishedAt,
+      createdAt: startedAt,
+    });
+    await e2eDb.insert(runRuntimeSpans).values({
+      id: spanId,
+      orgId: organization.id,
+      runId,
+      bindingId,
+      segmentId,
+      attemptId,
+      attemptRef: `attempt-${runId}`,
+      ownerToken: `owner-${runId}`,
+      ordinal: 0,
+      selectorJson: { kind: "hermes_session", sessionId },
+      state: "sealed",
+      completeness: "complete",
+      writerLeaseReleasedAt: finishedAt,
+      openedAt: startedAt,
+      closedAt: finishedAt,
+      updatedAt: finishedAt,
+    });
+    const [invocation] = await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 1,
+      eventType: "adapter.invoke",
+      stream: "system",
+      level: "info",
+      message: "adapter invocation",
+      payload: {
+        agentRuntimeType: "hermes_gateway",
+        invocationAttemptId: attemptId,
+        invocationSpanId: spanId,
+        invocationInstructionSnapshot: { ...snapshot, status: "available" },
+      },
+      createdAt: startedAt,
+    }).returning({ id: heartbeatRunEvents.id });
+    expect(invocation).toBeTruthy();
+
+    const ts = startedAt.toISOString();
+    const readerRows = [
+      { id: "reader-user-instruction", index: 1, turnIndex: 0, entry: {
+        kind: "user", ts, sourceEntryId: "reader-user-instruction", rowId: 1, sessionId, role: "user", text: instructionStack,
+      } },
+      { id: "reader-user-input", index: 2, turnIndex: 0, entry: {
+        kind: "user", ts, sourceEntryId: "reader-user-input", rowId: 2, sessionId, role: "user", text: "PRIVATE_NATIVE_USER_INPUT",
+      } },
+      { id: "reader-reasoning-tool", index: 3, turnIndex: 0, entry: {
+        kind: "assistant", ts, sourceEntryId: "219057", rowId: 3, sessionId, role: "assistant",
+        reasoningContent: "Native Reader reasoning remains available.", finishReason: "tool_calls",
+        toolCalls: [{ id: "native-read-1", function: { name: "read_file", arguments: "{\\\"path\\\":\\\"README.md\\\"}" } }],
+      } },
+      { id: "reader-tool-result", index: 4, turnIndex: 0, entry: {
+        kind: "hermes:db:tool", ts, sourceEntryId: "reader-tool-result", rowId: 4, sessionId,
+        toolCallId: "native-read-1", toolName: "read_file", text: "Native file read completed.", isError: false,
+      } },
+      { id: "reader-diagnostic", index: 5, turnIndex: 0, entry: {
+        kind: "system", ts, sourceEntryId: "reader-diagnostic", rowId: 5, sessionId, role: "system",
+        text: "Hermes thinking.delta: Waiting on provider response for 30s...",
+      } },
+      { id: "reader-final", index: 6, turnIndex: 0, entry: {
+        kind: "assistant", ts, sourceEntryId: "reader-final", rowId: 6, sessionId, role: "assistant",
+        text: "NATIVE_FINAL_RESPONSE", reasoningContent: "Final reasoning remains in Raw.", finishReason: "stop",
+      } },
+    ];
+    await page.route((url) => url.pathname === `/api/run-intelligence/runs/${runId}/transcript`, (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        run: { id: runId, orgId: organization.id, agentId: agent.id },
+        page: { cursor: null, hasMore: false, nextCursor: null, order: "oldest", returnedSteps: readerRows.length },
+        entries: readerRows,
+        source: "native",
+        revision: "native-fidelity-fixture-v1",
+        availability: "available",
+        completeness: "complete",
+      }),
+    }));
+
+    await page.goto("/");
+    await page.evaluate((orgId) => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${runId}`);
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText("Native Reader reasoning remains available.", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("Tool call", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("Final response", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("NATIVE_FINAL_RESPONSE", { exact: true })).toBeVisible();
+    await expect(detailPane).not.toContainText("PRIVATE_NATIVE_USER_INPUT");
+    await expect(detailPane).not.toContainText(instructionStack);
+
+    const instructionPath = `/api/agent-runs/${runId}/events/${invocation!.id}/invocation-instructions`;
+    const instructionRead = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === instructionPath);
+    await detailPane.getByRole("tab", { name: "Metadata", exact: true }).click();
+    const instructionResponse = await instructionRead;
+    expect(instructionResponse.status()).toBe(200);
+    const retainedSnapshot = await instructionResponse.json() as { source: string; completeness: string; agentInstructionStack: string };
+    expect(retainedSnapshot).toMatchObject({ source: "stored_snapshot", completeness: "complete", agentInstructionStack: instructionStack });
+    await expect(detailPane.getByTestId("invocation-prompt")).toHaveText(instructionStack);
+
+    await detailPane.getByRole("tab", { name: "Transcript", exact: true }).click();
+    await detailPane.getByRole("button", { name: "raw", exact: true }).click();
+    const rawReasoningRow = detailPane.locator('[data-source-entry-id="219057"]');
+    await expect(rawReasoningRow).toBeVisible();
+    await expect(rawReasoningRow.locator("pre")).toContainText("Native Reader reasoning remains available.");
+    await expect(detailPane.locator('[data-source-entry-id="reader-diagnostic"]'))
+      .toContainText("Hermes thinking.delta: Waiting on provider response for 30s...");
+    await expect(detailPane.locator('[data-source-entry-id="reader-final"]'))
+      .toContainText("Final reasoning remains in Raw.");
+    await expect(detailPane.locator('[data-source-entry-id="reader-final"]'))
+      .toContainText("NATIVE_FINAL_RESPONSE");
+    await expect(detailPane).not.toContainText("PRIVATE_NATIVE_USER_INPUT");
+    await expect(detailPane.getByText("5 entries", { exact: true })).toBeVisible();
   });
 
   test("restores own historical alias and stored Unicode range through public Instructions, Metadata, Copy and narrow reload", async ({ page, baseURL }, testInfo) => {

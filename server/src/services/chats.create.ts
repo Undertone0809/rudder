@@ -3,10 +3,11 @@ import { chatContextLinks, chatConversations, chatMessages } from "@rudderhq/db"
 import { normalizeChatInlineAnnotations, sanitizeChatStructuredPayload, type ChatConversation, type ChatInlineAnnotationInput, type ChatMessage } from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { unprocessable } from "../errors.js";
+import { conflict, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { assignChatToExistingMessengerGroup } from "./chat-family-groups.js";
 import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
+import { isPostgresError } from "./postgres-errors.js";
 import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 import {
@@ -111,6 +112,8 @@ export type CreateChatWithInitialMessageInput = {
     status: "streaming" | "completed" | "stopped" | "failed" | "interrupted";
     body: string;
     structuredPayload?: Record<string, unknown> | null;
+    clientMutationId?: string | null;
+    clientMutationFingerprint?: string | null;
     replyingAgentId?: string | null;
     chatTurnId?: string | null;
   };
@@ -127,7 +130,40 @@ export async function createChatWithInitialMessage(
   orgId: string,
   data: CreateChatWithInitialMessageInput,
   executor?: Db,
-): Promise<{ conversation: ChatConversation; message: ChatMessage }> {
+): Promise<{ conversation: ChatConversation; message: ChatMessage; replayed: boolean }> {
+  const findReplay = async (client: Db) => {
+    if (!data.initialClientMutationId || !data.createdByUserId) return null;
+    const existing = await client
+      .select()
+      .from(chatConversations)
+      .where(and(
+        eq(chatConversations.orgId, orgId),
+        eq(chatConversations.createdByUserId, data.createdByUserId),
+        eq(chatConversations.initialClientMutationId, data.initialClientMutationId),
+      ))
+      .then((rows) => rows[0] ?? null);
+    if (!existing) return null;
+    const existingMessage = await client
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, existing.id))
+      .then((rows) => rows[0] ?? null);
+    if (!existingMessage) return null;
+    if (
+      existingMessage.body !== data.initialMessage.body.trim()
+      || (
+        existingMessage.clientMutationFingerprint != null
+        && existingMessage.clientMutationFingerprint !== (data.initialMessage.clientMutationFingerprint ?? null)
+      )
+    ) {
+      throw conflict("Chat mutation key was already used for different content");
+    }
+    return {
+      conversation: existing as unknown as ChatConversation,
+      message: existingMessage as unknown as ChatMessage,
+      replayed: true,
+    };
+  };
   const persist = async (client: Db) => {
     const now = new Date();
     const normalizedBody = data.initialMessage.body.trim();
@@ -141,30 +177,8 @@ export async function createChatWithInitialMessage(
     const hasInlineAnnotations = initialAnnotations.length > 0;
     if (!normalizedBody && !hasInlineAnnotations) throw unprocessable("Initial chat message body is required");
     const deterministicTitle = normalizedBody.replace(/\s+/g, " ").slice(0, 200) || "Run feedback";
-    if (data.initialClientMutationId && data.createdByUserId) {
-      const existing = await client
-        .select()
-        .from(chatConversations)
-        .where(and(
-          eq(chatConversations.orgId, orgId),
-          eq(chatConversations.createdByUserId, data.createdByUserId),
-          eq(chatConversations.initialClientMutationId, data.initialClientMutationId),
-        ))
-        .then((rows) => rows[0] ?? null);
-      if (existing) {
-        const existingMessage = await client
-          .select()
-          .from(chatMessages)
-          .where(eq(chatMessages.conversationId, existing.id))
-          .then((rows) => rows[0] ?? null);
-        if (existingMessage) {
-          return {
-            conversation: existing as unknown as ChatConversation,
-            message: existingMessage as unknown as ChatMessage,
-          };
-        }
-      }
-    }
+    const replay = await findReplay(client);
+    if (replay) return replay;
     const conversationId = randomUUID();
     const [conversationRow] = await client
       .insert(chatConversations)
@@ -227,6 +241,8 @@ export async function createChatWithInitialMessage(
         status: data.initialMessage.status,
         body: normalizedBody,
         structuredPayload: persistedStructuredPayload,
+        clientMutationId: data.initialMessage.clientMutationId ?? null,
+        clientMutationFingerprint: data.initialMessage.clientMutationFingerprint ?? null,
         replyingAgentId: data.initialMessage.replyingAgentId ?? null,
         chatTurnId: data.initialMessage.chatTurnId ?? (data.initialMessage.role === "user" ? randomUUID() : null),
         turnVariant: 0,
@@ -358,9 +374,22 @@ export async function createChatWithInitialMessage(
       attachments: [],
       transcript,
     } as ChatMessage;
-    return { conversation, message };
+    return { conversation, message, replayed: false };
   };
 
   if (executor) return persist(executor);
-  return db.transaction(async (tx) => persist(tx as unknown as Db));
+  try {
+    return await db.transaction(async (tx) => persist(tx as unknown as Db));
+  } catch (error) {
+    if (
+      !data.initialClientMutationId
+      || !data.createdByUserId
+      || !isPostgresError(error, "23505", "chat_conversations_initial_owner_mutation_idx")
+    ) {
+      throw error;
+    }
+    const replay = await findReplay(db);
+    if (!replay) throw error;
+    return replay;
+  }
 }

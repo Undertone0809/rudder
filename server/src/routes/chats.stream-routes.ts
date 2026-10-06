@@ -39,7 +39,10 @@ import {
   setActiveChatGenerationId,
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
-import { replayChatStreamMessage } from "../services/chat-message-mutation-fingerprint.js";
+import {
+  chatFirstTurnMutationFingerprint,
+  replayChatStreamMessage,
+} from "../services/chat-message-mutation-fingerprint.js";
 import { logActivity } from "../services/index.js";
 import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
 import { getActorInfo } from "./authz.js";
@@ -1313,6 +1316,20 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(503).json({ error: draft.availability.error });
       return;
     }
+    const initialClientMutationFingerprint = parsed.data.clientMutationId
+      ? chatFirstTurnMutationFingerprint({
+        body: parsed.data.body,
+        inlineAnnotations: parsed.data.inlineAnnotations,
+        modelOverride: parsed.data.modelOverride ?? null,
+        effortOverride: parsed.data.effortOverride ?? null,
+        files: messageFiles,
+        preferredAgentId: draft.preferredAgentId,
+        groupId: parsed.data.groupId ?? null,
+        issueCreationMode: parsed.data.issueCreationMode ?? draft.organization.defaultChatIssueCreationMode,
+        planMode: parsed.data.planMode ?? false,
+        contextLinks: draft.contextLinks,
+      })
+      : null;
     const accepted = await svc.createWithInitialMessage(draft.orgId, {
       messengerGroupId: parsed.data.groupId ?? null,
       messengerGroupUserId: boardUserId(req),
@@ -1331,6 +1348,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         kind: "message",
         status: "completed",
         body: parsed.data.body,
+        clientMutationId: parsed.data.clientMutationId ?? null,
+        clientMutationFingerprint: initialClientMutationFingerprint,
         structuredPayload: parsed.data.inlineAnnotations.length > 0
           ? { inlineAnnotations: parsed.data.inlineAnnotations }
           : null,
@@ -1338,6 +1357,22 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       activity: actor,
     });
     const conversation = await assistantSvc.enrichConversation(accepted.conversation) as ChatConversation;
+    if (accepted.replayed) {
+      // The first request owns dispatch even when its stream acknowledgement was
+      // lost; replay only acknowledges the durable input and must never re-run it.
+      res.status(200);
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("X-Accel-Buffering", "no");
+      writeStreamEvent(res, {
+        type: "ack",
+        conversation,
+        userMessage: accepted.message,
+      });
+      writeStreamEvent(res, { type: "final", messages: [] });
+      res.end();
+      return;
+    }
     (req.params as Record<string, string>).id = conversation.id;
     (req as any).atomicFirstTurn = {
       conversation,

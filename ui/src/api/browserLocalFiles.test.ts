@@ -75,4 +75,17 @@ describe("browser local directory target resolution", () => {
       relativePath: "ui/src/evidence.md",
     });
   });
+
+  it("returns a safe selection error when a browser omits directory-relative paths", () => {
+    const selected = new File(["content"], "evidence.md", { type: "text/markdown" });
+    Object.defineProperty(selected, "webkitRelativePath", {
+      configurable: true,
+      value: undefined,
+    });
+
+    expect(() => readBrowserLocalFileFromDirectorySelection(
+      [selected],
+      "/Users/example/rudder-oss/ui/src/evidence.md",
+    )).toThrow("Choose one folder containing the recorded file.");
+  });
 });

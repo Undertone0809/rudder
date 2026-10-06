@@ -74,12 +74,6 @@ const ADVANCED_ADAPTER_OPTIONS: Array<{
     icon: Bot,
     desc: "Invoke OpenClaw via gateway protocol",
   },
-  {
-    value: "hermes_gateway",
-    label: "Hermes",
-    icon: Bot,
-    desc: "Use the Hermes installation and local provider setup on this machine",
-  },
 ];
 
 export function NewAgentDialog() {
@@ -95,7 +89,13 @@ export function NewAgentDialog() {
   });
 
   const ceoAgent = (agents ?? []).find((a) => a.role === "ceo");
-  const { data: runtimeAvailability } = useQuery({
+  const {
+    data: runtimeAvailability,
+    isPending: runtimeAvailabilityPending,
+    isFetching: runtimeAvailabilityFetching,
+    isError: runtimeAvailabilityError,
+    refetch: refetchRuntimeAvailability,
+  } = useQuery({
     queryKey: selectedOrganizationId
       ? queryKeys.agents.adapterAvailability(selectedOrganizationId)
       : ["agents", "none", "adapter-availability"],
@@ -103,11 +103,9 @@ export function NewAgentDialog() {
     enabled: !!selectedOrganizationId && newAgentOpen,
   });
   const hermesAvailability = runtimeAvailability?.find((item) => item.agentRuntimeType === "hermes_gateway");
-  const hermesStatusCopy = hermesAvailability?.status === "available"
-    ? "Hermes is ready locally. Rudder will connect automatically."
-    : hermesAvailability
-      ? "Hermes needs setup on this machine before you can create an agent."
-      : "Checking for Hermes on this machine…";
+  const hermesDetectionFailed = !runtimeAvailabilityFetching && (
+    runtimeAvailabilityError || (!runtimeAvailabilityPending && !hermesAvailability)
+  );
 
   function handleAskCeo() {
     closeNewAgent();
@@ -189,9 +187,45 @@ export function NewAgentDialog() {
                   <Bot className="h-4 w-4 mr-2" />
                   Create with Hermes
                 </Button>
-                <p className="text-center text-xs text-muted-foreground" role="status">
-                  {hermesStatusCopy}
-                </p>
+                {runtimeAvailabilityPending || runtimeAvailabilityFetching ? (
+                  <p className="text-center text-xs text-muted-foreground" role="status">
+                    Checking for Hermes on this machine…
+                  </p>
+                ) : hermesDetectionFailed ? (
+                  <div
+                    className="flex items-center justify-between gap-3 rounded-md border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
+                    role="alert"
+                  >
+                    <span>Couldn't check Hermes on this machine. Restart Rudder, then retry.</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { void refetchRuntimeAvailability(); }}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : hermesAvailability?.status === "available" ? (
+                  <p className="text-center text-xs text-muted-foreground" role="status">
+                    Hermes was found on this machine. Rudder will use its existing provider setup.
+                  </p>
+                ) : (
+                  <div
+                    className="flex items-center justify-between gap-3 rounded-md border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
+                    role="alert"
+                  >
+                    <span>Hermes isn't ready on this machine. Install or finish setting it up, then retry.</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { void refetchRuntimeAvailability(); }}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                )}
               </div>
 
               {/* Advanced link */}
@@ -220,21 +254,12 @@ export function NewAgentDialog() {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                {ADVANCED_ADAPTER_OPTIONS.map((opt) => {
-                  const hermesDescription = hermesAvailability?.status === "available"
-                    ? "Ready locally. Rudder will connect automatically."
-                    : hermesAvailability
-                      ? "Needs setup on this machine."
-                      : "Checking for Hermes on this machine…";
-                  return (
+                {ADVANCED_ADAPTER_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
                     className={cn(
                       "flex flex-col items-center gap-1.5 rounded-md border border-border p-3 text-xs transition-colors hover:bg-accent/50 relative"
                     )}
-                    title={opt.value === "hermes_gateway" && hermesAvailability?.status !== "available"
-                      ? "Hermes needs setup on this machine."
-                      : undefined}
                     onClick={() => handleAdvancedAdapterPick(opt.value)}
                   >
                     {opt.recommended && (
@@ -245,11 +270,10 @@ export function NewAgentDialog() {
                     <opt.icon className="h-4 w-4" />
                     <span className="font-medium">{opt.label}</span>
                     <span className="text-muted-foreground text-[10px]">
-                      {opt.value === "hermes_gateway" ? hermesDescription : opt.desc}
+                      {opt.desc}
                     </span>
                   </button>
-                  );
-                })}
+                ))}
               </div>
             </>
           )}

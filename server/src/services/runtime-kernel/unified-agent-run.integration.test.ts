@@ -1118,12 +1118,6 @@ describe("heartbeat-backed unified agent run adapter", () => {
         prompt: "Test the post-turn tail boundary.",
         timeoutMs: 2_000,
         onLog: async () => {},
-        acquireHistoryFence: async () => ({
-          tailRowId: 40,
-          sessionExists: true,
-          isHeld: () => true,
-          release: async () => {},
-        }),
         readHistoryTail: async () => {
           if (historyReads++ === 0) {
             order.push("before-tail");
@@ -1133,7 +1127,6 @@ describe("heartbeat-backed unified agent run adapter", () => {
           afterTailAdmission = await secondAdmission("after-tail-read");
           return { availability: "available", tailRowId: 44, relation: "none", successorSessionId: null };
         },
-        waitForSessionLease: async () => true,
         createClient: async ({ onNotification, onSpawn }) => {
           const emit = (type: string, payload: Record<string, unknown> = {}) => onNotification("event", {
             type,
@@ -1192,7 +1185,7 @@ describe("heartbeat-backed unified agent run adapter", () => {
       expect(result).toMatchObject({
         exitCode: 0,
         nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
-        resultJson: { transcriptBoundary: { status: "exact", startExclusive: 40, endInclusive: 44 } },
+        resultJson: { transcriptBoundary: { status: "unknown" } },
       });
       expect(order).toEqual([
         "before-tail",

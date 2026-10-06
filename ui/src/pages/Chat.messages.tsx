@@ -2952,7 +2952,9 @@ function AssistantMessageContextMenu(props: {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild disabled={!props.enabled}>
-        {props.children}
+        <div tabIndex={props.enabled ? 0 : undefined}>
+          {props.children}
+        </div>
       </ContextMenuTrigger>
       {props.enabled ? (
         <ContextMenuContent data-testid="chat-message-context-menu">

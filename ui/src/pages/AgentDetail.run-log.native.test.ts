@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { RawTranscriptView } from "../components/transcript/RunTranscriptView.detail";
+import { filterRunDetailRawEntries } from "../components/transcript/RunTranscriptView.common";
 import { normalizeTranscript } from "../components/transcript/RunTranscriptView.normalize";
 import { projectHermesSupplementEntries, projectNativeRunDetailEntries } from "./AgentDetail.run-log.native";
 
@@ -88,6 +89,24 @@ describe("Hermes native Run Detail projection", () => {
     expect(html).toContain('data-source-entry-id="9"');
     expect(html).toContain("reasoningContent");
     expect(html).toContain("tool_calls");
+  });
+
+  it("renders Reader reasoning beside assistant text, suppresses user input, and counts the visible Raw rows", () => {
+    const raw = [
+      native({ kind: "user", ts, sourceEntryId: "private-user", text: "PRIVATE_USER_INPUT" }),
+      native({ kind: "assistant", ts, sourceEntryId: "219057", text: "READY",
+        reasoningContent: "Reader reasoning remains visible.", finishReason: "stop", toolCalls: [] }),
+    ];
+    const visibleRawEntries = filterRunDetailRawEntries(raw);
+    const html = renderToStaticMarkup(createElement(RawTranscriptView, {
+      entries: visibleRawEntries,
+      density: "comfortable",
+    }));
+
+    expect(visibleRawEntries).toHaveLength(1);
+    expect(html).toContain("Reader reasoning remains visible.");
+    expect(html).toContain("READY");
+    expect(html).not.toContain("PRIVATE_USER_INPUT");
   });
 
   it("renders only verified plain-text agent identity from the real Hermes tool wrapper", () => {

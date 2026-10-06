@@ -128,9 +128,9 @@ export function TranscriptDetailTimeline({
   const { preludeBlocks, turns } = useMemo(
     () => normalizeChatTranscriptTurns(entries, streaming, {
       showDeveloperDiagnostics,
-      // This timeline is only used by Run Detail. Keep Rudder's injected
-      // operating instructions inspectable without exposing echoed user input.
-      showAgentInstructions: true,
+      // The exact retained instruction snapshot belongs to Run Metadata. The
+      // execution timeline should show activity, not repeat the injected prompt.
+      showAgentInstructions: false,
     }),
     [entries, streaming, showDeveloperDiagnostics],
   );
@@ -263,7 +263,7 @@ export function RawTranscriptView({
             {entry.sourceEntryId ? ` · ${entry.sourceEntryId}` : ""}
           </span>
           <pre className="min-w-0 whitespace-pre-wrap break-words text-foreground/80">
-            {entry.kind === "assistant" && typeof entry.text !== "string"
+            {entry.kind === "assistant" && (typeof entry.text !== "string" || hasNativeAssistantDetails(entry))
               ? JSON.stringify(entry, null, 2)
               : entry.kind === "tool_call"
               ? `${entry.name}\n${formatToolPayload(entry.input)}`
@@ -281,6 +281,11 @@ export function RawTranscriptView({
       ))}
     </div>
   );
+}
+
+function hasNativeAssistantDetails(entry: TranscriptEntry): boolean {
+  if (entry.kind !== "assistant") return false;
+  return ["reasoningContent", "toolCalls", "finishReason"].some((field) => Object.hasOwn(entry, field));
 }
 
 function formatRawTranscriptLabel(entry: TranscriptEntry): string {

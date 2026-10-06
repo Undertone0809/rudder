@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { useOptionalToast } from "../../context/ToastContext";
+import { isNativeSteerTranscriptEntry } from "../../lib/chat-stream-state";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { filterChatAssistantTranscriptEntries } from "./RunTranscriptView.chat";
 import { TranscriptChatTimeline } from "./RunTranscriptView.chat-timeline";
-import { filterRenderableTranscriptEntries, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
+import { filterRenderableTranscriptEntries, filterRunDetailRawEntries, isInternalTranscriptLifecycleEntry, isRudderInjectedAgentInstructionText, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { cursorAcpDisplayEntry, normalizeTranscript, terminalAssistantResponseEntryIndexes } from "./RunTranscriptView.normalize";
 import { RudderMcpPresenterProvider } from "./RunTranscriptView.rudder-mcp";
@@ -29,11 +30,6 @@ function trailingEntriesByVisibleLimit(
     if (remaining === 0) break;
   }
   return entries.slice(startIndex);
-}
-
-function isRudderEchoedStructuredUserInput(entry: RunTranscriptViewProps["entries"][number]) {
-  return entry.kind === "user"
-    && /^conversation input:\s*\{/iu.test(entry.text.trim());
 }
 
 export function RunTranscriptView(props: RunTranscriptViewProps) {
@@ -141,7 +137,9 @@ function RunTranscriptViewContent({
     if (presentation !== "detail") return renderableEntries;
     const projected = renderableEntries
       .map((entry) => cursorAcpDisplayEntry(entry) ?? entry)
-      .filter((entry) => entry.kind !== "user" || isInternalAgentInstructionText(entry.text));
+      .filter((entry) => entry.kind !== "user"
+        || isRudderInjectedAgentInstructionText(entry.text)
+        || isNativeSteerTranscriptEntry(entry));
     if (!terminalRun) return projected;
     const terminalIndexes = terminalAssistantResponseEntryIndexes(projected);
     return projected.map((entry, index) => (
@@ -151,7 +149,7 @@ function RunTranscriptViewContent({
     ));
   }, [presentation, renderableEntries, terminalRun]);
   const rawEntries = presentation === "detail"
-    ? (detailRawEntries ?? entries).filter((entry) => !isRudderEchoedStructuredUserInput(entry))
+    ? filterRunDetailRawEntries(detailRawEntries ?? entries)
     : renderableEntries;
   const blocks = useMemo(
     () => normalizeTranscript(presentation === "chat"
@@ -163,7 +161,9 @@ function RunTranscriptViewContent({
       })
       : displayEntries, streaming, {
       showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
-      showAgentInstructions: presentation === "detail",
+      // Historical injected instructions are available from Run Metadata,
+      // not repeated as execution activity in the Nice transcript.
+      showAgentInstructions: false,
       hideUserMessages: presentation === "chat",
     }),
     [displayEntries, effectiveShowDeveloperDiagnostics, hiddenAssistantMessageText, hideAssistantMessages, presentation, streaming],

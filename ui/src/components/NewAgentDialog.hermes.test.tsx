@@ -23,15 +23,24 @@ const mockState = vi.hoisted(() => ({
     message: "ACP local setup passed",
     hint: "Product RPC is unavailable",
   }],
+  availabilityError: false,
+  retryAvailability: vi.fn(async () => undefined),
+  rerender: null as null | (() => void),
   navigate: vi.fn(),
   closeNewAgent: vi.fn(),
   openNewIssue: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => ({
-    data: queryKey[2] === "adapter-availability" ? mockState.availability : [],
-  }),
+  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => queryKey[2] === "adapter-availability"
+    ? {
+        data: mockState.availability,
+        isPending: false,
+        isFetching: false,
+        isError: mockState.availabilityError,
+        refetch: mockState.retryAvailability,
+      }
+    : { data: [] },
 }));
 
 vi.mock("../api/agents", () => ({
@@ -73,7 +82,9 @@ function renderDialog() {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  act(() => root.render(<NewAgentDialog />));
+  const render = () => act(() => root.render(<NewAgentDialog />));
+  render();
+  mockState.rerender = render;
   cleanup = () => {
     act(() => root.unmount());
     container.remove();
@@ -89,6 +100,9 @@ afterEach(() => {
   mockState.closeNewAgent.mockClear();
   mockState.openNewIssue.mockClear();
   mockState.availability = [mockState.readyAvailability];
+  mockState.availabilityError = false;
+  mockState.retryAvailability.mockReset().mockResolvedValue(undefined);
+  mockState.rerender = null;
 });
 
 describe("NewAgentDialog Hermes path", () => {
@@ -97,8 +111,10 @@ describe("NewAgentDialog Hermes path", () => {
     const text = container.textContent ?? "";
 
     expect(text).toContain("Create with Hermes");
-    expect(text).toContain("Hermes is ready locally. Rudder will connect automatically.");
+    expect(text).toContain("Hermes was found on this machine. Rudder will use its existing provider setup.");
     expect(text).not.toMatch(/ACP|Product RPC|backend/i);
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("Hermes")))
+      .toHaveLength(1);
 
     const createWithHermes = [...container.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Create with Hermes"));
@@ -113,7 +129,7 @@ describe("NewAgentDialog Hermes path", () => {
     );
   });
 
-  it("keeps Hermes in the advanced runtime list with product-facing readiness copy", async () => {
+  it("keeps Hermes out of the advanced list so it has one selectable path", async () => {
     const container = renderDialog();
     const advancedButton = [...container.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("I want advanced configuration myself"));
@@ -124,12 +140,11 @@ describe("NewAgentDialog Hermes path", () => {
     });
 
     const text = container.textContent ?? "";
-    expect(text).toContain("Hermes");
-    expect(text).toContain("Ready locally. Rudder will connect automatically.");
+    expect(text).not.toMatch(/\bHermes\b/);
     expect(text).not.toMatch(/ACP|Product RPC|backend/i);
   });
 
-  it("does not expose local setup diagnostics in unavailable-state text or tooltips", async () => {
+  it("keeps unavailable setup guidance product-facing and offers retry", async () => {
     mockState.availability = [{
       ...mockState.readyAvailability,
       status: "unavailable",
@@ -137,17 +152,41 @@ describe("NewAgentDialog Hermes path", () => {
       hint: "Set the API key and retry the backend probe.",
     }];
     const container = renderDialog();
-    const advancedButton = [...container.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("I want advanced configuration myself"));
+    expect(container.textContent).toContain(
+      "Hermes isn't ready on this machine. Install or finish setting it up, then retry.",
+    );
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Retry"))
+      .toBe(true);
+    expect(container.textContent).not.toMatch(/ACP|Product RPC|backend/i);
+    expect(container.textContent).not.toContain("Hermes (legacy local)");
+  });
 
-    await act(async () => {
-      advancedButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  it("retries failed Hermes detection and recovers to the ready state", async () => {
+    mockState.availability = [];
+    mockState.availabilityError = true;
+    mockState.retryAvailability.mockImplementationOnce(async () => {
+      mockState.availability = [mockState.readyAvailability];
+      mockState.availabilityError = false;
     });
 
-    const hermesChoice = [...container.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("Hermes"));
-    expect(hermesChoice?.textContent).toContain("Needs setup on this machine.");
-    expect(hermesChoice?.getAttribute("title")).toBe("Hermes needs setup on this machine.");
-    expect(container.textContent).not.toMatch(/ACP|Product RPC|backend/i);
+    const container = renderDialog();
+    expect(container.textContent).toContain(
+      "Couldn't check Hermes on this machine. Restart Rudder, then retry.",
+    );
+    const retryButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Retry");
+    expect(retryButton).toBeDefined();
+
+    await act(async () => {
+      retryButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    mockState.rerender?.();
+
+    expect(mockState.retryAvailability).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain(
+      "Hermes was found on this machine. Rudder will use its existing provider setup.",
+    );
+    expect(container.textContent).not.toContain("Couldn't check Hermes");
   });
 });

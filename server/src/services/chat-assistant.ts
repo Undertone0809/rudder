@@ -53,6 +53,7 @@ import { chatProviderResultIds } from "./chat-assistant.runtime-result.js";
 import {
   chatSessionForCurrentProviderProfile,
   deriveSideChatContextHandoff,
+  deriveSideChatNativeForkBoundary,
   deriveSideChatForkSourceForCurrentProfile,
   loadSideChatForkSource,
   resolveChatContinuationSession,
@@ -352,6 +353,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       : null);
     const nativeContextHandoff = input.nativeContextHandoff
       ?? deriveSideChatContextHandoff(input, sideChatRuntimeAdmission, existingRuntimeBinding?.continuity);
+    const nativeForkBoundary = sideChatFirstSend
+      ? deriveSideChatNativeForkBoundary(input, sideChatRuntimeAdmission)
+      : null;
     const runtimeContinuity = sideChatRuntimeAdmission?.continuity
       ?? (input.conversation.conversationKind === "side_chat" ? "context_handoff" : "native");
     const bindingIntent = {
@@ -782,6 +786,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           ? promptMessages.length > 0 ? promptMessages : input.messages.slice(-1)
           : input.messages.slice(-12),
         nativeContextHandoff,
+        nativeForkBoundary,
       };
       const preparedAttachments = await guardActiveRun(() => prepareChatAttachmentReferences({
         runtimeType: runtimeAgentType,

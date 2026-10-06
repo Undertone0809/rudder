@@ -905,7 +905,7 @@ export function sideChatService(db: Db) {
           role: "system",
           kind: "system_event",
           status: "completed",
-          body: `Side Chat started from [${source.title}](chat://${source.id}).`,
+          body: `Side Chat branched from the selected assistant reply in [${source.title}](chat://${source.id}).`,
           structuredPayload: {
             eventType: "side_chat_started",
             sourceConversationId: source.id,

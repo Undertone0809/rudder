@@ -137,4 +137,54 @@ describe("native continuation prompt projection", () => {
       currentMessageBody,
     ]);
   });
+
+  it("marks the exact selected parent reply on the first native Side Chat turn", () => {
+    const currentMessageBody = "Which response opened this Side Chat?";
+    const selectedReplyBody = "SELECTED_NATIVE_SIDE_CHAT_REPLY_92AF";
+    const promptInput = {
+      conversation: {
+        id: "child-chat",
+        orgId: "org-1",
+        title: "Parent conversation title is not the branch point",
+        status: "active",
+        planMode: false,
+        issueCreationMode: "manual_approval",
+        preferredAgentId: "agent-1",
+        routedAgentId: "agent-1",
+        primaryIssueId: null,
+      },
+      messages: [{
+        id: "current-message",
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: currentMessageBody,
+        attachments: [],
+      }],
+      contextLinks: [],
+      nativeForkBoundary: {
+        sourceConversationId: "parent-chat",
+        sourceMessageId: "original-parent-message",
+        copiedMessageId: "copied-parent-message",
+        selectedAssistantReply: selectedReplyBody,
+      },
+    } as unknown as Parameters<typeof buildConversationPrompt>[0];
+    const runtimeSource = {
+      descriptor: { sourceType: "agent", sourceLabel: "Hermes Side Chat", runtimeAgentId: "agent-1", agentRuntimeType: "hermes_gateway", model: null, available: true, error: null },
+      runtimeAgent: null,
+      agentRuntimeType: "hermes_gateway",
+      agentRuntimeConfig: null,
+      runtimeSkills: [],
+    } as unknown as Parameters<typeof buildConversationPrompt>[1];
+
+    const prompt = buildConversationPrompt(promptInput, runtimeSource, "__RESULT__", "", new Map(), { nativeContinuation: true });
+    const envelope = conversationInputFromPrompt(prompt);
+
+    expect(prompt).toContain("Selected native Side Chat reply boundary:");
+    expect(prompt).toContain(selectedReplyBody);
+    expect(prompt).toContain("original-parent-message");
+    expect(prompt).not.toContain("Parent conversation title is not the branch point");
+    expect(envelope.currentMessage?.body).toBe(currentMessageBody);
+    expect(envelope.recentMessages).toBeUndefined();
+  });
 });

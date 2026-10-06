@@ -78,7 +78,10 @@ describe("RunTranscriptView", () => {
     const rudderInputEcho: TranscriptEntry = {
       kind: "user",
       ts,
-      text: 'Conversation input: {"currentMessage":{"body":"RUDDER_INPUT_ECHO"}}',
+      text: `Conversation input: ${JSON.stringify({ currentMessage: {
+        role: "user", kind: "message", status: "completed", body: "RUDDER_INPUT_ECHO",
+        attachments: [], structuredPayload: null,
+      } })}`,
     };
     const providerInputEcho = {
       kind: "cursor:acp:user_message_chunk",
@@ -132,12 +135,11 @@ describe("RunTranscriptView", () => {
       result: "TOOL_RESULT_EVIDENCE",
     });
 
-    expect(rawActiveView).toContain("CURRENT_USER_INPUT");
+    expect(rawActiveView).not.toContain("CURRENT_USER_INPUT");
     expect(rawActiveView).not.toContain("RUDDER_INPUT_ECHO");
     expect(rawActiveView).not.toContain("Conversation input:");
-    expect(rawActiveView).toContain("CURRENT_USER_INPUT");
-    expect(rawActiveView).toContain("PROVIDER_INPUT_ECHO");
-    expect(rawActiveView).toContain("provider-input-1");
+    expect(rawActiveView).not.toContain("PROVIDER_INPUT_ECHO");
+    expect(rawActiveView).not.toContain("provider-input-1");
   });
 
   it("leaves the Chat process empty when only user echoes and the separate final answer remain", () => {
@@ -148,7 +150,10 @@ describe("RunTranscriptView", () => {
         hideAssistantMessages
         entries={[
           { kind: "user", ts, text: "CURRENT_USER_INPUT" },
-          { kind: "user", ts, text: 'Conversation input: {"currentMessage":{"body":"RUDDER_INPUT_ECHO"}}' },
+          { kind: "user", ts, text: `Conversation input: ${JSON.stringify({ currentMessage: {
+            role: "user", kind: "message", status: "completed", body: "RUDDER_INPUT_ECHO",
+            attachments: [], structuredPayload: null,
+          } })}` },
           { kind: "assistant", ts, text: "Separate final answer.", phase: "final_answer" },
         ]}
       /></ThemeProvider>,
@@ -2117,7 +2122,7 @@ describe("RunTranscriptView", () => {
       },
     ];
 
-    const blocks = normalizeTranscript(entries, false, { showDeveloperDiagnostics: true });
+    const blocks = normalizeTranscript(entries, false, { showAgentInstructions: true });
     expect(blocks).toEqual([
       expect.objectContaining({
         type: "event",
@@ -2138,8 +2143,8 @@ describe("RunTranscriptView", () => {
         />
       </ThemeProvider>,
     );
-    expect(detailHtml).toContain("Agent Instruction");
-    expect(detailHtml).toContain("Runtime-loaded agent instruction");
+    expect(detailHtml).not.toContain('data-transcript-event-label="agent instruction"');
+    expect(detailHtml).not.toContain("Runtime-loaded agent instruction");
     expect(detailHtml).not.toContain("User</span>");
 
     const rawHtml = renderToStaticMarkup(

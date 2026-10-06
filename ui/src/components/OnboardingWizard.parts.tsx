@@ -9,6 +9,7 @@ export type AdapterType =
   | "opencode_local"
   | "pi_local"
   | "cursor"
+  | "hermes_gateway"
   | "http"
   | "openclaw_gateway";
 

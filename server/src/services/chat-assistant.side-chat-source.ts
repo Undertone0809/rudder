@@ -9,7 +9,7 @@ import {
 } from "@rudderhq/db";
 import type { ChatConversation } from "@rudderhq/shared";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { asRecord, type ChatNativeContextHandoff, type StreamChatAssistantReplyInput } from "./chat-assistant.helpers.js";
+import { asRecord, type ChatNativeContextHandoff, type ChatNativeForkBoundary, type StreamChatAssistantReplyInput } from "./chat-assistant.helpers.js";
 import { NATIVE_CHAT_FORK_ALIAS_KIND, assertNativeChatForkSourceContent, loadNativeChatForkSource } from "./chats.native-fork-aliases.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
@@ -34,6 +34,29 @@ export function deriveSideChatContextHandoff(
     sourceMessageId: admission?.sourceMessageId
       ?? input.conversation.forkedFromMessageId ?? items.at(-1)!.sourceId,
     items,
+  };
+}
+
+export function deriveSideChatNativeForkBoundary(
+  input: StreamChatAssistantReplyInput,
+  admission: Pick<SideChatRuntimeAdmission, "continuity"> | null,
+): ChatNativeForkBoundary | null {
+  if (admission?.continuity !== "native" || input.conversation.conversationKind !== "side_chat") return null;
+  const sourceConversationId = input.conversation.forkedFromConversationId?.trim() ?? "";
+  const sourceMessageId = input.conversation.forkedFromMessageId?.trim() ?? "";
+  if (!sourceConversationId || !sourceMessageId) return null;
+  const selectedReply = input.messages.find((message) => {
+    if (message.role !== "assistant" || message.kind !== "message" || message.status !== "completed") return false;
+    const payload = asRecord(message.structuredPayload);
+    const lineage = asRecord(payload?.sideChatSource);
+    return lineage?.conversationId === sourceConversationId && lineage.messageId === sourceMessageId;
+  });
+  if (!selectedReply || !selectedReply.body.trim()) return null;
+  return {
+    sourceConversationId,
+    sourceMessageId,
+    copiedMessageId: selectedReply.id,
+    selectedAssistantReply: selectedReply.body,
   };
 }
 

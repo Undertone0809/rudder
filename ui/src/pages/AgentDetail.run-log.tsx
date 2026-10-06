@@ -33,9 +33,11 @@ import { PageTabBar } from "../components/PageTabBar";
 import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInput, type TranscriptSkillTarget } from "../components/transcript/RunTranscriptView";
 import { TranscriptContinuationControls } from "../components/transcript/TranscriptContinuationControls";
 import { isAgentRunTranscriptActiveStatus, useAgentRunTranscripts, type AgentRunTranscriptState } from "../components/transcript/useAgentRunTranscripts";
+import { filterRunDetailRawEntries } from "../components/transcript/RunTranscriptView.common";
 import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
 import { useI18n } from "../context/I18nContext";
 import { useSidePanel } from "../context/SidePanelContext";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { queryKeys } from "../lib/queryKeys";
 import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
@@ -180,6 +182,7 @@ export function LogViewer({
   const transcriptExpandButtonRef = useRef<HTMLButtonElement>(null);
   const persistedEventCursorRef = useRef(0);
   const scrollContainerRef = useRef<ScrollContainer | null>(null);
+  const invocationInstructionScrollRef = useScrollbarActivityRef();
   const isFollowingRef = useRef(false);
   const lastMetricsRef = useRef<{ scrollHeight: number; distanceFromBottom: number }>({
     scrollHeight: 0,
@@ -503,7 +506,8 @@ export function LogViewer({
     invocationAgentInstructionStack !== undefined
       ? formatInvocationValueForDisplay(invocationAgentInstructionStack, censorUsernameInLogs)
       : null;
-  const transcriptEntryLabel = `${transcript.length} ${transcript.length === 1 ? "entry" : "entries"}`;
+  const rawTranscriptEntryCount = filterRunDetailRawEntries(transcript).length;
+  const transcriptEntryLabel = `${rawTranscriptEntryCount} ${rawTranscriptEntryCount === 1 ? "entry" : "entries"}`;
   const openTranscriptModal = useCallback(() => {
     const rect = transcriptExpandButtonRef.current?.getBoundingClientRect();
     if (rect && window.innerWidth > 0 && window.innerHeight > 0) {
@@ -711,23 +715,7 @@ export function LogViewer({
                   </span>
                 </div>
               )}
-              {Array.isArray(adapterInvokePayload?.commandNotes) && adapterInvokePayload.commandNotes.length > 0 && (
-                <div>
-                  <div className="mb-1 text-xs text-muted-foreground">Command notes</div>
-                  <ul className="list-disc space-y-1 pl-5">
-                    {adapterInvokePayload.commandNotes
-                      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-                      .map((note, idx) => (
-                        <li key={`${idx}-${note}`} className="text-xs break-all font-mono">
-                          {note}
-                        </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <InvocationSkillEvidence invocationPayload={adapterInvokePayload} usagePayload={adapterSkillUsagePayload} />
-              <InvocationMcpEvidence invocationPayloads={adapterInvokePayloads} />
-              {invocationPromptText === null && invocationContentSummary && (
+              {invocationPromptText === null && (
                 <div
                   role="status"
                   data-testid="invocation-content-summary"
@@ -757,13 +745,15 @@ export function LogViewer({
                         ? "The original full instruction stack is unavailable. A verified developer-instruction fragment is shown below."
                         : "The original full instruction stack is unavailable. Current Agent files are not a historical substitute."}
                   </p>
-                  <pre className="rounded-md bg-neutral-100 p-2 whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950">
-                    {formatInvocationValueForDisplay(invocationContentSummary, censorUsernameInLogs)}
-                  </pre>
+                  {invocationContentSummary ? (
+                    <pre className="rounded-md bg-neutral-100 p-2 whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950">
+                      {formatInvocationValueForDisplay(invocationContentSummary, censorUsernameInLogs)}
+                    </pre>
+                  ) : null}
                 </div>
               )}
               {invocationPromptText !== null && (
-                <div>
+                <div data-testid="invocation-prompt-section">
                   <div className="mb-1 text-xs text-muted-foreground">Injected Agent Instruction Stack</div>
                   <div className="relative">
                     <CopyText
@@ -776,8 +766,11 @@ export function LogViewer({
                       <Copy className="h-3.5 w-3.5" />
                     </CopyText>
                     <pre
+                      ref={invocationInstructionScrollRef}
+                      tabIndex={0}
+                      aria-label="Injected Agent Instruction Stack"
                       data-testid="invocation-prompt"
-                      className="rounded-md bg-neutral-100 p-2 pr-11 text-xs whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950"
+                      className="scrollbar-auto-hide max-h-[min(60vh,34rem)] overflow-y-auto overscroll-contain rounded-md bg-neutral-100 p-2 pr-11 text-xs whitespace-pre-wrap break-words focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring dark:bg-neutral-950"
                     >{invocationPromptText}</pre>
                   </div>
                 </div>
@@ -785,6 +778,22 @@ export function LogViewer({
               {invocationPromptText === null && recoveredInstructions && (
                 <RecoveredDeveloperInstructions recovery={recoveredInstructions} censorUsernameInLogs={censorUsernameInLogs} />
               )}
+              {Array.isArray(adapterInvokePayload?.commandNotes) && adapterInvokePayload.commandNotes.length > 0 && (
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Command notes</div>
+                  <ul className="list-disc space-y-1 pl-5">
+                    {adapterInvokePayload.commandNotes
+                      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+                      .map((note, idx) => (
+                        <li key={`${idx}-${note}`} className="text-xs break-all font-mono">
+                          {note}
+                        </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <InvocationSkillEvidence invocationPayload={adapterInvokePayload} usagePayload={adapterSkillUsagePayload} />
+              <InvocationMcpEvidence invocationPayloads={adapterInvokePayloads} />
               {debugInput !== undefined && debugInput !== invocationAgentInstructionStack && (
                 <div>
                   <div className="mb-1 text-xs text-muted-foreground">Debug Input</div>
