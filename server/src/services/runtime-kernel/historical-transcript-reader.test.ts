@@ -13,7 +13,7 @@ vi.mock("./transcript-reader.js", () => ({
 
 function database(agentRows: unknown[], revisions: unknown[]) {
   return {
-    select: vi.fn(() => {
+    select: vi.fn((_selection?: unknown) => {
       let table: unknown;
       const query = {
         from(value: unknown) { table = value; return query; },
@@ -32,7 +32,12 @@ function database(agentRows: unknown[], revisions: unknown[]) {
 describe("historical transcript consumer wiring", () => {
   it("resolves the Run's historical profile and forwards the exact read window to the native reader", async () => {
     mocks.createNativeReader.mockReturnValue({ readRange: mocks.read });
-    const agent = { agentRuntimeType: "codex_local", agentRuntimeConfig: { cwd: "/tmp/current" }, runtimeConfig: {} };
+    const agent = {
+      agentWorkspaceKey: "hermes-candidate--workspace",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { cwd: "/tmp/current" },
+      runtimeConfig: {},
+    };
     const revisions = [{ id: "revision-before-run", afterConfig: { cwd: "/tmp/historical" } }];
     const input = {
       orgId: "org-1", run: { agentId: "run-agent", createdAt: new Date(), contextSnapshot: {} },
@@ -44,6 +49,7 @@ describe("historical transcript consumer wiring", () => {
     const result = { items: [{ id: "native-only-entry" }], revision: "native-r1", availability: "available" };
     mocks.read.mockResolvedValueOnce(result);
     await expect(reader.nativeReader!.read!(input)).resolves.toBe(result);
+    expect(db.select.mock.calls[0]?.[0]).toMatchObject({ agentWorkspaceKey: agents.workspaceKey });
     expect(mocks.createNativeReader).toHaveBeenLastCalledWith({ ...input.run, ...agent }, revisions);
     expect(mocks.read).toHaveBeenLastCalledWith(input);
   });

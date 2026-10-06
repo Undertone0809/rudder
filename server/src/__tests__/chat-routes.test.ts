@@ -36,6 +36,7 @@ const mockChatService = vi.hoisted(() => ({
     recoverStaleControlOwners: vi.fn(),
   },
   list: vi.fn(),
+  listSummariesByIds: vi.fn(),
   getById: vi.fn(),
   resolveByReference: vi.fn(),
   create: vi.fn(),
@@ -1560,15 +1561,40 @@ describe("chat routes", { retry: 2 }, () => {
       items: [expiredSideChat],
       nextCursor: "next-side-chat-page",
     });
+    mockChatService.listSummariesByIds.mockResolvedValue([{
+      id: expiredSideChat.id,
+      userMessageCount: 4,
+      latestUserMessagePreview: "Persisted Side Chat question",
+      latestReplyPreview: "Persisted Side Chat answer",
+    }]);
 
     const res = await request(createApp())
       .get(`/api/chats/${sourceConversation.id}/side-chats?cursor=prior-page&limit=25`);
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      items: [expect.objectContaining({ id: expiredSideChat.id, sideChatState: "expired" })],
+      items: [expect.objectContaining({
+        id: expiredSideChat.id,
+        sideChatState: "expired",
+        userMessageCount: 4,
+        latestUserMessagePreview: "Persisted Side Chat question",
+        latestReplyPreview: "Persisted Side Chat answer",
+      })],
       nextCursor: "next-side-chat-page",
     });
+    expect(mockChatService.listSummariesByIds).toHaveBeenCalledWith(
+      sourceConversation.orgId,
+      [expiredSideChat.id],
+      "user-1",
+    );
+    expect(mockChatAssistantService.enrichConversations).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: expiredSideChat.id,
+        primaryIssue: null,
+        contextLinks: [],
+        userMessageCount: 4,
+      }),
+    ]);
     expect(mockSideChatService.listForSource).toHaveBeenCalledWith({
       orgId: "organization-1",
       sourceConversationId: sourceConversation.id,
@@ -2291,6 +2317,53 @@ describe("chat routes", { retry: 2 }, () => {
         "Atomic chat kickoff",
       );
     });
+  });
+
+  it("acknowledges a replayed first-turn mutation without starting another generation", async () => {
+    const conversation = createConversation({ title: "Accepted first turn" });
+    const userMessage = createMessage("message-user", "user", "message", "Start exactly once");
+    mockChatService.createWithInitialMessage.mockResolvedValue({
+      conversation,
+      message: userMessage,
+      replayed: true,
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats/messages/stream")
+      .send({
+        body: "Start exactly once",
+        clientMutationId: "first-turn-replay-1",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(200);
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "ack",
+        conversation: expect.objectContaining({ id: conversation.id }),
+        userMessage: expect.objectContaining({ id: userMessage.id, body: userMessage.body }),
+      }),
+      { type: "final", messages: [] },
+    ]);
+    expect(mockChatService.createWithInitialMessage).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        initialClientMutationId: "first-turn-replay-1",
+        initialMessage: expect.objectContaining({
+          clientMutationId: "first-turn-replay-1",
+          clientMutationFingerprint: expect.any(String),
+        }),
+      }),
+    );
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
   });
 
   it("preserves an explicit New chat title during an atomic streaming first turn", async () => {

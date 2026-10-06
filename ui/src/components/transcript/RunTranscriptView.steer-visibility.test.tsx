@@ -50,7 +50,7 @@ function steerMessage(deliveryDisposition = "accepted_current", afterTranscriptE
 }
 
 describe("native Steer Process visibility", () => {
-  it("shows one anchored Steer event in transcript order without exposing user echoes", () => {
+  it("excludes user-authored Steer content while retaining agent process events", () => {
     const runtimeEntries: TranscriptEntry[] = [
       { kind: "thinking", ts, text: "Reasoning before the control point." },
       { kind: "tool_call", ts, name: "read_file", toolUseId: "read-1", input: { path: "/tmp/config.json" } },
@@ -81,20 +81,13 @@ describe("native Steer Process visibility", () => {
     expect(processEntries.map((entry) => entry.kind)).toEqual([
       "thinking",
       "tool_call",
-      "user",
       "thinking",
     ]);
-    expect(processEntries.filter(isNativeSteerTranscriptEntry)).toHaveLength(1);
+    expect(processEntries.filter(isNativeSteerTranscriptEntry)).toHaveLength(0);
 
     const blocks = normalizeTranscript(processEntries, false, { hideUserMessages: true });
-    expect(blocks.map((block) => block.type)).toEqual(["thinking", "tool", "message", "thinking"]);
-    expect(blocks).toContainEqual(expect.objectContaining({
-      type: "message",
-      role: "user",
-      source: "steer",
-      messageId: "steer-visible-1",
-      text: steerBody,
-    }));
+    expect(blocks.map((block) => block.type)).toEqual(["thinking", "tool", "thinking"]);
+    expect(blocks.some((block) => block.type === "message" && block.text.includes(steerBody))).toBe(false);
     expect(blocks.some((block) => block.type === "event" && block.label === "skill context")).toBe(false);
 
     const html = renderToStaticMarkup(
@@ -102,13 +95,46 @@ describe("native Steer Process visibility", () => {
         <RunTranscriptView density="compact" presentation="chat" entries={processEntries} />
       </ThemeProvider>,
     );
-    expect(html.match(/data-testid="chat-transcript-steer-message"/g)).toHaveLength(1);
-    expect(html.indexOf("Reasoning before the control point.")).toBeLessThan(html.indexOf("Keep this direction visible as Steer input."));
-    expect(html.indexOf("Keep this direction visible as Steer input.")).toBeLessThan(html.indexOf("Reasoning after the control point."));
+    expect(html).not.toContain('data-testid="chat-transcript-steer-message"');
+    expect(html).not.toContain("Keep this direction visible as Steer input.");
+    expect(html).toContain("Reasoning before the control point.");
+    expect(html).toContain("Reasoning after the control point.");
+    expect(html).toContain('data-transcript-action-icon="read"');
     expect(html).not.toContain("PRIVATE_STRUCTURED_ECHO");
     expect(html).not.toContain("PRIVATE_USER_ECHO");
     expect(html).not.toContain("UNANCHORED_STEER_ECHO");
     expect(html).not.toContain("Final response stays in its own message.");
+  });
+
+  it("excludes anchored Steer content even when its body resembles a structured input envelope", () => {
+    const body = `Conversation input: ${JSON.stringify({ currentMessage: {
+      role: "user", kind: "message", status: "completed", body: "STEER_BODY_MUST_REMAIN_VISIBLE",
+      attachments: [], structuredPayload: null,
+    } })}`;
+    const runtimeEntries: TranscriptEntry[] = [
+      { kind: "thinking", ts, text: "Agent reasoning remains visible." },
+      { kind: "tool_call", ts, name: "inspect_state", toolUseId: "inspect-1", input: { target: "current run" } },
+    ];
+    const original = steerMessage("accepted_current", runtimeEntries.length);
+    const structuredSteer = {
+      ...original,
+      id: "steer-structured-input",
+      body,
+      structuredPayload: { ...original.structuredPayload, controlActionId: "steer-structured-control" },
+    };
+    const entries = mergeNativeSteerTranscriptEntries(runtimeEntries, [structuredSteer]);
+    const processEntries = chatProcessTranscriptEntries(entries);
+    expect(processEntries).toEqual(runtimeEntries);
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView presentation="chat" entries={processEntries} />
+      </ThemeProvider>,
+    );
+    expect(html).not.toContain("STEER_BODY_MUST_REMAIN_VISIBLE");
+    expect(html).not.toContain("Conversation input:");
+    expect(html).toContain("Agent reasoning remains visible.");
+    expect(html).toContain("Inspected details");
   });
 
   it("keeps the normalizer closed to unanchored and invalid-disposition Steer entries", () => {
@@ -136,7 +162,7 @@ describe("native Steer Process visibility", () => {
     expect(blocks.some((block) => block.type === "message" && block.text.includes("UNANCHORED_STEER_ECHO"))).toBe(false);
   });
 
-  it("retains reasoning on both sides of the anchored Steer entry in the streaming row", () => {
+  it("retains agent reasoning on both sides while omitting Steer content from the streaming row", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <StreamTranscriptItem
@@ -152,7 +178,9 @@ describe("native Steer Process visibility", () => {
       </ThemeProvider>,
     );
 
-    expect(html.indexOf("Reasoning before Steer")).toBeLessThan(html.indexOf("Keep this direction visible as Steer input."));
-    expect(html.indexOf("Keep this direction visible as Steer input.")).toBeLessThan(html.indexOf("Reasoning after Steer"));
+    expect(html).toContain("Reasoning before Steer");
+    expect(html).toContain("Reasoning after Steer");
+    expect(html).not.toContain("Keep this direction visible as Steer input.");
+    expect(html).not.toContain('data-testid="chat-transcript-steer-message"');
   });
 });

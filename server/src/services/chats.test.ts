@@ -4,6 +4,8 @@ import {
   agents,
   applyPendingMigrations,
   chatConversations,
+  chatGenerationEvents,
+  chatGenerations,
   chatMessageTranscriptEntries,
   chatMessages,
   createDb,
@@ -345,6 +347,205 @@ describe("chatService transcript persistence", () => {
     // after the assertions so normal fenced deletion remains enforced.
     await db.update(runRuntimeSpans).set({
       state: "unresolved", completeness: "unknown", closedAt: new Date(),
+      writerLeaseReleasedAt: new Date(),
+    }).where(eq(runRuntimeSpans.runId, run.id));
+  });
+
+  it("reports completeness for production-sized and bounded Run transcripts without embedding them in the message", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const entryCount = 1_000;
+    const userId = "board-user-large-transcript-reader";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Large Run Transcript Reader Org",
+      urlKey: deriveOrganizationUrlKey("Large Run Transcript Reader Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Large transcript Reader agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Large Run transcript",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    const runtimeBinding = await ensureRuntimeBinding(db, {
+      orgId,
+      conversationId,
+      principalScopeRef: `user:${userId}`,
+      agentId,
+      runtimeType: "codex_local",
+    });
+    const nativeSession = await currentNativeSession(db, runtimeBinding);
+    const run = await runs.createRun({
+      conversation: { id: conversationId, orgId, primaryIssueId: null, planMode: false },
+      agentId,
+      triggerDetail: "chat_assistant_reply",
+      linkedIssueIds: [],
+      linkedProjectId: null,
+      runtimeBinding,
+      runtimeSegment: nativeSession.segment,
+      nativeSessionId: nativeSession.sessionId,
+      nativeSessionParams: nativeSession.sessionParams,
+      inputCorrelationRef: randomUUID(),
+    });
+    expect(await runs.markLegacyTranscriptSource(run)).toBe(true);
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "stopped",
+      acceptedThroughSeq: entryCount,
+    });
+    const assistantMessage = await chats.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Ledger-backed long transcript completed.",
+      runId: run.id,
+      replyingAgentId: agentId,
+    });
+    const entries = Array.from({ length: entryCount }, (_, index) => ({
+      kind: "thinking" as const,
+      ts: new Date(Date.UTC(2026, 6, 23, 8, 0, 0, index)).toISOString(),
+      text: `production-shaped reasoning ${index} ${"x".repeat(1_050)}`,
+      generationId,
+      generationSeqStart: index + 1,
+      generationSeqEnd: index + 1,
+      sourceEntryId: `large-reader-entry-${index}`,
+    }));
+    await db.insert(chatGenerationEvents).values(entries.map((entry, index) => ({
+      orgId,
+      generationId,
+      generationSeq: index + 1,
+      attemptEpoch: 1,
+      eventKind: "transcript" as const,
+      payload: { entry },
+      assistantMessageId: assistantMessage.id,
+      runId: run.id,
+    })));
+    await db.insert(heartbeatRunEvents).values(entries.map((entry, index) => ({
+      orgId,
+      runId: run.id,
+      agentId,
+      seq: index + 1,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "info",
+      message: "chat transcript entry",
+      payload: { entry },
+    })));
+    nativeReadCalls.mockClear();
+
+    const transcript = await chats.getMessageTranscript(conversationId, assistantMessage.id);
+    const [persistedMessage] = await db.select({ structuredPayload: chatMessages.structuredPayload })
+      .from(chatMessages)
+      .where(eq(chatMessages.id, assistantMessage.id));
+    const persistedTranscriptEvents = await db.select({ id: chatGenerationEvents.id })
+      .from(chatGenerationEvents)
+      .where(eq(chatGenerationEvents.assistantMessageId, assistantMessage.id));
+    const readerCalls = nativeReadCalls.mock.calls
+      .map(([input]) => input as { runId: string; cursor: string | null })
+      .filter((input) => input.runId === run.id);
+
+    expect(persistedMessage?.structuredPayload?.__chatTranscript).toBeUndefined();
+    expect(persistedTranscriptEvents).toHaveLength(entryCount);
+    expect(readerCalls.length).toBeGreaterThan(1);
+    expect(transcript?.transcript).toHaveLength(entryCount);
+    expect(transcript?.transcript[0]).toMatchObject({ text: entries[0]?.text });
+    expect(transcript?.transcript.at(-1)).toMatchObject({ text: entries.at(-1)?.text });
+    expect(transcript).toMatchObject({
+      source: "legacy",
+      availability: "available",
+      completeness: "partial",
+      hasMore: false,
+      limit: { pageSize: 200, maxPages: 25, maxItems: 5_000, maxBytes: 2 * 1024 * 1024 },
+    });
+
+    nativeReadCalls.mockClear();
+    nativeReads.set(run.id, {
+      source: "native",
+      availability: "available",
+      completeness: "complete",
+      items: [{
+        id: "bounded-normal-item",
+        ordinal: 0,
+        runId: run.id,
+        spanId: null,
+        sourceRef: null,
+        kind: "thinking",
+        ts: "2026-07-23T08:00:00.000Z",
+        payload: { text: "bounded normal transcript item" },
+        visibility: "visible",
+        origin: "native",
+      }],
+      nextCursor: null,
+    });
+    const boundedNormalTranscript = await chats.getMessageTranscript(conversationId, assistantMessage.id);
+    expect(boundedNormalTranscript?.transcript).toHaveLength(1);
+    expect(boundedNormalTranscript).toMatchObject({
+      source: "native",
+      availability: "available",
+      completeness: "complete",
+      hasMore: false,
+      limit: { pageSize: 200, maxPages: 25, maxItems: 5_000, maxBytes: 2 * 1024 * 1024 },
+    });
+
+    nativeReadCalls.mockClear();
+    nativeReads.set(run.id, (input: { cursor: string | null }) => {
+      const pageIndex = input.cursor ? Number(input.cursor.slice("page-".length)) : 0;
+      const firstOrdinal = pageIndex * 200;
+      return {
+        source: "native",
+        availability: "available",
+        completeness: "complete",
+        items: Array.from({ length: 200 }, (_, index) => ({
+          id: `bounded-item-${firstOrdinal + index}`,
+          ordinal: firstOrdinal + index,
+          runId: run.id,
+          spanId: null,
+          sourceRef: null,
+          kind: "thinking",
+          ts: "2026-07-23T08:00:00.000Z",
+          payload: { text: `bounded transcript item ${firstOrdinal + index}` },
+          visibility: "visible",
+          origin: "native",
+        })),
+        nextCursor: `page-${pageIndex + 1}`,
+      };
+    });
+    const boundedTranscript = await chats.getMessageTranscript(conversationId, assistantMessage.id);
+    const boundedReaderCalls = nativeReadCalls.mock.calls
+      .map(([input]) => input as { runId: string })
+      .filter((input) => input.runId === run.id);
+    expect(boundedReaderCalls).toHaveLength(25);
+    expect(boundedTranscript?.transcript).toHaveLength(5_000);
+    expect(boundedTranscript).toMatchObject({
+      source: "native",
+      availability: "available",
+      completeness: "partial",
+      hasMore: true,
+      limit: { pageSize: 200, maxPages: 25, maxItems: 5_000, maxBytes: 2 * 1024 * 1024 },
+    });
+    await db.update(runRuntimeSpans).set({
+      state: "unresolved",
+      completeness: "unknown",
+      closedAt: new Date(),
       writerLeaseReleasedAt: new Date(),
     }).where(eq(runRuntimeSpans.runId, run.id));
   });

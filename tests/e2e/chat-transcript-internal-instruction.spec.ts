@@ -45,7 +45,10 @@ test.describe("Chat transcript internal instructions", () => {
             {
               kind: "user",
               ts: "2026-06-17T07:59:59.000Z",
-              text: 'Conversation input: {"currentMessage":{"role":"user","body":"What skills do you have?"}}',
+              text: `Conversation input: ${JSON.stringify({ currentMessage: {
+                role: "user", kind: "message", status: "completed", body: "What skills do you have?",
+                attachments: [], structuredPayload: null,
+              } })}`,
             },
             {
               kind: "system",

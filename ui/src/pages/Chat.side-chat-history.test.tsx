@@ -3,6 +3,7 @@
 import { chatsApi, type SideChatHistoryPage } from "@/api/chats";
 import { SidePanelProvider } from "@/context/SidePanelContext";
 import { queryKeys } from "@/lib/queryKeys";
+import { sideChatTargetFromConversation } from "@/lib/side-panel-targets";
 import type { ChatConversation } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
@@ -59,7 +60,7 @@ afterEach(() => {
   document.body.querySelectorAll("[data-radix-popper-content-wrapper]").forEach((node) => node.remove());
 });
 
-function renderHistoryMenu() {
+function renderHistoryMenu(onOpen = vi.fn()) {
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
@@ -67,12 +68,13 @@ function renderHistoryMenu() {
           <ChatSideChatHistoryMenu
             organizationId={organizationId}
             sourceConversationId={parentConversationId}
-            onOpen={vi.fn()}
+            onOpen={onOpen}
           />
         </SidePanelProvider>
       </QueryClientProvider>,
     );
   });
+  return onOpen;
 }
 
 function openHistoryMenu() {
@@ -87,6 +89,26 @@ function openHistoryMenu() {
 }
 
 describe("ChatSideChatHistoryMenu principal cache scope", () => {
+  it("reopens a Side Chat from its parent conversation history", async () => {
+    const conversation = sideChat("side-history-1", "Investigate the failed run");
+    vi.mocked(chatsApi.listSideChats).mockResolvedValue(historyPage(conversation));
+    const onOpen = renderHistoryMenu();
+
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid='side-chat-history-trigger']")).not.toBeNull());
+      host.querySelector<HTMLButtonElement>("[data-testid='side-chat-history-trigger']")?.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }),
+      );
+      await vi.waitFor(() => expect(document.body.querySelector("[data-testid='side-chat-history-item']")).not.toBeNull());
+    });
+
+    act(() => document.body.querySelector<HTMLElement>("[data-testid='side-chat-history-item']")?.click());
+
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(
+      sideChatTargetFromConversation(parentConversationId, conversation),
+    );
+  });
+
   it("switches the visible history and cache when the authenticated principal changes", async () => {
     const firstConversation = sideChat("side-user-1", "Account one Side Chat");
     const secondConversation = sideChat("side-user-2", "Account two Side Chat");

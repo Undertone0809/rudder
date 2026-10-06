@@ -130,16 +130,21 @@ export function readBrowserLocalFileFromDirectorySelection(
   targetPath: string,
 ): BrowserLocalDirectoryRead {
   const selectedFiles = Array.from(files);
+  const relativePaths = selectedFiles.map((file) => (
+    typeof file.webkitRelativePath === "string"
+      ? file.webkitRelativePath.replaceAll("\\", "/")
+      : ""
+  ));
   const selectedRoots = new Set(
-    selectedFiles.map((file) => file.webkitRelativePath.replaceAll("\\", "/").split("/")[0]).filter(Boolean),
+    relativePaths.map((relativePath) => relativePath.split("/")[0]).filter(Boolean),
   );
   if (selectedRoots.size !== 1) {
     throw new Error("Choose one folder containing the recorded file.");
   }
   const rootName = selectedRoots.values().next().value as string;
   const relativePath = browserLocalTargetRelativePath(targetPath, rootName);
-  const matches = selectedFiles.filter((file) => {
-    const segments = file.webkitRelativePath.replaceAll("\\", "/").split("/");
+  const matches = selectedFiles.filter((file, index) => {
+    const segments = relativePaths[index]!.split("/");
     return segments[0] === rootName && segments.slice(1).join("/") === relativePath;
   });
   if (matches.length !== 1) {

@@ -45,6 +45,38 @@ export function chatMessageMutationFingerprint(input: {
     .digest("hex");
 }
 
+export function chatFirstTurnMutationFingerprint(input: {
+  body: string;
+  inlineAnnotations: ChatInlineAnnotationInput[];
+  modelOverride?: string | null;
+  effortOverride?: string | null;
+  files: readonly MutationFile[];
+  preferredAgentId: string | null;
+  groupId: string | null;
+  issueCreationMode: "manual_approval" | "auto_create";
+  planMode: boolean;
+  contextLinks: unknown;
+}) {
+  const messageFingerprint = chatMessageMutationFingerprint({
+    body: input.body,
+    inlineAnnotationsProvided: true,
+    inlineAnnotations: input.inlineAnnotations,
+    modelOverride: input.modelOverride,
+    effortOverride: input.effortOverride,
+    files: input.files,
+  });
+  return createHash("sha256")
+    .update(JSON.stringify({
+      messageFingerprint,
+      preferredAgentId: input.preferredAgentId,
+      groupId: input.groupId,
+      issueCreationMode: input.issueCreationMode,
+      planMode: input.planMode,
+      contextLinks: input.contextLinks,
+    }))
+    .digest("hex");
+}
+
 export async function replayChatMessageMutation(
   lookup: (
     orgId: string,

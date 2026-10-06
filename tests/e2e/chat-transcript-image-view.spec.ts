@@ -147,6 +147,38 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
     const revoke = URL.revokeObjectURL.bind(URL);
     URL.revokeObjectURL = (url) => { revoked.push(url); revoke(url); };
     Object.defineProperty(window, "__rudderRevokedImageUrls", { value: revoked });
+    type DirectorySelection = {
+      mode: "cancel" | "grant";
+      rootName: string;
+      fileName: string;
+      imageBase64: string;
+    };
+    const browserWindow = window as Window & {
+      __rudderDirectorySelection?: DirectorySelection;
+      showDirectoryPicker?: (options: { mode: "read" }) => Promise<FileSystemDirectoryHandle>;
+    };
+    Object.defineProperty(browserWindow, "showDirectoryPicker", {
+      configurable: true,
+      value: async ({ mode }: { mode: "read" }) => {
+        const selection = browserWindow.__rudderDirectorySelection;
+        if (mode !== "read" || !selection) throw new Error("No browser directory selection was configured.");
+        if (selection.mode === "cancel") throw new DOMException("Picker dismissed", "AbortError");
+        const bytes = Uint8Array.from(atob(selection.imageBase64), (character) => character.charCodeAt(0));
+        const file = new File([bytes], selection.fileName, { type: "image/png" });
+        return {
+          name: selection.rootName,
+          getDirectoryHandle: async (name: string) => {
+            throw new DOMException(`Unexpected directory traversal: ${name}`, "NotFoundError");
+          },
+          getFileHandle: async (name: string, options: { create?: boolean }) => {
+            if (options.create !== false || name !== "screenshot.png") {
+              throw new DOMException(`Unexpected target file: ${name}`, "NotFoundError");
+            }
+            return { getFile: async () => file };
+          },
+        } as unknown as FileSystemDirectoryHandle;
+      },
+    });
   });
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Chat-Browser-Local-Image-${Date.now()}` },
@@ -211,47 +243,51 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
   await expect(second).toHaveAccessibleName("Preview image screenshot.png");
   await first.click();
   const picker = transcript.getByTestId("transcript-browser-image-picker");
-  await expect(picker).toContainText("original workspace path cannot be verified");
+  await expect(picker).toContainText("browser cannot verify the selected folder's full system path");
   await page.screenshot({ path: `${screenshotBase}-picker.png`, fullPage: true });
-  // Empty selection exercises the input's cancellation boundary; Playwright
-  // does not drive the OS chooser's Cancel button. No stale blob may appear.
-  const cancelledChooserPromise = page.waitForEvent("filechooser");
-  await picker.getByRole("button", { name: "Choose local image" }).click();
-  await (await cancelledChooserPromise).setFiles([]);
-  await expect(picker.getByRole("button", { name: "Choose local image" })).toBeEnabled();
+  const setDirectorySelection = async (selection: {
+    mode: "cancel" | "grant";
+    rootName: string;
+    fileName: string;
+  }) => page.evaluate(({ nextSelection, imageBase64 }) => {
+    (window as Window & {
+      __rudderDirectorySelection?: {
+        mode: "cancel" | "grant";
+        rootName: string;
+        fileName: string;
+        imageBase64: string;
+      };
+    }).__rudderDirectorySelection = { ...nextSelection, imageBase64 };
+  }, { nextSelection: selection, imageBase64: LOCAL_CHOOSER_IMAGE_BASE64 });
+
+  const folderPicker = picker.getByRole("button", { name: "Choose workspace folder" });
+  // The browser's native directory chooser is represented by the File System Access API in this E2E.
+  await setDirectorySelection({ mode: "cancel", rootName: "first", fileName: "screenshot.png" });
+  await folderPicker.click();
   await expect(picker.getByRole("alert")).toHaveCount(0);
   await expect(transcript.getByAltText("Preview of screenshot.png")).toHaveCount(0);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(transcript.getByRole("button", { name: /Worked for/i })).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
-  const localPickerButton = picker.getByRole("button", { name: "Choose local image", exact: true });
-  const narrowCancel = page.waitForEvent("filechooser");
+  const localPickerButton = picker.getByRole("button", { name: "Choose workspace folder", exact: true });
+  await setDirectorySelection({ mode: "cancel", rootName: "first", fileName: "screenshot.png" });
   await localPickerButton.focus();
   await localPickerButton.press("Enter");
-  await (await narrowCancel).setFiles([]);
-  await expect(localPickerButton).toBeEnabled();
   await expect(picker.getByRole("alert")).toHaveCount(0);
   await expect(transcript.getByAltText("Preview of screenshot.png")).toHaveCount(0);
-  const wrongChooserPromise = page.waitForEvent("filechooser");
-  await picker.getByRole("button", { name: "Choose local image" }).click();
-  await (await wrongChooserPromise).setFiles({
-    name: "wrong-name.png", mimeType: "image/png",
-    buffer: Buffer.from(LOCAL_CHOOSER_IMAGE_BASE64, "base64"),
-  });
+  await setDirectorySelection({ mode: "grant", rootName: "unrelated", fileName: "screenshot.png" });
+  await localPickerButton.click();
+  await expect(picker.getByRole("alert")).toContainText("Choose a folder whose name appears in the recorded file path.");
+  await setDirectorySelection({ mode: "grant", rootName: "first", fileName: "wrong-name.png" });
+  await localPickerButton.click();
   await expect(picker.getByRole("alert")).toContainText("Select the local file named screenshot.png.");
   await expect(transcript.getByAltText("Preview of screenshot.png")).toHaveCount(0);
-  await expect(picker.getByRole("button", { name: "Choose local image" })).toBeEnabled();
+  await expect(localPickerButton).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `${screenshotBase}-wrong-file-narrow.png`, fullPage: true });
-  const firstFileChooserPromise = page.waitForEvent("filechooser");
-  await picker.getByRole("button", { name: "Choose local image" }).click();
-  const firstFileChooser = await firstFileChooserPromise;
-  await firstFileChooser.setFiles({
-    name: "screenshot.png",
-    mimeType: "image/png",
-    buffer: Buffer.from(LOCAL_CHOOSER_IMAGE_BASE64, "base64"),
-  });
+  await setDirectorySelection({ mode: "grant", rootName: "first", fileName: "screenshot.png" });
+  await localPickerButton.click();
   const thumbnail = transcript.getByAltText("Preview of screenshot.png");
   await expect(thumbnail).toHaveAttribute("src", /^blob:/u);
   await page.screenshot({ path: `${screenshotBase}-inline.png`, fullPage: true });
@@ -304,15 +340,9 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
 
   await second.click();
   const secondPicker = transcript.getByTestId("transcript-browser-image-picker");
-  await expect(secondPicker).toContainText("Choose a local image named screenshot.png");
-  const secondFileChooserPromise = page.waitForEvent("filechooser");
-  await secondPicker.getByRole("button", { name: "Choose local image" }).click();
-  const secondFileChooser = await secondFileChooserPromise;
-  await secondFileChooser.setFiles({
-    name: "screenshot.png",
-    mimeType: "image/png",
-    buffer: Buffer.from(LOCAL_CHOOSER_IMAGE_BASE64, "base64"),
-  });
+  await expect(secondPicker).toContainText("browser cannot verify the selected folder's full system path");
+  await setDirectorySelection({ mode: "grant", rootName: "second", fileName: "screenshot.png" });
+  await secondPicker.getByRole("button", { name: "Choose workspace folder" }).click();
   await expect(transcript.getByAltText("Preview of screenshot.png")).toHaveAttribute("src", /^blob:/u);
   await page.screenshot({ path: `${screenshotBase}-second-inline.png`, fullPage: true });
   await transcript.getByRole("button", { name: "Collapse image screenshot.png" }).click();

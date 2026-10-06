@@ -4187,12 +4187,23 @@ export function chatService(db: Db, storage?: StorageService) {
         .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
-      const runRead = row.runId ? await readRunTranscriptThroughReader(row) : await readCopiedNativeTranscript(row);
-      if (runRead && (runRead.entries.length > 0 || runRead.source !== "legacy")) {
+      const runRead = row.runId
+        ? await readRunTranscriptThroughReader(row, { calculateContentHash: false })
+        : await readCopiedNativeTranscript(row);
+      if (runRead && (
+        runRead.entries.length > 0
+        || runRead.source !== "legacy"
+        || runRead.complete === false
+      )) {
         return {
           messageId: row.id,
           messageRef: messageShortRef(row.id),
           transcript: runRead.entries,
+          source: runRead.source,
+          availability: runRead.availability,
+          completeness: runRead.completeness ?? (runRead.complete ? "complete" : "unknown"),
+          hasMore: runRead.hasMore ?? false,
+          limit: runRead.limit,
         };
       }
       const conversationTranscript = await readConversationMessageTranscripts(db, [row]);
