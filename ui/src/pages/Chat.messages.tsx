@@ -3205,6 +3205,7 @@ export function AssistantDraftItem({
   createdAt,
   state,
   requireFinalAnswerPhase = false,
+  currentUserMessageBody,
   replyingAgentId,
   conversation,
   agents,
@@ -3218,6 +3219,7 @@ export function AssistantDraftItem({
   createdAt: Date;
   state: ChatStreamDraftState;
   requireFinalAnswerPhase?: boolean;
+  currentUserMessageBody?: string | null;
   replyingAgentId: string | null;
   conversation: ChatConversation;
   agents: Agent[] | undefined;
@@ -3230,6 +3232,7 @@ export function AssistantDraftItem({
     transcript ?? [],
     body,
     requireFinalAnswerPhase,
+    currentUserMessageBody,
   );
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const waitingForNetwork = state === "waiting_for_network";

@@ -100,6 +100,86 @@ test.describe("Chat message layout", () => {
     expect(toolbarBox!.y).toBeGreaterThanOrEqual(bubbleBox!.y + bubbleBox!.height - 1);
   });
 
+  test("keeps the first assistant reply in its text column as streaming completes", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `First-Reply-Layout-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "First Reply Layout Agent",
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+        command: E2E_CODEX_STUB,
+        chatAppServerEnabled: false,
+      },
+    });
+
+    await page.addInitScript((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat?agentId=${chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    const userText = "Keep the first reply below this message.";
+    await composer.fill(userText);
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+
+    const userBubble = page.getByTestId("chat-user-message-bubble").filter({ hasText: userText }).last();
+    await expect(userBubble).toBeVisible({ timeout: 15_000 });
+    await expect(userBubble).toHaveCount(1);
+    await expect(page).toHaveURL(/\/messenger\/chat\/[a-f0-9-]+$/);
+
+    await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toBeVisible({ timeout: 15_000 });
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toBeVisible({ timeout: 15_000 });
+    const streamingIdentity = `chat-layout-${randomUUID()}`;
+    await assistantMessage.evaluate((node, identity) => {
+      node.setAttribute("data-e2e-streaming-layout-identity", identity);
+    }, streamingIdentity);
+
+    const messagesContent = page.getByTestId("chat-messages-content");
+    const assistantTextColumn = assistantMessage.locator('[data-message-highlight-target="true"]').first();
+    const assertAssistantColumnAndOrder = async () => {
+      const [contentBox, columnBox, userBox] = await Promise.all([
+        messagesContent.boundingBox(),
+        assistantTextColumn.boundingBox(),
+        userBubble.boundingBox(),
+      ]);
+      expect(contentBox).not.toBeNull();
+      expect(columnBox).not.toBeNull();
+      expect(userBox).not.toBeNull();
+
+      // Assistant text stays in the left text column of the messages area.
+      expect(columnBox!.x).toBeGreaterThanOrEqual(contentBox!.x);
+      expect(columnBox!.x).toBeLessThan(contentBox!.x + contentBox!.width / 2);
+      expect(columnBox!.x + columnBox!.width).toBeLessThanOrEqual(contentBox!.x + contentBox!.width);
+      // The assistant row follows the acknowledged user message.
+      expect(columnBox!.y).toBeGreaterThan(userBox!.y + userBox!.height);
+      return { contentBox: contentBox!, columnBox: columnBox! };
+    };
+
+    const streamingPosition = await assertAssistantColumnAndOrder();
+    await expect(assistantMessage).toContainText("Streaming reply for chat.", { timeout: 35_000 });
+    await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0, {
+      timeout: 15_000,
+    });
+
+    const completedMessage = page.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }).last();
+    await expect(completedMessage).toBeVisible();
+    await expect(completedMessage).toHaveAttribute("data-e2e-streaming-layout-identity", streamingIdentity);
+    const completedPosition = await assertAssistantColumnAndOrder();
+    expect(Math.abs(
+      (completedPosition.columnBox.x - completedPosition.contentBox.x)
+      - (streamingPosition.columnBox.x - streamingPosition.contentBox.x),
+    )).toBeLessThan(5);
+  });
+
   test("renders uploaded agent image avatars directly in assistant message attribution", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

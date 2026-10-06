@@ -3867,6 +3867,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                 chatAgentUsesCodexAppServer(
                                   agents?.find((agent) => agent.id === activeStream.replyingAgentId) ?? activeSkillAgent,
                                 ),
+                                activeStream.userBody,
                               );
                               const assistantMessage = chatStreamDraftAssistantMessage(
                                 activeStream,
@@ -3897,6 +3898,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     onOpenChange={(open) => setProcessOpenForRowKey(assistantRowKey, open)}
                                     streamStartedAt={activeStream.createdAt}
                                     assistantMessageBody={activeStream.body}
+                                    currentUserMessageBody={activeStream.userBody}
                                     localizeText={localizeChatProcessText}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     onOpenFile={openTranscriptFile}
@@ -3958,6 +3960,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                 streamDraft.transcript,
                                 streamDraft.body,
                                 requireFinalAnswerPhase,
+                                streamDraft.userBody,
                               )
                               : undefined;
                             const displayedMessage = streamedAssistantBody === undefined
@@ -4024,6 +4027,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     onOpenChange={(open) => setProcessOpenForRowKey(assistantRowKey, open)}
                                     streamStartedAt={streamDraft.createdAt}
                                     assistantMessageBody={streamDraft.body}
+                                    currentUserMessageBody={streamDraft.userBody}
                                     localizeText={localizeChatProcessText}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     onOpenFile={openTranscriptFile}
@@ -4047,6 +4051,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     streamStartedAt={persistedProcessStartedAt!}
                                     streamEndedAt={persistedProcessEndedAt}
                                     assistantMessageBody={message.body}
+                                    currentUserMessageBody={
+                                      previousMessage?.role === "user" ? previousMessage.body : null
+                                    }
                                     localizeText={localizeChatProcessText}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     open={openProcessRowKeys[assistantRowKey] ?? openProcessMessageIds[message.id]}

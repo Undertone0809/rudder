@@ -1,7 +1,9 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import {
   isInternalTranscriptLifecycleEntry,
+  isRudderEchoedStructuredConversationInput,
   isRudderEchoedStructuredConversationInputEntry,
+  stripRudderEchoedStructuredConversationInput,
 } from "@/components/transcript/RunTranscriptView.common";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { activeChatStreamTimelineInsertionIndex } from "@/lib/chat-stream-state";
@@ -170,7 +172,29 @@ function mergeTranscriptRevision(
   return { ...incoming, text: previous.text + incoming.text };
 }
 
-export function chatFinalAnswerFromTranscript(entries: TranscriptEntry[]) {
+function chatTranscriptUserMessageBodies(
+  entries: TranscriptEntry[],
+  currentUserMessageBody?: string | null,
+) {
+  let latestBody: string | null = null;
+  for (const entry of entries) {
+    if (entry.kind !== "user") continue;
+    latestBody = entry.text;
+  }
+  const body = currentUserMessageBody ?? latestBody;
+  return body === null || body === undefined ? [] : [body];
+}
+
+function stripChatStructuredInputEcho(text: string, userMessageBodies: readonly string[]) {
+  const stripped = stripRudderEchoedStructuredConversationInput(text, userMessageBodies);
+  if (stripped !== null) return stripped;
+  return isRudderEchoedStructuredConversationInput(text) ? "" : null;
+}
+
+export function chatFinalAnswerFromTranscript(
+  entries: TranscriptEntry[],
+  currentUserMessageBody?: string | null,
+) {
   const finalEntries: Extract<TranscriptEntry, { kind: "assistant" }>[] = [];
   const sourcePositions = new Map<string, number>();
   for (const entry of entries) {
@@ -209,6 +233,11 @@ export function chatFinalAnswerFromTranscript(entries: TranscriptEntry[]) {
     previous = entry;
   }
 
+  const strippedText = stripChatStructuredInputEcho(
+    text,
+    chatTranscriptUserMessageBodies(entries, currentUserMessageBody),
+  );
+  if (strippedText !== null) return strippedText.trim() ? strippedText : null;
   return text.trim() ? text : null;
 }
 
@@ -226,24 +255,42 @@ export function chatStreamingAssistantBody(
   entries: TranscriptEntry[],
   fallbackBody: string,
   requireFinalAnswerPhase = false,
+  currentUserMessageBody?: string | null,
 ) {
   const hasExplicitAssistantPhase = entries.some((entry) => (
     entry.kind === "assistant"
     && (entry.phase === "commentary" || entry.phase === "final_answer")
   ));
+  const finalAnswer = chatFinalAnswerFromTranscript(entries, currentUserMessageBody);
   if (requireFinalAnswerPhase || hasExplicitAssistantPhase) {
-    return chatFinalAnswerFromTranscript(entries) ?? "";
+    return finalAnswer ?? "";
   }
-  return fallbackBody.trim() ? fallbackBody : chatFinalAnswerFromTranscript(entries) ?? fallbackBody;
+  const strippedFallback = stripChatStructuredInputEcho(
+    fallbackBody,
+    chatTranscriptUserMessageBodies(entries, currentUserMessageBody),
+  );
+  const displayedFallback = strippedFallback ?? fallbackBody;
+  return displayedFallback.trim() ? displayedFallback : finalAnswer ?? displayedFallback;
 }
 
-export function chatProcessTranscriptEntries(entries: TranscriptEntry[]) {
-  return entries.filter((entry) => {
+export function chatProcessTranscriptEntries(
+  entries: TranscriptEntry[],
+  currentUserMessageBody?: string | null,
+) {
+  const userMessageBodies = chatTranscriptUserMessageBodies(entries, currentUserMessageBody);
+  return entries.flatMap((entry) => {
     // Process is for agent work, not a second copy of user-authored input.
-    if (entry.kind === "user") return false;
-    if (isRudderEchoedStructuredConversationInputEntry(entry)) return false;
-    if (entry.kind === "assistant" && entry.phase === "final_answer") return false;
-    return !isInternalTranscriptLifecycleEntry(entry);
+    if (entry.kind === "user") return [];
+    if (isRudderEchoedStructuredConversationInputEntry(entry)) return [];
+    if (entry.kind === "assistant" && entry.phase === "final_answer") return [];
+    if (isInternalTranscriptLifecycleEntry(entry)) return [];
+    if (entry.kind === "assistant") {
+      const strippedText = stripChatStructuredInputEcho(entry.text, userMessageBodies);
+      if (strippedText !== null) {
+        return strippedText.trim() ? [{ ...entry, text: strippedText }] : [];
+      }
+    }
+    return [entry];
   });
 }
 

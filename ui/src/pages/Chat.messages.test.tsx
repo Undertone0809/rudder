@@ -720,8 +720,61 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     )).toBe("Final answer");
     expect(chatStreamingAssistantBody(entries.slice(1, 3), "unphased fallback")).toBe("");
     expect(chatStreamingAssistantBody([entries[2]!], "unphased fallback", true)).toBe("");
+    const echoedInput = promptEcho("Do not show this structured user input.");
+    const unphasedEcho: TranscriptEntry = { kind: "assistant", ts, text: echoedInput };
+    const finalEcho: TranscriptEntry = { kind: "assistant", ts, text: echoedInput, phase: "final_answer" };
+    expect(chatStreamingAssistantBody([unphasedEcho], echoedInput)).toBe("");
+    expect(chatFinalAnswerFromTranscript([finalEcho])).toBeNull();
+    expect(chatStreamingAssistantBody([finalEcho], echoedInput)).toBe("");
     expect(chatProcessTranscriptEntries(entries)).toEqual(entries.slice(1, 3));
     expect(chatProcessTranscriptEntries([entries[0]!, entries[3]!])).toEqual([]);
+  });
+
+  it("strips only this turn's Rudder currentMessage envelope and preserves the following answer", () => {
+    const ts = "2026-07-23T10:00:00.000Z";
+    const currentUserBody = "What is the result?";
+    const envelope = `Conversation input: ${JSON.stringify({ currentMessage: {
+      role: "user", kind: "message", status: "completed", body: currentUserBody,
+      attachments: [], structuredPayload: null,
+    } })}`;
+    const answer = "The result is 42.";
+    const userEntry: TranscriptEntry = { kind: "user", ts, text: currentUserBody };
+    const explicitAnswer: TranscriptEntry = {
+      kind: "assistant",
+      ts,
+      phase: "final_answer",
+      text: `${envelope}\n\n${answer}`,
+    };
+
+    expect(chatStreamingAssistantBody([userEntry, explicitAnswer], `${envelope}\n\n${answer}`))
+      .toBe(answer);
+    expect(chatStreamingAssistantBody([userEntry], `${envelope}\n\n${answer}`)).toBe(answer);
+
+    const processEntry: TranscriptEntry = {
+      kind: "assistant",
+      ts,
+      phase: "commentary",
+      text: `${envelope}\n\n${answer}`,
+    };
+    expect(chatProcessTranscriptEntries([userEntry, processEntry])).toEqual([
+      { ...processEntry, text: answer },
+    ]);
+
+    const schemaExample = `Conversation input: ${JSON.stringify({ currentMessage: {
+      role: "user", kind: "message", status: "completed", body: "EXPLANATION_SCHEMA",
+      attachments: [], structuredPayload: null,
+    } })}\nThis example explains how Rudder structures a message.`;
+    const explanation = "Explain this Rudder message schema.";
+    expect(chatStreamingAssistantBody(
+      [{ kind: "user", ts, text: explanation }],
+      schemaExample,
+    )).toBe(schemaExample);
+    expect(chatProcessTranscriptEntries([
+      { kind: "user", ts, text: explanation },
+      { kind: "assistant", ts, phase: "commentary", text: schemaExample },
+    ])).toEqual([
+      { kind: "assistant", ts, phase: "commentary", text: schemaExample },
+    ]);
   });
 
   it("keeps structured conversation-input echoes out of Process while retaining real agent activity", () => {

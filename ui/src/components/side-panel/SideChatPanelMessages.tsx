@@ -99,7 +99,7 @@ export function SideChatPanelMessages({
     activeAssistantMessageId && messages.some((message) => message.id === activeAssistantMessageId),
   );
   const fallbackAssistantBody = stream && conversation
-    ? chatStreamingAssistantBody(stream.transcript, stream.body, requireFinalAnswerPhase)
+    ? chatStreamingAssistantBody(stream.transcript, stream.body, requireFinalAnswerPhase, stream.userBody)
     : "";
   const fallbackAssistantMessage = stream && conversation
     ? chatStreamDraftAssistantMessage(stream, conversation, fallbackAssistantBody)
@@ -150,7 +150,7 @@ export function SideChatPanelMessages({
 
   return (
     <div className="flex min-h-[12rem] flex-col gap-5" data-testid="side-chat-messages">
-      {conversation ? displayedMessages.map((message) => {
+      {conversation ? displayedMessages.map((message, messageIndex) => {
         const isDraftStreamMessage = message.id === fallbackAssistantMessage?.id;
         const messageStream = stream && (
           isDraftStreamMessage
@@ -162,6 +162,10 @@ export function SideChatPanelMessages({
           activeAssistantMessageId,
           assistantRowIdentities,
         );
+        const previousUserMessageBody = displayedMessages
+          .slice(0, messageIndex)
+          .reverse()
+          .find((candidate) => candidate.role === "user")?.body ?? null;
         const transcript = chatTranscriptEntriesForMessage(
           message,
           Object.fromEntries(legacyTranscriptByMessageId) as Readonly<Record<string, TranscriptEntry[]>>,
@@ -172,6 +176,7 @@ export function SideChatPanelMessages({
             messageStream.transcript,
             messageStream.body,
             requireFinalAnswerPhase,
+            messageStream.userBody,
           )
           : undefined;
         const displayedMessage = streamedAssistantBody === undefined
@@ -208,6 +213,7 @@ export function SideChatPanelMessages({
                 onOpenChange={(open) => updateProcessOpen(messageRowKey, open)}
                 streamStartedAt={messageStream.createdAt}
                 assistantMessageBody={messageStream.body}
+                currentUserMessageBody={messageStream.userBody}
                 showDeveloperDiagnostics={false}
                 onOpenFile={onOpenFile}
               />
@@ -221,6 +227,7 @@ export function SideChatPanelMessages({
                 streamStartedAt={new Date(message.createdAt)}
                 streamEndedAt={new Date(message.updatedAt)}
                 assistantMessageBody={message.body}
+                currentUserMessageBody={previousUserMessageBody}
                 showDeveloperDiagnostics={false}
                 onOpenFile={onOpenFile}
               />

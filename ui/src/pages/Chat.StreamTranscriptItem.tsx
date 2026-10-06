@@ -32,6 +32,7 @@ export function StreamTranscriptItem({
   streamStartedAt,
   streamEndedAt,
   assistantMessageBody,
+  currentUserMessageBody,
   showDeveloperDiagnostics,
   open,
   defaultOpen = false,
@@ -53,6 +54,7 @@ export function StreamTranscriptItem({
   streamStartedAt: Date;
   streamEndedAt?: Date | null;
   assistantMessageBody?: string | null;
+  currentUserMessageBody?: string | null;
   showDeveloperDiagnostics?: boolean;
   open?: boolean;
   defaultOpen?: boolean;
@@ -83,8 +85,11 @@ export function StreamTranscriptItem({
   localizeText?: (text: string) => string;
 }) {
   const timelineEntries = useMemo(
-    () => chatProcessTranscriptEntries(mergeNativeSteerTranscriptEntries(entries, steerMessages)),
-    [entries, steerMessages],
+    () => chatProcessTranscriptEntries(
+      mergeNativeSteerTranscriptEntries(entries, steerMessages),
+      currentUserMessageBody,
+    ),
+    [entries, steerMessages, currentUserMessageBody],
   );
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const waitingForNetwork = state === "waiting_for_network";

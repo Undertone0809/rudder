@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { RunTranscriptView, normalizeTranscript } from "./RunTranscriptView";
-import { filterRenderableTranscriptEntries, isRudderEchoedStructuredConversationInput, isRudderInjectedAgentInstructionText } from "./RunTranscriptView.common";
+import { filterRenderableTranscriptEntries, isRudderEchoedStructuredConversationInput, isRudderInjectedAgentInstructionText, stripRudderEchoedStructuredConversationInput } from "./RunTranscriptView.common";
 
 const ts = "2026-09-29T01:33:22Z";
 const rudderPromptMessage = (body: string, role: "user" | "assistant" = "user") => ({
@@ -59,6 +59,24 @@ describe("native transcript presentation", () => {
     expect(isRudderEchoedStructuredConversationInput(
       `${rudderPromptEcho({ currentMessage: rudderPromptMessage("EXPLANATION_SCHEMA") })}\n\n${rudderPromptReminder}\nAn extra explanation is not part of the prompt.`,
     )).toBe(false);
+  });
+
+  it("strips a recognized currentMessage envelope only when it matches this turn's input", () => {
+    const envelope = rudderPromptEcho({ currentMessage: rudderPromptMessage("the actual request") });
+    const answer = "Here is the answer.";
+
+    expect(stripRudderEchoedStructuredConversationInput(
+      `${envelope}\n\n${answer}`,
+      ["the actual request"],
+    )).toBe(answer);
+    expect(stripRudderEchoedStructuredConversationInput(
+      `${envelope}\n\n${answer}`,
+      ["a different request"],
+    )).toBeNull();
+
+    const explanation = `${rudderPromptEcho({ currentMessage: rudderPromptMessage("EXPLANATION_SCHEMA") })}\nThis example explains how Rudder structures a message.`;
+    expect(stripRudderEchoedStructuredConversationInput(explanation, ["Explain the schema."]))
+      .toBeNull();
   });
 
   it("keeps an agent explanation that demonstrates a complete Rudder message schema", () => {

@@ -635,16 +635,16 @@ function isRudderFinalResultReminderText(text: string): boolean {
   return /^final rudder result reminder: for an ordinary message reply, the native runtime final message is authoritative and must contain only the final answer body\. only use [a-z0-9_-]+ plus json when the result kind is ask_user, issue_proposal, operation_proposal, or automation_create\. do not write progress text after the final message or after the structured json object\.$/u.test(normalized);
 }
 
-export function isRudderEchoedStructuredConversationInput(text: string): boolean {
+function parseRudderEchoedStructuredConversationInput(text: string) {
   const trimmed = text.trimStart().replace(/^(?:```(?:json)?\s*)/iu, "");
   const prefix = trimmed.match(/^[`"'“”‘’]*conversation input\s*:\s*/iu);
-  if (!prefix) return false;
+  if (!prefix) return null;
 
   const payload = trimmed.slice(prefix[0].length).trim()
     .replace(/^```(?:json)?\s*/iu, "")
     .replace(/\s*```\s*$/u, "")
     .trim();
-  if (!payload) return false;
+  if (!payload) return null;
 
   let parsed: unknown;
   let trailingText = "";
@@ -652,29 +652,25 @@ export function isRudderEchoedStructuredConversationInput(text: string): boolean
     parsed = JSON.parse(payload) as unknown;
   } catch {
     const jsonValue = firstBalancedJsonObject(payload) ?? firstJsonStringValue(payload);
-    if (!jsonValue) return false;
+    if (!jsonValue) return null;
     const objectStart = payload.indexOf(jsonValue);
     trailingText = payload.slice(objectStart + jsonValue.length).trim();
     try {
       parsed = JSON.parse(jsonValue) as unknown;
     } catch {
-      return false;
+      return null;
     }
   }
-  // A native prompt echo may append Rudder's fixed result-protocol reminder.
-  // Arbitrary prose after a schema-shaped object is not part of that envelope:
-  // keep it visible so an agent explanation is not mistaken for private input.
-  if (trailingText && !isRudderFinalResultReminderText(trailingText)) return false;
   if (typeof parsed === "string") {
     try {
       parsed = JSON.parse(parsed) as unknown;
     } catch {
-      return false;
+      return null;
     }
   }
 
   const record = asRecord(parsed);
-  if (!record) return false;
+  if (!record) return null;
   const isRudderPromptMessage = (value: unknown) => {
     const message = asRecord(value);
     return Boolean(
@@ -688,12 +684,48 @@ export function isRudderEchoedStructuredConversationInput(text: string): boolean
     );
   };
 
-  if (Object.hasOwn(record, "currentMessage")) {
-    return record.currentMessage === null || isRudderPromptMessage(record.currentMessage);
+  const isRudderEnvelope = Object.hasOwn(record, "currentMessage")
+    ? record.currentMessage === null || isRudderPromptMessage(record.currentMessage)
+    : Array.isArray(record.recentMessages)
+      && record.recentMessages.length > 0
+      && record.recentMessages.every(isRudderPromptMessage);
+  if (!isRudderEnvelope) return null;
+
+  const currentMessage = asRecord(record.currentMessage);
+  return {
+    trailingText,
+    currentMessageBody: typeof currentMessage?.body === "string" ? currentMessage.body : null,
+  };
+}
+
+export function isRudderEchoedStructuredConversationInput(text: string): boolean {
+  const parsed = parseRudderEchoedStructuredConversationInput(text);
+  if (!parsed) return false;
+  // A native prompt echo may append Rudder's fixed result-protocol reminder.
+  // Arbitrary prose after a schema-shaped object is not part of that envelope:
+  // keep it visible so an agent explanation is not mistaken for private input.
+  return !parsed.trailingText || isRudderFinalResultReminderText(parsed.trailingText);
+}
+
+export function stripRudderEchoedStructuredConversationInput(
+  text: string,
+  expectedCurrentMessageBodies: readonly string[],
+): string | null {
+  const parsed = parseRudderEchoedStructuredConversationInput(text);
+  if (
+    !parsed
+    || parsed.currentMessageBody === null
+    || !expectedCurrentMessageBodies.includes(parsed.currentMessageBody)
+  ) {
+    return null;
   }
-  return Array.isArray(record.recentMessages)
-    && record.recentMessages.length > 0
-    && record.recentMessages.every(isRudderPromptMessage);
+
+  const trailingLines = parsed.trailingText.split(/\r?\n/u);
+  for (let lineCount = 1; lineCount <= Math.min(4, trailingLines.length); lineCount += 1) {
+    if (!isRudderFinalResultReminderText(trailingLines.slice(0, lineCount).join("\n"))) continue;
+    return trailingLines.slice(lineCount).join("\n").trimStart();
+  }
+  return parsed.trailingText;
 }
 
 export function isRudderEchoedStructuredConversationInputEntry(entry: TranscriptEntry): boolean {
