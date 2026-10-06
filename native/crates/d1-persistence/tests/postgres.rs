@@ -979,6 +979,24 @@ fn branding_color(key: &str) -> String {
     format!("#{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2])
 }
 
+fn legacy_branding_adapter_fingerprint(command: &OrganizationBrandingCommand) -> String {
+    let core_fingerprint = command
+        .as_integration_view()
+        .unwrap()
+        .fingerprint()
+        .unwrap();
+    let identity = json!({
+        "adapter_format": 1,
+        "kind": "organization_branding",
+        "core_fingerprint": core_fingerprint,
+        "primary_goal_after": null,
+    });
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&identity).unwrap())
+    )
+}
+
 fn adapter_fingerprint(core_fingerprint: &str, primary_goal_after: Option<&str>) -> String {
     let identity = json!({
         "adapter_format": 1,
@@ -1128,6 +1146,7 @@ async fn branding_activity_action_tracks_the_public_route_and_is_idempotency_bou
         .await
         .unwrap();
 
+    // Newly written generic-route receipts use v2 and remain route-bound.
     assert!(matches!(
         store
             .branding_with_activity_action(
@@ -1171,6 +1190,65 @@ async fn branding_activity_action_tracks_the_public_route_and_is_idempotency_bou
         assert_eq!(outbox_action, expected_action);
     }
     assert_eq!(database.counts().await, (2, 2, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn branding_generic_retry_replays_legacy_v1_receipt_with_unrecoverable_route_origin() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = branding("branding-legacy-generic-route", 0);
+
+    // Before v25.5, generic PATCH called the dedicated branding endpoint. Its
+    // v1 receipt has no route-origin marker, so this dedicated write constructs
+    // the same persisted representation as a prior generic-route receipt.
+    let original = store.branding(command.clone()).await.unwrap();
+    assert_eq!(
+        original.receipt.fingerprint,
+        legacy_branding_adapter_fingerprint(&command)
+    );
+    let original_activity_action: String =
+        sqlx::query_scalar("SELECT action FROM activity_log WHERE id=$1::uuid")
+            .bind(original.receipt.activity_id.as_deref().unwrap())
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(original_activity_action, "organization.branding_updated");
+
+    let replay = store
+        .branding_with_activity_action(
+            command.clone(),
+            OrganizationBrandingActivityAction::OrganizationUpdated,
+        )
+        .await
+        .unwrap();
+
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, original.receipt);
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("branding-legacy-generic-route"))
+    );
+
+    let changed_payload = command.with_brand_color(Some("#123456".to_owned()));
+    assert!(matches!(
+        store
+            .branding_with_activity_action(
+                changed_payload,
+                OrganizationBrandingActivityAction::OrganizationUpdated,
+            )
+            .await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 1);
+    assert_eq!(database.counts().await, (1, 1, 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]

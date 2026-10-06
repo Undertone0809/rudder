@@ -36,10 +36,152 @@ commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
   - 17c9613e3df39e2c67c07d455206312b7ac33a75
   - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
-updated_at: 2026-10-04
+updated_at: 2026-10-06
 ---
 
 # Purpose and terminal outcome
+
+## Current checkpoint (2026-10-06)
+
+At 2026-10-06 09:42 UTC, `git ls-remote origin refs/heads/main` observed Main at
+`b5a07310328ea3826aeb96df4422976aff280300` (tree
+`ae78a3d4e5c1d27aede870393cc40b88aa572fce`). PR #274 added two Rust/SQLx
+live-run list reads behind the existing authenticated Node routes; this is a
+new, narrow authority row, not general run-read or execution ownership. The
+ledger now has 26 units: 7 implemented, 7 privately verified, 6 connected to a
+real entry, 1 default-path verified, 0 whole-authority retirements, and 13
+partial rows. The PR's Affected qualification check was skipped. Its shared
+`server-foundation` source file was reconciled into the D1 candidate without
+changing D1 write-fence semantics.
+
+Current D1 candidate: branch
+`codex/d1-resource-compat-real-entry-20261005`, base `b5a07310328ea3826aeb96df4422976aff280300`,
+commit `cde6b5f80c1cf9b4581840a8b265da620c449236`, source tree
+`90465d8fdd4611b3dcdf3870a19c51765e0cb66c`, source fingerprint
+`83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095`, and
+candidate patch tree `4d86861645f45cde8b0ec6d2fe5fb09c3141f158`. Packet v25.6 has
+fingerprint `a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349`.
+Stage review rejected v25.5 for a P1: existing generic organization PATCH
+branding receipts used the v1 adapter fingerprint, but v25.5 retries used a
+different v2 fingerprint. The v25.6 fix accepts exact-payload v1 replay while
+retaining changed-payload conflicts; 12 branding PostgreSQL tests passed, and a
+public generic-route replay plus no-side-effect snapshot was added to the smoke.
+The independent stage reviewer accepted v25.6 at `2026-10-06T09:56:58.069Z`,
+the public verifier returned `PASS` at `2026-10-06T10:23:58.257Z`, and the final
+reviewer returned `accept` at `2026-10-06T10:55:57Z` for the same frozen source,
+runtime, data scope, and packet. The fresh foundation artifact is
+`0f2d15c1…3ce3bf`. The candidate is not published; a new protected PR and
+exact-head CI remain pending because historical PR #225 is already merged and
+does not contain v25.6. The source commit identity must be rebound with all
+three receipt issuers after the exact candidate is committed.
+`implementation_complete=false`, `release_ready=false`, and
+`production_verified=false`.
+
+The following blocks preserve prior candidate history; their identities are
+historical and are not current acceptance evidence.
+
+### Historical v25.5 acceptance details (rejected; superseded by v25.6)
+
+The v25.5 packet `9d4836d7…` was independently rejected because it omitted
+same-key replay of pre-existing generic-route v1 branding receipts. The exact
+finding and disposition are retained in delivery packet v25.5; v25.6 adds both
+SQLx prior-receipt regression coverage and the authenticated public generic
+PATCH replay workflow. The v25.5 author smoke remains historical evidence only.
+
+### Historical v25.4 acceptance details (superseded)
+
+PRs #225 (D1 branding/Project-Goal real-entry), #233 (member-directory default
+read), #236 (Project creation/resource mutation), #245 (explicit opt-in Actix
+ingress), #269 (Project reads), and #271 (Windows process-helper preload) are
+merged. The new #269 increment sends the public Project list/detail/resource
+GETs through Rust SQLx while Node retains the public listener, authentication,
+reference resolution, and minimal Project-to-organization lookup. It does not
+transfer Project writer authority, SQLx migration authority, or Node backend
+runtime ownership. #236 connects Rust-owned Project creation and subsequent
+resource mutations but leaves import/worktree-merge and historical Node-owned
+Project writers in scope for later fencing/retirement proof. Main already has
+public API forwarding for Rust-owned organization resources and Project
+attachments; ordinary Node creation/read paths and unowned resources remain.
+
+The active D1 compatibility candidate is isolated at
+`/Users/zeeland/.codex/worktrees/d1-project-goal-main-20261005/rudder-oss`,
+branch `codex/d1-resource-compat-real-entry-20261005`, on the exact current Main
+base. Candidate source v25.2 fixes the v25.1 compatibility finding: a well-formed
+missing branding asset returns 404 while a foreign-organization asset remains
+422; public real-entry coverage proves both failures leave business state,
+version, receipts, activity, and outbox unchanged. Its 30 non-plan source paths
+have prior author-level focused checks for branding and Project/resource
+workflows, CLI/MCP, rollback/replay/import recovery, affected typechecks, CLI
+build, formatting, lint, and diff checks. Those source-level checks remain
+content-applicable because the source fingerprint is unchanged, but the prior
+real-entry run identities are no longer bound to the measured release binaries.
+They are historical evidence, not v25.4 workflow acceptance.
+
+The v25.1 stage `reject` is historical and its finding is fixed in source v25.2.
+Stage review returned `needs more evidence` on v25.2 because the packet omitted
+the current owner-handoff coordinator, the absence of an Actix handoff command,
+and the PostgreSQL lock-race/stale-writer evidence. The source candidate did not
+change. Packet v25.3 now names Node/Drizzle as the scoped handoff coordinator,
+records the covered branding and Project–Goal lock races and stale Node writer
+rejection without state/effect changes, and limits the claim to those tested
+writers. Its fingerprint is
+`65111e40587bc5060ff15192e978ff2fa476c07ff8fb7bc1c9b152fa73583584`; fresh
+stage re-review accepted v25.3, now historical for the successor packet. Its
+independent verifier stopped before a terminal verdict because the actual
+foundation/preflight release binaries measured
+`5a6650ffa7cc1358e08adeb73e6b6525a52c70dafa7e5bd666c4549efc70dd5b` /
+`ce698e0dcbc7679ad48020df4e58d85de2d3c3974322d9485742b47fe7b8fa70`, while
+v25.3 named `c51b88f5...` / `d5c38328...`. A debug branding smoke exited 0 and
+the PostgreSQL handoff-race test passed 2/2, but both were unbound diagnostics;
+Project/import smoke did not run. No v25.3 verifier verdict was issued. Packet
+v25.4 records the exact measured binaries and its independent stage review
+accepted the handoff boundary and candidate identity. The first v25.4 verifier
+returned `QUESTION` before starting a database or product workflow because its
+execution environment lacked the ignored release binaries and CLI output. The
+author then rebuilt the two Rust release binaries from this exact frozen source
+and rebuilt the CLI; all three SHA-256 values reproduced the v25.4 packet
+(`5a6650ff...`, `ce698e0d...`, `995c4694...`). Source paths and fingerprint did
+not change. The second independent verifier returned terminal `PASS` at
+2026-10-05 21:21 UTC against those rebuilt artifacts. Branding, full
+Project/resource/import recovery, and the PostgreSQL ownership-handoff race
+passed; the final lease recheck matched source, packet, runtime, and artifacts.
+The first `QUESTION` remains historical and is not promoted to a product
+failure or pass. The candidate remains frozen with source-diff fingerprint
+`edc01eec6c1994dca66fb8f8c22e5bbd6b299a5a74e6e6691d852ea8ad03150d`, patch tree
+`7d11d5eebe8d5eb8b976d1b715ec81dfc45851b8`; v25.4 packet fingerprint is
+`11633d4f8c33edc67dcf08f4cdd85a9fc9f9d5d808aeee5e8b728e7e98e5df18`. The
+the independent verifier has returned `PASS`; an independent final reviewer
+must now accept the same candidate before commit, PR, or integration. The
+candidate has not been
+pushed and has no PR. Node/Drizzle
+still coordinates owner handoff, while SQLx owns selected business mutations
+only after persisted Rust ownership; this is not default-path or Node-runtime-retirement proof.
+Public API/auth, Drizzle
+migration apply, default Rust ingress, other Node writers, and the first-party
+Node runtime remain. D1 default-path verification and old-writer retirement are
+false. A read-only successor scan found a narrow post-D1 candidate, not yet
+started: connect Project Resources “create source + attach” to one Project
+`newResources` PATCH, reusing the existing Rust transaction. Target
+`ProjectResourcesPanel.tsx` and, if needed for a stable idempotency key, the
+Project API client; add the missing existing-Project Sources E2E. The current
+public PATCH router already selects Rust for persisted Rust ownership and the
+fenced Node service otherwise, so the UI must not guess ownership. Before
+implementation, resolve how the Node-owned path preserves the existing
+`organization.resource.created` and `project.resource.attached` audit actions:
+a generic Project PATCH currently records `project.updated`, and the Node
+service must be checked for `newResources` support. Preserve one idempotency
+key across uncertain retries, public auth, and fail-closed Rust outage behavior;
+do not introduce a Node fallback write. Refresh Main after D1 integration and
+recheck the adjacent API route. Acceptance should cover the UI journey, stable
+replay, audit rollback/retry, restart readback, and installed required-default
+mode; no CLI/MCP change is currently implied. This slice does not prove
+catalog-wide Node retirement. Main #269 makes Project GET readback Rust-backed
+while the PATCH response still uses Node `svc.getById`; scope any claim to Rust
+write authority. The separately authorized C07 smoke-runner repair has its
+focused Node 12/12 and Vitest 9/9 checks passing in the existing coordination
+worktree; packaged workflow and C07 acceptance remain unverified.
+`implementation_complete=false`, `release_ready=false`, and
+`production_verified=false`.
 
 ## Current checkpoint (2026-10-04)
 
@@ -245,21 +387,16 @@ PostgreSQL, update/recovery, worker, and legacy-writer rows remain in the
 ledger. The migration manifest is
 `bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7`.
 
-The author-run disposable real-entry probe passed against embedded PostgreSQL
-18.1.0-beta.16 after building the missing local `migration-preflight` and
-`rudder-server-foundation` artifacts. It observed bootstrap and current
-preflight before Node migration inspection, Node API -> private Actix/SQLx,
-auth and organization fencing, CLI/MCP scalar and mixed Project updates,
-same-key CLI/MCP replay, public audit rollback and retry, outbox/restart
-replay, cross-organization rejection, and final persisted receipt/activity
-counts. The exact current author rerun used Project data
-`rust-project-goal-real-entry-89061` and branding data
-`rust-branding-real-entry-93985`; fixture IDs, binary hashes, and log hashes
-are recorded in the v23 author probe artifact. Earlier author data from the
-first v23 attempt is historical and not reused because its logs were not
-present in this environment. This remains author evidence; stage review,
-independent verifier, and final review for this candidate are pending. Default
-Rust path, old-authority retirement outside the fenced Rust-owned records, full
+The v25.6 candidate is stage-accepted, independently real-entry verified with
+`PASS`, and final-review accepted, recorded with exact source, runtime, disposable-data, and
+packet identities in the v25.6 delivery packet. The verifier covered branding,
+Project/resource create/edit/delete and replay, import recovery, CLI/MCP,
+rollback/outbox restart recovery, negative logo readbacks, authenticated legacy
+receipt replay and changed-payload conflict, and 2/2 PostgreSQL writer-handoff
+races. This only proves the scoped Node public listener/auth entry forwarding
+to private Actix/SQLx. The earlier v23 author probes above remain historical.
+Candidate identity rebind, publication, exact-head CI, and protected-PR
+integration are pending. Default Rust path, old-authority retirement, full
 migration, release readiness, and production verification remain false.
 
 ### Delivery convergence (2026-09-28)
@@ -1271,3 +1408,113 @@ Verify startup failure explicitly, and verify HTTP 503 without Node invocation f
 an unavailable foundation after the public listener is running. Packaging acceptance
 must run without repository `native/target` binaries. This read slice has no writer
 handoff; the subsequent D1 default-write slice does.
+
+## Historical D1 acceptance and Project Sources successor (pre-PR #274 / v25.4)
+
+The D1 resource-compatibility source commit is now `2d9a7d74351360a700e3f1fd2ab290799764ee4f`
+on current Main `46506e69d77205ee9096ac2e95b53a4cc5c41be8`, with tree
+`5c1c8146179b5cd9013067cdb60d3dd0c764bddb`. It was rebased from `bb27b56e`
+without conflicts. Main added only `desktop/scripts/smoke.mjs`, `ui/src/index.css`,
+and `ui/src/lib/index-css.test.ts`; none overlap the 30 D1 source paths, and the
+candidate source-diff SHA-256 remains
+`1f1b3741a92345cd649543abe0d1881635cb3ac7fc7991b93d1a12152b104a7c`. Rust
+foundation, migration-preflight, and CLI builds reproduce the v25.4 artifact
+hashes (`5a6650ff…dd5b`, `ce698e0d…8fa70`, and `995c4694…f23e39`). The v25.4
+stage, real-entry verifier, and final-review receipts remain historical for the
+pre-rebase `bb27b56e` identity; all three current-candidate receipts are pending.
+The packet and current-source record preserve that distinction, and the receipt
+rebind/rerun sequence is the next gate.
+The branch has not yet been pushed and has no PR CI result.
+
+The accepted workflow evidence on the predecessor remains useful historical
+evidence: an independent disposable public-entry verifier returned `PASS`,
+including the scoped PostgreSQL writer-handoff race. The claim remains a private
+Actix/SQLx bridge behind the Node public listener and Node/Drizzle ownership
+coordinator. It does not prove default Rust ingress, global Node writer
+retirement, release readiness, or production verification. The next handoff is
+fresh/rebound exact-candidate review, verification and final review, then publish
+to a protected PR and run CI on its exact head.
+
+After this candidate is published and its CI gate is resolved, prioritize the
+existing Project detail panel's “create source and attach” path as the next
+write slice. The Rust project `newResources` transaction already exists, but
+the detail panel still uses separate organization-resource-create and
+project-attach requests. Route only newly-created sources through the
+owner-aware project mutation; keep existing-resource attachment on its current
+path and preserve Node ownership for Node-owned projects.
+
+Acceptance must preserve the existing activity semantics
+(`organization.resource.created` and `project.resource.attached`) rather than
+silently replacing them with only `project.updated`; keep source creation,
+attachment, receipt, audit, and outbox effects atomic for Rust-owned projects.
+Provision the organization-resource ownership/fence row in that same transaction
+so later edits, detach, and stale Node writers behave correctly. Carry one
+idempotency key across an uncertain UI retry, and prove same-key replay does not
+duplicate the source. Add a real Project-detail UI E2E for new-source
+create/attach, retained existing sources, Node-owned routing, retry, and visible
+failure recovery. Preserve the separate new-Project dialog flow. Inspect the
+current CLI/MCP resource workflows and assert their existing contracts remain
+compatible; add surface changes only if the slice actually changes those
+supported entry points.
+
+Before implementation, refresh Main and inspect current React/API/SQLx callers
+and tests. Do not infer that the existing `newResources` call alone proves
+behavioral equivalence: its current `project.updated` audit event and direct
+resource inserts require explicit reconciliation with the two-request detail
+flow. Merge this successor only through its exact protected PR checks, then
+continue the remaining authority units; this D1 slice does not close Phases 0–7.
+
+## Current D1 checkpoint after Main PR #274 (2026-10-06 09:42 UTC)
+
+Main is `b5a07310328ea3826aeb96df4422976aff280300`. PR #274 moved the two
+live-run list-selection queries (`GET /api/orgs/:orgId/live-runs` and
+`GET /api/issues/:issueId/live-runs`) to SQLx behind the existing Node auth and
+issue-resolution routes. This adds the separate `read.live_run_lists` ledger
+unit: implemented, private-tested, and real-entry-connected; not installed-
+default-verified, and not evidence that other run reads, mutations, events,
+cancellation, Chat/Side Chat, scheduler, or workers have moved. The merged PR's
+Affected qualification check was skipped. The D1 candidate also changes
+`native/crates/server-foundation/src/lib.rs`; the shared file has been rebased
+and rebuilt as part of the exact candidate.
+
+Current D1 v25.6 candidate identity:
+
+- Base: `b5a07310328ea3826aeb96df4422976aff280300`.
+- Commit: `cde6b5f80c1cf9b4581840a8b265da620c449236`; tree
+  `90465d8fdd4611b3dcdf3870a19c51765e0cb66c`.
+- Source-diff fingerprint: `83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095`.
+- Patch tree: `4d86861645f45cde8b0ec6d2fe5fb09c3141f158`.
+- Packet: v25.6, fingerprint
+  `a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349`.
+
+Stage review rejected v25.5 for a P1: the former generic organization PATCH
+branding route left a v1 adapter receipt, but a v25.5 same-key retry used a
+different v2 fingerprint and conflicted. v25.6 accepts exact-payload legacy
+receipt replay and retains changed-payload conflict behavior. The 12 focused
+branding PostgreSQL tests passed; an independent verifier then exercised that
+legacy receipt through authenticated generic PATCH and compared business
+state, owner/version, receipt, activity, and outbox snapshots before and after
+the changed-payload conflict. The v25.6 stage review accepted and its
+independent real-entry verifier returned `PASS` for every packet criterion,
+including Project/resource edit/delete/replay, import recovery, CLI/MCP,
+rollback/outbox restart recovery, negative logo readbacks, and 2/2 PostgreSQL
+writer-handoff races. Evidence is recorded in
+`doc/plans/2026-10-06-rudder-full-rust-backend-completion-delivery-packet-v25.6.json`
+and `/tmp/rudder-v25.6-verifier.98cO2l/`. The proof remains scoped to the
+Node public listener/auth entry forwarding to private Actix/SQLx; it does not
+prove default Rust ingress, global Node writer retirement, release readiness,
+or production verification. Final review and exact-head CI are pending. No
+push or PR exists for v25.6. PR #225 is already merged historical work and
+does not contain this successor; after final acceptance, publish this candidate
+through a new protected PR. Keep
+`implementation_complete=false`, `release_ready=false`, and
+`production_verified=false`.
+
+After D1's protected PR checks pass, continue with Project Sources “create and
+attach” as one owner-aware Project `newResources` mutation. Preserve the
+existing `organization.resource.created` and `project.resource.attached` audit
+events, atomically provision the resource ownership fence, maintain same-key
+replay/recovery, retain Node-owned Project behavior, and test the real detail
+panel journey plus installed required-default routing. Continue the Phase 0–7
+authority ledger after that slice; this D1 increment is not migration
+completion.

@@ -153,6 +153,44 @@ async function main() {
     assert.equal(patch.status, 200);
     assert.equal((patch.body as { brandColor?: string }).brandColor, "#abcdef");
 
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    const legacyGenericReplayBefore = await sql.unsafe(
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, "
+        + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
+        + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "WHERE o.id=$1::uuid",
+      [organizationId],
+    );
+
+    // Before the generic organization PATCH selected its own activity action,
+    // Rust-owned branding requests from that route were adapted through the
+    // dedicated /branding path and persisted the v1 receipt fingerprint. A
+    // retry through the generic public route must continue to replay that
+    // already-committed receipt rather than conflict or write a second event.
+    const legacyGenericReplay = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": idempotencyKey,
+      },
+      body: JSON.stringify({ brandColor: "#abcdef" }),
+    }));
+    assert.equal(legacyGenericReplay.status, 200);
+    assert.equal((legacyGenericReplay.body as { brandColor?: string }).brandColor, "#abcdef");
+    const legacyGenericReplayAfter = await sql.unsafe(
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, "
+        + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
+        + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "WHERE o.id=$1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(Array.from(legacyGenericReplayAfter), Array.from(legacyGenericReplayBefore),
+      "legacy generic retry must replay without changing business state or side-effect counts");
+
     const renamed = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -176,7 +214,6 @@ async function main() {
     assert.equal(unlistedPatch.status, 200);
     assert.equal((unlistedPatch.body as { brandColor?: string }).brandColor, "#123456");
 
-    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     const organizationRows = await sql.unsafe(
       "SELECT name, description, brand_color FROM organizations WHERE id = $1",
       [organizationId],
@@ -343,16 +380,28 @@ async function main() {
         + "VALUES ($1::uuid, $2::uuid, 'test', $3, 'image/png', 1, $4)",
       [foreignLogoAssetId, unlistedOrganizationId, `branding/${foreignLogoAssetId}`, "f".repeat(64)],
     );
+    await sql?.unsafe(
+      "INSERT INTO organization_logos (org_id, asset_id) VALUES ($1::uuid, $2::uuid)",
+      [organizationId, logoAssetId],
+    );
+    const missingLogoAssetId = "40000000-0000-4000-8000-000000000099";
     const invalidBrandingBefore = await sql?.unsafe(
-      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, "
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, l.asset_id::text AS logo_asset_id, "
         + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
         + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
         + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
         + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "JOIN organization_logos l ON l.org_id=o.id "
         + "WHERE o.id=$1::uuid",
       [organizationId],
     );
-    const missingLogoAssetId = "40000000-0000-4000-8000-000000000099";
+    const invalidBrandingAssetsBefore = await sql?.unsafe(
+      "SELECT id::text AS id, org_id::text AS org_id, provider, object_key, content_type, byte_size, sha256 "
+        + "FROM assets WHERE id IN ($1::uuid, $2::uuid, $3::uuid) ORDER BY id",
+      [logoAssetId, foreignLogoAssetId, missingLogoAssetId],
+    );
+    assert.equal(invalidBrandingBefore?.[0]?.logo_asset_id, logoAssetId);
+    assert.equal(invalidBrandingAssetsBefore?.length, 2, "the missing asset fixture must not exist");
     const missingLogo = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
       method: "PATCH",
       headers: {
@@ -372,16 +421,24 @@ async function main() {
     }));
     assert.equal(foreignLogo.status, 422);
     const invalidBrandingAfter = await sql?.unsafe(
-      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, "
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, l.asset_id::text AS logo_asset_id, "
         + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
         + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
         + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
         + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "JOIN organization_logos l ON l.org_id=o.id "
         + "WHERE o.id=$1::uuid",
       [organizationId],
     );
+    const invalidBrandingAssetsAfter = await sql?.unsafe(
+      "SELECT id::text AS id, org_id::text AS org_id, provider, object_key, content_type, byte_size, sha256 "
+        + "FROM assets WHERE id IN ($1::uuid, $2::uuid, $3::uuid) ORDER BY id",
+      [logoAssetId, foreignLogoAssetId, missingLogoAssetId],
+    );
     assert.deepEqual(invalidBrandingAfter, invalidBrandingBefore,
       "missing or foreign logo rejection changed branding state or side effects");
+    assert.deepEqual(invalidBrandingAssetsAfter, invalidBrandingAssetsBefore,
+      "missing or foreign logo rejection changed the linked or foreign asset rows");
 
     const cliRuntimeEnv = {
       RUDDER_API_URL: current.apiUrl,

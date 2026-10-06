@@ -36,6 +36,7 @@ pub(crate) struct ActorMetadata {
 pub(crate) enum ExpectedReceipt {
     OrganizationBranding {
         activity_action: OrganizationBrandingActivityAction,
+        legacy_replay_fingerprint: Option<String>,
         name: Option<String>,
         description: Option<Option<String>>,
         brand_color: Option<Option<String>>,
@@ -173,6 +174,10 @@ impl Metadata {
         let org = uuid(view.organization_id())?.to_owned();
         let key = bounded_text(view.idempotency_key(), false)?;
         let core_fingerprint = view.fingerprint()?;
+        let legacy_replay_fingerprint = (activity_action
+            == OrganizationBrandingActivityAction::OrganizationUpdated)
+            .then(|| adapter_fingerprint(branding_kind(), &core_fingerprint, None))
+            .transpose()?;
         let fingerprint = branding_fingerprint(activity_action, &core_fingerprint)?;
         let body = json!({
             "organization_id": org,
@@ -201,6 +206,7 @@ impl Metadata {
             link_identifier: None,
             expected_receipt: ExpectedReceipt::OrganizationBranding {
                 activity_action,
+                legacy_replay_fingerprint,
                 name: None,
                 description: None,
                 brand_color: view.brand_color().map(|value| value.map(str::to_owned)),
@@ -925,7 +931,18 @@ pub(crate) async fn branding_replay(
         return Ok(None);
     };
 
-    if row.try_get::<String, _>("command_fingerprint")? != metadata.fingerprint {
+    let command_fingerprint: String = row.try_get("command_fingerprint")?;
+    let legacy_replay_fingerprint = match &metadata.expected_receipt {
+        ExpectedReceipt::OrganizationBranding {
+            activity_action: OrganizationBrandingActivityAction::OrganizationUpdated,
+            legacy_replay_fingerprint,
+            ..
+        } => legacy_replay_fingerprint.as_deref(),
+        _ => None,
+    };
+    if command_fingerprint != metadata.fingerprint
+        && Some(command_fingerprint.as_str()) != legacy_replay_fingerprint
+    {
         return Err(StoreError::IdempotencyConflict);
     }
     if row.try_get::<i32, _>("receipt_format")? != metadata.receipt_format {
@@ -947,7 +964,7 @@ pub(crate) async fn branding_replay(
     let fence_epoch = unsigned(row.try_get::<i64, _>("fence_epoch")?)?;
     let row_outcome = row.try_get::<String, _>("outcome")?;
     if receipt.organization_id != metadata.org
-        || receipt.fingerprint != metadata.fingerprint
+        || receipt.fingerprint != command_fingerprint
         || receipt.version != resulting_version
         || receipt.fence_epoch != fence_epoch
         || receipt.activity_id != row.try_get::<Option<String>, _>("activity_id")?
@@ -955,7 +972,7 @@ pub(crate) async fn branding_replay(
     {
         return Err(StoreError::InvalidReceipt);
     }
-    validate_receipt_result(metadata, &receipt)?;
+    validate_receipt_result_with_fingerprint(metadata, &receipt, &command_fingerprint)?;
     Ok(Some(CommittedMutation {
         replayed: true,
         receipt,
@@ -1450,9 +1467,17 @@ async fn persist_project_lifecycle(
 }
 
 fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(), StoreError> {
+    validate_receipt_result_with_fingerprint(metadata, receipt, &metadata.fingerprint)
+}
+
+fn validate_receipt_result_with_fingerprint(
+    metadata: &Metadata,
+    receipt: &Receipt,
+    expected_fingerprint: &str,
+) -> Result<(), StoreError> {
     if receipt.organization_id != metadata.org
         || !is_sha256_hex(&receipt.fingerprint)
-        || receipt.fingerprint != metadata.fingerprint
+        || receipt.fingerprint != expected_fingerprint
         || receipt.activity_id.is_none() != is_organization_import_project_patch(metadata)
     {
         return Err(StoreError::InvalidReceipt);
@@ -1489,6 +1514,7 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
             }
             let ExpectedReceipt::OrganizationBranding {
                 activity_action: _,
+                legacy_replay_fingerprint: _,
                 name,
                 description,
                 brand_color,
