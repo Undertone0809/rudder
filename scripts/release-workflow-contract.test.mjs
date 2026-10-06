@@ -100,6 +100,16 @@ describe("unified delivery workflows", () => {
     expect(desktop).toContain("--mode=packaged --scenario=account-gate");
   });
 
+  it("runs the real Node manifest CLI regression in the full Test matrix", () => {
+    const verify = workflowJob(testWorkflow, "verify");
+    const unitCondition = verify.match(/- name: Unit tests\n\s+if: ([^\n]+)/)?.[1];
+    const manifestStep = verify.match(/- name: Release candidate manifest CLI tests\n\s+if: ([^\n]+)\n\s+run: ([^\n]+)/);
+    expect(unitCondition).toBe("matrix.test == 'full'");
+    expect(manifestStep?.[1]).toBe(unitCondition);
+    expect(manifestStep?.[2]).toBe("node --test scripts/release-candidate-manifest.test.mjs");
+    expect(verify.indexOf("Release candidate manifest CLI tests")).toBeLessThan(verify.indexOf("Unit tests"));
+  });
+
   it("builds npm and four Desktop candidates before either publish job", () => {
     const preflight = workflowJob(releaseWorkflow, "preflight");
     const desktop = workflowJob(releaseWorkflow, "desktop-candidate");

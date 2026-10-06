@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   createCandidateManifest,
   EXPECTED_DESKTOP_ARTIFACT_COUNT,
@@ -203,6 +205,51 @@ test("rejects an npm candidate manifest with the wrong artifact count", () => {
       }),
       new RegExp(`Expected ${EXPECTED_NPM_ARTIFACT_COUNT} npm artifacts, found ${EXPECTED_NPM_ARTIFACT_COUNT - 1}`),
     );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("verify CLI rejects a mismatched workflow source SHA and accepts the matching SHA", () => {
+  const fixture = makeFixture();
+  try {
+    const manifest = createCandidateManifest({
+      sourceSha,
+      sourceTreeSha,
+      workflowSourceSha,
+      version: "0.7.17",
+      qualificationRunId: "100",
+      candidateRunId: "200",
+      runtime,
+      npmDir: fixture.npmDir,
+      desktopDir: fixture.desktopDir,
+      now: new Date(),
+    });
+    const manifestPath = join(fixture.root, "candidate-manifest.json");
+    writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+    const verify = (expectedWorkflowSha) => spawnSync(process.execPath, [
+      fileURLToPath(new URL("./release-candidate-manifest.mjs", import.meta.url)),
+      "verify",
+      "--manifest", manifestPath,
+      "--source-sha", sourceSha,
+      "--source-tree-sha", sourceTreeSha,
+      "--version", "0.7.17",
+      "--candidate-run-id", "200",
+      "--qualification-run-id", "100",
+      "--workflow-source-sha", expectedWorkflowSha,
+      "--npm-dir", fixture.npmDir,
+      "--desktop-dir", fixture.desktopDir,
+      "--runtime-file", fixture.runtimeFile,
+    ], { encoding: "utf8" });
+
+    const matching = verify(workflowSourceSha);
+    assert.equal(matching.status, 0, matching.stderr);
+    assert.equal(matching.stdout, `verified\t${sourceSha}\t0.7.17\t200\n`);
+
+    const mismatched = verify("d".repeat(40));
+    assert.equal(mismatched.status, 1, "CLI must reject a different trusted workflow SHA");
+    assert.match(mismatched.stderr, /Candidate workflow source SHA does not match the trusted workflow/);
+    assert.equal(mismatched.stdout, "");
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
