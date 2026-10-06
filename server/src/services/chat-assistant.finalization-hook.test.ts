@@ -46,16 +46,20 @@ vi.mock("../agent-runtimes/index.js", () => ({
   getRuntimeDriver: () => ({ capabilities: {} }), findServerAdapter: vi.fn(),
   createProfileBoundRuntimeProviderCapabilityResolverFromConfig: () => () => null,
 }));
-vi.mock("./chat-assistant.side-chat-source.js", () => ({
-  loadSideChatForkSource: async () => ({ sourceBinding: fixture.binding, sourceRunId: "parent-run",
-    sourceSpanId: "parent-span", sourceBoundaryRef: "parent-assistant", selectorJson: { kind: "claude_chain" } }),
-  sideChatForkBindingMatchesTarget: () => true,
-  deriveSideChatForkSourceForCurrentProfile: (source: unknown) => source,
-  deriveSideChatContextHandoff: () => null,
-  resolveChatContinuationSession: async () => ({ initialSession: fixture.session,
-    continuationTransport: {}, runtimeExecutionConfig: { model: "primary", cwd: "/tmp" } }),
-  chatSessionForCurrentProviderProfile: (_type: unknown, session: unknown) => session,
-}));
+vi.mock("./chat-assistant.side-chat-source.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./chat-assistant.side-chat-source.js")>();
+  return {
+    ...actual,
+    loadSideChatForkSource: async () => ({ sourceBinding: fixture.binding, sourceRunId: "parent-run",
+      sourceSpanId: "parent-span", sourceBoundaryRef: "parent-assistant", selectorJson: { kind: "claude_chain" } }),
+    sideChatForkBindingMatchesTarget: () => true,
+    deriveSideChatForkSourceForCurrentProfile: (source: unknown) => source,
+    deriveSideChatContextHandoff: () => null,
+    resolveChatContinuationSession: async () => ({ initialSession: fixture.session,
+      continuationTransport: {}, runtimeExecutionConfig: { model: "primary", cwd: "/tmp" } }),
+    chatSessionForCurrentProviderProfile: (_type: unknown, session: unknown) => session,
+  };
+});
 vi.mock("./claude-deferred-fork-admission.js", () => ({
   admitClaudeDeferredFork: async () => ({ admission: fixture.admission,
     adapterIntent: { version: 1 }, reservation: { idempotencyKey: "side-chat:side" } }),

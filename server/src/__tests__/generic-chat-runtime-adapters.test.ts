@@ -159,37 +159,31 @@ describe("generic runtime Chat conformance", () => {
     }
   });
 
-  it("passes the full Chat prompt and untruncated final result through Hermes", async () => {
+  it("rejects the retired Hermes Local CLI and points existing agents at Hermes Gateway", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-hermes-chat-contract-"));
     const commandPath = path.join(root, "fake-hermes.sh");
     const promptPath = path.join(root, "prompt.txt");
-    const responsePath = path.join(root, "response.txt");
-    const finalBody = `RUDDER_RESULT_BEGIN\n${"H".repeat(70_000)}\nRUDDER_RESULT_END`;
     await fs.writeFile(commandPath, [
       "#!/bin/sh",
       'printf "%s" "$3" > "$RUDDER_HERMES_PROMPT_CAPTURE"',
-      'cat "$RUDDER_HERMES_RESPONSE_FILE"',
-      'printf "\\nsession_id: hermes-chat-session\\n"',
     ].join("\n"), { mode: 0o755 });
-    await fs.writeFile(responsePath, finalBody);
 
     try {
       const adapter = findServerAdapter("hermes_local");
       if (!adapter) throw new Error("Hermes adapter is not registered");
-      const config = {
+      const result = await adapter.execute(buildContext("hermes_local", {
         hermesCommand: commandPath,
         cwd: root,
-        env: {
-          RUDDER_HERMES_PROMPT_CAPTURE: promptPath,
-          RUDDER_HERMES_RESPONSE_FILE: responsePath,
-        },
-      };
-      const result = await adapter.execute(buildContext("hermes_local", config));
+        env: { RUDDER_HERMES_PROMPT_CAPTURE: promptPath },
+      }));
 
-      expect(await fs.readFile(promptPath, "utf8"))
-        .toBe(CHAT_PROTOCOL_PROMPT);
-      expect(result.summary).toBe(finalBody);
-      expect(result.summary?.length).toBeGreaterThan(64 * 1024);
+      expect(result).toMatchObject({
+        exitCode: 1,
+        errorCode: "hermes_local_migration_required",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+        errorMessage: expect.stringContaining("hermes_gateway"),
+      });
+      await expect(fs.readFile(promptPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
