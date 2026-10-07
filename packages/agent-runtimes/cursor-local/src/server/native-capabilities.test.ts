@@ -595,7 +595,7 @@ describe("Cursor ACP native capabilities", () => {
     });
 
     expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_auth-required" });
-    expect(result.errorMessage).toContain("[REDACTED]");
+    expect(result.errorMessage).toBe("Cursor ACP authenticate requires Cursor authentication.");
     expect(result.errorMessage).not.toContain(secret);
     expect(logs.join("\n")).not.toContain(secret);
     expect(JSON.stringify(result.resultJson ?? {})).not.toContain(secret);
@@ -1032,6 +1032,63 @@ describe("Cursor ACP native capabilities", () => {
     expect(JSON.stringify(result.resultJson)).not.toContain(secret);
     expect(logs).toEqual([]);
     expect(fixture.requests.map((request) => request.method)).toEqual(["initialize", "initialized", "session/new"]);
+  });
+
+  it("retains only the failed RPC method and bounded parameter types for Invalid params", async () => {
+    const promptSentinel = "cursor-rpc-prompt-7bf9c1";
+    const secretSentinel = "cursor-rpc-secret-2a81de";
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/new") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "rpc-error-session" } })}\n`);
+      } else if (request.method === "session/prompt") {
+        output.write(`${JSON.stringify({
+          jsonrpc: "2.0", id: request.id,
+          error: { code: -32602, message: `Invalid params: ${promptSentinel} ${secretSentinel}`, data: { message: secretSentinel, prompt: promptSentinel } },
+        })}\n`);
+      }
+    });
+    const result = await executeCursorNativeChat({
+      profile: { ...profile(fixture.spawn), env: { CURSOR_API_KEY: secretSentinel } },
+      binding,
+      prompt: promptSentinel,
+      model: "",
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: false,
+      errorCode: "cursor_native_protocol-mismatch",
+      errorMessage: "Cursor ACP chat failed: Invalid params (JSON-RPC -32602).",
+    });
+    expect(result.resultJson).toMatchObject({
+      acpRpcFailureTrace: [
+        {
+          method: "initialize",
+          status: "completed",
+          parameterTypes: { protocolVersion: "number", clientInfo: "object", clientCapabilities: "object" },
+        },
+        {
+          method: "session/new",
+          status: "completed",
+          parameterTypes: { cwd: "string", mcpServers: "array" },
+        },
+        {
+          method: "session/prompt",
+          status: "failed",
+          jsonRpcCode: -32602,
+          parameterTypes: { sessionId: "string", prompt: "array" },
+        },
+      ],
+    });
+    expect(fixture.requests.find((request) => request.method === "session/prompt")?.params).toMatchObject({
+      prompt: [{ text: promptSentinel }],
+    });
+    const serializedDiagnostic = JSON.stringify({ errorMessage: result.errorMessage, resultJson: result.resultJson });
+    expect(serializedDiagnostic).not.toContain(promptSentinel);
+    expect(serializedDiagnostic).not.toContain(secretSentinel);
   });
 
   it("retains the exact authentication timeout boundary without request or response payloads", async () => {
