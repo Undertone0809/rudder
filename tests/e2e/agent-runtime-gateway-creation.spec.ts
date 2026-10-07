@@ -42,9 +42,11 @@ test.describe("gateway agent creation", () => {
     await page.evaluate((orgId) => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
     await page.goto(`/${organization.issuePrefix}/agents/all`);
     await page.getByRole("button", { name: "New agent" }).click();
-    await page.getByRole("button", { name: "I want advanced configuration myself" }).click();
-    await expect(page.getByRole("button", { name: /^Hermes\b/ })).toHaveCount(1);
-    await page.getByRole("button", { name: /^Hermes\b/ }).click();
+    await expect(page.getByText(
+      "Hermes was found on this machine. Rudder will use its existing provider setup.",
+      { exact: true },
+    )).toBeVisible();
+    await page.getByRole("button", { name: "Create with Hermes", exact: true }).click();
 
     await expect(page.getByRole("heading", { name: "Create with Hermes", exact: true })).toBeVisible();
     await expect(page.getByTestId("hermes-local-availability")).toContainText("Hermes was found on this machine. Rudder will use its existing provider setup.");
@@ -137,9 +139,7 @@ test.describe("gateway agent creation", () => {
     await page.evaluate((orgId) => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
     await page.goto(`/${organization.issuePrefix}/agents/all`);
     await page.getByRole("button", { name: "New agent" }).click();
-    await page.getByRole("button", { name: "I want advanced configuration myself" }).click();
-    await expect(page.getByRole("button", { name: /^Hermes\b/ })).toHaveCount(1);
-    await page.getByRole("button", { name: /^Hermes\b/ }).click();
+    await page.getByRole("button", { name: "Create with Hermes", exact: true }).click();
 
     await expect(page.getByRole("heading", { name: "Create with Hermes", exact: true })).toBeVisible();
     await page.locator('[data-testid="new-agent-advanced-settings"] > summary').click();
