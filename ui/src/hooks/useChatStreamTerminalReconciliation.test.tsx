@@ -32,6 +32,15 @@ const terminalMessage = {
   generationId: "generation-1",
 } as unknown as ChatMessage;
 
+const recoveredTerminalMessageWithoutGenerationId = {
+  ...terminalMessage,
+  id: "assistant-final-after-refresh",
+  generationId: null,
+  chatTurnId: "turn-1",
+  turnVariant: 0,
+  body: "Recovered after refresh without a generation id.",
+} as unknown as ChatMessage;
+
 const streamDraft = {
   chatId: "chat-1",
   streamKey: "stream-1",
@@ -61,12 +70,14 @@ beforeAll(() => {
 function StreamReconciliationProbe({
   messages,
   queueSnapshot,
+  initialStream = streamDraft,
 }: {
   messages: ChatMessage[];
   queueSnapshot: ChatQueueSnapshot;
+  initialStream?: ChatStreamDraft;
 }) {
   const queryClient = useQueryClient();
-  const [stream, setStream] = useState<ChatStreamDraft | null>(streamDraft);
+  const [stream, setStream] = useState<ChatStreamDraft | null>(initialStream);
   const [sendInFlight, setSendInFlight] = useState(true);
   const setDraft = useCallback((
     _scopeKey: string,
@@ -92,7 +103,6 @@ function StreamReconciliationProbe({
 
   const final = messages.find((message) => (
     message.role === "assistant"
-    && message.generationId === "generation-1"
     && message.status !== "streaming"
   ));
   return (
@@ -107,9 +117,11 @@ function StreamReconciliationProbe({
 function DelayedMessagesProbe({
   fetchMessages,
   queueSnapshot = terminalQueue,
+  initialStream = streamDraft,
 }: {
   fetchMessages: () => Promise<ChatMessage[]>;
   queueSnapshot?: ChatQueueSnapshot;
+  initialStream?: ChatStreamDraft;
 }) {
   const { data = [] } = useQuery({
     queryKey: messagesKey,
@@ -118,17 +130,47 @@ function DelayedMessagesProbe({
     staleTime: Infinity,
     retry: false,
   });
-  return <StreamReconciliationProbe messages={data} queueSnapshot={queueSnapshot} />;
+  return <StreamReconciliationProbe messages={data} queueSnapshot={queueSnapshot} initialStream={initialStream} />;
 }
 
-function CachedMessagesProbe({ queueSnapshot }: { queueSnapshot: ChatQueueSnapshot }) {
+function CachedMessagesProbe({
+  queueSnapshot,
+  initialStream = streamDraft,
+}: {
+  queueSnapshot: ChatQueueSnapshot;
+  initialStream?: ChatStreamDraft;
+}) {
   const { data = [] } = useQuery({
     queryKey: messagesKey,
     queryFn: async () => [],
     initialData: [] as ChatMessage[],
     staleTime: Infinity,
   });
-  return <StreamReconciliationProbe messages={data} queueSnapshot={queueSnapshot} />;
+  return <StreamReconciliationProbe messages={data} queueSnapshot={queueSnapshot} initialStream={initialStream} />;
+}
+
+function CachedMessagesWithRecoveredFinalProbe({
+  queueSnapshot,
+  finalMessage,
+  initialStream,
+}: {
+  queueSnapshot: ChatQueueSnapshot;
+  finalMessage: ChatMessage;
+  initialStream: ChatStreamDraft;
+}) {
+  const { data = [] } = useQuery({
+    queryKey: messagesKey,
+    queryFn: async () => [finalMessage],
+    initialData: [finalMessage],
+    staleTime: Infinity,
+  });
+  return (
+    <StreamReconciliationProbe
+      messages={data}
+      queueSnapshot={queueSnapshot}
+      initialStream={initialStream}
+    />
+  );
 }
 
 async function mountProbe(client: QueryClient, probe: ReactNode) {
@@ -198,6 +240,126 @@ describe("useChatStreamTerminalReconciliation", () => {
       }, { timeout: 4_000, interval: 20 });
     });
     expect(fetchMessages).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a generation-less refresh until its exact durable turn variant is readable", async () => {
+    const client = createQueryClient();
+    let readCount = 0;
+    const fetchMessages = vi.fn(async (): Promise<ChatMessage[]> => {
+      readCount += 1;
+      return readCount === 1 ? [] : [recoveredTerminalMessageWithoutGenerationId];
+    });
+    const refreshedStream = {
+      ...streamDraft,
+      generationId: null,
+      state: "finalizing",
+    } as unknown as ChatStreamDraft;
+    const container = await mountProbe(client, (
+      <DelayedMessagesProbe fetchMessages={fetchMessages} initialStream={refreshedStream} />
+    ));
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.querySelector('[data-testid="stream-state"]')?.textContent).toBe("cleared");
+        expect(container.querySelector('[data-testid="send-state"]')?.textContent).toBe("idle");
+        expect(container.querySelector('[data-testid="final-answer"]')?.textContent)
+          .toBe("Recovered after refresh without a generation id.");
+      }, { timeout: 4_000, interval: 20 });
+    });
+    expect(fetchMessages).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not clear a generation-less refresh for another variant of the same durable turn", async () => {
+    const client = createQueryClient();
+    let readCount = 0;
+    const differentVariantFinal = {
+      ...recoveredTerminalMessageWithoutGenerationId,
+      turnVariant: 1,
+    } as unknown as ChatMessage;
+    const fetchMessages = vi.fn(async (): Promise<ChatMessage[]> => {
+      readCount += 1;
+      return readCount === 1 ? [] : [differentVariantFinal];
+    });
+    const refreshedStream = {
+      ...streamDraft,
+      generationId: null,
+      state: "finalizing",
+    } as unknown as ChatStreamDraft;
+    const container = await mountProbe(client, (
+      <DelayedMessagesProbe fetchMessages={fetchMessages} initialStream={refreshedStream} />
+    ));
+
+    await act(async () => {
+      await vi.waitFor(() => expect(fetchMessages).toHaveBeenCalledTimes(2), { timeout: 2_000, interval: 20 });
+    });
+    expect(container.querySelector('[data-testid="stream-state"]')?.textContent).toBe("streaming");
+    expect(container.querySelector('[data-testid="send-state"]')?.textContent).toBe("sending");
+  });
+
+  it("clears a refreshed stream without a generation id when its durable turn already has a final", async () => {
+    const client = createQueryClient();
+    const refreshedStream = {
+      ...streamDraft,
+      generationId: null,
+      state: "finalizing",
+    } as unknown as ChatStreamDraft;
+    const container = await mountProbe(
+      client,
+      <CachedMessagesWithRecoveredFinalProbe
+        queueSnapshot={terminalQueue}
+        finalMessage={recoveredTerminalMessageWithoutGenerationId}
+        initialStream={refreshedStream}
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-testid="stream-state"]')?.textContent).toBe("cleared");
+      expect(container.querySelector('[data-testid="send-state"]')?.textContent).toBe("idle");
+      expect(container.querySelector('[data-testid="final-answer"]')?.textContent)
+        .toBe("Recovered after refresh without a generation id.");
+    });
+  });
+
+  it("does not clear a generation-less stream for a final from another durable turn", async () => {
+    const client = createQueryClient();
+    const unrelatedFinal = {
+      ...recoveredTerminalMessageWithoutGenerationId,
+      chatTurnId: "older-turn",
+    } as unknown as ChatMessage;
+    const refreshedStream = {
+      ...streamDraft,
+      generationId: null,
+      state: "finalizing",
+    } as unknown as ChatStreamDraft;
+    const container = await mountProbe(
+      client,
+      <CachedMessagesWithRecoveredFinalProbe
+        queueSnapshot={terminalQueue}
+        finalMessage={unrelatedFinal}
+        initialStream={refreshedStream}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="stream-state"]')?.textContent).toBe("streaming");
+    expect(container.querySelector('[data-testid="send-state"]')?.textContent).toBe("sending");
+  });
+
+  it("does not poll for a final while a generation-less stream is still active", async () => {
+    const client = createQueryClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+    const liveStream = {
+      ...streamDraft,
+      generationId: null,
+      state: "streaming",
+    } as unknown as ChatStreamDraft;
+    const container = await mountProbe(
+      client,
+      <CachedMessagesProbe queueSnapshot={activeQueue} initialStream={liveStream} />,
+    );
+
+    expect(invalidateQueries).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="stream-state"]')?.textContent).toBe("streaming");
+    expect(container.querySelector('[data-testid="send-state"]')?.textContent).toBe("sending");
   });
 
   it("keeps reconciling a network-waiting stream while its generation remains active", async () => {

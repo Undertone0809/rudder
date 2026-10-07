@@ -1033,6 +1033,43 @@ describe("executeCodexAppServerChat", () => {
     ))).toBe(true);
   });
 
+  it("sends a unique user-input sentinel in the native turn request, separate from developer instructions", async () => {
+    const capturePath = path.join(root, "native-chat-user-input-sentinel.ndjson");
+    const userInputSentinel = "RUDDER_CODEX_NATIVE_TURN_USER_SENTINEL_2a6d91";
+    const developerInstructionSentinel = "RUDDER_CODEX_NATIVE_THREAD_INSTRUCTION_SENTINEL_bf3084";
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+        RUDDER_TEST_PHASED_AGENT_MESSAGES: "1",
+      } as Record<string, string>,
+      prompt: userInputSentinel,
+      chatDeveloperInstructions: developerInstructionSentinel,
+      chatDeveloperInstructionsRevision: "sentinel-revision",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, errorMessage: null });
+    const requests = await readProtocolRequests(capturePath);
+    const threadStart = requests.find((request) => request.method === "thread/start");
+    const turnStart = requests.find((request) => request.method === "turn/start");
+    expect(JSON.stringify(threadStart?.params)).toContain(developerInstructionSentinel);
+    expect(JSON.stringify(threadStart?.params)).not.toContain(userInputSentinel);
+    expect(JSON.stringify(turnStart?.params)).toContain(userInputSentinel);
+    expect(JSON.stringify(turnStart?.params)).not.toContain(developerInstructionSentinel);
+  });
+
   it("falls back to stable turn instructions when the installed schema lacks thread developerInstructions", async () => {
     const capturePath = path.join(root, "legacy-native-chat-prompts.ndjson");
     const executeTurn = (sessionId: string | null, persistedRevision?: string | null) => executeCodexAppServerChat({

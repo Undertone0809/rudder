@@ -414,6 +414,36 @@ describe("chatAgentRunService", () => {
     expect((await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke")).toHaveLength(1);
   });
 
+  it("persists native Codex Instructions without copying the current user turn into invocation metadata", async () => {
+    const snapshots = createInstructionSnapshotStorage();
+    const invokeSvc = chatAgentRunService(db, {
+      transcriptObjectStore: objectStore,
+      instructionSnapshotStorage: snapshots.storage,
+    });
+    const run = await createChatRunFixture("Codex native invocation privacy", undefined, invokeSvc, "codex_local");
+    const userInputSentinel = "RUDDER_CODEX_PERSISTED_USER_INPUT_SENTINEL_3e21a9";
+    const instructionStack = "RUDDER_CODEX_PERSISTED_INSTRUCTIONS_SENTINEL_b0d4f7";
+    await invokeSvc.appendAdapterInvoke(run, {
+      agentRuntimeType: "codex_local",
+      command: "codex",
+      prompt: instructionStack,
+      agentInstructionStack: instructionStack,
+      promptMetrics: { promptChars: userInputSentinel.length },
+      context: { chatMode: true },
+    }, []);
+
+    const invocation = (await heartbeatService(db).listEvents(run.id))
+      .find((event) => event.eventType === "adapter.invoke")!;
+    expect(JSON.stringify(invocation.payload)).not.toContain(userInputSentinel);
+    await expect(readRunInstructionSnapshotForEvent({
+      db,
+      storage: snapshots.storage,
+      orgId: run.orgId,
+      runId: run.id,
+      eventId: invocation.id,
+    })).resolves.toMatchObject({ agentInstructionStack: instructionStack });
+  });
+
   it("publishes the actual Chat invocation only after its event is committed", async () => {
     const storage = createStorageService(createLocalDiskStorageProvider(fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-committed-invoke-"))));
     const caller = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: storage });

@@ -1084,10 +1084,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           ],
           commandArgs: appServerArgs,
           env: redactEnvForLogs(env),
-          prompt: appServerPrompt,
-          agentInstructionStack: appServerDeveloperInstructions
-            ? joinPromptSections([appServerDeveloperInstructions, appServerPrompt])
-            : appServerPrompt,
+          // The current user turn is sent only through the native turn/start
+          // request. Invocation metadata is durable, so keep its prompt field
+          // limited to Rudder's injected instructions.
+          ...(appServerDeveloperInstructions ? { prompt: appServerDeveloperInstructions } : {}),
+          ...(appServerDeveloperInstructions
+            ? { agentInstructionStack: appServerDeveloperInstructions }
+            : {}),
           promptMetrics: {
             ...promptMetrics,
             promptChars: appServerPrompt.length,

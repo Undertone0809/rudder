@@ -1,6 +1,114 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
-import { buildCodexSessionParams, codexChatStdoutCapturePolicy, resolveCodexAgentHome, validateCodexResumeSession } from "./execute.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { AgentRuntimeInvocationMeta } from "@rudderhq/agent-runtime-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  buildCodexSessionParams,
+  codexChatStdoutCapturePolicy,
+  execute,
+  resolveCodexAgentHome,
+  validateCodexResumeSession,
+} from "./execute.js";
+
+const { executeCodexAppServerChatMock } = vi.hoisted(() => ({
+  executeCodexAppServerChatMock: vi.fn(),
+}));
+
+vi.mock("./app-server-chat.js", () => ({
+  executeCodexAppServerChat: executeCodexAppServerChatMock,
+}));
+
+let tempRoot = "";
+
+beforeEach(async () => {
+  tempRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-instruction-snapshot-"));
+  executeCodexAppServerChatMock.mockReset();
+});
+
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+  tempRoot = "";
+});
+
+describe("Codex App Server instruction snapshots", () => {
+  it("keeps native user turn input out of the operator-visible instruction stack", async () => {
+    const userInputSentinel = "RUDDER_CODEX_CHAT_USER_INPUT_SENTINEL_91f0a7";
+    const developerInstructionSentinel = "RUDDER_CODEX_DEVELOPER_INSTRUCTION_SENTINEL_57c1bd";
+    vi.stubEnv("RUDDER_HOME", path.join(tempRoot, "rudder-home"));
+    vi.stubEnv("RUDDER_INSTANCE_ID", "instruction-snapshot-regression");
+
+    executeCodexAppServerChatMock.mockResolvedValue({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      errorMessage: null,
+      stdout: "",
+      stderr: "",
+      summary: "",
+      usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+      sessionId: null,
+      sessionParams: null,
+      chatDeveloperInstructionsRevision: null,
+      providerTurnId: null,
+      submissionPhase: "accepted",
+      resumed: false,
+      clearSession: false,
+      providerAuthFailure: false,
+    });
+
+    const invocationMeta: Array<Record<string, unknown>> = [];
+    await execute({
+      runId: "run-instruction-snapshot-regression",
+      agent: {
+        id: "agent-instruction-snapshot-regression",
+        orgId: "org-instruction-snapshot-regression",
+        name: "Codex snapshot regression",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: process.execPath,
+        cwd: tempRoot,
+        chatAppServerEnabled: true,
+        promptTemplate: userInputSentinel,
+        env: { CODEX_HOME: path.join(tempRoot, "shared-codex-home") },
+      },
+      context: {
+        chatMode: true,
+        rudderScene: "chat",
+        rudderCodexChatPrompt: {
+          version: 1,
+          developerInstructions: developerInstructionSentinel,
+        },
+      },
+      onLog: vi.fn(async () => undefined),
+      onMeta: async (meta: AgentRuntimeInvocationMeta) => { invocationMeta.push(meta as unknown as Record<string, unknown>); },
+    } as any);
+
+    const nativeTurnOptions = executeCodexAppServerChatMock.mock.calls[0]?.[0] as
+      | { prompt?: string; chatDeveloperInstructions?: string }
+      | undefined;
+    expect(nativeTurnOptions?.prompt).toContain(userInputSentinel);
+    expect(nativeTurnOptions?.chatDeveloperInstructions).toContain(developerInstructionSentinel);
+
+    expect(invocationMeta).toHaveLength(1);
+    const invocation = invocationMeta[0]!;
+    const instructionSnapshot = invocation.agentInstructionStack;
+    expect(instructionSnapshot).toEqual(expect.stringContaining(developerInstructionSentinel));
+    expect(instructionSnapshot).not.toContain(userInputSentinel);
+    expect(invocation.prompt).toContain(developerInstructionSentinel);
+    expect(JSON.stringify(invocationMeta)).not.toContain(userInputSentinel);
+  });
+});
 
 describe("qualified Chat stdout policy", () => {
   const config = { providerProfileId: "profile-1", env: { CODEX_HOME: "/isolated/profile" }, model: "test" };
