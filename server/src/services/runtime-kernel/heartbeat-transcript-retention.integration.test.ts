@@ -295,6 +295,7 @@ import { heartbeatService } from "../heartbeat.js";
 import { readRunInstructionSnapshotForEvent } from "../run-instruction-snapshots.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { runRuntimeRetentionMaintenance } from "./runtime-retention.js";
+import { proveCodexExactSupplementEquivalence, type CoverageIdentity } from "./native-transcript-coverage.js";
 import { getTranscriptObjectStore } from "./transcript-object-store.js";
 import { createTranscriptReader } from "./transcript-reader.js";
 
@@ -1058,6 +1059,222 @@ describe("heartbeat native transcript retention integration", () => {
       .toMatchObject({ status: "reference_only", recovery: [] });
     expect(finishedSpan?.supplementalObjectRef).toBeNull();
     expect(await readAllFiles(transcriptObjectRoot)).not.toContain(text);
+  }, 60_000);
+
+  it("reclaims an exactly covered persisted supplement on real PostgreSQL while preserving native read-back", async () => {
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    const { orgId, agentId } = await seedAgent();
+    const native = await queueRun(agentId);
+    const sessionId = `w12-exact-reclaim-${randomUUID()}`;
+    const turnId = `turn-${native.run.id}`;
+    const token = `W12_EXACT_RECLAIM_${randomUUID()}`;
+    const text = `${token}::${"native transcript payload 你好 🐕 ".repeat(1_399)}native transcript payload 你好 🐕.`;
+    const payloadBytes = Buffer.byteLength(text, "utf8");
+    expect(payloadBytes).toBeGreaterThan(50_000);
+    expect(payloadBytes).toBeLessThan(2 * 1024 * 1024);
+    fakeNativeProvider.register(native.run.id, {
+      sessionId,
+      turnId,
+      sourceEntryId: `assistant:${turnId}`,
+      rawTranscript: text,
+      decoy: "OUT_OF_SCOPE",
+      emitLog: false,
+    });
+
+    const objects = getTranscriptObjectStore() as Required<ReturnType<typeof getTranscriptObjectStore>>;
+    await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+    await waitForTerminalEffectsComplete(native.run.id);
+    await waitForNativeRetentionComplete(native.run.id);
+
+    const [runBeforeSupplement] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+    expect((runBeforeSupplement?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention)
+      .toMatchObject({ status: "reference_only", recovery: [] });
+    expect(span?.selectorJson).toMatchObject({ kind: "codex_turn", threadId: sessionId, turnId, runId: native.run.id });
+
+    const reader = createTranscriptReader(db, {
+      nativeReader: { readRange: input => fakeNativeProvider.readRange(input) },
+    });
+    const readRequest = {
+      orgId,
+      runId: native.run.id,
+      spanId: span!.id,
+      principal: { type: "board" as const, orgId, authorized: true },
+      limit: 200,
+    };
+    const nativeBefore = await reader.readRun(readRequest);
+    expect(nativeBefore).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    if (nativeBefore.source !== "native" || nativeBefore.availability !== "available" || nativeBefore.completeness !== "complete") {
+      throw new Error("Expected complete native transcript before reclaim");
+    }
+    const nativeEntries = nativeBefore.items.flatMap(item => item.entry ? [item.entry] : []) as TranscriptEntry[];
+    expect(nativeEntries).toHaveLength(1);
+    expect(nativeEntries[0]).toMatchObject({ kind: "assistant", sourceEntryId: `assistant:${turnId}`, text });
+
+    const handle = await objects.begin({ orgId, runId: native.run.id, spanId: span!.id, ownerToken: span!.ownerToken });
+    await objects.append(handle, nativeEntries);
+    const receipt = await objects.finalize(handle, { completeness: "complete" });
+    expect(receipt.bytes).toBeGreaterThan(payloadBytes);
+    await db.update(runRuntimeSpans).set({ supplementalObjectRef: handle.objectRef })
+      .where(eq(runRuntimeSpans.id, span!.id));
+
+    const proofResult = await proveSealedNativeRunTranscript({ db, reader, orgId, runId: native.run.id });
+    if (!proofResult.ok) throw new Error(proofResult.reason);
+    const spanProof = proofResult.proof.spans.find(candidate => candidate.spanId === span!.id);
+    if (!spanProof) throw new Error("Expected exact native proof for the supplemental span");
+    const identity: CoverageIdentity = {
+      orgId,
+      runId: native.run.id,
+      spanId: span!.id,
+      attemptId: spanProof.attemptId,
+      attemptEpoch: spanProof.attemptEpoch,
+      ownerToken: spanProof.ownerToken,
+      selector: spanProof.selectorJson as CoverageIdentity["selector"],
+    };
+    const supplementPage = await objects.readRange({
+      objectRef: handle.objectRef,
+      orgId,
+      runId: native.run.id,
+      spanId: span!.id,
+      ownerToken: span!.ownerToken,
+      limit: 200,
+    });
+    if (supplementPage.source !== "native_plus_objects" || supplementPage.availability !== "available"
+      || supplementPage.completeness !== "complete") {
+      throw new Error("Expected a complete persisted supplement before reclaim");
+    }
+    expect(supplementPage.entries).toEqual(nativeEntries);
+    expect(proveCodexExactSupplementEquivalence({
+      expected: identity,
+      expectedObjectRef: handle.objectRef,
+      expectedSourceRevision: spanProof.sourceRevision,
+      expectedNativeItemCount: spanProof.itemCount,
+      expectedNativeReadSha256: spanProof.nativeReadSha256,
+      supplement: {
+        identity,
+        objectRef: handle.objectRef,
+        source: supplementPage.source,
+        availability: supplementPage.availability,
+        completeness: supplementPage.completeness,
+        revisionBefore: supplementPage.revision,
+        revisionAfter: supplementPage.revision,
+        entryCount: supplementPage.entries.length,
+        entries: supplementPage.entries,
+      },
+      native: {
+        identity,
+        source: nativeBefore.source,
+        availability: nativeBefore.availability,
+        completeness: nativeBefore.completeness,
+        revisionBefore: nativeBefore.revision,
+        revisionAfter: nativeBefore.revision,
+        itemCount: nativeBefore.items.length,
+        readSha256: spanProof.nativeReadSha256,
+        entries: nativeEntries,
+      },
+    })).toMatchObject({ ok: true, authorizesOldObjectDelete: true });
+
+    const unrelated = await queueRun(agentId);
+    const unrelatedSessionId = `w12-unrelated-retained-${randomUUID()}`;
+    const unrelatedTurnId = `turn-${unrelated.run.id}`;
+    const unrelatedText = `W12_UNRELATED_RETAINED_${randomUUID()}`;
+    fakeNativeProvider.register(unrelated.run.id, {
+      sessionId: unrelatedSessionId,
+      turnId: unrelatedTurnId,
+      sourceEntryId: `assistant:${unrelatedTurnId}`,
+      rawTranscript: unrelatedText,
+      decoy: "OUT_OF_SCOPE",
+      emitLog: false,
+    });
+    await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+    await waitForTerminalEffectsComplete(unrelated.run.id);
+    await waitForNativeRetentionComplete(unrelated.run.id);
+    const [unrelatedSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, unrelated.run.id));
+    const unrelatedReadRequest = {
+      orgId,
+      runId: unrelated.run.id,
+      spanId: unrelatedSpan!.id,
+      principal: { type: "board" as const, orgId, authorized: true },
+      limit: 200,
+    };
+    const unrelatedNative = await reader.readRun(unrelatedReadRequest);
+    if (unrelatedNative.source !== "native" || unrelatedNative.availability !== "available"
+      || unrelatedNative.completeness !== "complete") {
+      throw new Error("Expected complete native transcript for the unrelated Run");
+    }
+    const unrelatedEntries = unrelatedNative.items.flatMap(item => item.entry ? [item.entry] : []) as TranscriptEntry[];
+    expect(unrelatedEntries).toHaveLength(1);
+    const unrelatedHandle = await objects.begin({ orgId, runId: unrelated.run.id, spanId: unrelatedSpan!.id,
+      ownerToken: unrelatedSpan!.ownerToken });
+    await objects.append(unrelatedHandle, unrelatedEntries);
+    await objects.finalize(unrelatedHandle, { completeness: "complete" });
+    await db.update(runRuntimeSpans).set({ supplementalObjectRef: unrelatedHandle.objectRef })
+      .where(eq(runRuntimeSpans.id, unrelatedSpan!.id));
+    const [unrelatedSpanBeforeCleanup] = await db.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.id, unrelatedSpan!.id));
+    const unrelatedObjectRefBeforeCleanup = unrelatedSpanBeforeCleanup?.supplementalObjectRef;
+    expect(unrelatedObjectRefBeforeCleanup).toBe(unrelatedHandle.objectRef);
+    const unrelatedReadBeforeCleanup = await objects.readRange({ objectRef: unrelatedHandle.objectRef, orgId,
+      runId: unrelated.run.id, spanId: unrelatedSpan!.id, ownerToken: unrelatedSpan!.ownerToken });
+    expect(unrelatedReadBeforeCleanup).toMatchObject({ source: "native_plus_objects", availability: "available", completeness: "complete" });
+    expect(unrelatedReadBeforeCleanup.entries).toEqual(unrelatedEntries);
+
+    const targetObjectFiles = async () => (await filesBelow(transcriptObjectRoot))
+      .filter(file => file.includes(handle.objectRef));
+    const persistedTargetObjectBytes = async () => {
+      const files = await targetObjectFiles();
+      const stats = await Promise.all(files.map(file => fsp.stat(file)));
+      return stats.reduce((total, stat) => total + stat.size, 0);
+    };
+    const targetFilesBeforeCleanup = await targetObjectFiles();
+    expect(targetFilesBeforeCleanup.map(file => path.basename(file)).sort()).toEqual([
+      `${handle.objectRef}.json`, `${handle.objectRef}.ndjson`,
+    ].sort());
+    const bytesBeforeCleanup = await persistedTargetObjectBytes();
+    expect(bytesBeforeCleanup).toBeGreaterThan(payloadBytes);
+    expect(await readAllFiles(transcriptObjectRoot)).toContain(token);
+
+    const cleanup = await cleanSealedNativeTranscriptMirrors({
+      db,
+      proof: proofResult.proof,
+      runLogStore: getRunLogStore(),
+      transcriptObjectStore: objects,
+      readerFactory: () => reader,
+      retainResultJson: value => value ?? {},
+    });
+    expect(cleanup).toEqual({ cleaned: true });
+
+    const [runAfterCleanup] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    const [spanAfterCleanup] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, span!.id));
+    const retention = (runAfterCleanup?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention;
+    expect(retention).toMatchObject({ status: "reference_only", recovery: [] });
+    expect(retention).not.toHaveProperty("cleanupLease");
+    expect(spanAfterCleanup?.supplementalObjectRef).toBeNull();
+
+    const nativeAfter = await reader.readRun(readRequest);
+    expect(nativeAfter).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    expect(nativeAfter.revision).toBe(nativeBefore.revision);
+    expect(nativeAfter.items).toEqual(nativeBefore.items);
+    const readBackText = nativeAfter.items.map(item => item.text ?? "").join("");
+    expect(readBackText).toBe(text);
+    expect(Buffer.from(readBackText, "utf8")).toEqual(Buffer.from(text, "utf8"));
+    expect(Buffer.byteLength(readBackText, "utf8")).toBe(payloadBytes);
+
+    const bytesAfterCleanup = await persistedTargetObjectBytes();
+    expect(bytesAfterCleanup).toBeLessThan(bytesBeforeCleanup);
+    expect(await targetObjectFiles()).toEqual([]);
+    await expect(objects.readRange({ objectRef: handle.objectRef, orgId, runId: native.run.id,
+      spanId: span!.id, ownerToken: span!.ownerToken })).rejects.toThrow();
+
+    const [unrelatedSpanAfterCleanup] = await db.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.id, unrelatedSpan!.id));
+    expect(unrelatedSpanAfterCleanup?.supplementalObjectRef).toBe(unrelatedObjectRefBeforeCleanup);
+    const unrelatedReadAfterCleanup = await objects.readRange({ objectRef: unrelatedHandle.objectRef, orgId,
+      runId: unrelated.run.id, spanId: unrelatedSpan!.id, ownerToken: unrelatedSpan!.ownerToken });
+    expect(unrelatedReadAfterCleanup).toMatchObject({ source: "native_plus_objects", availability: "available", completeness: "complete" });
+    expect(unrelatedReadAfterCleanup.entries).toEqual(unrelatedReadBeforeCleanup.entries);
+    expect(unrelatedReadAfterCleanup.entries).toEqual(unrelatedEntries);
+    expect(await readAllFiles(transcriptObjectRoot)).toContain(unrelatedText);
   }, 60_000);
 
   it("retains unproven supplements for a verified native profile and keeps native read-back authority", async () => {
