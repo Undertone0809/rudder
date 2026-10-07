@@ -844,6 +844,33 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
     expect(attachmentDeleteReplay.body).toEqual(attachmentDelete.body);
     expect(await snapshot()).toEqual(afterAttachmentDelete);
 
+    const resourceReattach = await request(server!).post(`/api/projects/${projectId}/resources`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-required-authority", "rust")
+      .set("x-rudder-idempotency-key", `${idempotencyKey}:resource-reattach-before-delete`)
+      .send({
+        resourceId,
+        role: "reference",
+        note: "Reattached to verify resource deletion fences its Project",
+        sortOrder: 1,
+        isPrimary: true,
+      });
+    expect(resourceReattach.status, JSON.stringify(resourceReattach.body)).toBe(201);
+    expect(resourceReattach.body).toMatchObject({
+      resourceId,
+      projectId,
+      role: "reference",
+      note: "Reattached to verify resource deletion fences its Project",
+    });
+    const beforeResourceDelete = await snapshot();
+    expect(beforeResourceDelete.resourceRows).toHaveLength(1);
+    expect(beforeResourceDelete.allProjectAttachments).toEqual([expect.objectContaining({
+      resource_id: resourceId,
+      role: "reference",
+      note: "Reattached to verify resource deletion fences its Project",
+    })]);
+    const projectVersionBeforeResourceDelete = Number(beforeResourceDelete.projectOwners[0]!.mutation_version);
+
     const resourceDeleteKey = `${idempotencyKey}:resource-delete`;
     const resourceDeletePath = `/api/orgs/${orgId}/resources/${resourceId}`;
     const resourceDelete = await request(server!).delete(resourceDeletePath)
@@ -861,6 +888,13 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
     expect(afterResourceDelete.resourceOwners).toEqual([expect.objectContaining({
       owner: "rust",
       mutation_version: "2",
+      fence_epoch: "1",
+    })]);
+    expect(afterResourceDelete.allProjectAttachments).toEqual([]);
+    expect(afterResourceDelete.allProjectResources).toEqual([]);
+    expect(afterResourceDelete.projectOwners).toEqual([expect.objectContaining({
+      owner: "rust",
+      mutation_version: String(projectVersionBeforeResourceDelete + 1),
       fence_epoch: "1",
     })]);
 
@@ -917,5 +951,17 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
     expect(resourceDeleteReplay.status, JSON.stringify(resourceDeleteReplay.body)).toBe(200);
     expect(resourceDeleteReplay.body).toEqual(resourceDelete.body);
     expect(await snapshot()).toEqual(afterResourceDelete);
+    expect(await observer!`
+      SELECT
+        (SELECT count(*)::text FROM organization_mutation_receipts
+         WHERE org_id = ${orgId}::uuid AND idempotency_key = ${resourceDeleteKey}) AS receipts,
+        (SELECT count(*)::text FROM activity_log
+         WHERE org_id = ${orgId}::uuid AND entity_type = 'organization_resource'
+           AND entity_id = ${resourceId} AND action = 'organization.resource.deleted') AS activities,
+        (SELECT count(*)::text FROM organization_mutation_outbox AS outbox
+         JOIN activity_log AS activity ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id
+         WHERE outbox.org_id = ${orgId}::uuid AND activity.entity_type = 'organization_resource'
+           AND activity.entity_id = ${resourceId} AND activity.action = 'organization.resource.deleted') AS outbox
+    `).toEqual([{ receipts: "1", activities: "1", outbox: "1" }]);
   }, 60_000);
 });
