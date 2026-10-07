@@ -86,6 +86,12 @@ jobs:
             src/__tests__/chat-branding-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+      - name: Build first-party CLI for branding CLI and MCP real-entry smoke
+        run: |
+          set -o pipefail
+          pnpm --filter @rudderhq/cli build \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Smoke Rust organization branding real entry
         run: |
           set -o pipefail

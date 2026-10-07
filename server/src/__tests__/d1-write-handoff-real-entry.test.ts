@@ -665,7 +665,7 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
         observer!`SELECT id::text AS id, resource_id::text AS resource_id, role, note, sort_order, is_primary FROM project_resource_attachments WHERE org_id = ${orgId}::uuid AND project_id = ${projectId}::uuid ORDER BY sort_order, id`,
         observer!`SELECT resource.id::text AS id, resource.name, resource.kind, resource.source_type, resource.locator, resource.description, resource.metadata FROM project_resource_attachments AS attachment JOIN organization_resources AS resource ON resource.org_id = attachment.org_id AND resource.id = attachment.resource_id WHERE attachment.org_id = ${orgId}::uuid AND attachment.project_id = ${projectId}::uuid ORDER BY attachment.sort_order, resource.id`,
         observer!`SELECT owner, mutation_version::text AS mutation_version, fence_epoch::text AS fence_epoch FROM project_goal_mutation_state WHERE org_id = ${orgId}::uuid AND project_id = ${projectId}::uuid`,
-        observer!`SELECT owner, mutation_version::text AS mutation_version, fence_epoch::text AS fence_epoch FROM organization_resource_mutation_state WHERE org_id = ${orgId}::uuid AND resource_id = ${resourceId}::uuid`,
+        observer!`SELECT * FROM organization_resource_mutation_state WHERE org_id = ${orgId}::uuid AND resource_id = ${resourceId}::uuid`,
         observer!`SELECT idempotency_key, command_kind, outcome, activity_id::text AS activity_id FROM organization_mutation_receipts WHERE org_id = ${orgId}::uuid AND idempotency_key = ${idempotencyKey}`,
         observer!`SELECT id::text AS id, action, entity_type, entity_id FROM activity_log WHERE org_id = ${orgId}::uuid AND entity_type = 'project' AND entity_id = ${projectId}`,
         observer!`SELECT outbox.id::text AS id, outbox.activity_id::text AS activity_id, activity.action FROM organization_mutation_outbox AS outbox JOIN activity_log AS activity ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id WHERE outbox.org_id = ${orgId}::uuid AND activity.entity_type = 'project' AND activity.entity_id = ${projectId}`,
@@ -719,19 +719,29 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
       .send({ name: updatedResourceName });
     expect(resourceUpdate.status, JSON.stringify(resourceUpdate.body)).toBe(200);
     expect(resourceUpdate.body).toMatchObject({ id: resourceId, name: updatedResourceName });
-    expect(await observer!`
+    const resourceUpdateOwner = await observer!`
       SELECT owner, mutation_version::text AS mutation_version, fence_epoch::text AS fence_epoch
       FROM organization_resource_mutation_state WHERE org_id = ${orgId}::uuid AND resource_id = ${resourceId}::uuid
-    `).toEqual([{ owner: "rust", mutation_version: "1", fence_epoch: "1" }]);
+    `;
+    expect(resourceUpdateOwner).toEqual([{ owner: "rust", mutation_version: "1", fence_epoch: "1" }]);
+    const resourceUpdateMutationState = await observer!`
+      SELECT * FROM organization_resource_mutation_state
+      WHERE org_id = ${orgId}::uuid AND resource_id = ${resourceId}::uuid
+    `;
+    const resourceUpdateState = await observer!`
+      SELECT * FROM organization_resources WHERE org_id = ${orgId}::uuid AND id = ${resourceId}::uuid
+    `;
     const resourceUpdateReceipt = await observer!`
-      SELECT command_kind, outcome, resulting_version::text AS resulting_version, activity_id::text AS activity_id
+      SELECT *
       FROM organization_mutation_receipts WHERE org_id = ${orgId}::uuid AND idempotency_key = ${resourceUpdateKey}
     `;
     expect(resourceUpdateReceipt).toHaveLength(1);
     expect(resourceUpdateReceipt[0]).toMatchObject({ command_kind: "organization_resource", outcome: "applied", resulting_version: "1" });
     const resourceUpdateActivity = await observer!`
-      SELECT id::text AS id, action, entity_type, entity_id
-      FROM activity_log WHERE org_id = ${orgId}::uuid AND entity_type = 'organization_resource' AND entity_id = ${resourceId}
+      SELECT *
+      FROM activity_log
+      WHERE org_id = ${orgId}::uuid AND entity_type = 'organization_resource' AND entity_id = ${resourceId}
+      ORDER BY id
     `;
     expect(resourceUpdateActivity).toEqual([expect.objectContaining({
       id: resourceUpdateReceipt[0]!.activity_id,
@@ -739,12 +749,63 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
       entity_type: "organization_resource",
       entity_id: resourceId,
     })]);
-    expect(await observer!`
-      SELECT outbox.activity_id::text AS activity_id, activity.action
+    const resourceUpdateOutbox = await observer!`
+      SELECT outbox.*, activity.action
       FROM organization_mutation_outbox AS outbox
       JOIN activity_log AS activity ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id
       WHERE outbox.org_id = ${orgId}::uuid AND activity.entity_type = 'organization_resource' AND activity.entity_id = ${resourceId}
-    `).toEqual([expect.objectContaining({ activity_id: resourceUpdateReceipt[0]!.activity_id, action: "organization.resource.updated" })]);
+      ORDER BY outbox.id
+    `;
+    expect(resourceUpdateOutbox).toEqual([expect.objectContaining({
+      activity_id: resourceUpdateReceipt[0]!.activity_id,
+      action: "organization.resource.updated",
+    })]);
+    const afterResourceUpdate = {
+      resource: resourceUpdateState,
+      owner: resourceUpdateOwner,
+      mutationState: resourceUpdateMutationState,
+      receipt: resourceUpdateReceipt,
+      activity: resourceUpdateActivity,
+      outbox: resourceUpdateOutbox,
+    };
+
+    const resourceUpdateReplay = await request(server!).patch(`/api/orgs/${orgId}/resources/${resourceId}`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", resourceUpdateKey)
+      .send({ name: updatedResourceName });
+    expect(resourceUpdateReplay.status, JSON.stringify(resourceUpdateReplay.body)).toBe(200);
+    expect(resourceUpdateReplay.body).toEqual(resourceUpdate.body);
+    const afterResourceUpdateReplay = {
+      resource: await observer!`
+        SELECT * FROM organization_resources WHERE org_id = ${orgId}::uuid AND id = ${resourceId}::uuid
+      `,
+      owner: await observer!`
+        SELECT owner, mutation_version::text AS mutation_version, fence_epoch::text AS fence_epoch
+        FROM organization_resource_mutation_state
+        WHERE org_id = ${orgId}::uuid AND resource_id = ${resourceId}::uuid
+      `,
+      mutationState: await observer!`
+        SELECT * FROM organization_resource_mutation_state
+        WHERE org_id = ${orgId}::uuid AND resource_id = ${resourceId}::uuid
+      `,
+      receipt: await observer!`
+        SELECT * FROM organization_mutation_receipts
+        WHERE org_id = ${orgId}::uuid AND idempotency_key = ${resourceUpdateKey}
+      `,
+      activity: await observer!`
+        SELECT * FROM activity_log
+        WHERE org_id = ${orgId}::uuid AND entity_type = 'organization_resource' AND entity_id = ${resourceId}
+        ORDER BY id
+      `,
+      outbox: await observer!`
+        SELECT outbox.*, activity.action
+        FROM organization_mutation_outbox AS outbox
+        JOIN activity_log AS activity ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id
+        WHERE outbox.org_id = ${orgId}::uuid AND activity.entity_type = 'organization_resource' AND activity.entity_id = ${resourceId}
+        ORDER BY outbox.id
+      `,
+    };
+    expect(afterResourceUpdateReplay).toEqual(afterResourceUpdate);
 
     const attachmentUpdateKey = `${idempotencyKey}:attachment-update`;
     const attachmentUpdate = await request(server!).patch(`/api/projects/${projectId}/resources/${attachmentId}`)
@@ -899,8 +960,7 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
     })]);
 
     const resourceDeleteReceipt = await observer!`
-      SELECT command_kind, outcome, resulting_version::text AS resulting_version,
-        activity_id::text AS activity_id
+      SELECT *
       FROM organization_mutation_receipts
       WHERE org_id = ${orgId}::uuid AND idempotency_key = ${resourceDeleteKey}
     `;
@@ -911,10 +971,11 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
       resulting_version: "2",
     });
     const resourceDeleteActivity = await observer!`
-      SELECT id::text AS id, action, entity_type, entity_id
+      SELECT *
       FROM activity_log
       WHERE org_id = ${orgId}::uuid
         AND entity_type = 'organization_resource' AND entity_id = ${resourceId}
+      ORDER BY id
     `;
     expect(resourceDeleteActivity).toHaveLength(2);
     expect(resourceDeleteActivity.map((row) => row.action).sort()).toEqual([
@@ -928,12 +989,13 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
       entity_id: resourceId,
     })]));
     const resourceActivityOutbox = await observer!`
-      SELECT outbox.activity_id::text AS activity_id, activity.action
+      SELECT outbox.*, activity.action
       FROM organization_mutation_outbox AS outbox
       JOIN activity_log AS activity
         ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id
       WHERE outbox.org_id = ${orgId}::uuid
         AND activity.entity_type = 'organization_resource' AND activity.entity_id = ${resourceId}
+      ORDER BY outbox.id
     `;
     expect(resourceActivityOutbox).toHaveLength(2);
     expect(resourceActivityOutbox.map((row) => row.action).sort()).toEqual([
@@ -952,16 +1014,23 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
     expect(resourceDeleteReplay.body).toEqual(resourceDelete.body);
     expect(await snapshot()).toEqual(afterResourceDelete);
     expect(await observer!`
-      SELECT
-        (SELECT count(*)::text FROM organization_mutation_receipts
-         WHERE org_id = ${orgId}::uuid AND idempotency_key = ${resourceDeleteKey}) AS receipts,
-        (SELECT count(*)::text FROM activity_log
-         WHERE org_id = ${orgId}::uuid AND entity_type = 'organization_resource'
-           AND entity_id = ${resourceId} AND action = 'organization.resource.deleted') AS activities,
-        (SELECT count(*)::text FROM organization_mutation_outbox AS outbox
-         JOIN activity_log AS activity ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id
-         WHERE outbox.org_id = ${orgId}::uuid AND activity.entity_type = 'organization_resource'
-           AND activity.entity_id = ${resourceId} AND activity.action = 'organization.resource.deleted') AS outbox
-    `).toEqual([{ receipts: "1", activities: "1", outbox: "1" }]);
+      SELECT * FROM organization_mutation_receipts
+      WHERE org_id = ${orgId}::uuid AND idempotency_key = ${resourceDeleteKey}
+    `).toEqual(resourceDeleteReceipt);
+    expect(await observer!`
+      SELECT * FROM activity_log
+      WHERE org_id = ${orgId}::uuid
+        AND entity_type = 'organization_resource' AND entity_id = ${resourceId}
+      ORDER BY id
+    `).toEqual(resourceDeleteActivity);
+    expect(await observer!`
+      SELECT outbox.*, activity.action
+      FROM organization_mutation_outbox AS outbox
+      JOIN activity_log AS activity
+        ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id
+      WHERE outbox.org_id = ${orgId}::uuid
+        AND activity.entity_type = 'organization_resource' AND activity.entity_id = ${resourceId}
+      ORDER BY outbox.id
+    `).toEqual(resourceActivityOutbox);
   }, 60_000);
 });

@@ -1,5 +1,7 @@
 import {
   activityLog,
+  agentApiKeys,
+  agents,
   applyPendingMigrations,
   approvals,
   authUsers,
@@ -11,10 +13,11 @@ import {
   organizationBrandingMutationReceipts,
   organizationBrandingMutationState,
   organizationMemberships,
+  organizationMutationOutbox,
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import express from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -86,6 +89,22 @@ function idempotencyKey(source: "chat-proposal" | "chat-approval", sourceId: str
     .digest("hex");
 }
 
+function normalizeEvidence(value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(normalizeEvidence);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, normalizeEvidence(entry)]),
+    );
+  }
+  return value;
+}
+
+function emitRealEntryEvidence(scenario: string, evidence: Record<string, unknown>) {
+  console.info(`[chat-branding-real-entry] ${JSON.stringify(normalizeEvidence({ scenario, ...evidence }))}`);
+}
+
 describe("Chat organization branding through authenticated Node API and Rust", () => {
   let db: ReturnType<typeof createDb> | undefined;
   let database: EmbeddedPostgresInstance | undefined;
@@ -137,6 +156,74 @@ describe("Chat organization branding through authenticated Node API and Rust", (
       },
     });
     return { conversationId, messageId };
+  }
+
+  async function seedOrganization(namePrefix: string) {
+    const id = randomUUID();
+    const name = `${namePrefix} ${id}`;
+    await db!.insert(organizations).values({
+      id,
+      name,
+      urlKey: deriveOrganizationUrlKey(name),
+      issuePrefix: `CB${id.replaceAll("-", "").slice(0, 8).toUpperCase()}`,
+    });
+    return id;
+  }
+
+  async function seedConversationForOrganization(
+    targetOrgId: string,
+    patch: Record<string, unknown>,
+    summary: string,
+  ) {
+    const conversationId = randomUUID();
+    const messageId = randomUUID();
+    await db!.insert(chatConversations).values({
+      id: conversationId,
+      orgId: targetOrgId,
+      title: summary,
+      createdByUserId: boardUserId,
+    });
+    await db!.insert(chatMessages).values({
+      id: messageId,
+      orgId: targetOrgId,
+      conversationId,
+      role: "assistant",
+      kind: "operation_proposal",
+      body: summary,
+      structuredPayload: {
+        operationProposal: {
+          targetType: "organization",
+          targetId: targetOrgId,
+          summary,
+          patch,
+        },
+        operationProposalState: {
+          status: "pending",
+          decisionNote: null,
+          decidedByUserId: null,
+          decidedAt: null,
+        },
+      },
+    });
+    return { conversationId, messageId };
+  }
+
+  async function seedAgent(orgId: string, role: string, token: string) {
+    const agentId = randomUUID();
+    await db!.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: `${role} Chat branding test agent`,
+      role,
+      status: "idle",
+    });
+    await db!.insert(agentApiKeys).values({
+      orgId,
+      agentId,
+      name: "Chat branding authorization test",
+      keyHash: createHash("sha256").update(token).digest("hex"),
+    });
+    return agentId;
   }
 
   async function readBrandColor() {
@@ -669,5 +756,508 @@ describe("Chat organization branding through authenticated Node API and Rust", (
       eq(activityLog.orgId, orgId),
       eq(activityLog.action, "organization.branding_updated"),
     ))).toHaveLength(3);
+  }, 60_000);
+
+  it("keeps a Node-owned non-branding organization proposal on Node", async () => {
+    const nodeOrgId = await seedOrganization("Node-owned Chat proposal");
+    await db!.insert(organizationMemberships).values({
+      orgId: nodeOrgId,
+      principalType: "user",
+      principalId: boardUserId,
+      status: "active",
+      membershipRole: "admin",
+    });
+    const proposal = await seedConversationForOrganization(
+      nodeOrgId,
+      { name: "Updated through the Node-owned Chat path" },
+      "Update the organization name",
+    );
+    const [initialAuthority] = await db!.select().from(organizationBrandingMutationState)
+      .where(eq(organizationBrandingMutationState.orgId, nodeOrgId));
+    expect(initialAuthority).toMatchObject({ owner: "node", fenceEpoch: 0n });
+
+    const directBridge = bridge!.organizationBrandingForActor.bind(bridge);
+    let brandingBridgeCalls = 0;
+    bridge!.organizationBrandingForActor = async (...args) => {
+      brandingBridgeCalls += 1;
+      return directBridge(...args);
+    };
+    let responseStatus: number | undefined;
+    let responseBody: unknown;
+    try {
+      const response = await request(server!)
+        .post(`/api/chats/${proposal.conversationId}/messages/${proposal.messageId}/operation-proposal/resolve`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ action: "approve", decisionNote: "Keep this on Node" });
+      responseStatus = response.status;
+      responseBody = response.body;
+    } finally {
+      bridge!.organizationBrandingForActor = directBridge;
+    }
+
+    expect(responseStatus, JSON.stringify(responseBody)).toBe(201);
+    expect(brandingBridgeCalls).toBe(0);
+    const [updatedOrganization] = await db!.select({
+      name: organizations.name,
+    }).from(organizations).where(eq(organizations.id, nodeOrgId));
+    expect(updatedOrganization?.name).toBe("Updated through the Node-owned Chat path");
+    const [finalAuthority] = await db!.select().from(organizationBrandingMutationState)
+      .where(eq(organizationBrandingMutationState.orgId, nodeOrgId));
+    expect(finalAuthority).toMatchObject({ owner: "node", fenceEpoch: 0n });
+    expect(finalAuthority).toEqual(initialAuthority);
+    expect(await db!.select().from(organizationBrandingMutationReceipts)
+      .where(eq(organizationBrandingMutationReceipts.orgId, nodeOrgId))).toHaveLength(0);
+
+    const [resolvedProposal] = await db!.select().from(chatMessages)
+      .where(eq(chatMessages.id, proposal.messageId));
+    expect(resolvedProposal?.structuredPayload?.operationProposalState).toMatchObject({ status: "approved" });
+    const appliedMessages = await db!.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, proposal.conversationId),
+      eq(chatMessages.kind, "system_event"),
+    ));
+    expect(appliedMessages).toHaveLength(1);
+    expect(appliedMessages[0]).toMatchObject({
+      role: "system",
+      structuredPayload: expect.objectContaining({
+        eventType: "operation_applied",
+        sourceMessageId: proposal.messageId,
+        targetId: nodeOrgId,
+      }),
+    });
+    const nodeAudits = await db!.select().from(activityLog).where(and(
+      eq(activityLog.orgId, nodeOrgId),
+      eq(activityLog.action, "organization.updated"),
+      eq(activityLog.entityId, nodeOrgId),
+    ));
+    expect(nodeAudits).toHaveLength(1);
+    expect(nodeAudits[0]).toMatchObject({
+      details: expect.objectContaining({ source: "chat_lightweight_change", sourceMessageId: proposal.messageId }),
+    });
+    emitRealEntryEvidence("node-owned-non-branding-proposal", {
+      fixture: {
+        organizationId: nodeOrgId,
+        conversationId: proposal.conversationId,
+        proposalMessageId: proposal.messageId,
+      },
+      readback: {
+        responseStatus,
+        brandingBridgeCalls,
+        organizationName: updatedOrganization?.name,
+        authorityBefore: initialAuthority,
+        authorityAfter: finalAuthority,
+        brandingReceiptCount: 0,
+        systemEventIds: appliedMessages.map(({ id }) => id),
+        activityIds: nodeAudits.map(({ id }) => id),
+      },
+    });
+  }, 60_000);
+
+  it("rejects non-CEO and foreign-organization CEO branding proposals without side effects", async () => {
+    const sameOrgId = await seedOrganization("Non-CEO branding target");
+    const foreignTargetOrgId = await seedOrganization("Foreign CEO branding target");
+    const foreignAgentOrgId = await seedOrganization("Foreign CEO agent organization");
+    const nonCeoToken = `chat-branding-non-ceo-${randomUUID()}`;
+    const foreignCeoToken = `chat-branding-foreign-ceo-${randomUUID()}`;
+    const nonCeoAgentId = await seedAgent(sameOrgId, "general", nonCeoToken);
+    const foreignCeoAgentId = await seedAgent(foreignAgentOrgId, "ceo", foreignCeoToken);
+    const nonCeoProposal = await seedConversationForOrganization(
+      sameOrgId,
+      { brandColor: "#112233" },
+      "Reject same-organization non-CEO branding",
+    );
+    const foreignCeoProposal = await seedConversationForOrganization(
+      foreignTargetOrgId,
+      { brandColor: "#445566" },
+      "Reject foreign-organization CEO branding",
+    );
+    const originalOrganizationStates = new Map<string, { name: string; brandColor: string | null }>();
+    for (const targetOrgId of [sameOrgId, foreignTargetOrgId]) {
+      const [organization] = await db!.select({
+        name: organizations.name,
+        brandColor: organizations.brandColor,
+      }).from(organizations).where(eq(organizations.id, targetOrgId));
+      if (organization) originalOrganizationStates.set(targetOrgId, organization);
+    }
+    const readDenialEffectsSnapshot = async (targetOrgIds: string[]) => Promise.all(
+      targetOrgIds.map(async (targetOrgId) => {
+        const [organization] = await db!.select().from(organizations)
+          .where(eq(organizations.id, targetOrgId));
+        const [authority] = await db!.select().from(organizationBrandingMutationState)
+          .where(eq(organizationBrandingMutationState.orgId, targetOrgId));
+        const proposalsAndSystemEvents = await db!.select().from(chatMessages).where(and(
+          eq(chatMessages.orgId, targetOrgId),
+          inArray(chatMessages.kind, ["operation_proposal", "system_event"]),
+        )).orderBy(asc(chatMessages.id));
+        return {
+          orgId: targetOrgId,
+          organization: organization ?? null,
+          authority: authority ?? null,
+          receipts: await db!.select().from(organizationBrandingMutationReceipts)
+            .where(eq(organizationBrandingMutationReceipts.orgId, targetOrgId))
+            .orderBy(asc(organizationBrandingMutationReceipts.idempotencyKey)),
+          activities: await db!.select().from(activityLog)
+            .where(eq(activityLog.orgId, targetOrgId))
+            .orderBy(asc(activityLog.id)),
+          outbox: await db!.select().from(organizationMutationOutbox)
+            .where(eq(organizationMutationOutbox.orgId, targetOrgId))
+            .orderBy(asc(organizationMutationOutbox.id)),
+          proposals: proposalsAndSystemEvents.filter(({ kind }) => kind === "operation_proposal"),
+          systemEvents: proposalsAndSystemEvents.filter(({ kind }) => kind === "system_event"),
+        };
+      }),
+    );
+    const summarizeDenialSnapshot = (snapshot: Awaited<ReturnType<typeof readDenialEffectsSnapshot>>) =>
+      snapshot.map(({ orgId: snapshotOrgId, organization, authority, receipts, activities, outbox, proposals, systemEvents }) => ({
+        orgId: snapshotOrgId,
+        organizationId: organization?.id ?? null,
+        authority: authority && {
+          owner: authority.owner,
+          mutationVersion: authority.mutationVersion,
+          fenceEpoch: authority.fenceEpoch,
+          fenceToken: authority.fenceToken,
+          updatedAt: authority.updatedAt,
+        },
+        receiptKeys: receipts.map(({ idempotencyKey: key }) => key),
+        activityIds: activities.map(({ id }) => id),
+        outboxIds: outbox.map(({ id }) => id),
+        proposalStates: proposals.map(({ id, structuredPayload }) => ({
+          messageId: id,
+          state: structuredPayload?.operationProposalState,
+        })),
+        systemEventIds: systemEvents.map(({ id }) => id),
+      }));
+    const nonCeoSnapshotBefore = await readDenialEffectsSnapshot([sameOrgId]);
+    const nonCeoProposalBefore = nonCeoSnapshotBefore[0]?.proposals.find(({ id }) => id === nonCeoProposal.messageId);
+    expect(nonCeoSnapshotBefore[0]?.authority).toMatchObject({
+      owner: "node",
+      mutationVersion: 0n,
+      fenceEpoch: 0n,
+      fenceToken: expect.any(String),
+      updatedAt: expect.any(Date),
+    });
+    expect(nonCeoProposalBefore?.structuredPayload?.operationProposalState)
+      .toMatchObject({ status: "pending" });
+
+    const foreignAuthorityOrgIds = [foreignTargetOrgId, foreignAgentOrgId];
+    const foreignSnapshotBefore = await readDenialEffectsSnapshot(foreignAuthorityOrgIds);
+    const foreignCeoProposalBefore = foreignSnapshotBefore[0]?.proposals.find(({ id }) => id === foreignCeoProposal.messageId);
+    expect(foreignSnapshotBefore.map(({ authority }) => authority)).toEqual([
+      expect.objectContaining({
+        owner: "node",
+        mutationVersion: 0n,
+        fenceEpoch: 0n,
+        fenceToken: expect.any(String),
+        updatedAt: expect.any(Date),
+      }),
+      expect.objectContaining({
+        owner: "node",
+        mutationVersion: 0n,
+        fenceEpoch: 0n,
+        fenceToken: expect.any(String),
+        updatedAt: expect.any(Date),
+      }),
+    ]);
+    expect(foreignSnapshotBefore.map(({ receipts, activities, outbox, systemEvents }) => ({
+      receipts,
+      activities,
+      outbox,
+      systemEvents,
+    }))).toEqual([
+      { receipts: [], activities: [], outbox: [], systemEvents: [] },
+      { receipts: [], activities: [], outbox: [], systemEvents: [] },
+    ]);
+    expect(foreignCeoProposalBefore?.structuredPayload?.operationProposalState)
+      .toMatchObject({ status: "pending" });
+
+    const previousSelection = process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS;
+    process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS = [sameOrgId, foreignTargetOrgId].join(",");
+    const directBridge = bridge!.organizationBrandingForActor.bind(bridge);
+    let brandingBridgeCalls = 0;
+    bridge!.organizationBrandingForActor = async (...args) => {
+      brandingBridgeCalls += 1;
+      return directBridge(...args);
+    };
+
+    let nonCeoResponseStatus: number | undefined;
+    let foreignCeoResponseStatus: number | undefined;
+    let nonCeoSnapshotAfter: Awaited<ReturnType<typeof readDenialEffectsSnapshot>> = [];
+    let foreignSnapshotAfter: Awaited<ReturnType<typeof readDenialEffectsSnapshot>> = [];
+    try {
+      const nonCeoResponse = await request(server!)
+        .post(`/api/chats/${nonCeoProposal.conversationId}/messages/${nonCeoProposal.messageId}/operation-proposal/resolve`)
+        .set("authorization", `Bearer ${nonCeoToken}`)
+        .send({ action: "approve", decisionNote: "Must be denied" });
+      expect(nonCeoResponse.status, JSON.stringify(nonCeoResponse.body)).toBe(403);
+      nonCeoResponseStatus = nonCeoResponse.status;
+      nonCeoSnapshotAfter = await readDenialEffectsSnapshot([sameOrgId]);
+      expect(nonCeoSnapshotAfter).toEqual(nonCeoSnapshotBefore);
+
+      const foreignCeoResponse = await request(server!)
+        .post(`/api/chats/${foreignCeoProposal.conversationId}/messages/${foreignCeoProposal.messageId}/operation-proposal/resolve`)
+        .set("authorization", `Bearer ${foreignCeoToken}`)
+        .send({ action: "approve", decisionNote: "Must be denied" });
+      expect(foreignCeoResponse.status, JSON.stringify(foreignCeoResponse.body)).toBe(403);
+      foreignCeoResponseStatus = foreignCeoResponse.status;
+      foreignSnapshotAfter = await readDenialEffectsSnapshot(foreignAuthorityOrgIds);
+      expect(foreignSnapshotAfter).toEqual(foreignSnapshotBefore);
+    } finally {
+      bridge!.organizationBrandingForActor = directBridge;
+      if (previousSelection === undefined) delete process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS;
+      else process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS = previousSelection;
+    }
+
+    expect(brandingBridgeCalls).toBe(0);
+    for (const [targetOrgId, proposal] of [
+      [sameOrgId, nonCeoProposal],
+      [foreignTargetOrgId, foreignCeoProposal],
+    ] as const) {
+      const [organization] = await db!.select({
+        name: organizations.name,
+        brandColor: organizations.brandColor,
+      }).from(organizations).where(eq(organizations.id, targetOrgId));
+      expect(organization).toEqual(originalOrganizationStates.get(targetOrgId));
+      const [authority] = await db!.select({
+        owner: organizationBrandingMutationState.owner,
+        fenceEpoch: organizationBrandingMutationState.fenceEpoch,
+      }).from(organizationBrandingMutationState)
+        .where(eq(organizationBrandingMutationState.orgId, targetOrgId));
+      expect(authority).toMatchObject({ owner: "node", fenceEpoch: 0n });
+      const [message] = await db!.select().from(chatMessages)
+        .where(eq(chatMessages.id, proposal.messageId));
+      expect(message?.structuredPayload?.operationProposalState).toMatchObject({ status: "pending" });
+      expect(await db!.select().from(organizationBrandingMutationReceipts)
+        .where(eq(organizationBrandingMutationReceipts.orgId, targetOrgId))).toHaveLength(0);
+      expect(await db!.select().from(chatMessages).where(and(
+        eq(chatMessages.conversationId, proposal.conversationId),
+        eq(chatMessages.kind, "system_event"),
+      ))).toHaveLength(0);
+      expect(await db!.select().from(activityLog)
+        .where(eq(activityLog.orgId, targetOrgId))).toHaveLength(0);
+    }
+    emitRealEntryEvidence("denied-branding-proposals", {
+      fixture: {
+        nonCeoOrganizationId: sameOrgId,
+        nonCeoAgentId,
+        nonCeoConversationId: nonCeoProposal.conversationId,
+        nonCeoProposalMessageId: nonCeoProposal.messageId,
+        foreignTargetOrganizationId: foreignTargetOrgId,
+        foreignAgentOrganizationId: foreignAgentOrgId,
+        foreignCeoAgentId,
+        foreignCeoConversationId: foreignCeoProposal.conversationId,
+        foreignCeoProposalMessageId: foreignCeoProposal.messageId,
+      },
+      readback: {
+        nonCeoResponseStatus,
+        foreignCeoResponseStatus,
+        brandingBridgeCalls,
+        nonCeoBefore: summarizeDenialSnapshot(nonCeoSnapshotBefore),
+        nonCeoAfter: summarizeDenialSnapshot(nonCeoSnapshotAfter),
+        foreignBefore: summarizeDenialSnapshot(foreignSnapshotBefore),
+        foreignAfter: summarizeDenialSnapshot(foreignSnapshotAfter),
+      },
+    });
+  }, 60_000);
+
+  it("hands off a fresh Node-owned organization through the public Chat branding proposal", async () => {
+    const freshOrgId = await seedOrganization("Fresh Node-owned branding target");
+    await db!.insert(organizationMemberships).values({
+      orgId: freshOrgId,
+      principalType: "user",
+      principalId: boardUserId,
+      status: "active",
+      membershipRole: "admin",
+    });
+    const proposalSummary = "Apply branding and hand off the fresh organization";
+    const proposal = await seedConversationForOrganization(
+      freshOrgId,
+      { brandColor: "#778899" },
+      proposalSummary,
+    );
+    const proposalKey = idempotencyKey("chat-proposal", proposal.messageId);
+    const nodeAuditKey = `chat-proposal:${proposal.messageId}:organization-activity`;
+    const [initialAuthority] = await db!.select().from(organizationBrandingMutationState)
+      .where(eq(organizationBrandingMutationState.orgId, freshOrgId));
+    expect(initialAuthority).toMatchObject({
+      owner: "node",
+      mutationVersion: 0n,
+      fenceEpoch: 0n,
+      fenceToken: expect.any(String),
+      updatedAt: expect.any(Date),
+    });
+    const [proposalBeforeApproval] = await db!.select().from(chatMessages)
+      .where(eq(chatMessages.id, proposal.messageId));
+    expect(proposalBeforeApproval).toMatchObject({
+      id: proposal.messageId,
+      orgId: freshOrgId,
+      conversationId: proposal.conversationId,
+      role: "assistant",
+      kind: "operation_proposal",
+      body: proposalSummary,
+      structuredPayload: {
+        operationProposal: {
+          targetType: "organization",
+          targetId: freshOrgId,
+          summary: proposalSummary,
+          patch: { brandColor: "#778899" },
+        },
+        operationProposalState: {
+          status: "pending",
+          decisionNote: null,
+          decidedByUserId: null,
+          decidedAt: null,
+        },
+      },
+    });
+    const outboxBeforeApproval = await db!.select().from(organizationMutationOutbox)
+      .where(eq(organizationMutationOutbox.orgId, freshOrgId))
+      .orderBy(asc(organizationMutationOutbox.id));
+    expect(outboxBeforeApproval).toEqual([]);
+
+    const previousSelection = process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS;
+    process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS = freshOrgId;
+    let responseStatus: number | undefined;
+    let responseBody: unknown;
+    try {
+      const response = await request(server!)
+        .post(`/api/chats/${proposal.conversationId}/messages/${proposal.messageId}/operation-proposal/resolve`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ action: "approve", decisionNote: "Apply the requested branding" });
+      responseStatus = response.status;
+      responseBody = response.body;
+    } finally {
+      if (previousSelection === undefined) delete process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS;
+      else process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS = previousSelection;
+    }
+
+    expect(responseStatus, JSON.stringify(responseBody)).toBe(201);
+    const [updatedOrganization] = await db!.select({
+      brandColor: organizations.brandColor,
+    }).from(organizations).where(eq(organizations.id, freshOrgId));
+    expect(updatedOrganization?.brandColor).toBe("#778899");
+    const [finalAuthority] = await db!.select().from(organizationBrandingMutationState)
+      .where(eq(organizationBrandingMutationState.orgId, freshOrgId));
+    expect(finalAuthority).toMatchObject({
+      owner: "rust",
+      mutationVersion: 1n,
+      fenceEpoch: 1n,
+      fenceToken: expect.any(String),
+      updatedAt: expect.any(Date),
+    });
+    expect(finalAuthority?.fenceToken).not.toBe(initialAuthority?.fenceToken);
+    expect(finalAuthority?.updatedAt.getTime()).toBeGreaterThanOrEqual(initialAuthority!.updatedAt.getTime());
+
+    const [finalProposalMessage] = await db!.select().from(chatMessages)
+      .where(eq(chatMessages.id, proposal.messageId));
+    expect(finalProposalMessage).toMatchObject({
+      id: proposal.messageId,
+      orgId: freshOrgId,
+      conversationId: proposal.conversationId,
+      role: "assistant",
+      kind: "operation_proposal",
+      body: proposalSummary,
+      structuredPayload: {
+        operationProposal: proposalBeforeApproval?.structuredPayload?.operationProposal,
+        operationProposalState: {
+          status: "approved",
+          decisionNote: "Apply the requested branding",
+          decidedByUserId: boardUserId,
+          decidedAt: expect.any(String),
+        },
+      },
+    });
+    expect(finalProposalMessage?.approvalId).toBe(proposalBeforeApproval?.approvalId);
+    expect(finalProposalMessage?.status).toBe(proposalBeforeApproval?.status);
+    expect(finalProposalMessage?.createdAt).toEqual(proposalBeforeApproval?.createdAt);
+
+    const receipts = await db!.select().from(organizationBrandingMutationReceipts).where(and(
+      eq(organizationBrandingMutationReceipts.orgId, freshOrgId),
+      eq(organizationBrandingMutationReceipts.idempotencyKey, proposalKey),
+    ));
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      orgId: freshOrgId,
+      idempotencyKey: proposalKey,
+      outcome: "applied",
+      fenceEpoch: 1n,
+    });
+    const rustActivities = await db!.select().from(activityLog).where(and(
+      eq(activityLog.orgId, freshOrgId),
+      eq(activityLog.action, "organization.branding_updated"),
+      eq(activityLog.entityId, freshOrgId),
+    ));
+    expect(rustActivities).toHaveLength(1);
+    expect(rustActivities[0]).toMatchObject({
+      id: receipts[0]!.activityId,
+      actorType: "user",
+      actorId: boardUserId,
+      entityType: "organization",
+      entityId: freshOrgId,
+    });
+    const outboxAfterApproval = await db!.select().from(organizationMutationOutbox)
+      .where(eq(organizationMutationOutbox.orgId, freshOrgId))
+      .orderBy(asc(organizationMutationOutbox.id));
+    expect(outboxAfterApproval).toEqual([
+      expect.objectContaining({
+        orgId: freshOrgId,
+        activityId: receipts[0]!.activityId,
+        eventType: "activity.logged",
+        payload: {
+          actorType: "user",
+          actorId: boardUserId,
+          action: "organization.branding_updated",
+          entityType: "organization",
+          entityId: freshOrgId,
+          agentId: null,
+          runId: null,
+          details: rustActivities[0]!.details,
+        },
+      }),
+    ]);
+    const appliedMessages = await db!.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, proposal.conversationId),
+      eq(chatMessages.kind, "system_event"),
+    ));
+    expect(appliedMessages).toHaveLength(1);
+    expect(appliedMessages[0]).toMatchObject({
+      role: "system",
+      structuredPayload: expect.objectContaining({
+        eventType: "operation_applied",
+        sourceMessageId: proposal.messageId,
+        targetId: freshOrgId,
+      }),
+    });
+    const nodeAudits = await db!.select().from(activityLog).where(and(
+      eq(activityLog.orgId, freshOrgId),
+      eq(activityLog.action, "organization.updated"),
+      eq(activityLog.entityId, freshOrgId),
+      eq(activityLog.idempotencyKey, nodeAuditKey),
+    ));
+    expect(nodeAudits).toHaveLength(1);
+    emitRealEntryEvidence("fresh-node-to-rust-handoff", {
+      fixture: {
+        organizationId: freshOrgId,
+        conversationId: proposal.conversationId,
+        proposalMessageId: proposal.messageId,
+      },
+      readback: {
+        responseStatus,
+        organizationBrandColor: updatedOrganization?.brandColor,
+        authority: finalAuthority,
+        receipt: {
+          idempotencyKey: receipts[0]?.idempotencyKey,
+          activityId: receipts[0]?.activityId,
+          outcome: receipts[0]?.outcome,
+        },
+        activityId: rustActivities[0]?.id,
+        outbox: outboxAfterApproval.map(({ id, eventType, activityId, payload }) => ({
+          id,
+          eventType,
+          activityId,
+          payload,
+        })),
+        systemEventIds: appliedMessages.map(({ id }) => id),
+        nodeAuditIds: nodeAudits.map(({ id }) => id),
+      },
+    });
   }, 60_000);
 });
