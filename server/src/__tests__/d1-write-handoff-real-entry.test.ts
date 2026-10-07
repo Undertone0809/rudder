@@ -843,5 +843,79 @@ describe("D1 authenticated Project Rust writes and ownership-handoff races on re
     expect(attachmentDeleteReplay.status, JSON.stringify(attachmentDeleteReplay.body)).toBe(200);
     expect(attachmentDeleteReplay.body).toEqual(attachmentDelete.body);
     expect(await snapshot()).toEqual(afterAttachmentDelete);
+
+    const resourceDeleteKey = `${idempotencyKey}:resource-delete`;
+    const resourceDeletePath = `/api/orgs/${orgId}/resources/${resourceId}`;
+    const resourceDelete = await request(server!).delete(resourceDeletePath)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", resourceDeleteKey);
+    expect(resourceDelete.status, JSON.stringify(resourceDelete.body)).toBe(200);
+    expect(resourceDelete.body).toMatchObject({
+      id: resourceId,
+      orgId,
+      name: updatedResourceName,
+    });
+    const afterResourceDelete = await snapshot();
+    expect(afterResourceDelete.resourceRows).toEqual([]);
+    expect(afterResourceDelete.attachmentRows).toEqual([]);
+    expect(afterResourceDelete.resourceOwners).toEqual([expect.objectContaining({
+      owner: "rust",
+      mutation_version: "2",
+      fence_epoch: "1",
+    })]);
+
+    const resourceDeleteReceipt = await observer!`
+      SELECT command_kind, outcome, resulting_version::text AS resulting_version,
+        activity_id::text AS activity_id
+      FROM organization_mutation_receipts
+      WHERE org_id = ${orgId}::uuid AND idempotency_key = ${resourceDeleteKey}
+    `;
+    expect(resourceDeleteReceipt).toHaveLength(1);
+    expect(resourceDeleteReceipt[0]).toMatchObject({
+      command_kind: "organization_resource",
+      outcome: "applied",
+      resulting_version: "2",
+    });
+    const resourceDeleteActivity = await observer!`
+      SELECT id::text AS id, action, entity_type, entity_id
+      FROM activity_log
+      WHERE org_id = ${orgId}::uuid
+        AND entity_type = 'organization_resource' AND entity_id = ${resourceId}
+    `;
+    expect(resourceDeleteActivity).toHaveLength(2);
+    expect(resourceDeleteActivity.map((row) => row.action).sort()).toEqual([
+      "organization.resource.deleted",
+      "organization.resource.updated",
+    ]);
+    expect(resourceDeleteActivity).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: resourceDeleteReceipt[0]!.activity_id,
+      action: "organization.resource.deleted",
+      entity_type: "organization_resource",
+      entity_id: resourceId,
+    })]));
+    const resourceActivityOutbox = await observer!`
+      SELECT outbox.activity_id::text AS activity_id, activity.action
+      FROM organization_mutation_outbox AS outbox
+      JOIN activity_log AS activity
+        ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id
+      WHERE outbox.org_id = ${orgId}::uuid
+        AND activity.entity_type = 'organization_resource' AND activity.entity_id = ${resourceId}
+    `;
+    expect(resourceActivityOutbox).toHaveLength(2);
+    expect(resourceActivityOutbox.map((row) => row.action).sort()).toEqual([
+      "organization.resource.deleted",
+      "organization.resource.updated",
+    ]);
+    expect(resourceActivityOutbox).toEqual(expect.arrayContaining([expect.objectContaining({
+      activity_id: resourceDeleteReceipt[0]!.activity_id,
+      action: "organization.resource.deleted",
+    })]));
+
+    const resourceDeleteReplay = await request(server!).delete(resourceDeletePath)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", resourceDeleteKey);
+    expect(resourceDeleteReplay.status, JSON.stringify(resourceDeleteReplay.body)).toBe(200);
+    expect(resourceDeleteReplay.body).toEqual(resourceDelete.body);
+    expect(await snapshot()).toEqual(afterResourceDelete);
   }, 60_000);
 });
