@@ -2086,11 +2086,27 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
 
     let parity = parity_fixture();
 
-    let backup_list = get_with_retry(
+    let public_backup_list = get_with_retry(
         bound_addr,
         "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
     );
-    assert_parity_error(&backup_list, &parity, "databaseDisabled");
+    assert!(
+        public_backup_list.starts_with("HTTP/1.1 404"),
+        "workspace backup collection stays private: {public_backup_list}"
+    );
+
+    let unconfigured_private_backup_list = get_with_retry(
+        bound_addr,
+        "/internal/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
+    );
+    assert!(
+        unconfigured_private_backup_list.starts_with("HTTP/1.1 503"),
+        "{unconfigured_private_backup_list}"
+    );
+    assert!(
+        unconfigured_private_backup_list.contains("actor_envelope_unconfigured"),
+        "{unconfigured_private_backup_list}"
+    );
 
     let backup_files = get_with_retry(
         bound_addr,
