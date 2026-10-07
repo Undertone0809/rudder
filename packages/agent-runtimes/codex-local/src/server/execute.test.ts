@@ -12,19 +12,35 @@ import {
   validateCodexResumeSession,
 } from "./execute.js";
 
-const { executeCodexAppServerChatMock } = vi.hoisted(() => ({
+const { executeCodexAppServerChatMock, runChildProcessMock } = vi.hoisted(() => ({
   executeCodexAppServerChatMock: vi.fn(),
+  runChildProcessMock: vi.fn(),
 }));
 
 vi.mock("./app-server-chat.js", () => ({
   executeCodexAppServerChat: executeCodexAppServerChatMock,
 }));
 
+vi.mock("@rudderhq/agent-runtime-utils/server-utils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@rudderhq/agent-runtime-utils/server-utils")>();
+  return { ...actual, runChildProcess: runChildProcessMock };
+});
+
 let tempRoot = "";
 
 beforeEach(async () => {
   tempRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-instruction-snapshot-"));
   executeCodexAppServerChatMock.mockReset();
+  runChildProcessMock.mockReset();
+  runChildProcessMock.mockResolvedValue({
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout: "",
+    stderr: "",
+    pid: null,
+    startedAt: null,
+  });
 });
 
 afterEach(async () => {
@@ -106,6 +122,66 @@ describe("Codex App Server instruction snapshots", () => {
     expect(instructionSnapshot).toEqual(expect.stringContaining(developerInstructionSentinel));
     expect(instructionSnapshot).not.toContain(userInputSentinel);
     expect(invocation.prompt).toContain(developerInstructionSentinel);
+    expect(JSON.stringify(invocationMeta)).not.toContain(userInputSentinel);
+  });
+});
+
+describe("Codex CLI fallback instruction snapshots", () => {
+  it.each([
+    ["App Server disabled", { chatAppServerEnabled: false }],
+    ["unsupported App Server argument", { chatAppServerEnabled: true, args: ["--unsupported-provider-option"] }],
+  ])("keeps the user turn in provider input and out of persisted metadata when %s", async (_label, fallbackConfig) => {
+    const userInputSentinel = "RUDDER_CODEX_CLI_USER_INPUT_SENTINEL_4a20d1";
+    const developerInstructionSentinel = "RUDDER_CODEX_CLI_DEVELOPER_INSTRUCTION_SENTINEL_8c3f62";
+    vi.stubEnv("RUDDER_HOME", path.join(tempRoot, "rudder-home"));
+    vi.stubEnv("RUDDER_INSTANCE_ID", "cli-instruction-snapshot-regression");
+
+    const invocationMeta: Array<Record<string, unknown>> = [];
+    await execute({
+      runId: "run-cli-instruction-snapshot-regression",
+      agent: {
+        id: "agent-cli-instruction-snapshot-regression",
+        orgId: "org-cli-instruction-snapshot-regression",
+        name: "Codex CLI snapshot regression",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: process.execPath,
+        cwd: tempRoot,
+        promptTemplate: userInputSentinel,
+        env: { CODEX_HOME: path.join(tempRoot, "shared-codex-home") },
+        ...fallbackConfig,
+      },
+      context: {
+        chatMode: true,
+        rudderScene: "chat",
+        rudderCodexChatPrompt: {
+          version: 1,
+          developerInstructions: developerInstructionSentinel,
+        },
+      },
+      onLog: vi.fn(async () => undefined),
+      onMeta: async (meta: AgentRuntimeInvocationMeta) => { invocationMeta.push(meta as unknown as Record<string, unknown>); },
+    } as any);
+
+    expect(executeCodexAppServerChatMock).not.toHaveBeenCalled();
+    const processOptions = runChildProcessMock.mock.calls[0]?.[3] as { stdin?: string } | undefined;
+    expect(processOptions?.stdin).toContain(userInputSentinel);
+    expect(processOptions?.stdin).toContain(developerInstructionSentinel);
+
+    expect(invocationMeta).toHaveLength(1);
+    const invocation = invocationMeta[0]!;
+    expect(invocation.prompt).toContain(developerInstructionSentinel);
+    expect(invocation.agentInstructionStack).toContain(developerInstructionSentinel);
+    expect(invocation.prompt).not.toContain(userInputSentinel);
+    expect(invocation.agentInstructionStack).not.toContain(userInputSentinel);
     expect(JSON.stringify(invocationMeta)).not.toContain(userInputSentinel);
   });
 });

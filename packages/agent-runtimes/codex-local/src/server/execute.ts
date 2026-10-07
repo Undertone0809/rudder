@@ -873,6 +873,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const codexChatDeveloperInstructions = codexChatPrompt
     ? asString(codexChatPrompt.developerInstructions, "").trim()
     : "";
+  const safeCodexChatInstructionSnapshot = joinPromptSections([
+    instructionFrame,
+    codexChatDeveloperInstructions,
+  ]);
   const prompt = joinPromptSections([
     instructionFrame,
     codexChatDeveloperInstructions,
@@ -1064,7 +1068,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? joinPromptSections([renderedBootstrapPrompt, sessionHandoffNote, renderedPrompt])
       : prompt;
     const appServerDeveloperInstructions = codexChatPrompt
-      ? joinPromptSections([instructionFrame, codexChatDeveloperInstructions])
+      ? safeCodexChatInstructionSnapshot
       : null;
     const appServerDeveloperInstructionsRevision = appServerDeveloperInstructions
       ? createHash("sha256").update(appServerDeveloperInstructions).digest("hex")
@@ -1272,6 +1276,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const attemptCommandNotes = isTransportContinuation
       ? [...commandNotes, "Continuing the same Codex session once after a provider transport disconnect."]
       : commandNotes;
+    const invocationPrompt = runtimeScene === "chat" && context.chatMode === true
+      ? safeCodexChatInstructionSnapshot
+      : attemptPrompt;
     if (onMeta) {
       await onMeta({
         agentRuntimeType: "codex_local",
@@ -1283,8 +1290,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           return value;
         }),
         env: redactEnvForLogs(env),
-        prompt: attemptPrompt,
-        agentInstructionStack: attemptPrompt,
+        prompt: invocationPrompt,
+        agentInstructionStack: invocationPrompt,
         promptMetrics: isTransportContinuation
           ? { ...promptMetrics, promptChars: attemptPrompt.length }
           : promptMetrics,
