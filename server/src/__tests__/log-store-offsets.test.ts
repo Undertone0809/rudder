@@ -52,6 +52,7 @@ describe("log store offsets", () => {
   async function writeNativeIndexFixture(
     root: string,
     mode: "success" | "malformed" | "hang" | "not-found" | "invalid-utf8",
+    errorReceiptPath?: string,
   ) {
     const binary = path.join(root, "native-index.mjs");
     await fs.writeFile(binary, `#!/usr/bin/env node
@@ -65,6 +66,8 @@ if (${JSON.stringify(mode)} === "hang" && args[1] === "read") {
 if (["not-found", "invalid-utf8"].includes(${JSON.stringify(mode)}) && args[1] === "read") {
   const errorCode = ${JSON.stringify(mode)} === "not-found" ? "evidence_read_not_found" : "evidence_read_invalid_utf8";
   console.log(JSON.stringify({ ok: false, capability: "evidence.read", protocolVersion: 1, errorCode, accepted: false }));
+  const errorReceiptPath = ${JSON.stringify(errorReceiptPath ?? null)};
+  if (errorReceiptPath) fs.writeFileSync(errorReceiptPath, JSON.stringify({ args, errorCode }));
   console.error("rudder-native: operation failed");
   process.exit(2);
 }
@@ -170,6 +173,8 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     expect(result.nextOffset).toBeUndefined();
   });
 
+  // The shared fixture starts five sequential children; retain each read's
+  // production deadline while using the existing suite-level CI load budget.
   it("matches the shared API, CLI, and MCP byte-page fixture through native read authority", async () => {
     const root = await makeTempRoot("rudder-run-log-native-read-");
     const fixture = JSON.parse(await fs.readFile(
@@ -268,7 +273,8 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     const task = (async () => {
       const root = await makeTempRoot("rudder-run-log-native-read-errors-");
       const basePath = path.join(root, "run-logs");
-      const binary = await writeNativeIndexFixture(root, fixture);
+      const errorReceiptPath = mode === "auto" ? path.join(root, "native-read-error.json") : undefined;
+      const binary = await writeNativeIndexFixture(root, fixture, errorReceiptPath);
       controller.signal.throwIfAborted();
       process.env.RUN_LOG_BASE_PATH = basePath;
       process.env.RUDDER_NATIVE_MODE = mode;
@@ -286,6 +292,10 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
       const result = store.read(handle, { offset: 0, limitBytes: mode === "auto" ? 64 : 4, signal: controller.signal });
       if (mode === "auto") {
         await expect(result).resolves.toMatchObject({ content: "node-fallback", eof: true });
+        expect(JSON.parse(await fs.readFile(errorReceiptPath!, "utf8"))).toEqual({
+          args: ["evidence", "read", logPath, "0", "64"],
+          errorCode: "evidence_read_invalid_utf8",
+        });
       } else if (fixture === "not-found") {
         await expect(result).rejects.toMatchObject({ status: 404 });
       } else {

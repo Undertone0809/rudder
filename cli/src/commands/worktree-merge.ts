@@ -15,7 +15,7 @@ import {
   projectWorkspaces,
   projects
 } from "@rudderhq/db";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import {
   existsSync
 } from "node:fs";
@@ -35,6 +35,7 @@ import {
   type PlannedIssueDocumentMerge,
   type PlannedIssueInsert,
 } from "./worktree-merge-history-lib.js";
+import { mergeTimestamp, selectMergeTimestamp } from "./worktree-merge-timestamps.js";
 import type {
   WorktreeListOptions,
   WorktreeMergeHistoryOptions,
@@ -284,7 +285,17 @@ export async function collectMergePlan(input: {
       .where(eq(organizations.id, orgId))
       .then((rows) => rows[0] ?? null),
     input.sourceDb
-      .select()
+      .select({
+        ...getTableColumns(issues),
+        mergeTimestamps: {
+          startedAt: selectMergeTimestamp(issues.startedAt),
+          completedAt: selectMergeTimestamp(issues.completedAt),
+          cancelledAt: selectMergeTimestamp(issues.cancelledAt),
+          hiddenAt: selectMergeTimestamp(issues.hiddenAt),
+          createdAt: selectMergeTimestamp(issues.createdAt),
+          updatedAt: selectMergeTimestamp(issues.updatedAt),
+        },
+      })
       .from(issues)
       .where(eq(issues.orgId, orgId)),
     input.targetDb
@@ -293,7 +304,13 @@ export async function collectMergePlan(input: {
       .where(eq(issues.orgId, orgId)),
     input.scopes.includes("comments")
       ? input.sourceDb
-        .select()
+        .select({
+          ...getTableColumns(issueComments),
+          mergeTimestamps: {
+            createdAt: selectMergeTimestamp(issueComments.createdAt),
+            updatedAt: selectMergeTimestamp(issueComments.updatedAt),
+          },
+        })
         .from(issueComments)
         .where(eq(issueComments.orgId, orgId))
       : Promise.resolve([]),
@@ -321,6 +338,12 @@ export async function collectMergePlan(input: {
         updatedByUserId: documents.updatedByUserId,
         documentCreatedAt: documents.createdAt,
         documentUpdatedAt: documents.updatedAt,
+        mergeTimestamps: {
+          documentCreatedAt: selectMergeTimestamp(documents.createdAt),
+          documentUpdatedAt: selectMergeTimestamp(documents.updatedAt),
+          linkCreatedAt: selectMergeTimestamp(issueDocuments.createdAt),
+          linkUpdatedAt: selectMergeTimestamp(issueDocuments.updatedAt),
+        },
       })
       .from(issueDocuments)
       .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
@@ -346,6 +369,12 @@ export async function collectMergePlan(input: {
         updatedByUserId: documents.updatedByUserId,
         documentCreatedAt: documents.createdAt,
         documentUpdatedAt: documents.updatedAt,
+        mergeTimestamps: {
+          documentCreatedAt: selectMergeTimestamp(documents.createdAt),
+          documentUpdatedAt: selectMergeTimestamp(documents.updatedAt),
+          linkCreatedAt: selectMergeTimestamp(issueDocuments.createdAt),
+          linkUpdatedAt: selectMergeTimestamp(issueDocuments.updatedAt),
+        },
       })
       .from(issueDocuments)
       .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
@@ -362,6 +391,7 @@ export async function collectMergePlan(input: {
         createdByAgentId: documentRevisions.createdByAgentId,
         createdByUserId: documentRevisions.createdByUserId,
         createdAt: documentRevisions.createdAt,
+        mergeTimestamps: { createdAt: selectMergeTimestamp(documentRevisions.createdAt) },
       })
       .from(documentRevisions)
       .innerJoin(issueDocuments, eq(documentRevisions.documentId, issueDocuments.documentId))
@@ -402,6 +432,12 @@ export async function collectMergePlan(input: {
         assetUpdatedAt: assets.updatedAt,
         attachmentCreatedAt: issueAttachments.createdAt,
         attachmentUpdatedAt: issueAttachments.updatedAt,
+        mergeTimestamps: {
+          assetCreatedAt: selectMergeTimestamp(assets.createdAt),
+          assetUpdatedAt: selectMergeTimestamp(assets.updatedAt),
+          attachmentCreatedAt: selectMergeTimestamp(issueAttachments.createdAt),
+          attachmentUpdatedAt: selectMergeTimestamp(issueAttachments.updatedAt),
+        },
       })
       .from(issueAttachments)
       .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
@@ -432,11 +468,25 @@ export async function collectMergePlan(input: {
       .innerJoin(issues, eq(issueAttachments.issueId, issues.id))
       .where(eq(issues.orgId, orgId)),
     input.sourceDb
-      .select()
+      .select({
+        ...getTableColumns(projects),
+        mergeTimestamps: {
+          pausedAt: selectMergeTimestamp(projects.pausedAt),
+          archivedAt: selectMergeTimestamp(projects.archivedAt),
+          createdAt: selectMergeTimestamp(projects.createdAt),
+          updatedAt: selectMergeTimestamp(projects.updatedAt),
+        },
+      })
       .from(projects)
       .where(eq(projects.orgId, orgId)),
     input.sourceDb
-      .select()
+      .select({
+        ...getTableColumns(projectWorkspaces),
+        mergeTimestamps: {
+          createdAt: selectMergeTimestamp(projectWorkspaces.createdAt),
+          updatedAt: selectMergeTimestamp(projectWorkspaces.updatedAt),
+        },
+      })
       .from(projectWorkspaces)
       .where(eq(projectWorkspaces.orgId, orgId)),
     input.targetDb
@@ -739,11 +789,11 @@ export async function applyMergePlan(input: {
         targetDate: project.source.targetDate,
         color: project.source.color,
         pauseReason: project.source.pauseReason,
-        pausedAt: project.source.pausedAt,
+        pausedAt: mergeTimestamp(project.source, "pausedAt"),
         executionWorkspacePolicy: project.source.executionWorkspacePolicy,
-        archivedAt: project.source.archivedAt,
-        createdAt: project.source.createdAt,
-        updatedAt: project.source.updatedAt,
+        archivedAt: mergeTimestamp(project.source, "archivedAt"),
+        createdAt: mergeTimestamp(project.source, "createdAt"),
+        updatedAt: mergeTimestamp(project.source, "updatedAt"),
       });
       if (project.targetGoalId) {
         await lockCliNodeProjectGoalMutationAuthority(tx, orgId, project.source.id);
@@ -779,8 +829,8 @@ export async function applyMergePlan(input: {
           sharedWorkspaceKey: workspace.sharedWorkspaceKey,
           metadata: workspace.metadata,
           isPrimary: workspace.isPrimary,
-          createdAt: workspace.createdAt,
-          updatedAt: workspace.updatedAt,
+          createdAt: mergeTimestamp(workspace, "createdAt"),
+          updatedAt: mergeTimestamp(workspace, "updatedAt"),
         });
         insertedProjectWorkspaces += 1;
       }
@@ -845,12 +895,12 @@ export async function applyMergePlan(input: {
         executionWorkspaceId: null,
         executionWorkspacePreference: null,
         executionWorkspaceSettings: null,
-        startedAt: issue.source.startedAt,
-        completedAt: issue.source.completedAt,
-        cancelledAt: issue.source.cancelledAt,
-        hiddenAt: issue.source.hiddenAt,
-        createdAt: issue.source.createdAt,
-        updatedAt: issue.source.updatedAt,
+        startedAt: mergeTimestamp(issue.source, "startedAt"),
+        completedAt: mergeTimestamp(issue.source, "completedAt"),
+        cancelledAt: mergeTimestamp(issue.source, "cancelledAt"),
+        hiddenAt: mergeTimestamp(issue.source, "hiddenAt"),
+        createdAt: mergeTimestamp(issue.source, "createdAt"),
+        updatedAt: mergeTimestamp(issue.source, "updatedAt"),
       });
       insertedIssues += 1;
     }
@@ -885,8 +935,8 @@ export async function applyMergePlan(input: {
         authorAgentId: comment.targetAuthorAgentId,
         authorUserId: comment.source.authorUserId,
         body: comment.source.body,
-        createdAt: comment.source.createdAt,
-        updatedAt: comment.source.updatedAt,
+        createdAt: mergeTimestamp(comment.source, "createdAt"),
+        updatedAt: mergeTimestamp(comment.source, "updatedAt"),
       });
       insertedComments += 1;
     }
@@ -937,8 +987,8 @@ export async function applyMergePlan(input: {
           createdByUserId: documentPlan.source.createdByUserId,
           updatedByAgentId: documentPlan.targetUpdatedByAgentId,
           updatedByUserId: documentPlan.source.updatedByUserId,
-          createdAt: documentPlan.source.documentCreatedAt,
-          updatedAt: documentPlan.source.documentUpdatedAt,
+          createdAt: mergeTimestamp(documentPlan.source, "documentCreatedAt"),
+          updatedAt: mergeTimestamp(documentPlan.source, "documentUpdatedAt"),
         });
         await tx.insert(issueDocuments).values({
           id: documentPlan.source.id,
@@ -946,8 +996,8 @@ export async function applyMergePlan(input: {
           issueId: documentPlan.source.issueId,
           documentId: documentPlan.source.documentId,
           key: documentPlan.source.key,
-          createdAt: documentPlan.source.linkCreatedAt,
-          updatedAt: documentPlan.source.linkUpdatedAt,
+          createdAt: mergeTimestamp(documentPlan.source, "linkCreatedAt"),
+          updatedAt: mergeTimestamp(documentPlan.source, "linkUpdatedAt"),
         });
         insertedDocuments += 1;
       } else {
@@ -963,8 +1013,8 @@ export async function applyMergePlan(input: {
             issueId: documentPlan.source.issueId,
             documentId: documentPlan.source.documentId,
             key: documentPlan.source.key,
-            createdAt: documentPlan.source.linkCreatedAt,
-            updatedAt: documentPlan.source.linkUpdatedAt,
+            createdAt: mergeTimestamp(documentPlan.source, "linkCreatedAt"),
+            updatedAt: mergeTimestamp(documentPlan.source, "linkUpdatedAt"),
           });
         } else {
           await tx
@@ -972,7 +1022,7 @@ export async function applyMergePlan(input: {
             .set({
               issueId: documentPlan.source.issueId,
               key: documentPlan.source.key,
-              updatedAt: documentPlan.source.linkUpdatedAt,
+              updatedAt: mergeTimestamp(documentPlan.source, "linkUpdatedAt"),
             })
             .where(eq(issueDocuments.documentId, documentPlan.source.documentId));
         }
@@ -987,7 +1037,7 @@ export async function applyMergePlan(input: {
             latestRevisionNumber: documentPlan.latestRevisionNumber,
             updatedByAgentId: documentPlan.targetUpdatedByAgentId,
             updatedByUserId: documentPlan.source.updatedByUserId,
-            updatedAt: documentPlan.source.documentUpdatedAt,
+            updatedAt: mergeTimestamp(documentPlan.source, "documentUpdatedAt"),
           })
           .where(eq(documents.id, documentPlan.source.documentId));
         mergedDocuments += 1;
@@ -1012,7 +1062,7 @@ export async function applyMergePlan(input: {
           changeSummary: revisionPlan.source.changeSummary,
           createdByAgentId: revisionPlan.targetCreatedByAgentId,
           createdByUserId: revisionPlan.source.createdByUserId,
-          createdAt: revisionPlan.source.createdAt,
+          createdAt: mergeTimestamp(revisionPlan.source, "createdAt"),
         });
         insertedDocumentRevisions += 1;
       }
@@ -1067,8 +1117,8 @@ export async function applyMergePlan(input: {
         originalFilename: attachment.source.originalFilename,
         createdByAgentId: attachment.targetCreatedByAgentId,
         createdByUserId: attachment.source.createdByUserId,
-        createdAt: attachment.source.assetCreatedAt,
-        updatedAt: attachment.source.assetUpdatedAt,
+        createdAt: mergeTimestamp(attachment.source, "assetCreatedAt"),
+        updatedAt: mergeTimestamp(attachment.source, "assetUpdatedAt"),
       });
 
       await tx.insert(issueAttachments).values({
@@ -1077,8 +1127,8 @@ export async function applyMergePlan(input: {
         issueId: attachment.source.issueId,
         assetId: attachment.source.assetId,
         issueCommentId: attachment.targetIssueCommentId,
-        createdAt: attachment.source.attachmentCreatedAt,
-        updatedAt: attachment.source.attachmentUpdatedAt,
+        createdAt: mergeTimestamp(attachment.source, "attachmentCreatedAt"),
+        updatedAt: mergeTimestamp(attachment.source, "attachmentUpdatedAt"),
       });
       insertedAttachments += 1;
     }

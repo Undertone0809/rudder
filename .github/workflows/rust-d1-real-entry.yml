@@ -12,6 +12,8 @@ on:
       - "scripts/smoke/rust-project-goal-real-entry.ts"
       - "scripts/smoke/rust-project-delete-real-entry.ts"
       - "scripts/smoke/rust-project-delete-real-entry.test.ts"
+      - "scripts/smoke/rust-project-create-real-entry.ts"
+      - "scripts/smoke/rust-project-create-real-entry.test.ts"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -70,6 +72,26 @@ jobs:
           test -x native/target/debug/rudder-server-foundation
           test -x native/target/debug/migration-preflight
 
+      - name: Verify API-wide Rust Project reads against legacy data
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/project-read-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Verify Chat branding recovery through authenticated API and Rust
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/chat-branding-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Build first-party CLI for branding CLI and MCP real-entry smoke
+        run: |
+          set -o pipefail
+          pnpm --filter @rudderhq/cli build \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Smoke Rust organization branding real entry
         run: |
           set -o pipefail
@@ -82,6 +104,16 @@ jobs:
           set -o pipefail
           node cli/node_modules/tsx/dist/cli.mjs \
             scripts/smoke/rust-project-goal-real-entry.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Smoke Rust project creation through HTTP CLI and MCP
+        run: |
+          set -o pipefail
+          node cli/node_modules/tsx/dist/cli.mjs --test \
+            scripts/smoke/rust-project-create-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          node cli/node_modules/tsx/dist/cli.mjs \
+            scripts/smoke/rust-project-create-real-entry.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
       - name: Smoke Rust-owned project deletion and recovery

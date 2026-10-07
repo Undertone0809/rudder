@@ -1,0 +1,453 @@
+{
+  "schema": "rudder.first-party-support-authority-refresh.v1",
+  "asOf": "2026-10-03",
+  "sourceSnapshot": {
+    "repository": "/Users/zeeland/.codex/worktrees/project-create-main-integration/rudder-oss",
+    "commit": "1e8507628d2bc20c8a03b1241f035dc07697a62b",
+    "tree": "da38347fce7dad3d7859357da6b8511728d2a208",
+    "basis": "All evidence path blob IDs below were resolved from this commit, not inferred from prior inventories."
+  },
+  "authoringCheckout": {
+    "headObservedBeforeWrite": "aa71d9a921c0a8971a2163275e8a935b52587e29",
+    "treeObservedBeforeWrite": "07ba94969bf50898e74a0ccdd4ef0e5689936f32",
+    "committedDeltaFromSourceSnapshot": [
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml"
+    ],
+    "ownership": "This worker adds only this artifact. The concurrent ledger/status changes and pre-existing __pycache__ remain outside this worker's edits."
+  },
+  "missingArtifactGap": {
+    "ledgerPath": "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+    "reportedLedgerTarget": "doc/plans/artifacts/2026-09-23-rudder-identity-analytics-managed-mcp-authority-inventory.md",
+    "reportSource": "Task brief and parent verification; ledger contents were not used as implementation evidence.",
+    "targetExistsInSourceTree": false,
+    "targetExistsInCheckoutAtInspection": false,
+    "verification": [
+      "git ls-tree -r 1e8507628d2bc20c8a03b1241f035dc07697a62b -- <reportedLedgerTarget> returned no entry",
+      "filesystem existence probe returned absent"
+    ],
+    "oldArtifactUsedAsCurrentEvidence": false
+  },
+  "scope": {
+    "families": [
+      "hosted_first_party_identity_and_local_account_bridge",
+      "first_party_analytics_collector_and_desktop_producer",
+      "managed_mcp_execution_and_adjacent_cli_mcp_controls",
+      "embedded_postgresql_process_and_migration_lifecycle"
+    ],
+    "boundedness": "Inspected current source, relevant test source, entrypoints, deployment assets, and relevant Rust crates for these families. Did not scan all 22 ledger units or full repository history.",
+    "statusDimensions": {
+      "implementation": "Present state owners and positive Rust behavior found in source.",
+      "private": "Private or operator-only controls and data paths.",
+      "public": "HTTP or other user-facing ingress; deployment reachability is stated separately from source route existence.",
+      "default": "Default or selected path evidenced by entrypoints/configuration.",
+      "retirement": "Whether Node/legacy/fallback behavior is still active and whether a Rust retirement is evidenced."
+    },
+    "evidenceRule": "Source presence, endpoint names, bearer-auth coverage, tests existing, or structural counts alone do not establish semantic Rust writer parity."
+  },
+  "families": {
+    "identity": {
+      "implementation": {
+        "currentAuthority": "Node. The hosted Vercel entry calls identityHandler; the handler obtains a singleton identity runtime and performs root-auth, device authorization, Desktop token/refresh, server exchange, telemetry consent, account/device, and security-event operations through identity-db.",
+        "additionalStateOwner": "The local Rudder server separately owns local-account exchange redemption and local auth-session persistence. Desktop owns client-side session/cookie installation and local telemetry/device state; it is not the hosted identity database writer.",
+        "rustEvidence": "auth-core is a private Node/Rust actor-envelope protocol with verification and a process-local replay guard. Its module contract says it does not persist credentials, contact an identity provider, or write product state. It is not root account/session/device authority.",
+        "inactiveOrLegacyCode": "identity/src/auth.ts defines a Better Auth factory, but no production callsite was found in the inspected tree. The identity HTTP E2E asserts /api/auth/sign-in/email is 404. The active hosted handler uses /api/root-auth and explicit Desktop/server paths. Local Rudder /api/auth/local-* routes are a separate Node implementation and do not make that Better Auth factory active."
+      },
+      "private": {
+        "status": "Node-owned authenticated mutations and server-to-server operations.",
+        "details": "The hosted handler validates account/device flows and uses identity-db state; consent synchronization is a separate authenticated collector hook. Local exchange/offline redemption and local-claim/signout require verified exchange, local session, or offline proof. Exact production secrets and deployed role grants were not read."
+      },
+      "public": {
+        "status": "HTTP identity entry exists; live reachability not verified.",
+        "details": "The Vercel adapter forwards requests to identityHandler. The handler exposes login/legal/health and auth/device/exchange endpoints. Source route presence does not prove current DNS, CDN, or deployment exposure."
+      },
+      "default": {
+        "status": "Node handler and Node persistence are the active source default.",
+        "details": "getIdentityRuntime selects the fixture adapter only for fixture environment; other environments select the Supabase root identity adapter. Desktop uses the first-party identity HTTP APIs and the local server exchange bridge. Supabase remains the upstream identity provider."
+      },
+      "retirement": {
+        "rustCutover": "Not evidenced; no Rust-owned hosted identity or local-account DB writer was found in the inspected Rust sources.",
+        "retainedBoundaries": [
+          "Supabase root identity provider and its externally owned auth schema",
+          "React/Electron login and session presentation",
+          "Node local-account exchange/offline/session business logic",
+          "Better Auth factory source/dependency remains present but hosted /api/auth routes are not the active handler path"
+        ],
+        "retirementDateOrGate": "Unknown; no retirement contract was evidenced in this bounded source pass."
+      },
+      "unknowns": [
+        "Current Vercel deployment, environment selection, and public reachability.",
+        "Production identity database migration state and Supabase project grants.",
+        "Whether identity/src/auth.ts is retained intentionally or is removable; this inventory does not remove it."
+      ],
+      "evidencePaths": [
+        "identity/api/index.ts",
+        "identity/src/handler.ts",
+        "identity/src/runtime.ts",
+        "identity/src/auth.ts",
+        "identity/src/config.ts",
+        "identity/src/supabase-root-identity-adapter.ts",
+        "identity/src/identity.e2e.test.ts",
+        "identity/src/telemetry-sync.ts",
+        "packages/identity-db/src/client.ts",
+        "packages/identity-db/src/schema.ts",
+        "packages/identity-db/src/device-authorization.ts",
+        "packages/identity-db/src/device-authorization.test.ts",
+        "packages/identity-db/src/production-migration-runner.ts",
+        "packages/identity-db/src/production-migration-safety.ts",
+        "packages/identity-db/src/product-analytics-consent.ts",
+        "server/src/routes/local-account-auth.ts",
+        "server/src/services/local-account-auth.ts",
+        "packages/db/src/schema/auth.ts",
+        "packages/db/src/schema/local_account_auth.ts",
+        "desktop/src/identity-local-session.ts",
+        "desktop/src/identity-runtime.ts",
+        "desktop/src/identity-session-store.ts",
+        "desktop/src/identity-device-authorization.test.ts",
+        "tests/e2e/local-account-upgrade.spec.ts",
+        "tests/identity-ui/identity-login.spec.ts",
+        "native/crates/auth-core/src/lib.rs"
+      ]
+    },
+    "analyticsCollector": {
+      "implementation": {
+        "currentAuthority": "Node standalone Express collector plus PostgreSQL. It verifies telemetry assertions/consent state, validates and persists event batches, updates installations/subjects, deduplicates by event ID and payload hash, and owns rollup/privacy aggregation, retention, deletion, and reporting behavior.",
+        "producerAndConsent": "Desktop maintains local telemetry identity/consent state and schedules uploads when configured. Hosted Identity issues assertions and synchronizes consent through the private collector route. These producer/control paths remain Node/Electron.",
+        "storageAndMigrations": "The deployed collector uses the rudder_analytics schema and role-separated collector, rollup, and reader connections. The deployment migration script applies 0140, 0141, and 0142 to that schema. Historical main-app migrations 0137 and 0139 create similarly named unqualified tables in the app database; they are not, by themselves, proof that the separate rudder_analytics deployment was migrated.",
+        "rustEvidence": "No collector route, persistence, consent, rollup, or retention implementation was found in the bounded native/crates and native/bins source search. CLI MCP protocol helpers are unrelated."
+      },
+      "private": {
+        "status": "Private data and control planes are explicit in source.",
+        "details": "Ingest requires a signed identity assertion or configured anonymous authorization plus installation consent state. Internal consent/revoke hooks use deployment secrets. The report connection is distinct and read-only by role; maintenance uses a separate role and connection."
+      },
+      "public": {
+        "status": "Compose publishes the collector on host loopback only; internet exposure is unknown.",
+        "details": "The container listener binds 0.0.0.0, while the checked compose mapping is 127.0.0.1:hostPort:4318. No network overlay, reverse proxy, or live deployment was inspected."
+      },
+      "default": {
+        "status": "Standalone deployment default, not a route mounted in the local Rudder API.",
+        "details": "The collector has its own Node entrypoint and Docker Compose service, gated after migration completion. The local app route registration does not mount collector ingest. Desktop passes an optional collector URL and continues without upload if the scheduler cannot start."
+      },
+      "retirement": {
+        "rustCutover": "Not evidenced; Node owns collector business and database writes.",
+        "retainedBoundaries": [
+          "Electron producer, consent UX, and local telemetry file",
+          "Separate central telemetry deployment and role provisioning",
+          "Main-app unqualified collector tables/migration history remain in the Drizzle lineage"
+        ],
+        "retirementDateOrGate": "Unknown; no removal or Rust cutover gate was found."
+      },
+      "unknowns": [
+        "Production ingress beyond the checked loopback Compose mapping.",
+        "Live schema/role/migration state and existing data in either app or rudder_analytics databases.",
+        "Whether every deployment runs the checked Compose file unchanged."
+      ],
+      "evidencePaths": [
+        "server/src/product-analytics-collector-server.ts",
+        "server/src/product-analytics-collector-config.ts",
+        "server/src/routes/product-analytics-collector.ts",
+        "server/src/routes/product-analytics-collector-report.ts",
+        "server/src/services/product-analytics-collector.ts",
+        "server/src/services/product-analytics-collector-maintenance.ts",
+        "server/src/__tests__/product-analytics-collector-server.test.ts",
+        "server/src/__tests__/product-analytics-collector-routes.test.ts",
+        "server/src/services/product-analytics-collector-maintenance.test.ts",
+        "packages/db/src/schema/product_analytics_collector_private.ts",
+        "packages/db/src/migrations/0137_shallow_quasimodo.sql",
+        "packages/db/src/migrations/0139_certain_selene.sql",
+        "packages/db/src/migrations/0140_faulty_kitty_pryde.sql",
+        "packages/db/src/migrations/0141_product_analytics_revision_origin.sql",
+        "packages/db/src/migrations/0142_product_analytics_quality_counters.sql",
+        "scripts/product-analytics-migrate.mjs",
+        "deploy/product-analytics/docker-compose.yml",
+        "deploy/product-analytics/init-roles.sh",
+        "server/package.json",
+        "desktop/src/product-analytics-main-scheduler.ts",
+        "desktop/src/product-analytics-main-scheduler.test.ts",
+        "desktop/src/product-analytics-telemetry.ts",
+        "desktop/src/product-analytics-uploader.ts",
+        "desktop/src/main.ts",
+        "identity/src/telemetry-sync.ts",
+        "packages/identity-db/src/product-analytics-consent.ts"
+      ]
+    },
+    "managedMcp": {
+      "implementation": {
+        "currentAuthority": "Node API routes, managed connection/binding/OAuth services, PostgreSQL state, and MCP SDK client transports. The runtime route handles initialize/discover/list/call and calls the configured external server over Streamable HTTP or STDIO.",
+        "state": "Connection/OAuth state is stored in mcp_connections and related tables. Per-agent access is implemented through agent_custom_integration_bindings with connection_id linkage; do not treat the legacy table name as proof that bindings have already moved to a new table.",
+        "rustEvidence": "cli-mcp-contract-core documents bounded primitives for a future Rust CLI/MCP binary and explicitly says it owns no authentication, product writes, or database state. It is not the managed remote MCP executor."
+      },
+      "private": {
+        "status": "Organization- and run-scoped controls are implemented in Node.",
+        "details": "Management paths require board and organization access plus owner/instance-admin policy. Runtime calls require a signed agent run with org/agent/run identity and a matching binding. Deployment-mode policy controls HTTP targets, STDIO command/cwd, and environment allowlists."
+      },
+      "public": {
+        "status": "Authenticated HTTP API surface; anonymous access is not evidenced.",
+        "details": "Routes are registered under the Rudder API, including a bound MCP runtime endpoint. Deployment exposure and reverse-proxy reachability were not probed."
+      },
+      "default": {
+        "status": "Node service is wired into the ordinary API route registration.",
+        "details": "The same connection service constructs the runtime client, OAuth grant check, and agent binding state. The adjacent first-party CLI agent-v1 MCP server is a separate local control surface that calls Rudder APIs; it must not be conflated with organization-managed external MCP servers."
+      },
+      "retirement": {
+        "rustCutover": "Not evidenced for managed connection state, OAuth, access policy, or remote tool execution.",
+        "retainedBoundaries": [
+          "User-authored or vendor MCP servers remain external processes/services.",
+          "Node managed-MCP executor remains active.",
+          "Rust CLI MCP contract primitives are not a replacement implementation."
+        ],
+        "retirementDateOrGate": "Unknown; no managed-MCP Rust retirement gate was found."
+      },
+      "unknowns": [
+        "Production allowlist values and deployment exposure.",
+        "Live credentials, OAuth grants, legacy integration rows, and connection bindings.",
+        "Whether all provider-specific execution branches have equivalent future Rust protocols."
+      ],
+      "adjacentCliMcpControls": {
+        "implementation": "Node CLI agent-v1 MCP server and CLI command surface; Rust contract helper crate exists.",
+        "ownershipMeaning": "This surface exposes Rudder agent capabilities. It does not own managed MCP connection/OAuth state or execute user-managed MCP servers.",
+        "retirement": "No runtime replacement or retirement evidence found."
+      },
+      "evidencePaths": [
+        "server/src/bootstrap/register-api-routes.ts",
+        "server/src/routes/managed-mcp-runtime.ts",
+        "server/src/routes/managed-mcp-connections.ts",
+        "server/src/routes/managed-mcp-agent-bindings.ts",
+        "server/src/services/mcp/managed-runtime.ts",
+        "server/src/services/mcp/managed-connections.ts",
+        "server/src/services/mcp/managed-bindings.ts",
+        "server/src/services/mcp/managed-client.ts",
+        "server/src/services/mcp/oauth.ts",
+        "server/src/services/mcp/security-policy.ts",
+        "server/src/services/mcp/pinned-fetch.ts",
+        "packages/db/src/schema/mcp_connections.ts",
+        "packages/db/src/schema/custom_integrations.ts",
+        "packages/db/src/migrations/0111_nostalgic_scarecrow.sql",
+        "server/src/__tests__/managed-mcp-runtime-routes.test.ts",
+        "server/src/__tests__/managed-mcp-connections-service.test.ts",
+        "tests/e2e/managed-mcp-integrations.spec.ts",
+        "doc/engineering/DEPLOYMENT-MODES.md",
+        "cli/src/agent-v1-mcp-server.ts",
+        "cli/src/commands/client/agent.ts",
+        "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+        "native/crates/cli-mcp-contract-core/src/lib.rs"
+      ]
+    },
+    "embeddedPostgresql": {
+      "implementation": {
+        "currentAuthority": "Node. server/src/index.ts selects/reuses the local instance, initializes/starts it, applies startup migrations, checks post-migration invariants, and registers owned-process stop with the runtime supervisor. packages/db owns the provider and recovery routines. pnpm db:migrate uses a separate Node connection lifecycle and stops only an instance it started.",
+        "migrationBoundary": "Node remains the migration writer: Drizzle applies SQL under advisory lock with recovery-point and post-migration gates. Rust migration-core validates assets; migration-history-postgres and migration-service read one repeatable-read snapshot; the migration-service source explicitly says it never locks, executes SQL, repairs history, or changes startup authority.",
+        "outsideServerAssets": "CLI resolves/downloads the shared PostgreSQL payload and injects RUDDER_POSTGRES_BIN_DIR before importing the installed server. Desktop resolves/reconciles the shared payload, holds a lifecycle lock, and finalizes compatibility links after health. Dev scripts choose per-instance DB paths/ports. These assets are mandatory parts of a complete Rust lifecycle scope.",
+        "rustEvidence": "Rust server-foundation provides service readiness with SELECT 1 and a foundation-only health receipt. It does not initialize or stop a PostgreSQL cluster. No Rust initdb/pg_ctl cluster lifecycle was found in the inspected crates/binaries."
+      },
+      "private": {
+        "status": "Embedded listener is loopback-bound and storage is instance-scoped.",
+        "details": "Provider start arguments bind 127.0.0.1. Per-instance config/data paths and runtime descriptors prevent the local provider from being treated as a shared public database. Existing local data was not opened or changed."
+      },
+      "public": {
+        "status": "No public listener is evidenced for the embedded path.",
+        "details": "DATABASE_URL selects an external PostgreSQL connection whose network exposure is owned by that provider and is outside the embedded process lifecycle."
+      },
+      "default": {
+        "status": "When DATABASE_URL is unset, the Node server uses its embedded provider.",
+        "details": "createLocalPostgresInstance selects verified official PostgreSQL 18.4 when RUDDER_POSTGRES_BIN_DIR is set; otherwise it loads the legacy embedded-postgres wrapper. Installed CLI runtime prepares/reuses the shared payload and sets the variable; Desktop has its own payload selection and lifecycle lock."
+      },
+      "retirement": {
+        "rustCutover": "Not evidenced for cluster initialization, start/readiness, stop, recovery, or migration writes.",
+        "retainedCompatibility": [
+          "The embedded-postgres Node dependency fallback remains active when no official bin directory is configured.",
+          "Legacy payload compatibility paths remain; packaged Desktop cleanup is gated on a verified cold start.",
+          "Rust migration preflight is a reader and is not a writer replacement."
+        ],
+        "retirementDateOrGate": "Unknown; no fallback removal or Rust migration-writer cutover date was found."
+      },
+      "unknowns": [
+        "Live local database processes, on-disk data, configured provider, and PostgreSQL runtime version.",
+        "Actual installed Desktop/CLI payload contents and whether current users still require the compatibility fallback.",
+        "External DATABASE_URL server policy and deployment-specific migration runner behavior."
+      ],
+      "evidencePaths": [
+        "doc/engineering/DEVELOPING.md",
+        "doc/engineering/DATABASE.md",
+        "packages/db/src/local-postgres-provider.ts",
+        "packages/db/src/migration-runtime.ts",
+        "packages/db/src/client.ts",
+        "packages/db/src/runtime-config.ts",
+        "packages/db/src/embedded-postgres-recovery.ts",
+        "packages/db/src/embedded-postgres-recovery.test.ts",
+        "packages/db/src/local-postgres-provider.test.ts",
+        "packages/db/src/migrate.ts",
+        "server/src/index.ts",
+        "server/src/__tests__/migration-startup-contract.test.ts",
+        "server/src/services/migration-preflight.ts",
+        "server/src/services/migration-preflight.test.ts",
+        "server/src/services/rust-foundation-bridge.ts",
+        "server/src/bootstrap/create-http-app.ts",
+        "desktop/src/postgres-runtime.ts",
+        "desktop/src/postgres-runtime.test.ts",
+        "desktop/src/main.ts",
+        "cli/src/runtime/postgres-runtime-source.ts",
+        "cli/src/runtime/postgres-runtime-download.ts",
+        "cli/src/runtime/postgres-payload.ts",
+        "cli/src/runtime/server-entry.ts",
+        "cli/src/commands/run.ts",
+        "scripts/dev-local-env.mjs",
+        "native/crates/migration-core/src/lib.rs",
+        "native/crates/migration-core/tests/validation.rs",
+        "native/crates/migration-history-postgres/src/lib.rs",
+        "native/crates/migration-history-postgres/tests/postgres.rs",
+        "native/crates/migration-service/src/lib.rs",
+        "native/crates/migration-service/tests/preflight.rs",
+        "native/crates/server-foundation/src/lib.rs",
+        "native/bins/rudder-server-foundation/src/main.rs"
+      ]
+    }
+  },
+  "nextRustAuthoritySlice": {
+    "recommended": "Own the local server-exchange redemption transaction for POST /api/auth/local-exchange, leaving Identity provider verification and HTTP/cookie presentation behind a narrow Node adapter.",
+    "currentNodeTransaction": [
+      "Verifies and validates issuer, audience, installation, expiry, subject, and verified email before entering the DB transaction.",
+      "Atomically inserts a one-time server_exchange_redemptions row, serializes issuer/subject binding creation with an advisory transaction lock, creates or refreshes the external user binding, creates the local user when needed, inserts the auth session, and links the redemption to that user."
+    ],
+    "explicitRetainedBoundaries": [
+      "Supabase/upstream identity provider and hosted identity HTTP service",
+      "Desktop and browser presentation/cookie installation",
+      "Offline grant, legacy installation claim, and signout-all until separately inventoried and accepted"
+    ],
+    "acceptanceEdgesForThatSlice": [
+      "Concurrent redemption of one jti has exactly one winner.",
+      "Issuer, audience, installation, expiry, and verified-email mismatches fail closed.",
+      "Concurrent first login for one issuer/subject creates one local binding.",
+      "Existing binding reuse and session persistence across server restart preserve current behavior.",
+      "Local-account upgrade E2E remains green on the exact Rust candidate."
+    ],
+    "blockers": [
+      "Define a Rust bridge proof for verified exchange claims; auth-core actor envelopes are not identity-provider exchange claims.",
+      "Bind Rust transaction authority to existing Drizzle schema, legacy operator-state semantics, and activity/organization effects before choosing write ownership.",
+      "Real PostgreSQL concurrency and E2E acceptance are intentionally not run in this Phase0 evidence task."
+    ],
+    "decisionStatus": "Candidate next slice only; no implementation authority is claimed by this inventory."
+  },
+  "verification": {
+    "performed": [
+      "Read AGENTS.md and the relevant DEVELOPING.md, DATABASE.md, and DEPLOYMENT-MODES.md contracts.",
+      "Read source and representative test files for the four bounded families and their non-server entrypoints.",
+      "Resolved source commit tree and path blob IDs from 1e8507628d2bc20c8a03b1241f035dc07697a62b.",
+      "Rechecked the reported September 23 artifact path is absent from the source tree and inspected checkout."
+    ],
+    "notRunByRequest": [
+      "Tests or acceptance suites",
+      "Runtime startup, PostgreSQL, build, or deployment",
+      "Network or live service checks"
+    ],
+    "claimLimit": "Source inventory only. Tests were inspected but not executed. No live or semantic acceptance PASS is claimed."
+  },
+  "evidence": [
+    {"path":"AGENTS.md","blob":"d98e60464032491fdadaa0c933ef4370235204e1","anchors":["purpose","source-of-truth and preservation rules"],"role":"repository instructions"},
+    {"path":"doc/engineering/DEVELOPING.md","blob":"6a1dd74201bd894ad443f91b263b62869af6aec8","anchors":["28-42","218-270","325-366"],"role":"Rust foundation, plan, and local runtime contracts"},
+    {"path":"doc/engineering/DATABASE.md","blob":"167c40883e5f8a948bb9677a4223fa16cc279130","anchors":["5-61","143-172","262-290"],"role":"embedded PostgreSQL, migration safety, and payload lifecycle"},
+    {"path":"doc/engineering/DEPLOYMENT-MODES.md","blob":"40eb637515e93da2952f0970f71f4daa729f90c7","anchors":["20-74","132-144"],"role":"managed MCP and exposure policy"},
+    {"path":"identity/api/index.ts","blob":"4c198fce9d676495296c72b70633428e8b7d20d4","anchors":["1-6"],"role":"hosted identity HTTP entry"},
+    {"path":"identity/src/handler.ts","blob":"c9b012dd5b96d0a1c55d0d4ac3d8efcb872a9d51","anchors":["712-771","1194-1551","1676-1733","1845-2160"],"role":"active hosted identity routes and stateful operations"},
+    {"path":"identity/src/runtime.ts","blob":"fd2d4bd04707a75b1114c62713e03547deecc786","anchors":["35-110"],"role":"identity DB and root adapter selection"},
+    {"path":"identity/src/auth.ts","blob":"fb5fc16743301694050176b82f79b1846b85ecce","anchors":["26-48"],"role":"Better Auth factory; no production callsite found"},
+    {"path":"identity/src/config.ts","blob":"5b317c8dc40ebfb9a348c5fc12a927fe949c8c7c","anchors":["config readers"],"role":"identity environment and provider configuration"},
+    {"path":"identity/src/supabase-root-identity-adapter.ts","blob":"fd21af9266dde536ea52a6282416a64919cfb75c","anchors":["128-"],"role":"external root identity provider adapter"},
+    {"path":"identity/src/identity.e2e.test.ts","blob":"4ac5b40343bd06239c115be048ad55a2a79029d4","anchors":["603-616","698-779"],"role":"asserts inactive Better Auth route and exercises root-auth"},
+    {"path":"identity/src/telemetry-sync.ts","blob":"3dbe6e5a8f87b7fb13f597de072d5a9262cf0453","anchors":["20-"],"role":"private identity-to-collector consent synchronization"},
+    {"path":"packages/identity-db/src/client.ts","blob":"6eacf9f17baa170dcbc8890de11f5e1e8566960f","anchors":["createIdentityDb"],"role":"identity database connection"},
+    {"path":"packages/identity-db/src/schema.ts","blob":"ab5fb0b6ca5ec3b426d986643f38814705561446","anchors":["identity schema and persisted entities"],"role":"hosted identity storage schema"},
+    {"path":"packages/identity-db/src/device-authorization.ts","blob":"bbf965a6daddfc946f211cd67f3388e72b059086","anchors":["device issue/approve/redeem exports"],"role":"identity device authorization state"},
+    {"path":"packages/identity-db/src/device-authorization.test.ts","blob":"cff22692eb9e6cb42a4e3ed8fb717a05ea0bef42","anchors":["file tests"],"role":"device authorization regression evidence"},
+    {"path":"packages/identity-db/src/production-migration-runner.ts","blob":"bb47b730d69e949c1b6c06901f78704220f8d148","anchors":["46-"],"role":"identity production migration gate"},
+    {"path":"packages/identity-db/src/production-migration-safety.ts","blob":"850cd739346b21a081830fd1fd9942e6111526b6","anchors":["safety contract"],"role":"identity migration safety rules"},
+    {"path":"packages/identity-db/src/product-analytics-consent.ts","blob":"9e734ccca42eced098140b3c92ed3a17df72bd0f","anchors":["39-"],"role":"identity consent ledger writes"},
+    {"path":"server/src/routes/local-account-auth.ts","blob":"1307dd73cee83f6875c6edcf31508bb5acde05be","anchors":["13-86"],"role":"local account exchange/offline/claim/signout routes"},
+    {"path":"server/src/services/local-account-auth.ts","blob":"aa0351b7b7def471346f77150405853297c38f0f","anchors":["117-","239-340","346-650"],"role":"local session and binding transaction authority"},
+    {"path":"packages/db/src/schema/auth.ts","blob":"cf261bc9bb6c1ed878eb77ee1d4711b2ffa3f9f6","anchors":["auth users/sessions/external bindings"],"role":"local account storage"},
+    {"path":"packages/db/src/schema/local_account_auth.ts","blob":"3cfb3ae9d4037ef97a32c56be05a0987f6d90928","anchors":["exchange redemption schema"],"role":"local auth schema"},
+    {"path":"desktop/src/identity-local-session.ts","blob":"7b2b1860319eb5cf596d91293075b383b5f9e66a","anchors":["48-160"],"role":"Desktop local session/client behavior"},
+    {"path":"desktop/src/identity-runtime.ts","blob":"f7eb7ffb95a140c0761f778194046a5a688d4583","anchors":["identity runtime"],"role":"Desktop-owned auth and telemetry client state"},
+    {"path":"desktop/src/identity-session-store.ts","blob":"c49b7d7e3b501db4dc7961a5f89eb4ea2c05dc09","anchors":["session store"],"role":"Electron session persistence"},
+    {"path":"desktop/src/identity-device-authorization.test.ts","blob":"e465dc8ea9421bca26b40c289290118ce37d2b0c","anchors":["file tests"],"role":"Desktop device flow regression evidence"},
+    {"path":"tests/e2e/local-account-upgrade.spec.ts","blob":"d5bbf2e50cf392b558a7a86738f198a01a4351e6","anchors":["file E2E"],"role":"local account upgrade workflow evidence"},
+    {"path":"tests/identity-ui/identity-login.spec.ts","blob":"4649f9f85de2245b67f25f20d3dfd6d10d2f2ba1","anchors":["file E2E"],"role":"hosted identity login workflow evidence"},
+    {"path":"native/crates/auth-core/src/lib.rs","blob":"7fa2df32f1d137cd762eeb9595295ce5582176f7","anchors":["1-6","RequestContext","NonceReplayGuard"],"role":"Rust actor-envelope protocol, not identity state authority"},
+    {"path":"server/src/product-analytics-collector-server.ts","blob":"4185cd1077c2c9e48c1a5c351192b87a5d3df17c","anchors":["21-75","85-173"],"role":"standalone collector startup, listener, maintenance, shutdown"},
+    {"path":"server/src/product-analytics-collector-config.ts","blob":"0d9ba9dcb25159a63ebc22e8c5d4488466ef197e","anchors":["47-86"],"role":"collector config/defaults"},
+    {"path":"server/src/routes/product-analytics-collector.ts","blob":"cee9e91de2d4a809bf068bb15ac0852b0d5db8e4","anchors":["20-79","83-"],"role":"assertion authorization, ingest, and private consent routes"},
+    {"path":"server/src/routes/product-analytics-collector-report.ts","blob":"d98b3e71adee04a0d52be80eecc68d0a646bbd16","anchors":["101-"],"role":"separate report reader"},
+    {"path":"server/src/services/product-analytics-collector.ts","blob":"50d6e21f34f743713a0dfb86d247f91da0ff15ec","anchors":["87-","236-","374-"],"role":"validation, persistent ingestion, idempotency"},
+    {"path":"server/src/services/product-analytics-collector-maintenance.ts","blob":"649c34b64268cd053e1314bdb034399c7df21029","anchors":["55-","71-","141-","196-","326-374"],"role":"DB boundary, rollups, privacy aggregates, retention/deletion"},
+    {"path":"packages/db/src/schema/product_analytics_collector_private.ts","blob":"a1617cdb74f1dc7e68b755522d41e20e73ea33c9","anchors":["1-"],"role":"rudder_analytics private collector schema"},
+    {"path":"packages/db/src/migrations/0137_shallow_quasimodo.sql","blob":"04287981a8659bbcedb71f5f732fce919f01f41a","anchors":["1-"],"role":"unqualified app-database collector tables"},
+    {"path":"packages/db/src/migrations/0139_certain_selene.sql","blob":"fb51bbb5cb27b881460d4807370f289052899aac","anchors":["1-"],"role":"unqualified app-database rollup tables"},
+    {"path":"packages/db/src/migrations/0140_faulty_kitty_pryde.sql","blob":"dbc5a933bedf1585e719bdc14abc9759b4067db0","anchors":["1-"],"role":"rudder_analytics schema/table and role grants"},
+    {"path":"packages/db/src/migrations/0141_product_analytics_revision_origin.sql","blob":"7aa76e2905e299e98610ebe9c6d9825fbb194026","anchors":["1-"],"role":"private collector work-loop origin migration"},
+    {"path":"packages/db/src/migrations/0142_product_analytics_quality_counters.sql","blob":"96d4de0169584dd7795c3e4983fb3ff51d2ae01d","anchors":["1-"],"role":"private collector quality counter table/grants"},
+    {"path":"scripts/product-analytics-migrate.mjs","blob":"88e02d40dcd82f07b4f939a3532264b02563347a","anchors":["9-","54-"],"role":"private collector Node migration writer"},
+    {"path":"deploy/product-analytics/docker-compose.yml","blob":"3c00086ed818da889b771dcd88f1b5c3ceb9b63c","anchors":["1-"],"role":"DB, migration, collector services and loopback port mapping"},
+    {"path":"deploy/product-analytics/init-roles.sh","blob":"67895b4cfe8fdb63be40245864cc7e8af2396975","anchors":["file"],"role":"collector role provisioning"},
+    {"path":"server/package.json","blob":"86996de430e0490bc1880fde193ccdac1c9b1a3c","anchors":["collector scripts"],"role":"collector Node entry commands"},
+    {"path":"desktop/src/product-analytics-main-scheduler.ts","blob":"da7a450f813eae1c638ea715e9174898c7079eed","anchors":["37-"],"role":"Desktop consent-gated producer scheduler"},
+    {"path":"desktop/src/product-analytics-main-scheduler.test.ts","blob":"1f883114bd62459223fe761ca69143d7eedb4374","anchors":["file tests"],"role":"scheduler behavior regression evidence"},
+    {"path":"desktop/src/product-analytics-telemetry.ts","blob":"034493b9e1c271833a7ba5791f5f4989f91b509a","anchors":["local telemetry state"],"role":"Desktop telemetry persistence"},
+    {"path":"desktop/src/product-analytics-uploader.ts","blob":"a07e45f74624d90d52d727f0e6e14eaaeae0bfe0","anchors":["upload"],"role":"Desktop collector client"},
+    {"path":"desktop/src/main.ts","blob":"a9c55af3e8e3141e8874aab08e3b64cc3874e423","anchors":["151-152","2291-2298"],"role":"scheduler lifecycle integration"},
+    {"path":"server/src/__tests__/product-analytics-collector-server.test.ts","blob":"e9029992383bb79023dac8a93cce770af70eb82f","anchors":["file tests"],"role":"collector server tests"},
+    {"path":"server/src/__tests__/product-analytics-collector-routes.test.ts","blob":"ca021629da4953f8b51762e69742ec4a8ce1c0c4","anchors":["file tests"],"role":"collector route tests"},
+    {"path":"server/src/services/product-analytics-collector-maintenance.test.ts","blob":"d36db5dce9067bf795b4d7fa08ef770828eb5b7b","anchors":["file tests"],"role":"collector maintenance tests"},
+    {"path":"server/src/bootstrap/register-api-routes.ts","blob":"a883118e8e81c1f9f01dfd723db89ed41057902f","anchors":["23-","65-112"],"role":"local auth and managed MCP API mounts; collector is absent"},
+    {"path":"server/src/routes/managed-mcp-runtime.ts","blob":"5c1b38c834c359ab2853ab13c8da5f1680298616","anchors":["27-","110-314"],"role":"agent-run-authenticated MCP protocol execution"},
+    {"path":"server/src/routes/managed-mcp-connections.ts","blob":"068d8511920a6916c69709e6b37dd9ef5450f31b","anchors":["49-","123-"],"role":"organization connection/OAuth API"},
+    {"path":"server/src/routes/managed-mcp-agent-bindings.ts","blob":"6255cc8cbdbc69b20c5d946633fbf2b43e238e3d","anchors":["23-"],"role":"agent binding management API"},
+    {"path":"server/src/services/mcp/managed-runtime.ts","blob":"fd9869545ca94d462e5a2943abf83130a2459bdf","anchors":["293-","412-560"],"role":"binding authorization, tool list/call"},
+    {"path":"server/src/services/mcp/managed-connections.ts","blob":"61b1abc814164ecc454450d800f445c4f77371e7","anchors":["431-","688-","966-"],"role":"connection persistence and external runtime client"},
+    {"path":"server/src/services/mcp/managed-bindings.ts","blob":"f651bdab17b18670e055042a91c8b11732acda2d","anchors":["1-","329-"],"role":"per-agent binding state on legacy integration tables"},
+    {"path":"server/src/services/mcp/managed-client.ts","blob":"5a54cba0ccd8727308faa846620c10906bbfe23d","anchors":["228-"],"role":"external HTTP and STDIO MCP transports"},
+    {"path":"server/src/services/mcp/oauth.ts","blob":"16c1f17e857639acc56367c8015b024ac910fcc9","anchors":["grant lifecycle"],"role":"managed provider OAuth state"},
+    {"path":"server/src/services/mcp/security-policy.ts","blob":"a0ab40a277b1af484b120e41b39691e1d0116e6e","anchors":["policy exports"],"role":"deployment-mode transport policy"},
+    {"path":"server/src/services/mcp/pinned-fetch.ts","blob":"487c0838a28b118b80e7e98bdf95198befff98b7","anchors":["fetch"],"role":"pinned-address HTTP transport"},
+    {"path":"packages/db/src/schema/mcp_connections.ts","blob":"d43eed6349ada8334351e6f870138aeddf967b6c","anchors":["22-"],"role":"connection and OAuth persistence"},
+    {"path":"packages/db/src/schema/custom_integrations.ts","blob":"fbdeb1c2a8b0fd11fcadd585d35300eb5e1b6f12","anchors":["agent_custom_integration_bindings"],"role":"binding/tool tables reused by managed MCP"},
+    {"path":"packages/db/src/migrations/0111_nostalgic_scarecrow.sql","blob":"a4ea9d0b61a3db1edfcf5468c616badfb4793f6f","anchors":["MCP connection_id linkage"],"role":"legacy binding/tool connection linkage"},
+    {"path":"server/src/__tests__/managed-mcp-runtime-routes.test.ts","blob":"bb027e435a8097f565ded42102277bb71429ef33","anchors":["file tests"],"role":"runtime protocol/access tests"},
+    {"path":"server/src/__tests__/managed-mcp-connections-service.test.ts","blob":"2e958f9487405894c4429cafd24d042a7d12ba1d","anchors":["file tests"],"role":"connection service tests"},
+    {"path":"tests/e2e/managed-mcp-integrations.spec.ts","blob":"64f00e204f77d0996b3336a10886657facbaac2b","anchors":["file E2E"],"role":"managed MCP workflow evidence"},
+    {"path":"cli/src/agent-v1-mcp-server.ts","blob":"887f85bab3f89811318b91be3e6e35f8afcbc00f","anchors":["server implementation"],"role":"adjacent first-party CLI MCP server"},
+    {"path":"cli/src/commands/client/agent.ts","blob":"d59159e9b6776cf13d9cf1f104f389e2d8b29157","anchors":["MCP manifest wiring"],"role":"CLI agent command registration"},
+    {"path":"cli/src/__tests__/agent-v1-mcp-server.test.ts","blob":"7afc9b177eb249189c08837eae14e77de6d74edc","anchors":["file tests"],"role":"CLI MCP protocol tests"},
+    {"path":"native/crates/cli-mcp-contract-core/src/lib.rs","blob":"adb6bdc60f6121a44a5e603ada91b15dc82f9263","anchors":["1-6","capability and identity helpers"],"role":"future Rust CLI MCP protocol helper, not managed MCP runtime"},
+    {"path":"packages/db/src/local-postgres-provider.ts","blob":"297b19148a311b4ec60f1f4c90e8b2320c8e76bb","anchors":["21-","234-","324-483"],"role":"Node official and legacy PostgreSQL provider"},
+    {"path":"packages/db/src/migration-runtime.ts","blob":"3f335400e98b1e67ec8bc9f3fb885facf83fd25b","anchors":["50-208"],"role":"manual migration database lifecycle and ownership-aware stop"},
+    {"path":"packages/db/src/client.ts","blob":"23b0cab329b9a538b31184eba47ba5a514cfb478","anchors":["1198-1355"],"role":"Node advisory lock, migration writer, invariant checks"},
+    {"path":"packages/db/src/runtime-config.ts","blob":"efd02cf8e1b58c78e67c421690e7e204fc002b97","anchors":["database target/path selection"],"role":"embedded/external DB config"},
+    {"path":"packages/db/src/embedded-postgres-recovery.ts","blob":"dc4254995d08ca0eccd96a62af3d054bb02f0892","anchors":["recovery helpers"],"role":"Node stale pid/shared memory recovery"},
+    {"path":"packages/db/src/local-postgres-provider.test.ts","blob":"e308b4a51f3b17675c5f40ce83fd7e3d5a8847b9","anchors":["file tests"],"role":"provider behavior tests"},
+    {"path":"packages/db/src/embedded-postgres-recovery.test.ts","blob":"ac2d181d65bbdabde93cc1c0a3eb7826961026a2","anchors":["file tests"],"role":"recovery behavior tests"},
+    {"path":"packages/db/src/migrate.ts","blob":"f51b629e2cfc016f864092f491c0d9b9f32aa456","anchors":["1-"],"role":"pnpm db:migrate Node entry"},
+    {"path":"server/src/index.ts","blob":"19422f8ebfb0f13bbfa5a8522209c2339042f192","anchors":["386-558","674-853","1536-"],"role":"server PG start/migrate/shutdown lifecycle"},
+    {"path":"server/src/__tests__/migration-startup-contract.test.ts","blob":"ff1b64d2f9b36ddb1f531b963b1f77c1e0f98069","anchors":["file tests"],"role":"startup migration contract tests"},
+    {"path":"server/src/services/migration-preflight.ts","blob":"5cd8275b17fb99bc6eb3e1ab6f34971987c07d96","anchors":["160-"],"role":"Node adapter invoking Rust read-only preflight"},
+    {"path":"server/src/services/migration-preflight.test.ts","blob":"4a8858fbbcccfbb53ba37984449c4496d4de608a","anchors":["file tests"],"role":"preflight bridge protocol tests"},
+    {"path":"server/src/services/rust-foundation-bridge.ts","blob":"e1ce9e2d76006dca6fe400ea6368669d3d1922b1","anchors":["30-","104-","361-"],"role":"limited Node/Rust business bridge and actor envelopes"},
+    {"path":"server/src/bootstrap/create-http-app.ts","blob":"deeb04b1084c7ae1800cc3f7443b8c6f8179679f","anchors":["42-"],"role":"Rust foundation startup integration"},
+    {"path":"desktop/src/postgres-runtime.ts","blob":"fbb83f0c46ffe9fdbded6d379980f07858ae177a","anchors":["72-","409-","484-739"],"role":"Desktop payload selection, lifecycle lock, cleanup"},
+    {"path":"desktop/src/postgres-runtime.test.ts","blob":"4c91733ed82af250ab3b65f2b9f2419d397ed99f","anchors":["file tests"],"role":"Desktop payload lifecycle tests"},
+    {"path":"cli/src/runtime/postgres-runtime-source.ts","blob":"50fb991f5425e5e3186e6f176ef8d8f76acfc4d4","anchors":["25-"],"role":"official archive source selection"},
+    {"path":"cli/src/runtime/postgres-runtime-download.ts","blob":"d4d86083beb0e5fc73282feb33a27d7ea517fa7e","anchors":["12-"],"role":"CLI PostgreSQL payload download"},
+    {"path":"cli/src/runtime/postgres-payload.ts","blob":"9a19070d0cc3f37ed21cb09518e8e6b5f759b86c","anchors":["payload lifecycle"],"role":"CLI shared payload state"},
+    {"path":"cli/src/runtime/server-entry.ts","blob":"f5e4687f858126ebf6d2f0a6b5aea87d5a0b0d5c","anchors":["34-90"],"role":"CLI sets verified payload path before server import"},
+    {"path":"cli/src/commands/run.ts","blob":"b72f3adf78a62af97eb9aa7f89d308ed35d42b5f","anchors":["26-115"],"role":"CLI server lifecycle owner"},
+    {"path":"scripts/dev-local-env.mjs","blob":"56dea2781cdd9f57d205e664ab8e4d79b8a360ff","anchors":["instance port/path presets"],"role":"dev per-instance DB selection"},
+    {"path":"native/crates/migration-core/src/lib.rs","blob":"e533fdfc6183637cf6005119b74237ef84f481e2","anchors":["1-","400-432","751-"],"role":"Rust migration asset validation"},
+    {"path":"native/crates/migration-core/tests/validation.rs","blob":"e84c099de2696f8513af570ac7d70d9b089d3787","anchors":["file tests"],"role":"Rust migration manifest tests"},
+    {"path":"native/crates/migration-history-postgres/src/lib.rs","blob":"a474a149271359036ba15a1604fe4add1992fc2b","anchors":["1-12","101-"],"role":"Rust read-only PostgreSQL history adapter"},
+    {"path":"native/crates/migration-history-postgres/tests/postgres.rs","blob":"bf9399c149500ec20a196c0e95425e55efbf64be","anchors":["file tests"],"role":"Rust history adapter tests"},
+    {"path":"native/crates/migration-service/src/lib.rs","blob":"ddfbd6117214cfe0dbc764843bc1f8437adfa0ce","anchors":["1-12","68-"],"role":"Rust read-only migration preflight; Node remains writer"},
+    {"path":"native/crates/migration-service/tests/preflight.rs","blob":"8ba7ad9269dd4e45842ac8ff0fa91fe6acb09681","anchors":["file tests"],"role":"Rust preflight tests"},
+    {"path":"native/crates/server-foundation/src/lib.rs","blob":"5df6f302a44e665719eef1849c4e6d7685d20f37","anchors":["1144-","2530-"],"role":"Rust readiness/foundation server, not PG lifecycle"},
+    {"path":"native/bins/rudder-server-foundation/src/main.rs","blob":"a533202fba1006e2c1992755c13da0039b2c1179","anchors":["1-"],"role":"Rust foundation process entry"},
+    {"path":"doc/plans/artifacts/2026-09-23-rudder-identity-analytics-managed-mcp-authority-inventory.md","blob":null,"anchors":[],"role":"expected prior artifact; absent from source tree"}
+  ]
+}

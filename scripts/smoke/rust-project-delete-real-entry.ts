@@ -104,7 +104,8 @@ async function main() {
       RUDDER_DEPLOYMENT_MODE: "local_trusted",
       RUDDER_RUST_MEMBER_DIRECTORY_MODE: "off",
       RUDDER_RUST_ORGANIZATION_BRANDING_MODE: "off",
-      RUDDER_RUST_PROJECT_GOAL_SET_MODE: "required",
+      // Establish intentional Node fixtures before the create pilot owns new rows.
+      RUDDER_RUST_PROJECT_GOAL_SET_MODE: "off",
       RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS: "",
       RUDDER_OPEN_ON_LISTEN: "false",
     });
@@ -158,9 +159,35 @@ async function main() {
     await start();
     const org = await create("/orgs", { name: "Project deletion ownership", issuePrefix: "RPD", requireBoardApprovalForNewAgents: false });
     const foreignOrg = await create("/orgs", { name: "Project deletion foreign scope", issuePrefix: "RPF", requireBoardApprovalForNewAgents: false });
+    const disabledPublicProjectName = `Disabled public Project ${randomUUID()}`;
+    const projectsBeforeDisabledPublicCreate = await sql.unsafe(
+      "SELECT id::text AS id, name FROM projects WHERE org_id = $1 ORDER BY id",
+      [org.id],
+    ) as Array<{ id: string; name: string }>;
+    const disabledPublicCreate = await request(`/orgs/${org.id}/projects`, "POST", { name: disabledPublicProjectName });
+    assert.equal(disabledPublicCreate.status, 503, JSON.stringify(disabledPublicCreate));
+    const projectsAfterDisabledPublicCreate = await sql.unsafe(
+      "SELECT id::text AS id, name FROM projects WHERE org_id = $1 ORDER BY id",
+      [org.id],
+    ) as Array<{ id: string; name: string }>;
+    assert.deepEqual(
+      Array.from(projectsAfterDisabledPublicCreate),
+      Array.from(projectsBeforeDisabledPublicCreate),
+      "public Project creation while Rust create mode is off must not insert a row",
+    );
+    assert.ok(!Array.from(projectsAfterDisabledPublicCreate).some((project) => project.name === disabledPublicProjectName));
+
+    const { projectService } = await import("../../server/src/services/projects.js");
+    const legacyProjectService = projectService(drizzle(sql) as never);
     const fixture = async (name: string, description = "Deletion parity fixture"): Promise<Fixture> => {
       const goal = await create(`/orgs/${org.id}/goals`, { title: `${name} goal` });
-      const project = await create(`/orgs/${org.id}/projects`, { name, goalIds: [goal.id], description });
+      const project = await legacyProjectService.create(
+        org.id,
+        { name, goalIds: [goal.id], description },
+        { lane: "node", caller: "import" },
+      );
+      assert.equal(project.orgId, org.id, "legacy fixture must remain organization-scoped");
+      assert.match(project.id, /^[0-9a-f-]{36}$/u);
       const resource = await create(`/orgs/${org.id}/resources`, {
         name: `${name} reference`, kind: "url", sourceType: "external", locator: `https://example.test/${project.id}`,
       });
@@ -213,6 +240,7 @@ async function main() {
 
     for (const f of [mainProject, largeProject, noKey, rollback, conflict, outage, unlistedRust, rustIssueProject]) selected.add(f.id);
     await stop();
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = "required";
     await start();
     const states = await sql.unsafe("SELECT project_id::text, owner FROM project_goal_mutation_state WHERE org_id = $1", [org.id]);
     for (const id of selected) assert.equal(states.find((row: Json) => row.project_id === id)?.owner, "rust");
@@ -278,7 +306,6 @@ async function main() {
     await sql.unsafe("CREATE FUNCTION smoke_count_project_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('smoke_project_delete_attempts'); RETURN OLD; END $$");
     await sql.unsafe("CREATE TRIGGER smoke_count_project_delete BEFORE DELETE ON projects FOR EACH ROW EXECUTE FUNCTION smoke_count_project_delete()");
     const attempts = async () => (await sql.unsafe("SELECT last_value::text, is_called FROM smoke_project_delete_attempts"))[0];
-    const { projectService } = await import("../../server/src/services/projects.js");
     const beforeStale = await attempts();
     await assert.rejects(projectService(drizzle(sql) as never).remove(mainProject.id), /owned by Rust/i);
     assert.deepEqual(await attempts(), beforeStale, "stale Node remove reached DELETE");
@@ -365,8 +392,10 @@ async function main() {
     await assertDeleted(rollback, retried.body);
     const unlistedBefore = await snapshot(unlistedRust);
     assert.equal(unlistedBefore.fence.owner, "rust");
-    assert.equal((await remove(unlistedRust.id, "unlisted-rust-owned")).status, 503);
-    assert.deepEqual(await snapshot(unlistedRust), unlistedBefore, "unlisted Rust-owned deletion reached Node");
+    const unlistedDeleted = await remove(unlistedRust.id, "unlisted-rust-owned");
+    assert.equal(unlistedDeleted.status, 200, "persisted Rust ownership must route independently of the startup allowlist");
+    assertLegacyDeleteResponse(unlistedDeleted.body, unlistedRust.before, legacyDeleted.body);
+    await assertDeleted(unlistedRust, unlistedDeleted.body);
     const attemptsAfterRestart = await attempts();
     assert.deepEqual(await remove(mainProject.id, key, engineer.token), deleted, "receipt replay failed after row/fence deletion and restart");
     assert.deepEqual(await attempts(), attemptsAfterRestart, "restart replay executed another DELETE");

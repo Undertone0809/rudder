@@ -39,7 +39,7 @@ function chatShortRef(id: string): string | null {
   }
 }
 
-async function listRuntimeContinuityByConversationId(
+export async function listRuntimeContinuityByConversationId(
   db: Db,
   orgId: string,
   conversationIds: string[],

@@ -10,9 +10,10 @@ import { sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { badRequest, conflict } from "../errors.js";
+import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { validate } from "../middleware/validate.js";
 import { logActivity, projectService, resourceCatalogService } from "../services/index.js";
-import { configuredProjectGoalMutationProjectIds } from "../services/project-goal-mutation-fence.js";
+import type { ProjectCreateContext } from "../services/projects.js";
 import type { RustFoundationBridge, RustFoundationResponse } from "../services/rust-foundation-bridge.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
@@ -67,9 +68,29 @@ async function readProjectDeleteReceiptOrganizationScope(
 
 export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
-  const svc = projectService(db);
+  const svc = projectService(db, rustFoundationBridge);
   const resources = resourceCatalogService(db);
-  const rustProjectGoalProjectIds = new Set(configuredProjectGoalMutationProjectIds());
+
+  async function forwardProjectRead(req: Request, res: Response, orgId: string, projectId: string | null, resourcesOnly = false) {
+    if (!rustFoundationBridge) {
+      res.status(503).json({ error: "Rust Project reads are unavailable", code: "rust_foundation_project_read_unavailable" });
+      return;
+    }
+    let response: RustFoundationResponse;
+    try {
+      response = await rustFoundationBridge.projectRead(req.actor, orgId, {
+        projectId,
+        resourcesOnly,
+        // SQL UUIDs are canonical lowercase. Use the same key as legacy
+        // hydration when looking up a friendly organization folder mapping.
+        organizationWorkspaceRoot: resolveOrganizationWorkspaceRoot(isUuidLike(orgId) ? orgId.toLowerCase() : orgId),
+      });
+    } catch {
+      res.status(503).json({ error: "Rust Project reads are unavailable", code: "rust_foundation_project_read_request_failed" });
+      return;
+    }
+    res.status(response.status).set("content-type", response.contentType).send(response.body);
+  }
 
   async function readResourceAttachmentReceiptResponse(
     req: Request,
@@ -140,10 +161,6 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     forceRust: boolean,
   ): Promise<ProjectPatchForward> {
     const owner = await svc.getMutationOwner(orgId, projectId);
-    const allowlisted = rustProjectGoalProjectIds.has(projectId);
-    if ((owner === "rust" || forceRust) && !allowlisted) {
-      return { kind: "unavailable", code: "rust_foundation_project_goal_set_not_allowlisted" };
-    }
     if (forceRust && owner !== "rust") {
       return { kind: "unavailable", code: "rust_foundation_project_goal_set_not_owned" };
     }
@@ -185,11 +202,9 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     res.status(503).json({
       error: result.code === "rust_foundation_project_goal_set_disabled"
         ? "Rust Project-Goal authority is not enabled"
-        : result.code === "rust_foundation_project_goal_set_not_allowlisted"
-          ? "Rust Project-Goal authority is not allowlisted for this Project"
-          : result.code === "rust_foundation_project_goal_set_not_owned"
-            ? "Rust does not own this Project-Goal authority"
-            : "Rust Project-Goal authority is unavailable",
+        : result.code === "rust_foundation_project_goal_set_not_owned"
+          ? "Rust does not own this Project-Goal authority"
+          : "Rust Project-Goal authority is unavailable",
       code: result.code,
     });
   }
@@ -233,30 +248,29 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
   router.get("/orgs/:orgId/projects", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const result = await svc.list(orgId);
-    res.json(result);
+    await forwardProjectRead(req, res, orgId, null);
   });
 
   router.get("/projects/:id", async (req, res) => {
     const id = req.params.id as string;
-    const project = await svc.getById(id);
-    if (!project) {
+    const orgId = await svc.getOrganizationId(id);
+    if (!orgId) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    assertCompanyAccess(req, project.orgId);
-    res.json(project);
+    assertCompanyAccess(req, orgId);
+    await forwardProjectRead(req, res, orgId, id);
   });
 
   router.get("/projects/:id/resources", async (req, res) => {
     const id = req.params.id as string;
-    const project = await svc.getById(id);
-    if (!project) {
+    const orgId = await svc.getOrganizationId(id);
+    if (!orgId) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    assertCompanyAccess(req, project.orgId);
-    res.json(project.resources);
+    assertCompanyAccess(req, orgId);
+    await forwardProjectRead(req, res, orgId, id, true);
   });
 
   router.post("/orgs/:orgId/projects", validate(createProjectSchema), async (req, res) => {
@@ -268,22 +282,13 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     const { workspace: _ignoredWorkspace, ...projectData } = req.body as Parameters<typeof svc.create>[1] & {
       workspace?: unknown;
     };
-    const project = await svc.create(orgId, projectData);
-
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "project.created",
-      entityType: "project",
-      entityId: project.id,
-      details: {
-        name: project.name,
-      },
-    });
+    const context: ProjectCreateContext = {
+      lane: "rust",
+      caller: "public",
+      actor: req.actor,
+      idempotencyKey: req.header("x-rudder-idempotency-key"),
+    };
+    const project = await svc.create(orgId, projectData, context);
     res.status(201).json(project);
   });
 
@@ -303,15 +308,6 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
     const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
     const rustOwnsProject = mutationOwner === "rust";
-    const allowlisted = rustProjectGoalProjectIds.has(id);
-
-    if ((rustOwnsProject || rustRequiredHeader) && !allowlisted) {
-      res.status(503).json({
-        error: "Rust Project-Goal authority is not allowlisted for this Project",
-        code: "rust_foundation_project_goal_set_not_allowlisted",
-      });
-      return;
-    }
 
     if (rustRequiredHeader && !rustOwnsProject) {
       res.status(503).json({
@@ -610,14 +606,6 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
 
     const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
     const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
-    const allowlisted = rustProjectGoalProjectIds.has(id);
-    if (rustRequiredHeader && !allowlisted) {
-      res.status(503).json({
-        error: "Rust Project deletion is not allowlisted for this Project",
-        code: "rust_foundation_project_delete_not_allowlisted",
-      });
-      return;
-    }
     if (rustRequiredHeader && mutationOwner !== "rust") {
       res.status(503).json({
         error: "Rust does not own this Project deletion authority",
@@ -626,13 +614,6 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
       return;
     }
     if (mutationOwner === "rust") {
-      if (!allowlisted) {
-        res.status(503).json({
-          error: "Rust Project deletion is not allowlisted for this Project",
-          code: "rust_foundation_project_delete_not_allowlisted",
-        });
-        return;
-      }
       await forwardRustProjectDelete(
         req,
         res,

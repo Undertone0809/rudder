@@ -8,6 +8,7 @@ import {
 } from "./local-app-process-platform-shared.mjs";
 import {
   captureManagedWindowsProcessIdentity,
+  failClosedWindowsProcessTreeCleanup,
   snapshotWindowsProcesses,
   terminateWindowsProcessInstances,
 } from "./local-app-windows-processes.mjs";
@@ -31,7 +32,11 @@ async function terminateOwnedTree() {
   cleanupPromise = (async () => {
     if (!isSafeLocalAppProcessId(appOwnerId)) return;
     if (process.platform === "win32" && appIdentityPromise) {
-      await appIdentityPromise;
+      try {
+        await appIdentityPromise;
+      } catch (error) {
+        await failClosedWindowsProcessTreeCleanup(appProcess, error, { timeoutMs: TERM_TIMEOUT_MS });
+      }
     }
     await terminateLocalAppOwner(appOwnerId, {
       platform: process.platform,

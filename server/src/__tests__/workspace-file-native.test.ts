@@ -230,7 +230,9 @@ describe("native workspace file reads", () => {
     }
   });
 
-  it.runIf(process.platform !== "win32")("cancels an in-flight native child and waits for it to exit", async () => {
+  // Allow the three 5s observation bounds plus the 10s native call deadline;
+  // keep each cancellation and process-exit assertion independently bounded.
+  it.runIf(process.platform !== "win32")("cancels an in-flight native child and waits for it to exit", { timeout: 30_000 }, async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
     cleanupDirs.add(root);
     const startedPath = path.join(root, "native-started");

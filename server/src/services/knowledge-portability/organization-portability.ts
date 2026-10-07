@@ -8,6 +8,7 @@ import { issueService } from "../issues.js";
 import { organizationSkillService } from "../organization-skills.js";
 import { organizationService } from "../orgs.js";
 import { projectService } from "../projects.js";
+import type { RustFoundationBridge } from "../rust-foundation-bridge.js";
 import { createOrganizationPortabilityExportHandlers } from "./organization-portability.export.js";
 import { createOrganizationPortabilityImportHandlers } from "./organization-portability.import.js";
 import { createOrganizationPortabilityPreviewHandlers } from "./organization-portability.preview.js";
@@ -18,7 +19,7 @@ export { parseGitHubSourceUrl } from "./organization-portability.package.js";
 export function organizationPortabilityService(
   db: Db,
   storage?: StorageService,
-  options: { organizationBrandingMode?: "off" | "shadow" | "required" } = {},
+  options: { organizationBrandingMode?: "off" | "shadow" | "required"; rustFoundationBridge?: RustFoundationBridge } = {},
 ) {
   const organizations = organizationService(db);
   const agents = agentService(db);
@@ -57,6 +58,7 @@ export function organizationPortabilityService(
     organizationSkills,
     buildPreview: previewHandlers.buildPreview,
     organizationBrandingMode: options.organizationBrandingMode,
+    rustFoundationBridge: options.rustFoundationBridge,
   });
 
   return {

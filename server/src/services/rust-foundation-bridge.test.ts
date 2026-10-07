@@ -10,6 +10,7 @@ import {
   createRustActorEnvelope,
   createRustFoundationBridge,
   type RustFoundationBridge,
+  type RustPublicIngressOptions,
 } from "./rust-foundation-bridge.js";
 
 vi.mock("node:url", async (importOriginal) => {
@@ -17,7 +18,7 @@ vi.mock("node:url", async (importOriginal) => {
   return { ...actual, fileURLToPath: vi.fn(actual.fileURLToPath) };
 });
 
-type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term";
+type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term" | "public-ready";
 
 type Fixture = {
   binaryPath: string;
@@ -48,7 +49,10 @@ const mode = fs.readFileSync(${JSON.stringify(modePath)}, "utf8").trim();
 fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
 fs.writeFileSync(${JSON.stringify(envPath)}, JSON.stringify(process.env));
 let server = null;
+let publicServer = null;
 const shutdown = () => {
+  publicServer?.closeAllConnections?.();
+  publicServer?.close();
   if (!server) {
     process.exit(0);
     return;
@@ -68,7 +72,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.method === "DELETE") {
+    if (req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -79,6 +83,7 @@ if (mode === "invalid") {
           body: Buffer.concat(chunks).toString("utf8"),
         }));
         res.setHeader("content-type", "application/json");
+        if (req.method === "POST" && !req.url?.includes("/project-reads")) res.statusCode = 201;
         res.end(JSON.stringify({ status: "accepted" }));
       });
       return;
@@ -89,11 +94,19 @@ if (mode === "invalid") {
   server.listen(0, "127.0.0.1", () => {
     const address = server.address();
     if (!address || typeof address === "string") process.exit(2);
-    process.stdout.write(JSON.stringify({
+    const receipt = {
       boundAddr: "127.0.0.1:" + address.port,
       publicListener: false,
       productWriteAuthority: false,
-    }) + "\\n");
+    };
+    const emit = () => process.stdout.write(JSON.stringify(receipt) + "\\n");
+    if (mode === "public-ready") {
+      publicServer = http.createServer((req, res) => res.end("ready"));
+      publicServer.listen(0, "127.0.0.1", () => {
+        receipt.publicIngress = { boundAddr: "127.0.0.1:" + publicServer.address().port, publicListener: true };
+        emit();
+      });
+    } else emit();
   });
 }
 setInterval(() => {}, 1000);
@@ -137,6 +150,7 @@ function createBridge(
     mode?: "off" | "shadow" | "required";
     organizationBrandingMode?: "off" | "shadow" | "required";
     projectGoalSetMode?: "off" | "shadow" | "required";
+    publicIngress?: RustPublicIngressOptions;
   } = {},
 ) {
   const bridge = createRustFoundationBridge({
@@ -147,6 +161,7 @@ function createBridge(
     binaryPath: fixture.binaryPath,
     actorEnvelopeKey: "bridge-test-secret",
     requestTimeoutMs: 25,
+    publicIngress: options.publicIngress,
   });
   activeBridges.add(bridge);
   return bridge;
@@ -193,7 +208,45 @@ afterEach(async () => {
 });
 
 describe("rust foundation bridge lifecycle", () => {
-  it("defaults only member directory reads to required and preserves explicit off", () => {
+  it("owns an explicitly requested public listener and clears its identity on shutdown", async () => {
+    const fixture = await createFixture("public-ready");
+    const publicIngress = {
+      listenAddr: "127.0.0.1:0",
+      nodeUpstream: "http://127.0.0.1:3101",
+      authorizationKey: "0123456789abcdef0123456789abcdef",
+      trustedProxies: "192.0.2.1,::1",
+    };
+    const bridge = createBridge(fixture, { mode: "off", publicIngress });
+    expect(bridge.requiresStartup).toBe(true);
+    await bridge.start();
+    expect(bridge.publicIngressBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    await expect(bridge.waitForPublicIngressReady!()).resolves.toBeUndefined();
+    expect(await fixture.readEnv()).toMatchObject({
+      RUDDER_NATIVE_PUBLIC_LISTEN: publicIngress.listenAddr,
+      RUDDER_NATIVE_NODE_UPSTREAM: publicIngress.nodeUpstream,
+      RUDDER_NATIVE_INGRESS_AUTH_KEY: publicIngress.authorizationKey,
+      RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: publicIngress.trustedProxies,
+    });
+    await bridge.close();
+    expect(bridge.publicIngressBaseUrl).toBeNull();
+    await expect(bridge.waitForPublicIngressReady!()).rejects.toMatchObject({ code: "not_ready" });
+  });
+
+  it("rejects a missing, unexpected or wrong public listener instead of accepting private readiness", async () => {
+    for (const [mode, listenAddr] of [["ready", "127.0.0.1:0"], ["public-ready", "127.0.0.1:1"]] as const) {
+      const fixture = await createFixture(mode);
+      const bridge = createBridge(fixture, { publicIngress: {
+        listenAddr, nodeUpstream: "http://127.0.0.1:3101",
+        authorizationKey: "0123456789abcdef0123456789abcdef",
+      } });
+      await expect(bridge.start()).rejects.toMatchObject({ code: "startup_failed" });
+      expect(bridge.publicIngressBaseUrl).toBeNull();
+    }
+    const fixture = await createFixture("public-ready");
+    await expect(createBridge(fixture).start()).rejects.toMatchObject({ code: "startup_failed" });
+  });
+
+  it("defaults member reads and Project-Goal writes to required while Project reads always require startup", () => {
     const names = [
       "RUDDER_RUST_MEMBER_DIRECTORY_MODE",
       "RUDDER_RUST_ORGANIZATION_BRANDING_MODE",
@@ -207,16 +260,17 @@ describe("rust foundation bridge lifecycle", () => {
       activeBridges.add(defaultBridge);
       expect(defaultBridge.mode).toBe("required");
       expect(defaultBridge.organizationBrandingMode).toBe("off");
-      expect(defaultBridge.projectGoalSetMode).toBe("off");
+      expect(defaultBridge.projectGoalSetMode).toBe("required");
       expect(defaultBridge.requiresStartup).toBe(true);
 
       const disabledBridge = createRustFoundationBridge({
         databaseUrl: "postgres://bridge-test",
         mode: "off",
+        projectGoalSetMode: "off",
       });
       activeBridges.add(disabledBridge);
       expect(disabledBridge.mode).toBe("off");
-      expect(disabledBridge.requiresStartup).toBe(false);
+      expect(disabledBridge.requiresStartup).toBe(true);
     } finally {
       for (const name of names) {
         const value = previous[name];
@@ -556,6 +610,20 @@ describe("rust foundation bridge lifecycle", () => {
         idempotencyKey: "goal-set-client-key",
       }, signer);
 
+      const createData = { name: "Project", goalIds: [] };
+      const createRoots = { organizationWorkspaceRoot: "/fixture/org", projectCreateStateRoot: "/fixture/instance/data" };
+      const createResponse = await bridge.projectCreate(goalSetActor, "org-1", createData, "create-key", {}, createRoots);
+      expect(createResponse.status).toBe(201);
+      expectEnvelopeSignedWith(await fixture.readRequest(), {
+        actor: goalSetActor,
+        organizationId: "org-1",
+        method: "POST",
+        path: "/api/orgs/org-1/projects",
+        action: "project.create",
+        body: Buffer.from(JSON.stringify({ runId: null, data: createData, activityDetails: {}, ...createRoots })),
+        idempotencyKey: "create-key",
+      }, signer);
+
       process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = "changed-before-bridge-restart";
       await bridge.close();
       await bridge.start();
@@ -621,6 +689,33 @@ describe("rust foundation bridge lifecycle", () => {
     await waitForProcessExit(pid);
   }, 10_000);
 
+  it.each([
+    { projectId: null, resourcesOnly: false },
+    { projectId: "old-node-owned-project", resourcesOnly: false },
+    { projectId: "new-rust-created-project", resourcesOnly: true },
+  ])("signs API-wide Project reads with mutation modes disabled: %j", async (selection) => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "off" });
+    const actor = { type: "agent", agentId: "agent-1", orgId: "org-1", source: "agent_key" } as const;
+    const input = { ...selection, organizationWorkspaceRoot: "/trusted/organization" };
+    const response = await bridge.projectRead(actor, "org-1", input);
+    expect(response.status).toBe(200);
+    expect(bridge.requiresStartup).toBe(true);
+    const captured = await fixture.readRequest();
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("/internal/orgs/org-1/project-reads");
+    expect(JSON.parse(captured.body)).toEqual(input);
+    expect(captured.headers["x-rudder-idempotency-key"]).toBeUndefined();
+    expectEnvelopeSignedWith(captured, {
+      actor,
+      organizationId: "org-1",
+      method: "POST",
+      path: captured.url,
+      action: "project.read",
+      body: Buffer.from(JSON.stringify(input)),
+    }, "bridge-test-secret");
+  });
+
   it("binds branding requests to the private Actix contract", async () => {
     const fixture = await createFixture("ready");
     const bridge = createBridge(fixture, { mode: "off", organizationBrandingMode: "required" });
@@ -664,6 +759,44 @@ describe("rust foundation bridge lifecycle", () => {
     expect(envelope.bodySha256).toBe(createHash("sha256").update(body).digest("hex"));
     expect(envelope.idempotencyKey).toBe("branding-client-key");
     expect(captured.headers["x-rudder-request-id"]).toBe(envelope.requestId);
+  });
+
+  it("signs Chat branding with the authenticated actor and stable idempotency key", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", organizationBrandingMode: "required" });
+    const actor = {
+      type: "board" as const,
+      source: "local_implicit" as const,
+      userId: "user-1",
+      sessionId: "chat-approval-session",
+      authEpoch: 9,
+    };
+    const body = Buffer.from(JSON.stringify({ brandColor: "#123456" }), "utf8");
+    const idempotencyKey = "approval-stable-key";
+
+    const response = await bridge.organizationBrandingForActor(
+      actor,
+      "org-1",
+      body,
+      idempotencyKey,
+    );
+
+    expect(response.status).toBe(200);
+    expect(bridge.requiresStartup).toBe(true);
+    const captured = await fixture.readRequest();
+    expect(captured.method).toBe("PATCH");
+    expect(captured.url).toBe("/api/orgs/org-1/branding");
+    expect(captured.body).toBe(body.toString("utf8"));
+    expect(captured.headers["x-rudder-idempotency-key"]).toBe(idempotencyKey);
+    expectEnvelopeSignedWith(captured, {
+      actor,
+      organizationId: "org-1",
+      method: "PATCH",
+      path: "/api/orgs/org-1/branding",
+      action: "organization.branding.update",
+      body,
+      idempotencyKey,
+    }, "bridge-test-secret");
   });
 
   it("identifies an invalid organization branding mode with its own environment variable", () => {
@@ -735,6 +868,68 @@ describe("rust foundation bridge lifecycle", () => {
     })).toThrow("RUDDER_RUST_PROJECT_GOAL_SET_MODE");
   });
 
+  it.each(["update", "delete"] as const)("signs resource %s method, scope, payload and replay key", async (operation) => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "required" });
+    const actor = { type: "board", source: "session", userId: "user-1", sessionId: "session-1", authEpoch: 3 } as const;
+    const req = { actor } as unknown as Request;
+    const body = Buffer.from(JSON.stringify({ data: operation === "update" ? { title: "Updated resource" } : {}, runId: null }));
+    const response = await bridge.organizationResourceMutation!(req, "org-1", "resource-1", operation, body, " resource-key ");
+    expect(response.status).toBe(200);
+    const captured = await fixture.readRequest();
+    const method = operation === "update" ? "PATCH" : "DELETE";
+    expect(captured.method).toBe(method);
+    expect(captured.url).toBe("/api/orgs/org-1/resources/resource-1");
+    expect(captured.body).toBe(body.toString());
+    expect(captured.headers["x-rudder-idempotency-key"]).toBe("resource-key");
+    expectEnvelopeSignedWith(captured, {
+      actor, organizationId: "org-1", method, path: captured.url,
+      action: "organization.resource.mutate", body, idempotencyKey: "resource-key",
+    }, "bridge-test-secret");
+  });
+
+  it.each(["off", "shadow"] as const)("rejects resource writes in %s mode before startup", async (projectGoalSetMode) => {
+    const bridge = createRustFoundationBridge({ databaseUrl: "", mode: "off", projectGoalSetMode });
+    await expect(bridge.organizationResourceMutation!({ actor: { type: "board", source: "local_implicit" } } as unknown as Request,
+      "org-1", "resource-1", "delete", Buffer.from(JSON.stringify({ data: {}, runId: null })), "resource-key"))
+      .rejects.toMatchObject({ code: "request_failed" });
+  });
+
+  it("binds Project creation actor/run, payload, trusted roots and key to the captured signer", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "required" });
+    const actor = { type: "agent", source: "agent_key", agentId: "agent-1", orgId: "org-1", runId: "run-1" } as const;
+    const data = { name: "Release", goalIds: [], organizationWorkspaceRoot: "/untrusted" };
+    const roots = { organizationWorkspaceRoot: "/trusted/org", projectCreateStateRoot: "/trusted/instance/data" };
+    const activityDetails = { source: "fixture" };
+    const response = await bridge.projectCreate(actor, "org-1", data, " create-key ", activityDetails, roots);
+    expect(response.status).toBe(201);
+    const captured = await fixture.readRequest();
+    const body = Buffer.from(JSON.stringify({ runId: "run-1", data, activityDetails, ...roots }));
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("/api/orgs/org-1/projects");
+    expect(captured.body).toBe(body.toString());
+    expect(captured.headers["x-rudder-idempotency-key"]).toBe("create-key");
+    expectEnvelopeSignedWith(captured, {
+      actor, organizationId: "org-1", method: "POST", path: captured.url,
+      action: "project.create", body, idempotencyKey: "create-key",
+    }, "bridge-test-secret");
+  });
+
+  it.each(["off", "shadow"] as const)("rejects Project creation in %s mode before startup", async (projectGoalSetMode) => {
+    const bridge = createRustFoundationBridge({ databaseUrl: "", mode: "off", projectGoalSetMode });
+    await expect(bridge.projectCreate({ type: "board", source: "local_implicit" }, "org-1", { name: "Release" }, "key", {},
+      { organizationWorkspaceRoot: "/trusted/org", projectCreateStateRoot: "/trusted/data" }))
+      .rejects.toMatchObject({ code: "request_failed" });
+  });
+
+  it("propagates Project creation startup failure", async () => {
+    const bridge = createRustFoundationBridge({ databaseUrl: "", mode: "off", projectGoalSetMode: "required" });
+    await expect(bridge.projectCreate({ type: "board", source: "local_implicit" }, "org-1", { name: "Release" }, "key", {},
+      { organizationWorkspaceRoot: "/trusted/org", projectCreateStateRoot: "/trusted/data" }))
+      .rejects.toMatchObject({ code: "database_unconfigured" });
+  });
+
   it("binds Project DELETE to the signed private bridge contract", async () => {
     const fixture = await createFixture("ready");
     const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "required" });
@@ -796,7 +991,7 @@ describe("rust foundation bridge lifecycle", () => {
       });
       activeBridges.add(bridge);
       expect(bridge.projectGoalSetMode).toBe("off");
-      expect(bridge.requiresStartup).toBe(false);
+      expect(bridge.requiresStartup).toBe(true);
     } finally {
       if (previousMode === undefined) delete process.env.RUDDER_RUST_PROJECT_DELETE_MODE;
       else process.env.RUDDER_RUST_PROJECT_DELETE_MODE = previousMode;

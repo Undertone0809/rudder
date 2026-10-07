@@ -1,0 +1,235 @@
+{
+  "schema_version": "rudder.authority-source-review/v1",
+  "reviewed_at": "2026-10-02",
+  "verdict": "reject",
+  "level": "stage verdict",
+  "review_target": {
+    "artifact": "/private/tmp/rudder-authority-main56-refresh-20261002.json",
+    "sha256": "7b1ffe19a2f75477a5a52361295fa680d7e78bf0723e8f2350b19cf11c8d1484",
+    "row_count": 22,
+    "artifact_scope": "Historical Main56 source-only refresh; this review used git-show source at its named commit."
+  },
+  "candidate_and_evidence_baseline": {
+    "source_name_in_artifact": "origin/main at refresh time",
+    "source_sha": "56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce",
+    "source_tree": "8c2a129478a52eedd00e3e0250381511237d313e",
+    "source_commit": "Merge pull request #261 from Undertone0809/codex/org-codex-gpt-6-luna",
+    "source_commit_time": "2026-10-02 02:32:47 +0800",
+    "review_method": "Read-only git show/git grep against the exact source SHA; did not use dirty worktree copies as Main56 source.",
+    "observed_worktree": {
+      "branch": "codex/rudder-full-rust-backend-completion-20260923",
+      "head": "c54001819ca38079b627994557db0a18ed278fc0",
+      "dirty": true,
+      "index_clean": true,
+      "unrelated_work_preserved": true
+    },
+    "parent_reported_main_drift": {
+      "current_origin_main": "8eedffad752c6065803cc880c7f48e92052c62c7",
+      "commit": "#263 test: await restored library state before project navigation",
+      "changed_path_reported": "tests/e2e/projects-library-navigation.spec.ts",
+      "scope_note": "Parent-provided read-only drift only. This receipt remains bound to historical Main56; it does not review or claim runtime acceptance for current Main 8eedffad. Parent owns durable drift reconciliation."
+    },
+    "limits": {
+      "tests_run": false,
+      "runtime_or_database_access": false,
+      "browser_or_production_access": false,
+      "repository_or_index_mutation": false,
+      "only_written_path": "/private/tmp/rudder-authority-main56-refresh-independent-review.json"
+    }
+  },
+  "intent_constraints": [
+    "Converge on the existing PR236 work; do not make listener redesign a prerequisite that postpones it.",
+    "Keep cumulative 646/7a/6b source candidates distinct from Main56.",
+    "Preserve historical accepted installed evidence at its exact candidate and scope; do not recast it as failed or invalidated merely because it is not a Main56 runtime receipt.",
+    "Keep implementation, private evidence, public entry, default path, and legacy retirement as separate claims."
+  ],
+  "row_review": {
+    "count": 22,
+    "result": "All 22 rows' implementation/private/public/default/legacy distinctions match the cited Main56 source. Test references are source-presence evidence only and remain unrun. No source-level row promotes a private Actix route to public authority, a bounded Rust component to a whole-domain default, or an extant Node path to retired.",
+    "rows": [
+      {
+        "id": "read.workspace_backups",
+        "audit_lines": "31-39",
+        "source_lines": ["native/crates/server-foundation/src/lib.rs:1738-2033", "native/crates/server-foundation/src/lib.rs:2241-2256", "server/src/routes/orgs.ts:880-956", "server/src/routes/orgs.ts:964-1005", "server/src/bootstrap/register-api-routes.ts:85-94"],
+        "assessment": "Matches: bounded private Rust reads coexist with Node public routes/default behavior; create, restore, delete, and scheduling are not represented as Rust-owned or retired."
+      },
+      {
+        "id": "runtime.http_public_listener",
+        "audit_lines": "40-48",
+        "source_lines": ["server/src/index.ts:1437-1447", "server/src/services/rust-foundation-bridge.ts:272-281", "server/src/services/rust-foundation-bridge.ts:449-453", "native/crates/server-foundation/src/lib.rs:2232-2289"],
+        "assessment": "Matches: Node owns the public listener; its Rust child is bound and receipt-checked as a private loopback foundation listener, with no public-listener or product-write authority claim."
+      },
+      {
+        "id": "runtime.sqlx_database_authority",
+        "audit_lines": "49-57",
+        "source_lines": ["native/crates/d1-persistence/src/branding.rs:13-74", "native/crates/d1-persistence/src/goal_sets.rs:1-120", "native/crates/d1-persistence/src/project_deletions.rs:29-104", "packages/db/src/client.ts:1300-1315", "server/src/bootstrap/register-api-routes.ts:85-94"],
+        "assessment": "Matches: SQLx owns selected transactions only; Node Drizzle still applies migrations and remains the general database authority."
+      },
+      {
+        "id": "read.organization_member_directory",
+        "audit_lines": "58-66",
+        "source_lines": ["server/src/services/rust-foundation-bridge.ts:342-361", "server/src/services/rust-foundation-bridge.ts:449-453", "server/src/routes/organization-rust-foundation-routes.ts:229-324", "native/crates/server-foundation/src/lib.rs:1186-1260", "scripts/smoke/installed-member-directory.mjs:535-575"],
+        "assessment": "Matches: Main56 source defaults this read to required Rust behind the Node-authenticated API and private Actix route; explicit shadow/off Node paths remain. Installed smoke/test source is not a Main56 runtime execution, and the row correctly does not claim Node retirement."
+      },
+      {
+        "id": "security.actor_envelope_and_private_bridge",
+        "audit_lines": "67-75",
+        "source_lines": ["native/crates/auth-core/src/lib.rs:1-6", "native/crates/auth-core/tests/protocol.rs:1-45", "server/src/services/rust-foundation-bridge.ts:272-281", "identity/src/auth.ts:42-55", "identity/src/handler.ts:712-725"],
+        "assessment": "Matches: signed request-envelope protocol is a private bridge capability; Node identity, authentication, session persistence, and revocation authority are not claimed as Rust-owned."
+      },
+      {
+        "id": "lifecycle.organization_mutation_state_provisioning",
+        "audit_lines": "76-84",
+        "source_lines": ["server/src/routes/orgs.ts:1178-1208", "server/src/routes/orgs.ts:1231-1243", "server/src/services/orgs.ts:494-507", "native/crates/server-foundation/src/lib.rs:2241-2271"],
+        "assessment": "Matches: organization creation/deletion, membership, and provisioning remain Node-owned; component fences consumed during deletion do not establish a Rust organization lifecycle."
+      },
+      {
+        "id": "audit.activity_outbox_terminal_effects",
+        "audit_lines": "85-94",
+        "source_lines": ["native/crates/d1-persistence/src/transaction.rs:1077-1181", "native/crates/d1-persistence/src/transaction.rs:1206-1294", "server/src/routes/projects.ts:262-287", "server/src/index.ts:1316-1366", "server/src/routes/organization-rust-foundation-routes.ts:436-475"],
+        "assessment": "Matches: transactionally persisted receipt/activity is limited to selected D1 commands; the source explicitly places Project Create activity after svc.create returns and leaves Node effects/schedulers in place."
+      },
+      {
+        "id": "domain.organization_branding",
+        "audit_lines": "95-103",
+        "source_lines": ["native/crates/d1-persistence/src/branding.rs:13-74", "server/src/routes/organization-rust-foundation-routes.ts:369-402", "server/src/routes/organization-rust-foundation-routes.ts:436-475", "server/src/services/rust-foundation-bridge.ts:348-361"],
+        "assessment": "Matches: Rust handles selected scalar brandColor writes behind required/allowlist checks; other organization fields and nonselected paths remain Node-owned."
+      },
+      {
+        "id": "domain.project_goal_link",
+        "audit_lines": "104-112",
+        "source_lines": ["native/crates/d1-persistence/src/links.rs:562-615", "server/src/services/project-goal-mutation-fence.ts:182-213", "server/src/routes/projects.ts:290-366", "server/src/services/goals.ts:2022-2039"],
+        "assessment": "Matches: bounded SQLx link operations and owner/allowlist-gated API forwarding do not retire all Node Goal/link writers or make the whole domain Rust-default."
+      },
+      {
+        "id": "domain.project_goal_set_replacement",
+        "audit_lines": "113-121",
+        "source_lines": ["native/crates/d1-persistence/src/goal_sets.rs:1-120", "native/crates/server-foundation/src/lib.rs:2266-2268", "server/src/routes/projects.ts:303-366", "server/src/services/projects.ts:667-701"],
+        "assessment": "Matches: full-set replacement is one private SQLx transaction, still Node-fronted and rollout-gated; adjacent Node writers remain."
+      },
+      {
+        "id": "runtime.migration_journal_authority",
+        "audit_lines": "122-130",
+        "source_lines": ["native/crates/migration-core/src/lib.rs:279-310", "native/crates/migration-core/src/lib.rs:402-420", "packages/db/src/client.ts:1300-1315", "packages/db/src/migrate.ts:1-24"],
+        "assessment": "Matches: Rust validates migration manifests/preflight inputs; Node invokes migration application and post-migration invariants."
+      },
+      {
+        "id": "runtime.first_party_cli_and_mcp_dispatch",
+        "audit_lines": "131-139",
+        "source_lines": ["cli/src/commands/client/company.ts:1110-1138", "cli/src/agent-v1-mcp-d1-capabilities.ts:30-31", "cli/src/agent-v1-mcp-server.ts:659", "server/src/routes/managed-mcp-runtime.ts:110-155"],
+        "assessment": "Matches: CLI and MCP dispatch use TypeScript/HTTP contracts; Main56 has no native/bins/rudder-cli path, and Node-managed MCP remains."
+      },
+      {
+        "id": "runtime.first_party_node_fallback_guards",
+        "audit_lines": "140-148",
+        "source_lines": ["cli/src/runtime/native-payload.ts:67-90", "cli/src/runtime/native-payload.ts:150-160", "cli/src/runtime/native-payload.test.ts:91-138", "server/src/services/rust-foundation-bridge.ts:342-361"],
+        "assessment": "Matches: fail-closed behavior is selected-capability/mode scoped; optional and other Node compatibility paths remain, with tests cited as source only."
+      },
+      {
+        "id": "runtime.electron_backend_attachment",
+        "audit_lines": "149-157",
+        "source_lines": ["desktop/src/main.ts:943-957", "server/src/services/rust-foundation-bridge.ts:342-361", "server/src/services/rust-foundation-bridge.ts:382-389", "server/src/index.ts:1437-1447", "desktop/scripts/smoke.mjs:7874-7885"],
+        "assessment": "Matches: Electron starts and profiles the Node app server; the foundation binary is a private helper and does not replace the packaged Desktop backend or public API listener."
+      },
+      {
+        "id": "domain.identity_session",
+        "audit_lines": "158-166",
+        "source_lines": ["identity/src/auth.ts:42-55", "identity/src/handler.ts:712-725", "native/crates/auth-core/src/lib.rs:1-6", "desktop/src/main.ts:2181-2212"],
+        "assessment": "Matches: Rust envelope support is narrower than first-party identity/session services, which remain in Node and Desktop flows."
+      },
+      {
+        "id": "runtime.analytics_collector",
+        "audit_lines": "167-175",
+        "source_lines": ["server/src/product-analytics-collector-server.ts:85-125", "desktop/src/main.ts:2291-2298"],
+        "assessment": "Matches: Node owns the collector HTTP listener and Desktop scheduler; no Rust collector implementation is identified."
+      },
+      {
+        "id": "runtime.managed_mcp",
+        "audit_lines": "176-184",
+        "source_lines": ["server/src/routes/managed-mcp-runtime.ts:110-155", "server/src/services/mcp/managed-runtime.ts:1-30"],
+        "assessment": "Matches: managed HTTP JSON-RPC, binding, and runtime service remain Node-owned; no Rust managed server is claimed."
+      },
+      {
+        "id": "runtime.embedded_postgres",
+        "audit_lines": "185-193",
+        "source_lines": ["desktop/src/postgres-runtime.ts:46-83", "desktop/src/postgres-runtime.ts:409-445", "desktop/src/main.ts:943-957"],
+        "assessment": "Matches: Desktop/Node resolve the bundled PostgreSQL runtime and own its profile/lifecycle; generic Rust process helpers are not promoted to lifecycle ownership."
+      },
+      {
+        "id": "runtime.update_recovery",
+        "audit_lines": "194-202",
+        "source_lines": ["native/crates/update-helper-core/src/lib.rs:317-337", "native/crates/update-helper-core/src/lib.rs:737-793", "desktop/src/main.ts:3150-3207", "desktop/src/desktop-update-helper.ts:11-92"],
+        "assessment": "Matches: Rust performs bounded update/rollback file operations; Electron validates identity, invokes recovery, and persists update/boot state."
+      },
+      {
+        "id": "workflow.agent_run_chat_side_chat",
+        "audit_lines": "203-211",
+        "source_lines": ["server/src/routes/chats.ts:2079-2169", "server/src/routes/chats.stream-routes.ts:1099-1222", "server/src/services/side-chats.ts:109-170"],
+        "assessment": "Matches: chat creation/read/streaming and Side Chat lifecycle are Node services; native process primitives do not claim chat ownership."
+      },
+      {
+        "id": "runtime.scheduler_workers_adapters",
+        "audit_lines": "212-220",
+        "source_lines": ["server/src/index.ts:1304-1434", "server/src/services/runtime-kernel/heartbeat.execute.ts:213-220"],
+        "assessment": "Matches: Node owns scheduled backups, server startup, and heartbeat execution; no Rust scheduler/worker entry is claimed."
+      },
+      {
+        "id": "retirement.first_party_node_backend",
+        "audit_lines": "221-229",
+        "source_lines": ["server/src/index.ts:1437-1447", "packages/db/src/client.ts:1300-1315", "identity/src/handler.ts:712-725", "server/src/routes/managed-mcp-runtime.ts:110-155", "native/crates/server-foundation/src/lib.rs:2232-2289"],
+        "assessment": "Matches: Node still owns the public listener, migrations, identity, managed MCP, and other runtime surfaces; whole-backend retirement is not started or inferred."
+      }
+    ]
+  },
+  "historical_installed_evidence": {
+    "preservation_status": "Historical PASS preserved; not demoted or invalidated.",
+    "verifier_receipt": "Main56:doc/plans/artifacts/2026-09-29-rudder-member-default-independent-verifier-v25.json",
+    "verifier_verdict": "PASS",
+    "packet": "25.2",
+    "accepted_candidate": {
+      "source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+      "tree": "7b02b6a6412130a5461042216ad15093806465ac",
+      "scope": "Installed member-directory default API/CLI/MCP workflow; macOS ARM64 execution, with foreign-target runtime limits explicitly retained."
+    },
+    "artifact_and_runtime_binding": "The v25.2 receipt records artifact HEAD 939ea94e1bc7c59d1aabee3eb0bb4229be1f3da5 and runtime source 1c387d7c1fdcce841a98d8928e80795d5e7feb95, then records the accepted finite source-equivalence rebind to 8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0; the durable ledger records final accept, exact CI PASS, and merged PR #233 as e14771c4a0ed642bafd478c18dd1278855be89c5 with the same tree.",
+    "durable_source_lines": ["doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml:48-55", "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml:364-371", "doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml:96-101"],
+    "scope_boundary": "This remains accepted installed evidence for its exact v25.2/e147 scope. It does not claim a new installed execution on Main56 or current Main 8eedffad. The refresh's wording that the prior receipt is not rebound as a Main56 receipt is accurate; it should retain the historical PASS explicitly so that limitation cannot be mistaken for invalidation.",
+    "Main56_delta_note": "Main56 adds selected Project DELETE handling to the shared foundation/bridge source after e147. No source-only inspection can convert the earlier installed run into a Main56 runtime run; this does not change the historical PASS."
+  },
+  "candidate_lineage_review": {
+    "result": "The audit correctly keeps all three cumulative tips outside Main56; commit counts, changed-path counts, and ancestry were independently confirmed from existing git objects.",
+    "candidates": [
+      {"sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f", "relationship": "24 commits and 83 changed paths beyond Main56; Main56 is ancestor; unmerged candidate only."},
+      {"sha": "7a416d088771925cf291a862bd83f7b97f04e567", "relationship": "39 commits and 105 changed paths beyond Main56; descendant of 646; unmerged candidate only."},
+      {"sha": "6b6896d1fe8e161c22b3ddfbbda9f329f1d34a22", "relationship": "44 commits and 112 changed paths beyond Main56; descendant of 7a; unmerged candidate only."}
+    ],
+    "audit_lines": "249-270"
+  },
+  "findings": [
+    {
+      "id": "P1-pr236-convergence-direction",
+      "severity": "P1",
+      "audit_lines": "272-276",
+      "evidence": "The proposed next slice first rebinds the Main56 member-directory installed workflow, then separately scopes a public-listener increment, and says this is smaller than adopting Project Create. That makes a listener lane the practical next direction and defers the user's existing PR236 convergence requirement.",
+      "impact": "The refresh does not converge on the requested existing PR236; it redirects execution toward listener redesign before that PR.",
+      "required_correction": "Rewrite smallest_next_executable_slice around convergence of the existing PR236 and its exact current PR candidate. Keep Main56 as the historical authority-ledger baseline and preserve 646/7a/6b as unmerged source candidates. Do not require listener redesign or a new listener increment before PR236 convergence; keep that work separate unless PR236's own exact acceptance evidence requires it."
+    },
+    {
+      "id": "P2-explicit-historical-pass-continuity",
+      "severity": "P2",
+      "audit_lines": "58-66, 274-275",
+      "evidence": "The row correctly says the v25 receipt is not rebound to Main56, but does not state in that row that v25.2 was an independent installed verifier PASS, was finally accepted, and was merged as PR233/e147 on the same accepted tree. Those facts are present in the Main56 durable ledger and receipt.",
+      "impact": "A downstream reader could mistake 'not rebound as a Main56 receipt' for loss or invalidation of the accepted historical result.",
+      "required_correction": "Add an explicit historical_evidence field preserving PASS, packet 25.2, accepted candidate 8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0, exact historical scope, and e147 merge/tree identity; separately state that no new Main56 installed runtime was verified."
+    }
+  ],
+  "overall_source_assessment": "The 22 authority rows, their source/test presence labels, and the exclusions of cumulative 646/7a/6b candidates are source-accurate for SHA 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce. The artifact is rejected at stage because its proposed convergence direction conflicts with the explicit PR236 requirement; preserve the historical v25.2 PASS explicitly when correcting it.",
+  "convergence_direction": "Keep PR236 as the active convergence target. Bind any PR-specific review to its exact candidate and current source drift, retain this Main56 audit as historical source-only context, and do not interpose listener redesign as a prerequisite.",
+  "blocking_conditions": ["Correct the PR236 convergence direction in lines 272-276 before treating this refresh as aligned."],
+  "receipt_integrity": {
+    "reviewer_mutations": "Only this receipt path is authorized and written.",
+    "source_or_index_mutation": false,
+    "runtime_or_database_work": false,
+    "tests_executed": false
+  }
+}

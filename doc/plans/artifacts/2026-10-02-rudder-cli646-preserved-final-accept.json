@@ -1,0 +1,84 @@
+{
+  "schema": "rudder.independent-final-handoff-review/v1",
+  "reviewed_at_utc": "2026-10-02",
+  "reviewer_skill": "agent-work-reviewer-maintainer",
+  "verdict": "accept",
+  "level": "final handoff verdict for narrow historical CLI evidence only",
+  "claim_scope": "Accept only the three current646 installed-CLI historical criteria with the evidence-only terminal verifier PASS: default member read and Rust authority receipt, CLI Project-create result and exact-ID Rust ledger, and already-recorded independent cleanup. This is not acceptance of the combined CLI/MCP leaf or PR236 aggregate.",
+  "candidate": {
+    "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "source_tree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "artifact_build_id": "integrated646-complete-dist-verified",
+    "artifact_receipt_path": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/receipt/2026-10-01T23-07-34-710Z-integrated646-complete-dist-verified.json",
+    "artifact_receipt_sha256": "14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49",
+    "installed_cli_entry_sha256": "405bac416912265d92f84ea7200cbe8fd966b196b65d900cd4d1f6bca0f3f07a"
+  },
+  "reviewed_evidence": {
+    "packet": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli646-preserved-observations/packet.json",
+      "sha256": "786b6ac7bd60df6f7a3b578ab2b48a720392272a409de66a29a95bc4b9c592dd"
+    },
+    "stage_review": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli646-preserved-observations/stage-review.json",
+      "sha256": "9bc823df52956163bb650100c7e21b7907a20ed76f5d4c7cb13d3dc0695b5f67",
+      "verdict": "accept"
+    },
+    "independent_verifier": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli646-preserved-observations/independent-verifier.json",
+      "sha256": "67ab98122ded9984e56f5a00d135a4322bca57958c20cf868c16cb77382a0514",
+      "verdict": "PASS",
+      "level": "narrow installed CLI historical evidence only",
+      "recorded_at": "2026-10-02T08:35:05Z",
+      "verifier_role": "Distinct evidence-only verifier, reported as Schrodinger; distinct from packet author and stage reviewer."
+    },
+    "raw_combined_evidence": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-sealed646-pino-pretty-v2/evidence/installed-cli-mcp-member-read-45ddcbf4-e899-49fe-9bf3-5d795a9b0fbd.json",
+      "sha256": "b535db1a03102a3fca05a6b3e995e6baa1715a6cb2da3cc3823da8b417d87e8a",
+      "combined_status": "OBSERVED_FAILURE; preserved CLI observations precede the MCP parse failure"
+    },
+    "original_combined_question": {
+      "path": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss/doc/plans/artifacts/2026-10-02-rudder-cli-mcp646-v2-independent-question.json",
+      "sha256": "4e928067031eb11a47d4fc05b369a37489cf53fefc4005d4f7cccbea8e7952d1",
+      "verdict": "QUESTION",
+      "preserved": true
+    }
+  },
+  "final_review": {
+    "candidate_and_packet_match": true,
+    "verifier_packet_hash_matches": true,
+    "verifier_stage_review_hash_matches": true,
+    "verifier_raw_evidence_hash_matches": true,
+    "verifier_installed_receipt_and_cli_hashes_match": true,
+    "criteria": [
+      {
+        "criterion": "Installed CLI default member read and Rust authority",
+        "verifier_verdict": "PASS",
+        "reviewer_assessment": "Accepted for the bounded historical observation. The returned member is the created agent; the required-mode Rust receipt names the same organization and records Rust authority/status 200. requestId is null, so the correlation remains temporal and operation-window based: one cursor-delimited receipt in the sequential CLI phase, same organization, raw receipt/log ordering, matching directory route/status, and matching parsed response. It is not direct request-ID correlation."
+      },
+      {
+        "criterion": "Installed CLI Project-create result and Rust ledger",
+        "verifier_verdict": "PASS",
+        "reviewer_assessment": "Accepted for the bounded historical observation. Parsed CLI project ID/org/name match the readback; that ID links to Rust owner/fence state, applied project_create receipt, project.created audit, and activity.logged outbox with matching activity identity."
+      },
+      {
+        "criterion": "Already-recorded independent cleanup",
+        "verifier_verdict": "PASS",
+        "reviewer_assessment": "Accepted. Raw cleanup records process-group and owned-root cleanup; the unchanged combined QUESTION separately records independent checks for absent root/PIDs/process group and no listeners on API/database ports 49533/49534."
+      }
+    ],
+    "command_and_exit_evidence": "The raw record contains parsed CLI result objects rather than verbatim child stdout/stderr or per-child exit-code fields. The hash-bound runner checks no timeout and code 0, then parses and validates each CLI response before storing it. The verifier explicitly retains this limit and does not claim independently captured CLI output or exit codes. This final review accepts only the structured historical observations at that stated level; it does not upgrade them to raw transcript proof.",
+    "mcp_boundary": "The separate MCP v4 PASS was not imported. The original combined QUESTION remains in force for MCP and the combined CLI/MCP leaf."
+  },
+  "findings": [],
+  "claim_boundaries": {
+    "three_cli_historical_criteria": "accepted at the bounded evidence-only level",
+    "combined_cli_mcp_question": "unchanged QUESTION",
+    "mcp_acceptance": false,
+    "aggregate_pr236_acceptance": false,
+    "product_or_release_acceptance": false,
+    "runtime_or_database_replayed": false,
+    "source_edited": false,
+    "parent_reconciliation_performed": false
+  },
+  "convergence_direction": "Parent may reconcile this exact narrow final review with the Schrodinger PASS. Preserve the combined QUESTION and all aggregate/runtime gates independently; no rerun is authorized or implied."
+}

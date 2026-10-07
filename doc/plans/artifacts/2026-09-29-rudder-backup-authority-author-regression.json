@@ -1,0 +1,22 @@
+{
+  "scope": "author-focused-regression-not-independent-installed-acceptance",
+  "worker_agent_id": "01a0e9e0-656e-72b1-b5aa-8aad22300c49",
+  "verdict": "PASS",
+  "tests": 9,
+  "typecheck": "@rudderhq/db PASS",
+  "implementation_sha256": "31d556bb939d9e68dbcafa1a4c819370fed52775871c2cdb26a82aaf02fc7add",
+  "unit_test_sha256": "c5887d0d6bd87f28e64e988d547b7ec9668af530816fc31ce18386c5cab9fc5d",
+  "postgres_test_sha256": "4a3dec0795b2b94d563b14711b9e3b45a1d0e06818033b6aea17875dd24f06d8",
+  "evidence": "/tmp/rudder-backup-regression.jVehN5/receipt.md",
+  "passed": [
+    "Full migration source restored with journal and without migration replay",
+    "Preserved Rust fence values and new Node-owner provisioning",
+    "Ownership/version reset and live authority deletion rejected",
+    "Immutable receipt update/delete/truncate rejected and receipt CHECK enforced",
+    "NOT VALID historical rows preserved while new violations rejected",
+    "ALWAYS trigger not fired during snapshot load but runs on new writes"
+  ],
+  "fixture_history": "Initial test JSON binding failed before backup; corrected to postgres.json, then all focused tests and typecheck passed.",
+  "cleanup": "Explicit no-globalSetup serial config; owned PG stopped and disposable data removed; no unrelated process touched.",
+  "limits": "Original exporter not rerun; installed public worktree seed/merge and subsequent PATCH remain independent verifier scope. Historical malformed backup files are not repaired by this exporter change."
+}

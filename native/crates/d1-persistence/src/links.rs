@@ -267,7 +267,10 @@ async fn load_link_state(
         let row_outcome: String = row.try_get("outcome")?;
         let row_version: i64 = row.try_get("resulting_version")?;
         let row_fence_epoch: i64 = row.try_get("fence_epoch")?;
-        let row_activity_id: String = row.try_get("activity_id")?;
+        let row_activity_id: Option<String> = row.try_get("activity_id")?;
+        let Some(row_activity_id) = row_activity_id else {
+            return Err(StoreError::InvalidReceipt);
+        };
         let text: String = row.try_get("result")?;
         let stored_value: serde_json::Value =
             serde_json::from_str(&text).map_err(|_| StoreError::InvalidReceipt)?;
@@ -285,7 +288,7 @@ async fn load_link_state(
             || receipt.fingerprint != row_fingerprint
             || receipt.version != row_version
             || receipt.fence_epoch != row_fence_epoch
-            || receipt.activity_id != row_activity_id
+            || receipt.activity_id.as_deref() != Some(row_activity_id.as_str())
             || receipt.outcome.as_str() != row_outcome
         {
             return Err(StoreError::InvalidReceipt);

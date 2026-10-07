@@ -1282,6 +1282,27 @@
       "when": 1790700000000,
       "tag": "0181_side_chat_first_input_generation",
       "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1790638485790,
+      "tag": "0176_project_create_receipt_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1790697590321,
+      "tag": "0177_organization_import_receipt_activity_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "7",
+      "when": 1790761299843,
+      "tag": "0178_organization_resource_mutation_state",
+      "breakpoints": true
     }
   ]
 }

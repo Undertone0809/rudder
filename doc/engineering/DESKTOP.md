@@ -535,6 +535,15 @@ of depending on files installed on the CI host.
 `desktop/scripts/stage-server.mjs` runs `pnpm deploy` with the legacy deploy
 config scoped to that child process so pnpm 10+ and 11+ can still package the
 server from a workspace that does not use injected workspace packages.
+The server npm postinstall and Desktop staging both apply the pinned
+`embedded-postgres` initdb diagnostics repair to the dependency resolved by the
+server and by `@rudderhq/db`, including separate nested copies. The repair accepts
+only the exact original or patched wrapper bytes, rejects unknown content and
+paths outside the installation, and replaces files without modifying shared
+pnpm hardlinks. Workspace installs continue to use the root pnpm patch; published
+server packages carry the repair themselves because ordinary npm installs do
+not apply that workspace configuration. Packaged server verification also checks
+the repaired bytes before accepting the artifact.
 The staged production server is then reduced to its reachable runtime dependency
 graph. Optional peer build/test tools, declarations, source maps, package test
 fixtures, and built Rudder workspace sources are excluded. The title generator

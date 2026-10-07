@@ -1903,6 +1903,87 @@ describe("agent-v1 MCP server", () => {
     });
   });
 
+  it("links an existing organization logo through MCP and preserves omitted branding fields", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+    });
+    const logoAssetId = "ABCDEFAB-CDEF-4ABC-8ABC-ABCDEFABCDEF";
+    const normalizedLogoAssetId = logoAssetId.toLowerCase();
+    expect(buildAgentV1ToolCallPlan("rudder_organization_brand_color_update", {
+      logoAssetId,
+      idempotencyKey: "logo-link-1",
+    }, env).args).toEqual([
+      "org", "brand-color", "update",
+      "--org-id", "runtime-org",
+      "--logo-asset-id", normalizedLogoAssetId,
+      "--idempotency-key", "logo-link-1",
+      "--json",
+    ]);
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_inputUrl, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ logoAssetId: normalizedLogoAssetId });
+      return new Response(JSON.stringify({ id: "org-1", logoAssetId: normalizedLogoAssetId }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "organization-logo-link",
+      method: "tools/call",
+      params: {
+        name: "rudder_organization_brand_color_update",
+        arguments: { logoAssetId, idempotencyKey: "logo-link-1" },
+      },
+    }, env);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "org-1", logoAssetId: "abcdefabcdef" },
+    });
+  });
+
+  it("accepts nullable branding clears through the MCP schema and direct request", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+    });
+    const input = { brandColor: null, logoAssetId: null, idempotencyKey: "branding-clear-1" };
+    expect(buildAgentV1ToolCallPlan("rudder_organization_brand_color_update", input, env).args).toEqual([
+      "org", "brand-color", "update",
+      "--org-id", "runtime-org",
+      "--clear-brand-color",
+      "--clear-logo",
+      "--idempotency-key", "branding-clear-1",
+      "--json",
+    ]);
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_inputUrl, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ brandColor: null, logoAssetId: null });
+      return new Response(JSON.stringify({ id: "org-1", brandColor: null, logoAssetId: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "organization-branding-clear",
+      method: "tools/call",
+      params: {
+        name: "rudder_organization_brand_color_update",
+        arguments: input,
+      },
+    }, env);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "org-1", brandColor: null, logoAssetId: null },
+    });
+  });
+
   it("dispatches Project-Goal project creation directly and fails closed without CLI fallback", async () => {
     const env = buildMcpServerEnv({
       RUDDER_API_URL: "http://127.0.0.1:3100",

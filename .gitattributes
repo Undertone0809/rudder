@@ -1,1 +1,3 @@
 packages/db/src/migrations/*.sql text eol=lf
+patches/embedded-postgres@18.1.0-beta.16.patch text eol=lf
+scripts/fixtures/embedded-postgres-18.1.0-beta.16/index.js.txt text eol=lf

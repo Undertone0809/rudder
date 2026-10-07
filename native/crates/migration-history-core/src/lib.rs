@@ -378,14 +378,29 @@ fn classify(
             diagnostics.push("migration history repeats a manifest migration".to_owned());
         }
     }
-    for pair in resolution.matches.windows(2) {
+    // Allowlisted unjournaled SQL is appended to the manifest for identity and
+    // hash verification, but is not part of the ordered migration journal.
+    // A predecessor may already contain those files before its next journaled
+    // migration is applied. Keep duplicate/unknown-row checks for every entry.
+    let journal_matches = resolution
+        .matches
+        .iter()
+        .filter(|matched| !manifest.entries[matched.entry_index].is_legacy_unjournaled())
+        .collect::<Vec<_>>();
+    for pair in journal_matches.windows(2) {
         if pair[0].entry_index >= pair[1].entry_index {
             mismatch = true;
             diagnostics.push("migration history order does not match manifest order".to_owned());
             break;
         }
     }
-    if (0..matched_orders.len()).any(|index| !matched_orders.contains(&index)) {
+    if manifest
+        .entries
+        .iter()
+        .filter(|entry| !entry.is_legacy_unjournaled())
+        .take(journal_matches.len())
+        .any(|entry| !matched_orders.contains(&entry.order))
+    {
         mismatch = true;
         diagnostics.push(
             "migration history applied migrations are not a contiguous manifest prefix".to_owned(),

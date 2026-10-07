@@ -1,0 +1,96 @@
+{
+  "schema_version": "rudder.authority-source-review/v1",
+  "reviewed_at": "2026-10-02",
+  "verdict": "accept",
+  "level": "stage verdict",
+  "review_target": {
+    "artifact": "/private/tmp/rudder-authority-main56-refresh-20261002-v2.json",
+    "sha256": "a5cb3eed8f06e13eddfbfdd3935348c1d25c5719268f6f20d836212f11b9a71d",
+    "row_count": 22,
+    "scope": "Changed-risk-only source review of the strategy and historical-evidence corrections. This verdict accepts the v2 audit artifact at its stated Main56 source-only level; it is not a PR236 final handoff or runtime verdict."
+  },
+  "predecessor": {
+    "artifact": "/private/tmp/rudder-authority-main56-refresh-20261002.json",
+    "sha256": "7b1ffe19a2f75477a5a52361295fa680d7e78bf0723e8f2350b19cf11c8d1484",
+    "disposition": "Original audit and its stage reject remain unchanged; v2 records this predecessor and corrects the reviewed blockers."
+  },
+  "candidate_and_evidence_baseline": {
+    "source_name_in_artifact": "origin/main at historical refresh time",
+    "source_sha": "56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce",
+    "source_tree": "8c2a129478a52eedd00e3e0250381511237d313e",
+    "source_commit": "Merge pull request #261 from Undertone0809/codex/org-codex-gpt-6-luna",
+    "changed_risks": [
+      {
+        "artifact_lines": "955-965",
+        "assessment": "The next slice now prioritizes existing PR236 on documentation head b572574cf6aa2f08bc555183559438dbd24bb346 and runtime candidate 646e3a6a10dfba538fafae9f8b88093c9d52bd2f. It says not to interpose a fresh Main56 member-read re-verification or listener redesign unless PR236's own criteria require it. This aligns with the user's convergence direction."
+      },
+      {
+        "artifact_lines": "190-203",
+        "assessment": "The member-directory row now explicitly preserves the historical verifier PASS and final reviewer accept with exact candidate, tree, PR, merged SHA/tree, timestamp, and scope, while explicitly disclaiming a new Main56 or Main8eed installed runtime result."
+      },
+      {
+        "artifact_lines": "975-979",
+        "assessment": "The predecessor pointer identifies the immutable original audit and its exact digest."
+      }
+    ],
+    "unchanged_content_check": {
+      "authority_rows": "All 22 prior row contents compare identical after excluding the added historical_evidence property on read.organization_member_directory.",
+      "remainder": "Canonical v1/v2 content compares identical after excluding the intended strategy update, historical-evidence addition, and predecessor pointer.",
+      "method": "Read-only jq canonicalization and cmp; no source files or audit artifacts were modified."
+    },
+    "pr236_source_identity": {
+      "documentation_head": {
+        "sha": "b572574cf6aa2f08bc555183559438dbd24bb346",
+        "tree": "10a8158356f5fcbbc544d1d6246ac630dc392013",
+        "subject": "docs: reconcile current installed CLI and MCP acceptance leaves",
+        "evidence_limit": "Git source object resolved; this does not independently establish live GitHub PR head or terminal acceptance."
+      },
+      "runtime_candidate": {
+        "sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+        "tree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+        "subject": "chore: integrate current organization model defaults",
+        "main56_is_ancestor": true,
+        "evidence_limit": "Source lineage only; candidate is not promoted to Main and this is not runtime evidence."
+      }
+    },
+    "current_main_drift": {
+      "sha": "8eedffad752c6065803cc880c7f48e92052c62c7",
+      "subject": "test: await restored library state before project navigation (#263)",
+      "source_diff_from_main56": "One commit; only tests/e2e/projects-library-navigation.spec.ts changed, with five added readiness-wait lines.",
+      "assessment": "Verified as test-only source drift. Parent retains responsibility for durable drift reconciliation; no current-Main runtime claim is made."
+    },
+    "limits": {
+      "tests_run": false,
+      "runtime_or_database_access": false,
+      "browser_or_production_access": false,
+      "repository_or_index_mutation": false,
+      "only_written_path": "/private/tmp/rudder-authority-main56-refresh-v2-independent-review.json"
+    }
+  },
+  "historical_installed_evidence": {
+    "source_record": "Main56:doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml:39-68, delivered_member_default_candidate",
+    "verified_fields": {
+      "packet": "25.2",
+      "verifier": "PASS",
+      "final_reviewer": "accept",
+      "accepted_source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+      "accepted_tree": "7b02b6a6412130a5461042216ad15093806465ac",
+      "merged_pr": 233,
+      "merged_sha": "e14771c4a0ed642bafd478c18dd1278855be89c5",
+      "merged_tree": "7b02b6a6412130a5461042216ad15093806465ac",
+      "merged_at": "2026-09-28T22:22:31Z"
+    },
+    "scope": "Bounded installed member-directory required-Rust default workflow on macOS arm64, with organization-boundary, HTTP-tamper, and 256/257-byte identity-bound evidence; no whole-backend retirement claim.",
+    "boundary": "The historical PASS remains valid for its exact accepted candidate and scope. It is not rebound as a Main56 receipt, and no Main56 or Main8eed installed runtime was tested."
+  },
+  "findings": [],
+  "overall_source_assessment": "Both changed risks from the predecessor reject are resolved. The 22 authority-row source classifications remain unchanged and source-scoped to Main56. The PR236 convergence priority is explicit, the listener lane is not a prerequisite, and historical v25.2 acceptance is preserved without inflating its scope.",
+  "convergence_direction": "Accept this v2 source-only audit artifact. Continue PR236 convergence on its exact documentation/runtime candidate lane and ordinary current candidate acceptance gates; keep listener redesign separate unless PR236 criteria specifically require it. Parent handles durable reconciliation of the one-commit E2E-only Main drift.",
+  "blocking_conditions": [],
+  "receipt_integrity": {
+    "reviewer_mutations": "Only this receipt path is authorized and written.",
+    "source_or_index_mutation": false,
+    "runtime_or_database_work": false,
+    "tests_executed": false
+  }
+}

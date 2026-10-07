@@ -270,6 +270,31 @@ afterEach(async () => {
   }
 }, migrationTestTimeout(30_000));
 
+describe("migration catalog", () => {
+  it("keeps the latest journal migration linked to its SQL and generated snapshot", () => {
+    const migrationsUrl = new URL("./migrations/", import.meta.url);
+    const journal = JSON.parse(
+      fs.readFileSync(new URL("meta/_journal.json", migrationsUrl), "utf8"),
+    ) as { entries: MigrationJournalEntry[] };
+    const latestEntry = journal.entries.at(-1);
+    if (!latestEntry) throw new Error("Migration journal must not be empty");
+
+    expect(latestEntry).toMatchObject({
+      idx: journal.entries.length - 1,
+      tag: "0178_organization_resource_mutation_state",
+    });
+    expect(fs.existsSync(new URL(`${latestEntry.tag}.sql`, migrationsUrl))).toBe(true);
+
+    const latestSnapshot = JSON.parse(
+      fs.readFileSync(new URL("meta/0178_snapshot.json", migrationsUrl), "utf8"),
+    ) as { id: string; prevId: string };
+    const previousSnapshot = JSON.parse(
+      fs.readFileSync(new URL("meta/0177_snapshot.json", migrationsUrl), "utf8"),
+    ) as { id: string };
+    expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
+  });
+});
+
 describe("applyPendingMigrations", () => {
   it.each(["main-prefix", "pr-checkpoint", "empty"])(
     "upgrades the merged migration history from %s without rewriting existing history",
@@ -300,8 +325,8 @@ describe("applyPendingMigrations", () => {
         await applyPendingMigrations(connectionString);
         expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
         expect(await validatePostMigrationInvariants(connectionString)).toMatchObject({
-          valid: true, issues: [], expectedMigrationCount: 185,
-          manifestFingerprint: "1061b688ac7cae7a688723b39ea4113cc91edd1f26ca494f8ed6daac8cbbc72e",
+          valid: true, issues: [], expectedMigrationCount: 188,
+          manifestFingerprint: "22abb952e48c6db1e311d4c1c2b7794e6589fdc8288e523194a4341478f7b414",
         });
         const after = await sql`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`;
         expect(after.slice(0, before.length)).toEqual(before);
@@ -1032,6 +1057,9 @@ describe("applyPendingMigrations", () => {
           "0179_side_chat_first_inputs.sql",
           "0180_native_resource_writer_fencing.sql",
           "0181_side_chat_first_input_generation.sql",
+          "0176_project_create_receipt_kind.sql",
+          "0177_organization_import_receipt_activity_mode.sql",
+          "0178_organization_resource_mutation_state.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1235,6 +1263,9 @@ describe("applyPendingMigrations", () => {
           "0179_side_chat_first_inputs.sql",
           "0180_native_resource_writer_fencing.sql",
           "0181_side_chat_first_input_generation.sql",
+          "0176_project_create_receipt_kind.sql",
+          "0177_organization_import_receipt_activity_mode.sql",
+          "0178_organization_resource_mutation_state.sql",
         ],
         reason: "pending-migrations",
       });

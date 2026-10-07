@@ -89,14 +89,14 @@ export function registerApiRoutes(
   );
   api.use("/orgs", aiSearchRoutes(db));
   api.use(organizationSkillRoutes(db));
-  api.use(agentRoutes(db, opts.storageService));
+  api.use(agentRoutes(db, opts.storageService, rustFoundationBridge));
   api.use(managedMcpAgentBindingRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db, rustFoundationBridge));
   api.use(appBuilderRoutes(db, {
     onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId),
   }));
-  api.use(onboardingRoutes(db));
+  api.use(onboardingRoutes(db, rustFoundationBridge));
   api.use(productAnalyticsRoutes(db));
   api.use(issueRoutes(db, opts.storageService));
   api.use(messengerRoutes(db));
@@ -105,6 +105,7 @@ export function registerApiRoutes(
     opts.storageService,
     chatBackgroundRuntime,
     opts.registerNetworkWaitingRunHandler,
+    rustFoundationBridge,
   ));
   api.use(automationRoutes(db));
   api.use(calendarRoutes(db));
@@ -123,7 +124,7 @@ export function registerApiRoutes(
     hostEnv: opts.mcpHostEnv ?? process.env,
   }));
   api.use(goalRoutes(db));
-  api.use(approvalRoutes(db));
+  api.use(approvalRoutes(db, rustFoundationBridge));
   api.use(requestRoutes(db));
   api.use(secretRoutes(db));
   api.use(costRoutes(db));

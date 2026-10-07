@@ -1,0 +1,135 @@
+{
+  "schema": "rudder.cli-mcp-residual-terminal-verdict/v1",
+  "verdict": "PASS",
+  "recordedAt": "2026-10-02T01:40:32Z",
+  "scope": "This verdict accepts only the fresh installed MCP residual journey: initialize, tools/list, Project create, default organization members list, raw protocol capture, and owned cleanup. It does not accept or replay CLI, browser/UI, historical MCP output, or aggregate/product-wide acceptance.",
+  "candidate": {
+    "sourceSha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "sourceTree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "artifactReceiptPath": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/receipt/2026-10-01T23-07-34-710Z-integrated646-complete-dist-verified.json",
+    "artifactReceiptSha256": "14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49",
+    "artifactReceiptSchema": "rudder.integrated-installed-artifact/v1",
+    "installPrefix": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/install-prefix-complete-dist",
+    "sourceTrackedProof": { "filesChecked": 4601, "mismatchCount": 0, "pass": true },
+    "installedEntryHashes": {
+      "server": "91d220481c55cdb1adb4669dc1391d3d7fbab4111eb6d5b529b738a730faeccb",
+      "cli": "405bac416912265d92f84ea7200cbe8fd966b196b65d900cd4d1f6bca0f3f07a",
+      "hostNativeAarch64AppleDarwin": "b0c8a44c6ee661b29baeed9ed1bcd6e32cb88c4db1e9cb308171dd0ab8ba3bf3"
+    }
+  },
+  "acceptancePacket": {
+    "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/packet.json",
+    "sha256": "de42822ee053455ece77e67f007c84569f06e2925ebfe33d399450aea67299a4",
+    "runnerPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/runner.mjs",
+    "runnerSha256": "acd2a6314fce3b7b8d832487b1379dfc04bbd7af8f7326cbd20c7783c8a6323a",
+    "noDbTestsPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/tests/stage.test.mjs",
+    "noDbTestsSha256": "f8b4ac8f5fd54f35e24aa0d783a31c5ee5130633f739283f429fc4df3ad1632c",
+    "stageAcceptPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/independent-stage-accept-2026-10-02T01-26-46Z.json",
+    "stageAcceptSha256": "8b1a708e3dd9ec9a985db70ac1a0072612fa9fa41d80abcb23d7edb39a0e7a45",
+    "stageVerdict": "accept"
+  },
+  "executionLease": {
+    "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/execution-lease.json",
+    "sha256": "043ef571bc2e025e9d59ad1772427f9bf54ffd9661795f972f0065c597599faa",
+    "leaseId": "mcp646-v4-dalton-exclusive-20261002T013000Z",
+    "authorizedUntil": "2026-10-02T02:00:00Z",
+    "scope": "one disposable embedded-PostgreSQL MCP residual run; no CLI replay, browser, or source edits",
+    "releasedAt": "2026-10-02T01:40:32Z",
+    "releaseDisposition": "Verifier terminal work is complete; owned processes, ports, and disposable data root are absent. The immutable authorization file is preserved so its pre-run hash remains valid; this terminal record releases this verifier's exclusive PG use."
+  },
+  "run": {
+    "runId": "e471550d-861f-4813-9955-d49b51af2c72",
+    "command": "node /private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/runner.mjs --execute --lease /private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/execution-lease.json",
+    "exitCode": 0,
+    "runnerObservation": "OBSERVED_NOT_ACCEPTANCE",
+    "evidencePath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/installed-mcp-residual-e471550d-861f-4813-9955-d49b51af2c72.json",
+    "evidenceSha256": "2cfaebb38025a6e2f662aed66558451460ba455defef580c1219da2f46ee55ef",
+    "raw": {
+      "stdinPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/mcp-e471550d-861f-4813-9955-d49b51af2c72.stdin.raw",
+      "stdinBytes": 666,
+      "stdinSha256": "f206686046b30b2751b6192422df6b4367e835eec3720188a93f9cc97c83ed7b",
+      "stdoutPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/mcp-e471550d-861f-4813-9955-d49b51af2c72.stdout.raw",
+      "stdoutBytes": 94978,
+      "stdoutSha256": "56136ebde3d4c28bc67349702ca5400798a40c666eb0a8dc0f3380c35861a667",
+      "stderrPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/mcp-e471550d-861f-4813-9955-d49b51af2c72.stderr.raw",
+      "stderrBytes": 0,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutLines": 4,
+      "stdoutFinalNewline": true,
+      "stdoutTruncated": false,
+      "stderrTruncated": false,
+      "timeout": false,
+      "signal": null
+    },
+    "outerTerminalCapture": {
+      "stdoutPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/v4-run-terminal.stdout.raw",
+      "stdoutSha256": "3f2185e9f6ea2f492f6bb8a3fb1a6fdd04923f91c7a0e273591cceccb2b4fee9",
+      "stderrPath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/v4-run-terminal.stderr.raw",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCodePath": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-residual646-v4/evidence/v4-run-terminal.exit-code",
+      "exitCodeSha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "independentProtocolReadback": {
+      "responses": ["initialize", "tools-list", "project-create", "members-list"],
+      "allResponsesJsonRpc2": true,
+      "allResponseIdsUniqueAndExpected": true,
+      "initializeProtocolVersion": "2025-11-25",
+      "toolsListed": 83,
+      "requiredToolsPresent": ["rudder_project_create", "rudder_organization_members_list"],
+      "projectCreateIsError": false,
+      "membersListIsError": false
+    }
+  },
+  "criterionLedger": [
+    {
+      "id": "environment-and-identity",
+      "status": "PASS",
+      "observation": "Installed server health was ok, version 0.7.24, disposable instance mcp-residual-c1060a56-36cd-4aa6-ae3e-7074952606f4; API 127.0.0.1:53339 and embedded database port 53340 were rooted under /private/tmp/rudder-cli-mcp-residual646-TiJjcY. Receipt and installed server/CLI/native hashes match the packet-bound candidate."
+    },
+    {
+      "id": "mcp-initialize-and-tools-list",
+      "status": "PASS",
+      "observation": "Captured initialize response selected protocol 2025-11-25; tools/list returned 83 tools including rudder_project_create and rudder_organization_members_list."
+    },
+    {
+      "id": "mcp-project-create-and-rust-ledger",
+      "status": "PASS",
+      "observation": "MCP returned Installed MCP Project 4B88B382 as prj_94dd5034. Read-only database proof recorded persisted id 94dd5034-ea7a-5d8e-9efa-e7706f3bb61d in organization 9ec303ff-b95a-41fc-95ec-44979d249550; Rust owner/fence epoch 1, applied project_create receipt, project.created audit, and activity.logged outbox correlate on activity/project IDs."
+    },
+    {
+      "id": "mcp-default-members-list-and-rust-receipt",
+      "status": "PASS",
+      "observation": "MCP default-arguments members-list returned the authenticated MCP residual agent (total 1, engineer). Captured receipt reports probe_mode required, rust_invoked true, response_authority rust, status 200, no fallback, and old_authority_invoked false."
+    },
+    {
+      "id": "raw-protocol-capture-integrity",
+      "status": "PASS",
+      "observation": "Raw stdin/stdout/stderr were persisted before parsing. Independently inspected stdout had four complete JSON-RPC 2.0 response lines, a final newline, no blank/noise line, no truncation; the MCP process exited 0 without signal or timeout. Historical CLI evidence was not replayed and historical MCP stdout was not reconstructed."
+    },
+    {
+      "id": "owned-cleanup",
+      "status": "PASS",
+      "observation": "Run record reports cleanup verified, server PID 36877 stopped and process group gone, run root removed, no cleanup errors. Independent post-run checks found neither PIDs 36877/36927 nor PGID 36877, no listeners on 53339/53340, and disposable root /private/tmp/rudder-cli-mcp-residual646-TiJjcY absent."
+    }
+  ],
+  "preservedPriorQuestion": {
+    "verdict": "QUESTION",
+    "terminalVerdictSha256": "4e928067031eb11a47d4fc05b369a37489cf53fefc4005d4f7cccbea8e7952d1",
+    "rawEvidenceSha256": "b535db1a03102a3fca05a6b3e995e6baa1715a6cb2da3cc3823da8b417d87e8a",
+    "disposition": "Unmodified and not promoted or reconstructed; previous CLI observations were not replayed. This PASS is limited to the new MCP residual run."
+  },
+  "leaseRecheck": "current at terminal; identity, expiry, candidate, receipt, runner, packet, and stage ACCEPT hashes match the authorized run",
+  "independentCleanupRecheck": {
+    "checkedAt": "2026-10-02T01:40:32Z",
+    "serverPid36877Present": false,
+    "rustPid36927Present": false,
+    "pgid36877Present": false,
+    "apiPort53339Listening": false,
+    "databasePort53340Listening": false,
+    "disposableRootPresent": false
+  },
+  "limitations": [
+    "No CLI replay, browser/UI session, product-source edit, artifact rebuild/install, or aggregate/product-wide acceptance claim was performed.",
+    "The previous terminal QUESTION and its historical evidence remain unchanged."
+  ]
+}

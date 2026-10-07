@@ -1,0 +1,52 @@
+{
+  "schema": "rudder.project-create-author-smoke/v1",
+  "date": "2026-09-29",
+  "verdict": "PASS",
+  "scope": "Author public-entry workflow on macOS only; not independent installed acceptance.",
+  "source_commit": "aef29616e24a515436167dfd992e56e9309d02fe",
+  "published_record_commit": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
+  "binary_sha256": "1442d49d0795692dbbd3c8eb4054a743f8e93d6e3f1d1189648ea75bfc9040a8",
+  "binary_equivalence": "Built after fresh-state-root fix, before Windows-only README branch; identical executed macOS behavior. No Windows claim.",
+  "preflight_sha256": "3f807531bce48da09b72932ea67ed2e16610e4fef6a338905cf48038014002b2",
+  "driver_sha256": "1331bd7e8534966f13cf9eebb03ee46f919959b72c7d14a237d8963a29962671",
+  "author_agent": "01a0ea6a-8e20-7b31-9a02-9652d0d8c32c",
+  "evidence_note": "/tmp/rudder-project-create-basic-http-failure-606c729.md",
+  "evidence_note_sha256": "e39a7c3c60f66205e1f58c4ad17d1803e31a35a0de53f1f52020f55fcb1975d0",
+  "organization_id": "a79b2957-9faf-485f-a12d-6f395419801e",
+  "project_id": "eeb4c0c0-e698-5033-b155-8b4add0a8cbd",
+  "cli_project_id": "dc1bac0c-6699-5f5e-a7f1-6cf6842ae06b",
+  "mcp_project_ref": "prj_c95d94a3",
+  "passed": [
+    "HTTP201 creates Rust-owned Project and synchronously Node-compatible Library README.",
+    "Same-key response is exact, including after server restart.",
+    "Later PATCH routes by persisted Rust ownership without a predeclared Project ID.",
+    "Actual CLI process creates UUIDv5 Project.",
+    "Actual MCP tools/call creates Project; typed shortref maps to same-org persisted UUID and Rust owner.",
+    "Cross-organization create403 and terminated actor401.",
+    "Rust unavailable: create503, health200, no Node fallback row."
+  ],
+  "historical_failures": [
+    "Missing dependency ICU symlinks blocked initial PostgreSQL startup; isolated dependency's official hydration repaired it.",
+    "Real179-migration profile lacked instance/data. Native provisioner required it and returned500. Native durable first-use creation repaired it.",
+    "MCP fixture incorrectly expected UUID in formatted MCP output. Assertion corrected to existing typed shortref contract with DB identity/owner checks."
+  ],
+  "cleanup": {
+    "confirmed": true,
+    "api_port": 65381,
+    "postgres_port": 65382,
+    "listeners_remaining": false,
+    "owned_process_exited": true,
+    "temporary_home_removed": true
+  },
+  "not_verified": [
+    "Independent installed package acceptance",
+    "Onboarding/import/worktree merge and full transactional crash/recovery acceptance",
+    "Windows execution",
+    "Production"
+  ],
+  "terminal_claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  }
+}

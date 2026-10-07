@@ -27,6 +27,7 @@ const accessSvc = {
 
 const projectSvc = {
   list: vi.fn(),
+  getMutationOwner: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
   createWorkspace: vi.fn(),
@@ -115,6 +116,7 @@ describe("organization portability", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    projectSvc.getMutationOwner.mockResolvedValue("node");
     companySvc.getById.mockResolvedValue({
       id: "organization-1",
       name: "Rudder",
@@ -983,7 +985,7 @@ describe("organization portability", () => {
         defaultMode: "shared_workspace",
         defaultProjectWorkspaceId: "workspace-imported",
       }),
-    }), { allowScalarUpdateWhenProjectGoalOwned: true });
+    }));
     expect(issueSvc.create).toHaveBeenCalledWith("organization-imported", expect.objectContaining({
       projectId: "project-imported",
       projectWorkspaceId: "workspace-imported",

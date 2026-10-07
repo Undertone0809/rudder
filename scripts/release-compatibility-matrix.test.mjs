@@ -56,6 +56,28 @@ function manifest(tags, sqlByTag, label) {
 
 describe("release migration compatibility matrix", () => {
   it.each([
+    ["0.7.24", "stable"],
+    ["0.7.24-canary.0", "canary"],
+  ])("accepts %s with the merged migration fingerprint", (candidateVersion, channel) => {
+    const result = runCompatibilityPreflight({ candidateVersion, channel });
+    expect(result.candidateFingerprint).toBe(
+      "22abb952e48c6db1e311d4c1c2b7794e6589fdc8288e523194a4341478f7b414",
+    );
+    expect(result.candidateMigrations).toBe(186);
+    expect(result.candidateSqlFiles).toBe(188);
+    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.23",
+      "0.7.22",
+      "0.7.21",
+      "0.7.20",
+      "0.7.19",
+      "0.7.18",
+      "0.7.16",
+      "0.7.15",
+    ]);
+  }, 60_000);
+
+  it.each([
     ["0.7.23", "stable"],
     ["0.7.23-canary.0", "canary"],
   ])("accepts the frozen %s with its published 0163 migration fingerprint", (candidateVersion, channel) => {
@@ -80,19 +102,6 @@ describe("release migration compatibility matrix", () => {
       "0.7.16",
       "0.7.15",
     ]);
-  }, 60_000);
-
-  it.each([
-    ["0.7.24", "stable"],
-    ["0.7.24-canary.0", "canary"],
-  ])("accepts %s with the current native-chat migration fingerprint", (candidateVersion, channel) => {
-    const result = runCompatibilityPreflight({ candidateVersion, channel });
-    expect(result.candidateFingerprint).toBe(
-      "1061b688ac7cae7a688723b39ea4113cc91edd1f26ca494f8ed6daac8cbbc72e",
-    );
-    expect(result.candidateMigrations).toBe(183);
-    expect(result.candidateSqlFiles).toBe(185);
-    expect(result.fixtures[0].version).toBe("0.7.23");
   }, 60_000);
 
   it("accepts the frozen pre-D1 0.7.21 candidate against the previous stable fixtures", () => {

@@ -1,0 +1,99 @@
+{
+  "schema": "rudder.independent-cli-preserved-evidence-verifier/v1",
+  "recordedAt": "2026-10-02T08:35:05Z",
+  "verdict": "PASS",
+  "level": "narrow installed CLI historical evidence only",
+  "reviewerRole": "Distinct evidence-only verifier; not packet author Godel or stage reviewer Darwin.",
+  "candidate": {
+    "sourceSha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "sourceTree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "artifactBuildId": "integrated646-complete-dist-verified",
+    "artifactReceiptSha256": "14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49",
+    "installedCliEntrySha256": "405bac416912265d92f84ea7200cbe8fd966b196b65d900cd4d1f6bca0f3f07a"
+  },
+  "inputs": {
+    "packet": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli646-preserved-observations/packet.json",
+      "sha256": "786b6ac7bd60df6f7a3b578ab2b48a720392272a409de66a29a95bc4b9c592dd"
+    },
+    "stageReview": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli646-preserved-observations/stage-review.json",
+      "sha256": "9bc823df52956163bb650100c7e21b7907a20ed76f5d4c7cb13d3dc0695b5f67",
+      "verdict": "accept"
+    },
+    "rawEvidence": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-sealed646-pino-pretty-v2/evidence/installed-cli-mcp-member-read-45ddcbf4-e899-49fe-9bf3-5d795a9b0fbd.json",
+      "sha256": "b535db1a03102a3fca05a6b3e995e6baa1715a6cb2da3cc3823da8b417d87e8a",
+      "observedAt": "2026-10-02T00:28:35.500Z",
+      "combinedRunStatus": "OBSERVED_FAILURE"
+    },
+    "originalCombinedQuestion": {
+      "path": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss/doc/plans/artifacts/2026-10-02-rudder-cli-mcp646-v2-independent-question.json",
+      "sha256": "4e928067031eb11a47d4fc05b369a37489cf53fefc4005d4f7cccbea8e7952d1",
+      "verdict": "QUESTION",
+      "handling": "Unchanged; this narrow verdict does not supersede it."
+    }
+  },
+  "criterionObservations": [
+    {
+      "criterion": "Installed CLI default member read and Rust authority receipt",
+      "verdict": "PASS",
+      "publicAction": "Captured installed @rudderhq/cli dist/index.js command: org members --org-id <created-org-id> --json --full-ids, with default member type.",
+      "terminalObservation": "Parsed response has total=1, hasMore=false, and the created agent ID/name/type. The preserved Rust receipt for the same organization records required mode, rust_invoked=true, response_authority=rust, no fallback or old authority, and HTTP 200. Preserved runtime log order places the receipt immediately before the matching same-organization members/directory GET 200.",
+      "evidence": [
+        "rawEvidence:$.surfaces.cliMemberRead.command",
+        "rawEvidence:$.surfaces.cliMemberRead.response",
+        "rawEvidence:$.surfaces.cliMemberRead.matchedMember",
+        "rawEvidence:$.surfaces.cliMemberRead.probeReceipt",
+        "rawEvidence:$.runtimeLogs.stdoutTail"
+      ],
+      "correlationLimit": "requestId is null; correlation is the preserved sequential operation window, organization, receipt/log order, route/status, and matching response, not request-ID equality."
+    },
+    {
+      "criterion": "Installed CLI Project create response and Rust-owned ledger",
+      "verdict": "PASS",
+      "publicAction": "Captured installed dist/index.js project create --full-ids --json command.",
+      "terminalObservation": "Parsed CLI response project ID, organization, and name match the persisted project row. The same project ID is linked to owner=rust, mutation_version=1, fence_epoch=1, an applied project_create receipt, project.created audit activity, and activity.logged outbox event with matching activity ID.",
+      "evidence": [
+        "rawEvidence:$.surfaces.cli.command",
+        "rawEvidence:$.surfaces.cli.response",
+        "rawEvidence:$.surfaces.cli.ledger"
+      ]
+    },
+    {
+      "criterion": "Already-recorded independent cleanup verification",
+      "verdict": "PASS",
+      "terminalObservation": "Raw cleanup record says verified, process stopped with code 0 and no signal, process group gone, owned run root removed, and no errors. The original combined receipt records independent post-run checks: owned root absent, server/Rust PIDs absent, process group absent, and API/database ports 49533/49534 without listeners.",
+      "evidence": [
+        "rawEvidence:$.cleanup",
+        "originalCombinedQuestion:$.cleanupAndRelease.independentPostRunChecks"
+      ]
+    }
+  ],
+  "evidenceLimits": [
+    "The raw record preserves parsed CLI response objects, not verbatim child stdout/stderr or per-child exit codes. The stage review verified the frozen runner's non-timeout, exit-code-zero, and JSON-parse assertions as prerequisites to recording those objects; no raw child exit receipt exists, so this verdict does not claim independently captured child exit codes or verbatim CLI output.",
+    "The raw combined run is marked OBSERVED_FAILURE because the MCP phase lacked preserved parseable public responses. MCP is excluded from this verdict; no MCP result is inferred. The original combined QUESTION remains unchanged and applicable to the combined CLI/MCP leaf."
+  ],
+  "scopeBoundary": {
+    "included": [
+      "Installed CLI default member read and its Rust authority receipt",
+      "Installed CLI Project create response and exact-ID Rust owner/fence/receipt/audit/outbox correlation",
+      "Already-recorded independently verified cleanup"
+    ],
+    "excluded": [
+      "MCP v1/v4 or the unresolved MCP result",
+      "Board UI, other CLI operations, aggregate/product acceptance, release readiness, or broad Rust-authority migration",
+      "Any current runtime, database, API, process, or CLI execution"
+    ],
+    "separateMcpV4PassUsed": false,
+    "combinedQuestionChanged": false,
+    "executionLease": "NONE; historical evidence-only re-evaluation"
+  },
+  "integrityRecheck": {
+    "checkedAt": "2026-10-02T08:35:05Z",
+    "packetStageRawEvidenceAndOriginalQuestionHashesMatch": true,
+    "artifactReceiptAndInstalledCliEntryHashesMatch": true,
+    "runtimeReplayed": false,
+    "sourceOrArtifactExecuted": false
+  }
+}

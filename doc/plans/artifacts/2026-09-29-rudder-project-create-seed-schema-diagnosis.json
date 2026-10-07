@@ -1,0 +1,84 @@
+{
+  "summary_of_independent_receipt": true,
+  "original_path": "/private/tmp/rudder-create-verifier.DSx0ST/seed-schema-diagnosis-v274.json",
+  "original_sha256": "d30a58cddbf518da425723b9a805802ca8a64e61d557d5c90172b3a538ee9f53",
+  "status": "READ_ONLY_ROOT_CAUSE_CONFIRMED",
+  "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+  "backendOrigin": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
+  "sourceTriggerCount": 15,
+  "targetTriggerCount": 0,
+  "sourceTriggerFunctionCount": 11,
+  "targetTriggerFunctionCount": 0,
+  "missingTriggers": [
+    {
+      "table": "organization_branding_mutation_receipts",
+      "name": "organization_branding_mutation_receipts_guard"
+    },
+    {
+      "table": "organization_branding_mutation_receipts",
+      "name": "organization_branding_mutation_receipts_truncate_guard"
+    },
+    {
+      "table": "organization_branding_mutation_state",
+      "name": "organization_branding_mutation_state_guard"
+    },
+    {
+      "table": "organization_branding_mutation_state",
+      "name": "organization_branding_mutation_state_truncate_guard"
+    },
+    {
+      "table": "organization_issue_prefix_aliases",
+      "name": "organization_alias_route_key_namespace_trigger"
+    },
+    {
+      "table": "organization_mutation_receipts",
+      "name": "organization_mutation_receipts_guard"
+    },
+    {
+      "table": "organization_mutation_receipts",
+      "name": "organization_mutation_receipts_truncate_guard"
+    },
+    {
+      "table": "organization_mutation_state",
+      "name": "organization_mutation_state_guard"
+    },
+    {
+      "table": "organization_mutation_state",
+      "name": "organization_mutation_state_truncate_guard"
+    },
+    {
+      "table": "organizations",
+      "name": "organizations_branding_mutation_state_provisioning"
+    },
+    {
+      "table": "organizations",
+      "name": "organizations_mutation_state_provisioning"
+    },
+    {
+      "table": "organizations",
+      "name": "organizations_route_key_namespace_trigger"
+    },
+    {
+      "table": "project_goal_mutation_state",
+      "name": "project_goal_mutation_state_guard"
+    },
+    {
+      "table": "project_goal_mutation_state",
+      "name": "project_goal_mutation_state_truncate_guard"
+    },
+    {
+      "table": "projects",
+      "name": "projects_goal_mutation_state_provisioning"
+    }
+  ],
+  "journalsIdentical": true,
+  "journalRowCount": 179,
+  "conclusion": "The normal installed worktree-init full seed snapshot omits trigger and trigger-function DDL while copying the complete migration journal. Target therefore reports all migrations applied but lacks 0174 provisioning/guard triggers. Later merge INSERT cannot invoke the absent AFTER INSERT provisioning trigger; target owner remains absent and public PATCH fails409. This is schema-loss during seed backup/restore, not evidence that applyMergePlan needs a duplicate authority INSERT.",
+  "replicationRoleConclusion": "Both newly opened read-only sessions report origin; no persistent database/role replication setting. Seed uses SET LOCAL replica within BEGIN/COMMIT. Missing catalog objects, not a surviving replica-mode session, explain this failure. Historical merge session setting was not captured live.",
+  "cleanup": {
+    "bothOwnedDatabasesStopped": true,
+    "noFixtureRepair": true,
+    "noApiStarted": true,
+    "pgLaneReleased": true
+  }
+}

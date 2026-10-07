@@ -329,6 +329,7 @@ export function resolveMigrationPreflightBinary(env: NodeJS.ProcessEnv = process
       ? (process as NodeJS.Process & { resourcesPath: string }).resourcesPath
       : "");
   const candidates = [
+    target ? path.resolve(moduleDir, "../../resources/native", target, binaryName) : "",
     path.resolve(moduleDir, "../../../native/target/debug", binaryName),
     path.resolve(moduleDir, "../../../../native/target/debug", binaryName),
     path.resolve(moduleDir, "../../../native", target ?? "unsupported", binaryName),

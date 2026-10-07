@@ -69,9 +69,10 @@ async function lockOrganizationBrandingMutationState(
 }
 
 /**
- * Serialize every legacy brandColor writer with the component-level Rust
- * ownership handoff. This lock must be acquired before the organization-wide
- * fence so a Rust branding transaction and a Node update cannot cross locks.
+ * Serialize legacy brandColor and organization-logo writers with the
+ * component-level Rust ownership handoff. Acquire this before the
+ * organization-wide fence so a Rust branding transaction and a Node update
+ * cannot cross locks.
  */
 export async function lockNodeOrganizationBrandingAuthority(
   tx: TransactionClient,

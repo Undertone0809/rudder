@@ -55,6 +55,40 @@ describe("D1 MCP capability dispatch", () => {
     );
   });
 
+  it("forwards an existing logo link and explicit nullable clears without materializing omitted fields", async () => {
+    const api = createApi();
+    const logoAssetId = "ABCDEFAB-CDEF-4ABC-8ABC-ABCDEFABCDEF";
+    const normalizedLogoAssetId = logoAssetId.toLowerCase();
+    const helpers = { requiredRuntimeString, requiredString, optionalString };
+
+    await dispatchD1CapabilityDirectly("organization.brand_color.update", {
+      logoAssetId,
+      idempotencyKey: "logo-link-1",
+    }, { RUDDER_ORG_ID: "org-1" }, api as never, helpers);
+    expect(api.patch).toHaveBeenLastCalledWith(
+      "/api/orgs/org-1/branding",
+      { logoAssetId: normalizedLogoAssetId },
+      { headers: {
+        "x-rudder-idempotency-key": "logo-link-1",
+        "x-rudder-required-authority": "rust",
+      } },
+    );
+
+    await dispatchD1CapabilityDirectly("organization.brand_color.update", {
+      brandColor: null,
+      logoAssetId: null,
+      idempotencyKey: "branding-clear-1",
+    }, { RUDDER_ORG_ID: "org-1" }, api as never, helpers);
+    expect(api.patch).toHaveBeenLastCalledWith(
+      "/api/orgs/org-1/branding",
+      { brandColor: null, logoAssetId: null },
+      { headers: {
+        "x-rudder-idempotency-key": "branding-clear-1",
+        "x-rudder-required-authority": "rust",
+      } },
+    );
+  });
+
   it("allowlists organization-scoped Project creation fields", async () => {
     const api = createApi();
 
@@ -184,6 +218,29 @@ describe("D1 MCP capability dispatch", () => {
       "--org-id", "org-1",
       "--brand-color", "#123456",
       "--idempotency-key", "brand-1",
+    ]);
+  });
+
+  it("supports existing logo links and nullable clears through the CLI fallback", () => {
+    expect(organizationBrandColorCliArgs({
+      logoAssetId: "ABCDEFAB-CDEF-4ABC-8ABC-ABCDEFABCDEF",
+      idempotencyKey: "logo-link-1",
+    }, { RUDDER_ORG_ID: "org-1" }, requiredString, pushOptional)).toEqual([
+      "org", "brand-color", "update",
+      "--org-id", "org-1",
+      "--logo-asset-id", "abcdefab-cdef-4abc-8abc-abcdefabcdef",
+      "--idempotency-key", "logo-link-1",
+    ]);
+    expect(organizationBrandColorCliArgs({
+      brandColor: null,
+      logoAssetId: null,
+      idempotencyKey: "branding-clear-1",
+    }, { RUDDER_ORG_ID: "org-1" }, requiredString, pushOptional)).toEqual([
+      "org", "brand-color", "update",
+      "--org-id", "org-1",
+      "--clear-brand-color",
+      "--clear-logo",
+      "--idempotency-key", "branding-clear-1",
     ]);
   });
 });

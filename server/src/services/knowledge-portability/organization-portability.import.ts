@@ -14,8 +14,10 @@ import {
   normalizeAgentUrlKey,
   PROJECT_STATUSES
 } from "@rudderhq/shared";
+import type { Request } from "express";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { conflict, notFound, unprocessable } from "../../errors.js";
+import { conflict, forbidden, HttpError, notFound, unprocessable } from "../../errors.js";
 import type { StorageService } from "../../storage/types.js";
 import { accessService } from "../access.js";
 import { agentInstructionsService } from "../agent-instructions.js";
@@ -26,6 +28,7 @@ import { issueService } from "../issues.js";
 import { organizationSkillService } from "../organization-skills.js";
 import { organizationService } from "../orgs.js";
 import { projectService } from "../projects.js";
+import type { RustFoundationBridge } from "../rust-foundation-bridge.js";
 
 import {
   asString,
@@ -66,6 +69,7 @@ type ImportContext = {
   organizationSkills: ReturnType<typeof organizationSkillService>;
   buildPreview: ReturnType<typeof createOrganizationPortabilityPreviewHandlers>["buildPreview"];
   organizationBrandingMode?: "off" | "shadow" | "required";
+  rustFoundationBridge?: RustFoundationBridge;
 };
 
 export function createOrganizationPortabilityImportHandlers(context: ImportContext) {
@@ -82,12 +86,14 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
     organizationSkills,
     buildPreview,
     organizationBrandingMode,
+    rustFoundationBridge,
   } = context;
 
   async function importBundle(
     input: OrganizationPortabilityImport,
     actorUserId: string | null | undefined,
     options?: ImportBehaviorOptions,
+    request?: Request,
   ): Promise<OrganizationPortabilityImportResult> {
     if (organizationBrandingMode === "required" && input.include?.organization !== false) {
       throw conflict("Organization portability imports that include organization settings are unavailable while Rust branding authority is required; import organization data separately from branding");
@@ -107,6 +113,82 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
     ) {
       throw unprocessable("Safe import routes only allow create or skip actions.");
     }
+
+    // Trusted request context is separate from portable input. Board replace
+    // already authorizes the target at the route; Rust reauthorizes the same
+    // actor. Safe agent imports never acquire a synthetic target-org actor.
+    const requireRustProjectRequest = (orgId: string): Request => {
+      if (!request || request.actor.type !== "board") {
+        throw forbidden("Rust-owned Project replacement requires the authenticated board request");
+      }
+      const actor = request.actor;
+      if (actor.source !== "local_implicit" && !actor.isInstanceAdmin && !actor.orgIds?.includes(orgId)) {
+        throw forbidden("User does not have access to this organization");
+      }
+      if (rustFoundationBridge?.projectGoalSetMode !== "required") {
+        throw new HttpError(503, "Rust Project-Goal authority is not enabled");
+      }
+      return request;
+    };
+    // Reject known unavailable Rust replacements before any import writes.
+    let needsRustProjectStartup = false;
+    if (input.target.mode === "existing_organization") {
+      for (const entry of plan.preview.plan.projectPlans) {
+        if (entry.action === "update" && entry.existingProjectId
+          && await projects.getMutationOwner(input.target.orgId, entry.existingProjectId) === "rust") {
+          requireRustProjectRequest(input.target.orgId);
+          needsRustProjectStartup = true;
+        }
+      }
+    }
+    if (needsRustProjectStartup) {
+      try {
+        await rustFoundationBridge!.start();
+      } catch {
+        throw new HttpError(503, "Rust Project-Goal authority is unavailable");
+      }
+    }
+    const trustedImportKey = request?.header("x-rudder-idempotency-key")?.trim() || null;
+    const projectCommandKey = trustedImportKey ?? randomUUID();
+    const updateImportedProject = async (
+      orgId: string,
+      projectId: string,
+      patch: Parameters<typeof projects.update>[1],
+      phase: "replace" | "hydrate",
+    ) => {
+      if (await projects.getMutationOwner(orgId, projectId) !== "rust") {
+        // The service rechecks Node ownership under its transaction fence.
+        return projects.update(projectId, patch);
+      }
+      const authenticatedRequest = requireRustProjectRequest(orgId);
+      const idempotencyKey = createHash("sha256")
+        .update(JSON.stringify(["portability-project-update", projectCommandKey, orgId, projectId, phase]))
+        .digest("hex");
+      const forwarded = Object.assign(Object.create(authenticatedRequest) as Request, {
+        headers: { ...authenticatedRequest.headers, "x-rudder-idempotency-key": idempotencyKey },
+      });
+      let response;
+      try {
+        response = await rustFoundationBridge!.projectGoalSet(
+          forwarded, orgId, projectId,
+          Buffer.from(JSON.stringify({
+            projectPatch: patch,
+            runId: authenticatedRequest.actor.runId ?? null,
+            mutationOrigin: "organization_import",
+          }), "utf8"),
+          `/api/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(projectId)}/goal-set`,
+        );
+      } catch {
+        throw new HttpError(503, "Rust Project-Goal authority is unavailable");
+      }
+      if (response.status < 200 || response.status >= 300) {
+        let body: { error?: string; details?: unknown } = {};
+        try { body = JSON.parse(response.body.toString("utf8")); } catch { /* retain a safe error */ }
+        throw new HttpError(response.status >= 400 && response.status <= 599 ? response.status : 502,
+          typeof body?.error === "string" ? body.error : "Rust Project update failed", body?.details);
+      }
+      return projects.getById(projectId);
+    };
 
     const sourceManifest = plan.source.manifest;
     const extensionPath = findPaperclipExtensionPath(plan.source.files);
@@ -445,9 +527,7 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
 
         let projectId: string | null = null;
         if (planProject.action === "update" && planProject.existingProjectId) {
-          const updated = await projects.update(planProject.existingProjectId, projectPatch, {
-            allowScalarUpdateWhenProjectGoalOwned: true,
-          });
+          const updated = await updateImportedProject(targetOrganization.id, planProject.existingProjectId, projectPatch, "replace");
           if (!updated) {
             warnings.push(`Skipped update for missing project ${planProject.existingProjectId}.`);
             resultProjects.push({
@@ -470,7 +550,10 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
             reason: planProject.reason,
           });
         } else {
-          const created = await projects.create(targetOrganization.id, projectPatch);
+          const created = await projects.create(targetOrganization.id, projectPatch, {
+            lane: "node",
+            caller: "import",
+          });
           projectId = created.id;
           importedSlugToProjectId.set(planProject.slug, created.id);
           existingProjectSlugToId.set(created.urlKey, created.id);
@@ -486,7 +569,10 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
         if (!projectId) continue;
 
         for (const workspace of manifestProject.workspaces) {
-          const createdWorkspace = await projects.createWorkspace(projectId, {
+          const workspaceImportIdentity = input.target.mode === "existing_organization" && trustedImportKey
+            ? { importKey: trustedImportKey, portableWorkspaceKey: workspace.key }
+            : undefined;
+          const workspaceInput = {
             name: workspace.name,
             sourceType: workspace.sourceType ?? undefined,
             repoUrl: workspace.repoUrl ?? undefined,
@@ -497,7 +583,10 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
             cleanupCommand: workspace.cleanupCommand ?? undefined,
             metadata: workspace.metadata ?? undefined,
             isPrimary: workspace.isPrimary,
-          });
+          };
+          const createdWorkspace = workspaceImportIdentity
+            ? await projects.createWorkspace(projectId, workspaceInput, workspaceImportIdentity)
+            : await projects.createWorkspace(projectId, workspaceInput);
           if (!createdWorkspace) {
             warnings.push(`Project ${planProject.slug} workspace ${workspace.key} could not be created during import.`);
             continue;
@@ -513,9 +602,9 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
           warnings,
         );
         if (hydratedProjectExecutionWorkspacePolicy) {
-          await projects.update(projectId, {
+          await updateImportedProject(targetOrganization.id, projectId, {
             executionWorkspacePolicy: hydratedProjectExecutionWorkspacePolicy,
-          }, { allowScalarUpdateWhenProjectGoalOwned: true });
+          }, "hydrate");
         }
       }
     }

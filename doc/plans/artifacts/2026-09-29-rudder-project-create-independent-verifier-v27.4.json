@@ -1,0 +1,433 @@
+{
+  "verdict": "FAIL",
+  "timestamp": "2026-09-29T02:39:32.453Z",
+  "packet": "27.4",
+  "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+  "source_tree": "440a6f1e27e732bd8c9fa96742fc2001385562ec",
+  "fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
+  "build_id": "server-f54f7190-cli-09238fd9-host-514d101c",
+  "runtime_id": "create-v27.4-7a4-cli0923-macos-arm64",
+  "data_id": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+  "artifactSource": {
+    "backend": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
+    "cli": "7a4d1120fbcc216256889d30c17c0fe5728e9138"
+  },
+  "hashes": {
+    "serverTarball": "f54f7190c4623f328ca673c5b7ede01f540450ebc280efab5bde09ea20bd81f0",
+    "cliTarball": "09238fd930eaecc0d1726678e874df190b11894a5b5f5d3975e35c8836259815",
+    "cliIndex": "668d1a00b05c592edb0a4997533d4116a7eaeb75dc3f417d1a519dde7935aa12",
+    "foundation": "514d101c7aa30c23b535a6553cdad6b83a5dd0119e531b023fdead34c3754875",
+    "preflight": "1110ba6a1e988f80bb6fefd362776264f266bd19d4126363db56e0b5a6c3eb97"
+  },
+  "fixture": {
+    "main": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+    "mainApi": 56939,
+    "mainPg": 56940,
+    "mainOrganizations": [
+      "16a1f32a-4a8a-4b72-ab0f-23b78a2a8e05",
+      "5eaec6ca-cd9f-4e12-b8e0-79fe696f7bc6",
+      "a462857b-d851-403b-ba33-b52d9ab16af3",
+      "13fd3641-560e-4e35-95fa-ab749db58f99",
+      "8d0dea2b-162b-490a-90c3-7749f717a747",
+      "875fca1e-9d5b-4326-9f59-6e37d7dc2f24"
+    ],
+    "merge": {
+      "root": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc",
+      "target": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/target",
+      "home": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/home",
+      "source": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/source",
+      "sourceConfig": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/source/.rudder/config.json",
+      "org": "875fca1e-9d5b-4326-9f59-6e37d7dc2f24",
+      "project": "24f5373f-bee6-5871-929d-bcb71b7ed6b7",
+      "issue": "18ee41f0-a95e-4643-9f90-258022771e89",
+      "targetConfig": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/target/.rudder/config.json"
+    },
+    "mergeApi": 56941,
+    "mergePg": 56942,
+    "processHistory": [
+      {
+        "at": "2026-09-29T02:31:25.554Z",
+        "event": "lease-before-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "build": "server-f54f7190-cli-09238fd9-host-514d101c",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "packet": "27.4",
+        "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+        "nodePid": 90672,
+        "apiPort": 56939,
+        "databasePort": 56940,
+        "phase": "merge-session",
+        "execution_authorized": true,
+        "pg_lane_granted": true
+      },
+      {
+        "at": "2026-09-29T02:31:33.390Z",
+        "event": "runtime-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "build": "server-f54f7190-cli-09238fd9-host-514d101c",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "packet": "27.4",
+        "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+        "nodePid": 90672,
+        "apiPort": 56939,
+        "databasePort": 56940,
+        "phase": "merge-session",
+        "execution_authorized": true,
+        "pg_lane_granted": true,
+        "apiUrl": "http://127.0.0.1:56939",
+        "ownedProcessCandidates": [
+          "91012 90672 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+          "91039 90672 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+        ]
+      },
+      {
+        "at": "2026-09-29T02:31:57.305Z",
+        "event": "lease-before-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "build": "server-f54f7190-cli-09238fd9-host-514d101c",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "packet": "27.4",
+        "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+        "nodePid": 92092,
+        "apiPort": 56939,
+        "databasePort": 56940,
+        "phase": "merge-session-v274",
+        "execution_authorized": true,
+        "pg_lane_granted": true
+      },
+      {
+        "at": "2026-09-29T02:31:58.850Z",
+        "event": "runtime-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "build": "server-f54f7190-cli-09238fd9-host-514d101c",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "packet": "27.4",
+        "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+        "nodePid": 92092,
+        "apiPort": 56939,
+        "databasePort": 56940,
+        "phase": "merge-session-v274",
+        "execution_authorized": true,
+        "pg_lane_granted": true,
+        "apiUrl": "http://127.0.0.1:56939",
+        "ownedProcessCandidates": [
+          "92094 92092 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+          "92117 92092 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+        ]
+      },
+      {
+        "at": "2026-09-29T02:32:58.487Z",
+        "event": "lease-before-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "build": "server-f54f7190-cli-09238fd9-host-514d101c",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "packet": "27.4",
+        "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+        "nodePid": 94207,
+        "apiPort": 56939,
+        "databasePort": 56940,
+        "phase": "merge-session-v274",
+        "execution_authorized": true,
+        "pg_lane_granted": true
+      },
+      {
+        "at": "2026-09-29T02:33:01.049Z",
+        "event": "runtime-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "build": "server-f54f7190-cli-09238fd9-host-514d101c",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "packet": "27.4",
+        "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+        "nodePid": 94207,
+        "apiPort": 56939,
+        "databasePort": 56940,
+        "phase": "merge-session-v274",
+        "execution_authorized": true,
+        "pg_lane_granted": true,
+        "apiUrl": "http://127.0.0.1:56939",
+        "ownedProcessCandidates": [
+          "94214 94207 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+          "94237 94207 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+        ]
+      },
+      {
+        "at": "2026-09-29T02:34:15.345Z",
+        "event": "merge-target-lease-before-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "root": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/home",
+        "pid": 95559,
+        "apiPort": 56941,
+        "databasePort": 56942,
+        "org": "875fca1e-9d5b-4326-9f59-6e37d7dc2f24"
+      },
+      {
+        "at": "2026-09-29T02:34:17.744Z",
+        "event": "merge-target-start",
+        "pid": 95559,
+        "url": "http://127.0.0.1:56941",
+        "processes": [
+          "95576 95559 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/home/instances/independent-create-merge/db -p 56942",
+          "95608 95559 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation",
+          "95632 95559 ps -axo pid=,ppid=,command="
+        ]
+      },
+      {
+        "at": "2026-09-29T02:36:45.836Z",
+        "event": "merge-target-lease-before-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "root": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/home",
+        "pid": 5188,
+        "apiPort": 56941,
+        "databasePort": 56942,
+        "org": "875fca1e-9d5b-4326-9f59-6e37d7dc2f24"
+      },
+      {
+        "at": "2026-09-29T02:36:48.721Z",
+        "event": "merge-target-start",
+        "pid": 5188,
+        "url": "http://127.0.0.1:56941",
+        "processes": [
+          " 5192  5188 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/home/instances/independent-create-merge/db -p 56942",
+          " 5219  5188 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation",
+          " 5243  5188 ps -axo pid=,ppid=,command="
+        ]
+      },
+      {
+        "at": "2026-09-29T02:37:54.423Z",
+        "event": "merge-target-lease-before-start",
+        "source": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+        "runtime": "create-v27.4-7a4-cli0923-macos-arm64",
+        "data": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+        "root": "/private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/home",
+        "pid": 8989,
+        "apiPort": 56941,
+        "databasePort": 56942,
+        "org": "875fca1e-9d5b-4326-9f59-6e37d7dc2f24"
+      },
+      {
+        "at": "2026-09-29T02:37:56.776Z",
+        "event": "merge-target-start",
+        "pid": 8989,
+        "url": "http://127.0.0.1:56941",
+        "processes": [
+          " 8993  8989 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/merge.CvKhdc/home/instances/independent-create-merge/db -p 56942",
+          " 9016  8989 /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation",
+          " 9041  8989 ps -axo pid=,ppid=,command="
+        ]
+      }
+    ]
+  },
+  "blockingFinding": {
+    "verdict": "FAIL",
+    "criterion": "preserved-node-lanes: later Node route",
+    "projectId": "24f5373f-bee6-5871-929d-bcb71b7ed6b7",
+    "orgId": "875fca1e-9d5b-4326-9f59-6e37d7dc2f24",
+    "targetRows": [
+      {
+        "id": "24f5373f-bee6-5871-929d-bcb71b7ed6b7",
+        "org_id": "875fca1e-9d5b-4326-9f59-6e37d7dc2f24",
+        "description": null,
+        "owner": null,
+        "fence_epoch": null
+      }
+    ],
+    "sourceRows": [
+      {
+        "id": "24f5373f-bee6-5871-929d-bcb71b7ed6b7",
+        "org_id": "875fca1e-9d5b-4326-9f59-6e37d7dc2f24",
+        "owner": "rust",
+        "fence_epoch": "1"
+      }
+    ],
+    "request": {
+      "method": "PATCH",
+      "url": "http://127.0.0.1:56941/api/projects/24f5373f-bee6-5871-929d-bcb71b7ed6b7",
+      "body": {
+        "description": "Merged Node owner public PATCH"
+      }
+    },
+    "status": 409,
+    "response": {
+      "error": "Project goal mutation authority is not provisioned"
+    }
+  },
+  "observedThisRound": {
+    "thinDiagnostic": "PASS: actual installed CLI with db package temporarily hidden; friendly diagnostic for worktree init/merge/db backup; package restored.",
+    "normalWorktreeInit": "PASS: full clone through installed CLI; source secret created via public fixture API before cloning.",
+    "interactiveMergeRollback": "PASS: Import Project selected, one Project and one Issue preview, Yes confirmed; scoped Issue insert failure rolled back Project/fence/Issue and issue counter.",
+    "interactiveMergeSuccess": "CLI exit0 imported one Project and one Issue; target row IDs/link/counter verified. No target ownership fence row.",
+    "mergeReplay": "CLI exit0 reported zero imports; later Node mutation failed, so preserved-node-lanes criterion FAIL.",
+    "nodeRoute": "FAIL: public PATCH returns409 authority not provisioned after target restart."
+  },
+  "priorReceipt": {
+    "path": "/private/tmp/rudder-create-verifier.DSx0ST/independent-receipt-v27.json",
+    "sha256": "3db78805b4c702dfa8e8956f9aca5304c2e14469dc732ca5a3491a718c0e62d1",
+    "verdict": "FAIL",
+    "preserved": true
+  },
+  "reboundBackendEvidence": {
+    "path": "/private/tmp/rudder-create-verifier.DSx0ST/observations.jsonl",
+    "sha256": "e51b69bfe998f01eaa4b18f47fadbca7192103dade11860a0d80fb8933a595c7",
+    "basis": "Unchanged exact installed server files, all six foundation binaries and preflight; later source deltas limited to CLI build/program diagnostic, tests and docs. Only observed successful unchanged backend checks rebound, never the prior overall verdict.",
+    "checks": [
+      "HTTP/CLI/MCP Create and goal precedence",
+      "Onboarding create/reuse",
+      "Resources and foreign reference denial",
+      "Synchronous Library and symlink/user-content preservation",
+      "Audit and receipt failure full SQL rollback",
+      "Intent no-replace/incomplete staging/malformed final and changed-request conflict",
+      "Provision failure then restart retry; actual dropped HTTP acknowledgement replay",
+      "Receipt after delete no Project filesystem plus same-name user-file preservation",
+      "Pending outbox restart actual WebSocket delivery",
+      "Current actor/run and org denial",
+      "Default-off Node create and closed Rust owner",
+      "Public safe import preserving source actor/run attribution",
+      "Supported large response/replay"
+    ]
+  },
+  "remainingRequiredProof": [
+    "Preserved merge Node mutation must be repaired/reverified; target ownership contract must be reconciled.",
+    "Full import success/replay requested for this round not rerun; previous safe-import observations only supporting equivalent-runtime evidence.",
+    "Predecessor-data upgrade.",
+    "Required-mode native outage/no fallback.",
+    "Resolved root/identity drift conflict.",
+    "Recreated same-UUID and delayed outbox interaction.",
+    "Isolated lock-held provisioning timing."
+  ],
+  "fixtureCorrections": [
+    "Reused fixture issue prefix caused409 before merge setup; fresh IMQ org used.",
+    "Fresh source profile lacked encrypted master key; created isolated secret through public API, then normal worktree init succeeded.",
+    "Initial target observation assumed persisted owner row; absence then actual public PATCH409 independently established blocker."
+  ],
+  "cleanup": {
+    "allOwnedProcessesStopped": true,
+    "processMatches": [],
+    "postmasterOrServerFiles": "",
+    "hiddenDbPackageRestored": true,
+    "foundationNeverHidden": true,
+    "fixturesRetained": true,
+    "pgLaneReleased": true
+  },
+  "leaseRecheck": {
+    "state": "current",
+    "observedHead": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+    "workingDiffPaths": [
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml",
+      "doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json"
+    ]
+  },
+  "limits": [
+    "External preflight is bounded fixture migration authority, not npm ownership of SQL apply.",
+    "No production, foreign-platform runtime, whole creator retirement or full-migration claim.",
+    "No source edits or injected product modules."
+  ],
+  "evidence": [
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/finalize-v274.mjs",
+      "sha256": "beeed22b237bd694be27c07eeb35c42f41fa083a2eb12436861f4530fb3bca23"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-after-failure-v274.json",
+      "sha256": "3351c8b605decf26beae50ff71ab86beb9101c560994767db0a6c82d89560642"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-before-v274.json",
+      "sha256": "3351c8b605decf26beae50ff71ab86beb9101c560994767db0a6c82d89560642"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-failure-v274.tty",
+      "sha256": "bfb40dbdcf52a091a0140d936192285b8d9910be29956f667763a660a05db72e"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-finding-v274.log",
+      "sha256": "8f02a87209a62914f27150a2cf2b028b8038c94834d38263bd4877b1cec838df"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-finding-v274.mjs",
+      "sha256": "420e612dc5ad339fc3a054b37a6c849d1c588fc891c789cadffc284a6923cd34"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-init-v274.log",
+      "sha256": "d4ef69adfa277ee03e0fde1c3564d02d32f6e3bb8596cfea6baa614999f2746a"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-node-route-finding-v274.json",
+      "sha256": "15afa36cca80d446d1f1ec047eeeb7fcc936dd958cb28153d69890a0c0522f43"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-ready-v274.json",
+      "sha256": "8d780f4ffc6dc2405d578a5c9e78a5d9fd0835ddd306077a3b2710ebb2316345"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-replay-v274.log",
+      "sha256": "3d29d1ff5aabfa378f15af80da84c98b6693067f6ef3a18de225d9857044a985"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-session-v274-ready.log",
+      "sha256": "b31f79fc882667f0dba18e02f7b8c70b9364e6f70b3b23f81d5872f4a9acddf8"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-session-v274-retry.log",
+      "sha256": "8086c1b29207fd32d1934f51ad3283ca761761923baae91ecf96d654e0e1e6a2"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-session-v274.log",
+      "sha256": "9b87d8c1362702e042675cf98d16b0ccc656db8ec543c1c4f3b85cb1f10927e3"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-session-v274.mjs",
+      "sha256": "74c7071936bb47cea9763076229b59919edbdc2c1dcbd0a168435688f733060f"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-success-v274.tty",
+      "sha256": "986537be71f75cdbb03abc9a618478cf1826c44ff3e851913b2947473db50820"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-target-replay-v274.log",
+      "sha256": "53db86a0b87f5149088e669beed7350245d603a2bd7a9b1ab8b8767113182375"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-target-replay-v274.mjs",
+      "sha256": "e4b56f582c17c502d1cc56e6edebb46e14c6b4ad8efa067e16ac80664b76b877"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-target-v274.log",
+      "sha256": "5c62064acdcd64dac82ae1c5dbacc6f7ce354d223d583e97d66aa2a143d6396e"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-target-v274.mjs",
+      "sha256": "f87a979dcfd66e40a6329643618f9b98d3e1185a7a2e316b3aab68e70448b477"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/observations-v274.jsonl",
+      "sha256": "2b19404bb6969797c0523fce0e111956ea74bc653a3445cde4dffcc9f8da0836"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/runtime-v274.mjs",
+      "sha256": "c7409648e27c26b155839ee44714196aa6437d1da9c76ac7d1c9d827fa33c368"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/thin-v274-result.json",
+      "sha256": "96a6e9d975bdc793e5f1b39d6b3847456128d3ebb114dc57acf2e5df2cec83db"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/thin-v274.log",
+      "sha256": "a24cb0cf47a5c683ac3aaf7b7d92be4598c105d0dd40a4fa59ef008052d2855c"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/thin-v274.mjs",
+      "sha256": "b5e5856b2cdf55d1736557a19ee5907da94a94c1aaaa13fd99259e874753c92e"
+    }
+  ]
+}

@@ -6,7 +6,12 @@ import {
   addChatMessageSchema,
   chatClientCheckpointSchema,
   chatInlineAnnotationsFromStructuredPayload,
+  convertChatToIssueSchema,
   createChatFirstTurnSchema,
+  createChatAttachmentMetadataSchema,
+  createChatContextLinkSchema,
+  resolveChatOperationProposalSchema,
+  setChatProjectContextSchema,
   type ChatConversation,
   type ChatInlineAnnotation,
   type ChatMessage,
@@ -18,7 +23,7 @@ import {
 import type { Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
-import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { conflict } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
@@ -45,9 +50,8 @@ import {
 } from "../services/chat-message-mutation-fingerprint.js";
 import { logActivity } from "../services/index.js";
 import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
-import { getActorInfo } from "./authz.js";
-import { registerChatAttachmentRoute } from "./chats.attachment-route.js";
-import { registerChatContextActionRoutes } from "./chats.context-action-routes.js";
+import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
 import { chatRuntimeSnapshot } from "./chats.runtime-controls.js";
 import {
   createChatRuntimeSensitiveInputStreamHandler,
@@ -82,6 +86,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const {
     router,
     db,
+    storage,
     svc,
     assistantSvc,
     agentsSvc,
@@ -1416,9 +1421,281 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   });
 
   registerChatStopRoute(ctx);
-  registerChatAttachmentRoute(ctx);
+  router.post("/orgs/:orgId/chats/:chatId/attachments", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const chatId = req.params.chatId as string;
+    assertCompanyAccess(req, orgId);
 
-  registerChatContextActionRoutes(ctx);
+    const conversation = await assertConversationAccess(req, chatId);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    if (conversation.orgId !== orgId) {
+      res.status(422).json({ error: "Chat conversation does not belong to organization" });
+      return;
+    }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+
+    try {
+      await runSingleFileUpload(req, res);
+    } catch (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+          return;
+        }
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+
+    const file = (req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string } }).file;
+    if (!file) {
+      res.status(400).json({ error: "Missing file field 'file'" });
+      return;
+    }
+    const contentType = (file.mimetype || "").toLowerCase();
+    if (!isAllowedContentType(contentType)) {
+      res.status(422).json({ error: `Unsupported attachment type: ${contentType || "unknown"}` });
+      return;
+    }
+    if (file.buffer.length <= 0) {
+      res.status(422).json({ error: "Attachment is empty" });
+      return;
+    }
+
+    const parsedMeta = createChatAttachmentMetadataSchema.safeParse(req.body ?? {});
+    if (!parsedMeta.success) {
+      res.status(400).json({ error: "Invalid attachment metadata", details: parsedMeta.error.issues });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    const stored = await storage.putFile({
+      orgId,
+      namespace: `chats/${chatId}`,
+      originalFilename: file.originalname || null,
+      contentType,
+      body: file.buffer,
+    });
+
+    const attachment = await svc.createAttachment({
+      orgId,
+      conversationId: chatId,
+      messageId: parsedMeta.data.messageId,
+      provider: stored.provider,
+      objectKey: stored.objectKey,
+      contentType: stored.contentType,
+      byteSize: stored.byteSize,
+      sha256: stored.sha256,
+      originalFilename: stored.originalFilename,
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.attachment_added",
+      entityType: "chat",
+      entityId: chatId,
+      details: {
+        attachmentId: attachment.id,
+        messageId: attachment.messageId,
+        originalFilename: attachment.originalFilename,
+        contentType: attachment.contentType,
+      },
+    });
+
+    res.status(201).json(attachment);
+  });
+
+  router.post("/chats/:id/context-links", validate(createChatContextLinkSchema), async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+    await assertContextLinksBelongToCompany(conversation.orgId, [req.body]);
+    const linked = await svc.addContextLink(conversation.id, conversation.orgId, req.body);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: conversation.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.context_linked",
+      entityType: "chat",
+      entityId: conversation.id,
+      details: req.body,
+    });
+    res.status(201).json(linked);
+  });
+
+  router.post("/chats/:id/project-context", validate(setChatProjectContextSchema), async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+    const projectId = req.body.projectId ?? null;
+    if (projectId) {
+      await assertContextLinksBelongToCompany(conversation.orgId, [{
+        entityType: "project",
+        entityId: projectId,
+      }]);
+    }
+    const messages = await svc.listMessages(conversation.id);
+    if (messages.length > 0) {
+      res.status(409).json({ error: "Project context is locked after conversation starts" });
+      return;
+    }
+
+    const updated = await svc.setProjectContextLink(conversation.id, conversation.orgId, projectId);
+    if (!updated) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: conversation.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.project_context_updated",
+      entityType: "chat",
+      entityId: conversation.id,
+      details: { projectId },
+    });
+    res.json(updated);
+  });
+
+  router.post("/chats/:id/convert-to-issue", validate(convertChatToIssueSchema), async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+    const actor = getActorInfo(req);
+    if (req.body.proposal?.goalId) {
+      const goal = await goalsSvc.getById(req.body.proposal.goalId);
+      if (!goal || goal.orgId !== conversation.orgId) {
+        res.status(422).json({ error: "Goal must belong to the same organization" });
+        return;
+      }
+    }
+    await assertCanConvertIssueProposal(req, conversation as ChatConversation, {
+      messageId: req.body.messageId ?? null,
+      proposal: req.body.proposal ?? null,
+    });
+    const issue = await svc.convertToIssue(conversation.id, {
+      actorUserId: actor.actorType === "user" ? actor.actorId : null,
+      messageId: req.body.messageId ?? null,
+      proposal: req.body.proposal ?? null,
+    });
+    await wakeIssueAssigneeAfterChatConversion({
+      db,
+      heartbeat,
+      issue,
+      reason: "issue_assigned",
+      mutation: "chat_convert",
+      contextSource: "chat.convert_to_issue",
+      requestedByActorType: actor.actorType,
+      requestedByActorId: actor.actorId,
+    });
+    const systemMessage = await svc.addMessage(conversation.id, {
+      orgId: conversation.orgId,
+      role: "system",
+      kind: "system_event",
+      body: `Created issue ${issue.identifier ?? issue.id} from this chat conversation.`,
+      structuredPayload: {
+        eventType: "issue_created",
+        issueId: issue.id,
+        issueIdentifier: issue.identifier,
+      },
+    });
+    await logActivity(db, {
+      orgId: conversation.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.issue_converted",
+      entityType: "chat",
+      entityId: conversation.id,
+      details: {
+        issueId: issue.id,
+        issueIdentifier: issue.identifier,
+        messageId: req.body.messageId ?? null,
+        systemMessageId: systemMessage.id,
+      },
+    });
+    res.status(201).json({ issue, systemMessage });
+  });
+
+  router.post(
+    "/chats/:id/messages/:messageId/operation-proposal/resolve",
+    validate(resolveChatOperationProposalSchema),
+    async (req, res) => {
+      const conversation = await assertConversationAccess(req, req.params.id as string);
+      if (!conversation) {
+        res.status(404).json({ error: "Chat conversation not found" });
+        return;
+      }
+      assertChatLocalMutationAllowed(conversation as ChatConversation);
+      await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+
+      const actor = getActorInfo(req);
+      const messageId = req.params.messageId as string;
+      const resolved = await svc.resolveOperationProposal(conversation.id, messageId, {
+        action: req.body.action,
+        actorUserId: actor.actorType === "user" ? actor.actorId : null,
+        actor: req.actor,
+        decisionNote: req.body.decisionNote ?? null,
+      });
+      res.status(201).json(resolved);
+    },
+  );
+
+  router.post("/chats/:id/resolve", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+    const actor = getActorInfo(req);
+    const resolved = await svc.resolve(conversation.id, {
+      actorType: actor.actorType === "user" ? "human" : actor.actorType,
+      actorId: actor.actorId,
+    });
+    await logActivity(db, {
+      orgId: conversation.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.resolved",
+      entityType: "chat",
+      entityId: conversation.id,
+    });
+    res.json(resolved ? await assistantSvc.enrichConversation(resolved as ChatConversation) : null);
+  });
 
   registerChatUserStateRoutes(ctx);
 }

@@ -56,12 +56,19 @@ for (const name of externalWorkspacePackages) {
 
 /** @type {import('esbuild').BuildOptions} */
 export default {
-  entryPoints: ["src/index.ts"],
+  // program.ts deliberately loads these by a variable specifier to keep heavy
+  // commands out of startup. esbuild cannot discover those imports, so emit
+  // their modules explicitly while preserving lazy command registration.
+  entryPoints: {
+    index: "src/index.ts",
+    "commands/worktree": "src/commands/worktree.ts",
+    "commands/db-backup": "src/commands/db-backup.ts",
+  },
   bundle: true,
   platform: "node",
   target: "node20",
   format: "esm",
-  outfile: "dist/index.js",
+  outdir: "dist",
   banner: { js: "#!/usr/bin/env node" },
   external: [...externals].sort(),
   treeShaking: true,

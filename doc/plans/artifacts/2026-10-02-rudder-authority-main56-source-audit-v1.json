@@ -1,0 +1,286 @@
+{
+  "schema_version": 1,
+  "refreshed_at": "2026-10-02",
+  "target": {
+    "source_ref": "56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce",
+    "source_name": "origin/main",
+    "previous_audit_anchor": "e2e603f07c7d4b7410fea7792b9a4d0667d3777e",
+    "worktree_observed": {
+      "branch": "codex/rudder-full-rust-backend-completion-20260923",
+      "head": "c54001819ca38079b627994557db0a18ed278fc0",
+      "was_dirty": true,
+      "index_was_clean": true,
+      "preservation": "No repository files or index entries were changed by this refresh."
+    },
+    "prior_output": {
+      "path": "/private/tmp/rudder-authority-main56-refresh-20261002.json",
+      "observed_before_write": "absent",
+      "godel_result": "not_found_after_interruption; no prior claims reconstructed"
+    }
+  },
+  "method_and_limits": {
+    "scope": "Read current AGENTS.md, the full completion plan and 22 ledger authority rows from /private/tmp/rudder-current-auth-records.L5HtpF; inspect Main56 source and test files via git show/git grep.",
+    "test_execution": "none",
+    "runtime_or_database_access": "none",
+    "independent_agent_review": "not performed; no Codex subagent-spawn tool was available in this session",
+    "claim_rule": "Source or test presence is not runtime, public-entry, default-path, or legacy-exit proof.",
+    "evidence_prefix": "Main56 means commit 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce; referenced tests were inspected as source only and were not run."
+  },
+  "authority_rows": [
+    {
+      "id": "read.workspace_backups",
+      "source_ref": ["native/crates/server-foundation/src/lib.rs:1738-2033", "native/crates/server-foundation/src/lib.rs:2241-2256"],
+      "implementation": {"state": "bounded_private_rust_read_handlers", "scope": "Backup list, files, file read and download only; create/restore/delete and scheduling remain outside this Rust slice."},
+      "private_evidence": {"state": "test_source_present_unrun", "refs": ["native/bins/rudder-server-foundation/tests/black_box.rs:1519-1603", "native/bins/rudder-server-foundation/tests/black_box.rs:1993-2025"]},
+      "public_entry": {"state": "supported_node_routes_and_separate_private_actix_routes", "refs": ["server/src/routes/orgs.ts:880-956", "native/crates/server-foundation/src/lib.rs:2241-2256"]},
+      "default_path": {"state": "node", "refs": ["server/src/bootstrap/register-api-routes.ts:85-94"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/routes/orgs.ts:880-956", "server/src/routes/orgs.ts:964-1005"]}
+    },
+    {
+      "id": "runtime.http_public_listener",
+      "source_ref": ["server/src/index.ts:1437-1447", "server/src/services/rust-foundation-bridge.ts:272-281", "native/crates/server-foundation/src/lib.rs:2232-2289"],
+      "implementation": {"state": "private_actix_foundation_only", "scope": "Actix has a foundation listener and bounded routes; bridge startup requires a loopback address and rejects receipts declaring a public listener or product-write authority."},
+      "private_evidence": {"state": "private_http_test_source_only_no_public_listener_acceptance", "refs": ["native/bins/rudder-server-foundation/tests/black_box.rs:31-34", "server/src/services/rust-foundation-bridge.test.ts:94-111", "server/src/services/rust-foundation-bridge.test.ts:196-212"]},
+      "public_entry": {"state": "node_public_listener_private_rust_bridge", "refs": ["server/src/index.ts:1437-1447", "server/src/services/rust-foundation-bridge.ts:449-453"]},
+      "default_path": {"state": "node_listener", "refs": ["server/src/index.ts:1437-1447"]},
+      "legacy_exit": {"state": "node_listener_retained", "refs": ["server/src/index.ts:1437-1447"]}
+    },
+    {
+      "id": "runtime.sqlx_database_authority",
+      "source_ref": ["native/crates/d1-persistence/src/branding.rs:13-74", "native/crates/d1-persistence/src/goal_sets.rs:1-120", "native/crates/d1-persistence/src/project_deletions.rs:29-104", "packages/db/src/client.ts:1300-1315"],
+      "implementation": {"state": "selected_d1_sqlx_transactions_only", "scope": "BrandColor, Project-Goal replacement and Project DELETE do not establish general SQLx database authority; Node Drizzle still applies migrations."},
+      "private_evidence": {"state": "d1_test_source_present_unrun", "refs": ["native/crates/d1-persistence/tests/postgres.rs:385-660", "native/crates/d1-persistence/tests/postgres.rs:679-898", "native/crates/d1-persistence/tests/postgres.rs:898-980"]},
+      "public_entry": {"state": "node_api_to_private_actix_for_selected_d1_operations", "refs": ["server/src/bootstrap/register-api-routes.ts:85-94", "native/crates/server-foundation/src/lib.rs:2262-2271"]},
+      "default_path": {"state": "node_drizzle_except_selected_or_owner_gated_d1_paths", "refs": ["packages/db/src/client.ts:1300-1315", "server/src/routes/organization-rust-foundation-routes.ts:369-402"]},
+      "legacy_exit": {"state": "node_database_and_migration_authority_retained", "refs": ["packages/db/src/client.ts:1300-1315"]}
+    },
+    {
+      "id": "read.organization_member_directory",
+      "source_ref": ["server/src/services/rust-foundation-bridge.ts:342-361", "server/src/routes/organization-rust-foundation-routes.ts:229-278", "native/crates/server-foundation/src/lib.rs:1186-1260"],
+      "implementation": {"state": "rust_private_read_and_required_bridge_source_present", "scope": "The bridge source defaults this read to required Rust; this is a row-level read, not public listener or whole-backend authority."},
+      "private_evidence": {"state": "test_and_installed_smoke_source_present_unrun", "refs": ["native/bins/rudder-server-foundation/tests/black_box.rs:31-145", "scripts/smoke/installed-member-directory.mjs:535-575", "cli/src/__tests__/organization-members.test.ts:1-80"]},
+      "public_entry": {"state": "node_authenticated_api_forwards_to_loopback_actix", "refs": ["server/src/routes/organization-rust-foundation-routes.ts:229-278", "server/src/services/rust-foundation-bridge.ts:277-280", "server/src/services/rust-foundation-bridge.ts:449-453"]},
+      "default_path": {"state": "required_rust_in_main_source_but_main56_installed_default_not_reverified_here", "refs": ["server/src/services/rust-foundation-bridge.ts:342-361", "scripts/smoke/installed-member-directory.mjs:535-575"], "prior_receipt_limit": "The ledger points to the v25 verifier receipt for the earlier e147 candidate; it is not rebound as a Main56 receipt."},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/routes/organization-rust-foundation-routes.ts:279-324"], "limit": "The explicit Node/off and shadow branches remain in source; no Main56 negative-retirement proof was run."}
+    },
+    {
+      "id": "security.actor_envelope_and_private_bridge",
+      "source_ref": ["native/crates/auth-core/src/lib.rs:1-6", "native/crates/auth-core/tests/protocol.rs:1-45", "server/src/services/rust-foundation-bridge.ts:272-281"],
+      "implementation": {"state": "signed_private_request_envelope", "scope": "Private bridge request binding exists; Main56 does not contain the later native_bearer_auth or public_ingress modules, and this is not full session/revocation authority."},
+      "private_evidence": {"state": "protocol_test_source_present_unrun", "refs": ["native/crates/auth-core/tests/protocol.rs:1-45"]},
+      "public_entry": {"state": "node_authentication_then_signed_loopback_bridge", "refs": ["server/src/services/rust-foundation-bridge.ts:272-281", "server/src/services/rust-foundation-bridge.ts:449-453"]},
+      "default_path": {"state": "node_actor_and_session_authority", "refs": ["server/src/services/rust-foundation-bridge.ts:342-361", "identity/src/auth.ts:42-55"]},
+      "legacy_exit": {"state": "node_identity_session_authority_retained", "refs": ["identity/src/auth.ts:42-55", "identity/src/handler.ts:712-725"]}
+    },
+    {
+      "id": "lifecycle.organization_mutation_state_provisioning",
+      "source_ref": ["server/src/routes/orgs.ts:1178-1208", "server/src/routes/orgs.ts:1231-1243", "server/src/services/orgs.ts:494-507"],
+      "implementation": {"state": "fence_state_consumption_not_rust_org_lifecycle", "scope": "Organization create/delete, membership and provisioning remain Node-owned; component fences are used during deletion."},
+      "private_evidence": {"state": "no_rust_org_create_delete_workflow_identified_in_main56", "refs": ["native/crates/server-foundation/src/lib.rs:2241-2271"]},
+      "public_entry": {"state": "node_create_delete_routes", "refs": ["server/src/routes/orgs.ts:1178-1208", "server/src/routes/orgs.ts:1231-1243"]},
+      "default_path": {"state": "node", "refs": ["server/src/routes/orgs.ts:1178-1208", "server/src/services/orgs.ts:494-507"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/services/orgs.ts:494-507"]}
+    },
+    {
+      "id": "audit.activity_outbox_terminal_effects",
+      "source_ref": ["native/crates/d1-persistence/src/transaction.rs:1077-1181", "native/crates/d1-persistence/src/transaction.rs:1206-1294", "server/src/routes/projects.ts:262-287"],
+      "implementation": {"state": "atomic_effects_for_selected_d1_commands_only", "scope": "Branding and selected Project commands persist activity/receipt transactionally; there is no shared Rust effect service across HTTP, WebSocket, CLI, MCP and workers."},
+      "private_evidence": {"state": "selected_transaction_test_source_present_unrun", "refs": ["native/crates/d1-persistence/tests/postgres.rs:385-660", "native/bins/rudder-server-foundation/tests/black_box.rs:235-370"]},
+      "public_entry": {"state": "node_mutators_remain_with_selected_private_actix_calls", "refs": ["server/src/routes/projects.ts:262-287", "server/src/routes/organization-rust-foundation-routes.ts:436-475"]},
+      "default_path": {"state": "node_effect_writers_except_selected_d1_commands", "refs": ["server/src/routes/projects.ts:271-287", "server/src/index.ts:1316-1366"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/routes/projects.ts:271-287", "server/src/index.ts:1316-1366"]},
+      "observed_atomicity_gap": "Project Create commits through svc.create before route-level project.created activity logging; a logging failure can occur after the business row is committed (server/src/routes/projects.ts:271-287; service transaction server/src/services/projects.ts:565-600)."
+    },
+    {
+      "id": "domain.organization_branding",
+      "source_ref": ["native/crates/d1-persistence/src/branding.rs:13-74", "server/src/routes/organization-rust-foundation-routes.ts:369-402", "server/src/routes/organization-rust-foundation-routes.ts:436-475"],
+      "implementation": {"state": "private_rust_scalar_brand_color_only", "scope": "Rust checks component owner/freshness and stores receipt/activity atomically; organization name, logo and other writers remain Node."},
+      "private_evidence": {"state": "black_box_and_postgres_test_source_present_unrun", "refs": ["native/bins/rudder-server-foundation/tests/black_box.rs:235-370", "native/crates/d1-persistence/tests/postgres.rs:385-660"]},
+      "public_entry": {"state": "node_org_api_forwards_only_when_required_and_selected", "refs": ["server/src/routes/organization-rust-foundation-routes.ts:369-402", "server/src/routes/organization-rust-foundation-routes.ts:436-475"]},
+      "default_path": {"state": "node_generally_rust_opt_in_scalar_allowlist", "refs": ["server/src/services/rust-foundation-bridge.ts:348-361", "server/src/routes/organization-rust-foundation-routes.ts:369-402"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/routes/organization-rust-foundation-routes.ts:404-433", "server/src/routes/organization-rust-foundation-routes.ts:464-475"]}
+    },
+    {
+      "id": "domain.project_goal_link",
+      "source_ref": ["native/crates/d1-persistence/src/links.rs:562-615", "server/src/services/project-goal-mutation-fence.ts:182-213", "server/src/routes/projects.ts:290-366"],
+      "implementation": {"state": "bounded_project_goal_sqlx_operations", "scope": "Rust Project-Goal operations exist for selected transactions; they do not retire every Node goal/link writer."},
+      "private_evidence": {"state": "private_test_source_present_unrun", "refs": ["native/bins/rudder-server-foundation/tests/black_box.rs:424-570", "native/crates/d1-persistence/tests/postgres.rs:679-898"]},
+      "public_entry": {"state": "node_project_api_with_owner_allowlist_bridge", "refs": ["server/src/routes/projects.ts:290-366", "native/crates/server-foundation/src/lib.rs:2266-2268"]},
+      "default_path": {"state": "owner_and_allowlist_gated_not_whole_domain_default", "refs": ["server/src/routes/projects.ts:303-355", "server/src/services/project-goal-mutation-fence.ts:182-213"]},
+      "legacy_exit": {"state": "node_goal_link_writers_retained_or_not_proven_retired", "refs": ["server/src/services/goals.ts:2022-2039", "server/src/services/project-goal-mutation-fence.ts:182-213"]}
+    },
+    {
+      "id": "domain.project_goal_set_replacement",
+      "source_ref": ["native/crates/d1-persistence/src/goal_sets.rs:1-120", "native/crates/server-foundation/src/lib.rs:2266-2268", "server/src/routes/projects.ts:324-366"],
+      "implementation": {"state": "private_rust_full_set_replacement", "scope": "SQLx replacement/projection/receipt/activity exists; supported API remains Node-fronted and the rollout is owner/allowlist gated."},
+      "private_evidence": {"state": "black_box_and_postgres_test_source_present_unrun", "refs": ["native/bins/rudder-server-foundation/tests/black_box.rs:424-570", "native/crates/d1-persistence/tests/postgres.rs:795-898"]},
+      "public_entry": {"state": "node_api_forwards_to_private_actix_patch", "refs": ["server/src/routes/projects.ts:324-366", "native/crates/server-foundation/src/lib.rs:2266-2268"]},
+      "default_path": {"state": "selected_owner_gated_rust_not_general_default", "refs": ["server/src/routes/projects.ts:303-355", "server/src/services/rust-foundation-bridge.ts:352-361"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/services/project-goal-mutation-fence.ts:182-213", "server/src/services/projects.ts:667-701"]}
+    },
+    {
+      "id": "runtime.migration_journal_authority",
+      "source_ref": ["native/crates/migration-core/src/lib.rs:279-310", "native/crates/migration-core/src/lib.rs:402-420", "packages/db/src/client.ts:1300-1315"],
+      "implementation": {"state": "rust_preflight_validation_not_migration_apply_or_journal_owner", "scope": "Rust migration-core validation exists; Node applies migrations and performs post-migration invariants."},
+      "private_evidence": {"state": "validation_test_source_present_unrun", "refs": ["native/crates/migration-core/tests/validation.rs:1-120", "packages/db/src/client.test.ts:273-390"]},
+      "public_entry": {"state": "node_startup_and_drizzle_migration_entry", "refs": ["packages/db/src/client.ts:1300-1315", "packages/db/src/migrate.ts:1-24"]},
+      "default_path": {"state": "node_drizzle", "refs": ["packages/db/src/client.ts:1300-1315"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["packages/db/src/client.ts:1300-1315"]}
+    },
+    {
+      "id": "runtime.first_party_cli_and_mcp_dispatch",
+      "source_ref": ["cli/src/commands/client/company.ts:1110-1138", "cli/src/agent-v1-mcp-d1-capabilities.ts:30-31", "cli/src/agent-v1-mcp-server.ts:659"],
+      "implementation": {"state": "typescript_cli_and_mcp_call_http_contract", "scope": "Selected D1 client operations use HTTP; Main56 has no native/bins/rudder-cli binary and no full Rust dispatch runtime."},
+      "private_evidence": {"state": "node_client_contract_test_source_present_unrun", "refs": ["cli/src/__tests__/organization-members.test.ts:1-80", "cli/src/__tests__/agent-v1-mcp-d1-capabilities.test.ts:40-55", "cli/src/__tests__/agent-v1-mcp-server.test.ts:1774-1902"]},
+      "public_entry": {"state": "installed_typescript_cli_and_node_managed_mcp_transport", "refs": ["cli/src/commands/client/company.ts:1110-1138", "server/src/routes/managed-mcp-runtime.ts:110-155"]},
+      "default_path": {"state": "node_dispatch", "refs": ["cli/src/commands/client/company.ts:1110-1138", "server/src/routes/managed-mcp-runtime.ts:110-155"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["cli/src/commands/client/company.ts:1110-1138", "server/src/routes/managed-mcp-runtime.ts:110-155"]}
+    },
+    {
+      "id": "runtime.first_party_node_fallback_guards",
+      "source_ref": ["cli/src/runtime/native-payload.ts:67-90", "cli/src/runtime/native-payload.test.ts:91-110"],
+      "implementation": {"state": "selected_required_mode_fail_closed_guards", "scope": "Required native payload can fail closed for selected calls; optional/other Node paths and compatibility toggles remain."},
+      "private_evidence": {"state": "unit_test_source_present_unrun", "refs": ["cli/src/runtime/native-payload.test.ts:91-138", "server/src/services/rust-foundation-bridge.test.ts:297-321"]},
+      "public_entry": {"state": "node_runtime_resolver_selects_native_for_bounded_operations", "refs": ["cli/src/runtime/native-payload.ts:67-90", "server/src/services/rust-foundation-bridge.ts:342-361"]},
+      "default_path": {"state": "not_globally_native; selected required modes only", "refs": ["cli/src/runtime/native-payload.ts:67-90", "cli/src/runtime/native-payload.ts:150-160"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["cli/src/runtime/native-payload.ts:150-160", "cli/src/runtime/native-payload.test.ts:91-110"]}
+    },
+    {
+      "id": "runtime.electron_backend_attachment",
+      "source_ref": ["desktop/src/main.ts:943-957", "server/src/services/rust-foundation-bridge.ts:342-361", "server/src/index.ts:1437-1447"],
+      "implementation": {"state": "native_foundation_binary_staged_as_private_helper", "scope": "Electron/Node still owns the packaged startup, local profile and public API listener; foundation staging does not make Rust the Desktop backend."},
+      "private_evidence": {"state": "private_bridge_and_packaging_test_source_not_backend_cutover", "refs": ["server/src/services/rust-foundation-bridge.test.ts:94-111", "server/src/services/rust-foundation-bridge.test.ts:374-400", "desktop/scripts/smoke.mjs:7874-7885"]},
+      "public_entry": {"state": "electron_to_node_app_server_with_private_rust_child", "refs": ["desktop/src/main.ts:943-957", "server/src/index.ts:1437-1447", "server/src/services/rust-foundation-bridge.ts:382-389"]},
+      "default_path": {"state": "node_server_attached_to_electron_shell", "refs": ["desktop/src/main.ts:943-957", "server/src/index.ts:1437-1447"]},
+      "legacy_exit": {"state": "node_bootstrap_and_public_backend_retained", "refs": ["desktop/src/main.ts:943-957", "server/src/index.ts:1437-1447"]}
+    },
+    {
+      "id": "domain.identity_session",
+      "source_ref": ["identity/src/auth.ts:42-55", "identity/src/handler.ts:712-725", "native/crates/auth-core/src/lib.rs:1-6"],
+      "implementation": {"state": "native_actor_envelope_protocol_not_full_first_party_identity", "scope": "First-party identity service, account/session persistence and root identity remain in the Node identity service; auth-core envelope support is narrower."},
+      "private_evidence": {"state": "auth_protocol_tests_present_but_not_identity_acceptance", "refs": ["native/crates/auth-core/tests/protocol.rs:1-45", "identity/src/config.test.ts:1-60"]},
+      "public_entry": {"state": "hosted_identity_handler_and_desktop_local_identity_flows", "refs": ["identity/src/handler.ts:712-725", "desktop/src/main.ts:2181-2212"]},
+      "default_path": {"state": "node_better_auth_and_identity_db", "refs": ["identity/src/auth.ts:42-55"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["identity/src/auth.ts:42-55", "identity/src/handler.ts:712-725"]}
+    },
+    {
+      "id": "runtime.analytics_collector",
+      "source_ref": ["server/src/product-analytics-collector-server.ts:85-125", "desktop/src/main.ts:2291-2298"],
+      "implementation": {"state": "no_rust_collector_runtime_identified", "scope": "Rust D1 or analytics-adjacent artifacts do not implement this collector service."},
+      "private_evidence": {"state": "not_applicable_no_rust_collector", "refs": []},
+      "public_entry": {"state": "node_http_collector_and_desktop_scheduler", "refs": ["server/src/product-analytics-collector-server.ts:85-125", "desktop/src/main.ts:2291-2298"]},
+      "default_path": {"state": "node", "refs": ["server/src/product-analytics-collector-server.ts:85-125"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/product-analytics-collector-server.ts:85-125"]}
+    },
+    {
+      "id": "runtime.managed_mcp",
+      "source_ref": ["server/src/routes/managed-mcp-runtime.ts:110-155", "server/src/services/mcp/managed-runtime.ts:1-30"],
+      "implementation": {"state": "no_rust_managed_server_identified", "scope": "Rust agent contract artifacts/stdio client do not replace Node-managed HTTP, OAuth, binding, grants, runtime dispatch and audit."},
+      "private_evidence": {"state": "not_applicable_no_rust_managed_server", "refs": []},
+      "public_entry": {"state": "node_managed_http_json_rpc", "refs": ["server/src/routes/managed-mcp-runtime.ts:110-155"]},
+      "default_path": {"state": "node", "refs": ["server/src/routes/managed-mcp-runtime.ts:110-155"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/routes/managed-mcp-runtime.ts:110-155"]}
+    },
+    {
+      "id": "runtime.embedded_postgres",
+      "source_ref": ["desktop/src/postgres-runtime.ts:46-83", "desktop/src/postgres-runtime.ts:409-445", "desktop/src/main.ts:943-957"],
+      "implementation": {"state": "no_rust_postgres_lifecycle_owner_identified", "scope": "Desktop/Node resolves and guards the bundled PostgreSQL payload/profile; this is lifecycle ownership, not a generic Rust process helper."},
+      "private_evidence": {"state": "node_runtime_test_source_only", "refs": ["desktop/src/postgres-runtime.test.ts:61-95", "desktop/src/postgres-runtime.test.ts:194-211"]},
+      "public_entry": {"state": "electron_desktop_profile_and_node_postgres_helpers", "refs": ["desktop/src/main.ts:943-957", "desktop/src/postgres-runtime.ts:46-83"]},
+      "default_path": {"state": "node_electron_lifecycle", "refs": ["desktop/src/postgres-runtime.ts:409-445", "desktop/src/main.ts:943-957"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["desktop/src/postgres-runtime.ts:46-83"]}
+    },
+    {
+      "id": "runtime.update_recovery",
+      "source_ref": ["native/crates/update-helper-core/src/lib.rs:317-337", "native/crates/update-helper-core/src/lib.rs:737-793", "desktop/src/main.ts:3150-3207"],
+      "implementation": {"state": "rust_update_helper_with_node_electron_orchestration", "scope": "Helper has slot/probation/rollback logic; Electron validates journal identity, invokes recover and persists boot/update state."},
+      "private_evidence": {"state": "helper_test_and_desktop_flow_test_source_present_unrun", "refs": ["native/crates/update-helper-core/src/lib.rs:1562-1603", "desktop/src/desktop-update-flow.test.ts:849-856", "desktop/src/desktop-update-helper.test.ts:130-165"]},
+      "public_entry": {"state": "electron_update_and_recovery_workflow_calls_rust_helper", "refs": ["desktop/src/main.ts:3165-3207", "desktop/src/desktop-update-helper.ts:11-92"]},
+      "default_path": {"state": "mixed; helper performs bounded file transaction while electron owns state and orchestration", "refs": ["desktop/src/main.ts:3150-3207"]},
+      "legacy_exit": {"state": "electron_node_authority_retained", "refs": ["desktop/src/main.ts:3150-3207"]}
+    },
+    {
+      "id": "workflow.agent_run_chat_side_chat",
+      "source_ref": ["server/src/routes/chats.ts:2079-2169", "server/src/routes/chats.stream-routes.ts:1099-1222", "server/src/services/side-chats.ts:109-170"],
+      "implementation": {"state": "no_rust_public_chat_or_side_chat_workflow_identified", "scope": "Rust process/runtime primitives do not establish chat ownership, streaming, transcript persistence or side-chat continuity."},
+      "private_evidence": {"state": "not_applicable_no_rust_public_workflow", "refs": []},
+      "public_entry": {"state": "node_http_stream_and_chat_service", "refs": ["server/src/routes/chats.ts:2079-2169", "server/src/routes/chats.stream-routes.ts:1099-1222"]},
+      "default_path": {"state": "node", "refs": ["server/src/routes/chats.ts:2079-2169", "server/src/services/side-chats.ts:109-170"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/routes/chats.ts:2079-2169", "server/src/services/side-chats.ts:109-170"]}
+    },
+    {
+      "id": "runtime.scheduler_workers_adapters",
+      "source_ref": ["server/src/index.ts:1304-1434", "server/src/services/runtime-kernel/heartbeat.execute.ts:213-220"],
+      "implementation": {"state": "no_rust_scheduler_worker_entry_identified", "scope": "Private process/attempt primitives are not a Rust scheduler, claim loop, adapter supervisor or terminal-effect owner."},
+      "private_evidence": {"state": "not_applicable_no_rust_scheduler_entry", "refs": []},
+      "public_entry": {"state": "node_server_schedulers_and_workers", "refs": ["server/src/index.ts:1304-1434", "server/src/services/runtime-kernel/heartbeat.execute.ts:213-220"]},
+      "default_path": {"state": "node", "refs": ["server/src/index.ts:1304-1434"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/index.ts:1304-1434"]}
+    },
+    {
+      "id": "retirement.first_party_node_backend",
+      "source_ref": ["server/src/index.ts:1437-1447", "packages/db/src/client.ts:1300-1315", "identity/src/handler.ts:712-725", "server/src/routes/managed-mcp-runtime.ts:110-155"],
+      "implementation": {"state": "not_started_as_whole_backend", "scope": "Main56 has accepted bounded Rust components, but Node public listener, database migrations, identity, CLI/MCP, workers and other product services remain."},
+      "private_evidence": {"state": "no_global_retirement_test_or_negative_receipt_identified", "refs": ["native/crates/server-foundation/src/lib.rs:2232-2289", "server/src/index.ts:1437-1447"]},
+      "public_entry": {"state": "node_public_api_and_multiple_node_runtime_surfaces", "refs": ["server/src/index.ts:1437-1447", "server/src/bootstrap/register-api-routes.ts:85-94"]},
+      "default_path": {"state": "node_for_backend_as_a_whole", "refs": ["server/src/index.ts:1437-1447", "packages/db/src/client.ts:1300-1315"]},
+      "legacy_exit": {"state": "not_retired", "refs": ["server/src/index.ts:1437-1447", "identity/src/handler.ts:712-725", "server/src/routes/managed-mcp-runtime.ts:110-155"]}
+    }
+  ],
+  "transaction_fence_assessment": {
+    "bounded_positive_evidence": [
+      "Node's organization lock uses SELECT ... FOR UPDATE and rejects owner!=node while held in the writer transaction: server/src/services/organization-mutation-fence.ts:17-53.",
+      "Project create/update/delete acquire organization or Project-Goal component fences inside their SQL transaction: server/src/services/projects.ts:565-600, 667-701, 710-727.",
+      "Node branding update locks both its component and organization rows in its update transaction: server/src/services/orgs.ts:358-366.",
+      "Rust branding and Project-Goal/DELETE code lock/recheck scoped ownership/freshness before persistence: native/crates/d1-persistence/src/branding.rs:13-17,64-74; native/crates/d1-persistence/src/transaction.rs:583-623; native/crates/d1-persistence/src/project_deletions.rs:29-38,90-104."
+    ],
+    "gaps_and_limits": [
+      "This is not proof every legacy writer takes the correct fence in the same transaction; the refresh did not perform an exhaustive writer inventory. Organization deletion explicitly locks branding and Project-Goal component rows, then deletes dependent rows: server/src/services/orgs.ts:494-507.",
+      "Project Create's activity write is after svc.create returns, outside the business transaction; this is an observed post-commit audit gap, not evidence of an unfenced stale-writer race: server/src/routes/projects.ts:271-287; server/src/services/projects.ts:565-600.",
+      "Owner/allowlist gates and private Actix execution do not retire Node writers; no global epoch, default cutover, or stale-writer negative proof is inferred from D1 source/tests."
+    ]
+  },
+  "main_deltas_since_e2e603": [
+    {"commit": "e14771c4a", "change": "PR #233: installed member-directory reads default to required Rust bridge; this changes a bounded read default, not the public listener or Node auth/session authority."},
+    {"commit": "89859a26b", "change": "PR #235: adds Rust-owned Project DELETE transactions/receipts; supported entry remains Node-fronted and owner/allowlist-scoped."},
+    {"commit": "3ca11abea", "change": "Organization Codex model default update; no backend-authority transfer identified."},
+    {"commit_range": "e2e603f07c7d4b7410fea7792b9a4d0667d3777e..56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce", "change": "Additional native packaging/CI reliability and application changes exist; none inspected here makes Main56's public HTTP/WebSocket listener or whole Node backend Rust-owned."}
+  ],
+  "unmerged_source_candidates": [
+    {
+      "tip": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+      "branch": "codex/project-create-main56-20261002",
+      "relationship": "24 commits / 83 changed paths beyond Main56; Main56 is ancestor.",
+      "scope": "Rust Project Create service and public Node route handoff, resource/library and ownership fences, migrations and real-entry workflow source.",
+      "status": "unmerged_candidate_only; not Main56 authority or acceptance"
+    },
+    {
+      "tip": "7a416d088771925cf291a862bd83f7b97f04e567",
+      "branch": "codex/native-auth-security-fixture-20261002",
+      "relationship": "39 commits / 105 changed paths beyond Main56; stacked on 646e3a6a.",
+      "scope": "Adds opt-in Actix public ingress/WebSocket and native bearer/auth fixtures on top of the Project Create candidate.",
+      "status": "unmerged_candidate_only; no public-ingress claim transferred to Main56"
+    },
+    {
+      "tip": "6b6896d1fe8e161c22b3ddfbbda9f329f1d34a22",
+      "branch": "codex/native-member-cli-entry-20261002",
+      "relationship": "44 commits / 112 changed paths beyond Main56; stacked on 7a416d0.",
+      "scope": "Adds native Rust CLI/member-directory entry on top of the earlier Project Create and public-ingress candidate work.",
+      "status": "unmerged_candidate_only; Main56 has no native/bins/rudder-cli path"
+    }
+  ],
+  "smallest_next_executable_slice": {
+    "type": "candidate-bound acceptance slice",
+    "scope": "Rebind the existing installed member-directory default workflow to exact Main56 source/runtime/package identity, authenticated mode, pagination/scope and required-bridge failure behavior; use no later candidate files. Then separately scope the first public-listener increment to health plus this one already-default read route, keeping Node auth/session semantics explicit.",
+    "why_smallest": "Main56 already contains the required member-directory bridge and installed smoke source, but its prior verifier receipt is for an earlier candidate and Main56 was not reverified here; resolving that evidence boundary is smaller than adopting Project Create, public ingress, native CLI, or whole-backend work.",
+    "candidate_handling": "Do not combine 646/7a/6b into Main evidence. If implementation follows, first rebind/review the smallest required slice against Main56; no candidate was merged or tested by this refresh."
+  },
+  "closeout": {
+    "row_count": 22,
+    "source_tests_executed": false,
+    "runtime_or_database_mutation": false,
+    "repository_or_index_mutation": false,
+    "percentages_used": false,
+    "claim_upgrade_from_source_presence": false
+  }
+}

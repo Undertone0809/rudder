@@ -120,10 +120,16 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "on-first-retry",
   },
-  globalSetup: SCOPED_PREFLIGHT ? undefined : "./support/global-setup.ts",
+  globalSetup: SCOPED_PREFLIGHT
+    ? undefined
+    : USE_EXISTING_SERVER
+      ? "./support/existing-server-setup.ts"
+      : "./support/global-setup.ts",
   // The regular teardown scans global SysV shared memory. Scoped runs leave
   // their exact-instance process cleanup to the caller and preserve the home.
-  globalTeardown: SCOPED_PREFLIGHT ? undefined : "./support/global-teardown.ts",
+  globalTeardown: SCOPED_PREFLIGHT || USE_EXISTING_SERVER
+    ? undefined
+    : "./support/global-teardown.ts",
   projects: [
     {
       name: "chromium",

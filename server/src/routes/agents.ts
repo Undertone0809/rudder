@@ -84,6 +84,7 @@ import {
   stopFeishuIntegrationRuntime,
 } from "../services/integrations/feishu/runtime-registry.js";
 import { feishuIntegrationUserBindingService } from "../services/integrations/feishu/user-bindings.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
 import { buildAgentRudderTools } from "./agents.rudder-tools.js";
@@ -212,7 +213,7 @@ function buildFeishuIntegrationSetupUrl(input: {
   return setupUrl.toString();
 }
 
-export function agentRoutes(db: Db, storage?: StorageService) {
+export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBridge?: RustFoundationBridge) {
   function stripPersistedSkillSyncConfig(config: Record<string, unknown>) {
     const next = { ...config };
     delete next.rudderSkillSync;
@@ -1980,9 +1981,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   });
 
   registerAgentManagementRoutes({
-    router,
-    db,
-    storage,
+    router, db, storage, rustFoundationBridge,
     svc,
     assets,
     access,

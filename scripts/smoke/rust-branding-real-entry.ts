@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer as createNetServer } from "node:net";
@@ -152,6 +153,59 @@ async function main() {
     assert.equal(patch.status, 200);
     assert.equal((patch.body as { brandColor?: string }).brandColor, "#abcdef");
 
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    const legacyGenericReplayBefore = await sql.unsafe(
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, "
+        + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
+        + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "WHERE o.id=$1::uuid",
+      [organizationId],
+    );
+
+    // Before the generic organization PATCH selected its own activity action,
+    // Rust-owned branding requests from that route were adapted through the
+    // dedicated /branding path and persisted the v1 receipt fingerprint. A
+    // retry through the generic public route must continue to replay that
+    // already-committed receipt rather than conflict or write a second event.
+    const legacyGenericReplay = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": idempotencyKey,
+      },
+      body: JSON.stringify({ brandColor: "#abcdef" }),
+    }));
+    assert.equal(legacyGenericReplay.status, 200);
+    assert.equal((legacyGenericReplay.body as { brandColor?: string }).brandColor, "#abcdef");
+    const legacyGenericReplayAfter = await sql.unsafe(
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, "
+        + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
+        + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "WHERE o.id=$1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(Array.from(legacyGenericReplayAfter), Array.from(legacyGenericReplayBefore),
+      "legacy generic retry must replay without changing business state or side-effect counts");
+
+    const renamed = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Rust branding real entry renamed" }),
+    }));
+    assert.equal(renamed.status, 200);
+    assert.equal((renamed.body as { name?: string }).name, "Rust branding real entry renamed");
+    const descriptionUpdated = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ description: "Node-owned organization profile field" }),
+    }));
+    assert.equal(descriptionUpdated.status, 200);
+    assert.equal((descriptionUpdated.body as { description?: string }).description, "Node-owned organization profile field");
+
     const unlistedPatch = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${unlistedOrganizationId}/branding`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -160,9 +214,8 @@ async function main() {
     assert.equal(unlistedPatch.status, 200);
     assert.equal((unlistedPatch.body as { brandColor?: string }).brandColor, "#123456");
 
-    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     const organizationRows = await sql.unsafe(
-      "SELECT brand_color FROM organizations WHERE id = $1",
+      "SELECT name, description, brand_color FROM organizations WHERE id = $1",
       [organizationId],
     );
     const stateRows = await sql.unsafe(
@@ -176,15 +229,22 @@ async function main() {
       [organizationId, idempotencyKey],
     );
     const activityRows = await sql.unsafe(
-      "SELECT action FROM activity_log WHERE org_id = $1 AND action = $2",
-      [organizationId, "organization.branding_updated"],
+      "SELECT action, details FROM activity_log "
+        + "WHERE org_id = $1 AND entity_type = 'organization' AND entity_id = $1::text "
+        + "AND action IN ('organization.updated', 'organization.branding_updated') "
+        + "ORDER BY action, details::text",
+      [organizationId],
     );
     const outboxRows = await sql.unsafe(
       "SELECT state, attempts FROM organization_mutation_outbox "
         + "WHERE org_id = $1 ORDER BY created_at DESC LIMIT 1",
       [organizationId],
     );
-    assert.equal(organizationRows[0]?.brand_color, "#abcdef");
+    assert.deepEqual(organizationRows[0], {
+      name: "Rust branding real entry renamed",
+      description: "Node-owned organization profile field",
+      brand_color: "#abcdef",
+    });
     assert.deepEqual(stateRows[0], { owner: "rust", mutation_version: "1", fence_epoch: "1" });
     const unlistedStateRows = await sql.unsafe(
       "SELECT owner FROM organization_branding_mutation_state WHERE org_id = $1",
@@ -192,7 +252,11 @@ async function main() {
     );
     assert.deepEqual(Array.from(unlistedStateRows), [{ owner: "node" }]);
     assert.deepEqual(receiptRows[0], { outcome: "applied", resulting_version: "1", fence_epoch: "1" });
-    assert.deepEqual(Array.from(activityRows), [{ action: "organization.branding_updated" }]);
+    assert.deepEqual(Array.from(activityRows), [
+      { action: "organization.branding_updated", details: { brandColor: "#abcdef" } },
+      { action: "organization.branding_updated", details: { description: "Node-owned organization profile field" } },
+      { action: "organization.updated", details: { name: "Rust branding real entry renamed" } },
+    ]);
     assert.equal(outboxRows.length, 1);
     assert.ok(outboxRows[0]?.state === "pending" || outboxRows[0]?.state === "published");
 
@@ -223,6 +287,7 @@ async function main() {
     // disposable trigger verifies that business state, the receipt, and the
     // outbox do not partially commit when activity logging fails.
     const auditFailureKey = `audit-failure-${organizationId}`;
+    const auditFailureActivityKey = `rust-d1:${createHash("sha256").update(auditFailureKey).digest("hex")}`;
     await sql?.unsafe(
       "CREATE FUNCTION fail_real_entry_activity() RETURNS trigger "
         + "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'real-entry audit failure'; END; $$",
@@ -258,7 +323,7 @@ async function main() {
     );
     const failedActivityRows = await sql?.unsafe(
       "SELECT id FROM activity_log WHERE org_id = $1 AND idempotency_key = $2",
-      [organizationId, auditFailureKey],
+      [organizationId, auditFailureActivityKey],
     );
     const failedOutboxRows = await sql?.unsafe(
       "SELECT id FROM organization_mutation_outbox WHERE org_id = $1",
@@ -275,12 +340,47 @@ async function main() {
       method: "PATCH",
       headers: {
         "content-type": "application/json",
-        "x-rudder-idempotency-key": `audit-retry-${organizationId}`,
+        "x-rudder-idempotency-key": auditFailureKey,
       },
-      body: JSON.stringify({ brandColor: "#fedcba" }),
+      body: JSON.stringify({ brandColor: "#deadbe" }),
     }));
     assert.equal(auditRetry.status, 200);
-    assert.equal((auditRetry.body as { brandColor?: string }).brandColor, "#fedcba");
+    assert.equal((auditRetry.body as { brandColor?: string }).brandColor, "#deadbe");
+    const auditRetryEffectRows = await sql?.unsafe(
+      "SELECT receipt.idempotency_key, receipt.activity_id::text AS activity_id, "
+        + "activity.action, activity.idempotency_key AS activity_idempotency_key, "
+        + "outbox.id::text AS outbox_id, outbox.event_type, outbox.payload "
+        + "FROM organization_branding_mutation_receipts receipt "
+        + "JOIN activity_log activity ON activity.org_id=receipt.org_id AND activity.id=receipt.activity_id "
+        + "JOIN organization_mutation_outbox outbox ON outbox.org_id=receipt.org_id AND outbox.activity_id=receipt.activity_id "
+        + "WHERE receipt.org_id=$1::uuid AND receipt.idempotency_key=$2",
+      [organizationId, auditFailureKey],
+    );
+    assert.equal(auditRetryEffectRows?.length, 1,
+      "retrying the failed request with the original key did not create one receipt-linked effect set");
+    const auditRetryReplay = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": auditFailureKey,
+      },
+      body: JSON.stringify({ brandColor: "#deadbe" }),
+    }));
+    assert.equal(auditRetryReplay.status, 200);
+    assert.deepEqual(auditRetryReplay.body, auditRetry.body,
+      "replaying the successfully retried request changed its response");
+    const auditRetryReplayEffectRows = await sql?.unsafe(
+      "SELECT receipt.idempotency_key, receipt.activity_id::text AS activity_id, "
+        + "activity.action, activity.idempotency_key AS activity_idempotency_key, "
+        + "outbox.id::text AS outbox_id, outbox.event_type, outbox.payload "
+        + "FROM organization_branding_mutation_receipts receipt "
+        + "JOIN activity_log activity ON activity.org_id=receipt.org_id AND activity.id=receipt.activity_id "
+        + "JOIN organization_mutation_outbox outbox ON outbox.org_id=receipt.org_id AND outbox.activity_id=receipt.activity_id "
+        + "WHERE receipt.org_id=$1::uuid AND receipt.idempotency_key=$2",
+      [organizationId, auditFailureKey],
+    );
+    assert.deepEqual(Array.from(auditRetryReplayEffectRows ?? []), Array.from(auditRetryEffectRows ?? []),
+      "same-key replay changed the receipt-linked activity or outbox rows");
 
     const agentResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/agents`, {
       method: "POST",
@@ -303,6 +403,80 @@ async function main() {
     assert.equal(keyResponse.status, 201);
     const agentApiKey = String((keyResponse.body as { token?: string }).token);
     assert.match(agentApiKey, /^pcp_[a-f0-9]{48}$/u);
+    const childFailureMessage = (result: { stderr: string; stdout: string }) =>
+      (result.stderr || result.stdout).replaceAll(agentApiKey, "[redacted]");
+    const logoAssetId = randomUUID();
+    const shortLogoAssetId = logoAssetId.replace(/-/gu, "").slice(0, 12);
+    const foreignLogoAssetId = randomUUID();
+    await sql?.unsafe(
+      "INSERT INTO assets (id, org_id, provider, object_key, content_type, byte_size, sha256) "
+        + "VALUES ($1::uuid, $2::uuid, 'test', $3, 'image/png', 1, $4)",
+      [logoAssetId, organizationId, `branding/${logoAssetId}`, "e".repeat(64)],
+    );
+    await sql?.unsafe(
+      "INSERT INTO assets (id, org_id, provider, object_key, content_type, byte_size, sha256) "
+        + "VALUES ($1::uuid, $2::uuid, 'test', $3, 'image/png', 1, $4)",
+      [foreignLogoAssetId, unlistedOrganizationId, `branding/${foreignLogoAssetId}`, "f".repeat(64)],
+    );
+    await sql?.unsafe(
+      "INSERT INTO organization_logos (org_id, asset_id) VALUES ($1::uuid, $2::uuid)",
+      [organizationId, logoAssetId],
+    );
+    const missingLogoAssetId = "40000000-0000-4000-8000-000000000099";
+    const invalidBrandingBefore = await sql?.unsafe(
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, l.asset_id::text AS logo_asset_id, "
+        + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
+        + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "JOIN organization_logos l ON l.org_id=o.id "
+        + "WHERE o.id=$1::uuid",
+      [organizationId],
+    );
+    const invalidBrandingAssetsBefore = await sql?.unsafe(
+      "SELECT id::text AS id, org_id::text AS org_id, provider, object_key, content_type, byte_size, sha256 "
+        + "FROM assets WHERE id IN ($1::uuid, $2::uuid, $3::uuid) ORDER BY id",
+      [logoAssetId, foreignLogoAssetId, missingLogoAssetId],
+    );
+    assert.equal(invalidBrandingBefore?.[0]?.logo_asset_id, logoAssetId);
+    assert.equal(invalidBrandingAssetsBefore?.length, 2, "the missing asset fixture must not exist");
+    const missingLogo = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": `missing-logo-${organizationId}`,
+      },
+      body: JSON.stringify({ brandColor: "#654321", logoAssetId: missingLogoAssetId }),
+    }));
+    assert.equal(missingLogo.status, 404);
+    const foreignLogo = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": `foreign-logo-${organizationId}`,
+      },
+      body: JSON.stringify({ brandColor: "#654321", logoAssetId: foreignLogoAssetId }),
+    }));
+    assert.equal(foreignLogo.status, 422);
+    const invalidBrandingAfter = await sql?.unsafe(
+      "SELECT o.brand_color, s.mutation_version::text AS mutation_version, l.asset_id::text AS logo_asset_id, "
+        + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id=$1) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id=$1) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id=$1) AS outbox "
+        + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+        + "JOIN organization_logos l ON l.org_id=o.id "
+        + "WHERE o.id=$1::uuid",
+      [organizationId],
+    );
+    const invalidBrandingAssetsAfter = await sql?.unsafe(
+      "SELECT id::text AS id, org_id::text AS org_id, provider, object_key, content_type, byte_size, sha256 "
+        + "FROM assets WHERE id IN ($1::uuid, $2::uuid, $3::uuid) ORDER BY id",
+      [logoAssetId, foreignLogoAssetId, missingLogoAssetId],
+    );
+    assert.deepEqual(invalidBrandingAfter, invalidBrandingBefore,
+      "missing or foreign logo rejection changed branding state or side effects");
+    assert.deepEqual(invalidBrandingAssetsAfter, invalidBrandingAssetsBefore,
+      "missing or foreign logo rejection changed the linked or foreign asset rows");
 
     const cliRuntimeEnv = {
       RUDDER_API_URL: current.apiUrl,
@@ -311,90 +485,261 @@ async function main() {
       RUDDER_AGENT_ID: agentId,
       RUDDER_TOOL_TRANSPORT_SURFACE: "cli",
     };
-    const tsxPath = path.join(repoRoot, "cli/node_modules/tsx/dist/cli.mjs");
-    const cliEntryPath = path.join(repoRoot, "cli/src/index.ts");
+    const cliEntryPath = path.join(repoRoot, "cli/dist/index.js");
+    const crossTransportBrandingInput = {
+      brandColor: "#bada55",
+      idempotencyKey: `cli-mcp-branding-${organizationId}`,
+    };
+    const runMcpBranding = async (requestId: string, input: Record<string, unknown>) => {
+      const initializeRequestId = "initialize";
+      const toolsListRequestId = "tools-list";
+      const result = await runChildProcess(
+        process.execPath,
+        [cliEntryPath, "mcp-server"],
+        repoRoot,
+        {
+          ...cliRuntimeEnv,
+          RUDDER_TOOL_TRANSPORT_SURFACE: "mcp",
+          RUDDER_MCP_RUDDER_BIN: path.join(home, "missing-rudder-cli"),
+        },
+        [
+          {
+            jsonrpc: "2.0",
+            id: initializeRequestId,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              clientInfo: { name: "rust-branding-real-entry", version: "1" },
+            },
+          },
+          { jsonrpc: "2.0", method: "notifications/initialized", params: {} },
+          { jsonrpc: "2.0", id: toolsListRequestId, method: "tools/list", params: {} },
+          {
+            jsonrpc: "2.0",
+            id: requestId,
+            method: "tools/call",
+            params: {
+              name: "rudder_organization_brand_color_update",
+              arguments: input,
+            },
+          },
+        ].map((message) => JSON.stringify(message)).join("\n") + "\n",
+      );
+      assert.equal(result.exitCode, 0, childFailureMessage(result));
+      const replies = result.stdout.trim().split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as {
+        jsonrpc?: string;
+        id?: string | number | null;
+        result?: {
+          protocolVersion?: string;
+          tools?: Array<{ name?: string }>;
+          isError?: boolean;
+          structuredContent?: { brandColor?: string | null; logoAssetId?: string | null };
+        };
+        error?: unknown;
+      });
+      assert.deepEqual(replies.map((reply) => reply.id), [initializeRequestId, toolsListRequestId, requestId],
+        "stdio MCP lifecycle returned unexpected JSON-RPC replies");
+
+      const initializeReply = replies.find((reply) => reply.id === initializeRequestId);
+      assert.equal(initializeReply?.jsonrpc, "2.0");
+      assert.equal(initializeReply?.result?.protocolVersion, "2025-06-18");
+      assert.equal(initializeReply?.error, undefined, "stdio MCP initialize returned a JSON-RPC error");
+
+      const toolsListReply = replies.find((reply) => reply.id === toolsListRequestId);
+      assert.equal(toolsListReply?.jsonrpc, "2.0");
+      assert.equal(toolsListReply?.error, undefined, "stdio MCP tools/list returned a JSON-RPC error");
+      assert.ok(toolsListReply?.result?.tools?.some(
+        (tool) => tool.name === "rudder_organization_brand_color_update",
+      ), "organization brand-color update tool was not advertised over stdio MCP");
+
+      const callReply = replies.find((reply) => reply.id === requestId);
+      assert.equal(callReply?.jsonrpc, "2.0");
+      assert.equal(callReply?.error, undefined, "stdio MCP tools/call returned a JSON-RPC error");
+      assert.equal(callReply?.result?.isError, false);
+      const organization = callReply?.result?.structuredContent;
+      assert.ok(organization, "stdio MCP tools/call omitted structuredContent");
+      return { result, body: callReply, organization };
+    };
+
     const cliResult = await runChildProcess(
       process.execPath,
-      [tsxPath, cliEntryPath, "org", "brand-color", "update", "--org-id", organizationId, "--brand-color", "#bada55", "--idempotency-key", `cli-${organizationId}`, "--json"],
+      [cliEntryPath, "org", "brand-color", "update", "--org-id", organizationId,
+        "--brand-color", crossTransportBrandingInput.brandColor,
+        "--idempotency-key", crossTransportBrandingInput.idempotencyKey, "--json"],
       repoRoot,
       cliRuntimeEnv,
     );
-    assert.equal(cliResult.exitCode, 0, cliResult.stderr || cliResult.stdout);
+    assert.equal(cliResult.exitCode, 0, childFailureMessage(cliResult));
     const cliBody = JSON.parse(cliResult.stdout) as { brandColor?: string };
-    assert.equal(cliBody.brandColor, "#bada55");
+    assert.equal(cliBody.brandColor, crossTransportBrandingInput.brandColor);
 
-    const mcpResult = await runChildProcess(
+    const readCrossTransportBrandingSnapshot = async () => {
+      const rows = await sql!.unsafe(
+        "SELECT o.brand_color, s.owner, s.mutation_version::text AS mutation_version, "
+          + "s.fence_epoch::text AS fence_epoch, "
+          + "(SELECT count(*)::text FROM organization_branding_mutation_receipts "
+          + "WHERE org_id=$1::uuid AND idempotency_key=$2) AS receipt_count, "
+          + "(SELECT count(*)::text FROM organization_branding_mutation_receipts receipt "
+          + "JOIN activity_log activity ON activity.org_id=receipt.org_id AND activity.id=receipt.activity_id "
+          + "WHERE receipt.org_id=$1::uuid AND receipt.idempotency_key=$2) AS activity_count, "
+          + "(SELECT count(*)::text FROM organization_mutation_outbox outbox "
+          + "JOIN organization_branding_mutation_receipts receipt "
+          + "ON receipt.org_id=outbox.org_id AND receipt.activity_id=outbox.activity_id "
+          + "WHERE receipt.org_id=$1::uuid AND receipt.idempotency_key=$2) AS outbox_count "
+          + "FROM organizations o JOIN organization_branding_mutation_state s ON s.org_id=o.id "
+          + "WHERE o.id=$1::uuid",
+        [organizationId, crossTransportBrandingInput.idempotencyKey],
+      );
+      assert.equal(rows.length, 1, "shared CLI/MCP branding command did not persist organization mutation state");
+      return Array.from(rows)[0] as {
+        brand_color: string;
+        owner: string;
+        mutation_version: string;
+        fence_epoch: string;
+        receipt_count: string;
+        activity_count: string;
+        outbox_count: string;
+      };
+    };
+
+    const cliBrandingSnapshot = await readCrossTransportBrandingSnapshot();
+    assert.equal(cliBrandingSnapshot.brand_color, crossTransportBrandingInput.brandColor);
+    assert.equal(cliBrandingSnapshot.owner, "rust", "built CLI branding write was not Rust-owned");
+    assert.ok(Number(cliBrandingSnapshot.mutation_version) > 0);
+    assert.ok(Number(cliBrandingSnapshot.fence_epoch) > 0);
+    assert.equal(cliBrandingSnapshot.receipt_count, "1");
+    assert.equal(cliBrandingSnapshot.activity_count, "1");
+    assert.equal(cliBrandingSnapshot.outbox_count, "1");
+
+    const mcpReplay = await runMcpBranding("branding-mcp-replay-cli-write", crossTransportBrandingInput);
+    assert.equal(mcpReplay.organization?.brandColor, crossTransportBrandingInput.brandColor);
+    const mcpReplayBrandingSnapshot = await readCrossTransportBrandingSnapshot();
+    assert.deepEqual(mcpReplayBrandingSnapshot, cliBrandingSnapshot,
+      "same-payload MCP replay changed Rust state, receipt, activity, or outbox counts");
+
+    const cliLogoLink = await runChildProcess(
       process.execPath,
-      [tsxPath, cliEntryPath, "mcp-server"],
+      [cliEntryPath, "org", "brand-color", "update", "--org-id", organizationId,
+        "--logo-asset-id", logoAssetId, "--idempotency-key", `cli-logo-${organizationId}`, "--json"],
       repoRoot,
-      {
-        ...cliRuntimeEnv,
-        RUDDER_TOOL_TRANSPORT_SURFACE: "mcp",
-        RUDDER_MCP_RUDDER_BIN: path.join(home, "missing-rudder-cli"),
-      },
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: "branding-mcp",
-        method: "tools/call",
-        params: {
-          name: "rudder_organization_brand_color_update",
-          arguments: {
-            brandColor: "#c0ffee",
-            idempotencyKey: `mcp-${organizationId}`,
-          },
-        },
-      }) + "\n",
+      cliRuntimeEnv,
     );
-    assert.equal(mcpResult.exitCode, 0, mcpResult.stderr || mcpResult.stdout);
-    const mcpBody = JSON.parse(mcpResult.stdout.trim()) as {
-      result?: { isError?: boolean; structuredContent?: { brandColor?: string } };
-    };
-    assert.equal(mcpBody.result?.isError, false);
-    assert.equal(mcpBody.result?.structuredContent?.brandColor, "#c0ffee");
+    assert.equal(cliLogoLink.exitCode, 0, childFailureMessage(cliLogoLink));
+    const cliLogoBody = JSON.parse(cliLogoLink.stdout) as { brandColor?: string; logoAssetId?: string };
+    assert.equal(cliLogoBody.brandColor, "#bada55", "logo-only CLI update changed the omitted brand color");
+    assert.equal(cliLogoBody.logoAssetId, shortLogoAssetId,
+      "CLI output did not preserve Rudder's stable short-ID display convention");
+    const cliLogoRows = await sql?.unsafe(
+      "SELECT asset_id::text AS asset_id FROM organization_logos WHERE org_id = $1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(Array.from(cliLogoRows ?? []), [{ asset_id: logoAssetId }]);
 
-    // Seed a delayed, previously claimed row so the live publisher cannot race
-    // the simulated process interruption by finishing an in-flight delivery.
-    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
-    const recoveryActivityRows = await sql.unsafe(
-      "INSERT INTO activity_log "
-        + "(org_id, actor_type, actor_id, action, entity_type, entity_id, details) "
-        + "VALUES ($1::uuid, 'user', $1::text, 'organization.branding_updated', "
-        + "'organization', $1::text, $2::jsonb) RETURNING id::text AS id",
-      [organizationId, { recoveryProbe: true }],
-    );
-    const recoveryActivityId = String(recoveryActivityRows[0]?.id);
-    assert.match(recoveryActivityId, /^[0-9a-f-]{36}$/u);
-    const recoveryPayload = {
-      actorType: "user",
-      actorId: organizationId,
-      action: "organization.branding_updated",
-      entityType: "organization",
-      entityId: organizationId,
-      details: { recoveryProbe: true },
-    };
-    const recoveryOutboxRows = await sql.unsafe(
-      "INSERT INTO organization_mutation_outbox "
-        + "(org_id, activity_id, event_type, payload, state, attempts, next_attempt_at, last_error) "
-        + "VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb, 'pending', 1, "
-        + "now() + interval '1 hour', $4) RETURNING id::text AS id, state, attempts, last_error",
-      [
-        organizationId,
-        recoveryActivityId,
-        recoveryPayload,
-        "simulated process interruption before publication",
-      ],
-    );
-    const recoveryOutboxId = String(recoveryOutboxRows[0]?.id);
-    assert.match(recoveryOutboxId, /^[0-9a-f-]{36}$/u);
-    const interruptedOutboxRows = await sql.unsafe(
-      "SELECT state, attempts, last_error FROM organization_mutation_outbox WHERE id=$1::uuid",
-      [recoveryOutboxId],
-    );
-    assert.deepEqual(interruptedOutboxRows[0], {
-      state: "pending",
-      attempts: 1,
-      last_error: "simulated process interruption before publication",
+    const mcpLogoLink = await runMcpBranding("branding-mcp-logo-link", {
+      logoAssetId: logoAssetId.toUpperCase(),
+      idempotencyKey: `mcp-logo-${organizationId}`,
     });
+    assert.equal(mcpLogoLink.organization?.brandColor, "#bada55");
+    assert.equal(mcpLogoLink.organization?.logoAssetId, shortLogoAssetId,
+      "MCP logo link did not preserve omitted brand color or Rudder's short-ID output convention");
+    const mcpLogoRows = await sql?.unsafe(
+      "SELECT asset_id::text AS asset_id FROM organization_logos WHERE org_id = $1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(Array.from(mcpLogoRows ?? []), [{ asset_id: logoAssetId }],
+      "MCP uppercase UUID input was not normalized to the canonical stored logo asset ID");
+
+    const mcpLogoClear = await runMcpBranding("branding-mcp-logo-clear", {
+      logoAssetId: null,
+      idempotencyKey: `mcp-logo-clear-${organizationId}`,
+    });
+    assert.equal(mcpLogoClear.organization?.brandColor, "#bada55",
+      "nullable MCP logo clear changed the omitted brand color");
+    assert.equal(mcpLogoClear.organization?.logoAssetId, null);
+    const clearedLogoRows = await sql?.unsafe(
+      "SELECT asset_id::text AS asset_id FROM organization_logos WHERE org_id = $1::uuid",
+      [organizationId],
+    );
+    assert.deepEqual(Array.from(clearedLogoRows ?? []), [], "MCP logo clear left the organization logo link");
+
+    const mcpBrandColorClear = await runMcpBranding("branding-mcp-color-clear", {
+      brandColor: null,
+      idempotencyKey: `mcp-color-clear-${organizationId}`,
+    });
+    assert.equal(mcpBrandColorClear.organization?.brandColor, null);
+    assert.equal(mcpBrandColorClear.organization?.logoAssetId, null,
+      "nullable MCP color clear changed the omitted logo field");
+
+    // Delay a real Rust transaction's receipt-linked outbox row in the
+    // disposable database so a persisted pending event survives restart.
+    // The existing publisher provides retryable at-least-once delivery; this
+    // smoke verifies stable event identity, not exactly-once network delivery.
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    const recoveryIdempotencyKey = `outbox-recovery-${organizationId}`;
+    const recoveryColor = "#d00ded";
+    await sql.unsafe(
+      "CREATE FUNCTION delay_real_entry_outbox() RETURNS trigger "
+        + "LANGUAGE plpgsql AS $$ BEGIN "
+        + "NEW.next_attempt_at := now() + interval '1 hour'; "
+        + "NEW.attempts := 1; "
+        + "NEW.last_error := 'simulated interruption before publication'; "
+        + "RETURN NEW; END; $$",
+    );
+    await sql.unsafe(
+      "CREATE TRIGGER delay_real_entry_outbox_trigger "
+        + "BEFORE INSERT ON organization_mutation_outbox "
+        + "FOR EACH ROW EXECUTE FUNCTION delay_real_entry_outbox()",
+    );
+    const recoveryMutation = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": recoveryIdempotencyKey,
+      },
+      body: JSON.stringify({ brandColor: recoveryColor }),
+    }));
+    assert.equal(recoveryMutation.status, 200);
+    assert.equal((recoveryMutation.body as { brandColor?: string }).brandColor, recoveryColor);
+    await sql.unsafe("DROP TRIGGER delay_real_entry_outbox_trigger ON organization_mutation_outbox");
+    await sql.unsafe("DROP FUNCTION delay_real_entry_outbox()");
+
+    const readRecoverySnapshot = async () => {
+      const rows = await sql!.unsafe(
+        "SELECT receipt.idempotency_key, receipt.activity_id::text AS activity_id, receipt.outcome, "
+          + "activity.action, activity.idempotency_key AS activity_idempotency_key, "
+          + "outbox.id::text AS outbox_id, outbox.event_type, outbox.payload, outbox.state, "
+          + "outbox.attempts, outbox.last_error "
+          + "FROM organization_branding_mutation_receipts receipt "
+          + "JOIN activity_log activity ON activity.org_id=receipt.org_id AND activity.id=receipt.activity_id "
+          + "JOIN organization_mutation_outbox outbox ON outbox.org_id=receipt.org_id AND outbox.activity_id=receipt.activity_id "
+          + "WHERE receipt.org_id=$1::uuid AND receipt.idempotency_key=$2",
+        [organizationId, recoveryIdempotencyKey],
+      );
+      assert.equal(rows.length, 1, "real Rust write did not produce exactly one linked recovery effect set");
+      return Array.from(rows)[0] as {
+        idempotency_key: string;
+        activity_id: string;
+        outcome: string;
+        action: string;
+        activity_idempotency_key: string;
+        outbox_id: string;
+        event_type: string;
+        payload: Record<string, unknown>;
+        state: string;
+        attempts: number;
+        last_error: string | null;
+      };
+    };
+    const interruptedRecovery = await readRecoverySnapshot();
+    assert.equal(interruptedRecovery.idempotency_key, recoveryIdempotencyKey);
+    assert.equal(interruptedRecovery.outcome, "applied");
+    assert.equal(interruptedRecovery.action, "organization.branding_updated");
+    assert.equal(interruptedRecovery.event_type, "activity.logged");
+    assert.equal(interruptedRecovery.state, "pending");
+    assert.equal(interruptedRecovery.attempts, 1);
+    assert.equal(interruptedRecovery.last_error, "simulated interruption before publication");
+    assert.equal(interruptedRecovery.payload.action, "organization.branding_updated");
     await sql.end({ timeout: 2 });
     sql = null;
     await current.stop();
@@ -403,20 +748,36 @@ async function main() {
     sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     await sql.unsafe(
       "UPDATE organization_mutation_outbox SET next_attempt_at=now() WHERE id=$1::uuid",
-      [recoveryOutboxId],
+      [interruptedRecovery.outbox_id],
     );
-    let recoveredOutboxRows: Array<{ state: string; attempts: number; last_error: string | null }> = [];
+    let recoveredSnapshot = await readRecoverySnapshot();
     for (let attempt = 0; attempt < 40; attempt += 1) {
-      recoveredOutboxRows = await sql.unsafe(
-        "SELECT state, attempts, last_error FROM organization_mutation_outbox WHERE id=$1::uuid",
-        [recoveryOutboxId],
-      ) as Array<{ state: string; attempts: number; last_error: string | null }>;
-      if (recoveredOutboxRows[0]?.state === "published") break;
+      recoveredSnapshot = await readRecoverySnapshot();
+      if (recoveredSnapshot.state === "published") break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert.equal(recoveredOutboxRows[0]?.state, "published");
-    assert.ok((recoveredOutboxRows[0]?.attempts ?? 0) >= 2);
-    assert.equal(recoveredOutboxRows[0]?.last_error, null);
+    assert.equal(recoveredSnapshot.state, "published");
+    assert.ok(recoveredSnapshot.attempts >= 2);
+    assert.equal(recoveredSnapshot.last_error, null);
+    assert.deepEqual({
+      idempotency_key: recoveredSnapshot.idempotency_key,
+      activity_id: recoveredSnapshot.activity_id,
+      outcome: recoveredSnapshot.outcome,
+      action: recoveredSnapshot.action,
+      activity_idempotency_key: recoveredSnapshot.activity_idempotency_key,
+      outbox_id: recoveredSnapshot.outbox_id,
+      event_type: recoveredSnapshot.event_type,
+      payload: recoveredSnapshot.payload,
+    }, {
+      idempotency_key: interruptedRecovery.idempotency_key,
+      activity_id: interruptedRecovery.activity_id,
+      outcome: interruptedRecovery.outcome,
+      action: interruptedRecovery.action,
+      activity_idempotency_key: interruptedRecovery.activity_idempotency_key,
+      outbox_id: interruptedRecovery.outbox_id,
+      event_type: interruptedRecovery.event_type,
+      payload: interruptedRecovery.payload,
+    }, "restart recovery changed the receipt/activity/outbox identity or payload");
 
     console.log(JSON.stringify({
       marker: "RUST_BRANDING_REAL_ENTRY_PASS",
@@ -430,15 +791,41 @@ async function main() {
       auditFailureStatus: auditFailure.status,
       auditRetryStatus: auditRetry.status,
       cliStatus: cliResult.exitCode,
-      mcpStatus: mcpResult.exitCode,
+      mcpReplayStatus: mcpReplay.result.exitCode,
+      crossTransportReplay: {
+        owner: mcpReplayBrandingSnapshot.owner,
+        mutationVersion: mcpReplayBrandingSnapshot.mutation_version,
+        fenceEpoch: mcpReplayBrandingSnapshot.fence_epoch,
+        receipts: mcpReplayBrandingSnapshot.receipt_count,
+        activities: mcpReplayBrandingSnapshot.activity_count,
+        outbox: mcpReplayBrandingSnapshot.outbox_count,
+      },
+      cliLogoLinkStatus: cliLogoLink.exitCode,
+      missingLogoStatus: missingLogo.status,
+      foreignLogoStatus: foreignLogo.status,
+      mcpLogoLinkStatus: mcpLogoLink.result.exitCode,
+      mcpLogoClearStatus: mcpLogoClear.result.exitCode,
+      mcpBrandColorClearStatus: mcpBrandColorClear.result.exitCode,
       cliBrandColor: cliBody.brandColor,
-      mcpBrandColor: mcpBody.result?.structuredContent?.brandColor,
+      cliLogoAssetId: cliLogoBody.logoAssetId,
+      mcpLogoAssetId: mcpLogoLink.organization?.logoAssetId,
+      mcpBrandColorAfterLogoClear: mcpLogoClear.organization?.brandColor,
+      mcpBrandColorAfterClear: mcpBrandColorClear.organization?.brandColor,
       state: stateRows[0],
       unlistedOwnerAfterRestart: unlistedRestartStateRows[0]?.owner,
       receipt: receiptRows[0],
       activityCount: activityRows.length,
       outbox: outboxRows[0],
-      outboxRecovery: recoveredOutboxRows[0],
+      auditRetryEffect: auditRetryEffectRows?.[0],
+      auditRetryReplayStatus: auditRetryReplay.status,
+      outboxRecovery: {
+        state: recoveredSnapshot.state,
+        attempts: recoveredSnapshot.attempts,
+        lastError: recoveredSnapshot.last_error,
+        idempotencyKey: recoveredSnapshot.idempotency_key,
+        activityId: recoveredSnapshot.activity_id,
+        outboxId: recoveredSnapshot.outbox_id,
+      },
     }));
   } finally {
     await sql?.end({ timeout: 2 }).catch(() => undefined);

@@ -2688,6 +2688,7 @@ async function assertDesktopGlassShell(electronApp, page, context) {
       windows: document.documentElement.classList.contains("desktop-shell-windows"),
       captionControls: document.querySelectorAll(".desktop-caption-control").length,
       shellBackground: getComputedStyle(shellProbe).backgroundImage,
+      shellBackdropFilter: getComputedStyle(shellProbe).backdropFilter,
       primaryRailBackground: getComputedStyle(primaryRailProbe).backgroundImage,
     };
     shellProbe.remove();
@@ -2696,6 +2697,9 @@ async function assertDesktopGlassShell(electronApp, page, context) {
   });
 
   assert.equal(rendererState.glass, true, `${context} should enable the cross-platform glass shell class`);
+  if (process.platform === "darwin") {
+    assert.equal(rendererState.shellBackdropFilter, "none", `${context} should use native macOS vibrancy without filtering the workspace ancestor`);
+  }
   if (process.platform === "win32") {
     assert.equal(rendererState.platform, "win32", `${context} should expose the Windows desktop platform`);
     assert.equal(rendererState.windows, true, `${context} should enable Windows shell styling`);

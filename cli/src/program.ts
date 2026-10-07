@@ -55,7 +55,12 @@ async function importLazyCommandModule<T>(specifier: string, commandName: string
 function isMissingLazyCommandModule(error: unknown, specifier: string): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as { code?: unknown }).code;
-  return code === "ERR_MODULE_NOT_FOUND" && error.message.includes(specifier);
+  return code === "ERR_MODULE_NOT_FOUND" && (
+    error.message.includes(specifier)
+    // The command chunks are shipped for full runtime installs, but the thin
+    // CLI intentionally does not install their direct database dependency.
+    || error.message.startsWith("Cannot find package '@rudderhq/db' imported from ")
+  );
 }
 
 function numberOption(value: string): number {

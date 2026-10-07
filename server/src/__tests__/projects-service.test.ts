@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { resolveOrganizationWorkspaceRoot, resolveProjectLibraryDir } from "../home-paths.js";
-import { projectService } from "../services/projects.js";
+import { projectService, type ProjectCreateContext } from "../services/projects.js";
 import { resourceCatalogService } from "../services/resource-catalog.js";
 
 type EmbeddedPostgresInstance = {
@@ -40,6 +40,20 @@ type EmbeddedPostgresCtor = new (opts: {
   onLog?: (message: unknown) => void;
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
+
+type ProjectService = ReturnType<typeof projectService>;
+
+function createImportProjectService(db: Parameters<typeof projectService>[0]) {
+  const service = projectService(db);
+  return {
+    ...service,
+    create: (
+      orgId: Parameters<ProjectService["create"]>[0],
+      data: Parameters<ProjectService["create"]>[1],
+      context: ProjectCreateContext = { lane: "node", caller: "import" },
+    ) => service.create(orgId, data, context),
+  };
+}
 
 async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
   const mod = await import("embedded-postgres");
@@ -107,7 +121,7 @@ describe("project service workspace resolution", () => {
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
-    projectSvc = projectService(db);
+    projectSvc = createImportProjectService(db);
     instance = started.instance;
     dataDir = started.dataDir;
   }, 20_000);
@@ -474,6 +488,59 @@ describe("project service workspace resolution", () => {
     expect(reloaded?.codebase.localFolder).toBe(resolveOrganizationWorkspaceRoot(orgId));
     expect(reloaded?.primaryWorkspace?.id).toBe(workspaceId);
     expect(reloaded?.workspaces.map((workspace) => workspace.id)).toEqual([workspaceId]);
+  });
+
+  it("creates idempotent imported workspaces once and leaves ordinary workspace creation random", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Imported Workspace Org",
+      urlKey: deriveOrganizationUrlKey("Imported Workspace Org"),
+      issuePrefix: "IWO",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await provisionNodeMutationState(orgId);
+    const project = await projectSvc.create(orgId, {
+      name: "Imported Workspace Project",
+      status: "planned",
+    });
+    const importIdentity = { importKey: "workspace-import-retry", portableWorkspaceKey: "main" };
+    const importData = {
+      name: "Main Repo",
+      sourceType: "git_repo",
+      repoUrl: "https://example.com/repo.git",
+      repoRef: "main",
+      defaultRef: "main",
+      visibility: "default",
+      isPrimary: true,
+    };
+
+    const first = await projectSvc.createWorkspace(project.id, importData, importIdentity);
+    const retried = await projectSvc.createWorkspace(project.id, importData, importIdentity);
+    expect(first?.id).toBeTruthy();
+    expect(first?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(retried?.id).toBe(first?.id);
+
+    await expect(projectSvc.createWorkspace(project.id, {
+      ...importData,
+      repoUrl: "https://example.com/changed.git",
+    }, importIdentity)).rejects.toMatchObject({
+      status: 409,
+      message: "Project workspace import key conflicts with existing workspace content",
+    });
+
+    const ordinaryInput = {
+      name: "Ordinary workspace",
+      sourceType: "local_path",
+      cwd: "/tmp/rudder-ordinary-workspace",
+    };
+    const ordinaryFirst = await projectSvc.createWorkspace(project.id, ordinaryInput);
+    const ordinarySecond = await projectSvc.createWorkspace(project.id, ordinaryInput);
+    expect(ordinaryFirst?.id).not.toBe(ordinarySecond?.id);
+
+    const rows = await db.select().from(projectWorkspaces).where(eq(projectWorkspaces.projectId, project.id));
+    expect(rows).toHaveLength(3);
+    expect(rows.filter((row) => row.id === first?.id)).toHaveLength(1);
   });
 
   it("rejects ordinary project field updates after Project authority moves to Rust", async () => {

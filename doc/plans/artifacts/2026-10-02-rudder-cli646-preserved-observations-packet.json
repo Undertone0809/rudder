@@ -1,0 +1,112 @@
+{
+  "schema": "rudder.cli646.preserved-observations.packet/v1",
+  "packetId": "pr236-cli646-preserved-observations-2026-10-02",
+  "purpose": "Independent evidence-only re-evaluation of the already captured installed-CLI observations from the current646 combined QUESTION. This packet is not a rerun and records no author acceptance.",
+  "candidate": {
+    "sourceSha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "sourceTree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "artifactBuildId": "integrated646-complete-dist-verified",
+    "artifactReceiptPath": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/receipt/2026-10-01T23-07-34-710Z-integrated646-complete-dist-verified.json",
+    "artifactReceiptSha256": "14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49",
+    "installPrefix": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/install-prefix-complete-dist",
+    "installedCliEntry": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/install-prefix-complete-dist/node_modules/@rudderhq/cli/dist/index.js",
+    "installedCliEntrySha256": "405bac416912265d92f84ea7200cbe8fd966b196b65d900cd4d1f6bca0f3f07a",
+    "installedServerVersion": "0.7.24",
+    "installedCliVersion": "0.7.24"
+  },
+  "preservedCombinedQuestion": {
+    "path": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss/doc/plans/artifacts/2026-10-02-rudder-cli-mcp646-v2-independent-question.json",
+    "sha256": "4e928067031eb11a47d4fc05b369a37489cf53fefc4005d4f7cccbea8e7952d1",
+    "verdict": "QUESTION",
+    "handling": "Read-only reference. Do not edit, replace, supersede, or relabel this combined verdict, even if the narrower CLI slice is independently accepted."
+  },
+  "diagnostic": {
+    "path": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss/doc/plans/artifacts/2026-10-02-rudder-cli-mcp646-v2-question-diagnostic.json",
+    "sha256": "2802cdae3f043671707b305c9388a9a1f7c91b1021758166974f1115779630e1",
+    "scope": "Read-only diagnosis; identifies MCP child stdout tail truncation at 80000 characters as the parse failure. It does not establish MCP protocol success/failure and does not negate the separately captured CLI observations."
+  },
+  "priorAcceptanceInputs": {
+    "packet": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-sealed646-pino-pretty-v2/packet.json",
+      "sha256": "98dfc9c3fd61f0cb1b7834eb0f2d7c4b1fad0d253442a2434e5958c24c48ecbf"
+    },
+    "runner": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-sealed646-pino-pretty-v2/runner.mjs",
+      "sha256": "8247cd7415abe869028f34822cddedbcbcfe31b059013046db9168d7f6198710"
+    },
+    "rawEvidence": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-sealed646-pino-pretty-v2/evidence/installed-cli-mcp-member-read-45ddcbf4-e899-49fe-9bf3-5d795a9b0fbd.json",
+      "sha256": "b535db1a03102a3fca05a6b3e995e6baa1715a6cb2da3cc3823da8b417d87e8a",
+      "observedAt": "2026-10-02T00:28:35.500Z",
+      "status": "OBSERVED_FAILURE"
+    }
+  },
+  "scope": {
+    "included": [
+      "Installed CLI member-directory read using its default member type, with the captured required-mode Rust authority receipt.",
+      "Installed CLI Project create public result, correlated to its persisted project row and Rust owner/fence, applied receipt, audit action, and outbox event.",
+      "Recorded cleanup evidence for the exact disposable run: runner cleanup verified, process group gone, owned run root removed, and API/database ports checked clear."
+    ],
+    "excluded": [
+      "MCP initialize/tools-list/tools-call: explicitly unresolved in the combined QUESTION; do not infer from server logs or this CLI packet.",
+      "Board UI, other CLI/MCP operations, aggregate v45/product acceptance, release readiness, or any broader Rust-authority migration claim.",
+      "Any runtime, database, HTTP, process, or CLI execution in this evidence-only re-evaluation."
+    ],
+    "separateMcpV4Pass": "A separate MCP v4 PASS is not imported, replayed, or used to resolve the current646 combined QUESTION."
+  },
+  "evidenceMap": [
+    {
+      "criterion": "Installed CLI default member read and Rust authority",
+      "rawEvidencePointers": [
+        "$.surfaces.cliMemberRead.command",
+        "$.surfaces.cliMemberRead.response",
+        "$.surfaces.cliMemberRead.matchedMember",
+        "$.surfaces.cliMemberRead.probeReceipt",
+        "$.criterionObservations.installedCliMemberRead"
+      ],
+      "capturedObservation": "The response contains the created agent; the Rust receipt records probe_mode=required, rust_invoked=true, response_authority=rust, no fallback/old authority, and HTTP 200. The receipt requestId is null; evaluate whether organization, operation sequence, raw line, and response are sufficient correlation."
+    },
+    {
+      "criterion": "Installed CLI Project create result and Rust-owned ledger",
+      "rawEvidencePointers": [
+        "$.surfaces.cli.command",
+        "$.surfaces.cli.response",
+        "$.surfaces.cli.ledger",
+        "$.criterionObservations.installedCliProjectCreate"
+      ],
+      "capturedObservation": "The CLI response project ID matches the persisted row; the ledger records owner=rust, mutation_version=1, fence_epoch=1, receipt outcome=applied, audit action=project.created, and outbox event=activity.logged. Inspect the exact-ID chain; do not use the separate MCP-related server log as CLI proof."
+    },
+    {
+      "criterion": "Cleanup",
+      "rawEvidencePointers": [
+        "$.cleanup",
+        "$.cleanupAndRelease"
+      ],
+      "capturedObservation": "The raw run record reports verified cleanup, process group gone, owned run root removed, and no cleanup errors; the combined receipt also records independent post-run checks."
+    }
+  ],
+  "independentReevaluation": {
+    "reviewer": {
+      "required": true,
+      "role": "Independent reviewer, not packet author; inspect only the frozen candidate/artifact identity, original packet, combined QUESTION, diagnostic, and hash-matched raw evidence.",
+      "report": "State whether each included criterion is sufficiently supported by preserved evidence; identify exact correlation or provenance gaps. Do not execute or repair anything."
+    },
+    "verifier": {
+      "required": true,
+      "distinctFrom": ["packet author", "independent reviewer"],
+      "role": "Independent evidence-only terminal re-evaluation of the narrow CLI slice, not a runtime verifier and not a rerun.",
+      "outcomes": ["PASS", "FAIL", "QUESTION"],
+      "rule": "Return QUESTION if preserved observations cannot establish a required public CLI result, Rust authority/ledger linkage, or cleanup. Do not reconstruct historical stdout, infer MCP results, or turn the combined QUESTION into PASS."
+    },
+    "knownEvidenceLimit": "The raw evidence preserves parsed CLI response objects and readbacks, but not verbatim CLI child stdout/stderr or child exit codes. The evaluator must decide whether the preserved response objects plus exact installed entry, authority receipt/readbacks, and cleanup record suffice. If not, name the missing exact terminal evidence; no retry is authorized by this packet.",
+    "authorAcceptance": "NONE",
+    "executionLease": "NONE; evidence-only review requires no runtime or database lease."
+  },
+  "preservation": {
+    "sourceOrArtifactMutation": false,
+    "rawEvidenceMutation": false,
+    "combinedQuestionMutation": false,
+    "newExecution": false,
+    "packetDoesNotClaimAcceptance": true
+  }
+}

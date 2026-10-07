@@ -22,6 +22,7 @@ import {
   upsertOrganizationIntelligenceProfileSchema,
 } from "@rudderhq/shared";
 import { Router, type NextFunction, type Request, type Response } from "express";
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -44,6 +45,7 @@ import {
   workspaceBackupService,
 } from "../services/index.js";
 import { libraryEntryService } from "../services/library-entries.js";
+import { forwardRustOrganizationResourceMutation } from "../services/organization-resource-rust-authority.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
@@ -60,6 +62,20 @@ export type { RustFoundationProbeReceipt } from "./organization-rust-foundation-
 const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
 const EMBEDDED_IMAGE_DATA_URL_ERROR =
   "Embedded image data URLs are not allowed in Library files. Upload images as attachments or assets and reference their content URL instead.";
+const ORGANIZATION_IMPORT_AUDIT_IDEMPOTENCY_NAMESPACE = "rudder:organization-import-audit:v1:";
+
+function organizationImportAuditIdempotencyKey(
+  req: Request,
+  actor: ReturnType<typeof getActorInfo>,
+  lane: "public-import" | "safe-import",
+) {
+  const requestKey = req.header("x-rudder-idempotency-key")?.trim();
+  if (!requestKey) return undefined;
+
+  const scope = JSON.stringify([lane, actor.actorType, actor.actorId, requestKey]);
+  const digest = createHash("sha256").update(scope).digest("hex");
+  return `${ORGANIZATION_IMPORT_AUDIT_IDEMPOTENCY_NAMESPACE}${digest}`;
+}
 
 function assertNoEmbeddedImageDataUrls(content: string) {
   if (EMBEDDED_IMAGE_DATA_URL_RE.test(content)) {
@@ -127,6 +143,7 @@ export function organizationRoutes(
   const agents = agentService(db);
   const portability = organizationPortabilityService(db, storage, {
     organizationBrandingMode: rustFoundationBridge?.organizationBrandingMode,
+    rustFoundationBridge,
   });
   const organizationSkills = organizationSkillService(db);
   const intelligenceProfiles = organizationIntelligenceProfileService(db);
@@ -499,6 +516,13 @@ export function organizationRoutes(
     const resourceId = req.params.resourceId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
+    const rustResponse = await forwardRustOrganizationResourceMutation(
+      db, rustFoundationBridge, req, orgId, resourceId, "update", req.body,
+    );
+    if (rustResponse) {
+      res.status(rustResponse.status).type(rustResponse.contentType).send(rustResponse.body);
+      return;
+    }
     const resource = await resources.updateOrganizationResource(orgId, resourceId, req.body);
     if (!resource) {
       res.status(404).json({ error: "Resource not found" });
@@ -524,6 +548,13 @@ export function organizationRoutes(
     const resourceId = req.params.resourceId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
+    const rustResponse = await forwardRustOrganizationResourceMutation(
+      db, rustFoundationBridge, req, orgId, resourceId, "delete", {},
+    );
+    if (rustResponse) {
+      res.status(rustResponse.status).type(rustResponse.contentType).send(rustResponse.body);
+      return;
+    }
     const resource = await resources.removeOrganizationResource(orgId, resourceId);
     if (!resource) {
       res.status(404).json({ error: "Resource not found" });
@@ -1041,7 +1072,7 @@ export function organizationRoutes(
       assertCompanyAccess(req, req.body.target.orgId);
     }
     const actor = getActorInfo(req);
-    const result = await portability.importBundle(req.body, req.actor.type === "board" ? req.actor.userId : null);
+    const result = await portability.importBundle(req.body, req.actor.type === "board" ? req.actor.userId : null, undefined, req);
     await handoffRequiredOrganizationBranding(db, rustFoundationBridge, result.organization.id);
     await logActivity(db, {
       orgId: result.organization.id,
@@ -1052,6 +1083,7 @@ export function organizationRoutes(
       entityId: result.organization.id,
       agentId: actor.agentId,
       runId: actor.runId,
+      idempotencyKey: organizationImportAuditIdempotencyKey(req, actor, "public-import"),
       details: {
         include: req.body.include ?? null,
         agentCount: result.agents.length,
@@ -1160,7 +1192,7 @@ export function organizationRoutes(
     const result = await portability.importBundle(req.body, req.actor.type === "board" ? req.actor.userId : null, {
       mode: "agent_safe",
       sourceOrganizationId: orgId,
-    });
+    }, req);
     await handoffRequiredOrganizationBranding(db, rustFoundationBridge, result.organization.id);
     await logActivity(db, {
       orgId: result.organization.id,
@@ -1171,6 +1203,7 @@ export function organizationRoutes(
       agentId: actor.agentId,
       runId: actor.runId,
       action: "organization.imported",
+      idempotencyKey: organizationImportAuditIdempotencyKey(req, actor, "safe-import"),
       details: {
         include: req.body.include ?? null,
         agentCount: result.agents.length,

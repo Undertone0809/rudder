@@ -1,0 +1,82 @@
+{
+  "schema": "rudder.independent-stage-review/v1",
+  "reviewed_at_utc": "2026-10-02",
+  "reviewer_skill": "agent-work-reviewer-maintainer",
+  "verdict": "accept",
+  "level": "stage verdict",
+  "claim_scope": "Evidence-only review readiness for the exact installed CLI member-read, CLI Project-create/ledger, and cleanup observations captured in the combined current646 QUESTION. This is not the distinct terminal verifier verdict, does not alter the combined QUESTION, and is not aggregate acceptance.",
+  "candidate": {
+    "source_sha": "646e3a6a10dfba538fafae9f8b88093c9d52bd2f",
+    "source_tree": "faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0",
+    "artifact_build_id": "integrated646-complete-dist-verified",
+    "artifact_receipt_path": "/Users/zeeland/.codex/artifacts/rudder-integrated646.6TRxWt/receipt/2026-10-01T23-07-34-710Z-integrated646-complete-dist-verified.json",
+    "artifact_receipt_sha256": "14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49",
+    "installed_cli_entry_sha256": "405bac416912265d92f84ea7200cbe8fd966b196b65d900cd4d1f6bca0f3f07a"
+  },
+  "reviewed_inputs": {
+    "packet": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli646-preserved-observations/packet.json",
+      "sha256": "786b6ac7bd60df6f7a3b578ab2b48a720392272a409de66a29a95bc4b9c592dd"
+    },
+    "readme": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli646-preserved-observations/README.md",
+      "sha256": "c4f924ec54956fa9bd02f3993979e21c65ef1c174c77cdaac37623acbfa2a014"
+    },
+    "prior_acceptance_packet": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-sealed646-pino-pretty-v2/packet.json",
+      "sha256": "98dfc9c3fd61f0cb1b7834eb0f2d7c4b1fad0d253442a2434e5958c24c48ecbf"
+    },
+    "runner": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-sealed646-pino-pretty-v2/runner.mjs",
+      "sha256": "8247cd7415abe869028f34822cddedbcbcfe31b059013046db9168d7f6198710"
+    },
+    "preserved_evidence": {
+      "path": "/private/tmp/rudder-project-create-installed.2KTYsB/cli-mcp-sealed646-pino-pretty-v2/evidence/installed-cli-mcp-member-read-45ddcbf4-e899-49fe-9bf3-5d795a9b0fbd.json",
+      "sha256": "b535db1a03102a3fca05a6b3e995e6baa1715a6cb2da3cc3823da8b417d87e8a",
+      "status": "OBSERVED_FAILURE for combined CLI/MCP run; CLI subobservations were captured before the MCP parse failure"
+    },
+    "combined_question": {
+      "path": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss/doc/plans/artifacts/2026-10-02-rudder-cli-mcp646-v2-independent-question.json",
+      "sha256": "4e928067031eb11a47d4fc05b369a37489cf53fefc4005d4f7cccbea8e7952d1",
+      "verdict": "QUESTION",
+      "handling": "Preserved unchanged; this stage verdict does not supersede or relabel it."
+    },
+    "question_diagnostic": {
+      "path": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss/doc/plans/artifacts/2026-10-02-rudder-cli-mcp646-v2-question-diagnostic.json",
+      "sha256": "2802cdae3f043671707b305c9388a9a1f7c91b1021758166974f1115779630e1"
+    }
+  },
+  "criteria_review": [
+    {
+      "criterion": "Installed CLI default member read and Rust authority",
+      "status": "sufficient_for_narrow_evidence_only_reevaluation",
+      "evidence": "The exact installed entry, command shape, organization and agent IDs, parsed JSON response, and matched member are preserved. The response identifies the created agent. The structured Rust probe receipt has the same organization, required mode, rust_invoked=true, response_authority=rust, no fallback/old authority, and HTTP 200. The runner takes the server-log cursor immediately before this CLI child, waits for exactly one matching receipt in that operation window, validates its organization/authority fields, and only afterward starts MCP. Preserved runtime log order shows this raw receipt followed by the same-org GET /members/directory?fullIds=true 200; the later second receipt belongs to the later MCP phase. requestId is null, so correlation is temporal/operation-window plus organization/path, not request-ID correlation; that is adequate for this isolated sequential CLI slice and must be described accurately."
+    },
+    {
+      "criterion": "Installed CLI Project create public result and Rust ledger",
+      "status": "sufficient_for_narrow_evidence_only_reevaluation",
+      "evidence": "The captured parsed CLI result has project ID 60d7ea5a-54b5-5e67-ae70-3a451371f90a, the exact disposable organization, and the unique Installed CLI Project name. The readback joins that same project ID/org/name to owner rust, mutation_version 1, fence_epoch 1, an applied project_create receipt, and matching activity/audit/outbox IDs and action. The frozen runner invokes this CLI command before it starts MCP, asserts non-timeout and child code 0, parses stdout JSON, validates the response identity, then records the result. The sequence in preserved server logs and exact-ID ledger avoid relying on the later MCP request as CLI proof."
+    },
+    {
+      "criterion": "Owned cleanup",
+      "status": "sufficient_for_narrow_evidence_only_reevaluation",
+      "evidence": "The evidence records cleanup verified, server process stopped, process group gone, code 0/no signal, run root removed, and no errors. The frozen runner's cleanup path checks both owned ports and makes any failed port check an error that prevents cleanup."
+    }
+  ],
+  "evidence_limits": [
+    "The preserved evidence stores parsed CLI response objects, not verbatim child stdout/stderr or per-child exit-code fields. The exact hash-bound runner's assertion order establishes that code 0, no timeout, and successful JSON parsing were prerequisites to writing each CLI observation; this supports the limited parsed-result claim but is not a raw CLI transcript or independently captured child-exit receipt.",
+    "requestId is null on the Rust probe receipt. The acceptable correlation here is limited to the runner's sequential cursor-delimited one-receipt window, exact organization, raw log line, adjacent matching HTTP route/status, and matching parsed response. Do not describe it as direct request-ID correlation.",
+    "This verdict reviews readiness/sufficiency of preserved evidence for a distinct evidence-only terminal re-evaluation. It is not that terminal verifier verdict. If the distinct verifier requires raw child streams or a persisted per-child exit code as a mandatory criterion, it must return QUESTION rather than infer those artifacts."
+  ],
+  "scope_boundaries": {
+    "mcp": "Excluded. MCP remains unresolved in the combined QUESTION. A separate MCP v4 PASS is not imported or used here.",
+    "combined_question": "Preserved unchanged and still applies to the combined CLI/MCP packet.",
+    "runtime_or_database_replayed": false,
+    "source_or_artifact_edited": false,
+    "product_acceptance": false,
+    "aggregate_acceptance": false,
+    "release_or_merge_readiness": false
+  },
+  "findings": [],
+  "convergence_direction": "A distinct evidence-only terminal verifier may now issue PASS/FAIL/QUESTION for these three CLI-only observations on exact source 646 and artifact receipt 14e39, retaining the command-output and null-requestId limits above. Keep MCP, the original combined QUESTION, and aggregate acceptance separate. No rerun is authorized or needed by this packet."
+}

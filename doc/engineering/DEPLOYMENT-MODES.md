@@ -45,6 +45,30 @@ This keeps one authenticated auth stack while still separating low-friction priv
 - explicit public URL required
 - stricter deployment checks and failures in doctor
 
+## Experimental Actix ingress
+
+`RUDDER_RUST_PUBLIC_INGRESS_MODE=required` explicitly selects the experimental
+Actix public listener and a separate loopback Node transition service. The
+default remains `off`; this does not retire Node auth or unmigrated business
+services. Missing Rust assets or listener readiness fails startup.
+
+The HTTP listener derives client IP and protocol from the actual socket and
+ignores client-supplied forwarding assertions by default, including loopback
+clients. When a reverse proxy terminates TLS, explicitly configure
+`RUDDER_RUST_PUBLIC_INGRESS_TRUSTED_PROXIES` with its exact numeric IP addresses
+separated by commas. DNS names, CIDRs, wildcard addresses and implicit loopback
+trust are unsupported. Keep that proxy inaccessible to untrusted local callers
+and configure it to append the actual client IP and overwrite protocol metadata.
+
+A trusted proxy must send one bounded `X-Forwarded-For` chain and one
+`X-Forwarded-Proto` value (`http` or `https`). Rust selects the nearest untrusted
+hop from the right, then replaces forwarding fields with one canonical client IP
+and protocol before HTTP, WebSocket and private member authorization forwarding.
+Missing, malformed, duplicate or entirely trusted chains fail with HTTP 400.
+Original Host, Origin, cookies and bearer credentials remain subject to existing
+authorization. Configure the explicit public auth URL as usual. Real installed
+auth, cookie, redirect and rate-limit acceptance still gates activation.
+
 ## Managed MCP Deployment Policy
 
 Managed custom MCP servers use instance-administrator environment allowlists

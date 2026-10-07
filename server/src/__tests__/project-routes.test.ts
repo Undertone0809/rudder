@@ -1,8 +1,12 @@
 import express from "express";
 import { once } from "node:events";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HttpError } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { projectRoutes } from "../routes/projects.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
@@ -10,6 +14,7 @@ import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js
 const mockProjectService = vi.hoisted(() => ({
   list: vi.fn(),
   getById: vi.fn(),
+  getOrganizationId: vi.fn(),
   getMutationOwner: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
@@ -118,7 +123,9 @@ describe("POST /api/orgs/:orgId/projects", () => {
   beforeEach(() => {
     process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = RUST_OWNED_PROJECT_ID;
     mockProjectService.create.mockReset();
+    mockProjectService.list.mockReset();
     mockProjectService.getById.mockReset();
+    mockProjectService.getOrganizationId.mockReset().mockResolvedValue("organization-1");
     mockProjectService.getMutationOwner.mockReset().mockResolvedValue("node");
     mockProjectService.update.mockReset();
     mockProjectService.remove.mockReset();
@@ -141,7 +148,41 @@ describe("POST /api/orgs/:orgId/projects", () => {
     }
   });
 
-  it("ignores workspace payload from legacy callers", async () => {
+  it("passes agent/run/key context separately from public data and rejects authority/root spoofing", async () => {
+    const actor = { type: "agent", agentId: "agent-1", orgId: "organization-1", source: "agent_key", runId: "run-1" };
+    mockProjectService.create.mockResolvedValue(createProject());
+    const app = await createApp(actor, { projectGoalSetMode: "required" } as RustFoundationBridge);
+    const response = await request(app).post("/api/orgs/organization-1/projects")
+      .set("x-rudder-idempotency-key", "create-key")
+      .send({ name: "Rudder", lane: "node", organizationWorkspaceRoot: "/untrusted", projectCreateStateRoot: "/untrusted", actor: { type: "board" } });
+    expect(response.status).toBe(201);
+    expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", { name: "Rudder", status: "backlog" }, {
+      lane: "rust", caller: "public", actor, idempotencyKey: "create-key",
+    });
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("routes the default Project create to Rust and propagates failure without a Node audit", async () => {
+    mockProjectService.create.mockRejectedValue(new HttpError(503, "Rust Project creation is not enabled"));
+    const actor = { type: "board", userId: "user-1", source: "local_implicit" };
+    const app = await createApp(actor, { projectGoalSetMode: "off" } as RustFoundationBridge);
+    const response = await request(app).post("/api/orgs/organization-1/projects").send({ name: "Rudder" });
+    expect(response.status).toBe(503);
+    expect(mockProjectService.create).toHaveBeenCalledOnce();
+    expect(mockProjectService.create.mock.calls[0]?.[2]).toEqual({ lane: "rust", caller: "public", actor, idempotencyKey: undefined });
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-organization creation before service dispatch", async () => {
+    const app = await createApp({ type: "agent", agentId: "agent-1", orgId: "other-org" },
+      { projectGoalSetMode: "required" } as RustFoundationBridge);
+    const response = await request(app).post("/api/orgs/organization-1/projects").send({ name: "Rudder" });
+    expect(response.status).toBe(403);
+    expect(mockProjectService.create).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("ignores legacy workspace payload and uses the default Rust create lane", async () => {
     mockProjectService.create.mockResolvedValue(createProject());
     const app = await createApp({
       type: "board",
@@ -164,18 +205,10 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", {
       name: "Rudder",
       status: "planned",
-    });
+    }, expect.objectContaining({ lane: "rust", caller: "public" }));
     expect(res.body.workspaces).toEqual([]);
     expect(res.body.primaryWorkspace).toBeNull();
-    expect(mockLogActivity).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        orgId: "organization-1",
-        action: "project.created",
-        entityType: "project",
-        entityId: "project-1",
-      }),
-    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("allows authenticated agents to create projects in their organization", async () => {
@@ -199,21 +232,11 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", {
       name: "Rudder",
       status: "planned",
-    });
-    expect(mockLogActivity).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        orgId: "organization-1",
-        actorType: "agent",
-        actorId: "agent-1",
-        agentId: "agent-1",
-        runId: "run-1",
-        action: "project.created",
-      }),
-    );
+    }, expect.objectContaining({ lane: "rust", caller: "public", actor: expect.objectContaining({ agentId: "agent-1" }) }));
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it("keeps create-with-goals atomic before handing the new Project-Goal fence to Rust", async () => {
+  it("selects the Rust service lane for create-with-goals without a duplicate Node audit", async () => {
     const created = {
       ...createProject(),
       goalId: "11111111-1111-4111-8111-111111111111",
@@ -244,14 +267,9 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockProjectService.create).toHaveBeenCalledWith(
       "organization-1",
       { name: "Rudder with goals", status: "backlog", goalIds: created.goalIds },
+      expect.objectContaining({ lane: "rust", caller: "public", actor: expect.objectContaining({ userId: "user-1" }) }),
     );
-    expect(mockLogActivity).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        action: "project.created",
-        entityId: created.id,
-      }),
-    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("passes project icon tokens through create and update payload validation", async () => {
@@ -276,7 +294,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
       name: "Travel Ops",
       icon: "plane",
       status: "backlog",
-    });
+    }, expect.objectContaining({ lane: "rust", caller: "public" }));
 
     const updated = await request(app)
       .patch("/api/projects/project-1")
@@ -310,10 +328,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
   });
 
   it("rejects agent project reads outside the authenticated organization", async () => {
-    mockProjectService.getById.mockResolvedValue({
-      ...createProject(),
-      orgId: "organization-1",
-    });
+    mockProjectService.getOrganizationId.mockResolvedValue("organization-1");
     const app = await createApp({
       type: "agent",
       agentId: "agent-1",
@@ -321,10 +336,151 @@ describe("POST /api/orgs/:orgId/projects", () => {
       source: "agent_key",
     });
 
-    const res = await request(app).get("/api/projects/project-1");
+    const res = await request(app).get("/api/projects/11111111-1111-4111-8111-111111111111");
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("Agent key cannot access another organization");
+  });
+
+  it.each([
+    { path: "/orgs/organization-1/projects", projectId: null, resourcesOnly: false },
+    { path: `/projects/${RUST_OWNED_PROJECT_ID}`, projectId: RUST_OWNED_PROJECT_ID, resourcesOnly: false },
+    { path: `/projects/${RUST_OWNED_PROJECT_ID}/resources`, projectId: RUST_OWNED_PROJECT_ID, resourcesOnly: true },
+  ])("uses Rust for every public read without consulting mutation ownership: $path", async ({ path, projectId, resourcesOnly }) => {
+    const actor = { type: "board", userId: "user-1", source: "local_implicit" };
+    const body = Buffer.from(JSON.stringify(resourcesOnly ? [{ id: "attachment", resource: { title: "Existing" } }] : projectId ? createProject(projectId) : [createProject()]));
+    const projectRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body });
+    const app = await createApp(actor, { projectGoalSetMode: "off", projectRead } as unknown as RustFoundationBridge);
+    const response = await request(app).get(`/api${path}`).set("x-rudder-required-authority", "node");
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(JSON.parse(body.toString()));
+    expect(projectRead).toHaveBeenCalledWith(actor, "organization-1", {
+      projectId, resourcesOnly, organizationWorkspaceRoot: expect.any(String),
+    });
+    expect(mockProjectService.list).not.toHaveBeenCalled();
+    expect(mockProjectService.getById).not.toHaveBeenCalled();
+    expect(mockProjectService.getMutationOwner).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it.each(["/orgs/organization-1/projects", `/projects/${RUST_OWNED_PROJECT_ID}`, `/projects/${RUST_OWNED_PROJECT_ID}/resources`])(
+    "fails closed instead of falling back on Rust read transport failure: %s", async (path) => {
+      const projectRead = vi.fn().mockRejectedValue(new Error("foundation stopped"));
+      const app = await createApp({ type: "board", source: "local_implicit" }, { projectRead } as unknown as RustFoundationBridge);
+      const response = await request(app).get(`/api${path}`);
+      expect(response.status).toBe(503);
+      expect(response.body.code).toBe("rust_foundation_project_read_request_failed");
+      expect(mockProjectService.list).not.toHaveBeenCalled();
+      expect(mockProjectService.getById).not.toHaveBeenCalled();
+      expect(mockProjectService.getMutationOwner).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { folderName: "Friendly-Organization", status: 200 },
+    { folderName: "Friendly Organization", status: 503 },
+  ])("preserves canonical friendly-path lookup and rejects malformed mappings: $folderName", async ({ folderName, status }) => {
+    const orgId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const home = await mkdtemp(join(tmpdir(), "rudder-project-read-friendly-"));
+    const previousHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+    const previousInstance = process.env.RUDDER_INSTANCE_ID;
+    const mapPath = join(home, ".rudder-organizations.json");
+    const mapping = JSON.stringify({ version: 1, organizations: [{
+      instanceId: "project-route-test", orgId, folderName,
+      createdAt: "2026-10-04T00:00:00.000Z", updatedAt: "2026-10-04T00:00:00.000Z",
+    }] });
+    await writeFile(mapPath, mapping);
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = home;
+    process.env.RUDDER_INSTANCE_ID = "project-route-test";
+    try {
+      const projectRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("[]") });
+      const actor = { type: "board", source: "local_implicit" };
+      const app = await createApp(actor, { projectRead } as unknown as RustFoundationBridge);
+      const response = await request(app).get(`/api/orgs/${orgId.toUpperCase()}/projects`);
+      expect(response.status).toBe(status);
+      if (status === 200) {
+        expect(projectRead).toHaveBeenCalledWith(actor, orgId.toUpperCase(), {
+          projectId: null, resourcesOnly: false,
+          organizationWorkspaceRoot: join(home, folderName),
+        });
+      } else {
+        expect(response.body.code).toBe("rust_foundation_project_read_request_failed");
+        expect(projectRead).not.toHaveBeenCalled();
+      }
+      expect(await readFile(mapPath, "utf8")).toBe(mapping);
+      expect(await readdir(home)).toEqual([".rudder-organizations.json"]);
+    } finally {
+      if (previousHome === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+      else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = previousHome;
+      if (previousInstance === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousInstance;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a missing bridge without routing the read to Node", async () => {
+    const app = await createApp({ type: "board", source: "local_implicit" });
+    const response = await request(app).get("/api/orgs/organization-1/projects");
+    expect(response.status).toBe(503);
+    expect(response.body.code).toBe("rust_foundation_project_read_unavailable");
+    expect(mockProjectService.list).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 404, payload: { error: "Project not found" } },
+    { status: 500, payload: { error: "Internal server error", code: "project_read_failed" } },
+  ])("preserves Rust terminal errors without Node fallback: $status", async ({ status, payload }) => {
+    const projectRead = vi.fn().mockResolvedValue({
+      status, contentType: "application/json", body: Buffer.from(JSON.stringify(payload)),
+    });
+    const app = await createApp({ type: "board", source: "local_implicit" }, { projectRead } as unknown as RustFoundationBridge);
+    const response = await request(app).get(`/api/projects/${RUST_OWNED_PROJECT_ID}`);
+    expect(response.status).toBe(status);
+    expect(response.body).toEqual(payload);
+    expect(mockProjectService.getById).not.toHaveBeenCalled();
+  });
+
+  it.each([`/projects/${RUST_OWNED_PROJECT_ID}`, `/projects/${RUST_OWNED_PROJECT_ID}/resources`])(
+    "preserves missing-project responses before native dispatch: %s", async (path) => {
+      mockProjectService.getOrganizationId.mockResolvedValue(null);
+      const projectRead = vi.fn();
+      const app = await createApp({ type: "board", source: "local_implicit" }, { projectRead } as unknown as RustFoundationBridge);
+      const response = await request(app).get(`/api${path}`);
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: "Project not found" });
+      expect(projectRead).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["/orgs/organization-1/projects", `/projects/${RUST_OWNED_PROJECT_ID}`, `/projects/${RUST_OWNED_PROJECT_ID}/resources`])(
+    "rejects cross-organization reads before native dispatch: %s", async (path) => {
+      const projectRead = vi.fn();
+      const app = await createApp({ type: "agent", agentId: "agent-1", orgId: "other-org" }, { projectRead } as unknown as RustFoundationBridge);
+      const response = await request(app).get(`/api${path}`);
+      expect(response.status).toBe(403);
+      expect(projectRead).not.toHaveBeenCalled();
+      expect(mockProjectService.getById).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retains scoped shortname resolution before signing the canonical target", async () => {
+    mockProjectService.resolveByReference.mockResolvedValue({ project: { id: RUST_OWNED_PROJECT_ID }, ambiguous: false });
+    const projectRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("{}") });
+    const actor = { type: "agent", agentId: "agent-1", orgId: "organization-1", source: "agent_key" };
+    const app = await createApp(actor, { projectRead } as unknown as RustFoundationBridge);
+    const response = await request(app).get("/api/projects/old-project/resources");
+    expect(response.status).toBe(200);
+    expect(mockProjectService.resolveByReference).toHaveBeenCalledWith("organization-1", "old-project");
+    expect(projectRead).toHaveBeenCalledWith(actor, "organization-1", expect.objectContaining({ projectId: RUST_OWNED_PROJECT_ID, resourcesOnly: true }));
+  });
+
+  it("retains ambiguous shortname errors without signing a guessed target", async () => {
+    mockProjectService.resolveByReference.mockResolvedValue({ project: null, ambiguous: true });
+    const projectRead = vi.fn();
+    const app = await createApp({ type: "agent", agentId: "agent-1", orgId: "organization-1" }, { projectRead } as unknown as RustFoundationBridge);
+    const response = await request(app).get("/api/projects/ambiguous");
+    expect(response.status).toBe(409);
+    expect(projectRead).not.toHaveBeenCalled();
   });
 
   it("rejects agent project updates outside the authenticated organization", async () => {
@@ -404,6 +560,84 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
+  it("keeps authenticated same-org Agent identity for goal-only and mixed patches and rejects cross-org goal-only access", async () => {
+    const existing = createProject(RUST_OWNED_PROJECT_ID);
+    const goalIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const goalOnlyResult = { ...existing, goalId: goalIds[0], goalIds: [goalIds[0]] };
+    const mixedResult = { ...existing, name: "Agent mixed patch", goalId: goalIds[1], goalIds: [goalIds[1]] };
+    mockProjectService.getById
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(goalOnlyResult)
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(mixedResult)
+      .mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const actor = {
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      source: "agent_key",
+      runId: "run-1",
+    };
+    const projectGoalSet = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from("{}"),
+    });
+    const bridge = { projectGoalSetMode: "required", projectGoalSet } as unknown as RustFoundationBridge;
+    const app = await createApp(actor, bridge);
+
+    const goalOnly = await request(app)
+      .patch(`/api/projects/${existing.id}`)
+      .set("x-rudder-idempotency-key", "agent-goal-only-patch")
+      .send({ goalIds: [goalIds[0]] });
+    expect(goalOnly.status).toBe(200);
+    expect(projectGoalSet).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ actor }),
+      existing.orgId,
+      existing.id,
+      expect.any(Buffer),
+      `/api/orgs/${existing.orgId}/projects/${existing.id}/goal-set`,
+    );
+    expect(JSON.parse(projectGoalSet.mock.calls[0]![3].toString("utf8"))).toEqual({
+      goalIds: [goalIds[0]],
+      primaryGoalId: goalIds[0],
+      runId: "run-1",
+    });
+
+    const mixedPatch = { goalIds: [goalIds[1]], name: "Agent mixed patch" };
+    const mixed = await request(app)
+      .patch(`/api/projects/${existing.id}`)
+      .set("x-rudder-idempotency-key", "agent-mixed-patch")
+      .send(mixedPatch);
+    expect(mixed.status).toBe(200);
+    expect(projectGoalSet).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ actor }),
+      existing.orgId,
+      existing.id,
+      expect.any(Buffer),
+      `/api/orgs/${existing.orgId}/projects/${existing.id}/goal-set`,
+    );
+    expect(JSON.parse(projectGoalSet.mock.calls[1]![3].toString("utf8"))).toEqual({
+      projectPatch: mixedPatch,
+      runId: "run-1",
+    });
+    expect(mockProjectService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+
+    const foreignApp = await createApp({ ...actor, orgId: "organization-2" }, bridge);
+    const denied = await request(foreignApp)
+      .patch(`/api/projects/${existing.id}`)
+      .send({ goalIds: [] });
+    expect(denied.status).toBe(403);
+    expect(projectGoalSet).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps a Node-owned Project usable in required mode, even when it is allowlisted", async () => {
     const existing = createProject(RUST_OWNED_PROJECT_ID);
     const updated = { ...existing, goalId: null, goalIds: [] };
@@ -429,7 +663,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
     );
   });
 
-  it("fails closed when a caller explicitly requires Rust outside the project allowlist", async () => {
+  it("fails closed when a caller explicitly requires Rust for a Node-owned Project", async () => {
     const existing = createProject();
     mockProjectService.getById.mockResolvedValue(existing);
     const bridge = {
@@ -445,7 +679,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
       .send({ goalIds: [] });
 
     expect(res.status).toBe(503);
-    expect(res.body.code).toBe("rust_foundation_project_goal_set_not_allowlisted");
+    expect(res.body.code).toBe("rust_foundation_project_goal_set_not_owned");
     expect(mockProjectService.update).not.toHaveBeenCalled();
     expect(bridge.projectGoalSet).not.toHaveBeenCalled();
   });
@@ -859,21 +1093,21 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it("does not send an unallowlisted Rust-owned Project delete to either writer", async () => {
+  it("routes a Rust-owned Project delete without requiring a startup allowlist entry", async () => {
     const existing = createProject();
     mockProjectService.getById.mockResolvedValue(existing);
     mockProjectService.getMutationOwner.mockResolvedValue("rust");
     const bridge = {
       projectGoalSetMode: "required",
-      projectDelete: vi.fn(),
+      projectDelete: vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(existing)) }),
     } as unknown as RustFoundationBridge;
     const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" }, bridge);
 
     const res = await request(app).delete(`/api/projects/${existing.id}`);
 
-    expect(res.status).toBe(503);
-    expect(res.body.code).toBe("rust_foundation_project_delete_not_allowlisted");
-    expect(bridge.projectDelete).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(existing.id);
+    expect(bridge.projectDelete).toHaveBeenCalledOnce();
     expect(mockProjectService.remove).not.toHaveBeenCalled();
   });
 
