@@ -22,6 +22,11 @@ Current desktop scope is intentionally narrow:
 - no launch-at-login
 - no remote-instance connection mode
 
+When an existing Account session refreshes successfully, Desktop can continue
+online even if renewal of its Offline Grant fails. The previous grant remains
+subject to its original expiry and device checks; offline access requires a valid
+grant. A rejected Account session still requires sign-in.
+
 ## Commands
 
 From the repo root:

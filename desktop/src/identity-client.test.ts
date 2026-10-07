@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyDesktopSignInIntent, createDesktopIdentityClient } from "./identity-client.js";
+import { establishDesktopLocalSession } from "./identity-local-session.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -387,6 +388,99 @@ describe("Desktop Identity client", () => {
       audience: "installation-1",
     });
   });
+
+  it.each(["binding", "storage", "key-unavailable"])(
+    "continues online server exchange when offline renewal fails at %s",
+    async (failure) => {
+      const stored = {
+        version: 1 as const,
+        issuer: "https://accounts.rudderhq.dev",
+        accountId: "account-1",
+        accountEmail: "river@rudderhq.dev",
+        accountName: "River Alvarez",
+        deviceId: "device-1",
+        refreshToken: "refresh-old",
+        refreshTokenExpiresAt: "2026-08-29T00:00:00.000Z",
+      };
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const clear = vi.fn();
+      const signOut = vi.fn();
+      const write = vi.fn();
+      const acceptGrant = vi.fn(() => {
+        throw new Error(failure === "binding" ? "Offline Grant device binding is invalid" : "private storage failure detail");
+      });
+      const fetch = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+        const pathname = new URL(String(input)).pathname;
+        if (pathname === "/api/desktop/refresh") {
+          return new Response(JSON.stringify({
+            access_token: "access-new",
+            token_type: "Bearer",
+            expires_in: 900,
+            refresh_token: "refresh-new",
+            account: { id: "account-1", email: stored.accountEmail, name: stored.accountName, image: null },
+            device: { id: "device-1", installationId: "installation-1", displayName: "Test Mac" },
+            offline_grant: "renewed-grant",
+            offline_grant_expires_at: "2026-08-29T00:00:00.000Z",
+            offline_grant_key_id: "key-1",
+          }), { status: 200 });
+        }
+        if (pathname === "/.well-known/rudder-offline-grant-key") {
+          return new Response(JSON.stringify({
+            issuer: stored.issuer, kid: "key-1", alg: "EdDSA", public_key_spki: "public-key",
+          }), { status: failure === "key-unavailable" ? 503 : 200 });
+        }
+        if (pathname === "/api/auth/local-exchange") {
+          expect(JSON.parse(String(init?.body))).toEqual({ exchangeCode: "one-time-server-exchange-code" });
+          return new Response("{}", { status: 200, headers: {
+            "set-cookie": "better-auth.session_token=token.signature; Path=/; HttpOnly; SameSite=Lax",
+          } });
+        }
+        if (pathname === "/api/auth/local-claim") {
+          expect(new Headers(init?.headers).get("cookie")).toBe("better-auth.session_token=token.signature");
+          return new Response("{}", { status: 200 });
+        }
+        expect(pathname).toBe("/api/server/exchange");
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-new");
+        return new Response(JSON.stringify({ code: "one-time-server-exchange-code", expires_in: 60 }), { status: 200 });
+      });
+      const client = createDesktopIdentityClient({
+        identityOrigin: stored.issuer,
+        installationId: "installation-1",
+        deviceName: "Test Mac",
+        vault: { read: () => stored, write, clear },
+        offlineGrantStore: {
+          prepareDeviceKey: vi.fn(() => ({
+            privateKeyPkcs8: "private-key", publicKeySpki: "public-key", thumbprint: "thumbprint", localSignOutEpoch: 0,
+          })),
+          acceptGrant,
+          signOut,
+        },
+        openExternal: vi.fn(),
+        fetch,
+      });
+
+      const exchangeCode = await client.createServerExchange("installation-1");
+      const installCookie = vi.fn(async () => undefined);
+      await establishDesktopLocalSession({
+        localApiUrl: "http://127.0.0.1:3200",
+        exchangeCode,
+        fetch,
+        installCookie,
+      });
+      expect(installCookie).toHaveBeenCalledWith(expect.objectContaining({ httpOnly: true, name: "better-auth.session_token" }));
+      expect(fetch.mock.calls.map(([input]) => new URL(String(input)).pathname)).toEqual([
+        "/api/desktop/refresh", "/.well-known/rudder-offline-grant-key", "/api/server/exchange",
+        "/api/auth/local-exchange", "/api/auth/local-claim",
+      ]);
+      expect(write).toHaveBeenCalledWith(expect.objectContaining({ refreshToken: "refresh-new" }));
+      expect(clear).not.toHaveBeenCalled();
+      expect(signOut).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        "[rudder-desktop] Offline access could not be renewed; continuing with the authenticated online session",
+      );
+      expect(acceptGrant).toHaveBeenCalledTimes(failure === "key-unavailable" ? 0 : 1);
+    },
+  );
 
   it("single-flights refresh rotation across concurrent account requests", async () => {
     let credential = {

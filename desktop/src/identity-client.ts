@@ -323,7 +323,13 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
       }
       const token = parseTokenResponse(await response.json());
       persistToken(token);
-      await persistOfflineGrant(token, material);
+      try {
+        await persistOfflineGrant(token, material);
+      } catch {
+        // A valid online session must not fall back to an expired grant merely
+        // because its optional offline credential could not be renewed.
+        console.warn("[rudder-desktop] Offline access could not be renewed; continuing with the authenticated online session");
+      }
       return token.access_token;
     })();
     refreshInFlight = pending;
