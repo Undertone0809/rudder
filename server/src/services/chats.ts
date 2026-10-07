@@ -13,15 +13,14 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
-  chatQueuedMessages,
-  organizations
+  chatQueuedMessages
 } from "@rudderhq/db";
-import { parseShortRef, sanitizeChatStructuredPayload, updateOrganizationBrandingSchema, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
+import { parseShortRef, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { conflict, forbidden, HttpError, notFound, unauthorized, unprocessable } from "../errors.js";
+import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import type { StorageService } from "../storage/types.js";
 import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
@@ -30,6 +29,7 @@ import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
 import { selectedChatMessageBranchCondition } from "./chat-message-branch.js";
+import { createChatOrganizationBrandingService } from "./chat-organization-branding.js";
 import {
   hydrateQueuedMessage,
   materializeQueuedUserMessage,
@@ -102,7 +102,6 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
-import { handoffOrganizationBrandingAuthority, organizationBrandingOrgIsSelected } from "./organization-branding-fence.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
@@ -121,17 +120,6 @@ type ChatControlActionRow = typeof chatControlActions.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
 
 const CHAT_TITLE_MAX_LENGTH = 200;
-const RUST_ORGANIZATION_BRANDING_FIELDS = new Set(["brandColor", "logoAssetId"]);
-
-function hasOrganizationBrandingPatch(patch: Record<string, unknown>) {
-  return Object.keys(patch).some((key) => RUST_ORGANIZATION_BRANDING_FIELDS.has(key));
-}
-
-function organizationBrandingIdempotencyKey(source: "chat-proposal" | "chat-approval", sourceId: string) {
-  return createHash("sha256")
-    .update(`rudder.${source}.organization-branding.v1\0${sourceId}`)
-    .digest("hex");
-}
 
 class InvalidQueueDeliveryActionLinkError extends Error {}
 
@@ -154,101 +142,15 @@ export function chatService(
   const addUserChatMessage = createChatAnnotationMessagePersistence(db, getMessage);
   const getUserMessageMutationByClientMutationId = createChatMessageMutationLookup(db, getMessage);
 
-  async function organizationBrandingIsRustOwned(orgId: string) {
-    if (
-      rustFoundationBridge?.organizationBrandingMode === "required"
-      && organizationBrandingOrgIsSelected(orgId)
-    ) {
-      return true;
-    }
-    return (await organizationsSvc.getBrandingMutationOwner(orgId)) === "rust";
-  }
-
-  async function validateOrganizationBrandingForRust(input: {
-    orgId: string;
-    patch: Record<string, unknown>;
-    actor?: RustFoundationActor | null;
-  }) {
-    const rustOwned = hasOrganizationBrandingPatch(input.patch)
-      && await organizationBrandingIsRustOwned(input.orgId);
-    if (!rustOwned) return { rustOwned: false as const };
-
-    if (Object.keys(input.patch).some((key) => !RUST_ORGANIZATION_BRANDING_FIELDS.has(key))) {
-      throw unprocessable("Rust-owned Chat branding changes cannot be combined with other organization fields");
-    }
-    const parsed = updateOrganizationBrandingSchema.safeParse(input.patch);
-    if (!parsed.success) {
-      throw unprocessable("Chat organization branding proposal did not match the branding contract", parsed.error.issues);
-    }
-    if (!rustFoundationBridge) {
-      throw conflict("Rust owns organization branding; Chat cannot fall back to the Node writer");
-    }
-    const actor = input.actor;
-    if (!actor || actor.type === "none") {
-      throw unauthorized("Authenticated actor context is required for Rust organization branding");
-    }
-    if (actor.type === "agent") {
-      if (!actor.agentId) throw forbidden("Agent authentication required");
-      const actorAgent = await agentsSvc.getById(actor.agentId);
-      if (!actorAgent || actorAgent.orgId !== input.orgId) {
-        throw forbidden("Agent key cannot access another organization");
-      }
-      if (actorAgent.role !== "ceo") {
-        throw forbidden("Only CEO agents can update organization branding");
-      }
-    } else if (actor.type !== "board") {
-      throw forbidden("Authenticated board or CEO agent actor required for organization branding");
-    }
-
-    return { rustOwned: true as const, parsed: parsed.data, actor, bridge: rustFoundationBridge };
-  }
-
-  async function updateOrganizationFromChatProposal(input: {
-    orgId: string;
-    patch: Record<string, unknown>;
-    source: "chat-proposal" | "chat-approval";
-    sourceId: string;
-    actor?: RustFoundationActor | null;
-  }) {
-    const validated = await validateOrganizationBrandingForRust(input);
-    if (!validated.rustOwned) {
-      const updated = await organizationsSvc.update(
-        input.orgId,
-        input.patch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
-      );
-      return { updated, rustOwned: false };
-    }
-    const { parsed, actor, bridge } = validated;
-
-    if (
-      bridge.organizationBrandingMode === "required"
-      && organizationBrandingOrgIsSelected(input.orgId)
-    ) {
-      await handoffOrganizationBrandingAuthority(db, input.orgId);
-    }
-
-    const idempotencyKey = organizationBrandingIdempotencyKey(input.source, input.sourceId);
-    const response = await bridge.organizationBrandingForActor(
-      actor,
-      input.orgId,
-      Buffer.from(JSON.stringify(parsed), "utf8"),
-      idempotencyKey,
-    );
-    if (response.status < 200 || response.status >= 300) {
-      let message = `Rust organization branding request failed with status ${response.status}`;
-      try {
-        const body = JSON.parse(response.body.toString("utf8")) as Record<string, unknown>;
-        if (typeof body.error === "string") message = body.error;
-        else if (typeof body.reason === "string") message = body.reason;
-      } catch {
-        // Preserve the status and fail closed when Rust did not return JSON.
-      }
-      throw new HttpError(response.status, message);
-    }
-    const updated = await organizationsSvc.getById(input.orgId);
-    if (!updated) throw notFound("Organization not found");
-    return { updated, rustOwned: true };
-  }
+  const organizationBrandingSvc = createChatOrganizationBrandingService({
+    db,
+    organizationsSvc,
+    agentsSvc,
+    bridge: rustFoundationBridge,
+    getMessage,
+    updateMessageStructuredPayload,
+    addMessage,
+  });
 
   const ensureConversationUserStates = createConversationUserStateInitializer(db);
 
@@ -4993,88 +4895,27 @@ export function chatService(
         }
       }
 
-      const organizationBrandingProposal =
-        proposal.targetType === "organization" && hasOrganizationBrandingPatch(proposal.patch);
-      const rustOwnedBrandingRetry = input.action === "approve"
-        && currentState.status === "approved"
-        && organizationBrandingProposal
-        && await organizationBrandingIsRustOwned(proposal.targetId);
-      if (currentState.status !== "pending" && !rustOwnedBrandingRetry) {
+      if (input.action === "approve" && proposal.targetType === "organization") {
+        return organizationBrandingSvc.resolveOperationProposal({
+          conversationId,
+          messageId,
+          orgId: conversation.orgId,
+          messagePayload: message.structuredPayload,
+          proposal: { ...proposal, targetType: "organization" },
+          currentState,
+          actorUserId: input.actorUserId,
+          actor: input.actor,
+          decisionNote: input.decisionNote,
+        });
+      }
+      if (currentState.status !== "pending") {
         throw unprocessable("Only pending lightweight changes can be resolved");
       }
 
-      const decisionNote = rustOwnedBrandingRetry
-        ? currentState.decisionNote
-        : safeTrim(input.decisionNote);
-      const decidedAtIso = rustOwnedBrandingRetry
-        ? currentState.decidedAt ?? new Date().toISOString()
-        : new Date().toISOString();
-      const decidedByUserId = rustOwnedBrandingRetry
-        ? currentState.decidedByUserId
-        : input.actorUserId;
+      const decisionNote = safeTrim(input.decisionNote);
+      const decidedAtIso = new Date().toISOString();
 
       if (input.action === "approve") {
-        if (proposal.targetType === "organization") {
-          const { updated, rustOwned } = await updateOrganizationFromChatProposal({
-            orgId: proposal.targetId,
-            patch: proposal.patch,
-            source: "chat-proposal",
-            sourceId: messageId,
-            actor: input.actor,
-          });
-          if (!updated) throw notFound("Organization not found");
-          const updatedMessage = rustOwnedBrandingRetry
-            ? await getMessage(conversationId, messageId)
-            : await updateMessageStructuredPayload(
-              conversationId,
-              messageId,
-              withOperationProposalDecisionState(message.structuredPayload, {
-                status: "approved",
-                decisionNote,
-                decidedByUserId,
-                decidedAt: decidedAtIso,
-              }),
-            );
-          if (!updatedMessage) {
-            throw notFound("Operation proposal not found");
-          }
-
-          const systemMessage = await addMessage(conversationId, {
-            orgId: conversation.orgId,
-            role: "system",
-            kind: "system_event",
-            body: `Applied lightweight change: ${proposal.summary}.`,
-            structuredPayload: {
-              eventType: "operation_applied",
-              source: "chat",
-              sourceMessageId: messageId,
-              targetType: "organization",
-              targetId: proposal.targetId,
-              decisionNote,
-            },
-            ...(rustOwned ? { clientMutationId: `chat-proposal:${messageId}:organization-applied` } : {}),
-          });
-          await logActivity(db, {
-            orgId: conversation.orgId,
-            actorType: rustOwned && input.actor?.type === "agent" ? "agent" : "user",
-            actorId: rustOwned && input.actor?.type === "agent"
-              ? input.actor.agentId ?? "unknown-agent"
-              : input.actorUserId ?? "board",
-            ...(rustOwned && input.actor?.type === "agent" ? { agentId: input.actor.agentId } : {}),
-            action: "organization.updated",
-            entityType: "organization",
-            entityId: proposal.targetId,
-            details: {
-              source: "chat_lightweight_change",
-              sourceMessageId: messageId,
-              decisionNote,
-              ...proposal.patch,
-            },
-            ...(rustOwned ? { idempotencyKey: `chat-proposal:${messageId}:organization-activity` } : {}),
-          });
-          return { message: updatedMessage, systemMessage };
-        }
-
         const updated = await agentsSvc.update(
           proposal.targetId,
           proposal.patch as Partial<typeof agents.$inferInsert>,
@@ -5277,41 +5118,14 @@ export function chatService(
       }
 
       if (proposal.targetType === "organization") {
-        const rustOwnedBranding = hasOrganizationBrandingPatch(proposal.patch)
-          && await organizationBrandingIsRustOwned(proposal.targetId);
-        if (options.recoveryOnly && !rustOwnedBranding) return null;
-        const { updated, rustOwned } = await updateOrganizationFromChatProposal({
-          orgId: proposal.targetId,
-          patch: proposal.patch,
-          source: "chat-approval",
-          sourceId: approval.id,
+        return organizationBrandingSvc.applyApprovedApproval({
+          approval,
+          actorUserId,
           actor,
+          recoveryOnly: options.recoveryOnly ?? false,
+          conversationId,
+          proposal: { ...proposal, targetType: "organization" },
         });
-        if (!updated) throw notFound("Organization not found");
-        await addMessage(conversationId, {
-          orgId: approval.orgId,
-          role: "system",
-          kind: "system_event",
-          body: `Applied approved organization change: ${proposal.summary}.`,
-          structuredPayload: {
-            eventType: "operation_applied",
-            approvalId: approval.id,
-            targetType: "organization",
-            targetId: proposal.targetId,
-          },
-          ...(rustOwned ? { clientMutationId: `chat-approval:${approval.id}:organization-applied` } : {}),
-        });
-        await logActivity(db, {
-          orgId: approval.orgId,
-          actorType: "user",
-          actorId: actorUserId ?? "board",
-          action: "organization.updated",
-          entityType: "organization",
-          entityId: proposal.targetId,
-          details: proposal.patch,
-          ...(rustOwned ? { idempotencyKey: `chat-approval:${approval.id}:organization-activity` } : {}),
-        });
-        return updated;
       }
 
       const updated = await agentsSvc.update(
@@ -5341,24 +5155,6 @@ export function chatService(
         details: proposal.patch,
       });
       return updated;
-  }
-
-  async function validateApprovedApproval(approval: ApprovalRow, actor?: RustFoundationActor | null) {
-    if (approval.type !== "chat_operation") return;
-    const payload = approval.payload as Record<string, unknown>;
-    const proposal = operationProposalFromPayload(
-      (payload.operationProposal as Record<string, unknown> | null | undefined) ?? payload,
-    );
-    if (!proposal || proposal.targetType !== "organization") return;
-    if (proposal.targetId !== approval.orgId) {
-      throw unprocessable("Organization approvals can only update the same organization");
-    }
-    if (!hasOrganizationBrandingPatch(proposal.patch)) return;
-    await validateOrganizationBrandingForRust({
-      orgId: proposal.targetId,
-      patch: proposal.patch,
-      actor,
-    });
   }
 
   async function createProposalApproval(
@@ -5456,7 +5252,7 @@ export function chatService(
     getMessage,
     getUserMessageMutationByClientMutationId,
     applyApprovedApproval,
-    validateApprovedApproval,
+    validateApprovedApproval: organizationBrandingSvc.validateApprovedApproval,
     createProposalApproval,
     resolveOperationProposal,
   };
