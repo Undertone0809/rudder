@@ -54,6 +54,9 @@ function inputSchema(name) {
   if (mode === "malformed-core-keyword" && name === coreTools[0]) {
     return { ...canonicalSchema(), oneOf: "not-an-array" };
   }
+  if (mode === "malformed-core-pattern" && name === coreTools[0]) {
+    return { ...canonicalSchema(), pattern: "[" };
+  }
   if (mode === "malformed-browser-keyword" && name === browserTools[0]) {
     return { ...canonicalSchema(), enum: "not-an-array" };
   }
@@ -201,6 +204,15 @@ describe("preflightRudderMcpServer", () => {
       diagnosticCode: null,
     });
     expect(result.tools.map((tool) => tool.name)).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
+    expect(result.tools.find((tool) => tool.name === "rudder_organization_brand_color_update"))
+      .toMatchObject({
+        inputSchema: {
+          properties: {
+            brandColor: { pattern: "^#[0-9a-fA-F]{6}$" },
+            logoAssetId: { pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" },
+          },
+        },
+      });
     expect(result).not.toHaveProperty("browserAvailable");
     expect(result).not.toHaveProperty("contractHash");
   });
@@ -326,6 +338,7 @@ describe("preflightRudderMcpServer", () => {
     "whitespace-core-name",
     "malformed-core-schema",
     "malformed-core-keyword",
+    "malformed-core-pattern",
     "unsupported-core-schema-draft",
     "malformed-nested-keyword",
   ])("fails core MCP fast for %s tools/list", async (mode) => {

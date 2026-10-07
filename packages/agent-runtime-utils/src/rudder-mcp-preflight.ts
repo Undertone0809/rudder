@@ -23,6 +23,7 @@ const RUDDER_SCHEMA_KEYS = new Set([
   "additionalProperties",
   "required",
   "enum",
+  "pattern",
   "minimum",
   "maximum",
   "minLength",
@@ -111,6 +112,14 @@ function isValidRudderSchemaNode(value: unknown): value is Record<string, unknow
     }
   }
   if (schema.format !== undefined && typeof schema.format !== "string") return false;
+  if (schema.pattern !== undefined) {
+    if (typeof schema.pattern !== "string") return false;
+    try {
+      new RegExp(schema.pattern);
+    } catch {
+      return false;
+    }
+  }
   if (
     schema.oneOf !== undefined
     && (

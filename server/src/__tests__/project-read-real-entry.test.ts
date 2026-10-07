@@ -400,11 +400,12 @@ describe.each(["off", "required"] as const)("Project reads through real public H
     await closeServer(server);
     server = undefined;
     await bridge.close();
-    // All three mutation/member switches off must still support all reads.
+    // Reads above must work with mutation switches off; keep goal-set writes
+    // required here so the final PATCH regression reaches the Rust store.
     nodeListenPort = ingressMode === "required" ? await getAvailablePort() : 0;
     bridge = createRustFoundationBridge({
       databaseUrl: connectionString, binaryPath: nativeBinary, mode: "off",
-      organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10_000,
+      organizationBrandingMode: "off", projectGoalSetMode: "required", requestTimeoutMs: 10_000,
       ...(ingressMode === "required" ? { publicIngress: {
         listenAddr: "127.0.0.1:0",
         nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
@@ -622,5 +623,58 @@ describe.each(["off", "required"] as const)("Project reads through real public H
         await bridge!.waitForPublicIngressReady!();
       }
     }
+  });
+
+  it("matches Node Agent permissions and attribution for Rust goal-only and mixed Project PATCHes", async () => {
+    const goalOnlyKey = "agent-project-goals-only";
+    const mixedKey = "agent-project-mixed-patch";
+    const goalOnly = await request(publicTarget)
+      .patch(`/api/projects/${rustProjectId}`)
+      .set("authorization", `Bearer ${agentToken}`)
+      .set("x-rudder-idempotency-key", goalOnlyKey)
+      .send({ goalIds: [goalIds[0]] });
+    expect(goalOnly.status, JSON.stringify(goalOnly.body)).toBe(200);
+    expect(goalOnly.body.goalIds).toEqual([goalIds[0]]);
+
+    const mixedPatch = {
+      goalIds: [goalIds[1]],
+      name: "Agent mixed Project patch",
+      description: "Updated by the authenticated general Agent",
+    };
+    const mixed = await request(publicTarget)
+      .patch(`/api/projects/${rustProjectId}`)
+      .set("authorization", `Bearer ${agentToken}`)
+      .set("x-rudder-idempotency-key", mixedKey)
+      .send(mixedPatch);
+    expect(mixed.status, JSON.stringify(mixed.body)).toBe(200);
+    expect(mixed.body).toMatchObject({
+      name: mixedPatch.name,
+      description: mixedPatch.description,
+      goalIds: [goalIds[1]],
+    });
+
+    const attribution = await db!.execute(sql`
+      SELECT actor_type, actor_id, agent_id::text AS agent_id, action
+      FROM activity_log
+      WHERE org_id=${orgId}::uuid
+        AND entity_id=${rustProjectId}
+        AND action='project.updated'
+      ORDER BY created_at
+    `);
+    expect(attribution).toHaveLength(2);
+    expect(attribution.every((row) =>
+      row.actor_type === "agent"
+      && row.actor_id === agentId
+      && row.agent_id === agentId
+      && row.action === "project.updated",
+    )).toBe(true);
+
+    const beforeCrossOrgRequest = await databaseSnapshot();
+    const crossOrg = await request(publicTarget)
+      .patch(`/api/projects/${foreignProjectId}`)
+      .set("authorization", `Bearer ${agentToken}`)
+      .send({ goalIds: [] });
+    expect(crossOrg.status).toBe(403);
+    expect(await databaseSnapshot()).toEqual(beforeCrossOrgRequest);
   });
 });

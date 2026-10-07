@@ -40,9 +40,9 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   {
     "attachesRunIdWhenAvailable": true,
     "category": "organization",
-    "command": "rudder org brand-color update --org-id <id> --brand-color <hex> --idempotency-key <key>",
+    "command": "rudder org brand-color update --org-id <id> [--brand-color <hex> | --clear-brand-color] [--logo-asset-id <uuid> | --clear-logo] --idempotency-key <key>",
     "contract": "agent-v1",
-    "description": "Update the authenticated organization's brand color.",
+    "description": "Set or clear the authenticated organization's brand color and link or clear an existing same-organization logo asset.",
     "id": "organization.brand_color.update",
     "mutating": true,
     "requiresAgentId": false,

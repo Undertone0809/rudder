@@ -23,6 +23,7 @@ import {
   logActivity,
   secretService,
 } from "../services/index.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import {
   wakeIssueAssigneeAfterChatConversion,
@@ -44,13 +45,29 @@ function isChatConvertedIssue(value: unknown): value is ChatConvertedIssue & { i
   );
 }
 
-export function approvalRoutes(db: Db) {
+function isOrganizationBrandingChatOperationApproval(approval: {
+  type: string;
+  payload: Record<string, unknown>;
+}) {
+  if (approval.type !== "chat_operation") return false;
+  const rawProposal = approval.payload.operationProposal;
+  const proposal = rawProposal && typeof rawProposal === "object" && !Array.isArray(rawProposal)
+    ? rawProposal as Record<string, unknown>
+    : approval.payload;
+  const patch = proposal.patch;
+  return proposal.targetType === "organization"
+    && Boolean(patch && typeof patch === "object" && !Array.isArray(patch)
+      && (Object.prototype.hasOwnProperty.call(patch, "brandColor")
+        || Object.prototype.hasOwnProperty.call(patch, "logoAssetId")));
+}
+
+export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = approvalService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const goalsSvc = goalService(db);
-  const chatsSvc = chatService(db);
+  const chatsSvc = chatService(db, undefined, rustFoundationBridge);
   const issueApprovalsSvc = issueApprovalService(db);
   const issuesSvc = issueService(db);
   const secretsSvc = secretService(db);
@@ -256,6 +273,33 @@ export function approvalRoutes(db: Db) {
     const id = req.params.id as string;
     const pendingApproval = await svc.getById(id);
     if (pendingApproval) assertCompanyAccess(req, pendingApproval.orgId);
+    if (
+      pendingApproval?.status === "approved"
+      && isOrganizationBrandingChatOperationApproval(pendingApproval)
+    ) {
+      const actorId = req.actor.userId ?? "board";
+      if (pendingApproval.decidedByUserId && pendingApproval.decidedByUserId !== actorId) {
+        throw forbidden("Only the authenticated approver can resume this Rust-backed Chat branding change");
+      }
+      const recovered = await chatsSvc.applyApprovedApproval(pendingApproval, actorId, req.actor, { recoveryOnly: true });
+      if (recovered) {
+        await logActivity(db, {
+          orgId: pendingApproval.orgId,
+          actorType: "user",
+          actorId,
+          action: "approval.approved",
+          entityType: "approval",
+          entityId: pendingApproval.id,
+          details: {
+            type: pendingApproval.type,
+            requestedByAgentId: pendingApproval.requestedByAgentId,
+          },
+          idempotencyKey: `approval-approved:${pendingApproval.id}`,
+        });
+      }
+      res.json(redactApprovalPayload(pendingApproval));
+      return;
+    }
     const payloadOverride =
       pendingApproval?.type === "chat_issue_creation"
       && req.body.payload
@@ -316,16 +360,24 @@ export function approvalRoutes(db: Db) {
       await assertCanApproveChatIssueConversion(req, approvalForValidation);
       await assertChatIssueProposalLabelsIfNeeded(approvalForValidation);
     }
+    if (
+      pendingApproval?.status === "pending"
+      && isOrganizationBrandingChatOperationApproval(pendingApproval)
+    ) {
+      await chatsSvc.validateApprovedApproval(pendingApproval, req.actor);
+    }
     const { approval, applied } = await svc.approve(
       id,
-      req.body.decidedByUserId ?? "board",
+      pendingApproval?.type === "chat_operation"
+        ? req.actor.userId ?? "board"
+        : req.body.decidedByUserId ?? "board",
       req.body.decisionNote,
       payloadOverride,
     );
 
     if (applied) {
       let chatAppliedIssue: Awaited<ReturnType<typeof chatsSvc.applyApprovedApproval>> = null;
-      chatAppliedIssue = await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board");
+      chatAppliedIssue = await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board", req.actor);
 
       if (approval.type === "chat_issue_creation" && isChatConvertedIssue(chatAppliedIssue)) {
         await wakeIssueAssigneeAfterChatConversion({
@@ -462,6 +514,7 @@ export function approvalRoutes(db: Db) {
           linkedIssueIds,
           reactivatedLinkedIssueIds,
         },
+        idempotencyKey: `approval-approved:${approval.id}`,
       });
 
       if (approval.requestedByAgentId) {

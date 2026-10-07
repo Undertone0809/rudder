@@ -1,9 +1,9 @@
 mod support;
 
 use rudder_d1_persistence::{
-    MutationStore, OrganizationResourceCommand, OrganizationResourceOperation, Outcome,
-    ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
-    ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
+    MutationStore, OrganizationBrandingActivityAction, OrganizationResourceCommand,
+    OrganizationResourceOperation, Outcome, ProjectCreateCommand, ProjectCreateProvisionRequest,
+    ProjectCreateProvisioned, ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
     ProjectPatchMutationOrigin, Receipt, ResultState, StoreError,
 };
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
@@ -979,6 +979,24 @@ fn branding_color(key: &str) -> String {
     format!("#{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2])
 }
 
+fn legacy_branding_adapter_fingerprint(command: &OrganizationBrandingCommand) -> String {
+    let core_fingerprint = command
+        .as_integration_view()
+        .unwrap()
+        .fingerprint()
+        .unwrap();
+    let identity = json!({
+        "adapter_format": 1,
+        "kind": "organization_branding",
+        "core_fingerprint": core_fingerprint,
+        "primary_goal_after": null,
+    });
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&identity).unwrap())
+    )
+}
+
 fn adapter_fingerprint(core_fingerprint: &str, primary_goal_after: Option<&str>) -> String {
     let identity = json!({
         "adapter_format": 1,
@@ -998,7 +1016,7 @@ async fn branding_applies_state_activity_and_immutable_receipt_atomically() {
     let store = MutationStore::new(database.pool.clone());
 
     let committed = store
-        .branding(branding("branding-applied", 0))
+        .branding(branding("branding-applied", 0).with_logo_asset_id(Some(ASSET.into())))
         .await
         .unwrap();
 
@@ -1010,17 +1028,94 @@ async fn branding_applies_state_activity_and_immutable_receipt_atomically() {
         database.brand_color().await,
         Some(branding_color("branding-applied"))
     );
+    let linked_logo: Option<String> =
+        sqlx::query_scalar("SELECT asset_id::text FROM organization_logos WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_optional(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(linked_logo.as_deref(), Some(ASSET));
+    let (activity_action, actor_type, actor_id): (String, String, String) =
+        sqlx::query_as("SELECT action, actor_type, actor_id FROM activity_log WHERE id=$1::uuid")
+            .bind(committed.receipt.activity_id.as_deref().unwrap())
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(activity_action, "organization.branding_updated");
+    assert_eq!(
+        (actor_type.as_str(), actor_id.as_str()),
+        ("user", "board-user")
+    );
     assert_eq!(database.counts().await, (1, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn branding_preserves_omitted_logo_and_clears_nullable_fields() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    store
+        .branding(branding("branding-logo-initial", 0).with_logo_asset_id(Some(ASSET.into())))
+        .await
+        .unwrap();
+
+    store
+        .branding(
+            OrganizationBrandingCommand::board(ORG, "board-user", "branding-color-clear", 1, 7)
+                .with_brand_color(None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(database.brand_color().await, None);
+    let preserved_logo: Option<String> =
+        sqlx::query_scalar("SELECT asset_id::text FROM organization_logos WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_optional(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(preserved_logo.as_deref(), Some(ASSET));
+
+    store
+        .branding(
+            OrganizationBrandingCommand::board(ORG, "board-user", "branding-logo-clear", 2, 7)
+                .with_logo_asset_id(None),
+        )
+        .await
+        .unwrap();
+    let cleared_logo: Option<String> =
+        sqlx::query_scalar("SELECT asset_id::text FROM organization_logos WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_optional(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(cleared_logo, None);
+    assert_eq!(database.brand_color().await, None);
+    // Match the current Node contract: replacing or clearing a logo removes its old asset record.
+    let old_asset_count: i64 = sqlx::query_scalar("SELECT count(*) FROM assets WHERE id=$1::uuid")
+        .bind(ASSET)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(old_asset_count, 0);
+    assert_eq!(database.counts().await, (3, 3, 3));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn branding_replay_returns_original_receipt_after_a_later_mutation() {
     let database = Database::start().await;
     let store = MutationStore::new(database.pool.clone());
-    let first = store.branding(branding("branding-first", 0)).await.unwrap();
-    store.branding(branding("branding-later", 1)).await.unwrap();
+    let first = store
+        .branding(branding("branding-first", 0).with_logo_asset_id(Some(ASSET.into())))
+        .await
+        .unwrap();
+    store
+        .branding(branding("branding-later", 1).with_logo_asset_id(None))
+        .await
+        .unwrap();
 
-    let replay = store.branding(branding("branding-first", 0)).await.unwrap();
+    let replay = store
+        .branding(branding("branding-first", 0).with_logo_asset_id(Some(ASSET.into())))
+        .await
+        .unwrap();
 
     assert!(replay.replayed);
     assert_eq!(replay.receipt, first.receipt);
@@ -1028,7 +1123,132 @@ async fn branding_replay_returns_original_receipt_after_a_later_mutation() {
         database.brand_color().await,
         Some(branding_color("branding-later"))
     );
+    let current_logo_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_logos WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(current_logo_count, 0);
     assert_eq!(database.counts().await, (2, 2, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn branding_activity_action_tracks_the_public_route_and_is_idempotency_bound() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let generic = branding("branding-generic-route", 0);
+    let generic_result = store
+        .branding_with_activity_action(
+            generic.clone(),
+            OrganizationBrandingActivityAction::OrganizationUpdated,
+        )
+        .await
+        .unwrap();
+
+    // Newly written generic-route receipts use v2 and remain route-bound.
+    assert!(matches!(
+        store
+            .branding_with_activity_action(
+                generic,
+                OrganizationBrandingActivityAction::OrganizationBrandingUpdated,
+            )
+            .await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    let dedicated_result = store
+        .branding(branding("branding-dedicated-route", 1))
+        .await
+        .unwrap();
+
+    for (receipt, expected_action) in [
+        (&generic_result.receipt, "organization.updated"),
+        (&dedicated_result.receipt, "organization.branding_updated"),
+    ] {
+        let activity_id = receipt.activity_id.as_deref().unwrap();
+        let activity_action: String =
+            sqlx::query_scalar("SELECT action FROM activity_log WHERE id=$1::uuid")
+                .bind(activity_id)
+                .fetch_one(&database.pool)
+                .await
+                .unwrap();
+        let outbox_action: String = sqlx::query_scalar(
+            "SELECT payload->>'action' FROM organization_mutation_outbox WHERE activity_id=$1::uuid",
+        )
+        .bind(activity_id)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        let actor_id: String =
+            sqlx::query_scalar("SELECT actor_id FROM activity_log WHERE id=$1::uuid")
+                .bind(activity_id)
+                .fetch_one(&database.pool)
+                .await
+                .unwrap();
+        assert_eq!(activity_action, expected_action);
+        assert_eq!(actor_id, "board-user");
+        assert_eq!(outbox_action, expected_action);
+    }
+    assert_eq!(database.counts().await, (2, 2, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn branding_generic_retry_replays_legacy_v1_receipt_with_unrecoverable_route_origin() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = branding("branding-legacy-generic-route", 0);
+
+    // Before v25.5, generic PATCH called the dedicated branding endpoint. Its
+    // v1 receipt has no route-origin marker, so this dedicated write constructs
+    // the same persisted representation as a prior generic-route receipt.
+    let original = store.branding(command.clone()).await.unwrap();
+    assert_eq!(
+        original.receipt.fingerprint,
+        legacy_branding_adapter_fingerprint(&command)
+    );
+    let original_activity_action: String =
+        sqlx::query_scalar("SELECT action FROM activity_log WHERE id=$1::uuid")
+            .bind(original.receipt.activity_id.as_deref().unwrap())
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(original_activity_action, "organization.branding_updated");
+
+    let replay = store
+        .branding_with_activity_action(
+            command.clone(),
+            OrganizationBrandingActivityAction::OrganizationUpdated,
+        )
+        .await
+        .unwrap();
+
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, original.receipt);
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("branding-legacy-generic-route"))
+    );
+
+    let changed_payload = command.with_brand_color(Some("#123456".to_owned()));
+    assert!(matches!(
+        store
+            .branding_with_activity_action(
+                changed_payload,
+                OrganizationBrandingActivityAction::OrganizationUpdated,
+            )
+            .await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 1);
+    assert_eq!(database.counts().await, (1, 1, 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1221,17 +1441,30 @@ async fn branding_rejects_missing_and_cross_organization_resources() {
         store.branding(foreign_asset).await,
         Err(StoreError::InvalidInput)
     ));
+    let missing_asset = branding("missing-asset", 0)
+        .with_logo_asset_id(Some("40000000-0000-4000-8000-000000000099".into()));
+    assert!(matches!(
+        store.branding(missing_asset).await,
+        Err(StoreError::NotFound)
+    ));
     assert_eq!(database.name().await, "Original");
     assert_eq!(database.counts().await, (0, 0, 0));
 
     store
-        .branding(branding("local-brand-color", 0))
+        .branding(branding("local-brand-color", 0).with_logo_asset_id(Some(ASSET.into())))
         .await
         .unwrap();
     assert_eq!(
         database.brand_color().await,
         Some(branding_color("local-brand-color"))
     );
+    let linked_logo: Option<String> =
+        sqlx::query_scalar("SELECT asset_id::text FROM organization_logos WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_optional(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(linked_logo.as_deref(), Some(ASSET));
     assert_ne!(OTHER, ORG);
     assert_ne!(CEO, "board-user");
 }
@@ -1250,13 +1483,26 @@ async fn branding_rolls_back_business_state_version_activity_and_receipt_on_audi
         .await;
 
     let error = store
-        .branding(branding("audit-rollback", 0))
+        .branding(branding("audit-rollback", 0).with_logo_asset_id(Some(ASSET.into())))
         .await
         .unwrap_err();
 
     assert!(matches!(error, StoreError::Database(_)));
     assert_eq!(database.name().await, "Original");
     assert_eq!(database.counts().await, (0, 0, 0));
+    let logo_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_logos WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(logo_count, 0);
+    let asset_count: i64 = sqlx::query_scalar("SELECT count(*) FROM assets WHERE id=$1::uuid")
+        .bind(ASSET)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(asset_count, 1);
     database
         .sql(
             "DROP TRIGGER fail_d1_activity_trigger ON activity_log;

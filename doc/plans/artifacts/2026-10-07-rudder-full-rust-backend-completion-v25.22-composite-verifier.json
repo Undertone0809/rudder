@@ -1,0 +1,124 @@
+{
+  "verdict": "PASS",
+  "level": "independent black-box verifier, composite v25.22 slice",
+  "candidate": {
+    "branch": "codex/d1-resource-compat-real-entry-20261005",
+    "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46",
+    "source_tree": "e13c5bbb5e3acf6a22cec18280f60aa88b83b59a",
+    "source_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94"
+  },
+  "acceptance_packet": {
+    "version": "v25.22",
+    "sha256": "f5a0d58f691f7085a3fe9a630a3ae7fca8ebf1ba2f88f5bac49b8bb042a5dc43",
+    "acceptance_fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b",
+    "acceptance_criteria_unchanged": true,
+    "criteria_and_state_inventory_unchanged": true,
+    "rebind_assessment": "The packet SHA changed only with delivery metadata (integration references and source-drift explanation). The acceptance fingerprint and criteria are unchanged, and the candidate source SHA, tree, and scoped fingerprint remain the verified values above. This metadata rebind does not invalidate the observations or their content-equivalence basis."
+  },
+  "criterion_to_proof_ledger": [
+    {
+      "criterion": "Authenticated public Resource/Project workflow, including idempotent replay, attachment lifecycle, organization fences, ownership/tombstone, receipts, activities, and outbox effects.",
+      "proof": "PASS in Lagrange's prior full-workflow artifact, workflow 'Resource authenticated public API', on source 6b17bdfb3cca1fc08932300a67d4ac105a5d94a8. Its product implementation sources are content-equivalent to the exact 4fd candidate; the shared scoped source fingerprint is 98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94. The exact-4fd follow-up independently ran the focused ownership-handoff race suite (3/3), including the Project/Resource case."
+    },
+    {
+      "criterion": "Public Chat authorization and continuity across Node-owned non-branding behavior and the approved branding ownership handoff.",
+      "proof": "PASS in Lagrange's prior full-workflow artifact, workflow 'Chat permissions and branding continuity', on content-equivalent product sources at 6b17. Full Chat workflows were not rerun in the exact-4fd race follow-up."
+    },
+    {
+      "criterion": "Built first-party CLI and stdio MCP real-entry behavior, including same-key cross-transport replay and supported clear/invalid-logo behavior.",
+      "proof": "PASS in Lagrange's prior full-workflow artifact, workflow 'Built CLI, stdio MCP, retry and restart recovery', on content-equivalent product sources at 6b17. CLI/MCP workflows were not rerun in the exact-4fd race follow-up."
+    },
+    {
+      "criterion": "Identical-key/payload audit retry and receipt-linked outbox recovery across server restart, with stable identity and retryable at-least-once semantics.",
+      "proof": "PASS in Lagrange's prior full-workflow artifact, workflow 'Built CLI, stdio MCP, retry and restart recovery', on content-equivalent product sources at 6b17. Retry/restart workflows were not rerun in the exact-4fd race follow-up. This evidence does not claim exactly-once network delivery."
+    },
+    {
+      "criterion": "Acceptance scope and state inventory, including explicit deferred capabilities and non-claims.",
+      "proof": "The unchanged v25.22 acceptance fingerprint binds the same four workflow criteria and state inventory. The prior artifact covers Resource, Chat, CLI/MCP, retry, and restart states; the exact-4fd race run closes the previously missing ownership-handoff race evidence. Deferred states remain excluded from PASS claims as listed under scope_limits."
+    }
+  ],
+  "evidence_composition": {
+    "prior_full_workflow_evidence": {
+      "verifier": "Lagrange",
+      "verdict": "PASS",
+      "artifact": "doc/plans/artifacts/2026-10-07-rudder-full-rust-backend-completion-v25.22-verifier.json",
+      "artifact_sha256": "3f632746c7ec06dc3166513960c804c60078e1ec702739362379c35a70d20f7a",
+      "source_sha": "6b17bdfb3cca1fc08932300a67d4ac105a5d94a8",
+      "source_tree": "e4c76ab4fa90bc25a3d0ae253c9a2f6c5689dd37",
+      "source_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94",
+      "workflows": [
+        "Resource authenticated public API",
+        "Chat permissions and branding continuity",
+        "Built CLI, stdio MCP, retry and restart recovery"
+      ],
+      "product_source_equivalence": "The 6b17-to-4fd delta is limited to CI workflow, smoke harness, and tests; product/Rust implementation sources are unchanged. The scoped source fingerprint is identical."
+    },
+    "exact_candidate_race_evidence": {
+      "scope": "Focused ownership-handoff race suite on exact source 4fd984a61e41ac2fe8e487430ec72e373367dd46; two ownership-handoff races plus the Project/Resource case.",
+      "result": {
+        "passed": 3,
+        "total": 3,
+        "failed": 0
+      },
+      "runtime": {
+        "node": "v22.23.1",
+        "pnpm": "9.15.4",
+        "vitest": "3.2.7",
+        "postgresql": "18.1",
+        "postgres_pid": 54932,
+        "postgres_host": "127.0.0.1",
+        "postgres_port": 62626,
+        "postgres_system_identifier": "7693946281982178924"
+      },
+      "fixtures": {
+        "target_organization_id": "5ea8a9c2-ec68-4223-895f-cfe46ea4903c",
+        "foreign_organization_id": "1d29f9e2-b359-405d-a874-c052f1799e6f",
+        "project_id": "30d25ca9-7640-4b74-938e-7aac2382236e"
+      },
+      "data_scope": "Disposable local embedded PostgreSQL and random test fixtures only; no persistent or production data.",
+      "teardown": {
+        "confirmed": true,
+        "residual_postgres_process": false,
+        "residual_listener": false,
+        "temporary_cluster_directory_present": false
+      },
+      "full_workflows_rerun": false
+    }
+  },
+  "state_inventory": [
+    {
+      "area": "Resource public API",
+      "coverage": "Prior Lagrange full workflow covers credential and cross-organization denial, inline Project/Resource creation, edit/replay, detach/reattach/delete-while-attached, and ownership/fence/effect readback. Exact-4fd race suite covers the focused Project/Resource ownership-handoff case."
+    },
+    {
+      "area": "Chat public API",
+      "coverage": "Prior Lagrange full workflow covers retained Node-owned non-branding behavior, non-CEO and foreign-organization denial without side effects, and authorized branding handoff. Not rerun during race follow-up."
+    },
+    {
+      "area": "CLI/MCP",
+      "coverage": "Prior Lagrange full workflow covers built CLI update, stdio MCP protocol lifecycle, same-key cross-transport replay, and invalid-logo paths. Not rerun during race follow-up."
+    },
+    {
+      "area": "Retry/restart recovery",
+      "coverage": "Prior Lagrange full workflow covers same-key/same-payload audit retry and receipt-linked outbox recovery through server restart with stable identity and at-least-once semantics. Not rerun during race follow-up."
+    },
+    {
+      "area": "Deferred states",
+      "coverage": "Not covered and not claimed: installed UI/default ingress, full Node backend exit, all other Chat/Side Chat capabilities, release readiness, and production cutover."
+    }
+  ],
+  "scope_limits": [
+    "The race follow-up reran only the focused ownership-handoff race suite; it did not rerun the full Resource, Chat, CLI/MCP, retry, or restart workflows.",
+    "No production or staging verification claim.",
+    "No installed/default public Rust ingress claim.",
+    "No broad Node-authority retirement claim.",
+    "No exactly-once network delivery claim; the outbox behavior is retryable at-least-once with stable identity."
+  ],
+  "spawn_metadata": {
+    "requested_model": "gpt-6-luna",
+    "requested_reasoning_effort": "xhigh",
+    "exact_pair_passed_in_spawn_args": true,
+    "actual_runtime_model_or_reasoning_metadata_exposed": false,
+    "limitation": "The spawn/wait tooling did not expose actual runtime model or reasoning metadata."
+  }
+}

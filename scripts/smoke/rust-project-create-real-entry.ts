@@ -596,6 +596,175 @@ async function main() {
     );
     assert.equal(secondRustAttachment.resourceId, legacyNodeAttachment.resourceId);
 
+    // Exercise the public attachment edit/remove APIs after the default Rust
+    // Project-create path. These must stay on the Project's Rust transaction
+    // authority; falling through to the legacy Node writer would hit its
+    // ownership fence (or create a stale Node receipt).
+    const attachmentPath = "/projects/" + secondRustProject.id + "/resources/" + secondRustAttachment.id;
+    const attachmentUpdateKey = "resource-attachment-update-rust-" + randomUUID();
+    const attachmentDeleteKey = "resource-attachment-delete-rust-" + randomUUID();
+    const readProjectAttachmentSnapshot = async () => {
+      const [attachmentRows, projectRows, receiptRows, activityRows, outboxRows] = await Promise.all([
+        sql.unsafe(
+          "SELECT id::text AS id, org_id::text AS org_id, project_id::text AS project_id, "
+            + "resource_id::text AS resource_id, role, note, sort_order, is_primary "
+            + "FROM project_resource_attachments WHERE org_id=$1 AND project_id=$2 AND id::text=$3",
+          [organization.id, secondRustProject.id, secondRustAttachment.id],
+        ),
+        sql.unsafe(
+          "SELECT owner, mutation_version::text AS mutation_version FROM project_goal_mutation_state "
+            + "WHERE org_id=$1 AND project_id=$2",
+          [organization.id, secondRustProject.id],
+        ),
+        sql.unsafe(
+          "SELECT idempotency_key, command_kind, outcome, activity_id::text AS activity_id "
+            + "FROM organization_mutation_receipts WHERE org_id=$1 AND idempotency_key = ANY($2::text[]) "
+            + "ORDER BY idempotency_key",
+          [organization.id, [attachmentUpdateKey, attachmentDeleteKey]],
+        ),
+        sql.unsafe(
+          "SELECT id::text AS id, action, entity_type, entity_id FROM activity_log "
+            + "WHERE org_id=$1 AND entity_type='project_resource_attachment' AND entity_id=$2::text "
+            + "AND action IN ('project.resource.updated', 'project.resource.detached') ORDER BY id",
+          [organization.id, secondRustAttachment.id],
+        ),
+        sql.unsafe(
+          "SELECT outbox.activity_id::text AS activity_id FROM organization_mutation_outbox outbox "
+            + "JOIN activity_log activity ON activity.id=outbox.activity_id AND activity.org_id=outbox.org_id "
+            + "WHERE activity.org_id=$1 AND activity.entity_type='project_resource_attachment' "
+            + "AND activity.entity_id=$2::text "
+            + "AND activity.action IN ('project.resource.updated', 'project.resource.detached') "
+            + "ORDER BY outbox.activity_id",
+          [organization.id, secondRustAttachment.id],
+        ),
+      ]);
+      return {
+        attachment: Array.from(attachmentRows) as Json[],
+        projectState: Array.from(projectRows) as Json[],
+        receipts: Array.from(receiptRows) as Json[],
+        activities: Array.from(activityRows) as Json[],
+        outbox: Array.from(outboxRows) as Json[],
+      };
+    };
+    const beforeAttachmentUpdate = await readProjectAttachmentSnapshot();
+    assert.equal(beforeAttachmentUpdate.attachment.length, 1);
+    assert.equal(beforeAttachmentUpdate.attachment[0]?.note, "Shared with the second Rust Project");
+    assert.equal(beforeAttachmentUpdate.projectState[0]?.owner, "rust");
+    const attachmentUpdate = await request(
+      attachmentPath,
+      "PATCH",
+      { note: "Updated through Rust-owned Project attachment authority" },
+      { "x-rudder-idempotency-key": attachmentUpdateKey },
+    );
+    assert.equal(attachmentUpdate.status, 200, JSON.stringify(attachmentUpdate.body));
+    assert.equal(attachmentUpdate.body.note, "Updated through Rust-owned Project attachment authority");
+    const afterAttachmentUpdate = await readProjectAttachmentSnapshot();
+    assert.deepEqual(afterAttachmentUpdate.attachment, [{
+      id: secondRustAttachment.id,
+      org_id: organization.id,
+      project_id: secondRustProject.id,
+      resource_id: resourceId,
+      role: "reference",
+      note: "Updated through Rust-owned Project attachment authority",
+      sort_order: 4,
+      is_primary: false,
+    }]);
+    assert.equal(afterAttachmentUpdate.projectState[0]?.owner, "rust");
+    assert.equal(
+      Number(afterAttachmentUpdate.projectState[0]?.mutation_version),
+      Number(beforeAttachmentUpdate.projectState[0]?.mutation_version) + 1,
+    );
+    assert.deepEqual(afterAttachmentUpdate.receipts.map((receipt) => receipt.idempotency_key), [attachmentUpdateKey]);
+    assert.deepEqual(afterAttachmentUpdate.receipts.map((receipt) => receipt.command_kind), ["project_goal_set_replacement"]);
+    assert.deepEqual(afterAttachmentUpdate.activities.map((activity) => activity.action), ["project.resource.updated"]);
+    assert.equal(afterAttachmentUpdate.activities[0]?.entity_id, secondRustAttachment.id);
+    assert.equal(afterAttachmentUpdate.receipts[0]?.activity_id, afterAttachmentUpdate.activities[0]?.id);
+    assert.deepEqual(afterAttachmentUpdate.outbox.map((entry) => entry.activity_id), [
+      afterAttachmentUpdate.activities[0]?.id,
+    ]);
+    const attachmentUpdateReplay = await request(
+      attachmentPath,
+      "PATCH",
+      { note: "Updated through Rust-owned Project attachment authority" },
+      { "x-rudder-idempotency-key": attachmentUpdateKey },
+    );
+    assert.equal(attachmentUpdateReplay.status, 200, JSON.stringify(attachmentUpdateReplay.body));
+    assert.deepEqual(attachmentUpdateReplay.body, attachmentUpdate.body,
+      "Project attachment update replay changed its public response");
+    assert.deepEqual(await readProjectAttachmentSnapshot(), afterAttachmentUpdate,
+      "same-key Project attachment update replay duplicated audit or outbox effects");
+
+    const attachmentDelete = await request(
+      attachmentPath,
+      "DELETE",
+      undefined,
+      { "x-rudder-idempotency-key": attachmentDeleteKey },
+    );
+    assert.equal(attachmentDelete.status, 200, JSON.stringify(attachmentDelete.body));
+    assert.equal(attachmentDelete.body.id, secondRustAttachment.id);
+    assert.equal(attachmentDelete.body.note, "Updated through Rust-owned Project attachment authority");
+    const afterAttachmentDelete = await readProjectAttachmentSnapshot();
+    assert.deepEqual(afterAttachmentDelete.attachment, [], "Rust attachment delete left the Project attachment row");
+    assert.equal(afterAttachmentDelete.projectState[0]?.owner, "rust");
+    assert.equal(
+      Number(afterAttachmentDelete.projectState[0]?.mutation_version),
+      Number(afterAttachmentUpdate.projectState[0]?.mutation_version) + 1,
+    );
+    assert.deepEqual(
+      afterAttachmentDelete.receipts.map((receipt) => receipt.idempotency_key),
+      [attachmentDeleteKey, attachmentUpdateKey].sort(),
+    );
+    assert.deepEqual(afterAttachmentDelete.receipts.map((receipt) => receipt.command_kind), [
+      "project_goal_set_replacement",
+      "project_goal_set_replacement",
+    ]);
+    assert.deepEqual(afterAttachmentDelete.activities.map((activity) => activity.action).sort(), [
+      "project.resource.detached",
+      "project.resource.updated",
+    ]);
+    assert.ok(afterAttachmentDelete.activities.every((activity) =>
+      activity.entity_type === "project_resource_attachment" && activity.entity_id === secondRustAttachment.id));
+    assert.deepEqual(
+      afterAttachmentDelete.receipts.map((receipt) => receipt.activity_id).sort(),
+      afterAttachmentDelete.activities.map((activity) => activity.id).sort(),
+      "Project attachment receipts did not point to their audit records",
+    );
+    assert.deepEqual(
+      afterAttachmentDelete.outbox.map((entry) => entry.activity_id).sort(),
+      afterAttachmentDelete.activities.map((activity) => activity.id).sort(),
+      "Rust attachment operations did not enqueue exactly one outbox effect per audit record",
+    );
+    const attachmentDeleteReplay = await request(
+      attachmentPath,
+      "DELETE",
+      undefined,
+      { "x-rudder-idempotency-key": attachmentDeleteKey },
+    );
+    assert.equal(attachmentDeleteReplay.status, 200, JSON.stringify(attachmentDeleteReplay.body));
+    assert.deepEqual(attachmentDeleteReplay.body, attachmentDelete.body,
+      "Project attachment delete replay changed its public response");
+    assert.deepEqual(await readProjectAttachmentSnapshot(), afterAttachmentDelete,
+      "same-key Project attachment delete replay duplicated audit or outbox effects");
+
+    const attachmentReceipts = Array.from(await sql.unsafe(
+      "SELECT idempotency_key, command_kind FROM organization_mutation_receipts "
+        + "WHERE org_id = $1 AND idempotency_key = ANY($2::text[]) ORDER BY idempotency_key",
+      [organization.id, [attachmentUpdateKey, attachmentDeleteKey]],
+    )) as Json[];
+    assert.deepEqual(attachmentReceipts, [
+      { idempotency_key: attachmentDeleteKey, command_kind: "project_goal_set_replacement" },
+      { idempotency_key: attachmentUpdateKey, command_kind: "project_goal_set_replacement" },
+    ].sort((left, right) => String(left.idempotency_key).localeCompare(String(right.idempotency_key))),
+    "Project attachment edits did not commit through the Rust Project receipt authority");
+
+    const reattachedRustResource = await attachSharedResource(
+      secondRustProject.id,
+      "Restored after exercising Rust attachment edit/remove",
+      "resource-reattach-rust-" + randomUUID(),
+    );
+    assert.notEqual(reattachedRustResource.id, secondRustAttachment.id,
+      "removing an attachment did not permit a fresh attachment identity");
+
     const resourcePath = "/orgs/" + organization.id + "/resources/" + resourceId;
     const resourcePatchKey = "organization-resource-update-" + randomUUID();
     const resourceDeleteKey = "organization-resource-delete-" + randomUUID();
@@ -1217,6 +1386,24 @@ async function main() {
       resourceChangedPayloadStatus: changedResourcePayload.status,
       resourceDeleteStatus: resourceDeleteResponse.status,
       resourceDeleteReplayStatus: resourceDeleteReplay.status,
+      projectAttachmentPatch: {
+        method: "PATCH",
+        path: attachmentPath,
+        status: attachmentUpdate.status,
+        replayStatus: attachmentUpdateReplay.status,
+        persistedNote: afterAttachmentUpdate.attachment[0]?.note,
+        auditActions: afterAttachmentUpdate.activities.map((activity) => activity.action),
+        outboxCount: afterAttachmentUpdate.outbox.length,
+      },
+      projectAttachmentDelete: {
+        method: "DELETE",
+        path: attachmentPath,
+        status: attachmentDelete.status,
+        replayStatus: attachmentDeleteReplay.status,
+        persistedAttachmentCount: afterAttachmentDelete.attachment.length,
+        auditActions: afterAttachmentDelete.activities.map((activity) => activity.action).sort(),
+        outboxCount: afterAttachmentDelete.outbox.length,
+      },
       resourceDeleteReplayAfterRestartStatus: resourceDeleteReplayAfterRestart.status,
       resourceOutageStatus: resourceOutageResponse.status,
       resourceDeleteReceiptCount: afterResourceDelete.receipts.length,

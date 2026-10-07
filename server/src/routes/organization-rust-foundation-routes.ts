@@ -174,22 +174,29 @@ async function applyRustBranding(
   }
 }
 
-function scalarBrandColorPatchOnly(body: Record<string, unknown>) {
-  const keys = Object.keys(body);
-  return keys.length === 1 && keys[0] === "brandColor";
+function hasRustOwnedBrandingField(body: Record<string, unknown>) {
+  return ["brandColor", "logoAssetId"]
+    .some((field) => Object.prototype.hasOwnProperty.call(body, field));
 }
 
-function rustBrandingRequiredForRequest(
+function rustBrandingPatchOnly(body: Record<string, unknown>) {
+  const keys = Object.keys(body);
+  return keys.length > 0 && keys.every((key) => key === "brandColor" || key === "logoAssetId");
+}
+
+async function rustBrandingRequiredForRequest(
   req: Request,
   bridge: RustFoundationBridge | undefined,
   orgId: string,
+  orgService: ReturnType<typeof organizationService>,
 ) {
   const explicitlyRequired = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
   const selected = organizationBrandingOrgIsSelected(orgId, configuredOrganizationBrandingOrgIds());
   if (explicitlyRequired && bridge?.organizationBrandingMode === "required" && !selected) {
     throw conflict("Organization is outside the Rust branding rollout allowlist");
   }
-  return explicitlyRequired || (bridge?.organizationBrandingMode === "required" && selected);
+  if (explicitlyRequired || (bridge?.organizationBrandingMode === "required" && selected)) return true;
+  return (await orgService.getBrandingMutationOwner(orgId)) === "rust";
 }
 
 function requireBrandingIdempotencyKey(req: Request) {
@@ -366,9 +373,12 @@ export function registerOrganizationRustFoundationRoutes(
       body = updateOrganizationSchema.parse(req.body);
     }
 
-    const rustBrandingRequired = rustBrandingRequiredForRequest(req, bridge, orgId);
-    if (rustBrandingRequired && Object.prototype.hasOwnProperty.call(body, "brandColor")) {
-      if (!scalarBrandColorPatchOnly(body)) {
+    const touchesRustOwnedBranding = hasRustOwnedBrandingField(body);
+    const rustBrandingRequired = touchesRustOwnedBranding
+      ? await rustBrandingRequiredForRequest(req, bridge, orgId, organizations)
+      : false;
+    if (rustBrandingRequired && touchesRustOwnedBranding) {
+      if (!rustBrandingPatchOnly(body)) {
         throw conflict("Organization branding and non-branding updates must use separate requests while Rust branding authority is enabled");
       }
       if (bridge?.organizationBrandingMode !== "required") {
@@ -386,7 +396,7 @@ export function registerOrganizationRustFoundationRoutes(
         req,
         orgId,
         options,
-        `/api/orgs/${encodeURIComponent(orgId)}/branding`,
+        `/api/orgs/${encodeURIComponent(orgId)}`,
       );
       if (result.kind === "organization") {
         res.json(result.organization);
@@ -418,7 +428,8 @@ export function registerOrganizationRustFoundationRoutes(
       details: body,
     });
     if (bridge?.organizationBrandingMode === "required"
-      && Object.prototype.hasOwnProperty.call(body, "brandColor")) {
+      && (Object.prototype.hasOwnProperty.call(body, "brandColor")
+        || Object.prototype.hasOwnProperty.call(body, "logoAssetId"))) {
       emitRustFoundationProbeReceipt({
         orgId,
         probeMode: "required",
@@ -436,10 +447,12 @@ export function registerOrganizationRustFoundationRoutes(
   router.patch("/:orgId/branding", validate(updateOrganizationBrandingSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanUpdateBranding(req, orgId, agents);
-    const rustBrandingRequired = rustBrandingRequiredForRequest(req, bridge, orgId);
-    if (rustBrandingRequired && Object.prototype.hasOwnProperty.call(req.body, "brandColor")) {
-      if (!scalarBrandColorPatchOnly(req.body)) {
-        throw conflict("Only scalar brandColor updates are currently Rust-authoritative; migrate other branding fields separately");
+    const rustBrandingRequired = hasRustOwnedBrandingField(req.body)
+      ? await rustBrandingRequiredForRequest(req, bridge, orgId, organizations)
+      : false;
+    if (rustBrandingRequired) {
+      if (!rustBrandingPatchOnly(req.body)) {
+        throw conflict("Rust organization branding currently supports brandColor and logoAssetId; update other organization settings separately");
       }
       if (bridge?.organizationBrandingMode !== "required") {
         res.status(503).json({
@@ -480,7 +493,8 @@ export function registerOrganizationRustFoundationRoutes(
       details: req.body,
     });
     if (bridge?.organizationBrandingMode === "required"
-      && Object.prototype.hasOwnProperty.call(req.body, "brandColor")) {
+      && (Object.prototype.hasOwnProperty.call(req.body, "brandColor")
+        || Object.prototype.hasOwnProperty.call(req.body, "logoAssetId"))) {
       emitRustFoundationProbeReceipt({
         orgId,
         probeMode: "required",

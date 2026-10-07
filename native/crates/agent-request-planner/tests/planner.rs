@@ -12,6 +12,13 @@ fn runtime(browser_enabled: bool) -> ManagedRuntimeIdentity {
 }
 
 fn sample(schema: &Value) -> Value {
+    if schema
+        .get("type")
+        .and_then(Value::as_array)
+        .is_some_and(|types| types.iter().any(|kind| kind == "null"))
+    {
+        return Value::Null;
+    }
     if schema.get("type").is_none()
         && let Some(one) = schema.get("oneOf").and_then(Value::as_array)
     {

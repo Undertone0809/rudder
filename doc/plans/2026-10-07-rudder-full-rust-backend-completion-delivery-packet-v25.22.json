@@ -1,0 +1,170 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-full-rust-backend-completion-v25.22-d1-resource-chat-cli-mcp-real-entry",
+  "status": "integration_pending",
+  "owner": {
+    "root_id": "2026-09-21-rudder-full-rust-backend-completion",
+    "agent_id": "main-thread"
+  },
+  "intent": {
+    "raw_request": "继续",
+    "corrections": [
+      "The inherited Phase 0–7 request remains active: complete the first-party backend and Agent tooling migration to Rust, not merely this bounded D1 slice.",
+      "This candidate adds real first-party CLI and stdio MCP entry coverage to Resource/Chat real-entry coverage; it does not establish the installed default Rust path or retire Node authorities.",
+      "Preserve Chat and Side Chat lifecycle, history, stream/cancel/reconnect, temporary/expired/permanent behavior, and supported session continuity; Chat must not require Issue.",
+      "Adapt to current Main; origin/main is a3f49e86183b66c694fd8f2ba44324ce42b9b6b9 and is the candidate base.",
+      "Subagents must receive explicit model gpt-6-luna and reasoning_effort xhigh. Spawn/wait do not expose effective runtime metadata; record this limitation without inferring a different setting.",
+      "Authorized scope: isolated local implementation, disposable PostgreSQL, normal CI/candidate builds, checkpoint commits, and protected PR updates after required gates. Not authorized: production database mutation/migration, traffic switching, stable publication, purchase, or destructive real-user-data operations.",
+      "Converge with scoped increments and CI, but preserve independent stage review, exact-candidate black-box verification, and final review gates."
+    ],
+    "non_goals": [
+      "No public Actix listener/default-path cutover, global Node writer retirement, Node migration/scheduler/auth/worker retirement, installation acceptance, release readiness, or production verification is claimed by this D1 slice.",
+      "No Chat/Side Chat feature removal or product redesign is included."
+    ],
+    "authorization": "Authorized for isolated implementation, disposable local PostgreSQL, candidate builds and CI, checkpoint commits, and protected-PR update/merge only after repository-required exact-candidate gates. No production database change, production traffic change, stable release, purchase, or destructive real-user-data action."
+  },
+  "candidate": {
+    "branch": "codex/d1-resource-compat-real-entry-20261005",
+    "source_ref": "refs/heads/codex/d1-resource-compat-real-entry-20261005",
+    "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46",
+    "source_tree": "e13c5bbb5e3acf6a22cec18280f60aa88b83b59a",
+    "dirty_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94",
+    "dirty_fingerprint_method": "SHA-256 of git diff --binary origin/main -- . (:(exclude)doc/plans/**); 48 non-plan paths, including the current workflow/test/smoke delta. Plan artifacts are tracked separately.",
+    "changed_paths": [
+      ".github/workflows/rust-d1-real-entry.yml",
+      "cli/src/__tests__/agent-v1-mcp-d1-capabilities.test.ts",
+      "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+      "cli/src/__tests__/organization-brand-color.test.ts",
+      "cli/src/agent-v1-capabilities.generated.ts",
+      "cli/src/agent-v1-mcp-d1-capabilities.ts",
+      "cli/src/commands/client/company-brand-color.ts",
+      "contracts/rudder-agent-contract/v1.json",
+      "native/crates/agent-contract-core/src/contract.generated.json",
+      "native/crates/agent-request-planner/src/lib.rs",
+      "native/crates/agent-request-planner/tests/planner.rs",
+      "native/crates/d1-persistence/src/branding.rs",
+      "native/crates/d1-persistence/src/goal_sets.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/project-goal-link-core/src/lib.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-preflight.test.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-preflight.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
+      "scripts/smoke/rust-branding-real-entry.ts",
+      "scripts/smoke/rust-project-create-real-entry.ts",
+      "server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
+      "server/src/__tests__/approval-routes-chat-application.test.ts",
+      "server/src/__tests__/chat-branding-real-entry.test.ts",
+      "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/d1-write-handoff-real-entry.test.ts",
+      "server/src/__tests__/orgs-service.test.ts",
+      "server/src/__tests__/project-read-real-entry.test.ts",
+      "server/src/__tests__/project-routes.test.ts",
+      "server/src/bootstrap/register-api-routes.ts",
+      "server/src/routes/approvals.ts",
+      "server/src/routes/chats.stream-routes.ts",
+      "server/src/routes/chats.ts",
+      "server/src/routes/organization-rust-foundation-routes.ts",
+      "server/src/services/chat-organization-branding-rust-idempotency.test.ts",
+      "server/src/services/chat-organization-branding.ts",
+      "server/src/services/chats.ts",
+      "server/src/services/organization-branding-fence.ts",
+      "server/src/services/orgs.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts",
+      "tests/e2e/existing-server-setup.spec.ts",
+      "tests/e2e/messenger-copy-chat-link.spec.ts",
+      "tests/e2e/playwright.config.ts",
+      "tests/e2e/support/existing-server-setup.ts"
+    ],
+    "build": {
+      "id": "v25.22-4fd984a61-exact-source-build-20261007",
+      "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46",
+      "source_diff_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94",
+      "artifacts": {
+        "rudder_server_foundation_debug_sha256": "a3183e7c95fbf6010013ed88d916ef9aff892afabdfb27fa8431f5304de1c3d0",
+        "migration_preflight_debug_sha256": "381e90dd4b31ea45c1089739b01a8199932d0f9cf5779168362e6dc655e6dc4d",
+        "cli_dist_index_sha256": "995c4694451641adbb170c3fc1ee9a3275ef34a739665d1ae49037ec98f23e39"
+      },
+      "artifact_binding_note": "Exact-candidate builds were run at 4fd984a61 with cargo build --locked -p rudder-server-foundation-core -p rudder-migration-service --manifest-path native/Cargo.toml and pnpm --filter @rudderhq/cli build. Foundation SHA-256 a3183e7c95fbf6010013ed88d916ef9aff892afabdfb27fa8431f5304de1c3d0 matches the binary used by the independent verifier; CLI dist SHA-256 995c4694451641adbb170c3fc1ee9a3275ef34a739665d1ae49037ec98f23e39 matches prior CLI/MCP evidence. Current migration-preflight build SHA-256 is 381e90dd4b31ea45c1089739b01a8199932d0f9cf5779168362e6dc655e6dc4d and was not used to claim Rust migration-apply authority. The 6b17-to-4fd984a61 source delta is limited to CI workflow, smoke harness, and tests; product/Rust implementation files are unchanged."
+    },
+    "runtime": {
+      "id": "v25.22-composite-verification-runtime-4fd984a61-20261007",
+      "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46",
+      "network": "Loopback-only local API and a disposable embedded PostgreSQL cluster; no external credentials or production services.",
+      "database": "Prior full workflows used separate fresh embedded PostgreSQL databases with process/system identifiers recorded in the Lagrange artifact. The exact-4fd race suite used a disposable embedded PostgreSQL 18.1 database (PID 54932, port 62626, system identifier 7693946281982178924) and fixtures recorded below; teardown removed the temporary directory and process. All data was local/disposable. Existing migration application remains Node/Drizzle-owned.",
+      "acceptance_scope_limit": "Authenticated Node public API to signed private Actix/SQLx plus built CLI and stdio MCP; not the installed/default Rust public listener, global Node authority retirement, or production.",
+      "observed_runtime": "Composite independent acceptance: Lagrange full Resource/Chat/CLI-MCP/retry/restart workflows on 6b17 (content-equivalent product sources; prior verifier artifact) plus McClintock race suite on exact 4fd984a61. Race runtime Node v22.23.1, pnpm 9.15.4, Vitest 3.2.7, embedded PostgreSQL 18.1 PID 54932 at 127.0.0.1:62626; system identifier 7693946281982178924; teardown confirmed no process, listener, or temporary directory. Foundation binary SHA-256 a3183e7c95fbf6010013ed88d916ef9aff892afabdfb27fa8431f5304de1c3d0."
+    },
+    "organization_data": {
+      "organization_id": "8c40ca10-a9c9-4be3-b487-72fea8255895",
+      "data_id": "v25.22-composite-disposable-fixtures-4fd984a61-20261007",
+      "fixture_identity": "Author smoke target/unlisted orgs 8c40ca10-a9c9-4be3-b487-72fea8255895 / 582791d5-d032-4d42-ba20-86573c21de0f; Lagrange Resource system 7693926129472163118 org f1a7af28-6029-459c-88ba-8a2911c92d12 project fd42c5c9-8b9b-54b7-bff6-5a9128c08ef5 resource 0512db02-dae6-4596-8af1-ab969dbcd37f attachment 70bfcf85-8249-4eec-815f-ea276b7192c4; Chat system 7693926380071564210 org a705f310-ec44-4640-a8b7-29f2574088e9; CLI/MCP/recovery system 7693926541170738870 target/unlisted orgs 4654c55e-82dc-4c17-9b2f-ccd9fdc23508 / 7142f914-d909-4cca-a6a9-ef918ea97b6f; exact-4fd race system 7693946281982178924 target/foreign orgs 5ea8a9c2-ec68-4223-895f-cfe46ea4903c / 1d29f9e2-b359-405d-a874-c052f1799e6f and project 30d25ca9-7640-4b74-938e-7aac2382236e. All databases and profiles were disposable and removed after verification."
+    },
+    "workload_fixture": "v25.22 Resource public API create/edit/detach/reattach/delete/replay; Chat Node-owned non-branding, authorization denials, fresh branding handoff; built CLI branding write then stdio MCP initialize/notifications/initialized/tools/list/tools/call replay; same-key/same-payload audit failure retry; receipt-linked outbox pending across server stop/restart under the same Node test-harness process and at-least-once retry with stable event identity.",
+    "budget_lease": {"id": "full-rust-backend-goal-continuation", "fingerprint": "no-explicit-token-budget", "expires_at": "not_applicable"},
+    "acceptance_packet": {
+      "version": "v25.22",
+      "fingerprint_method": "SHA256 jq -cS '.candidate.acceptance_packet | del(.fingerprint)' including jq terminal newline",
+      "criteria": [
+        "Through the authenticated public API, create a Project with an inline organization Resource; edit and replay exact idempotency keys; detach and reattach the Resource; delete it while attached; verify organization/Project fences, ownership/tombstone, exact receipts, activities, outbox, byte-identical replay response, and unchanged post-replay rows. Missing credentials and a cross-organization agent must be rejected before writes.",
+        "Through the authenticated public Chat API, retain the Node-owned non-branding proposal path with its audit/system event and no Rust branding receipt; reject same-org non-CEO and cross-org CEO proposals with 403 and unchanged state/side effects across target and agent organizations; approve a fresh Node-owned branding proposal as board admin and verify one Node-to-Rust owner/fence transition, receipt, activity, outbox, and Chat operation-applied event.",
+        "Run the built first-party CLI org brand-color update command against the real API, then run the built stdio MCP server through initialize, notifications/initialized, tools/list, and tools/call using the same org, payload, and idempotency key. Both surfaces return the expected result; SQL readback proves Rust ownership and exactly one receipt, linked activity, and outbox row after cross-transport replay. Exercise supported logo/color clear and invalid-logo behavior.",
+        "Force a Rust audit-side-effect failure, then retry the identical request with the original idempotency key and payload; require one applied receipt, linked activity, and outbox row, then replay the same request and verify the response and effect rows are unchanged. For outbox recovery, delay a real receipt-linked Rust event in the disposable database, restart the server, make it eligible, and verify it reaches published with the same receipt/activity/outbox IDs and payload. The existing publisher is retryable at-least-once with a stable outbox-ID dedupe key; this criterion does not claim exactly-once network delivery.",
+        "Scope is a private real-entry bridge slice. It does not claim installed/default public Rust ingress, retirement of all first-party Node authorities, complete Chat/Side Chat migration, implementation completion, release readiness, or production verification."
+      ],
+      "state_inventory": [
+        "Resource public API: missing credential/cross-org denial; create with inline Resource; edit/replay; attachment edit/detach/replay; reattach; attached delete/replay with exact owner/fence/effect readback.",
+        "Chat public API: Node-owned non-branding approval remains intact; non-CEO and foreign-organization CEO denial preserve pending proposal and all side-effect tables; authorized fresh branding proposal performs one ownership handoff and preserves proposal/history/audit semantics.",
+        "CLI/MCP: CLI update followed by full stdio MCP protocol lifecycle using the same idempotency key; compare database snapshot before/after replay; exercise supported logo/color updates and negative logo paths.",
+        "Recovery: failed audit write is retried with the identical key and payload and creates one receipt-linked effect set; a real pending receipt-linked event survives restart and is published with stable identity under retryable at-least-once delivery semantics.",
+        "Deferred: installed UI/default ingress, full Node backend exit, all other Chat/Side Chat capabilities, release gates, production cutover."
+      ],
+      "fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b"
+    }
+  },
+  "receipts": {
+    "reviewer": {"verdict": "accept", "agent_id": "01a11697-db2d-7e90-89e2-d9ba9748049d", "nickname": "Goodall", "level": "stage verdict", "candidate_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94", "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46", "source_tree": "e13c5bbb5e3acf6a22cec18280f60aa88b83b59a", "build_id": "v25.22-4fd984a61-exact-source-build-20261007", "runtime_id": "v25.22-composite-verification-runtime-4fd984a61-20261007", "data_id": "v25.22-composite-disposable-fixtures-4fd984a61-20261007", "packet_version": "v25.22", "reviewed_packet_sha256": "0bd0e5d34f63ee7093649e60cd17e4d6360a1600acb4bdb93ccbb96f4fcb4c88", "issuer_rebind_packet_sha256": "0bd0e5d34f63ee7093649e60cd17e4d6360a1600acb4bdb93ccbb96f4fcb4c88", "requested_model": "gpt-6-luna", "requested_reasoning_effort": "xhigh", "exact_arguments_passed": true, "runtime_metadata": "not_exposed_by_spawn_wait_tools"},
+    "verifier": {"verdict": "PASS", "agent_id": "01a116eb-3ffb-7723-a4e3-9184bd2d0dd0", "nickname": "McClintock", "level": "independent black-box verifier, composite v25.22 slice", "candidate_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94", "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46", "source_tree": "e13c5bbb5e3acf6a22cec18280f60aa88b83b59a", "build_id": "v25.22-4fd984a61-exact-source-build-20261007", "runtime_id": "v25.22-composite-verification-runtime-4fd984a61-20261007", "data_id": "v25.22-composite-disposable-fixtures-4fd984a61-20261007", "packet_version": "v25.22", "packet_sha256_at_verdict": "f5a0d58f691f7085a3fe9a630a3ae7fca8ebf1ba2f88f5bac49b8bb042a5dc43", "acceptance_fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b", "evidence_artifacts": ["doc/plans/artifacts/2026-10-07-rudder-full-rust-backend-completion-v25.22-verifier.json", "doc/plans/artifacts/2026-10-07-rudder-full-rust-backend-completion-v25.22-composite-verifier.json"], "evidence_artifact_sha256": "5a453332f6aa519d5944f9a0bffedf6277830d0ef5ff47d417b6d4fa1777684f", "full_workflows_rerun_at_exact_source": false, "scope_note": "PASS composes Lagrange full Resource/Chat/CLI-MCP/retry/restart evidence on content-equivalent product sources with McClintock exact-4fd focused ownership race suite (3/3); it does not claim installed/default Rust ingress, broad Node authority retirement, production, or exactly-once network delivery.", "requested_model": "gpt-6-luna", "requested_reasoning_effort": "xhigh", "exact_arguments_passed": true, "runtime_metadata": "not_exposed_by_spawn_wait_tools"},
+    "final_review": {"verdict": "accept", "agent_id": "01a11697-db2d-7e90-89e2-d9ba9748049d", "nickname": "Goodall", "level": "final handoff verdict", "candidate_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94", "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46", "source_tree": "e13c5bbb5e3acf6a22cec18280f60aa88b83b59a", "build_id": "v25.22-4fd984a61-exact-source-build-20261007", "runtime_id": "v25.22-composite-verification-runtime-4fd984a61-20261007", "data_id": "v25.22-composite-disposable-fixtures-4fd984a61-20261007", "packet_version": "v25.22", "reviewed_packet_sha256": "0bd0e5d34f63ee7093649e60cd17e4d6360a1600acb4bdb93ccbb96f4fcb4c88", "acceptance_fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b", "requested_model": "gpt-6-luna", "requested_reasoning_effort": "xhigh", "exact_arguments_passed": true, "runtime_metadata": "not_exposed_by_spawn_wait_tools", "blocking_findings": [], "non_blocking_notes": ["Plan opening checkpoint was stale and cited the prior 21db packet plus verifier-in-progress language; corrected before durable handoff."]},
+    "reviewer_history": [{"verdict": "needs more evidence", "level": "stage verdict", "agent_id": "01a11684-b448-7550-9049-da6a7626f79b", "requested_model": "gpt-6-luna", "requested_reasoning_effort": "xhigh", "candidate_fingerprint": "cf046749b94915d03d5347ae52b44cce370bbd6eda32a3e45238ed9ddc740d35", "packet_version": "v25.21", "acceptance_packet_fingerprint": "c38e9646e00274980dc5072a5baaefae16d8d5a79d714e6c0fc32f30e9849016", "findings": ["Audit failure retry used a new key and payload instead of retrying the identical request.", "Outbox restart proof used a synthetic activity/outbox row without receipt linkage and did not prove exactly-once delivery; v25.22 narrows to stable identity and retryable at-least-once semantics."]}, {"verdict": "accept", "level": "stage verdict", "agent_id": "01a11697-db2d-7e90-89e2-d9ba9748049d", "nickname": "Goodall", "requested_model": "gpt-6-luna", "requested_reasoning_effort": "xhigh", "exact_arguments_passed": true, "role_configuration_pins_pair": true, "runtime_metadata": "not_exposed_by_spawn_wait_tools", "reviewed_packet_sha256": "0c45c7d9491bcaa706e655511692566de7ab31cd99f8c2e72e224b161dcf3bf1", "candidate_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94", "acceptance_packet_fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b", "issuer_rebind_packet_sha256": "0c45c7d9491bcaa706e655511692566de7ab31cd99f8c2e72e224b161dcf3bf1", "findings": ["Non-blocking wording about process restart clarified: the test restarts the server under the same Node test-harness process."]}, {"verdict": "accept", "level": "issuer stage receipt rebind", "agent_id": "01a11697-db2d-7e90-89e2-d9ba9748049d", "nickname": "Goodall", "requested_model": "gpt-6-luna", "requested_reasoning_effort": "xhigh", "exact_arguments_passed": true, "role_configuration_pins_pair": true, "runtime_metadata": "not_exposed_by_spawn_wait_tools", "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46", "source_tree": "e13c5bbb5e3acf6a22cec18280f60aa88b83b59a", "candidate_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94", "acceptance_packet_fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b", "reviewed_packet_sha256": "0bd0e5d34f63ee7093649e60cd17e4d6360a1600acb4bdb93ccbb96f4fcb4c88", "issuer_rebind_packet_sha256": "0bd0e5d34f63ee7093649e60cd17e4d6360a1600acb4bdb93ccbb96f4fcb4c88"}],
+    "verifier_history": [
+      {"agent_id": "01a116a4-f9b2-7423-8b44-0e77012a1405", "nickname": "Lagrange", "verdict": "PASS_on_content_equivalent_6b17_full_workflows", "source_sha": "6b17bdfb3cca1fc08932300a67d4ac105a5d94a8", "source_tree": "e4c76ab4fa90bc25a3d0ae253c9a2f6c5689dd37", "candidate_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94", "acceptance_fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b", "evidence_artifact": "doc/plans/artifacts/2026-10-07-rudder-full-rust-backend-completion-v25.22-verifier.json", "limitation": "two_ownership_handoff_races_not_run"},
+      {"agent_id": "01a116d9-60ff-78d1-bbbf-3cc3c6d3c036", "nickname": "Erdos", "verdict": "QUESTION", "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46", "candidate_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94", "evidence": "3_of_3_focused_tests_passed_but_temporary_PostgreSQL_system_identifier_PID_port_not_captured", "superseded_by": "McClintock_exact_candidate_race_run"},
+      {"agent_id": "01a116eb-3ffb-7723-a4e3-9184bd2d0dd0", "nickname": "McClintock", "verdict": "PASS_whole_slice_composite", "source_sha": "4fd984a61e41ac2fe8e487430ec72e373367dd46", "source_tree": "e13c5bbb5e3acf6a22cec18280f60aa88b83b59a", "candidate_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94", "acceptance_fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b", "packet_sha256": "f5a0d58f691f7085a3fe9a630a3ae7fca8ebf1ba2f88f5bac49b8bb042a5dc43", "evidence_artifact": "doc/plans/artifacts/2026-10-07-rudder-full-rust-backend-completion-v25.22-composite-verifier.json", "evidence_artifact_sha256": "5a453332f6aa519d5944f9a0bffedf6277830d0ef5ff47d417b6d4fa1777684f", "scope": "prior_full_workflows_on_content_equivalent_6b17_plus_exact_4fd_race_suite_3_of_3; full_workflows_not_rerun"}
+    ]
+  },
+  "drift": {"active": false, "events": ["v25.20 verifier QUESTION remains historical and is not reused. v25.21 stage review returned needs more evidence on same-request retry and receipt-linked outbox recovery. v25.22 fixes the same-key/same-payload retry, binds recovery to a real receipt-linked transaction, and narrows delivery semantics to retryable at-least-once with stable outbox identity.", "Source identity rebound from 6b17bdfb3cca1fc08932300a67d4ac105a5d94a8/e4c76ab4fa90bc25a3d0ae253c9a2f6c5689dd37 to 4fd984a61e41ac2fe8e487430ec72e373367dd46/e13c5bbb5e3acf6a22cec18280f60aa88b83b59a. The source delta is limited to CI workflow, smoke harness, and workflow tests; product/Rust runtime sources and the 48-path scoped source fingerprint are unchanged. Lagrange full-workflow evidence remains content-equivalent; McClintock added current-candidate ownership-race coverage. This rebind does not claim the full workflows were rerun at 4fd or alter acceptance criteria."], "invalidated_receipts": ["v25.20 reviewer", "v25.20 verifier", "v25.20 final_review", "v25.21 reviewer needs_more_evidence", "v25.21 verifier pending", "v25.21 final_review pending"]},
+  "integration": {
+    "authorized": true,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "a3f49e86183b66c694fd8f2ba44324ce42b9b6b9",
+    "candidate_branch_base_sha": "a3f49e86183b66c694fd8f2ba44324ce42b9b6b9",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "a3f49e86183b66c694fd8f2ba44324ce42b9b6b9",
+    "branch_refs": ["refs/heads/codex/d1-resource-compat-real-entry-20261005@4fd984a61e41ac2fe8e487430ec72e373367dd46", "refs/remotes/origin/codex/d1-resource-compat-real-entry-20261005@c623274c3bde11a5c6fb45370b09c823c46604e6", "refs/remotes/origin/main@a3f49e86183b66c694fd8f2ba44324ce42b9b6b9"],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/d1-project-goal-main-20261005/rudder-oss",
+    "patch_tree_sha": "e13c5bbb5e3acf6a22cec18280f60aa88b83b59a",
+    "expected_old_sha": "a3f49e86183b66c694fd8f2ba44324ce42b9b6b9",
+    "cas": {"attempted": false, "succeeded": false, "observed_old_sha": null, "delivered_sha": null},
+    "index_update_mode": "none",
+    "existing_pr": {"number": 277, "state": "OPEN", "observed_head_sha": "c623274c3bde11a5c6fb45370b09c823c46604e6", "candidate_pushed": false, "exact_head_ci": "not_started_for_4fd984a61; observed_c623274c_architecture_ratchet_and_qualification_summary_failed_and_x86_64_macos_native_check_cancelled"}
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": ["doc/plans/2026-10-06-rudder-full-rust-backend-completion-delivery-packet-v25.json", "doc/plans/2026-10-06-rudder-full-rust-backend-completion-delivery-packet-v25.5.json", "doc/plans/2026-10-06-rudder-full-rust-backend-completion-delivery-packet-v25.7.json", "doc/plans/2026-10-06-rudder-full-rust-backend-completion-delivery-packet-v25.8.json", "doc/plans/2026-10-06-rudder-full-rust-backend-completion-delivery-packet-v25.9.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.10.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.11.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.12.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.14.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.15.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.16.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.17.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.18.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.19.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.20.json", "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.21.json"],
+    "index_fingerprint_before": "unknown-at-task-handoff; staged diff was empty",
+    "index_fingerprint_after": "0a65bf20108c569fd46c124a9ed195941e87f31fe172a74f8c4f6818655b3843",
+    "worktree_fingerprint_before": "unknown-at-task-handoff",
+    "worktree_fingerprint_after": "source fingerprint 98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94; v25.21 and earlier historical plan packets remain unmodified",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": ["The isolated migration worktree was used; no reset or checkout was performed.", "The candidate index is unstaged/empty; no staging or commit was performed during author verification.", "Existing untracked historical delivery packets were left untouched; no production, shared database, or user data was used."]
+  },
+  "terminal": {"delivered_ref": null, "delivered_sha": null, "delivered_tree_sha": null, "timestamp": null, "proof": []}
+}

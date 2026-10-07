@@ -1,0 +1,73 @@
+{
+  "verdict": "PASS",
+  "level": "independent black-box verifier",
+  "agent": {
+    "id": "01a116a4-f9b2-7423-8b44-0e77012a1405",
+    "nickname": "Lagrange",
+    "requested_model": "gpt-6-luna",
+    "requested_reasoning_effort": "xhigh",
+    "exact_arguments_passed": true,
+    "effective_runtime_metadata": "not_exposed_by_spawn_wait_tools"
+  },
+  "candidate": {
+    "branch": "codex/d1-resource-compat-real-entry-20261005",
+    "source_sha": "6b17bdfb3cca1fc08932300a67d4ac105a5d94a8",
+    "source_tree": "e4c76ab4fa90bc25a3d0ae253c9a2f6c5689dd37",
+    "source_fingerprint": "98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94",
+    "packet_version": "v25.22",
+    "packet_sha256_at_verdict": "9cbbab8fd96ddfae7096d82f91dac9bc0632f1fd31531388e867f5dd4c8cae0a",
+    "acceptance_fingerprint": "fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b"
+  },
+  "environment": {
+    "node": "v22.23.1",
+    "pnpm": "9.15.4",
+    "rust_cargo": "1.93.0",
+    "disposable_postgres_only": true,
+    "production_or_shared_data_touched": false
+  },
+  "workflows": [
+    {
+      "name": "Resource authenticated public API",
+      "result": "PASS",
+      "processes": {"api_worker_pid": 89298, "api_port": 57404, "postgres_pid": 89559, "postgres_port": 57357},
+      "postgres_system_identifier": "7693926129472163118",
+      "fixtures": {
+        "organization_id": "f1a7af28-6029-459c-88ba-8a2911c92d12",
+        "project_id": "fd42c5c9-8b9b-54b7-bff6-5a9128c08ef5",
+        "resource_id": "0512db02-dae6-4596-8af1-ab969dbcd37f",
+        "attachment_id": "70bfcf85-8249-4eec-815f-ea276b7192c4"
+      },
+      "observed": ["credential denial before writes", "cross-organization denial", "inline Project/Resource creation", "Resource edit and same-key replay", "detach/reattach/delete while attached", "exact ownership/fence/receipt/activity/outbox readback", "unchanged state on replay"]
+    },
+    {
+      "name": "Chat permissions and branding continuity",
+      "result": "PASS",
+      "processes": {"api_worker_pid": 90949, "api_port": 57888, "postgres_pid": 91074, "postgres_port": 57849},
+      "postgres_system_identifier": "7693926380071564210",
+      "fixtures": {"handoff_organization_id": "a705f310-ec44-4640-a8b7-29f2574088e9"},
+      "observed": ["non-branding proposal remains Node-owned without Rust branding receipt", "same-organization non-CEO denied with 403 and no side effects", "foreign-organization CEO denied with 403 and no side effects", "authorized approval returns 201 and performs one ownership/fence handoff with linked receipt/activity/outbox and operation-applied event"]
+    },
+    {
+      "name": "Built CLI, stdio MCP, retry and restart recovery",
+      "result": "PASS",
+      "processes": {"node_harness_pid": 91754, "tsx_wrapper_pid": 91746, "api_port": 58079, "postgres_pid": 91864, "postgres_port": 58080},
+      "postgres_system_identifier": "7693926541170738870",
+      "fixtures": {"target_organization_id": "4654c55e-82dc-4c17-9b2f-ccd9fdc23508", "unlisted_organization_id": "7142f914-d909-4cca-a6a9-ef918ea97b6f"},
+      "observed": ["CLI command succeeds", "MCP initialize/notifications-initialized/tools-list/tools-call succeeds", "same-key cross-transport replay yields one Rust-owned receipt/activity/outbox", "audit fail returns 500 then same-key/same-payload retry and replay return 200", "same Node harness stops and restarts the server", "receipt-linked outbox is published after retry with stable IDs and at-least-once semantics", "missing and foreign logo paths return 404 and 422"]
+    }
+  ],
+  "artifact_sha256": {
+    "rudder_server_foundation": "a3183e7c95fbf6010013ed88d916ef9aff892afabdfb27fa8431f5304de1c3d0",
+    "migration_preflight": "c6f03c6950a7aeb7e43a20e18d008bea5ea31969f5ecd88c9510a3df113b2cdb",
+    "cli_dist_index": "995c4694451641adbb170c3fc1ee9a3275ef34a739665d1ae49037ec98f23e39"
+  },
+  "evidence_logs": [
+    "/tmp/rudder-v2522-verifier.jPg52y/resource-vitest-lease2.log",
+    "/tmp/rudder-v2522-verifier.jPg52y/resource-db-identity2.log",
+    "/tmp/rudder-v2522-verifier.jPg52y/chat-vitest.log",
+    "/tmp/rudder-v2522-verifier.jPg52y/chat-db-identity.log",
+    "/tmp/rudder-v2522-verifier.jPg52y/branding-smoke.log",
+    "/tmp/rudder-v2522-verifier.jPg52y/branding-runtime-identity.log"
+  ],
+  "scope_limit": "This is a Node public API to private Actix/SQLx bridge verification plus CLI/MCP caller coverage. It does not establish installed/default Rust ingress, retirement of broader Node authority, release readiness, or production verification."
+}

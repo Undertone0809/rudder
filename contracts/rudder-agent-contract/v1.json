@@ -157,9 +157,9 @@
       "cli": {
         "attachesRunIdWhenAvailable": true,
         "category": "organization",
-        "command": "rudder org brand-color update --org-id <id> --brand-color <hex> --idempotency-key <key>",
+        "command": "rudder org brand-color update --org-id <id> [--brand-color <hex> | --clear-brand-color] [--logo-asset-id <uuid> | --clear-logo] --idempotency-key <key>",
         "contract": "agent-v1",
-        "description": "Update the authenticated organization's brand color.",
+        "description": "Set or clear the authenticated organization's brand color and link or clear an existing same-organization logo asset.",
         "id": "organization.brand_color.update",
         "mutating": true,
         "requiresAgentId": false,
@@ -172,28 +172,52 @@
           "destructiveHint": false,
           "idempotentHint": true,
           "readOnlyHint": false,
-          "title": "Update the authenticated organization's brand color"
+          "title": "Update organization branding"
         },
         "capabilityId": "organization.brand_color.update",
-        "description": "Update the authenticated organization's brand color. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+        "description": "Set or clear the authenticated organization's brand color and link or clear an existing same-organization logo asset. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
         "inputSchema": {
           "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "brandColor"
+              ]
+            },
+            {
+              "required": [
+                "logoAssetId"
+              ]
+            }
+          ],
           "properties": {
             "brandColor": {
-              "description": "Hex brand color, for example #123456.",
+              "description": "Hex brand color, for example #123456; null clears it. Omit to preserve it.",
               "maxLength": 7,
               "minLength": 7,
-              "type": "string"
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "idempotencyKey": {
               "description": "Required stable key for safe replay.",
               "maxLength": 255,
               "minLength": 1,
               "type": "string"
+            },
+            "logoAssetId": {
+              "description": "Existing asset UUID from this organization; null clears the logo. Omit to preserve it.",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
-            "brandColor",
             "idempotencyKey"
           ],
           "type": "object"

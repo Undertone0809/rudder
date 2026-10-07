@@ -13,7 +13,9 @@ pub(crate) async fn apply(
     command: ProjectGoalSetReplacementCommand,
     metadata: &transaction::Metadata,
 ) -> Result<CommittedMutation, StoreError> {
-    let scope = transaction::lock_scope(tx, metadata).await?;
+    // A goal-only Project PATCH follows the public Node route's organization-
+    // scoped Agent policy, matching the mixed Project PATCH transaction.
+    let scope = transaction::lock_scope_for_project_patch(tx, metadata).await?;
     if let Some(receipt) = transaction::replay(tx, metadata).await? {
         return Ok(receipt);
     }

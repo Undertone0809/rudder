@@ -101,8 +101,10 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "on-first-retry",
   },
-  globalSetup: "./support/global-setup.ts",
-  globalTeardown: "./support/global-teardown.ts",
+  globalSetup: USE_EXISTING_SERVER
+    ? "./support/existing-server-setup.ts"
+    : "./support/global-setup.ts",
+  globalTeardown: USE_EXISTING_SERVER ? undefined : "./support/global-teardown.ts",
   projects: [
     {
       name: "chromium",

@@ -10,9 +10,9 @@ use base64::Engine;
 pub use rudder_auth_core::{ActorEnvelope, ActorIdentity, VerifiedActor};
 use rudder_auth_core::{NonceReplayGuard, RequestContext, SigningKey};
 use rudder_d1_persistence::{
-    MutationStore, OrganizationResourceCommand, OrganizationResourceOperation,
-    ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
-    ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
+    MutationStore, OrganizationBrandingActivityAction, OrganizationResourceCommand,
+    OrganizationResourceOperation, ProjectCreateCommand, ProjectCreateProvisionRequest,
+    ProjectCreateProvisioned, ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
     ProjectPatchMutationOrigin, ResultState, StoreError,
     project_library::{
         ProjectLibraryCommand, ProjectLibraryError, ensure_project_create_intent,
@@ -1474,6 +1474,7 @@ impl AppState {
         request: &HttpRequest,
         org_id: &str,
         body: &[u8],
+        activity_action: OrganizationBrandingActivityAction,
     ) -> HttpResponse {
         let Some(idempotency_key) = request
             .headers()
@@ -1508,12 +1509,11 @@ impl AppState {
         };
         if patch.name.is_some()
             || patch.description.is_some()
-            || patch.logo_asset_id.is_some()
-            || patch.brand_color.is_none()
+            || (patch.logo_asset_id.is_none() && patch.brand_color.is_none())
         {
             return self.json_error(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "branding_scalar_brand_color_required",
+                "branding_color_or_logo_required",
             );
         }
         let Some(store) = self.d1_mutations.as_ref() else {
@@ -1550,7 +1550,10 @@ impl AppState {
             Ok(command) => command,
             Err(_) => return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "branding_invalid"),
         };
-        match store.branding(command).await {
+        match store
+            .branding_with_activity_action(command, activity_action)
+            .await
+        {
             Ok(committed) => bounded_json(
                 StatusCode::OK,
                 &committed.receipt,
@@ -2493,7 +2496,28 @@ async fn organization_branding(
     org_id: web::Path<String>,
 ) -> HttpResponse {
     state
-        .organization_branding(&request, org_id.as_str(), body.as_ref())
+        .organization_branding(
+            &request,
+            org_id.as_str(),
+            body.as_ref(),
+            OrganizationBrandingActivityAction::OrganizationBrandingUpdated,
+        )
+        .await
+}
+
+async fn organization_update_branding(
+    state: web::Data<AppState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    org_id: web::Path<String>,
+) -> HttpResponse {
+    state
+        .organization_branding(
+            &request,
+            org_id.as_str(),
+            body.as_ref(),
+            OrganizationBrandingActivityAction::OrganizationUpdated,
+        )
         .await
 }
 
@@ -2642,6 +2666,10 @@ impl ServerRuntime {
                 .route(
                     "/api/orgs/{org_id}/branding",
                     web::patch().to(organization_branding),
+                )
+                .route(
+                    "/api/orgs/{org_id}",
+                    web::patch().to(organization_update_branding),
                 )
                 .route(
                     "/api/orgs/{org_id}/projects/{project_id}/goal-set",
