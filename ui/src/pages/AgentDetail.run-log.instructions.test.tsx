@@ -141,7 +141,7 @@ describe("Run Detail retained instruction snapshot", () => {
       .find((tab) => tab.textContent?.includes("Metadata"));
     expect(metadataTab).toBeDefined();
     expect(metadataTab?.querySelector('[role="tooltip"]')?.textContent)
-      .toBe("Run metadata and the instruction snapshot used for this Run");
+      .toBe("Run metadata and injected instructions");
     expect(fetchSnapshot).not.toHaveBeenCalled();
     await act(async () => {
       metadataTab!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
@@ -201,7 +201,7 @@ describe("Run Detail retained instruction snapshot", () => {
       .find((tab) => tab.textContent?.includes("Metadata"));
     expect(metadataTab).toBeDefined();
     expect(metadataTab?.querySelector('[role="tooltip"]')?.textContent)
-      .toBe("Runtime metadata and any available instruction details for this Run");
+      .toBe("Runtime metadata and available instructions");
     await act(async () => {
       metadataTab!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       metadataTab!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));

@@ -596,11 +596,11 @@ export function LogViewer({
                     mobileLabel: locale === "zh-CN" ? "元数据" : "Metadata",
                     tooltip: instructionSnapshotStatus === "available"
                       ? locale === "zh-CN"
-                        ? "本次运行的元数据及实际注入的指令快照"
-                        : "Run metadata and the instruction snapshot used for this Run"
+                        ? "运行信息和本次注入的指令"
+                        : "Run metadata and injected instructions"
                       : locale === "zh-CN"
-                        ? "本次运行的运行时元数据及可用的指令详情"
-                        : "Runtime metadata and any available instruction details for this Run",
+                        ? "运行信息和可用的指令详情"
+                        : "Runtime metadata and available instructions",
                   },
                 ]}
                 value={activeDetailTab}
