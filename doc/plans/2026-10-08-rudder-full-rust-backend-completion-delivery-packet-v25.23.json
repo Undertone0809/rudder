@@ -1,0 +1,278 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-full-rust-backend-completion-v25.23-workspace-backup-list-read",
+  "status": "integration_pending",
+  "owner": {
+    "root_id": "2026-09-21-rudder-full-rust-backend-completion",
+    "agent_id": "main-thread"
+  },
+  "intent": {
+    "raw_request": "继续",
+    "corrections": [
+      "The full Phase 0–7 Rust migration remains active; this packet covers only the workspace-backup list read slice.",
+      "Preserve the existing Node public HTTP/authentication entry while routing the data read through signed private Actix/SQLx; this is not installed default-path or public Actix ingress acceptance.",
+      "The old Node list query is removed with no fallback. Backup creation, restore, deletion, file access, scheduler, and recovery remain Node-owned and outside this slice.",
+      "There is no distinct workspace-backup list CLI/MCP capability; do not claim CLI/MCP migration for this read slice.",
+      "Use explicit gpt-6-luna and xhigh for every subagent. Spawn/wait tools may not expose effective runtime metadata; record that limit without inferring a downgrade.",
+      "Authorized: isolated implementation, disposable local PostgreSQL, candidate CI/builds, and protected-PR publication after repository gates. Not authorized: production database mutation, production traffic change, stable release, purchase, or destructive real-user-data operations."
+    ],
+    "non_goals": [
+      "No public Actix listener/default-path cutover, global Node backend retirement, migration/scheduler/auth/worker retirement, installed release acceptance, stable release, or production verification.",
+      "No changes to workspace-backup create, restore, delete, file access, scheduler, sparse repair, or recovery semantics.",
+      "No CLI/MCP endpoint or product contract redesign."
+    ],
+    "authorization": "Implement and validate this bounded read slice in the isolated migration worktree using disposable local PostgreSQL. Commit, push, and open/update a protected PR only after the repository reviewer, independent verifier, final reviewer, and exact-head CI gates. Do not mutate production data or traffic or publish stable."
+  },
+  "candidate": {
+    "branch": "codex/rudder-d1-closeout-and-next-slice-20261008",
+    "source_ref": "b6a058061fd6a6802af0e163bef3e09932404c22",
+    "source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+    "source_tree_sha": "4702e9c28c2330b4cd1cba03a2c611b4df738920",
+    "dirty_fingerprint": "8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609",
+    "fingerprint_method": "SHA256 over sorted changed product paths, with UTF-8 path + NUL + exact file bytes + NUL per path; plan/packet files excluded.",
+    "changed_paths": [
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "server/src/__tests__/workspace-backup-list-real-entry.test.ts",
+      "server/src/__tests__/workspace-backups-routes.test.ts",
+      "server/src/__tests__/workspace-backups.test.ts",
+      "server/src/routes/orgs.ts",
+      "server/src/services/chat-organization-branding-rust-idempotency.test.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts",
+      "server/src/services/workspace-backups.ts",
+      "tests/e2e/workspace-backups.spec.ts"
+    ],
+    "evidence_paths": [
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-plan.md",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml",
+      "doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.22.json",
+      "doc/plans/2026-10-08-rudder-full-rust-backend-completion-delivery-packet-v25.23.json"
+    ],
+    "build": {
+      "id": "v25.23-workspace-backup-list-ff287-dirty-8c9dbbff",
+      "source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+      "source_diff_fingerprint": "8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609",
+      "artifacts": {
+        "rudder_server_foundation_debug_sha256": "9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3"
+      },
+      "checks": {
+        "rust_server_foundation_binary": "fresh cargo build --locked -p rudder-server-foundation --bin rudder-server-foundation; sha256 9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3",
+        "workspace_runtime_dependencies": "pnpm --filter @rudderhq/server... build PASS",
+        "bridge_vitest": "41/41 PASS",
+        "workspace_backup_route_service_real_entry_vitest": "60/60 PASS",
+        "server_typecheck": "PASS",
+        "lint_changed": "PASS; 8 files",
+        "cargo_fmt_check": "PASS",
+        "Rust_PostgreSQL_black_box": "1/1 PASS"
+      },
+      "note": "The first real-entry test invocation used a stale foundation binary and is not counted. After a fresh exact-source Cargo build (SHA-256 9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3) and workspace dependency build, all 60 backup/service/route/real-entry tests passed. The UI Playwright 2/2 result predates the timeout correction and is stale for this candidate; it is not reused. Independent verifier Hubble returned PASS on the frozen v25.23 candidate, with exact run/data identity and supporting route/bridge evidence in receipts.verifier."
+    },
+    "runtime": {
+      "id": "v25.23-author-node22.23.1-rust-foundation-9bedbbff-embedded-postgres",
+      "source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+      "node": "v22.23.1",
+      "cargo": "1.93.0",
+      "network": "Loopback-only public Node test app and private Actix bridge; disposable embedded PostgreSQL; no production or external provider services.",
+      "binary_sha256": "9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3"
+    },
+    "organization_data": {
+      "organization_id": "primary=798b55d1-30c6-473b-9d75-5f5def3bae00; foreign=43bef6a7-3038-4c5d-85ac-d99f463a982d; medium=acfc422e-4603-4f95-bb72-54b97426443d; large=c6772bbf-e3cf-492f-b3e0-b14524d0ca04; DST=71c219ab-7ace-481f-b470-2c450a4a885c; empty=55af0da9-b661-4759-b0fa-4aaeeab98c80",
+      "data_id": "v25.23-independent-verifier-disposable-postgres-system_identifier-7694020089018558177-port-60586-node-pid-50479-port-60628-rust-pid-51057-port-60624"
+    },
+    "workload_fixture": "Authenticated GET /api/orgs/:orgId/workspace/backups through the public Node route, Board/org authorization, signed private Actix/SQLx, and disposable PostgreSQL. Cases cover ordered live rows, foreign-organization isolation, scoped Board and agent denial, missing organization, empty list, 96-row payload, 1,350-row response >4 MiB, null expiry at a DST boundary, row/activity/outbox snapshot invariance, corrupted/truncated NDJSON, and separate list timeout versus ordinary Project Create timeout.",
+    "budget_lease": {
+      "id": "not_applicable-no-long-running-resource-lease",
+      "fingerprint": "not_applicable",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "v25.23",
+      "fingerprint_method": "SHA256 jq -cS '.candidate.acceptance_packet | del(.fingerprint)' including jq terminal newline",
+      "fingerprint": "779803333ad31fd35e81dfed653a88388eb55973021bbe9cb2fda941c740d650",
+      "criteria": [
+        "Public Board workflow reaches the exact private Rust read query, preserves the existing {backups:[...]} API shape, and never calls a Node list fallback.",
+        "Board authorization, organization scope, agent denial, foreign organization denial, and missing-organization 404 behavior are preserved.",
+        "Ordered, non-deleted rows are complete for empty, ordinary, medium, and >4 MiB lists; null expiresAt retains the established 720-hour UTC/DST behavior.",
+        "No workspace_backup rows, activity_log rows, or outbox rows change during reads.",
+        "The private bridge verifies NDJSON frame order, count, SHA-256 terminal, content type, UTF-8, and bounded timeout before exposing any response; all failure cases fail closed.",
+        "The dedicated list timeout is applied only to list reads; Project Create and other ordinary bridge requests retain the normal request timeout.",
+        "Installed/default-path and global Node retirement claims remain false; backup mutations/scheduler/recovery remain Node-owned; CLI/MCP list capability is not applicable."
+      ],
+      "state_inventory": [
+        "Existing UI/API list journey via Node public listener and Board/org authorization; the query is private Actix/SQLx.",
+        "Success states: empty list, ordered live rows, 96-row list, and 1,350-row >4 MiB list; null-expiry DST result preserved.",
+        "Denied/error states: agent actor, foreign scoped Board, missing organization, missing bridge, timeout, invalid stream, checksum/count mismatch, and transport truncation; no partial public response or Node fallback.",
+        "Mutation states: none. Reads must preserve backup, activity, and outbox snapshots; create/restore/delete/file/scheduler/recovery remain outside the slice.",
+        "No distinct CLI/MCP list controls exist; no new CLI/MCP affordance is added. Installed/default Rust path and global Node authority retirement are deferred."
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "agent_id": "01a117cd-6fd1-7342-94fe-1300c38945e3",
+      "nickname": "Beauvoir",
+      "level": "stage verdict",
+      "reviewed_packet_sha256": "ab9f1f4f10b5438f57571b7288fc77b3ef53cd00e0f3e24b2a7738110627a4e4",
+      "candidate_fingerprint": "8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609",
+      "source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+      "build_id": "v25.23-workspace-backup-list-ff287-dirty-8c9dbbff",
+      "runtime_id": "v25.23-author-node22.23.1-rust-foundation-9bedbbff-embedded-postgres",
+      "data_id": "v25.23-independent-verifier-disposable-postgres-system_identifier-7694020089018558177-port-60586-node-pid-50479-port-60628-rust-pid-51057-port-60624",
+      "packet_version": "v25.23",
+      "requested_model": "gpt-6-luna",
+      "requested_reasoning_effort": "xhigh",
+      "exact_arguments_passed": true,
+      "runtime_metadata": "not_exposed_by_spawn_wait_tools",
+      "metadata_rebind": {
+        "from_data_id": "author-vitest-disposable-embedded-postgres; verifier must record fresh PostgreSQL system_identifier and fixture IDs",
+        "to_data_id": "v25.23-independent-verifier-disposable-postgres-system_identifier-7694020089018558177-port-60586-node-pid-50479-port-60628-rust-pid-51057-port-60624",
+        "confirmed_by_stage_reviewer": "01a117cd-6fd1-7342-94fe-1300c38945e3",
+        "basis": "Stage accept rebound by content equivalence from the frozen dirty source to its immutable product commit; dirty fingerprint, build/binary, runtime/data and acceptance fingerprint are unchanged.",
+        "source_sha_rebind": {
+          "from_source_sha": "ff287a248b02ef4b4d54db012c814f334e1c4b70",
+          "to_source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+          "parent_sha": "ff287a248b02ef4b4d54db012c814f334e1c4b70",
+          "tree_sha": "4702e9c28c2330b4cd1cba03a2c611b4df738920",
+          "content_fingerprint": "8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609",
+          "changed_paths_verified_equal_to_candidate_paths": true,
+          "worktree_content_verified_equal_to_commit": true,
+          "verification": "Commit diff contains exactly the 11 candidate.changed_paths; tracked paths match the commit and the real-entry test blob matches its commit blob. No product source content changed after review."
+        }
+      },
+      "blocking_findings": [],
+      "non_blocking_notes": ["Unpaginated list and fetch_all memory grow with history size; >4 MiB behavior is verified, but no upper memory bound is claimed."]
+    },
+    "verifier": {
+      "verdict": "PASS",
+      "agent_id": "01a117f8-45ec-7d12-8e13-89b213fdd2f6",
+      "nickname": "Hubble",
+      "level": "independent workflow verifier",
+      "candidate_fingerprint": "8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609",
+      "source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+      "build_id": "v25.23-workspace-backup-list-ff287-dirty-8c9dbbff",
+      "runtime_id": "v25.23-author-node22.23.1-rust-foundation-9bedbbff-embedded-postgres",
+      "data_id": "v25.23-independent-verifier-disposable-postgres-system_identifier-7694020089018558177-port-60586-node-pid-50479-port-60628-rust-pid-51057-port-60624",
+      "packet_version": "v25.23",
+      "requested_model": "gpt-6-luna",
+      "requested_reasoning_effort": "xhigh",
+      "exact_arguments_passed": true,
+      "runtime_metadata": "not_exposed_by_spawn_wait_tools; no downgrade inferred",
+      "metadata_rebind": {
+        "from_source_sha": "ff287a248b02ef4b4d54db012c814f334e1c4b70",
+        "to_source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+        "confirmed_by_verifier": "01a117f8-45ec-7d12-8e13-89b213fdd2f6",
+        "tree_sha": "4702e9c28c2330b4cd1cba03a2c611b4df738920",
+        "product_fingerprint_unchanged": true,
+        "acceptance_fingerprint_unchanged": true,
+        "runtime_data_identity_unchanged": true,
+        "effective_model_effort_metadata": "not_exposed_by_agent_runtime_tools"
+      },
+      "evidence": {
+        "candidate_recheck": "source SHA b6a058061fd6a6802af0e163bef3e09932404c22; dirty fingerprint 8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609; Rust binary SHA-256 9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3; acceptance packet fingerprint 779803333ad31fd35e81dfed653a88388eb55973021bbe9cb2fda941c740d650",
+        "live_environment_observer": "Parent read-only watcher captured this same initial verifier run before teardown: PostgreSQL PID 50945 at 127.0.0.1:60586 with system_identifier 7694020089018558177; Node PID 50479 at 127.0.0.1:60628; Rust bridge PID 51057 at 127.0.0.1:60624. Verifier test logs independently recorded bridge PIDs 51057 and 51400, both closing with exit code 0.",
+        "fixture_organization_ids": {
+          "primary": "798b55d1-30c6-473b-9d75-5f5def3bae00",
+          "foreign": "43bef6a7-3038-4c5d-85ac-d99f463a982d",
+          "medium": "acfc422e-4603-4f95-bb72-54b97426443d",
+          "large": "c6772bbf-e3cf-492f-b3e0-b14524d0ca04",
+          "dst": "71c219ab-7ace-481f-b470-2c450a4a885c",
+          "empty": "55af0da9-b661-4759-b0fa-4aaeeab98c80"
+        },
+        "real_entry_workflow": "PASS; workspace-backup-list-real-entry.test.ts 1/1 through authenticated public Node route, signed private Actix/SQLx and disposable PostgreSQL; success/missing/unauthorized/foreign scope, ordered non-deleted rows, empty/96-row/1,350-row >4 MiB lists, DST expiry, and backup/activity/outbox snapshot invariance covered.",
+        "supporting_suites": "PASS; route and bridge suites 50/50 (9 route, 41 bridge), including NDJSON order/count/hash/content-type/UTF-8/truncation failures, fail-closed behavior, and list timeout isolation from Project Create.",
+        "claim_limits": "No installed/default-path, public Actix ingress, CLI/MCP, mutation, Node backend retirement, production, or release claim. No upper memory bound is established for the unpaginated list."
+      },
+      "attempt_history": [
+        {
+          "verdict": "QUESTION",
+          "attempt": "initial unscoped test-runner setup",
+          "agent_id": "not retained in current packet",
+          "reason": "Default Vitest/Playwright global setup could scan and stop unrelated /tmp Rudder PostgreSQL instances; that attempt was not allowed to touch shared instances. Acceptance was rerun with config:false and a verifier-owned disposable TMPDIR.",
+          "shared_database_touched": false
+        }
+      ]
+    },
+    "final_review": {
+      "verdict": "accept",
+      "agent_id": "01a11806-739b-7150-bc06-7d3f63646a78",
+      "nickname": "Bohr",
+      "level": "final handoff verdict",
+      "reviewed_packet_sha256": "d73efeab307824bb12d46818c6bd5e6d715e06263e9a96e377bcb82a661ca125",
+      "candidate_fingerprint": "8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609",
+      "source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+      "build_id": "v25.23-workspace-backup-list-ff287-dirty-8c9dbbff",
+      "runtime_id": "v25.23-author-node22.23.1-rust-foundation-9bedbbff-embedded-postgres",
+      "data_id": "v25.23-independent-verifier-disposable-postgres-system_identifier-7694020089018558177-port-60586-node-pid-50479-port-60628-rust-pid-51057-port-60624",
+      "packet_version": "v25.23",
+      "requested_model": "gpt-6-luna",
+      "requested_reasoning_effort": "xhigh",
+      "exact_arguments_passed": true,
+      "runtime_metadata": "not_exposed_by_spawn_wait_tools; no downgrade inferred",
+      "metadata_rebind": {
+        "from_source_sha": "ff287a248b02ef4b4d54db012c814f334e1c4b70",
+        "to_source_sha": "b6a058061fd6a6802af0e163bef3e09932404c22",
+        "confirmed_by_final_reviewer": "01a11806-739b-7150-bc06-7d3f63646a78",
+        "tree_sha": "4702e9c28c2330b4cd1cba03a2c611b4df738920",
+        "product_fingerprint_unchanged": true,
+        "acceptance_fingerprint_unchanged": true,
+        "runtime_data_identity_unchanged": true,
+        "effective_model_effort_metadata": "not_exposed_by_agent_runtime_tools"
+      },
+      "blocking_findings": [],
+      "non_blocking_notes": [
+        "The unpaginated list has no established upper memory bound; the >4 MiB workflow passed.",
+        "Exact-head CI, protected PR integration, installed/default-path, release, and production evidence remain pending/out of scope."
+      ]
+    }
+  },
+  "drift": {"active": false, "events": [], "invalidated_receipts": []},
+  "integration": {
+    "authorized": true,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "ff287a248b02ef4b4d54db012c814f334e1c4b70",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "ff287a248b02ef4b4d54db012c814f334e1c4b70",
+    "branch_refs": [
+      "refs/heads/codex/rudder-d1-closeout-and-next-slice-20261008@ff287a248b02ef4b4d54db012c814f334e1c4b70",
+      "refs/heads/main@ff287a248b02ef4b4d54db012c814f334e1c4b70",
+      "refs/remotes/origin/main@ff287a248b02ef4b4d54db012c814f334e1c4b70"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rust-migration-main-refresh-20261008/rudder-oss",
+    "patch_tree_sha": "4702e9c28c2330b4cd1cba03a2c611b4df738920",
+    "expected_old_sha": "ff287a248b02ef4b4d54db012c814f334e1c4b70",
+    "cas": {"attempted": false, "succeeded": false, "observed_old_sha": null, "delivered_sha": null},
+    "index_update_mode": "none",
+    "publication_scope": "Commit and protected-PR publication after all candidate gates; no direct Main push or release."
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [],
+    "index_fingerprint_before": "94dba2e225a4276f6b9cbdc9978393c8829ad686",
+    "index_fingerprint_after": "94dba2e225a4276f6b9cbdc9978393c8829ad686",
+    "worktree_fingerprint_before": "3ff270d1e1008694630ad9649405b8340101f1eed8ce653501b9906781f7b743",
+    "worktree_fingerprint_after": "2c0a13e36a1368be4b04c7b1ec39f22b1f4c828be0cc91cf61a7e1ac8e094ed6",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "The live index is unstaged; git write-tree before and after alternate-index candidate-tree construction returned 94dba2e225a4276f6b9cbdc9978393c8829ad686.",
+      "The alternate candidate source tree was built with an explicit temporary GIT_INDEX_FILE; no live index update was performed.",
+      "The pre-update fingerprint covers git diff --binary HEAD plus SHA-1 object IDs for sorted untracked non-packet files, then SHA-256; the v25.23 packet is excluded to avoid self-reference.",
+      "The post-record fingerprint uses the same method after updating plan, ledger, status, and current-source-refresh; the delivery packet itself remains excluded to avoid self-reference.",
+      "All 17 visible dirty paths are candidate product paths or migration plan/ledger/status/packet records; no unrelated dirty path was found. The separate backup-list-adapt worktree remains untouched.",
+      "Live index tree stayed 94dba2e225a4276f6b9cbdc9978393c8829ad686; no staged changes or live-index writes occurred."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}

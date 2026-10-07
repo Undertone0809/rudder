@@ -10,7 +10,7 @@ import {
   workspaceBackups,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -27,6 +27,14 @@ import {
 } from "../services/workspace-backups.js";
 
 import workspaceBackupReadParity from "../../../native/fixtures/workspace-backup-read-parity.json";
+
+async function visibleBackupRows(database: ReturnType<typeof createDb>, orgId: string) {
+  return await database
+    .select()
+    .from(workspaceBackups)
+    .where(and(eq(workspaceBackups.orgId, orgId), ne(workspaceBackups.status, "deleted")))
+    .orderBy(desc(workspaceBackups.createdAt));
+}
 
 vi.setConfig({ hookTimeout: 30_000, testTimeout: 30_000 });
 
@@ -1207,7 +1215,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     const deleted = await service.remove(orgId, backup.id);
 
     expect(deleted.status).toBe("deleted");
-    await expect(service.list(orgId)).resolves.toEqual([]);
+    await expect(visibleBackupRows(db!, orgId)).resolves.toEqual([]);
   });
 
   it("blocks downloads when the artifact checksum no longer matches metadata", async () => {
@@ -1267,7 +1275,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     const deleted = await service.pruneExpired(new Date());
 
     expect(deleted).toHaveLength(1);
-    await expect(service.list(orgId)).resolves.toEqual([]);
+    await expect(visibleBackupRows(db!, orgId)).resolves.toEqual([]);
   });
 
   it("skips a due scheduled backup when the canonical workspace tree is unchanged", async () => {
@@ -1293,7 +1301,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
       comparedBackupId: initial.id,
       treeSha256: initial.treeSha256,
     }]);
-    const persisted = await service.list(orgId);
+    const persisted = await visibleBackupRows(db!, orgId);
     expect(persisted).toHaveLength(1);
     expect(persisted[0]?.manifest).toEqual(expect.objectContaining({
       lastScheduledCheck: {
@@ -1473,7 +1481,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     expect(restored.preRestoreBackup.triggerSource).toBe("pre_restore");
     expect(restored.preRestoreBackup.id).not.toBe(secondManual.id);
     expect(restored.preRestoreBackup.treeSha256).toBe(firstManual.treeSha256);
-    await expect(service.list(orgId)).resolves.toHaveLength(3);
+    await expect(visibleBackupRows(db!, orgId)).resolves.toHaveLength(3);
   });
 
   it("prunes expired backups even when another organization is skipped as unchanged", async () => {
@@ -1528,7 +1536,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     ]);
 
     expect(first.created.length + second.created.length).toBe(1);
-    await expect(service.list(orgId)).resolves.toHaveLength(1);
+    await expect(visibleBackupRows(db!, orgId)).resolves.toHaveLength(1);
   });
 
   it("commits the scheduled running claim before writing the artifact", async () => {
@@ -1614,7 +1622,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     ]);
 
     expect(stateBeforeRelease).toBe("blocked");
-    await expect(service.list(orgId)).resolves.toEqual([]);
+    await expect(visibleBackupRows(db!, orgId)).resolves.toEqual([]);
     releaseLock();
     await lockTransaction;
     const scheduled = await scheduledPromise;

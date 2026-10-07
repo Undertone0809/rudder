@@ -36,12 +36,62 @@ commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
   - 17c9613e3df39e2c67c07d455206312b7ac33a75
   - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
-updated_at: 2026-10-07
+updated_at: 2026-10-08
 ---
 
 # Purpose and terminal outcome
 
-## Current checkpoint (2026-10-07 v25.22; final review accepted, PR update pending)
+## Current checkpoint (2026-10-08 v25.23; stage review accepted, independent verifier pending)
+
+The latest protected `origin/main` is `ff287a248b02ef4b4d54db012c814f334e1c4b70`
+(tree `94dba2e225a4276f6b9cbdc9978393c8829ad686`), independently rechecked
+against the remote. PR #277 is merged and its exact-head Test and D1 smoke
+checks passed; its packet remains `integration_pending` because the original
+pre-integration index digest was not captured. That historical receipt gap is
+preserved, not backfilled.
+
+The next bounded candidate is v25.23 on branch
+`codex/rudder-d1-closeout-and-next-slice-20261008`, based on the current Main
+SHA above, in isolated worktree
+`/Users/zeeland/.codex/worktrees/rust-migration-main-refresh-20261008/rudder-oss`.
+Its 11 changed product/test paths have scoped content fingerprint
+`8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609`. It
+connects `GET /api/orgs/:orgId/workspace/backups` through the existing Node
+public listener and Board/org authorization to the signed private Actix/SQLx
+read, removes `workspaceBackupService.list`, and fails closed without a Node
+query fallback. The acceptance covers organization isolation, empty and
+large (>4 MiB) lists, null-expiry DST semantics, ordered live rows, read-only
+activity/outbox and row snapshots, malformed/incomplete stream recovery, and
+the dedicated bounded bridge timeout. The timeout correction also restores
+Project Create to its ordinary request timeout.
+
+Author checks on this exact source candidate: bridge tests 41/41; workspace
+backup service, route, and real-entry PostgreSQL tests 60/60; server
+typecheck; changed-file lint (8 files); Rust fmt check; and Rust PostgreSQL
+black-box test 1/1. The 60-test run followed a fresh exact-source foundation
+build (`rudder-server-foundation` SHA-256
+`9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3`) and
+workspace dependency build; an earlier invocation against a stale binary is
+explicitly not counted. The UI Playwright result from before the timeout-only
+correction is stale for this exact candidate and is not reused. Beauvoir's
+independent stage verdict is `accept` on the source fingerprint and packet
+snapshot SHA recorded in v25.23; the one non-blocking note is that unpaginated
+`fetch_all` memory grows with history size despite the >4 MiB coverage. A fresh
+independent public-workflow verifier and final reviewer are pending;
+the candidate is not installed/default-path verified. The standalone backup
+CLI/MCP capability does not exist, and this slice makes no CLI/MCP migration
+claim. Node still owns the public HTTP/auth entry and all backup create,
+restore, delete, file, scheduler, and recovery behavior; only the old Node
+list query is retired. The overall authority inventory remains 28 units;
+current evidence flags are 7 whole-row implemented, 7 privately verified,
+7 real-entry connected, 1 default-path verified, and 1 scoped legacy reader
+retired (overlapping evidence states, not a percentage).
+
+Overall claims remain `implementation_complete=false`, `release_ready=false`,
+and `production_verified=false`. No installed acceptance, release, production
+database, or traffic change is claimed.
+
+## Historical checkpoint (2026-10-07 v25.22; final review accepted, PR update pending)
 
 The current base remains `origin/main` `a3f49e86183b66c694fd8f2ba44324ce42b9b6b9` (tree `a0db6520beb8e178cdeaa0229bf4553e160532cb`). The isolated D1 candidate is branch `codex/d1-resource-compat-real-entry-20261005`, HEAD `4fd984a61e41ac2fe8e487430ec72e373367dd46`, tree `e13c5bbb5e3acf6a22cec18280f60aa88b83b59a`, with source fingerprint `98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94` over 48 non-plan paths. Commit `4fd984a6` records the four already-reviewed v25.22 workflow/test/smoke paths from its parent `6b17bdfb`; recomputing the non-plan diff confirms byte-identical source content and fingerprint. v25.22 repairs both v25.21 stage-review findings in the branding real-entry harness: audit failure retries use the identical idempotency key and payload with one receipt-linked effect set; restart recovery uses an actual Rust mutation receipt and verifies stable receipt/activity/outbox identities. The delivery claim is explicitly retryable at-least-once with a stable outbox dedupe key, not exactly-once network delivery. No product or Rust runtime source changed in this delta.
 
@@ -1895,3 +1945,131 @@ organization-lifecycle parent-delete authority. Keep the workspace-backup
 successor parked until then. The full migration remains active with
 `implementation_complete=false`, `release_ready=false`, and
 `production_verified=false`.
+
+## 2026-10-08 Continuation — Main refresh after PR #277
+
+The current protected Main is `ff287a248b02ef4b4d54db012c814f334e1c4b70`
+(tree `94dba2e225a4276f6b9cbdc9978393c8829ad686`), merged from PR #277 at
+`2026-10-07T17:59:43Z`. The merged PR head was
+`06a6450491392e1e8f064f1eba060b4a5cc5d7e5`; it has the same tree as Main and
+differs from reviewed source `4fd984a61e41ac2fe8e487430ec72e373367dd46` only
+in six plan/ledger/status/packet/evidence paths. The 48-path product-source
+fingerprint is unchanged. Exact-head Test run `37659806482` and D1 real-entry
+smoke `37659806518` both succeeded. Every applicable Test job passed;
+`Affected qualification` was skipped and `Qualification summary` passed. The
+macOS arm64 packaged smoke and four native target checks passed. These are
+candidate CI/package-smoke results, not installed-default acceptance or
+production evidence.
+
+The v25.22 reviewer, composite verifier, and final-review receipts remain
+bounded: stage/final `accept`; verifier `PASS` composes complete workflows on
+content-equivalent `6b17bdfb` with the exact `4fd984a6` race suite (3/3). It
+does not claim that the complete workflows were rerun on `4fd`, installed
+default Rust ingress, Node authority retirement, exactly-once network
+delivery, or production. The delivery packet now records the merged PR and
+exact CI. It intentionally remains `integration_pending`: the candidate's
+pre-integration index digest was not captured, so the strict historical
+before/after index-preservation proof required for a terminal `delivered`
+receipt cannot be reconstructed from the current snapshot. The remote PR merge
+did not update a local shared index; the original candidate worktree still has
+its previously listed unstaged/untracked plan work. Do not turn this evidence
+gap into a claim that the PR is unmerged—the code is on Main, while the packet
+terminal receipt is withheld pending preservation reconciliation.
+
+The post-merge authority audit reconfirms 28 authority rows, including
+identity/session, analytics collector, managed MCP, embedded PostgreSQL,
+migration apply, update/recovery, CLI/MCP, and Electron attachment boundaries.
+The overlapping evidence flags remain 7 implemented, 7 privately verified,
+6 real-entry connected, 1 default-path verified, 0 old authorities retired,
+and 15 partial-capability rows; they are not percentages. D1 now has merged
+real-entry evidence for selected branding, Project–Goal, Project create/delete,
+owned Resource edit/delete/replay, CLI/MCP callers, transaction rollback, and
+receipt-linked outbox recovery. Node remains the public HTTP/WebSocket and
+auth/session entry, Drizzle migration authority, and owner of many writers;
+these rows must not be upgraded to default-path or retired status.
+
+The organization-delete audit corrected an inaccurate ledger description:
+the current Node transaction deletes child rows and tenant activity, then
+attempts five local-directory cleanups after commit; failures only warn, with
+no durable deletion event or cleanup-retry receipt. The user has not selected
+whether to preserve that behavior or authorize a durable audit/recovery semantic
+change. Keep organization parent deletion parked on that product choice and
+the lifecycle-fence/legacy-writer audit; continue independent migration work.
+
+The next bounded slice is the existing Rust workspace-backup-list read handler.
+On current Main, `GET /api/orgs/:orgId/workspace/backups` still queries
+`workspaceBackupService.list()` in Node. The old candidate's private Rust
+handler and public bridge are not treated as accepted; its v6/v7 receipts are
+stale and its null-expiry DST correction has not been independently verified.
+A worker is re-adapting only the needed source/tests onto `ff287`, preserving
+the Board/org access contract, response shape, and fail-closed bridge behavior.
+The acceptance must prove positive rows, large-list behavior, null-expiry DST
+semantics, auth/failure behavior, and that no silent Node query fallback
+remains. Create/restore/delete and scheduled backup writers are explicitly
+outside this read-only slice and stay Node-owned.
+
+This continuation is still pre-cutover. No production database, production
+traffic, stable release, or user data was changed. Overall claims remain
+`implementation_complete=false`, `release_ready=false`, and
+`production_verified=false`.
+
+## 2026-10-08 checkpoint: v25.23 verifier pass
+
+The workspace-backup list-read candidate remains on the isolated
+`codex/rudder-d1-closeout-and-next-slice-20261008` worktree at Main base
+`ff287a248b02ef4b4d54db012c814f334e1c4b70`. The product fingerprint is
+`8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609`; fresh
+Rust binary SHA-256 is
+`9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3`.
+Stage review accepted, independent verifier Hubble returned `PASS`, and final
+reviewer Bohr returned `accept` on the
+exact candidate: the authenticated public Node route reached signed private
+Actix/SQLx and disposable PostgreSQL (1/1 real-entry workflow; 50/50 supporting
+route/bridge tests). PostgreSQL identity and all six fixture organization IDs
+are bound in delivery packet v25.23; the initial unsafe global-runner attempt
+remains recorded as `QUESTION`, followed by the isolated `config:false` rerun.
+No blocking review findings remain for this bounded slice.
+
+The code is not yet committed, published, or merged. PR #277 is already merged
+at `ff287a248b02ef4b4d54db012c814f334e1c4b70`; a new protected PR and exact-head
+CI are still required for this slice. After final `accept`, recheck the scoped
+diff and index preservation, commit only this candidate and its delivery
+records, open/update the protected PR, and wait for exact-head CI before merge.
+
+The next bounded authority slice is workspace-backup file-tree and single-file
+preview reads (`GET .../:backupId/files` and `GET .../:backupId/file`), after
+this list-read slice merges and Main is refreshed. Reuse Rust archive inspection
+and preview behavior, but add signed private-route authorization and prove the
+Node readers are not called. Keep download, create, restore, delete, scheduler,
+recovery, and nonexistent CLI/MCP capability outside that slice. Recheck the
+live Main implementation before starting it. Global claims remain
+`implementation_complete=false`, `release_ready=false`, and
+`production_verified=false`; no production or release action occurred.
+
+## 2026-10-08 continuation: v25.23 source-commit rebind
+
+The accepted workspace-backup list-read source is now materialized as product
+commit `b6a058061fd6a6802af0e163bef3e09932404c22`, parented directly on current
+Main `ff287a248b02ef4b4d54db012c814f334e1c4b70`. Its tree is
+`4702e9c28c2330b4cd1cba03a2c611b4df738920`, with the same 11 product paths
+and fingerprint `8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609`
+that were reviewed and independently exercised. Beauvoir, Hubble, and Bohr
+confirmed metadata-only rebinding; runtime/data and acceptance identity did
+not change. The agent runtime tools do not expose effective model/effort
+metadata, so no downgrade is inferred; exact requested `gpt-6-luna/xhigh`
+arguments are recorded.
+
+The product commit object exists, but its branch has not been pushed and the
+protected PR/exact-head CI have not started. The live index remains unchanged
+at `94dba2e225a4276f6b9cbdc9978393c8829ad686`; the 11 source paths plus their
+delivery records are the only visible dirty work, and the separate
+`codex/workspace-backup-list-main-adapt-20261008` worktree remains preserved
+but unselected. Keep this delivery `integration_pending` until the protected
+PR and exact-head CI pass.
+
+Once merged, refresh Main and begin the next read-only slice: workspace-backup
+file-tree listing and bounded single-file preview. Do not expand it to
+download, create, restore, delete, scheduling, recovery, or nonexistent CLI/MCP
+capabilities. Continue updating the authority ledger and keep
+`implementation_complete=false`, `release_ready=false`, and
+`production_verified=false` until their separate evidence gates are met.

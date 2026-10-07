@@ -152,6 +152,7 @@ function createFakeRustBridge(
     projectRead: unexpectedBridgeCall,
     projectCreate: unexpectedBridgeCall,
     memberDirectory: unexpectedBridgeCall,
+    workspaceBackupList: unexpectedBridgeCall,
     organizationBranding: unexpectedBridgeCall,
     organizationBrandingForActor,
     projectGoalSet: unexpectedBridgeCall,
