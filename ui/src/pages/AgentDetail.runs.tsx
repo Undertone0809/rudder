@@ -43,6 +43,7 @@ import {
 } from "react";
 import { activityApi } from "../api/activity";
 import { agentRunsApi } from "../api/agent-runs";
+import { ApiError } from "../api/client";
 import {
   agentsApi,
   type ClaudeLoginResult
@@ -952,21 +953,52 @@ function RunListEmptyState({ message }: { message: string }) {
 
 /* ---- Run Detail (expanded) ---- */
 
-export function RunDetail({
-  run: initialRun,
-  agentRouteId,
-  agentRuntimeType,
-  onAnnotate,
-  onAskAgent,
-  onCreateTask,
-}: {
+type RunDetailProps = {
   run: HeartbeatRun;
   agentRouteId: string;
   agentRuntimeType: string;
   onAnnotate?: (input: TranscriptRunAnnotationInput) => void;
   onAskAgent: (diagnostics: string) => void;
   onCreateTask: (diagnostics: string) => Promise<void>;
-}) {
+};
+
+export function RunDetail(props: RunDetailProps) {
+  const [searchParams] = useSearchParams();
+  const { t } = useI18n();
+  const detailQuery = useQuery({
+    queryKey: queryKeys.runDetail(props.run.id),
+    queryFn: () => agentRunsApi.get(props.run.id),
+    enabled: Boolean(props.run.id),
+    retry: (failureCount, error) => !(error instanceof ApiError && error.status === 404) && failureCount < 3,
+  });
+  const isNotFound = detailQuery.error instanceof ApiError && detailQuery.error.status === 404;
+
+  if (isNotFound) {
+    return (
+      <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-sm">
+        <span>{t("agentRuns.runNotFound")}</span>
+        <Link className="shrink-0 font-medium underline underline-offset-2" to={appendRunSearchParams(`/agents/${props.agentRouteId}/runs`, searchParams)}>
+          {t("agentRuns.backToRuns")}
+        </Link>
+      </div>
+    );
+  }
+
+  if (detailQuery.isPending || detailQuery.isFetching) {
+    return <p role="status" className="text-sm text-muted-foreground">{t("agentRuns.loadingRun")}</p>;
+  }
+
+  return <RunDetailContent {...props} run={detailQuery.data ?? props.run} />;
+}
+
+function RunDetailContent({
+  run,
+  agentRouteId,
+  agentRuntimeType,
+  onAnnotate,
+  onAskAgent,
+  onCreateTask,
+}: RunDetailProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [debugTaskPending, setDebugTaskPending] = useState(false);
@@ -974,12 +1006,6 @@ export function RunDetail({
   const debugTaskPendingRef = useRef(false);
   const [searchParams] = useSearchParams();
   const { confirm } = useDialog();
-  const { data: hydratedRun } = useQuery({
-    queryKey: queryKeys.runDetail(initialRun.id),
-    queryFn: () => agentRunsApi.get(initialRun.id),
-    enabled: Boolean(initialRun.id),
-  });
-  const run = hydratedRun ?? initialRun;
   const displayStatus = run.executionPhase === "waiting_for_network" ? "waiting_for_network" : run.status;
   const metrics = runMetrics(run);
   const [sessionOpen, setSessionOpen] = useState(false);

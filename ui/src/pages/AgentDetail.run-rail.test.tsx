@@ -2,7 +2,7 @@
 
 import type { HeartbeatRun } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentRunsApi } from "../api/agent-runs";
@@ -26,6 +26,7 @@ const testState = vi.hoisted(() => ({
   navigate: vi.fn(),
   isMobile: false,
   searchParams: new URLSearchParams("runScene=chat&panel=discarded"),
+  readerRequest: vi.fn(),
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -72,7 +73,12 @@ vi.mock("./AgentDetail.chat-context", () => ({
 }));
 
 vi.mock("./AgentDetail.run-log", () => ({
-  LogViewer: () => null,
+  LogViewer: ({ run }: { run: HeartbeatRun }) => {
+    useEffect(() => {
+      testState.readerRequest(run.id);
+    }, [run.id]);
+    return <div data-testid="run-log-viewer" />;
+  },
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -147,6 +153,7 @@ let sidePanelControls: ReturnType<typeof useSidePanel> | null = null;
 
 beforeEach(() => {
   testState.navigate.mockReset();
+  testState.readerRequest.mockReset();
   testState.isMobile = false;
   testState.searchParams = new URLSearchParams("runScene=chat&panel=discarded");
   container = document.createElement("div");
@@ -587,6 +594,61 @@ describe("RunsTab shared rail branches", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Run not found");
     expect(container.querySelector<HTMLAnchorElement>('[role="alert"] a')?.getAttribute("to"))
       .toContain("/agents/agent-route/runs");
+  });
+
+  it("shows Run not found for a stale selected list item without retrying or starting Reader", async () => {
+    queryClient.setDefaultOptions({
+      queries: { enabled: false, retry: true, retryDelay: 0, staleTime: Infinity },
+    });
+    const staleRun = run({ id: "stale-listed-run", resultJson: { summary: "Stale list summary" } });
+    const getRun = vi.spyOn(agentRunsApi, "get").mockRejectedValue(new ApiError("Not found", 404, null));
+    const readerRequest = vi.spyOn(agentRunsApi, "transcript")
+      .mockRejectedValue(new ApiError("Transcript missing", 404, null));
+    testState.readerRequest.mockImplementation((runId: string) => {
+      void agentRunsApi.transcript(runId, {
+        cursor: null,
+        includeOutput: false,
+        turnLimit: 50,
+        maxChars: 4_000,
+      }).catch(() => undefined);
+    });
+    queryClient.setQueryData(queryKeys.runDetail(staleRun.id), staleRun);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.runDetail(staleRun.id) });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <RunsTab
+              runs={[staleRun]}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={staleRun.id}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    await act(async () => {
+      await vi.waitFor(() => expect(queryClient.getQueryState(queryKeys.runDetail(staleRun.id))?.status).toBe("error"));
+    });
+
+    const detailPane = container.querySelector<HTMLElement>("[data-testid='agent-runs-detail-pane']");
+    await act(async () => {
+      await vi.waitFor(() => expect(detailPane?.textContent).toContain("Run not found"));
+    });
+    const selectedRow = container.querySelector<HTMLElement>("[data-testid='agent-run-conversation-group-row'][aria-current='page']");
+    expect(getRun).toHaveBeenCalledTimes(1);
+    expect(selectedRow?.textContent).toContain("Stale list summary");
+    expect(detailPane?.textContent).toContain("Run not found");
+    expect(detailPane?.textContent).toContain("Back to runs");
+    expect(detailPane?.textContent).not.toContain("Stale list summary");
+    expect(detailPane?.textContent).not.toContain("Transcript missing");
+    expect(detailPane?.querySelector("[data-testid='run-log-viewer']")).toBeNull();
+    expect(readerRequest).not.toHaveBeenCalled();
   });
 
   it("offers a retry when a deep-linked run request fails", async () => {
