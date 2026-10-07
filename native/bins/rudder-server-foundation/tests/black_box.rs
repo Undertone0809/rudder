@@ -5,7 +5,7 @@ use rudder_server_foundation_core::{
     ACTOR_ENVELOPE_AUDIENCE, ACTOR_ENVELOPE_HEADER, ACTOR_ENVELOPE_REQUEST_ID_HEADER,
     ActorEnvelope, ActorIdentity, IDEMPOTENCY_KEY_HEADER, MEMBER_DIRECTORY_ACTION,
     ORGANIZATION_BRANDING_ACTION, ORGANIZATION_RESOURCE_ACTION, PROJECT_CREATE_ACTION,
-    PROJECT_DELETE_ACTION, PROJECT_GOAL_SET_ACTION,
+    PROJECT_DELETE_ACTION, PROJECT_GOAL_SET_ACTION, WORKSPACE_BACKUP_LIST_ACTION,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -1928,6 +1928,61 @@ fn signed_member_directory_get_with_sent_route(
     http_request_with_headers(addr, "GET", sent_route, &headers).expect("member directory request")
 }
 
+fn signed_workspace_backup_list_get(
+    addr: SocketAddr,
+    route: &str,
+    org_id: &str,
+    secret: &str,
+    nonce: &str,
+    actor_kind: &str,
+) -> String {
+    signed_workspace_backup_list_get_with_sent_route(
+        addr, route, route, org_id, secret, nonce, actor_kind,
+    )
+}
+
+fn signed_workspace_backup_list_get_with_sent_route(
+    addr: SocketAddr,
+    signed_route: &str,
+    sent_route: &str,
+    org_id: &str,
+    secret: &str,
+    nonce: &str,
+    actor_kind: &str,
+) -> String {
+    let request_id = format!("request-{nonce}");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_secs();
+    let envelope = ActorEnvelope::new(
+        ActorIdentity::new(actor_kind, "backup-list-actor").expect("test actor"),
+        org_id,
+        "session-backup-list",
+        1,
+        ACTOR_ENVELOPE_AUDIENCE,
+        "GET",
+        signed_route,
+        WORKSPACE_BACKUP_LIST_ACTION,
+        &[],
+        &request_id,
+        nonce,
+        now.saturating_sub(1),
+        now + 120,
+    )
+    .expect("workspace backup list envelope")
+    .sign(secret.as_bytes())
+    .expect("sign workspace backup list envelope");
+    let envelope_text =
+        serde_json::to_string(&envelope).expect("serialize workspace backup list envelope");
+    let headers = [
+        (ACTOR_ENVELOPE_HEADER, envelope_text.as_str()),
+        (ACTOR_ENVELOPE_REQUEST_ID_HEADER, request_id.as_str()),
+    ];
+    http_request_with_headers(addr, "GET", sent_route, &headers)
+        .expect("workspace backup list request")
+}
+
 fn assert_parity_error(response: &str, fixture: &Value, error_name: &str) {
     let error = &fixture["apiErrors"][error_name];
     let status = error["status"].as_u64().expect("parity error status");
@@ -2070,6 +2125,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn workspace_backup_list_uses_postgres_and_preserves_the_read_only_contract() {
+    const SECRET: &str = "workspace-backup-list-test-secret";
     let postgres = PostgresHarness::start();
     let pool = PgPoolOptions::new()
         .max_connections(1)
@@ -2085,15 +2141,52 @@ async fn workspace_backup_list_uses_postgres_and_preserves_the_read_only_contrac
     let (child, stdout, bound_addr) = spawn_server(&[
         ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
         ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
         ("RUDDER_NATIVE_MAX_RESPONSE_BYTES", "4096"),
     ]);
 
-    let org_one = get_with_retry(
+    let route = "/internal/orgs/00000000-0000-0000-0000-000000000001/workspace/backups";
+    let missing_envelope = get_with_retry(bound_addr, route);
+    assert!(
+        missing_envelope.starts_with("HTTP/1.1 401"),
+        "{missing_envelope}"
+    );
+    assert!(
+        missing_envelope.contains("actor_envelope_invalid"),
+        "{missing_envelope}"
+    );
+
+    let agent = signed_workspace_backup_list_get(
         bound_addr,
-        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
+        route,
+        "00000000-0000-0000-0000-000000000001",
+        SECRET,
+        "backup-list-agent",
+        "agent",
+    );
+    assert!(agent.starts_with("HTTP/1.1 403"), "{agent}");
+    assert!(agent.contains("board_actor_required"), "{agent}");
+
+    let wrong_secret = signed_workspace_backup_list_get(
+        bound_addr,
+        route,
+        "00000000-0000-0000-0000-000000000001",
+        "wrong-secret",
+        "backup-list-wrong-secret",
+        "user",
+    );
+    assert!(wrong_secret.starts_with("HTTP/1.1 401"), "{wrong_secret}");
+
+    let org_one = signed_workspace_backup_list_get(
+        bound_addr,
+        route,
+        "00000000-0000-0000-0000-000000000001",
+        SECRET,
+        "backup-list-org-one",
+        "user",
     );
     assert!(org_one.starts_with("HTTP/1.1 200"), "{org_one}");
-    let org_one_body = response_json(&org_one);
+    let org_one_body = response_workspace_backup_list_json(&org_one);
     let backups = org_one_body["backups"].as_array().expect("backup array");
     assert_eq!(
         backups.len(),
@@ -2109,24 +2202,52 @@ async fn workspace_backup_list_uses_postgres_and_preserves_the_read_only_contrac
     assert_eq!(backups[1]["warnings"], serde_json::json!(["older"]));
     assert_eq!(backups[1]["expiresAt"], "2026-10-15T12:00:00.000Z");
 
-    let org_two = get_with_retry(
+    let replay = signed_workspace_backup_list_get(
         bound_addr,
-        "/api/orgs/00000000-0000-0000-0000-000000000002/workspace/backups",
+        route,
+        "00000000-0000-0000-0000-000000000001",
+        SECRET,
+        "backup-list-org-one",
+        "user",
     );
-    let org_two_body = response_json(&org_two);
+    assert!(replay.starts_with("HTTP/1.1 401"), "{replay}");
+
+    let org_two = signed_workspace_backup_list_get(
+        bound_addr,
+        "/internal/orgs/00000000-0000-0000-0000-000000000002/workspace/backups",
+        "00000000-0000-0000-0000-000000000002",
+        SECRET,
+        "backup-list-org-two",
+        "user",
+    );
+    let org_two_body = response_workspace_backup_list_json(&org_two);
     assert_eq!(org_two_body["backups"].as_array().unwrap().len(), 1);
     assert_eq!(
         org_two_body["backups"][0]["orgId"],
         "00000000-0000-0000-0000-000000000002"
     );
 
-    let unknown = get_with_retry(
+    let unknown = signed_workspace_backup_list_get(
         bound_addr,
-        "/api/orgs/00000000-0000-0000-0000-000000000099/workspace/backups",
+        "/internal/orgs/00000000-0000-0000-0000-000000000099/workspace/backups",
+        "00000000-0000-0000-0000-000000000099",
+        SECRET,
+        "backup-list-unknown-org",
+        "user",
     );
     assert!(unknown.starts_with("HTTP/1.1 404"), "{unknown}");
     assert!(unknown.contains("organization_not_found"), "{unknown}");
 
+    let public_untrusted = http_request(
+        bound_addr,
+        "GET",
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
+    )
+    .expect("untrusted public route");
+    assert!(
+        public_untrusted.starts_with("HTTP/1.1 404"),
+        "{public_untrusted}"
+    );
     let post = http_request(
         bound_addr,
         "POST",
@@ -2139,15 +2260,19 @@ async fn workspace_backup_list_uses_postgres_and_preserves_the_read_only_contrac
     let (limited_child, limited_stdout, limited_addr) = spawn_server(&[
         ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
         ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
         ("RUDDER_NATIVE_MAX_RESPONSE_BYTES", "128"),
     ]);
-    let limited = get_with_retry(
+    let limited = signed_workspace_backup_list_get(
         limited_addr,
-        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
+        route,
+        "00000000-0000-0000-0000-000000000001",
+        SECRET,
+        "backup-list-limited-response",
+        "user",
     );
-    assert!(limited.starts_with("HTTP/1.1 500"), "{limited}");
-    assert!(limited.contains("response_limit"), "{limited}");
-    assert!(response_body_len(&limited) <= 128, "{limited}");
+    assert!(limited.starts_with("HTTP/1.1 200"), "{limited}");
+    assert_eq!(response_workspace_backup_list_json(&limited), org_one_body);
     stop_server(limited_child, limited_stdout);
 }
 
@@ -2888,9 +3013,75 @@ fn response_parts(response: &[u8]) -> (String, &[u8]) {
     )
 }
 
+fn decoded_http_body(response: &[u8]) -> Vec<u8> {
+    let (headers, body) = response_parts(response);
+    if !headers.lines().any(|line| {
+        line.to_ascii_lowercase()
+            .starts_with("transfer-encoding: chunked")
+    }) {
+        return body.to_vec();
+    }
+
+    let mut decoded = Vec::new();
+    let mut offset = 0;
+    loop {
+        let line_end = body[offset..]
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .map(|relative| offset + relative)
+            .expect("chunk size terminator");
+        let size_text = std::str::from_utf8(&body[offset..line_end]).expect("chunk size");
+        let size = usize::from_str_radix(size_text.split(';').next().unwrap_or_default(), 16)
+            .expect("chunk size hex");
+        offset = line_end + 2;
+        if size == 0 {
+            break;
+        }
+        let chunk_end = offset + size;
+        assert!(chunk_end + 2 <= body.len(), "complete chunk payload");
+        decoded.extend_from_slice(&body[offset..chunk_end]);
+        assert_eq!(&body[chunk_end..chunk_end + 2], b"\r\n");
+        offset = chunk_end + 2;
+    }
+    decoded
+}
+
 fn response_json(response: &str) -> Value {
-    let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response body");
-    serde_json::from_str(body).expect("JSON response body")
+    serde_json::from_slice(&decoded_http_body(response.as_bytes())).expect("JSON response body")
+}
+
+fn response_workspace_backup_list_json(response: &str) -> Value {
+    let bytes = response.as_bytes();
+    let (headers, _) = response_parts(bytes);
+    assert!(headers.contains("application/x-rudder-workspace-backup-list+ndjson"));
+    let body = decoded_http_body(bytes);
+    let mut backups = Vec::new();
+    let mut digest = Sha256::new();
+    let mut terminal = None;
+    for line in body.split(|byte| *byte == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let frame: Value = serde_json::from_slice(line).expect("workspace backup stream frame");
+        match frame["type"].as_str().expect("frame type") {
+            "backup" => {
+                assert!(terminal.is_none(), "no backup rows after terminal frame");
+                digest.update(line);
+                digest.update(b"\n");
+                backups.push(frame["backup"].clone());
+            }
+            "end" => {
+                assert!(terminal.is_none(), "one terminal frame");
+                assert_eq!(frame["count"].as_u64(), Some(backups.len() as u64));
+                let checksum = format!("{:x}", digest.clone().finalize());
+                assert_eq!(frame["sha256"].as_str(), Some(checksum.as_str()));
+                terminal = Some(());
+            }
+            kind => panic!("unknown workspace backup stream frame: {kind}"),
+        }
+    }
+    assert!(terminal.is_some(), "stream has a terminal integrity frame");
+    serde_json::json!({ "backups": backups })
 }
 
 fn http_get_with_body(addr: SocketAddr, body: &[u8]) -> io::Result<String> {
@@ -3727,15 +3918,15 @@ INSERT INTO workspace_backups (
   compressed_size, manifest, warnings, expires_at, created_at, updated_at
 ) VALUES
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001',
-   'completed', 'manual', '/backups/older.tar.zst', 2, 20, 10, '{"version":1}', '["older"]',
+   'succeeded', 'manual', '/backups/older.tar.zst', 2, 20, 10, '{"version":1}', '["older"]',
    '2026-10-15T12:00:00Z', '2026-08-30T12:00:00Z', '2026-08-30T12:00:00Z'),
   ('10000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001',
-   'completed', 'scheduled', '/backups/newer.tar.zst', 3, 30, 15, '{"version":1}', '{}',
+   'succeeded', 'scheduled', '/backups/newer.tar.zst', 3, 30, 15, '{"version":1}', '{}',
    NULL, '2026-08-31T12:00:00Z', '2026-08-31T12:00:00Z'),
   ('10000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001',
    'deleted', 'manual', '/backups/deleted.tar.zst', 1, 10, 5, '{}', '[]',
    NULL, '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z'),
   ('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002',
-   'completed', 'manual', '/backups/org-two.tar.zst', 1, 10, 5, '{}', '[]',
+   'succeeded', 'manual', '/backups/org-two.tar.zst', 1, 10, 5, '{}', '[]',
    NULL, '2026-08-31T12:00:00Z', '2026-08-31T12:00:00Z');
 "#;

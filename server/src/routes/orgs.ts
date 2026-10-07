@@ -47,7 +47,7 @@ import {
 import { libraryEntryService } from "../services/library-entries.js";
 import { forwardRustOrganizationResourceMutation } from "../services/organization-resource-rust-authority.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
-import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { RustFoundationBridgeError, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -912,8 +912,27 @@ export function organizationRoutes(
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
-    const backups = await workspaceBackups.list(orgId);
-    res.json({ backups });
+    if (!rustFoundationBridge) {
+      throw new RustFoundationBridgeError("request_failed", "Rust workspace backup list bridge is unavailable");
+    }
+    const response = await rustFoundationBridge.workspaceBackupList(req, orgId);
+    if (response.status === 404) {
+      let reason: unknown;
+      try {
+        reason = JSON.parse(response.body.toString("utf8")).reason;
+      } catch {
+        reason = undefined;
+      }
+      if (reason === "organization_not_found") {
+        res.status(404).json({ error: "Organization not found" });
+        return;
+      }
+    }
+    if (response.status >= 500) {
+      res.status(response.status).json({ error: "Internal server error" });
+      return;
+    }
+    res.status(response.status).type(response.contentType).send(response.body);
   });
 
   router.post("/:orgId/workspace/backups", validate(createWorkspaceBackupSchema), async (req, res) => {
