@@ -36,45 +36,150 @@ commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
   - 17c9613e3df39e2c67c07d455206312b7ac33a75
   - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
-updated_at: 2026-10-06
+updated_at: 2026-10-07
 ---
 
 # Purpose and terminal outcome
 
-## Current checkpoint (2026-10-06)
+## Current checkpoint (2026-10-07 v25.22; final review accepted, PR update pending)
 
-At 2026-10-06 09:42 UTC, `git ls-remote origin refs/heads/main` observed Main at
+The current base remains `origin/main` `a3f49e86183b66c694fd8f2ba44324ce42b9b6b9` (tree `a0db6520beb8e178cdeaa0229bf4553e160532cb`). The isolated D1 candidate is branch `codex/d1-resource-compat-real-entry-20261005`, HEAD `4fd984a61e41ac2fe8e487430ec72e373367dd46`, tree `e13c5bbb5e3acf6a22cec18280f60aa88b83b59a`, with source fingerprint `98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94` over 48 non-plan paths. Commit `4fd984a6` records the four already-reviewed v25.22 workflow/test/smoke paths from its parent `6b17bdfb`; recomputing the non-plan diff confirms byte-identical source content and fingerprint. v25.22 repairs both v25.21 stage-review findings in the branding real-entry harness: audit failure retries use the identical idempotency key and payload with one receipt-linked effect set; restart recovery uses an actual Rust mutation receipt and verifies stable receipt/activity/outbox identities. The delivery claim is explicitly retryable at-least-once with a stable outbox dedupe key, not exactly-once network delivery. No product or Rust runtime source changed in this delta.
+
+Packet [`v25.22`](2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.22.json) is rebound to source SHA/tree `4fd984a61e41ac2fe8e487430ec72e373367dd46`/`e13c5bbb5e3acf6a22cec18280f60aa88b83b59a` and the unchanged acceptance fingerprint `fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b`. Goodall re-bound the stage `accept` and returned the final handoff `accept` on packet snapshot SHA-256 `0bd0e5d34f63ee7093649e60cd17e4d6360a1600acb4bdb93ccbb96f4fcb4c88`. McClintock's composite verifier returned `PASS`, recorded in `artifacts/2026-10-07-rudder-full-rust-backend-completion-v25.22-composite-verifier.json` (SHA-256 `5a453332f6aa519d5944f9a0bffedf6277830d0ef5ff47d417b6d4fa1777684f`). The final reviewer confirmed the packet-hash change from the verifier snapshot was metadata-only and acceptance criteria were unchanged.
+
+Lagrange's prior independent evidence covers the authenticated Resource lifecycle, Chat permissions/branding continuity, built CLI plus stdio MCP, identical-key retry, and receipt-linked restart recovery on content-equivalent product sources at `6b17bdfb`. McClintock separately ran the previously omitted ownership-handoff race suite on exact `4fd984a6`: 3/3 passed using disposable PostgreSQL 18.1 (system identifier `7693946281982178924`, PID 54932, port 62626); teardown found no process, listener, or temporary directory. The full Resource/Chat/CLI/MCP/retry/restart workflows were not rerun on 4fd. The combined `PASS` is explicitly this evidence composition, not a fresh full-workflow run. This remains authenticated Node public API -> private Actix/SQLx plus CLI/MCP caller coverage; it does not prove installed/default Rust ingress, broad Node authority retirement, or production.
+
+PR #277 is open at remote head `c623274c3bde11a5c6fb45370b09c823c46604e6`; candidate `4fd984a6` is not pushed and has no exact-head CI. The old head had Architecture ratchet and dependent Qualification summary failures, plus a cancelled x86_64 macOS native check. A read-only local comparison against Main finds no architecture regressions: `chats.ts` is 5,259 lines vs 5,263 at baseline, and `routes/chats.ts` is 3,442 vs 3,444. This local result does not replace CI. The final-review gate is now accepted; next checkpoint only the scoped files, fast-forward update the existing PR, and require exact-head CI—including the x86_64 Apple native job—before protected integration.
+
+The authority inventory remains 28 units: 7 whole-row implemented, 7 privately verified, 6 real-entry connected, 1 default-path verified, 0 old authorities retired, and 15 partial-capability rows. These flags overlap and are not percentages; audit source `877e7ec625d831636306414fda00949ab4080ef8`. Node still owns the public listener, auth/session, migration apply, schedulers/workers, and many first-party writers. The embedded PostgreSQL migration runner plus first-party identity, analytics, managed MCP, and maintenance/update-recovery authorities remain in scope. `implementation_complete=false`, `release_ready=false`, and `production_verified=false`.
+
+The first post-D1 authority slice remains Project deletion ownership. A fresh Main audit found the per-Project `DELETE /api/projects/:id` Node service already rejects Rust-owned Projects and the route forwards Rust-owned deletes without fallback. The remaining writer is the organization-delete cascade, which currently deletes Project rows while accepting Rust-owned Project-Goal state; existing tests explicitly preserve that cascade. Before coding, make the authority boundary explicit: either treat organization deletion as a distinct atomic higher-level Rust authority, or reject a cascade containing Rust-owned Projects before its first business write. Do not silently change organization-delete semantics. The exact route/store/test gap is recorded in [the Project deletion audit](artifacts/2026-10-07-rudder-project-delete-ownership-audit.json). The workspace-backup-list read candidate is preserved but parked; its D1 overlap is reconciled only after D1 integration. Identity/session, analytics collector, managed MCP, embedded PostgreSQL lifecycle, and migration apply remain Node/Electron-owned; maintenance/update recovery is mixed. The single authorized C07 runner handoff was already sent; `C07_PASS=false`; do not repeat it. No production database, traffic, stable release, deployment, or user data was touched.
+
+Next: checkpoint the accepted v25.22 slice and update PR #277, then run exact-head CI. After D1 integration, refresh Main and begin the organization-delete cascade ownership slice only after its fence, cascade/audit/outbox semantics, and post-commit storage recovery boundary are reviewed. Continue Phase 0–7; this is not migration completion.
+
+### Superseded intermediate checkpoint (2026-10-07 14:56 UTC)
+
+Historical only; this snapshot predates the exact-candidate verifier and final
+review receipts recorded in the current v25.22 checkpoint below.
+
+This refresh supersedes the earlier PR/review sequencing language in the v25.22 checkpoint above. PR #277 remains open at old remote head `c623274c3bde11a5c6fb45370b09c823c46604e6`; local candidate `4fd984a61e41ac2fe8e487430ec72e373367dd46` is not pushed, and exact-head CI is absent. Goodall rebound the stage acceptance to this source/tree after verifying content equivalence. Independent verifier Erdos is running the missing race suite; final-review rebind follows its terminal result. Only after those receipts are bound will the branch be pushed and CI run.
+
+The organization-delete audit's independent recommendation is to retain whole-organization deletion semantics as a distinct atomic parent authority, not reinterpret it as per-Project DELETE and not loop over Projects. The current Board-authorized Node cascade remains active until a dedicated Rust organization-lifecycle command can atomically perform the cascade, preserve audit/history and post-commit storage cleanup, and retire Node fallback. Rebase this decision against fresh Main after D1 integration before implementation. The migration status remains `implementation_complete=false`, `release_ready=false`, `production_verified=false`.
+
+## Historical checkpoint (2026-10-07 v25.10; superseded)
+
+At 2026-10-06 17:19:58 UTC, a fresh `git fetch origin main` reconfirmed Main at
+`b5a07310328ea3826aeb96df4422976aff280300` (tree
+`ae78a3d4e5c1d27aede870393cc40b88aa572fce`); there is no new Main drift to
+reconcile. The 26-unit authority ledger remains 7 implemented, 7 privately
+verified, 6 connected to a real entry, 1 default-path verified, 0 whole-unit
+retirements, and 13 partial rows. These are authority states, not a completion
+percentage.
+
+The active candidate is branch
+`codex/d1-resource-compat-real-entry-20261005`, checkpoint
+`470818b22eaafa41d8db1b87e516b2573ff4c99c`, tree
+`97e1ead06c2d0de98d3529cce601e303369d5534`, and binary-diff fingerprint
+`42d3ec5c010fb4452b7eb76607dfc799fb6ebb080f49a52abe85df8a418962ac` over 43
+source paths (plan/evidence files excluded). It adds public-entry Project
+resource lifecycle coverage on top of D1 branding, Project–Goal, canonical MCP
+schema preflight, and Chat approval compatibility fixes. Packet v25.10
+fingerprint is
+`21ef69020455b8367bca5dd4b3e584534276febaf6d970d070f2bbf9bda73830`.
+Author-run evidence recorded in the packet includes D1 authenticated real-entry
+3/3, Chat real-entry 1/1, MCP preflight 41/41, server typecheck, changed-file
+lint/diff checks, and a Rust foundation build. These checks do not replace the
+fresh stage review, installed/packaged verification, or independent public
+workflow verifier; all three receipts are pending for v25.10.
+Formal reviewer dispatch is now in progress: agent `01a11231-e77e-7ad3-987c-3eaacc22e426`
+(`Euclid`) was spawned with explicit `gpt-6-luna` and `xhigh` arguments. The
+available spawn/status tools do not expose effective runtime metadata, so the
+requested pair is recorded without claiming runtime confirmation. The stage
+verdict is still pending; do not substitute self-review or start the verifier
+before it arrives.
+
+PR #277 is open at old remote head
+`2c61322d04b075f331d4c228c32ec64e7647b7a3`. Its CI—including the prior D1
+smoke pass and Ubuntu, Native, packaged macOS, and qualification failures—belongs
+only to that old head and is not reusable for `470818b`. The current candidate
+has not been pushed, reviewed, independently verified, or run through exact-head
+CI. Node still owns the public listener, auth/session, and Drizzle migration
+apply; this D1 bridge does not prove default Rust ingress or global legacy
+writer retirement. No production data, traffic, stable release, or deployment
+was touched. `implementation_complete`, `release_ready`, and
+`production_verified` remain false.
+
+The separately scoped C07 maintenance/update-recovery runner is not accepted:
+its v3 empty-result wrapper correction was present and historically exercised,
+but that run failed on lost sub-millisecond `created_at` precision and its
+lease is closed. A newer installed1276 terminal remains `QUESTION`; no current
+cloud owner/freeze was available during this refresh. Preserve that record and
+do not reopen the closed lease or repeat the already-authorized handoff.
+
+Next: complete fresh stage review on the exact v25.10 packet; if accepted, run
+packaged verification and an independent real-entry verifier on fresh
+disposable fixtures, then obtain final review. Only after those receipts should
+the accepted candidate update PR #277 and enter exact-head CI. Continue Phase
+0–7 after this slice; do not treat a D1 checkpoint or PR as migration
+completion.
+
+The v25.9 checkpoint is retained below as historical evidence.
+
+The next-slice audit recommends Project Sources create-and-attach after D1
+integration, but does not accept its existing candidate. That worktree is
+detached at old PR head `2c61322d04b075f331d4c228c32ec64e7647b7a3` with a
+10-file, 1,292-addition/79-deletion diff (`6588fb98…`). It has no Main-only
+commits past its merge base; the overlap is with D1 branch commits that change
+branding receipt and replay behavior. Rebuild the slice cleanly on current
+Main, preserve Main's branding/receipt semantics, and close or explicitly bound
+the Node fallback split-write, sort-order gaps, reload retry-key, and concurrent
+Library creation gaps. The audit verdict is `needs more evidence`; no tests or
+packaged acceptance were run for that candidate.
+
+The previous v25.7 checkpoint is retained below as historical evidence.
+
+## Historical checkpoint (2026-10-06 v25.7)
+
+At 2026-10-06 12:56 UTC, `git fetch origin main` reconfirmed Main at
 `b5a07310328ea3826aeb96df4422976aff280300` (tree
 `ae78a3d4e5c1d27aede870393cc40b88aa572fce`). PR #274 added two Rust/SQLx
-live-run list reads behind the existing authenticated Node routes; this is a
-new, narrow authority row, not general run-read or execution ownership. The
-ledger now has 26 units: 7 implemented, 7 privately verified, 6 connected to a
-real entry, 1 default-path verified, 0 whole-authority retirements, and 13
-partial rows. The PR's Affected qualification check was skipped. Its shared
-`server-foundation` source file was reconciled into the D1 candidate without
-changing D1 write-fence semantics.
+live-run list reads behind existing authenticated Node routes; this remains a
+narrow read authority, not general run-read or execution ownership. The
+authority ledger has 26 units: 7 implemented, 7 privately verified, 6 connected
+to a real entry, 1 default-path verified, 0 whole-authority retirements, and 13
+partial rows. PR #274's Affected qualification was skipped. Its shared
+`server-foundation` source file is reconciled into this D1 candidate without
+changing write-fence semantics.
 
 Current D1 candidate: branch
 `codex/d1-resource-compat-real-entry-20261005`, base `b5a07310328ea3826aeb96df4422976aff280300`,
-commit `cde6b5f80c1cf9b4581840a8b265da620c449236`, source tree
-`90465d8fdd4611b3dcdf3870a19c51765e0cb66c`, source fingerprint
-`83140a67e076474685144cb1bed025e886e37ccbc7ebcb073dbb1056c53d7095`, and
-candidate patch tree `4d86861645f45cde8b0ec6d2fe5fb09c3141f158`. Packet v25.6 has
-fingerprint `a559cb9d579bf1f61c99985614b308e84d078ad20717c8257127046eb8389349`.
-Stage review rejected v25.5 for a P1: existing generic organization PATCH
-branding receipts used the v1 adapter fingerprint, but v25.5 retries used a
-different v2 fingerprint. The v25.6 fix accepts exact-payload v1 replay while
-retaining changed-payload conflicts; 12 branding PostgreSQL tests passed, and a
-public generic-route replay plus no-side-effect snapshot was added to the smoke.
-The independent stage reviewer accepted v25.6 at `2026-10-06T09:56:58.069Z`,
-the public verifier returned `PASS` at `2026-10-06T10:23:58.257Z`, and the final
-reviewer returned `accept` at `2026-10-06T10:55:57Z` for the same frozen source,
-runtime, data scope, and packet. The fresh foundation artifact is
-`0f2d15c1…3ce3bf`. The candidate is not published; a new protected PR and
-exact-head CI remain pending because historical PR #225 is already merged and
-does not contain v25.6. The source commit identity must be rebound with all
-three receipt issuers after the exact candidate is committed.
-`implementation_complete=false`, `release_ready=false`, and
+commit `d21f16e80b81c20641a09278ba613e91b77dca49`, tree
+`4d360b1efd1197fa50adb6aaaaab01bf4d36e96d`, source-diff fingerprint
+`0814ba21ecfad54f4c8f9010bdbefb73c67def3758068201a935aeef104e2168`, 32
+non-plan source paths, and patch tree
+`0d10720e08a58e9431e95009228af934cc97cdc3`. Packet v25.7 fingerprint is
+`e9e04c112f600f4cf4ea0327810badc894a9e8bd04da1c1e4bf94fd34b5da7af`. It adds
+the installed-MCP preflight regression: canonical JSON Schema `pattern`
+constraints are accepted and malformed patterns still fail closed. Focused
+evidence is 41/41 preflight tests, agent-runtime-utils typecheck, MCP contract
+check, workspace Clippy, and rebuilt foundation/preflight/CLI artifact hashes
+`0f2d15c1…3ce3bf`, `ce698e0d…8fa70`, and `995c4694…f23e39`. The independent
+v25.7 stage reviewer returned `accept` with no blocking findings (result
+observed at `2026-10-06T13:16:17Z`). Fresh packaged verification and the v25.7
+public-workflow run remain pending. The five Ubuntu Vitest commands that failed
+on old PR #277 head are not yet verified on d21 and remain an exact-head CI
+risk. All v25.6
+receipts are historical and invalidated for this source/packet update.
+
+PR #277 remains open but its remote head is the older
+`2c61322d04b075f331d4c228c32ec64e7647b7a3`; its CI is not evidence for d21:
+D1 smoke and macOS/Windows verification passed, while Ubuntu, all four Native
+targets, macOS-arm64 packaged smoke, and qualification summary failed; Affected
+qualification was skipped. Refresh the same PR only after the v25.7 independent
+gates, then use its exact-head CI for convergence. A separate Project Sources
+create-and-attach implementation is preserved in its own worktree, but is based
+on the old PR head and must wait for D1 integration plus a fresh Main
+reconciliation. `implementation_complete=false`, `release_ready=false`, and
 `production_verified=false`.
 
 The following blocks preserve prior candidate history; their identities are
@@ -1523,3 +1628,270 @@ replay/recovery, retain Node-owned Project behavior, and test the real detail
 panel journey plus installed required-default routing. Continue the Phase 0–7
 authority ledger after that slice; this D1 increment is not migration
 completion.
+
+## v25.10 delivery checkpoint (2026-10-07)
+
+The exact candidate `470818b22eaafa41d8db1b87e516b2573ff4c99c` received an
+independent stage-review `accept` from Euclid (requested `gpt-6-luna` / `xhigh`;
+effective runtime metadata is not exposed). The review confirmed the delta from
+`a50b7d1` contains only two real-entry test files (+462/-5), with no production
+source changes. Its receipt is bound to source fingerprint
+`42d3ec5c010fb4452b7eb76607dfc799fb6ebb080f49a52abe85df8a418962ac` and packet
+v25.10 fingerprint
+`21ef69020455b8367bca5dd4b3e584534276febaf6d970d070f2bbf9bda73830`.
+
+The independent installed verifier is running the frozen package-bound
+candidate. It must replay Resource edit with the same `resourceUpdateKey`,
+compare response/state/receipt/activity/outbox counts, and exercise failure
+after ownership handoff but before Rust execution to prove retry recovery and
+fail-closed behavior. The repo `main` advanced from `b5a0731` to `a3f49e8` with
+one `AGENTS.md`-only commit and no overlap with this candidate's 43 source
+paths. After the verifier terminates, rebase onto current `main`, prove source
+diff and build-artifact equivalence, obtain issuer rebinds for the changed
+commit identity, complete final review, then update PR #277 and run exact-head
+CI. An accidental shell command substitution started `pnpm desktop:verify`
+while searching this plan; it was terminated during the Desktop build before
+the smoke stage and provides no new acceptance evidence. Do not repeat that
+unrelated failed smoke unless exact-head CI or new runtime evidence shows it is
+relevant. The public listener, auth/session and Drizzle migration authority remain Node; default
+Rust ingress, old-writer retirement, and the Phase 0–7 completion claims remain
+false.
+
+Terminal verifier reconciliation (supersedes the immediately preceding
+“verifier is running” checkpoint): Anscombe returned `QUESTION` at
+`2026-10-06T19:08:56Z` on the still-current v25.10 source and packet lease.
+Installed-package public observations passed for auth negatives, Project
+create/replay, Resource same-key edit/attachment detach/restart replay, and
+handoff failure/retry/fail-closed; each exercised Resource key had exactly one
+receipt, activity, and published outbox row on database readback. Project–Goal
+CLI link/replay and foreign-Goal rejection were observed, but its durable
+effect readback was not captured. Missing proof remains for Chat/Side Chat
+continuity and approval recovery, malformed MCP schema/no-Node-fallback,
+branding/Project–Goal rollback and outbox restart, Resource import/catalog/
+concurrency/stale-Node-writer rejection, and Project–Goal CLI effect readback.
+No Chat prompt was sent because the configured Codex-local provider requires
+non-loopback account/model access. This is `QUESTION`, not product `FAIL`; the
+final reviewer, push, merge, and completion claims remain blocked. The exact
+criterion ledger is `/tmp/rudder-d1-accept-v25.10.Rywj0e/evidence/criterion-to-proof-ledger.md`
+(SHA-256 `9bab4bd76daf5ca7f6ccacd8c4c48a38c199af2a3ff3c7474f6a132d5a78529c`);
+the final lease recheck is
+`/tmp/rudder-d1-accept-v25.10.Rywj0e/evidence/final-lease-process-recheck.txt`
+(SHA-256 `3e70898cb8bb1c5ee33805b999a702cd5511bdd07d8cc2ed9c8c6e7bfc184dcc`).
+At the parent recheck (`2026-10-06T19:15:17Z`), verifier Node PID 5694,
+Foundation PID 7361, and disposable PostgreSQL PID 32608 were still running;
+recheck identity and isolated data path before reuse or shutdown.
+
+Carver's read-only harness audit completed at `2026-10-06T19:25:12Z`. Existing
+Chat/Side Chat E2E flows use a local Codex stub and can target an existing
+server, while D1 branding, Project–Goal, Resource import/concurrency and CLI
+effect-readback runners already exist for source-launched real-entry flows.
+No existing runner composes the full criteria against the installed package.
+The existing-server Playwright mode still runs a global cleanup that scans
+repo E2E PostgreSQL instances; a narrow test-harness change is in progress to
+skip that cleanup only for existing-server runs. The Resource import fixture
+uses an external `example.com` repository locator and must be replaced with a
+local fixture or otherwise proven not to access the network. This audit made
+no source edits, test runs, or API calls. The previous verifier's Node process
+uses a one-shot failure wrapper and is not a reusable clean runtime.
+
+The package-bound build is `v25.10-470818b2-foundation-debug-33e267b3-release-0f2d15c1-preflight-3fbe28df-cli-995c4694-desktop-portable-6427d8c6`; portable artifact SHA-256 is
+`6427d8c6ea067193bb93e88da38866681d4c35c7cef0222a9edf597a71a85501`.
+`desktop:dist`, server-package validation, Computer Use package validation,
+packaged account-gate/auto-update smoke, and packaged app-builder smoke passed.
+The combined `pnpm desktop:verify` remains failed because its earlier dev
+Desktop smoke timed out waiting for Agent Terminal restart output. The `EEXIST`
+HTTP 500 was the smoke's intentional obstructed-workspace negative fixture;
+the directory was restored and the next agent GET returned 200. The timeout
+cause remains unproven; advancing before the terminal is fully `running` is a
+plausible smoke-readiness gap, not a confirmed cause. The old PR CI failures were triaged to its
+older head, and candidate Clippy/MCP fixes are present but still await exact-
+head CI. The original stage reviewer confirmed the package-identity rebind;
+that receipt applies to source `470818b22` and packet v25.10, and does not
+substitute for the installed/public workflow verifier's terminal `QUESTION` or
+final review.
+
+## 2026-10-07 Continuation — D1 Resource Delete/Replay Candidate v25.14
+
+The current isolated candidate is `877e7ec625d831636306414fda00949ab4080ef8` on
+`codex/d1-resource-compat-real-entry-20261005`, based on `origin/main`
+`a3f49e86183b66c694fd8f2ba44324ce42b9b6b9`. Its only source delta since v25.13
+is a 74-line addition to
+`server/src/__tests__/d1-write-handoff-real-entry.test.ts`; no product/runtime
+source changed. The authenticated public workflow now covers deletion of a
+detached Rust-owned organization Resource and exact same-key replay, asserting
+row removal, owner tombstone version/fence, one receipt, one audit activity,
+matching outbox, and unchanged state/response on replay.
+
+Author evidence recorded for this checkpoint is D1 PostgreSQL real-entry 3/3,
+Rust Foundation build, server typecheck, `pnpm lint:changed`, and `git diff
+--check`. This does not establish that the previously reported 409 is fixed on
+every Resource path, installed/default-path acceptance, or retirement of Node
+writers. Packet v25.14 is bound to source fingerprint
+`7b12ada8aee8e2e76a59c8eab06308681c8b3eed9db381f5225db67ce8aed9b3` and
+acceptance fingerprint
+`f604857d602fa464fe3a1e3f16d53baf06a131c865673f2fab676daeba28988f`; the
+delivery-packet validator reports `VALID: review_ready`.
+
+Fresh independent stage review is running. The v25.13 installed-verifier
+terminal remains `QUESTION`: the packaged UI/API did not start because
+Chromium sandbox initialization failed; no production or user data was used.
+Do not bypass the sandbox, alter `/opt/homebrew/bin/rudder`, delete the
+preserved extraction, or promote that observation to a product failure or PASS.
+PR #277 is still open at remote head `2c61322d04b075f331d4c228c32ec64e7647b7a3`
+and base `b5a07310328ea3826aeb96df4422976aff280300`; no v25.14 commit has been
+pushed and no exact-head CI has run. All global completion claims remain false.
+
+Next: resolve v25.14 stage review, then seek a supported independent installed
+verification environment with the Chromium sandbox intact and fresh isolated
+profile/database/ports. If that environment is unavailable, keep the verifier
+result unresolved and advance a separate, independently executable authority
+slice; do not start the previously audited Project Sources successor before
+D1 integration. Re-audit the full authority ledger before refreshing its
+counts. Continue Phase 0–7 after this bounded D1 checkpoint.
+
+## 2026-10-07 Continuation — D1 Resource Delete/Replay Candidate v25.15
+
+The exact source checkpoint is `c623274c3bde11a5c6fb45370b09c823c46604e6`
+(`codex/d1-resource-compat-real-entry-20261005`), based on
+`origin/main` `a3f49e86183b66c694fd8f2ba44324ce42b9b6`. It adds 46 test lines
+to `server/src/__tests__/d1-write-handoff-real-entry.test.ts` and changes no
+product/runtime source. The independent v25.14 stage reviewer accepted its
+candidate but identified two P2 evidence gaps; that receipt is historical and
+invalid for v25.15.
+
+The test now reattaches the same Resource to the same Project before DELETE,
+checks attachment removal and the attached Project's mutation-fence increment,
+then rereads Resource receipt/activity/outbox counts after exact-key replay.
+The packet deliberately limits this evidence to one Resource/one Project; it
+does not claim multi-Project fan-out or global resolution of every reported
+409. Packet v25.15 is bound to source fingerprint
+`be7d0169827be68e20041c196edf987c860838bd2304b73993ecd4ea6c55eb50`,
+source-only patch tree `c9c4bd106948ec6b2117cf834f5fce419c013da7`, and
+acceptance fingerprint
+`320310a8803f30c02c5648c42db80263b9d75c288568216da716456608268263`; its
+validator reports `VALID: acceptance_pending`.
+
+The v25.15 stage reviewer returned `accept` on this exact source and packet.
+An independent public-API verifier is now running against a fresh disposable
+PostgreSQL database under a dedicated `TMPDIR`; its terminal verdict and
+runtime/data identities are still pending. The current test cleanup scans
+Rudder-prefixed PostgreSQL directories only beneath `os.tmpdir()`; on this
+host that root is `/var/folders/.../T`, so preserved PID 32608/port 55460 under
+`/tmp` is outside its scan. Dedicated per-run temp roots remain required to
+prevent cross-run cleanup overlap.
+
+A complete authority audit also found that the prior snapshot understated
+partial capabilities and omitted distinct Project-delete and workspace-backup
+mutation rows. The reconciled ledger now tracks 28 authority units, including
+those two rows; only 7 whole rows are implemented/private-verified, 6 are
+real-entry connected, 1 default path is verified, 0 old authorities are
+retired, and 15 rows expose partial Rust capabilities. These flags overlap;
+they are not percentages. The audit recommended connecting the existing Rust
+workspace-backup list handler to the authenticated public Node route as the
+next bounded read slice after the current D1 acceptance gate.
+
+The prior installed-package attempt remains `QUESTION` because Electron/
+Chromium sandbox initialization failed before any listener or UI was observed;
+it is not a product `FAIL` or `PASS`. No sandbox bypass, production access,
+release, or traffic switch is authorized. PR #277 remains stale and unupdated;
+no candidate push or exact-head CI is claimed. The whole migration remains
+incomplete, with `implementation_complete=false`, `release_ready=false`, and
+`production_verified=false`.
+
+## 2026-10-07 Continuation — v25.22 Exact-Candidate Receipt Recovery
+
+The active candidate remains `4fd984a61e41ac2fe8e487430ec72e373367dd46`
+(`e13c5bbb5e3acf6a22cec18280f60aa88b83b59a`), with the unchanged Main base
+`a3f49e86183b66c694fd8f2ba44324ce42b9b6b9`. The source-only fingerprint is
+`98b7f4d0e1f922958390a0596a5e6c05ff49af52d0a9713d91750edcf76feb94` across
+48 non-plan paths. The 6b17-to-4fd source delta is limited to workflow,
+smoke-harness, and test files; product/Rust runtime sources and the acceptance
+fingerprint remain unchanged. Packet v25.22 now records this exact source/tree,
+the live PR #277 head (`c623274c3bde11a5c6fb45370b09c823c46604e6`), and the
+current Main observation. Its validator reports `VALID: acceptance_pending`.
+
+Goodall's stage receipt is `accept` for the exact source and acceptance
+fingerprint. McClintock issued whole-slice `PASS` by composing Lagrange's full
+Resource, Chat, CLI/MCP, retry, and restart workflows on the content-equivalent
+6b17 product sources with a current-4fd race run (3/3). That race run used
+PostgreSQL 18.1, system identifier `7693946281982178924`, PID 54932, port
+62626, target/foreign organizations `5ea8a9c2-ec68-4223-895f-cfe46ea4903c` /
+`1d29f9e2-b359-405d-a874-c052f1799e6f`, and Project
+`30d25ca9-7640-4b74-938e-7aac2382236e`; teardown left no process, listener, or
+temporary directory. The full Resource/Chat/CLI/MCP workflows were not rerun
+in this race follow-up. The slice remains a Node-public-API-to-private-Actix/
+SQLx bridge; this is not evidence of default Rust ingress, broad Node-authority
+retirement, exact-once network delivery, release readiness, or production.
+The issuer-authored composite verifier artifact is recorded at
+`doc/plans/artifacts/2026-10-07-rudder-full-rust-backend-completion-v25.22-composite-verifier.json`
+(SHA-256 `5a453332f6aa519d5944f9a0bffedf6277830d0ef5ff47d417b6d4fa1777684f`).
+At the time this 14:56Z checkpoint was recorded, Goodall's current-packet
+stage receipt rebind and final handoff verdict were still pending. Both were
+completed afterward; see the authoritative 16:05Z delivery checkpoint below.
+
+PR #277 is open at the older remote head above. Its previous CI had an
+Architecture ratchet failure and dependent Qualification summary failure, and
+the x86_64 macOS native check was cancelled. Those results are not current-head
+CI. The 4fd candidate is not pushed and has no exact-head CI yet. A read-only
+independent audit compared it to `a3f49e86`: `server/src/services/chats.ts` is
+5,259 lines versus 5,263 at baseline, and `server/src/routes/chats.ts` is
+3,442 versus 3,444; the same architecture check reports no regressions locally.
+After the composite artifact and Goodall final `accept`, commit only the
+scoped current packet/status/ledger/plan/evidence files, update the existing
+branch via fast-forward, and run exact-head CI; the required x86_64 Apple
+native check must complete. Merge only after current receipts and all required
+checks pass.
+
+The next authority slice remains organization lifecycle parent deletion, but
+it is sequenced after D1 integration and a fresh Main refresh. Its stage review
+still requires a lifecycle-specific fence that does not disable shared
+organization writers, explicit cascade/audit/receipt/outbox semantics, and a
+recoverable post-commit storage-cleanup boundary. Keep the workspace-backup
+successor parked until that integration point. Current authority snapshot is
+28 units (7 whole-row implemented, 7 private-verified, 6 real-entry connected,
+1 default-path verified, 0 old authorities retired, 15 partial-capability
+rows); these flags overlap and are not percentages. Overall claims remain
+`implementation_complete=false`, `release_ready=false`, and
+`production_verified=false`.
+
+## 2026-10-07 Continuation — D1 exact-candidate delivery
+
+At 2026-10-07T16:05:18Z, the D1 candidate remains
+`4fd984a61e41ac2fe8e487430ec72e373367dd46` (tree
+`e13c5bbb5e3acf6a22cec18280f60aa88b83b59a`), based on current remote Main
+`a3f49e86183b66c694fd8f2ba44324ce42b9b6b9`. Goodall's stage and final review
+are `accept`; McClintock's independent composite verifier is `PASS`. The
+composite combines full Resource/Chat/CLI/MCP/retry/restart workflows on
+content-equivalent `6b17bdfb` with the exact-`4fd` ownership-race suite (3/3);
+it does not claim those complete workflows were rerun on `4fd`.
+
+The packet is `v25.22`
+(`doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.22.json`),
+acceptance fingerprint
+`fac6aa5c8007f3038ce6576b5784e749a033d1e887df6dc7914ff03bc9bdd37b`, and
+validates as `integration_pending`. This is a bounded authenticated Node
+public API → private Actix/SQLx bridge with exercised CLI/MCP callers; it does
+not transfer default public ingress or retire the broader Node backend.
+
+PR #277 remains open. Live remote head is
+`c623274c3bde11a5c6fb45370b09c823c46604e6`; local `4fd` is two commits ahead
+and not pushed. The old remote head had Architecture ratchet and Qualification
+summary failures, and its x86_64 Apple native check was cancelled; these are
+not results for `4fd`. Local architecture comparison passes, but exact-head CI
+has not run. Persist only the scoped plan/status/ledger and v25.22 evidence,
+rebind receipts for any metadata-only identity change, update PR #277 by
+fast-forward, and require passing exact-head CI including the x86_64 Apple
+native job before merge.
+
+The one authorized C07 runner handoff was already sent and corrected in the
+existing “Audit Rust migration goal” task. Its bounded result is
+`EXISTING_FIX_PRESENT_READINESS_BLOCKED_NO_NEW_FREEZE`: 14/15 runner assertions
+pass, one frozen test uses a missing historical gate-receipt path, and the
+appointed Kant receipt is absent. No product/runtime change or new C07 freeze
+is authorized by that handoff; retain its prior `QUESTION` and `pass=false`.
+
+After D1 integration, refresh Main before implementing the separately reviewed
+organization-lifecycle parent-delete authority. Keep the workspace-backup
+successor parked until then. The full migration remains active with
+`implementation_complete=false`, `release_ready=false`, and
+`production_verified=false`.
