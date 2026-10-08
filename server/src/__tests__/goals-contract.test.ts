@@ -592,7 +592,7 @@ describe("Goal contract", () => {
     ]));
   });
 
-  it("keeps the HTTP Goal Workspace response allowlisted", async () => {
+  it("forwards the allowlisted native HTTP Goal Workspace response", async () => {
     const { db, state } = createGoalDb(makeGoal({
       lifecycle: "active",
       status: "active",
@@ -624,7 +624,13 @@ describe("Goal contract", () => {
       req.actor = { type: "board", source: "local_implicit", userId: "board-user" };
       next();
     });
-    app.use("/api", goalRoutes(db));
+    // Preserve the retained contract as this transport fixture's native response.
+    // The real Rust projection is independently checked by goal-read-real-entry.
+    const nativeWorkspace = await goalService(db).workspace(GOAL_ID);
+    const goalRead = vi.fn().mockResolvedValue({
+      status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(nativeWorkspace)),
+    });
+    app.use("/api", goalRoutes(db, { goalRead } as unknown as RustFoundationBridge));
     app.use(errorHandler);
 
     const response = await request(app).get(`/api/goals/${GOAL_ID}/workspace`);
@@ -658,9 +664,13 @@ describe("Goal contract", () => {
       "proposedByAgentId",
     ]));
     expect(JSON.stringify(response.body)).not.toContain("private-candidate-hash");
+    expect(goalRead).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: "board", userId: "board-user" }), ORG_ID,
+      { view: "workspace", goalId: GOAL_ID },
+    );
   });
 
-  it("lets a runtime Agent discover only its owned active Goals", async () => {
+  it("forwards native discovery of a runtime Agent's owned active Goals", async () => {
     const { db } = createGoalDb(makeGoal({
       lifecycle: "active",
       status: "active",
@@ -678,7 +688,15 @@ describe("Goal contract", () => {
       };
       next();
     });
-    app.use("/api", goalRoutes(db));
+    const nativeAssigned = {
+      count: 1,
+      filters: { lifecycle: "active", focus: null, facet: null, limit: 20 },
+      goals: await goalService(db).workspaceCards(ORG_ID),
+    };
+    const goalRead = vi.fn().mockResolvedValue({
+      status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(nativeAssigned)),
+    });
+    app.use("/api", goalRoutes(db, { goalRead } as unknown as RustFoundationBridge));
     app.use(errorHandler);
 
     const response = await request(app).get(`/api/orgs/${ORG_ID}/goals/assigned`);
@@ -689,9 +707,13 @@ describe("Goal contract", () => {
       filters: { lifecycle: "active", focus: null, facet: null, limit: 20 },
       goals: [{ id: GOAL_ID, ownerAgentId: OWNER_ID, lifecycle: "active" }],
     });
+    expect(goalRead).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: "agent", agentId: OWNER_ID }), ORG_ID,
+      { view: "assigned", goalId: null, agentId: OWNER_ID, lifecycle: "active", focus: null, facet: null, limit: "20" },
+    );
   });
 
-  it("returns the exact owned Goal agreement and operating state to the runtime Agent", async () => {
+  it("forwards the exact native Goal agreement and operating state to the runtime Agent", async () => {
     const { db } = createGoalDb(makeGoal({
       lifecycle: "active",
       status: "active",
@@ -711,7 +733,22 @@ describe("Goal contract", () => {
       };
       next();
     });
-    app.use("/api", goalRoutes(db));
+    const nativeContext = {
+      goal: { id: GOAL_ID, ownerAgentId: OWNER_ID, lifecycle: "active" },
+      contract: {
+        revision: 7,
+        objectiveMode: "target",
+        criteria: [{ id: "result", label: "Result exists", evaluator: "artifact" }],
+        autonomyEnvelope: { allowed: ["bounded_work"] },
+        humanAuthorities: { close: "board_human" },
+      },
+      state: { facet: "agent_advancing" },
+      allowedActions: { reportProgress: true, proposeChange: true, proposeResult: true },
+    };
+    const goalRead = vi.fn().mockResolvedValue({
+      status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(nativeContext)),
+    });
+    app.use("/api", goalRoutes(db, { goalRead } as unknown as RustFoundationBridge));
     app.use(errorHandler);
 
     const response = await request(app).get(`/api/goals/${GOAL_ID}/agent-context`);
@@ -729,6 +766,10 @@ describe("Goal contract", () => {
       state: { facet: "agent_advancing" },
       allowedActions: { reportProgress: true, proposeChange: true, proposeResult: true },
     });
+    expect(goalRead).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: "agent", agentId: OWNER_ID }), ORG_ID,
+      { view: "agentContext", goalId: GOAL_ID, agentId: OWNER_ID },
+    );
   });
 
   it("canonicalizes typed Goal references before reading runtime routes", async () => {
@@ -748,7 +789,12 @@ describe("Goal contract", () => {
       };
       next();
     });
-    const goalRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify({ id: GOAL_ID })) });
+    const goalRead = vi.fn().mockImplementation(async (_actor, _orgId, input) => ({
+      status: 200, contentType: "application/json",
+      body: Buffer.from(JSON.stringify(input.view === "agentContext"
+        ? { goal: { id: GOAL_ID, ownerAgentId: OWNER_ID } }
+        : { id: GOAL_ID })),
+    }));
     app.use("/api", goalRoutes(db, { goalRead } as unknown as RustFoundationBridge));
     app.use(errorHandler);
 
@@ -762,6 +808,11 @@ describe("Goal contract", () => {
     expect(goalRead).toHaveBeenCalledWith(expect.objectContaining({ agentId: OWNER_ID }), ORG_ID, { view: "detail", goalId: GOAL_ID });
     expect(context.status, JSON.stringify(context.body)).toBe(200);
     expect(context.body.goal).toMatchObject({ id: GOAL_ID, ownerAgentId: OWNER_ID });
+    expect(goalRead).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: OWNER_ID }), ORG_ID,
+      { view: "agentContext", goalId: GOAL_ID, agentId: OWNER_ID },
+    );
+    expect(goalRead).toHaveBeenCalledTimes(2);
   });
 
   it("rejects cross-organization discovery and non-owner Goal context", async () => {
