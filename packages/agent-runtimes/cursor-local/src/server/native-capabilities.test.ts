@@ -1974,7 +1974,7 @@ describe("Cursor ACP native capabilities", () => {
       binding,
       workspace: { workspaceId: "workspace-1", repoUrl: "https://example.invalid/repo", repoRef: "main" },
       prompt: "Inspect this repository.",
-      model: "auto",
+      model: "composer-1.5",
       onLog: async (_stream, chunk) => { logs.push(chunk); },
     });
 
@@ -1999,7 +1999,7 @@ describe("Cursor ACP native capabilities", () => {
       "session/set_model",
       "session/prompt",
     ]);
-    expect(fixture.requests[3]?.params).toEqual({ sessionId: "cursor-native-new", modelId: "auto" });
+    expect(fixture.requests[3]?.params).toEqual({ sessionId: "cursor-native-new", modelId: "composer-1.5" });
     expect(fixture.requests[4]?.params).toEqual({
       sessionId: "cursor-native-new",
       prompt: [{ type: "text", text: "Inspect this repository." }],
@@ -2016,6 +2016,43 @@ describe("Cursor ACP native capabilities", () => {
         },
       },
     }) + "\n"]);
+  });
+
+  it("leaves Cursor ACP's default model selected for the auto sentinel", async () => {
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/new") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "cursor-auto-default" } })}\n`);
+      } else if (request.method === "session/prompt") {
+        output.write(`${JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "cursor-auto-default",
+            update: { sessionUpdate: "agent_message_chunk", executionRef: "cursor-auto-execution", content: { type: "text", text: "default model answer" } },
+          },
+        })}\n`);
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } })}\n`);
+      }
+    });
+
+    const result = await executeCursorNativeChat({
+      profile: profile(fixture.spawn),
+      binding,
+      prompt: "Use the configured Cursor default model.",
+      model: "auto",
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, sessionId: "cursor-auto-default", summary: "default model answer" });
+    expect(fixture.requests.map((request) => request.method)).toEqual([
+      "initialize",
+      "initialized",
+      "session/new",
+      "session/prompt",
+    ]);
+    expect(fixture.requests.some((request) => request.method === "session/set_model")).toBe(false);
   });
 
   it("forwards only observed prompt notifications for the Run transcript projection", async () => {

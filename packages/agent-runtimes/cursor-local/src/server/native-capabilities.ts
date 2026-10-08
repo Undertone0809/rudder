@@ -2147,10 +2147,12 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
     if (!activeSessionId) {
       throw new CursorNativeCapabilityError("unknown", "protocol-mismatch", "Cursor ACP chat has no session identity.");
     }
-    if (input.model.trim()) {
+    const requestedModelId = input.model.trim();
+    if (requestedModelId && requestedModelId.toLowerCase() !== "auto") {
       // Installed Cursor ACP exposes the official unstable model selector.
       // A provider refusal is terminal; never silently use a different model.
-      await client.request("session/set_model", { sessionId: activeSessionId, modelId: input.model.trim() });
+      // Rudder's `auto` sentinel means Cursor's own session default, not an ACP model ID.
+      await client.request("session/set_model", { sessionId: activeSessionId, modelId: requestedModelId });
     }
     if (input.mode) {
       const availableModes = Array.isArray(sessionModes?.availableModes)
