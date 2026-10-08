@@ -49,6 +49,12 @@ impl Database {
         );
         let pg_ctl = binary("pg_ctl");
         let dynamic_shared_memory_type = if cfg!(windows) { "windows" } else { "mmap" };
+        // Some cloud runners permit loopback TCP but do not support Unix sockets.
+        let socket_directory = if env::var_os("RUDDER_POSTGRES_NO_UNIX_SOCKET").is_some() {
+            "''".to_owned()
+        } else {
+            root.path().display().to_string()
+        };
         let status = Command::new(&pg_ctl)
             .env("LC_ALL", "C")
             .arg("-D")
@@ -59,7 +65,7 @@ impl Database {
             .arg(format!(
                 "-h 127.0.0.1 -p {port} -k {} -c shared_buffers=16MB -c max_connections=16 \
                  -c dynamic_shared_memory_type={dynamic_shared_memory_type}",
-                root.path().display()
+                socket_directory
             ))
             .args(["-w", "start"])
             .status()

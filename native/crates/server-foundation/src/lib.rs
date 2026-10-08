@@ -48,6 +48,7 @@ use tracing::{info, warn};
 mod live_run_reads;
 pub use live_run_reads::LIVE_RUN_READ_ACTION;
 
+mod cost_reads;
 mod project_reads;
 mod public_ingress;
 mod public_ingress_config;
@@ -58,6 +59,7 @@ pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
 pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
 
+pub use cost_reads::COST_READ_ACTION;
 pub use project_reads::PROJECT_READ_ACTION;
 
 use workspace_backup_files::{
@@ -118,6 +120,7 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "workspace_backup_download",
     "organization_member_directory",
     "project_read",
+    "cost_read",
     "live_run_read",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
@@ -2732,6 +2735,10 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/live-run-reads",
                     web::post().to(live_run_reads::live_run_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/cost-reads",
+                    web::post().to(cost_reads::cost_reads),
                 )
                 .route(
                     "/internal/orgs/{org_id}/project-reads",

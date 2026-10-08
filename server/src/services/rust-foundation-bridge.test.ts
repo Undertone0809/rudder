@@ -76,7 +76,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
+    if (req.url?.includes("/cost-reads") || req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -124,7 +124,7 @@ if (mode === "invalid") {
           return;
         }
         res.setHeader("content-type", "application/json");
-        if (req.method === "POST" && !req.url?.includes("/project-reads")) res.statusCode = 201;
+        if (req.method === "POST" && !req.url?.includes("/project-reads") && !req.url?.includes("/cost-reads")) res.statusCode = 201;
         const finish = () => res.end(JSON.stringify({ status: "accepted" }));
         if (mode === "delayed") setTimeout(finish, 75);
         else finish();
@@ -865,6 +865,20 @@ describe("rust foundation bridge lifecycle", () => {
       path: captured.url,
       action: "project.read",
       body: Buffer.from(JSON.stringify(input)),
+    }, "bridge-test-secret");
+  });
+
+  it("signs Cost reads with every mutation mode disabled", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "off", organizationBrandingMode: "off" });
+    const actor = { type: "agent", agentId: "agent-1", orgId: "org-1", source: "agent_key" } as const;
+    const input = { operation: "trend", fromMs: 1709164800000, granularity: "hour", projectId: "project" } as const;
+    expect((await bridge.costRead(actor, "org-1", input)).status).toBe(200);
+    const captured = await fixture.readRequest();
+    expect(captured.url).toBe("/internal/orgs/org-1/cost-reads");
+    expect(JSON.parse(captured.body)).toEqual(input);
+    expectEnvelopeSignedWith(captured, { actor, organizationId: "org-1", method: "POST", path: captured.url,
+      action: "cost.read", body: Buffer.from(JSON.stringify(input)),
     }, "bridge-test-secret");
   });
 

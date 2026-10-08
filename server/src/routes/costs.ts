@@ -6,7 +6,8 @@ import {
   updateBudgetSchema,
   upsertBudgetPolicySchema,
 } from "@rudderhq/shared";
-import { Router } from "express";
+import { sql } from "drizzle-orm";
+import { Router, type Request, type Response } from "express";
 import { badRequest } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -19,9 +20,10 @@ import {
   organizationService,
 } from "../services/index.js";
 import { fetchAllQuotaWindows } from "../services/quota-windows.js";
+import type { CostReadInput, RustFoundationBridge, RustFoundationResponse } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function costRoutes(db: Db) {
+export function costRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const heartbeat = heartbeatService(db);
   const budgetHooks = {
@@ -32,6 +34,33 @@ export function costRoutes(db: Db) {
   const budgets = budgetService(db, budgetHooks);
   const organizations = organizationService(db);
   const agents = agentService(db);
+
+  async function forwardCostRead(req: Request, res: Response, orgId: string, input: CostReadInput) {
+    if (!rustFoundationBridge) {
+      res.status(503).json({ error: "Rust Cost reads are unavailable", code: "rust_foundation_cost_read_unavailable" });
+      return;
+    }
+    let response: RustFoundationResponse;
+    try {
+      if (input.operation === "finance-events") {
+        // Date-parsing context only: SQLx defaults to UTC while this legacy
+        // connection may use a database/role/connection-specific timezone.
+        // Rust still owns finance table reads, filtering, sorting and projection.
+        const [context] = await db.execute(sql<{ timezone: string }>`SELECT current_setting('TimeZone') AS timezone`);
+        if (typeof context?.timezone !== "string") throw new Error("Missing database date context");
+        input = { ...input, legacyDateTimezone: context.timezone };
+      }
+      response = await rustFoundationBridge.costRead(req.actor, orgId, input);
+    } catch {
+      res.status(503).json({ error: "Rust Cost reads are unavailable", code: "rust_foundation_cost_read_request_failed" });
+      return;
+    }
+    res.status(response.status).set("content-type", response.contentType).send(response.body);
+  }
+
+  function rangeInput(range: ReturnType<typeof parseDateRange>) {
+    return { fromMs: range?.from?.getTime(), toMs: range?.to?.getTime() };
+  }
 
   router.post("/orgs/:orgId/cost-events", validate(createCostEventSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -138,16 +167,14 @@ export function costRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const summary = await costs.summary(orgId, range);
-    res.json(summary);
+    await forwardCostRead(req, res, orgId, { operation: "summary", ...rangeInput(range) });
   });
 
   router.get("/orgs/:orgId/costs/by-agent", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const rows = await costs.byAgent(orgId, range);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "by-agent", ...rangeInput(range) });
   });
 
   router.get("/orgs/:orgId/costs/trend", async (req, res) => {
@@ -156,56 +183,49 @@ export function costRoutes(db: Db) {
     const range = parseDateRange(req.query);
     const granularity = parseTrendGranularity(req.query);
     const filter = parseTrendFilter(req.query);
-    const rows = await costs.trend(orgId, range, granularity, filter);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "trend", ...rangeInput(range), granularity, ...filter });
   });
 
   router.get("/orgs/:orgId/costs/by-agent-model", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const rows = await costs.byAgentModel(orgId, range);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "by-agent-model", ...rangeInput(range) });
   });
 
   router.get("/orgs/:orgId/costs/by-provider", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const rows = await costs.byProvider(orgId, range);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "by-provider", ...rangeInput(range) });
   });
 
   router.get("/orgs/:orgId/costs/by-biller", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const rows = await costs.byBiller(orgId, range);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "by-biller", ...rangeInput(range) });
   });
 
   router.get("/orgs/:orgId/costs/finance-summary", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const summary = await finance.summary(orgId, range);
-    res.json(summary);
+    await forwardCostRead(req, res, orgId, { operation: "finance-summary", ...rangeInput(range) });
   });
 
   router.get("/orgs/:orgId/costs/finance-by-biller", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const rows = await finance.byBiller(orgId, range);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "finance-by-biller", ...rangeInput(range) });
   });
 
   router.get("/orgs/:orgId/costs/finance-by-kind", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const rows = await finance.byKind(orgId, range);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "finance-by-kind", ...rangeInput(range) });
   });
 
   router.get("/orgs/:orgId/costs/finance-events", async (req, res) => {
@@ -213,15 +233,13 @@ export function costRoutes(db: Db) {
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
     const limit = parseLimit(req.query);
-    const rows = await finance.list(orgId, range, limit);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "finance-events", ...rangeInput(range), limit });
   });
 
   router.get("/orgs/:orgId/costs/window-spend", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const rows = await costs.windowSpend(orgId);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "window-spend" });
   });
 
   router.get("/orgs/:orgId/costs/quota-windows", async (req, res) => {
@@ -284,8 +302,7 @@ export function costRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
-    const rows = await costs.byProject(orgId, range);
-    res.json(rows);
+    await forwardCostRead(req, res, orgId, { operation: "by-project", ...rangeInput(range) });
   });
 
   router.patch("/orgs/:orgId/budgets", validate(updateBudgetSchema), async (req, res) => {

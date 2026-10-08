@@ -149,6 +149,7 @@ function createFakeRustBridge(
     projectGoalSetMode: "off",
     requiresStartup: false,
     start: async () => {},
+    costRead: async () => { throw new Error("unused cost read"); },
     projectRead: unexpectedBridgeCall,
     projectCreate: unexpectedBridgeCall,
     memberDirectory: unexpectedBridgeCall,

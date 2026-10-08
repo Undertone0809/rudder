@@ -55,6 +55,29 @@ pilot switches. Node keeps authentication, organization authorization, and
 issue identifier/alias resolution. A missing or failed native read returns an
 error instead of executing the former Node live-run query.
 
+Cost and Finance read APIs (`summary`, `by-agent`, `trend`, `by-agent-model`,
+`by-provider`, `by-biller`, `by-project`, `window-spend`, `finance-summary`,
+`finance-by-biller`, `finance-by-kind`, and `finance-events`) also use Rust by
+default with no Node fallback. Rust owns domain SQL, aggregation, attribution,
+ordering and response projection in a read-only PostgreSQL snapshot. Node keeps
+actor checks, query/date validation and a signed connection-timezone context for
+legacy Finance timestamp parsing; it sends no cost or finance rows to Rust.
+Token additions and Finance totals use wide aggregates, avoiding signed 32-bit
+overflow for large organizations. Writes, budgets and provider quota fetching
+retain their existing owners.
+
+To verify the complete Cost/Finance path, build the foundation binary, then run:
+
+```sh
+cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --test cost_reads
+pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/cost-read-real-entry.test.ts
+```
+
+The SQL fixture needs PostgreSQL tools on `PATH` or `RUDDER_POSTGRES_BIN_DIR`.
+For runners that support only TCP loopback, set `RUDDER_POSTGRES_NO_UNIX_SOCKET=1`.
+The real-entry suite covers both default and Rust public ingress against real
+PostgreSQL with authentication, legacy parity and fail-closed behavior.
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.
