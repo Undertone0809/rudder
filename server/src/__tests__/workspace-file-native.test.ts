@@ -1,3 +1,4 @@
+import { ChildProcess } from "node:child_process";
 import fs, { type FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,8 +13,6 @@ import {
 import { resolveNativeWorkspaceFilesBinary } from "../services/workspace-files-native.js";
 
 const originalNativePath = process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH;
-const originalTestStartedPath = process.env.RUDDER_NATIVE_TEST_STARTED;
-const originalTestStoppedPath = process.env.RUDDER_NATIVE_TEST_STOPPED;
 const cleanupDirs = new Set<string>();
 
 async function waitForPath(filePath: string) {
@@ -25,10 +24,6 @@ async function waitForPath(filePath: string) {
 afterEach(async () => {
   if (originalNativePath === undefined) delete process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH;
   else process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = originalNativePath;
-  if (originalTestStartedPath === undefined) delete process.env.RUDDER_NATIVE_TEST_STARTED;
-  else process.env.RUDDER_NATIVE_TEST_STARTED = originalTestStartedPath;
-  if (originalTestStoppedPath === undefined) delete process.env.RUDDER_NATIVE_TEST_STOPPED;
-  else process.env.RUDDER_NATIVE_TEST_STOPPED = originalTestStoppedPath;
   await Promise.all([...cleanupDirs].map((directory) => fs.rm(directory, { recursive: true, force: true })));
   cleanupDirs.clear();
 });
@@ -230,47 +225,144 @@ describe("native workspace file reads", () => {
     }
   });
 
-  // Allow the three 5s observation bounds plus the 10s native call deadline;
-  // keep each cancellation and process-exit assertion independently bounded.
-  it.runIf(process.platform !== "win32")("cancels an in-flight native child and waits for it to exit", { timeout: 30_000 }, async () => {
+  it.runIf(process.platform !== "win32").each(["immediate", "delayed", "ignored", "unconfirmed"] as const)(
+    "cancels an in-flight native child and waits for close (%s SIGTERM exit)",
+    { timeout: 30_000 },
+    async (mode) => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+      cleanupDirs.add(root);
+      const startedPath = path.join(root, "native-started");
+      const stoppedPath = path.join(root, "native-stopped");
+      const releasePath = path.join(root, "native-release");
+      const fakeBinary = path.join(root, "fake-native");
+      await fs.writeFile(
+        fakeBinary,
+        [
+          "#!/usr/bin/env node",
+          "const fs = require('node:fs');",
+          // The ready marker must mean the SIGTERM handler is already installed.
+          "process.on('SIGTERM', () => {",
+          `  fs.writeFileSync(${JSON.stringify(stoppedPath)}, 'received');`,
+          mode === "immediate" ? "  process.exit(143);" : "",
+          mode === "delayed" ? `  setInterval(() => { if (fs.existsSync(${JSON.stringify(releasePath)})) process.exit(143); }, 10);` : "",
+          "});",
+          `fs.writeFileSync(${JSON.stringify(startedPath)}, String(process.pid));`,
+          "setInterval(() => {}, 1000);",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
+      const controller = new AbortController();
+      const originalKill = ChildProcess.prototype.kill;
+      const killSpy = vi.spyOn(ChildProcess.prototype, "kill");
+      let child: ChildProcess | undefined;
+      let closed: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+      let settled = false;
+      let closedAtSettlement = false;
+      const pending = readWorkspaceFileNative(root, "pending.md", controller.signal).then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      ).then((result) => {
+        settled = true;
+        closedAtSettlement = closed !== undefined;
+        return result;
+      });
+
+      try {
+        await waitForPath(startedPath);
+        const pid = Number(await fs.readFile(startedPath, "utf8"));
+        const abortedAt = Date.now();
+        controller.abort();
+        child = killSpy.mock.contexts[0] as ChildProcess | undefined;
+        expect(child?.pid).toBe(pid);
+        child!.once("close", (code, signal) => { closed = { code, signal }; });
+
+        if (mode === "unconfirmed") {
+          // Simulate an OS that cannot deliver the escalation; the real owned
+          // child is killed and reaped unconditionally in finally below.
+          killSpy.mockImplementation(function (this: ChildProcess, signal) {
+            return signal === "SIGKILL" ? false : originalKill.call(this, signal);
+          });
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+          await vi.advanceTimersByTimeAsync(5_000);
+          await expect(pending).resolves.toMatchObject({
+            error: { code: "workspace_file_cleanup_failed", fallbackAllowed: false },
+          });
+          expect(closedAtSettlement).toBe(false);
+          expect(closed).toBeUndefined();
+          expect(child!.exitCode).toBeNull();
+          expect(child!.signalCode).toBeNull();
+          expect(() => process.kill(pid, 0)).not.toThrow();
+          return;
+        }
+        if (mode === "delayed") {
+          await waitForPath(stoppedPath);
+          // Hold the handler open until the parent observes that cancellation
+          // has not completed. This catches an immediate AbortError settlement.
+          expect(settled).toBe(false);
+          expect(closed).toBeUndefined();
+          await fs.writeFile(releasePath, "exit");
+        }
+        await expect(pending).resolves.toMatchObject({
+          error: { code: "workspace_file_cancelled", fallbackAllowed: false },
+        });
+        expect(closedAtSettlement).toBe(true);
+        expect(closed).toEqual(mode === "ignored"
+          ? { code: null, signal: "SIGKILL" }
+          : { code: 143, signal: null });
+        expect(child!.exitCode).toBe(closed!.code);
+        expect(child!.signalCode).toBe(closed!.signal);
+        expect(() => process.kill(pid, 0)).toThrow();
+        expect(await fs.readFile(stoppedPath, "utf8")).toBe("received");
+        expect(killSpy.mock.calls.map(([signal]) => signal ?? "SIGTERM")).toEqual(
+          mode === "ignored" ? ["SIGTERM", "SIGKILL"] : ["SIGTERM"],
+        );
+        if (mode === "ignored") expect(Date.now() - abortedAt).toBeLessThan(5_000);
+      } finally {
+        vi.useRealTimers();
+        controller.abort();
+        child ??= killSpy.mock.contexts[0] as ChildProcess | undefined;
+        if (child && child.exitCode === null && child.signalCode === null) {
+          const close = new Promise<void>((resolve) => child!.once("close", () => resolve()));
+          originalKill.call(child, "SIGKILL");
+          await close;
+        }
+        await pending;
+        killSpy.mockRestore();
+      }
+    },
+  );
+
+  it("preserves spawn failures and cancellation before a failed spawn", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
     cleanupDirs.add(root);
-    const startedPath = path.join(root, "native-started");
-    const stoppedPath = path.join(root, "native-stopped");
-    const fakeBinary = path.join(root, "fake-native");
-    await fs.writeFile(
-      fakeBinary,
-      [
-        "#!/usr/bin/env node",
-        "const fs = require('node:fs');",
-        "fs.writeFileSync(process.env.RUDDER_NATIVE_TEST_STARTED, String(process.pid));",
-        "process.on('SIGTERM', () => { fs.writeFileSync(process.env.RUDDER_NATIVE_TEST_STOPPED, 'stopped'); process.exit(143); });",
-        "setInterval(() => {}, 1000);",
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
-    process.env.RUDDER_NATIVE_TEST_STARTED = startedPath;
-    process.env.RUDDER_NATIVE_TEST_STOPPED = stoppedPath;
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = path.join(root, "missing-native");
+    await expect(readWorkspaceFileNative(root, "pending.md")).rejects.toMatchObject({
+      code: "workspace_file_process_failed", fallbackAllowed: true,
+    });
+
     const controller = new AbortController();
     const pending = readWorkspaceFileNative(root, "pending.md", controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({
+      code: "workspace_file_cancelled", fallbackAllowed: false,
+    });
+  });
 
+  it.runIf(process.platform !== "win32")("keeps the native timeout classification", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+    cleanupDirs.add(root);
+    const fakeBinary = path.join(root, "fake-native");
+    await fs.writeFile(fakeBinary, "#!/usr/bin/env node\nsetInterval(() => {}, 1000);\n", { mode: 0o755 });
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
+    vi.stubEnv("RUDDER_NATIVE_WORKSPACE_FILE_TIMEOUT_MS", "100");
     try {
-      await waitForPath(startedPath);
-      const pid = Number(await fs.readFile(startedPath, "utf8"));
-      controller.abort();
-
-      await expect(pending).rejects.toMatchObject({
-        code: "workspace_file_cancelled",
-        fallbackAllowed: false,
+      await expect(readWorkspaceFileNative(root, "pending.md")).rejects.toMatchObject({
+        code: "workspace_file_timeout", fallbackAllowed: true,
       });
-      await waitForPath(stoppedPath);
-      await vi.waitFor(() => {
-        expect(() => process.kill(pid, 0)).toThrow();
-      }, { timeout: 5_000, interval: 20 });
     } finally {
-      controller.abort();
+      vi.unstubAllEnvs();
     }
   });
 

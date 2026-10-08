@@ -1,5 +1,5 @@
 import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
@@ -12,6 +12,8 @@ export const WORKSPACE_FILE_READ_MAX_BYTES = 1_000_000;
 export const WORKSPACE_FILE_PATH_MAX_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
+const CANCEL_GRACE_MS = 1_000;
+const CANCEL_CLOSE_TIMEOUT_MS = 5_000;
 
 const REJECTED_PATH_CODES = new Set([
   "unsafe_workspace_path",
@@ -170,6 +172,29 @@ function throwIfCancelled(signal?: AbortSignal): void {
   if (signal?.aborted) throw cancelledError();
 }
 
+async function reapCancelledChild(child: ChildProcess, closed: Promise<void>): Promise<void> {
+  // execFile reports AbortError and clears its timeout before the child exits.
+  // Give SIGTERM a short grace period, then reap this child before releasing
+  // the caller. A missing close is a cleanup failure, never a successful cancel.
+  const forceKill = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }, CANCEL_GRACE_MS);
+  let closeDeadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closed,
+      new Promise<never>((_, reject) => {
+        closeDeadline = setTimeout(() => {
+          reject(new WorkspaceFileNativeError("workspace_file_cleanup_failed", false, false));
+        }, CANCEL_CLOSE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(forceKill);
+    clearTimeout(closeDeadline);
+  }
+}
+
 function parseResponse(response: NativeResponse, expectedFilePath: string): NativeWorkspaceFileRead {
   if (!response || typeof response !== "object" || Array.isArray(response)) {
     throw new WorkspaceFileNativeError("workspace_file_envelope_mismatch", false, false);
@@ -244,12 +269,18 @@ export async function readWorkspaceFileNative(
   let stdout: string;
   let stderr: string;
   try {
-    const result = await execFileAsync(command.command, command.args, {
+    const pending = execFileAsync(command.command, command.args, {
       encoding: "buffer",
       timeout: timeoutMs(),
       maxBuffer: MAX_OUTPUT_BYTES,
       windowsHide: true,
       signal,
+    });
+    // Observe close before awaiting the callback: neither AbortError nor
+    // child.killed proves the owned process has exited and its pipes closed.
+    const closed = new Promise<void>((resolve) => pending.child.once("close", () => resolve()));
+    const result = await pending.finally(async () => {
+      if (signal?.aborted) await reapCancelledChild(pending.child, closed);
     });
     throwIfCancelled(signal);
     stdout = decodeNativeUtf8(result.stdout);
