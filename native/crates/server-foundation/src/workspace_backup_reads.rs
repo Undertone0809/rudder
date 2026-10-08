@@ -14,7 +14,7 @@ use actix_web::{
 use futures_util::StreamExt;
 use serde::Deserialize;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
 };
 use tokio_util::io::ReaderStream;
@@ -41,7 +41,7 @@ fn error(status: StatusCode, message: impl AsRef<str>) -> HttpResponse {
     HttpResponse::build(status).json(serde_json::json!({"error": message.as_ref()}))
 }
 
-fn artifact_error(reason: ArtifactError, archive: &PathBuf, path: &str) -> HttpResponse {
+fn artifact_error(reason: ArtifactError, archive: &Path, path: &str) -> HttpResponse {
     match reason {
         ArtifactError::NotFound => {
             error(StatusCode::NOT_FOUND, "Workspace backup artifact not found")

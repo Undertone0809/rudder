@@ -120,7 +120,15 @@ describe("backup artifact reads through authenticated public HTTP, Rust and Post
     vi.stubEnv("RUDDER_NATIVE_MODE", "node");
     vi.stubEnv("RUDDER_WORKSPACE_BACKUP_V2_NATIVE", "false");
     const root = fileURLToPath(new URL("../../../", import.meta.url));
-    const binary = process.env.RUDDER_SERVER_FOUNDATION_PATH ?? path.join(path.resolve(root, process.env.CARGO_TARGET_DIR ?? "native/target"), "debug", process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation");
+    const binaryTarget = path.resolve(root, process.env.CARGO_TARGET_DIR ?? "native/target");
+    const binaryName = process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation";
+    const explicitBinary = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim();
+    const candidates = explicitBinary ? [path.resolve(root, explicitBinary)]
+      : [path.join(binaryTarget, "debug", binaryName), path.join(binaryTarget, "release", binaryName)];
+    const binary = candidates.find((candidate) => {
+      try { fs.accessSync(candidate, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK); return fs.statSync(candidate).isFile(); }
+      catch { return false; }
+    }) ?? candidates[0]!;
     fs.accessSync(binary, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-backup-read-db-"));
     artifacts = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-backup-read-artifacts-"));
