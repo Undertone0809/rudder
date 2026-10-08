@@ -59,8 +59,9 @@ test("steers an active Issue Run through persisted feedback and one continuation
   const steerButton = page.getByTestId("issue-comment-steer");
   await expect(steerButton).toBeVisible({ timeout: 20_000 });
   const composer = page.locator('.chat-composer .rudder-milkdown-content [contenteditable="true"]').last();
+  const feedback = "Keep compatibility and use the smaller migration.";
   await composer.click();
-  await page.keyboard.type("Keep compatibility and use the smaller migration.");
+  await page.keyboard.type(feedback);
   if (process.env.RUDDER_ISSUE_STEER_SCREENSHOT) {
     await page.screenshot({
       path: process.env.RUDDER_ISSUE_STEER_SCREENSHOT.replace(/\.png$/i, "-ready.png"),
@@ -69,8 +70,11 @@ test("steers an active Issue Run through persisted feedback and one continuation
   }
   await steerButton.click();
 
-  await expect(page.getByText("Keep compatibility and use the smaller migration.", { exact: true }))
-    .toBeVisible({ timeout: 15_000 });
+  // Match a submitted comment, even while the composer still contains its draft.
+  const submittedFeedback = page.getByTestId("comment-thread-timeline-flow")
+    .locator('[id^="comment-"]')
+    .getByText(feedback, { exact: true });
+  await expect(submittedFeedback).toBeVisible({ timeout: 15_000 });
 
   const readRuns = async () => {
     const response = await page.request.get(
@@ -104,6 +108,9 @@ test("steers an active Issue Run through persisted feedback and one continuation
     continuationCount: 1,
     continuationActive: true,
   });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(submittedFeedback).toBeVisible({ timeout: 15_000 });
 
   if (process.env.RUDDER_ISSUE_STEER_SCREENSHOT) {
     await page.screenshot({ path: process.env.RUDDER_ISSUE_STEER_SCREENSHOT, fullPage: true });
