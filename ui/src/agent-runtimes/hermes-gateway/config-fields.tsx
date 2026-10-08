@@ -1,11 +1,15 @@
 import { Button } from "@/components/ui/button";
-import { DraftInput, Field, help } from "../../components/agent-config-primitives";
+import { useId } from "react";
+import { DraftInput, Field, HintIcon, help } from "../../components/agent-config-primitives";
 import { PayloadTemplateJsonField } from "../runtime-json-fields";
 import type { AgentRuntimeConfigFieldsProps } from "../types";
 
 const inputClass = "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
 
 export function HermesGatewayConfigFields({ isCreate, values, set, config, eff, mark }: AgentRuntimeConfigFieldsProps) {
+  const fieldId = useId();
+  const serverUrlId = `${fieldId}-server-url`;
+  const apiKeyId = `${fieldId}-api-key`;
   const connectionMode = isCreate
     ? values!.hermesConnectionMode ?? "local"
     : config.hermesConnectionMode === "local" || (!config.url && config.hermesChatBackend !== "native_runs_http")
@@ -39,20 +43,31 @@ export function HermesGatewayConfigFields({ isCreate, values, set, config, eff, 
               Use local Hermes instead
             </Button>
           )}
-          <Field label="Hermes API Server URL" hint={help.webhookUrl}>
+          <div>
+            <div className="mb-1 flex items-center gap-1.5">
+              <label htmlFor={serverUrlId} className="text-xs text-muted-foreground">
+                Hermes API Server URL
+              </label>
+              <HintIcon text={help.webhookUrl} />
+            </div>
             <DraftInput
+              id={serverUrlId}
               value={isCreate ? values!.url : eff("agentRuntimeConfig", "url", String(config.url ?? ""))}
               onCommit={(value) => isCreate ? set!({ url: value }) : mark("agentRuntimeConfig", "url", value || undefined)}
               immediate className={inputClass} placeholder="http://127.0.0.1:8642"
             />
-          </Field>
-          <Field label="API Server key">
+          </div>
+          <div>
+            <div className="mb-1 flex items-center gap-1.5">
+              <label htmlFor={apiKeyId} className="text-xs text-muted-foreground">API Server key</label>
+            </div>
             <DraftInput
+              id={apiKeyId}
               value={isCreate ? values!.apiKey ?? "" : eff("agentRuntimeConfig", "apiKey", String(config.apiKey ?? ""))}
               onCommit={(value) => isCreate ? set!({ apiKey: value }) : mark("agentRuntimeConfig", "apiKey", value || undefined)}
               immediate type="password" className={inputClass} placeholder="API_SERVER_KEY"
             />
-          </Field>
+          </div>
         </>
       )}
       {!isCreate && (

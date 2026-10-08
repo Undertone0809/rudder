@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { getUIAdapter, listUIAdapters } from "./registry";
 
 describe("UI runtime registry", () => {
+  it("exposes Hermes as one runtime choice with the Hermes product label", () => {
+    const hermesAdapters = listUIAdapters().filter((entry) =>
+      entry.type.includes("hermes") || entry.label.includes("Hermes"),
+    );
+
+    expect(hermesAdapters.map(({ type, label }) => ({ type, label }))).toEqual([
+      { type: "hermes_gateway", label: "Hermes" },
+    ]);
+  });
+
   it("keeps removed Gemini agents out of the executable adapters while decoding their history", () => {
     const adapter = getUIAdapter("gemini_local");
 

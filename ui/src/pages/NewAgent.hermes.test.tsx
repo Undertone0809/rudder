@@ -26,6 +26,8 @@ const mockState = vi.hoisted(() => ({
     hint: "Product RPC is unavailable",
   }],
   availabilityError: false,
+  availabilityPending: false,
+  availabilityFetching: false,
   retryAvailability: vi.fn(async () => undefined),
   rerender: null as null | (() => void),
   routeSearchParams: "agentRuntimeType=hermes_gateway",
@@ -42,8 +44,8 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[2] === "adapter-availability") {
       return {
         data: mockState.availability,
-        isPending: false,
-        isFetching: false,
+        isPending: mockState.availabilityPending,
+        isFetching: mockState.availabilityFetching,
         isError: mockState.availabilityError,
         refetch: mockState.retryAvailability,
       };
@@ -175,6 +177,8 @@ afterEach(() => {
   mockState.created.length = 0;
   mockState.availability = [mockState.readyAvailability];
   mockState.availabilityError = false;
+  mockState.availabilityPending = false;
+  mockState.availabilityFetching = false;
   mockState.routeSearchParams = "agentRuntimeType=hermes_gateway";
   mockState.retryAvailability.mockReset().mockResolvedValue(undefined);
   mockState.rerender = null;
@@ -209,6 +213,7 @@ describe("NewAgent local Hermes creation", () => {
       .toContain("Add fallback model");
     expect(advancedSettings?.querySelector("[aria-label='Environment variables']")?.closest("details"))
       .toBe(advancedSettings);
+    expect(text).not.toMatch(/legacy local|API Server|Coming soon/i);
   });
 
   it("creates a local Hermes agent without a server address or API key", async () => {
@@ -228,8 +233,30 @@ describe("NewAgent local Hermes creation", () => {
     expect(mockState.created[0]).toMatchObject({
       name: "Hermes helper",
       agentRuntimeType: "hermes_gateway",
-      agentRuntimeConfig: { hermesConnectionMode: "local" },
+      agentRuntimeConfig: {
+        hermesConnectionMode: "local",
+        hermesChatBackend: "acp",
+        hermesProductRpcCapabilityGap: "yaml_missing",
+        hermesAcpCommand: "/opt/hermes/bin/hermes",
+      },
     });
+  });
+
+  it("keeps creation blocked until local Hermes readiness finishes", () => {
+    mockState.availabilityPending = true;
+    const container = renderPage();
+    const createButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Create agent");
+    const advancedSettings = container.querySelector<HTMLDetailsElement>(
+      "details[data-testid='new-agent-advanced-settings']",
+    );
+
+    expect(container.textContent).toContain("Checking for Hermes on this machine…");
+    expect((createButton as HTMLButtonElement | undefined)?.disabled).toBe(true);
+    expect(advancedSettings?.open).toBe(false);
+    expect(container.querySelector("input[aria-label='Hermes API Server URL']")).toBeNull();
+    expect(container.querySelector("input[aria-label='API Server key']")).toBeNull();
+    expect(container.textContent).not.toMatch(/legacy local|API Server|Coming soon/i);
   });
 
   it("shows custom Hermes controls and preserves required-field validation and submission", async () => {

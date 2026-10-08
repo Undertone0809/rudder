@@ -24,6 +24,8 @@ const mockState = vi.hoisted(() => ({
     hint: "Product RPC is unavailable",
   }],
   availabilityError: false,
+  availabilityPending: false,
+  availabilityFetching: false,
   retryAvailability: vi.fn(async () => undefined),
   rerender: null as null | (() => void),
   navigate: vi.fn(),
@@ -35,8 +37,8 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => queryKey[2] === "adapter-availability"
     ? {
         data: mockState.availability,
-        isPending: false,
-        isFetching: false,
+        isPending: mockState.availabilityPending,
+        isFetching: mockState.availabilityFetching,
         isError: mockState.availabilityError,
         refetch: mockState.retryAvailability,
       }
@@ -101,11 +103,25 @@ afterEach(() => {
   mockState.openNewIssue.mockClear();
   mockState.availability = [mockState.readyAvailability];
   mockState.availabilityError = false;
+  mockState.availabilityPending = false;
+  mockState.availabilityFetching = false;
   mockState.retryAvailability.mockReset().mockResolvedValue(undefined);
   mockState.rerender = null;
 });
 
 describe("NewAgentDialog Hermes path", () => {
+  it("keeps one Hermes creation choice while local readiness is being checked", () => {
+    mockState.availabilityPending = true;
+    const container = renderDialog();
+    const hermesChoices = [...container.querySelectorAll("button")]
+      .filter((button) => button.textContent?.includes("Hermes"));
+
+    expect(hermesChoices).toHaveLength(1);
+    expect(hermesChoices[0].textContent).toContain("Create with Hermes");
+    expect(container.textContent).toContain("Checking for Hermes on this machine…");
+    expect(container.textContent).not.toMatch(/legacy local|API Server|Coming soon/i);
+  });
+
   it("offers the detected local Hermes path before advanced setup", async () => {
     const container = renderDialog();
     const text = container.textContent ?? "";
@@ -113,6 +129,7 @@ describe("NewAgentDialog Hermes path", () => {
     expect(text).toContain("Create with Hermes");
     expect(text).toContain("Hermes was found on this machine. Rudder will use its existing provider setup.");
     expect(text).not.toMatch(/ACP|Product RPC|backend/i);
+    expect(text).not.toMatch(/legacy local|API Server|Coming soon/i);
     expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("Hermes")))
       .toHaveLength(1);
 

@@ -27,8 +27,7 @@ type AdvancedAdapterType =
   | "opencode_local"
   | "pi_local"
   | "cursor"
-  | "openclaw_gateway"
-  | "hermes_gateway";
+  | "openclaw_gateway";
 const ADVANCED_ADAPTER_OPTIONS: Array<{
   value: AdvancedAdapterType;
   label: string;
@@ -124,7 +123,16 @@ export function NewAgentDialog() {
     closeNewAgent();
     setShowAdvancedCards(false);
     const params = new URLSearchParams({ agentRuntimeType });
-    if (agentRuntimeType === "hermes_gateway") params.set("hermesConnectionMode", "local");
+    navigate(`/agents/new?${params.toString()}`);
+  }
+
+  function handleHermesCreate() {
+    closeNewAgent();
+    setShowAdvancedCards(false);
+    const params = new URLSearchParams({
+      agentRuntimeType: "hermes_gateway",
+      hermesConnectionMode: "local",
+    });
     navigate(`/agents/new?${params.toString()}`);
   }
 
@@ -182,7 +190,7 @@ export function NewAgentDialog() {
                   variant="outline"
                   className="w-full"
                   size="lg"
-                  onClick={() => handleAdvancedAdapterPick("hermes_gateway")}
+                  onClick={handleHermesCreate}
                 >
                   <Bot className="h-4 w-4 mr-2" />
                   Create with Hermes

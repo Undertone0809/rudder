@@ -194,7 +194,9 @@ export function RuntimeProviderCard({
       ? queryKeys.agents.adapterModels(selectedOrganizationId, runtimeType)
       : ["agents", "none", "adapter-models", runtimeType],
     queryFn: () => agentsApi.adapterModels(selectedOrganizationId!, runtimeType),
-    enabled: Boolean(selectedOrganizationId) && runtimeType !== "gemini_local",
+    enabled: Boolean(selectedOrganizationId)
+      && runtimeType !== "gemini_local"
+      && runtimeType !== "hermes_local",
   });
   const models = useMemo(
     () => resolveRuntimeModels(runtimeType, fetchedModels, externalModels),
@@ -277,8 +279,14 @@ export function RuntimeProviderCard({
             <span className="shrink-0 rounded border border-amber-400/50 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
               Unsupported
             </span>
+          ) : runtimeType === "hermes_local" ? (
+            <span className="shrink-0 rounded border border-amber-400/50 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+              Legacy · migration required
+            </span>
           ) : null}
-          <RuntimeEnvironmentStatusBadge status={environmentStatus} />
+          {runtimeType !== "hermes_local" && (
+            <RuntimeEnvironmentStatusBadge status={environmentStatus} />
+          )}
         </div>
         {onRemove ? (
           <Button
@@ -305,7 +313,16 @@ export function RuntimeProviderCard({
             />
           </Field>
         )}
-        {runtimeType === "gemini_local" ? (
+        {runtimeType === "hermes_local" ? (
+          <div
+            role="alert"
+            className="rounded-md border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
+          >
+            This saved agent uses the legacy Hermes Local runtime and requires reconfiguration to the supported Hermes runtime. {hideRuntimeType
+              ? "Open Agent settings and choose Hermes to stage the change."
+              : "Choose Hermes above to stage the change."} Existing settings remain unchanged until you save.
+          </div>
+        ) : runtimeType === "gemini_local" ? (
           <div
             role="alert"
             className="rounded-md border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
