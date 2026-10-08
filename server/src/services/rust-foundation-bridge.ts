@@ -64,6 +64,7 @@ export interface RustFoundationBridge {
   readonly publicIngressBaseUrl?: string | null;
   waitForPublicIngressReady?(): Promise<void>;
   start(): Promise<void>;
+  calendar?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   messengerState?(actor: RustFoundationActor, orgId: string, input: MessengerStateInput): Promise<RustFoundationResponse>;
   runRead?(actor: RustFoundationActor, orgId: string, input: RunReadInput): Promise<RustFoundationResponse>;
   liveRunRead?(
@@ -74,7 +75,17 @@ export interface RustFoundationBridge {
   goalRead(
     actor: RustFoundationActor,
     orgId: string,
-    input: { view: "list" | "detail" | "activities" | "history" | "dependencies"; goalId: string | null; cursor?: string | null; limit?: string | null },
+    input: {
+      view: "list" | "detail" | "activities" | "history" | "dependencies"
+        | "workspaceCards" | "assigned" | "workspace" | "agentContext" | "timeline";
+      goalId: string | null;
+      cursor?: string | null;
+      limit?: string | null;
+      agentId?: string | null;
+      lifecycle?: "draft" | "active" | "closed" | "all";
+      focus?: boolean | null;
+      facet?: string | null;
+    },
   ): Promise<RustFoundationResponse>;
   costRead(
     actor: RustFoundationActor,
@@ -836,6 +847,42 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         } satisfies RustFoundationResponse;
       } catch (error) {
         throw new RustFoundationBridgeError("request_failed", "Rust Goal read request failed", { cause: error });
+      }
+    },
+    async calendar(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/calendar`;
+      const body = Buffer.from(JSON.stringify(input), "utf8");
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({
+        actor,
+        organizationId: orgId,
+        method: "POST",
+        path: requestPath,
+        action: "calendar.mutate",
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+      });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+          },
+          body: body as unknown as BodyInit,
+          signal: AbortSignal.timeout(requestTimeoutMs),
+        });
+        return {
+          status: response.status,
+          contentType: response.headers.get("content-type") ?? "application/json",
+          body: Buffer.from(await response.arrayBuffer()),
+        } satisfies RustFoundationResponse;
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust Calendar request failed", { cause: error });
       }
     },
     async costRead(actor, orgId, input) {

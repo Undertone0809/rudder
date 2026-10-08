@@ -3,7 +3,7 @@ use crate::{ActorEnvelopeVerificationError, AppState, DatabaseState};
 use actix_web::{HttpRequest, HttpResponse, http::StatusCode, web};
 use rudder_d1_persistence::{
     StoreError,
-    goal_reads::{GoalReadError, GoalReadRequest, read_goals},
+    goal_reads::{GoalReadError, GoalReadRequest, GoalReadView, read_goals_for_actor},
 };
 
 pub const GOAL_READ_ACTION: &str = "goal.read";
@@ -28,8 +28,9 @@ pub(super) async fn goal_reads(
 }
 impl AppState {
     async fn goal_read(&self, request: &HttpRequest, org_id: &str, body: &[u8]) -> HttpResponse {
-        match self.verify_actor_envelope(request, org_id, GOAL_READ_ACTION, None, body) {
-            Ok(_) => (),
+        let actor = match self.verify_actor_envelope(request, org_id, GOAL_READ_ACTION, None, body)
+        {
+            Ok(actor) => actor,
             Err(ActorEnvelopeVerificationError::Unconfigured) => {
                 return goal_read_error(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -39,17 +40,27 @@ impl AppState {
             Err(ActorEnvelopeVerificationError::Invalid) => {
                 return goal_read_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
             }
-        }
+        };
         let input = match serde_json::from_slice::<GoalReadRequest>(body) {
             Ok(input) => input,
             Err(_) => {
                 return goal_read_error(StatusCode::UNPROCESSABLE_ENTITY, "goal_read_invalid");
             }
         };
+        if matches!(
+            input.view,
+            GoalReadView::Assigned | GoalReadView::AgentContext
+        ) {
+            let signed_agent_id =
+                (actor.actor().kind == "agent").then_some(actor.actor().id.as_str());
+            if input.agent_id.as_deref() != signed_agent_id {
+                return goal_read_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
+            }
+        }
         let DatabaseState::Configured(pool) = &self.database else {
             return goal_read_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
-        match read_goals(pool, org_id, &input).await {
+        match read_goals_for_actor(pool, org_id, &input, crate::run_visibility::owner(&actor)).await {
             Ok(response) => HttpResponse::Ok()
                 .content_type("application/json")
                 .body(response),
@@ -57,6 +68,8 @@ impl AppState {
                 .json(serde_json::json!({"error":"Invalid Goal history cursor"})),
             Err(GoalReadError::Limit) => HttpResponse::BadRequest()
                 .json(serde_json::json!({"error":"Goal history limit must be between 1 and 100"})),
+            Err(GoalReadError::TimelineLimit) => HttpResponse::BadRequest()
+                .json(serde_json::json!({"error":"Goal activity timeline limit must be between 1 and 100"})),
             Err(GoalReadError::Store(StoreError::NotFound)) => {
                 HttpResponse::NotFound().json(serde_json::json!({"error":"Goal not found"}))
             }
@@ -86,9 +99,13 @@ mod tests {
     }
 
     fn signed_request(body: &[u8], field: &str) -> HttpRequest {
+        signed_request_as(body, field, "user", "synthetic")
+    }
+
+    fn signed_request_as(body: &[u8], field: &str, kind: &str, id: &str) -> HttpRequest {
         let now = unix_time_seconds();
         let mut envelope = ActorEnvelope::new(
-            ActorIdentity::new("user", "synthetic").unwrap(),
+            ActorIdentity::new(kind, id).unwrap(),
             ORG,
             "session",
             1,
@@ -214,5 +231,37 @@ mod tests {
                 .status(),
             StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[actix_web::test]
+    async fn runtime_agent_identity_is_bound_to_assigned_and_context_bodies() {
+        let agent = "20000000-0000-4000-8000-000000000001";
+        let other = "20000000-0000-4000-8000-000000000002";
+        for view in ["assigned", "agentContext"] {
+            let body = serde_json::to_vec(&serde_json::json!({
+                "goalId": if view == "assigned" { serde_json::Value::Null } else { serde_json::json!("30000000-0000-4000-8000-000000000001") },
+                "view": view,
+                "agentId": agent,
+                "lifecycle": "active",
+                "limit": "20"
+            })).unwrap();
+            let valid = signed_request_as(&body, "matching-agent", "agent", agent);
+            assert_eq!(
+                state().goal_read(&valid, ORG, &body).await.status(),
+                StatusCode::SERVICE_UNAVAILABLE
+            );
+            let mismatched = signed_request_as(&body, "mismatched-agent", "agent", other);
+            assert_eq!(
+                state().goal_read(&mismatched, ORG, &body).await.status(),
+                StatusCode::UNAUTHORIZED,
+                "{view}"
+            );
+            let user = signed_request_as(&body, "user-agent", "user", "synthetic");
+            assert_eq!(
+                state().goal_read(&user, ORG, &body).await.status(),
+                StatusCode::UNAUTHORIZED,
+                "{view} user actor"
+            );
+        }
     }
 }

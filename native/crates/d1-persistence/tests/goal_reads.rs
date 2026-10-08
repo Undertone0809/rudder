@@ -22,6 +22,10 @@ fn input(view: GoalReadView, id: Option<&str>) -> GoalReadRequest {
         goal_id: id.map(str::to_owned),
         cursor: None,
         limit: None,
+        agent_id: None,
+        lifecycle: None,
+        focus: None,
+        facet: None,
     }
 }
 
@@ -143,6 +147,11 @@ async fn goal_reads_sql_public_projection_scope_history_and_dependencies() {
     assert_eq!(deps["counts"]["linkedProjects"], 1);
     assert_eq!(deps["blockers"], json!(["child_goals", "linked_projects"]));
     assert!(!deps.to_string().contains(FOREIGN_PROJECT));
+    let mut context_request = input(GoalReadView::AgentContext, Some(GOAL));
+    context_request.agent_id = Some(CEO.to_owned());
+    let context = read_goals(&db.pool, ORG, &context_request).await;
+    assert!(context.is_ok(), "agent-context read failed: {context:?}");
+    assert_eq!(context.as_ref().unwrap()["goal"]["ownerAgentId"], CEO);
     let empty = read_goals(
         &db.pool,
         OTHER,

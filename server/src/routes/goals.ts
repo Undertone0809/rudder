@@ -1,10 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import type {
-  GoalAgentContext,
   GoalAgentListLifecycle,
-  GoalAgentListResponse,
-  GoalCriterion,
-  GoalWorkspaceCard,
   GoalWorkspaceFacet,
 } from "@rudderhq/shared";
 import {
@@ -53,7 +49,14 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
 
   // Selected GETs always execute in Rust, regardless of mutation pilot ownership.
   // Node only authenticates and resolves goal references; no hydration fallback.
-  async function forwardGoalRead(req: Request, res: Response, orgId: string, view: Parameters<RustFoundationBridge["goalRead"]>[2]["view"], goalId: string | null) {
+  async function forwardGoalRead(
+    req: Request,
+    res: Response,
+    orgId: string,
+    view: Parameters<RustFoundationBridge["goalRead"]>[2]["view"],
+    goalId: string | null,
+    additional: Partial<Parameters<RustFoundationBridge["goalRead"]>[2]> = {},
+  ) {
     if (!rustFoundationBridge) {
       res.status(503).json({ error: "Rust Goal reads are unavailable", code: "rust_foundation_goal_read_unavailable" });
       return;
@@ -66,6 +69,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
           cursor: typeof req.query.cursor === "string" ? req.query.cursor : null,
           limit: typeof req.query.limit === "string" ? req.query.limit : null,
         } : {}),
+        ...additional,
       });
     } catch {
       res.status(503).json({ error: "Rust Goal reads are unavailable", code: "rust_foundation_goal_read_request_failed" });
@@ -173,7 +177,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
   router.get("/orgs/:orgId/goals/workspace", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    res.json(await svc.workspaceCards(orgId));
+    await forwardGoalRead(req, res, orgId, "workspaceCards", null);
   });
 
   router.get("/orgs/:orgId/goals/assigned", async (req, res) => {
@@ -181,17 +185,13 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     assertCompanyAccess(req, orgId);
     const agentId = requireRuntimeAgent(req);
     const filters = parseAssignedGoalFilters(req.query as Record<string, unknown>);
-    const assigned = (await svc.workspaceCards(orgId) as GoalWorkspaceCard[]).filter((goal) =>
-      goal.ownerAgentId === agentId
-      && (filters.lifecycle === "all" || goal.lifecycle === filters.lifecycle)
-      && (filters.focus === null || goal.focus === filters.focus)
-      && (filters.facet === null || goal.facet === filters.facet));
-    const response: GoalAgentListResponse = {
-      goals: assigned.slice(0, filters.limit),
-      count: assigned.length,
-      filters,
-    };
-    res.json(response);
+    await forwardGoalRead(req, res, orgId, "assigned", null, {
+      agentId,
+      lifecycle: filters.lifecycle,
+      focus: filters.focus,
+      facet: filters.facet,
+      limit: String(filters.limit),
+    });
   });
 
   router.get("/goals/:id", async (req, res) => {
@@ -206,11 +206,12 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
 
   router.get("/goals/:id/workspace", async (req, res) => {
     const id = req.params.id as string;
-    if (!await loadAuthorizedGoal(req, id)) {
+    const goal = await loadAuthorizedGoal(req, id);
+    if (!goal) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    res.json(await svc.workspace(id));
+    await forwardGoalRead(req, res, goal.orgId, "workspace", goal.id);
   });
 
   router.get("/goals/:id/agent-context", async (req, res) => {
@@ -224,80 +225,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     if (goal.ownerAgentId !== agentId) {
       throw forbidden("Agents can only read runtime context for Goals they own");
     }
-    const [detail, workspace, latestCheckpoint, recentCheckpoints, pendingContinuationWake] = await Promise.all([
-      svc.detail(id),
-      svc.workspace(id),
-      svc.latestCheckpoint(id),
-      svc.recentCheckpoints(id),
-      svc.pendingContinuationWake(id),
-    ]);
-    const publicGoal = publicGoalView(detail);
-    const response: GoalAgentContext = {
-      goal: {
-        id: publicGoal.id,
-        orgId: publicGoal.orgId,
-        title: publicGoal.title,
-        description: publicGoal.description,
-        lifecycle: publicGoal.lifecycle,
-        status: publicGoal.status,
-        ownerAgentId: publicGoal.ownerAgentId,
-        focus: publicGoal.focus,
-        closeReason: publicGoal.closeReason,
-        createdAt: publicGoal.createdAt,
-        updatedAt: publicGoal.updatedAt,
-      },
-      contract: {
-        revision: detail.contractRevision,
-        outcomeStatement: detail.outcomeStatement,
-        objectiveMode: detail.objectiveMode as GoalAgentContext["contract"]["objectiveMode"],
-        criteria: detail.criteria as GoalCriterion[],
-        autonomyEnvelope: detail.autonomyEnvelope,
-        humanAuthorities: detail.humanAuthorities,
-        evaluationPolicy: detail.evaluationPolicy,
-        actionDeadline: detail.actionDeadline,
-        evaluationDeadline: detail.evaluationDeadline,
-      },
-      plan: detail.plan
-        ? {
-            revision: detail.plan.revision,
-            summary: detail.plan.summary,
-            hypotheses: detail.plan.hypotheses,
-            selectedPaths: detail.plan.selectedPaths,
-            rejectedPaths: detail.plan.rejectedPaths,
-            sequencing: detail.plan.sequencing,
-            budgetAllocations: detail.plan.budgetAllocations,
-            invalidationConditions: detail.plan.invalidationConditions,
-          }
-        : null,
-      continuation: detail.continuationKind
-        ? {
-            kind: detail.continuationKind as "commitment" | "wait" | "decision" | "verification",
-            summary: detail.continuationSummary ?? "",
-            wakeCondition: detail.wakeCondition,
-          }
-        : null,
-      latestCheckpoint: latestCheckpoint ? publicGoalCheckpoint(latestCheckpoint) : null,
-      recentCheckpoints: recentCheckpoints.map(publicGoalCheckpoint),
-      pendingContinuationWake,
-      state: {
-        facet: workspace.facet,
-        currentProgress: workspace.currentProgress,
-        agentAction: workspace.agentAction,
-        nextStep: workspace.nextStep,
-        attention: workspace.attention,
-      },
-      pending: {
-        changeProposals: workspace.changeProposals ?? [],
-        resultProposals: workspace.resultProposals,
-      },
-      recentHistory: workspace.timeline.slice(0, 20),
-      allowedActions: {
-        reportProgress: detail.lifecycle === "active",
-        proposeChange: detail.lifecycle === "active",
-        proposeResult: detail.lifecycle === "active",
-      },
-    };
-    res.json(response);
+    await forwardGoalRead(req, res, goal.orgId, "agentContext", goal.id, { agentId });
   });
 
   router.get("/goals/:id/history", async (req, res) => {
@@ -311,13 +239,15 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
 
   router.get("/goals/:id/timeline", async (req, res) => {
     const id = req.params.id as string;
-    if (!await loadAuthorizedGoal(req, id)) {
+    const goal = await loadAuthorizedGoal(req, id);
+    if (!goal) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
-    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
-    res.json(await svc.timeline(id, { cursor, limit }));
+    await forwardGoalRead(req, res, goal.orgId, "timeline", goal.id, {
+      cursor: typeof req.query.cursor === "string" ? req.query.cursor : null,
+      limit: typeof req.query.limit === "string" ? req.query.limit : null,
+    });
   });
 
   router.get("/goals/:id/dependencies", async (req, res) => {
