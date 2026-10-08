@@ -29,7 +29,7 @@ import { chatAgentRunService } from "./chat-agent-runs.js";
 import { sideChatRuntimeAdmissionSnapshot } from "./chat-assistant.admission-snapshot.js";
 import { chatBindingInstructionsRevision } from "./chat-assistant.binding-revision.js";
 import { assertClaudeSideChatInputSafe, canRestartPristineClaudeFork, claudeForkFenceForRun, recoverClaudeDeferredForkRun } from "./chat-assistant.claude-fork-recovery.js";
-import { cursorAcpTimeoutEvidence } from "./chat-assistant.cursor-diagnostics.js";
+import { cursorAcpRpcFailureEvidence, cursorAcpTimeoutEvidence } from "./chat-assistant.cursor-diagnostics.js";
 import {
   createChatAssistantExecutionOwner,
   createChatAssistantStopFinalizer,
@@ -1281,6 +1281,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         );
         const rawProviderFailure = asRecord(result.resultJson?.providerFailure);
         const nativeFailure = parseOpenCodeNativeFailureDiagnostic(result.resultJson?.nativeFailure);
+        const cursorAcpRpcFailure = cursorAcpRpcFailureEvidence(result);
         const authProviderFailure = result.errorCode === "codex_provider_auth_required"
           && rawProviderFailure?.classification === "authentication"
           && rawProviderFailure.retryable === false
@@ -1336,6 +1337,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...(acceptanceUnknown ? { submissionPhase: "indeterminate", nativeCompletion: "unknown" } : {}),
             ...(authProviderFailure ? { providerFailure: authProviderFailure } : {}),
             ...(nativeFailure ? { nativeFailure } : {}),
+            ...(cursorAcpRpcFailure ? { cursorAcpRpcFailure } : {}),
           },
         });
         throw new ChatAssistantStreamError(

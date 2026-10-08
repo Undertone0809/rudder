@@ -5150,6 +5150,64 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(JSON.stringify(mockChatAgentRuns.finalizeRun.mock.lastCall)).not.toContain(secret);
   });
 
+  it("persists only the bounded Cursor ACP RPC method and parameter types in the failed Run", async () => {
+    const svc = chatAssistantService({} as any);
+    const promptSentinel = "cursor-run-prompt-c81d2a";
+    const secretSentinel = "cursor-run-secret-41e5bc";
+    mockAdapter.execute.mockImplementationOnce(async () => ({
+      summary: "",
+      timedOut: false,
+      exitCode: 1,
+      errorCode: "cursor_native_protocol-mismatch",
+      errorMessage: "Cursor ACP session/prompt failed: Invalid params",
+      resultJson: {
+        acpRpcFailureTrace: [
+          {
+            method: "session/prompt",
+            status: "failed",
+            jsonRpcCode: -32602,
+            parameterTypes: { sessionId: "string", prompt: "array", credential: secretSentinel },
+            params: { prompt: promptSentinel, token: secretSentinel },
+            errorData: { message: secretSentinel },
+          },
+        ],
+      },
+    }));
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({ errorCode: "chat_submission_acceptance_unknown" });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "chat_submission_acceptance_unknown",
+        resultJson: expect.objectContaining({
+          cursorAcpRpcFailure: {
+            requestTrace: [
+              {
+                method: "session/prompt",
+                status: "failed",
+                jsonRpcCode: -32602,
+                parameterTypes: { sessionId: "string", prompt: "array" },
+              },
+            ],
+          },
+          recoverable: false,
+          retryable: false,
+          submissionPhase: "indeterminate",
+          nativeCompletion: "unknown",
+          action: "inspect_run",
+        }),
+      }),
+    );
+    const serializedRun = JSON.stringify(mockChatAgentRuns.finalizeRun.mock.lastCall);
+    expect(serializedRun).not.toContain(promptSentinel);
+    expect(serializedRun).not.toContain(secretSentinel);
+  });
+
   it("wraps runtime exceptions as recoverable failed chat results", async () => {
     const svc = chatAssistantService({} as any);
 

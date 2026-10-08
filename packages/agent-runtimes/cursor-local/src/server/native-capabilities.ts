@@ -855,15 +855,19 @@ function normalizeRpcFailure(error: unknown, operation: string, secrets: readonl
   if (error instanceof CursorAcpRpcError) {
     const message = diagnosticText(error.message, secrets);
     if (/authentication required|not authenticated|run ['`]?agent login|cursor_login/i.test(message)) {
-      return new CursorNativeCapabilityError("unknown", "auth-required", `Cursor ACP ${operation} requires Cursor authentication: ${message}`);
+      return new CursorNativeCapabilityError("unknown", "auth-required", `Cursor ACP ${operation} requires Cursor authentication.`);
     }
     if (/unknown (?:session|chat)|(?:session|chat).*(?:not found|does not exist)|could not load session/i.test(message)) {
-      return new CursorNativeCapabilityError("unknown", "missing-session", `Cursor ACP ${operation} could not load the requested session: ${message}`);
+      return new CursorNativeCapabilityError("unknown", "missing-session", `Cursor ACP ${operation} could not load the requested session.`);
     }
     if (error.code === -32601 || /method not found|unsupported/i.test(message)) {
-      return new CursorNativeCapabilityError("unsupported", "unsupported", `Cursor ACP ${operation} is unsupported: ${message}`);
+      return new CursorNativeCapabilityError("unsupported", "unsupported", `Cursor ACP ${operation} is unsupported${error.code === -32601 ? " (JSON-RPC -32601)" : ""}.`);
     }
-    return new CursorNativeCapabilityError("unknown", "protocol-mismatch", `Cursor ACP ${operation} failed: ${message}`);
+    const invalidParams = error.code === -32602 ? "Invalid params" : "request failed";
+    const safeCode = typeof error.code === "number" && Number.isSafeInteger(error.code)
+      ? ` (JSON-RPC ${error.code})`
+      : "";
+    return new CursorNativeCapabilityError("unknown", "protocol-mismatch", `Cursor ACP ${operation} failed: ${invalidParams}${safeCode}.`);
   }
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
     return new CursorNativeCapabilityError("unknown", "transport-error", `Cursor ACP ${operation} timed out: ${error.message}`);
@@ -932,10 +936,43 @@ type CursorAcpAuthMethodDiagnostic = {
   advertisedAuthMethodIds: string[];
   chosenAuthMethodId: string | null;
 };
+type CursorAcpParameterType = "null" | "boolean" | "number" | "string" | "array" | "object";
+type CursorAcpRpcFailureTraceEntry = {
+  method: CursorAcpRequestMethod;
+  status: CursorAcpRequestDiagnostic["status"];
+  parameterTypes: Record<string, CursorAcpParameterType>;
+  jsonRpcCode?: number;
+};
+const CURSOR_ACP_RPC_TRACE_MAX_ENTRIES = 8;
+const CURSOR_ACP_RPC_TRACE_MAX_PARAMETERS = 24;
+const CURSOR_ACP_RPC_TRACE_MAX_PARAMETER_NAME_LENGTH = 48;
+const CURSOR_ACP_RPC_TRACE_MAX_BYTES = 16 * 1024;
+
+function cursorAcpParameterTypes(params: JsonRecord): Record<string, CursorAcpParameterType> {
+  const parameterTypes: Record<string, CursorAcpParameterType> = {};
+  for (const [name, value] of Object.entries(params).slice(0, CURSOR_ACP_RPC_TRACE_MAX_PARAMETERS)) {
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name) || name.length > CURSOR_ACP_RPC_TRACE_MAX_PARAMETER_NAME_LENGTH) continue;
+    if (value === null) {
+      parameterTypes[name] = "null";
+    } else if (Array.isArray(value)) {
+      parameterTypes[name] = "array";
+    } else {
+      switch (typeof value) {
+        case "string": parameterTypes[name] = "string"; break;
+        case "number": parameterTypes[name] = "number"; break;
+        case "boolean": parameterTypes[name] = "boolean"; break;
+        case "object": parameterTypes[name] = "object"; break;
+      }
+    }
+  }
+  return parameterTypes;
+}
+
 type CursorAcpRequestDiagnostic = {
   method: CursorAcpRequestMethod;
   status: "started" | "completed" | "failed" | "timed_out";
   durationMs: number;
+  parameterTypes?: Record<string, CursorAcpParameterType>;
   errorCode?: number | string | null;
   errorMessage?: string;
   errorDataMessage?: string;
@@ -1135,6 +1172,7 @@ class CursorAcpClient {
       method,
       status: "started",
       durationMs: 0,
+      parameterTypes: cursorAcpParameterTypes(params),
       ...(method === "authenticate" && authMethodDiagnostic ? {
         advertisedAuthMethodIds: [...authMethodDiagnostic.advertisedAuthMethodIds],
         chosenAuthMethodId: authMethodDiagnostic.chosenAuthMethodId,
@@ -1186,13 +1224,46 @@ class CursorAcpClient {
   get requestTrace(): CursorAcpRequestDiagnostic[] {
     const childProcess = this.childProcessDiagnostic();
     const lastRequestIndex = this.requestDiagnostics.length - 1;
-    return this.requestDiagnostics.map((diagnostic, index) => ({
-      ...diagnostic,
-      ...(diagnostic.advertisedAuthMethodIds
-        ? { advertisedAuthMethodIds: [...diagnostic.advertisedAuthMethodIds] }
-        : {}),
-      ...(childProcess && index === lastRequestIndex ? { childProcess } : {}),
-    }));
+    return this.requestDiagnostics.map((diagnostic, index) => {
+      const { parameterTypes: _parameterTypes, ...timeoutDiagnostic } = diagnostic;
+      void _parameterTypes;
+      return {
+        ...timeoutDiagnostic,
+        ...(diagnostic.advertisedAuthMethodIds
+          ? { advertisedAuthMethodIds: [...diagnostic.advertisedAuthMethodIds] }
+          : {}),
+        ...(childProcess && index === lastRequestIndex ? { childProcess } : {}),
+      };
+    });
+  }
+
+  get rpcFailureTrace(): CursorAcpRpcFailureTraceEntry[] {
+    const failedIndex = this.requestDiagnostics.findLastIndex((diagnostic) =>
+      diagnostic.status === "failed"
+      && typeof diagnostic.errorCode === "number"
+      && Number.isSafeInteger(diagnostic.errorCode)
+      && diagnostic.errorCode >= -2_147_483_648
+      && diagnostic.errorCode <= 2_147_483_647);
+    if (failedIndex < 0) return [];
+
+    const firstIndex = Math.max(0, failedIndex - CURSOR_ACP_RPC_TRACE_MAX_ENTRIES + 1);
+    const trace: CursorAcpRpcFailureTraceEntry[] = [];
+    let traceBytes = 2;
+    for (const diagnostic of this.requestDiagnostics.slice(firstIndex, failedIndex + 1)) {
+      const entry: CursorAcpRpcFailureTraceEntry = {
+        method: diagnostic.method,
+        status: diagnostic.status,
+        parameterTypes: { ...(diagnostic.parameterTypes ?? {}) },
+        ...(diagnostic.status === "failed" && typeof diagnostic.errorCode === "number"
+          ? { jsonRpcCode: diagnostic.errorCode }
+          : {}),
+      };
+      const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8") + (trace.length ? 1 : 0);
+      if (traceBytes + entryBytes > CURSOR_ACP_RPC_TRACE_MAX_BYTES) break;
+      trace.push(entry);
+      traceBytes += entryBytes;
+    }
+    return trace;
   }
 
   get pid(): number | null {
@@ -2076,10 +2147,12 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
     if (!activeSessionId) {
       throw new CursorNativeCapabilityError("unknown", "protocol-mismatch", "Cursor ACP chat has no session identity.");
     }
-    if (input.model.trim()) {
+    const requestedModelId = input.model.trim();
+    if (requestedModelId && requestedModelId.toLowerCase() !== "auto") {
       // Installed Cursor ACP exposes the official unstable model selector.
       // A provider refusal is terminal; never silently use a different model.
-      await client.request("session/set_model", { sessionId: activeSessionId, modelId: input.model.trim() });
+      // Rudder's `auto` sentinel means Cursor's own session default, not an ACP model ID.
+      await client.request("session/set_model", { sessionId: activeSessionId, modelId: requestedModelId });
     }
     if (input.mode) {
       const availableModes = Array.isArray(sessionModes?.availableModes)
@@ -2187,6 +2260,7 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
     const timedOut = error instanceof CursorAcpTimeoutError;
     const requestTrace = client?.requestTrace ?? [];
     const timedOutRequest = timedOut ? requestTrace.findLast((request) => request.status === "timed_out") : null;
+    const rpcFailureTrace = !timedOut ? client?.rpcFailureTrace ?? [] : [];
     return {
       exitCode: 1,
       signal: null,
@@ -2219,6 +2293,9 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
             durationMs: timedOutRequest?.durationMs ?? error.timeoutMs,
           },
         } : {}),
+        ...(!timedOut && rpcFailureTrace.some((request) => request.status === "failed" && request.jsonRpcCode !== undefined)
+          ? { acpRpcFailureTrace: rpcFailureTrace }
+          : {}),
       },
       summary: "",
     };
