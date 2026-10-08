@@ -57,6 +57,7 @@ type EmbeddedPostgresCtor = new (opts: {
   port: number;
   persistent: boolean;
   initdbFlags: string[];
+  postgresFlags: string[];
   onLog: () => void;
   onError: () => void;
 }) => EmbeddedPostgresInstance;
@@ -340,7 +341,8 @@ describe("Live-run reads through real public HTTP, Rust and PostgreSQL", () => {
     const EmbeddedPostgres = (await import("embedded-postgres")).default as EmbeddedPostgresCtor;
     database = new EmbeddedPostgres({
       databaseDir: dataDir, user: "rudder", password: "rudder", port, persistent: true,
-      initdbFlags: ["--encoding=UTF8", "--locale=C"], onLog: () => {}, onError: () => {},
+      initdbFlags: ["--encoding=UTF8", "--locale=C"],
+      postgresFlags: ["-c", "unix_socket_directories="], onLog: () => {}, onError: () => {},
     });
     await database.initialise();
     await database.start();

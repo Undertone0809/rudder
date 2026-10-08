@@ -7,6 +7,8 @@
 //! reads are pure, organization-scoped projections independent of ownership.
 
 mod branding;
+pub mod cost_reads;
+pub mod goal_reads;
 mod goal_sets;
 pub mod legacy_read_json;
 mod links;
@@ -16,6 +18,7 @@ mod project_deletions;
 pub mod project_library;
 mod project_patches;
 pub mod project_reads;
+pub mod run_visibility;
 mod transaction;
 
 use rudder_organization_mutation_core::{

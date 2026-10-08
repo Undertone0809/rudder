@@ -28,7 +28,7 @@ import {
   updateGoalPlanSchema,
   updateGoalSchema,
 } from "@rudderhq/shared";
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { badRequest, conflict, forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -43,12 +43,36 @@ import {
   publicGoalView,
 } from "../services/goals.js";
 import { goalService, heartbeatService, logActivity } from "../services/index.js";
+import type { RustFoundationBridge, RustFoundationResponse } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function goalRoutes(db: Db) {
+export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = goalService(db);
   const heartbeat = heartbeatService(db);
+
+  // Selected GETs always execute in Rust, regardless of mutation pilot ownership.
+  // Node only authenticates and resolves goal references; no hydration fallback.
+  async function forwardGoalRead(req: Request, res: Response, orgId: string, view: Parameters<RustFoundationBridge["goalRead"]>[2]["view"], goalId: string | null) {
+    if (!rustFoundationBridge) {
+      res.status(503).json({ error: "Rust Goal reads are unavailable", code: "rust_foundation_goal_read_unavailable" });
+      return;
+    }
+    let response: RustFoundationResponse;
+    try {
+      response = await rustFoundationBridge.goalRead(req.actor, orgId, {
+        view, goalId,
+        ...(view === "history" ? {
+          cursor: typeof req.query.cursor === "string" ? req.query.cursor : null,
+          limit: typeof req.query.limit === "string" ? req.query.limit : null,
+        } : {}),
+      });
+    } catch {
+      res.status(503).json({ error: "Rust Goal reads are unavailable", code: "rust_foundation_goal_read_request_failed" });
+      return;
+    }
+    res.status(response.status).set("content-type", response.contentType).send(response.body);
+  }
 
   async function dispatchGoalWakeup(dispatch: {
     ownerAgentId: string;
@@ -143,7 +167,7 @@ export function goalRoutes(db: Db) {
   router.get("/orgs/:orgId/goals", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    res.json((await svc.list(orgId)).map(publicGoalView));
+    await forwardGoalRead(req, res, orgId, "list", null);
   });
 
   router.get("/orgs/:orgId/goals/workspace", async (req, res) => {
@@ -177,7 +201,7 @@ export function goalRoutes(db: Db) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    res.json(publicGoalDetail(await svc.detail(id)));
+    await forwardGoalRead(req, res, goal.orgId, "detail", goal.id);
   });
 
   router.get("/goals/:id/workspace", async (req, res) => {
@@ -277,14 +301,12 @@ export function goalRoutes(db: Db) {
   });
 
   router.get("/goals/:id/history", async (req, res) => {
-    const id = req.params.id as string;
-    if (!await loadAuthorizedGoal(req, id)) {
+    const goal = await loadAuthorizedGoal(req, req.params.id as string);
+    if (!goal) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
-    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
-    res.json(await svc.history(id, { cursor, limit }));
+    await forwardGoalRead(req, res, goal.orgId, "history", goal.id);
   });
 
   router.get("/goals/:id/timeline", async (req, res) => {
@@ -305,19 +327,16 @@ export function goalRoutes(db: Db) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    res.json(await svc.dependencies(goal));
+    await forwardGoalRead(req, res, goal.orgId, "dependencies", goal.id);
   });
 
   router.get("/goals/:id/activities", async (req, res) => {
-    const id = req.params.id as string;
-    if (!await loadAuthorizedGoal(req, id)) {
+    const goal = await loadAuthorizedGoal(req, req.params.id as string);
+    if (!goal) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    const goal = await svc.getById(id);
-    res.json((await svc.listActivities(id)).map((activity) => publicGoalActivity(activity, {
-      runAgentId: goal?.ownerAgentId,
-    })));
+    await forwardGoalRead(req, res, goal.orgId, "activities", goal.id);
   });
 
   router.post("/goals/:id/checkpoint", validate(createGoalCheckpointSchema), async (req, res) => {

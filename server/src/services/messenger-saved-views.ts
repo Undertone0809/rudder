@@ -36,11 +36,11 @@ export type MessengerSavedViewListOptions = {
 const MAX_PRIMARY_RAIL_PINS = 100;
 
 function savedViewPlacementLockKey(orgId: string, userId: string) {
-  return `messenger-saved-views:${orgId}:${userId}`;
+  return `messenger-saved-views:${orgId.toLowerCase()}:${userId}`;
 }
 
 function customGroupPlacementLockKey(orgId: string, userId: string, groupId: string) {
-  return `messenger-custom-group:${orgId}:${userId}:${groupId}`;
+  return `messenger-custom-group:${orgId.toLowerCase()}:${userId}:${groupId.toLowerCase()}`;
 }
 
 /**

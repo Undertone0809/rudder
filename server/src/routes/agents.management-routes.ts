@@ -1,15 +1,13 @@
 import { runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
 import type { Db } from "@rudderhq/db";
-import { agents as agentsTable, organizations } from "@rudderhq/db";
+import { agents as agentsTable, heartbeatRuns, organizations } from "@rudderhq/db";
 import {
   createAgentHireSchema,
   createAgentKeySchema,
   createAgentSchema,
   createDelegationRunSchema,
   toAgentRun,
-  toAgentRuns,
   toHeartbeatRun,
-  toHeartbeatRuns,
   updateAgentInstructionsBundleSchema,
   updateAgentInstructionsPathSchema,
   updateAgentPermissionsSchema,
@@ -18,7 +16,7 @@ import {
   wakeAgentSchema
 } from "@rudderhq/shared";
 import { asc, eq } from "drizzle-orm";
-import { Router, type Request } from "express";
+import { Router, type Request, type RequestHandler } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
@@ -35,6 +33,7 @@ import {
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
 import { sendLiveRunRead } from "../services/live-run-read-bridge.js";
+import { requireRunReadAccess, runReadRedaction, sendRunRead } from "../services/run-read-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
 
@@ -74,6 +73,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     strictSecretsMode,
     persistReconciledInstructionsBundle,
     getCurrentUserRedactionOptions,
+    getRunReadEnvironment = runReadRedaction,
     canCreateAgents,
     buildAgentAccessState,
     assertCanCreateAgentsForCompany,
@@ -1257,51 +1257,32 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     res.json(result);
   });
 
-  router.get("/orgs/:orgId/heartbeat-runs", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const runs = await listRunsForRequest(req, orgId);
-    res.json(toHeartbeatRuns(runs));
-  });
-
-  router.get("/orgs/:orgId/agent-runs", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const runs = await listRunsForRequest(req, orgId);
-    res.json(toAgentRuns(runs));
-  });
+  function listRunsForRequest(surface: "heartbeat" | "agent"): RequestHandler {
+    return async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const start = req.query.startDate ? new Date(req.query.startDate as string) : null;
+      const end = req.query.endDate ? new Date(req.query.endDate as string) : null;
+      const startDate = start && Number.isFinite(start.getTime()) ? start.toISOString() : null;
+      const endDate = end && Number.isFinite(end.getTime()) ? end.toISOString() : null;
+      const limitParam = req.query.limit as string | undefined;
+      await sendRunRead(res, rustFoundationBridge, req.actor, orgId, {
+        operation: "list", surface,
+        agentId: (req.query.agentId as string) || null,
+        goalId: typeof req.query.goalId === "string" && /^[0-9a-f-]{36}$/i.test(req.query.goalId) ? req.query.goalId : null,
+        startDate, endDate,
+        limit: limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100)) : startDate || endDate ? null : 100,
+      });
+    };
+  }
+  router.get("/orgs/:orgId/heartbeat-runs", listRunsForRequest("heartbeat"));
+  router.get("/orgs/:orgId/agent-runs", listRunsForRequest("agent"));
 
   router.get("/orgs/:orgId/agent-runs/overview", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const overview = await heartbeat.overview(orgId);
-    res.json({
-      latestByAgent: toAgentRuns(overview.latestByAgent),
-      recent: toAgentRuns(overview.recent),
-    });
+    await sendRunRead(res, rustFoundationBridge, req.actor, orgId, { operation: "overview" });
   });
-
-  async function listRunsForRequest(req: Request, orgId: string) {
-    const agentId = req.query.agentId as string | undefined;
-    const limitParam = req.query.limit as string | undefined;
-    const startDateParam = req.query.startDate as string | undefined;
-    const endDateParam = req.query.endDate as string | undefined;
-    const goalIdParam = req.query.goalId as string | undefined;
-    const startDate = startDateParam ? new Date(startDateParam) : undefined;
-    const endDate = endDateParam ? new Date(endDateParam) : undefined;
-    const filters = {
-      startDate: startDate && Number.isFinite(startDate.getTime()) ? startDate : undefined,
-      endDate: endDate && Number.isFinite(endDate.getTime()) ? endDate : undefined,
-      goalId: goalIdParam && /^[0-9a-f-]{36}$/i.test(goalIdParam) ? goalIdParam : undefined,
-    };
-    const hasDateRange = Boolean(filters.startDate || filters.endDate);
-    const limit = limitParam
-      ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100))
-      : hasDateRange
-        ? undefined
-        : 100;
-    return heartbeat.list(orgId, agentId, limit, filters);
-  }
 
   router.get("/orgs/:orgId/live-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -1320,28 +1301,29 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     });
   });
 
-  router.get("/heartbeat-runs/:runId", async (req, res) => {
-    const run = await getAuthorizedRun(req, res, "Heartbeat run not found");
-    if (!run) return;
-    res.json(redactCurrentUserValue(toHeartbeatRun(run), await getCurrentUserRedactionOptions()));
-  });
+  function detailForRequest(surface: "heartbeat" | "agent", notFoundMessage: string): RequestHandler {
+    return async (req, res) => {
+      const run = await getAuthorizedRunReference(req, res, notFoundMessage);
+      if (!run) return;
+      await sendRunRead(res, rustFoundationBridge, req.actor, run.orgId, {
+        operation: "detail", surface, runId: run.id,
+        redaction: getRunReadEnvironment(),
+      });
+    };
+  }
+  router.get("/heartbeat-runs/:runId", detailForRequest("heartbeat", "Heartbeat run not found"));
+  router.get("/agent-runs/:runId", detailForRequest("agent", "Agent run not found"));
 
-  router.get("/agent-runs/:runId", async (req, res) => {
-    const run = await getAuthorizedRun(req, res, "Agent run not found");
-    if (!run) return;
-    res.json(redactCurrentUserValue(toAgentRun(run), await getCurrentUserRedactionOptions()));
-  });
-
-  async function getAuthorizedRun(req: Request, res: any, notFoundMessage: string) {
+  async function getAuthorizedRunReference(req: Request, res: any, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
+      orgIds: getAuthorizedOrgScope(req), notFoundMessage,
     });
-    const run = await heartbeat.getRun(runId);
-    if (!run) {
-      res.status(404).json({ error: notFoundMessage });
-      return null;
-    }
+    // Only identity is read here for the existing access check. Native code
+    // rereads the org-scoped row and owns every public payload field.
+    const [run] = await db.select({ id: heartbeatRuns.id, orgId: heartbeatRuns.orgId })
+      .from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).limit(1);
+    if (!run) { res.status(404).json({ error: notFoundMessage }); return null; }
     assertCompanyAccess(req, run.orgId);
     return run;
   }
@@ -1358,6 +1340,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   async function cancelRunForRequest(req: Request, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
       orgIds: getAuthorizedOrgScope(req),
       notFoundMessage,
     });
@@ -1399,6 +1382,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   async function retryRunForRequest(req: Request, res: any, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
       orgIds: getAuthorizedOrgScope(req),
       notFoundMessage,
     });
@@ -1432,42 +1416,22 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     return run;
   }
 
-  router.get("/heartbeat-runs/:runId/events", async (req, res) => {
-    const events = await listRunEventsForRequest(req, res, "Heartbeat run not found");
-    if (!events) return;
-    res.json(events);
-  });
-
-  router.get("/agent-runs/:runId/events", async (req, res) => {
-    const events = await listRunEventsForRequest(req, res, "Agent run not found");
-    if (!events) return;
-    res.json(events);
-  });
-
-  async function listRunEventsForRequest(req: Request, res: any, notFoundMessage: string) {
-    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
-    });
-    const run = await heartbeat.getRun(runId);
-    if (!run) {
-      res.status(404).json({ error: notFoundMessage });
-      return null;
-    }
-    assertCompanyAccess(req, run.orgId);
-
-    const afterSeq = Number(req.query.afterSeq ?? 0);
-    const limit = Number(req.query.limit ?? 200);
-    const events = await heartbeat.listEvents(runId, Number.isFinite(afterSeq) ? afterSeq : 0, Number.isFinite(limit) ? limit : 200);
-    const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
-    const redactedEvents = events.map((event: any) =>
-      redactCurrentUserValue({
-        ...event,
-        payload: redactEventPayload(event.payload),
-      }, currentUserRedactionOptions),
-    );
-    return redactedEvents;
+  function eventsForRequest(notFoundMessage: string): RequestHandler {
+    return async (req, res) => {
+      const run = await getAuthorizedRunReference(req, res, notFoundMessage);
+      if (!run) return;
+      const afterSeq = Number(req.query.afterSeq ?? 0);
+      const limit = Number(req.query.limit ?? 200);
+      await sendRunRead(res, rustFoundationBridge, req.actor, run.orgId, {
+        operation: "events", runId: run.id,
+        afterSeq: Number.isFinite(afterSeq) ? afterSeq : 0,
+        limit: Number.isFinite(limit) ? limit : 200,
+        redaction: getRunReadEnvironment(),
+      });
+    };
   }
+  router.get("/heartbeat-runs/:runId/events", eventsForRequest("Heartbeat run not found"));
+  router.get("/agent-runs/:runId/events", eventsForRequest("Agent run not found"));
 
   router.get("/heartbeat-runs/:runId/log", async (req, res) => {
     const result = await readRunLogForRequest(req, res, "Heartbeat run not found");
@@ -1485,6 +1449,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   async function readRunLogForRequest(req: Request, res: any, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
       orgIds: getAuthorizedOrgScope(req),
       notFoundMessage,
     });
@@ -1505,35 +1470,18 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     return result;
   }
 
-  router.get("/heartbeat-runs/:runId/workspace-operations", async (req, res) => {
-    const operations = await listRunWorkspaceOperationsForRequest(req, res, "Heartbeat run not found");
-    if (!operations) return;
-    res.json(operations);
-  });
-
-  router.get("/agent-runs/:runId/workspace-operations", async (req, res) => {
-    const operations = await listRunWorkspaceOperationsForRequest(req, res, "Agent run not found");
-    if (!operations) return;
-    res.json(operations);
-  });
-
-  async function listRunWorkspaceOperationsForRequest(req: Request, res: any, notFoundMessage: string) {
-    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
-      orgIds: getAuthorizedOrgScope(req),
-      notFoundMessage,
-    });
-    const run = await heartbeat.getRun(runId);
-    if (!run) {
-      res.status(404).json({ error: notFoundMessage });
-      return null;
-    }
-    assertCompanyAccess(req, run.orgId);
-
-    const context = asRecord(run.contextSnapshot);
-    const executionWorkspaceId = asNonEmptyString(context?.executionWorkspaceId);
-    const operations = await workspaceOperations.listForRun(runId, executionWorkspaceId);
-    return redactCurrentUserValue(operations, await getCurrentUserRedactionOptions());
+  function workspaceOperationsForRequest(notFoundMessage: string): RequestHandler {
+    return async (req, res) => {
+      const run = await getAuthorizedRunReference(req, res, notFoundMessage);
+      if (!run) return;
+      await sendRunRead(res, rustFoundationBridge, req.actor, run.orgId, {
+        operation: "workspaceOperations", runId: run.id,
+        redaction: getRunReadEnvironment(),
+      });
+    };
   }
+  router.get("/heartbeat-runs/:runId/workspace-operations", workspaceOperationsForRequest("Heartbeat run not found"));
+  router.get("/agent-runs/:runId/workspace-operations", workspaceOperationsForRequest("Agent run not found"));
 
   router.get("/workspace-operations/:operationId/log", async (req, res) => {
     const operationId = req.params.operationId as string;
@@ -1543,6 +1491,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
     assertCompanyAccess(req, operation.orgId);
+    await requireRunReadAccess(rustFoundationBridge, req.actor, operation.orgId,
+      { operation: "workspaceOperationAccess", operationId }, "Workspace operation not found");
 
     const offset = Number(req.query.offset ?? 0);
     const limitBytes = Number(req.query.limitBytes ?? 256000);
@@ -1586,35 +1536,9 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     }
     assertCompanyAccess(req, issue.orgId);
 
-    let run = issue.executionRunId ? await heartbeat.getRun(issue.executionRunId) : null;
-    if (run && run.status !== "queued" && run.status !== "running" && !run.terminalEffectsPending) {
-      run = null;
-    }
-
-    if (!run && issue.assigneeAgentId && issue.status === "in_progress") {
-      const candidateRun = await heartbeat.getActiveRunForAgent(issue.assigneeAgentId);
-      const candidateContext = asRecord(candidateRun?.contextSnapshot);
-      const candidateIssueId = asNonEmptyString(candidateContext?.issueId);
-      if (candidateRun && candidateIssueId === issue.id) {
-        run = candidateRun;
-      }
-    }
-    if (!run) {
-      res.json(null);
-      return;
-    }
-
-    const agent = await svc.getById(run.agentId);
-    if (!agent) {
-      res.json(null);
-      return;
-    }
-
-    res.json({
-      ...redactCurrentUserValue(toHeartbeatRun(run), await getCurrentUserRedactionOptions()),
-      agentId: agent.id,
-      agentName: agent.name,
-      agentRuntimeType: agent.agentRuntimeType,
+    await sendRunRead(res, rustFoundationBridge, req.actor, issue.orgId, {
+      operation: "active", issueId: issue.id,
+      redaction: getRunReadEnvironment(),
     });
   });
 }

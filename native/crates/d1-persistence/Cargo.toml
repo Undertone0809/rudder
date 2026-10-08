@@ -5,6 +5,10 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64 = "0.22"
+regex-lite = "0.1"
+url = "2.5"
+time = { version = "0.3", features = ["parsing", "formatting"] }
 rudder-organization-mutation-core = { path = "../organization-mutation-core" }
 rudder-project-goal-link-core = { path = "../project-goal-link-core" }
 serde = { version = "1.0", features = ["derive"] }

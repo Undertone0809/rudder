@@ -45,9 +45,17 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
-mod live_run_reads;
-pub use live_run_reads::LIVE_RUN_READ_ACTION;
+mod messenger_state;
+pub use messenger_state::MESSENGER_STATE_ACTION;
 
+mod live_run_reads;
+mod run_reads;
+mod run_visibility;
+pub use live_run_reads::LIVE_RUN_READ_ACTION;
+pub use run_reads::RUN_READ_ACTION;
+
+mod cost_reads;
+mod goal_reads;
 mod project_reads;
 mod public_ingress;
 mod public_ingress_config;
@@ -60,6 +68,8 @@ mod workspace_backup_reads;
 pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
 pub use workspace_backup_reads::WORKSPACE_BACKUP_READ_ACTION;
 
+pub use cost_reads::COST_READ_ACTION;
+pub use goal_reads::GOAL_READ_ACTION;
 pub use project_reads::PROJECT_READ_ACTION;
 
 use workspace_backup_files::{
@@ -87,6 +97,7 @@ pub const PROJECT_CREATE_ACTION: &str = "project.create";
 pub const ORGANIZATION_RESOURCE_ACTION: &str = "organization.resource.mutate";
 
 const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
+    "messenger_state",
     "organization_branding",
     "project_goal_set_replacement",
     "project_delete",
@@ -120,7 +131,10 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "workspace_backup_download",
     "organization_member_directory",
     "project_read",
+    "cost_read",
     "live_run_read",
+    "goal_read",
+    "run_read",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -2748,8 +2762,24 @@ impl ServerRuntime {
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
                 .route(
+                    "/internal/orgs/{org_id}/messenger-state",
+                    web::post().to(messenger_state::messenger_state),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/run-reads",
+                    web::post().to(run_reads::run_reads),
+                )
+                .route(
                     "/internal/orgs/{org_id}/live-run-reads",
                     web::post().to(live_run_reads::live_run_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/cost-reads",
+                    web::post().to(cost_reads::cost_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/goal-reads",
+                    web::post().to(goal_reads::goal_reads),
                 )
                 .route(
                     "/internal/orgs/{org_id}/project-reads",

@@ -84,8 +84,15 @@ async fn read_live_runs(
     pool: &PgPool,
     org_id: &str,
     input: &LiveRunReadRequest,
+    owner: Option<&str>,
 ) -> Result<String, sqlx::Error> {
     let sql = read_sql(input.issue_id.is_some(), input.goal_id.is_some());
+    let owner_parameter = if input.issue_id.is_some() || input.goal_id.is_some() {
+        4
+    } else {
+        3
+    };
+    let sql = crate::run_visibility::scoped_query(&sql, owner_parameter);
     let mut query = sqlx::query_scalar::<_, String>(&sql).bind(org_id);
     if let Some(issue_id) = &input.issue_id {
         query = query.bind(issue_id);
@@ -94,6 +101,7 @@ async fn read_live_runs(
     }
     let rows = query
         .bind(i64::from(input.min_count))
+        .bind(owner)
         .fetch_all(pool)
         .await?;
     rows.into_iter()
@@ -133,18 +141,19 @@ impl AppState {
         org_id: &str,
         body: &[u8],
     ) -> HttpResponse {
-        match self.verify_actor_envelope(request, org_id, LIVE_RUN_READ_ACTION, None, body) {
-            Ok(_) => (),
-            Err(ActorEnvelopeVerificationError::Unconfigured) => {
-                return read_error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "actor_envelope_unconfigured",
-                );
-            }
-            Err(ActorEnvelopeVerificationError::Invalid) => {
-                return read_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
-            }
-        }
+        let actor =
+            match self.verify_actor_envelope(request, org_id, LIVE_RUN_READ_ACTION, None, body) {
+                Ok(actor) => actor,
+                Err(ActorEnvelopeVerificationError::Unconfigured) => {
+                    return read_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "actor_envelope_unconfigured",
+                    );
+                }
+                Err(ActorEnvelopeVerificationError::Invalid) => {
+                    return read_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
+                }
+            };
         let input = match serde_json::from_slice::<LiveRunReadRequest>(body) {
             Ok(input)
                 if input.min_count <= 20
@@ -158,7 +167,7 @@ impl AppState {
         let DatabaseState::Configured(pool) = &self.database else {
             return read_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
-        match read_live_runs(pool, org_id, &input).await {
+        match read_live_runs(pool, org_id, &input, crate::run_visibility::owner(&actor)).await {
             // The old live list is unbounded. Applying the foundation receipt
             // size limit here would silently break high-volume parity.
             Ok(runs) => HttpResponse::Ok()
