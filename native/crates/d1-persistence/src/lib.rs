@@ -7,6 +7,7 @@
 //! reads are pure, organization-scoped projections independent of ownership.
 
 mod branding;
+pub mod goal_reads;
 mod goal_sets;
 pub mod legacy_read_json;
 mod links;

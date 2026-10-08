@@ -9,7 +9,7 @@ import {
 } from "@rudderhq/shared";
 import express from "express";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { goalRoutes } from "../routes/goals.js";
 import {
@@ -24,6 +24,7 @@ import {
   reduceGoalEvaluation,
   stableGoalHash,
 } from "../services/goals.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const ORG_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG_ID = "22222222-2222-4222-8222-222222222222";
@@ -747,7 +748,8 @@ describe("Goal contract", () => {
       };
       next();
     });
-    app.use("/api", goalRoutes(db));
+    const goalRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify({ id: GOAL_ID })) });
+    app.use("/api", goalRoutes(db, { goalRead } as unknown as RustFoundationBridge));
     app.use(errorHandler);
 
     const [detail, context] = await Promise.all([
@@ -757,6 +759,7 @@ describe("Goal contract", () => {
 
     expect(detail.status, JSON.stringify(detail.body)).toBe(200);
     expect(detail.body.id).toBe(GOAL_ID);
+    expect(goalRead).toHaveBeenCalledWith(expect.objectContaining({ agentId: OWNER_ID }), ORG_ID, { view: "detail", goalId: GOAL_ID });
     expect(context.status, JSON.stringify(context.body)).toBe(200);
     expect(context.body.goal).toMatchObject({ id: GOAL_ID, ownerAgentId: OWNER_ID });
   });
@@ -791,7 +794,7 @@ describe("Goal contract", () => {
     expect(nonOwner.body.error).toBe("Agents can only read runtime context for Goals they own");
   });
 
-  it("keeps legacy Goal read endpoints on the public read model", async () => {
+  it("forwards the native public Goal read model unchanged", async () => {
     const { db, state } = createGoalDb(makeGoal({
       lifecycle: "active",
       status: "active",
@@ -814,7 +817,12 @@ describe("Goal contract", () => {
       req.actor = { type: "board", source: "local_implicit", userId: "board-user" };
       next();
     });
-    app.use("/api", goalRoutes(db));
+    const publicActivity = { id: "activity-1", evidence: [{ label: "Supporting work 1", href: null, external: false }] };
+    const goalRead = vi.fn().mockImplementation(async (_actor, _orgId, input) => ({
+      status: 200, contentType: "application/json",
+      body: Buffer.from(JSON.stringify(input.view === "activities" ? [publicActivity] : { id: GOAL_ID, activities: [publicActivity] })),
+    }));
+    app.use("/api", goalRoutes(db, { goalRead } as unknown as RustFoundationBridge));
     app.use(errorHandler);
 
     const detail = await request(app).get(`/api/goals/${GOAL_ID}`);

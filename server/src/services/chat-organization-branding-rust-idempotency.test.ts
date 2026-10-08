@@ -149,6 +149,7 @@ function createFakeRustBridge(
     projectGoalSetMode: "off",
     requiresStartup: false,
     start: async () => {},
+    goalRead: unexpectedBridgeCall,
     projectRead: unexpectedBridgeCall,
     projectCreate: unexpectedBridgeCall,
     memberDirectory: unexpectedBridgeCall,

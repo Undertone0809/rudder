@@ -55,6 +55,14 @@ pilot switches. Node keeps authentication, organization authorization, and
 issue identifier/alias resolution. A missing or failed native read returns an
 error instead of executing the former Node live-run query.
 
+Goal list, detail, activity-list, history, and dependency GETs execute SQL and
+public projection in Rust for all legacy and current Goals. Node retains actor
+authentication, organization authorization, and typed-reference resolution.
+These reads are independent of mutation pilots and fail closed if foundation
+is unavailable. History keeps bounded cursor pagination; detail and activities
+keep the existing 100-entry window. Workspace, assigned, agent-context, timeline,
+and Goal mutations retain their existing execution paths.
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.

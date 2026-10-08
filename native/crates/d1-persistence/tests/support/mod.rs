@@ -57,9 +57,8 @@ impl Database {
             .arg(root.path().join("postgres.log"))
             .arg("-o")
             .arg(format!(
-                "-h 127.0.0.1 -p {port} -k {} -c shared_buffers=16MB -c max_connections=16 \
-                 -c dynamic_shared_memory_type={dynamic_shared_memory_type}",
-                root.path().display()
+                "-h 127.0.0.1 -p {port} -c unix_socket_directories= -c shared_buffers=16MB -c max_connections=16 \
+                 -c dynamic_shared_memory_type={dynamic_shared_memory_type}"
             ))
             .args(["-w", "start"])
             .status()
