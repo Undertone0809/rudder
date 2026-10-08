@@ -1,8 +1,10 @@
 import { ChildProcess } from "node:child_process";
+import { channel } from "node:diagnostics_channel";
+import { getEventListeners } from "node:events";
 import fs, { type FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import {
   readWorkspaceFileNative,
   readWorkspaceFileNode,
@@ -19,6 +21,30 @@ async function waitForPath(filePath: string) {
   await vi.waitFor(async () => {
     await fs.access(filePath);
   }, { timeout: 5_000, interval: 20 });
+}
+
+function startObservedNativeRead(root: string, filePath: string, signal: AbortSignal) {
+  const children: ChildProcess[] = [];
+  const creation = channel("child_process");
+  const onCreate = (message: unknown) => {
+    const child = (message as { process?: unknown }).process;
+    if (child instanceof ChildProcess) children.push(child);
+  };
+  creation.subscribe(onCreate);
+  let pending: ReturnType<typeof readWorkspaceFileNative>;
+  try {
+    // Subscription covers only this synchronous execFile creation. Match its
+    // executable and unique fixture root before trusting any captured object.
+    pending = readWorkspaceFileNative(root, filePath, signal);
+  } finally {
+    creation.unsubscribe(onCreate);
+  }
+  const matches = children.filter((child) => (
+    child.spawnfile === process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH
+    && child.spawnargs.includes(path.resolve(root))
+    && child.spawnargs.includes(filePath)
+  ));
+  return { pending, child: matches.length === 1 ? matches[0] : undefined };
 }
 
 afterEach(async () => {
@@ -254,13 +280,15 @@ describe("native workspace file reads", () => {
       );
       process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
       const controller = new AbortController();
-      const originalKill = ChildProcess.prototype.kill;
-      const killSpy = vi.spyOn(ChildProcess.prototype, "kill");
       let child: ChildProcess | undefined;
+      let ownedPid: number | undefined;
+      let originalKill: ChildProcess["kill"] | undefined;
+      let killSpy: MockInstance<ChildProcess["kill"]> | undefined;
       let closed: { code: number | null; signal: NodeJS.Signals | null } | undefined;
       let settled = false;
       let closedAtSettlement = false;
-      const pending = readWorkspaceFileNative(root, "pending.md", controller.signal).then(
+      const observed = startObservedNativeRead(root, "pending.md", controller.signal);
+      const pending = observed.pending.then(
         (value) => ({ value }),
         (error: unknown) => ({ error }),
       ).then((result) => {
@@ -272,28 +300,37 @@ describe("native workspace file reads", () => {
       try {
         await waitForPath(startedPath);
         const pid = Number(await fs.readFile(startedPath, "utf8"));
+        // A failed assertion never grants cleanup authority over an arbitrary
+        // prototype-spy receiver. Both creation identity and positive PID agree.
+        if (Number.isSafeInteger(pid) && pid > 0 && observed.child?.pid === pid) {
+          child = observed.child;
+          ownedPid = pid;
+        }
+        expect(child).toBeDefined();
+        originalKill = child!.kill.bind(child);
+        killSpy = vi.spyOn(child!, "kill");
+        child!.once("close", (code, signal) => { closed = { code, signal }; });
+        if (mode === "unconfirmed") {
+          killSpy.mockImplementation((signal) => (
+            signal === "SIGKILL" ? false : originalKill!(signal)
+          ));
+        }
         const abortedAt = Date.now();
         controller.abort();
-        child = killSpy.mock.contexts[0] as ChildProcess | undefined;
-        expect(child?.pid).toBe(pid);
-        child!.once("close", (code, signal) => { closed = { code, signal }; });
 
         if (mode === "unconfirmed") {
           // Simulate an OS that cannot deliver the escalation; the real owned
           // child is killed and reaped unconditionally in finally below.
-          killSpy.mockImplementation(function (this: ChildProcess, signal) {
-            return signal === "SIGKILL" ? false : originalKill.call(this, signal);
-          });
-          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-          await vi.advanceTimersByTimeAsync(5_000);
           await expect(pending).resolves.toMatchObject({
             error: { code: "workspace_file_cleanup_failed", fallbackAllowed: false },
           });
+          expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(4_900);
           expect(closedAtSettlement).toBe(false);
           expect(closed).toBeUndefined();
           expect(child!.exitCode).toBeNull();
           expect(child!.signalCode).toBeNull();
           expect(() => process.kill(pid, 0)).not.toThrow();
+          expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
           return;
         }
         if (mode === "delayed") {
@@ -315,6 +352,7 @@ describe("native workspace file reads", () => {
         expect(child!.signalCode).toBe(closed!.signal);
         expect(() => process.kill(pid, 0)).toThrow();
         expect(await fs.readFile(stoppedPath, "utf8")).toBe("received");
+        expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
         expect(killSpy.mock.calls.map(([signal]) => signal ?? "SIGTERM")).toEqual(
           mode === "ignored" ? ["SIGTERM", "SIGKILL"] : ["SIGTERM"],
         );
@@ -322,33 +360,53 @@ describe("native workspace file reads", () => {
       } finally {
         vi.useRealTimers();
         controller.abort();
-        child ??= killSpy.mock.contexts[0] as ChildProcess | undefined;
-        if (child && child.exitCode === null && child.signalCode === null) {
+        if (child && originalKill && ownedPid !== undefined && child.pid === ownedPid
+          && child.exitCode === null && child.signalCode === null) {
           const close = new Promise<void>((resolve) => child!.once("close", () => resolve()));
-          originalKill.call(child, "SIGKILL");
+          originalKill("SIGKILL");
           await close;
         }
         await pending;
-        killSpy.mockRestore();
+        killSpy?.mockRestore();
       }
     },
   );
 
-  it("preserves spawn failures and cancellation before a failed spawn", async () => {
+  it("preserves spawn failures", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
     cleanupDirs.add(root);
     process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = path.join(root, "missing-native");
     await expect(readWorkspaceFileNative(root, "pending.md")).rejects.toMatchObject({
       code: "workspace_file_process_failed", fallbackAllowed: true,
     });
-
-    const controller = new AbortController();
-    const pending = readWorkspaceFileNative(root, "pending.md", controller.signal);
-    controller.abort();
-    await expect(pending).rejects.toMatchObject({
-      code: "workspace_file_cancelled", fallbackAllowed: false,
-    });
   });
+
+  it.each([undefined, 0, -1, Number.NaN, 1.5])(
+    "cancels a failed spawn without signaling an invalid PID (%s)",
+    async (pid) => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+      cleanupDirs.add(root);
+      process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = path.join(root, "missing-native");
+      const controller = new AbortController();
+      const { pending, child } = startObservedNativeRead(root, "pending.md", controller.signal);
+      expect(child).toBeDefined();
+      expect(child!.pid).toBeUndefined();
+      Object.defineProperty(child!, "pid", { value: pid, configurable: true });
+      // Even the failing baseline is safe to exercise: intercept every signal
+      // on this failed-spawn object; never call its low-level native kill.
+      const killSpy = vi.spyOn(child!, "kill").mockReturnValue(false);
+      try {
+        controller.abort();
+        await expect(pending).rejects.toMatchObject({
+          code: "workspace_file_cancelled", fallbackAllowed: false,
+        });
+        expect(killSpy).not.toHaveBeenCalled();
+        expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+      } finally {
+        killSpy.mockRestore();
+      }
+    },
+  );
 
   it.runIf(process.platform !== "win32")("keeps the native timeout classification", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));

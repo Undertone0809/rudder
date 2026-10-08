@@ -172,15 +172,32 @@ function throwIfCancelled(signal?: AbortSignal): void {
   if (signal?.aborted) throw cancelledError();
 }
 
-async function reapCancelledChild(child: ChildProcess, closed: Promise<void>): Promise<void> {
-  // execFile reports AbortError and clears its timeout before the child exits.
-  // Give SIGTERM a short grace period, then reap this child before releasing
-  // the caller. A missing close is a cleanup failure, never a successful cancel.
+function isLiveOwnedChild(child: ChildProcess, pid: number | undefined): boolean {
+  // A failed spawn can retain a native handle without a PID until its deferred
+  // error event. Never let that handle reach kill(0) or signal another process.
+  return pid !== undefined && Number.isSafeInteger(pid) && pid > 0 && child.pid === pid
+    && child.exitCode === null && child.signalCode === null;
+}
+
+async function reapCancelledChild(
+  child: ChildProcess,
+  pid: number | undefined,
+  closed: Promise<void>,
+  abortNative: () => void,
+): Promise<void> {
+  // Give the owned child a short SIGTERM grace period, then require close.
+  // A missing close is a cleanup failure, never a successful cancellation.
   const forceKill = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (!isLiveOwnedChild(child, pid)) return;
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // A failed signal is not proof of exit; retain the close deadline.
+    }
   }, CANCEL_GRACE_MS);
   let closeDeadline: ReturnType<typeof setTimeout> | undefined;
   try {
+    if (isLiveOwnedChild(child, pid)) abortNative();
     await Promise.race([
       closed,
       new Promise<never>((_, reject) => {
@@ -269,18 +286,39 @@ export async function readWorkspaceFileNative(
   let stdout: string;
   let stderr: string;
   try {
+    const nativeCancellation = new AbortController();
     const pending = execFileAsync(command.command, command.args, {
       encoding: "buffer",
       timeout: timeoutMs(),
       maxBuffer: MAX_OUTPUT_BYTES,
       windowsHide: true,
-      signal,
+      signal: nativeCancellation.signal,
     });
-    // Observe close before awaiting the callback: neither AbortError nor
-    // child.killed proves the owned process has exited and its pipes closed.
-    const closed = new Promise<void>((resolve) => pending.child.once("close", () => resolve()));
-    const result = await pending.finally(async () => {
-      if (signal?.aborted) await reapCancelledChild(pending.child, closed);
+    const child = pending.child;
+    const pid = child.pid;
+    let onClose!: () => void;
+    const closed = new Promise<void>((resolve) => { onClose = resolve; });
+    child.once("close", onClose);
+    let cleanup: Promise<void> | undefined;
+    let rejectCancelled!: (error: unknown) => void;
+    const cancelled = new Promise<never>((_, reject) => { rejectCancelled = reject; });
+    const onAbort = () => {
+      if (cleanup) return;
+      cleanup = reapCancelledChild(child, pid, closed, () => nativeCancellation.abort());
+      void cleanup.then(() => rejectCancelled(cancelledError()), rejectCancelled);
+    };
+    // Do not forward the external signal to execFile: Node's abort path can
+    // call kill before a failed spawn has acquired a valid PID. Own cancellation
+    // through a guarded relay, retaining execFile's buffer/timeout/error cleanup.
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    const result = await Promise.race([pending, cancelled]).finally(async () => {
+      signal?.removeEventListener("abort", onAbort);
+      try {
+        await cleanup;
+      } finally {
+        child.removeListener("close", onClose);
+      }
     });
     throwIfCancelled(signal);
     stdout = decodeNativeUtf8(result.stdout);
