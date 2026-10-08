@@ -1058,6 +1058,119 @@ describe("home paths", () => {
     ]);
   });
 
+  it.each(["valid", "unrecognized"])("rechecks a %s successor lock after another process replaces the inspected owner", async (successor) => {
+    const rudderHome = await makeTempDir("rudder-home-paths-lock-inspection-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-lock-inspection-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    const lockPath = path.join(workspaceHome, ".rudder-organizations.lock");
+    await fs.mkdir(lockPath);
+    await fs.writeFile(path.join(lockPath, ".rudder-lock-owner-stale-owner.json"), JSON.stringify({
+      kind: "rudder-organization-workspace-map-lock",
+      version: 1,
+      token: "stale-owner",
+      pid: 2_000_000_000,
+      hostname: os.hostname(),
+      createdAt: "2000-01-01T00:00:00.000Z",
+    }));
+
+    // IPC barriers force replacement between readdir and readFile. No timing
+    // assumption or stress-loop luck is needed to expose a mixed-generation read.
+    const script = `
+      import fs from 'node:fs/promises';
+      import path from 'node:path';
+      import { once } from 'node:events';
+      import { ensureOrganizationWorkspaceLayout } from './src/home-paths.ts';
+      const role = process.argv[1];
+      const successor = process.argv[2];
+      const lockPath = path.join(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME, '.rudder-organizations.lock');
+      const readFile = fs.readFile;
+      const rename = fs.rename;
+      let paused = false;
+      let observed = false;
+      fs.readFile = async (...args) => {
+        if (role === 'reader' && path.dirname(String(args[0])) === lockPath) {
+          if (!paused && String(args[0]).endsWith('.rudder-lock-owner-stale-owner.json')) {
+            paused = true;
+            const resume = once(process, 'message');
+            process.send('owner-read-paused');
+            await resume;
+          } else if (paused && !observed && String(args[0]).includes('.rudder-lock-owner-')) {
+            observed = true;
+            process.send('successor-observed');
+          }
+        }
+        return readFile.apply(fs, args);
+      };
+      fs.rename = async (...args) => {
+        const result = await rename.apply(fs, args);
+        if (role === 'reclaimer' && String(args[0]).includes('.lock.acquire-') && String(args[1]) === lockPath) {
+          if (successor === 'unrecognized') {
+            await fs.writeFile(path.join(lockPath, 'user-data.txt'), 'must survive');
+          }
+          const release = once(process, 'message');
+          process.send('successor-held');
+          await release;
+        }
+        return result;
+      };
+      try {
+        await ensureOrganizationWorkspaceLayout({ id: role, name: role, urlKey: role });
+      } catch (error) {
+        process.send({ error: error.code, message: error.message });
+        process.exitCode = 1;
+      } finally {
+        process.disconnect();
+      }
+    `;
+    const children: ReturnType<typeof spawn>[] = [];
+    const runChild = (role: string) => {
+      const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script, role, successor], {
+        cwd: serverPackageRoot,
+        env: {
+          ...process.env,
+          RUDDER_HOME: rudderHome,
+          RUDDER_INSTANCE_ID: "test-instance",
+          RUDDER_ORGANIZATION_WORKSPACE_HOME: workspaceHome,
+        },
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+      });
+      children.push(child);
+      const exited = once(child, "exit");
+      const message = once(child, "message");
+      return { child, exited, message };
+    };
+    try {
+      const reader = runChild("reader");
+      expect(await reader.message).toEqual(["owner-read-paused", undefined]);
+      const reclaimer = runChild("reclaimer");
+      expect(await reclaimer.message).toEqual(["successor-held", undefined]);
+      const observation = once(reader.child, "message");
+      reader.child.send("resume");
+      const result = await observation;
+      reclaimer.child.send("release");
+      const exits = await Promise.all([reader.exited, reclaimer.exited]);
+      const map = JSON.parse(await fs.readFile(path.join(workspaceHome, ".rudder-organizations.json"), "utf8"));
+      if (successor === "valid") {
+        expect(result).toEqual(["successor-observed", undefined]);
+        expect(exits).toEqual([[0, null], [0, null]]);
+        expect(map.organizations.map((entry: { orgId: string }) => entry.orgId).sort()).toEqual(["reader", "reclaimer"]);
+      } else {
+        expect(result[0]).toMatchObject({ error: "RUDDER_WORKSPACE_MAP_LOCK_COLLISION" });
+        expect(exits).toEqual([[1, null], [0, null]]);
+        expect(map.organizations.map((entry: { orgId: string }) => entry.orgId)).toEqual(["reclaimer"]);
+        await expect(fs.readFile(path.join(lockPath, "user-data.txt"), "utf8")).resolves.toBe("must survive");
+      }
+    } finally {
+      await Promise.all(children.map(async (child) => {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        const exited = once(child, "exit");
+        child.kill();
+        await exited;
+      }));
+    }
+  });
+
   it("migrates the previous Documents instance workspace root into the friendly folder", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-documents-migration-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-documents-migration-");
