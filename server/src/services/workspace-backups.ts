@@ -1569,17 +1569,6 @@ export function workspaceBackupService(db: Db) {
     claimBackup,
     finalizeClaimedBackup,
 
-    async list(orgId: string): Promise<WorkspaceBackupSummary[]> {
-      const organization = await orgs.getById(orgId);
-      if (!organization) throw notFound("Organization not found");
-      const rows = await db
-        .select()
-        .from(workspaceBackups)
-        .where(and(eq(workspaceBackups.orgId, orgId), sql`${workspaceBackups.status} <> 'deleted'`))
-        .orderBy(desc(workspaceBackups.createdAt));
-      return rows.map(mapBackupRow);
-    },
-
     async create(input: WorkspaceBackupCreateInput): Promise<WorkspaceBackupSummary> {
       const runningRow = await claimBackup(input);
       return await finalizeClaimedBackup(runningRow);

@@ -18,7 +18,10 @@ vi.mock("node:url", async (importOriginal) => {
   return { ...actual, fileURLToPath: vi.fn(actual.fileURLToPath) };
 });
 
-type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term" | "public-ready";
+type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term" | "public-ready" | "delayed"
+  | "stream-missing-terminal" | "stream-bad-checksum" | "stream-transport-error"
+  | "stream-invalid-json" | "stream-invalid-frame" | "stream-invalid-utf8"
+  | "stream-wrong-content-type" | "stream-count-mismatch";
 
 type Fixture = {
   binaryPath: string;
@@ -45,6 +48,7 @@ function fixtureSource(modePath: string, pidPath: string, envPath: string, reque
   return `#!${process.execPath}
 const fs = require("node:fs");
 const http = require("node:http");
+const crypto = require("node:crypto");
 const mode = fs.readFileSync(${JSON.stringify(modePath)}, "utf8").trim();
 fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
 fs.writeFileSync(${JSON.stringify(envPath)}, JSON.stringify(process.env));
@@ -72,7 +76,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
+    if (req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -82,9 +86,48 @@ if (mode === "invalid") {
           headers: req.headers,
           body: Buffer.concat(chunks).toString("utf8"),
         }));
+        if (req.url?.includes("/workspace/backups")) {
+          const rowFrame = JSON.stringify({ type: "backup", backup: { id: "fixture-backup" } }) + "\\n";
+          const checksum = crypto.createHash("sha256").update(rowFrame, "utf8").digest("hex");
+          res.setHeader("content-type", "application/x-rudder-workspace-backup-list+ndjson");
+          if (mode === "stream-wrong-content-type") {
+            res.setHeader("content-type", "application/json");
+            res.end(rowFrame);
+            return;
+          }
+          if (mode === "stream-invalid-json") {
+            res.end("{not-json}\\n");
+            return;
+          }
+          if (mode === "stream-invalid-frame") {
+            res.end(JSON.stringify({ type: "backup", backup: [] }) + "\\n");
+            return;
+          }
+          if (mode === "stream-invalid-utf8") {
+            res.end(Buffer.from([0xff, 0x0a]));
+            return;
+          }
+          if (mode === "stream-transport-error") {
+            res.write(rowFrame);
+            res.destroy();
+            return;
+          }
+          if (mode === "stream-missing-terminal") {
+            res.end(rowFrame);
+            return;
+          }
+          const terminalChecksum = mode === "stream-bad-checksum" ? "0".repeat(64) : checksum;
+          const terminalCount = mode === "stream-count-mismatch" ? 2 : 1;
+          const finish = () => res.end(rowFrame + JSON.stringify({ type: "end", count: terminalCount, sha256: terminalChecksum }) + "\\n");
+          if (mode === "delayed") setTimeout(finish, 75);
+          else finish();
+          return;
+        }
         res.setHeader("content-type", "application/json");
         if (req.method === "POST" && !req.url?.includes("/project-reads")) res.statusCode = 201;
-        res.end(JSON.stringify({ status: "accepted" }));
+        const finish = () => res.end(JSON.stringify({ status: "accepted" }));
+        if (mode === "delayed") setTimeout(finish, 75);
+        else finish();
       });
       return;
     }
@@ -151,6 +194,8 @@ function createBridge(
     organizationBrandingMode?: "off" | "shadow" | "required";
     projectGoalSetMode?: "off" | "shadow" | "required";
     publicIngress?: RustPublicIngressOptions;
+    requestTimeoutMs?: number;
+    workspaceBackupListTimeoutMs?: number;
   } = {},
 ) {
   const bridge = createRustFoundationBridge({
@@ -160,7 +205,8 @@ function createBridge(
     projectGoalSetMode: options.projectGoalSetMode ?? "off",
     binaryPath: fixture.binaryPath,
     actorEnvelopeKey: "bridge-test-secret",
-    requestTimeoutMs: 25,
+    requestTimeoutMs: options.requestTimeoutMs ?? 25,
+    workspaceBackupListTimeoutMs: options.workspaceBackupListTimeoutMs,
     publicIngress: options.publicIngress,
   });
   activeBridges.add(bridge);
@@ -208,6 +254,112 @@ afterEach(async () => {
 });
 
 describe("rust foundation bridge lifecycle", () => {
+  it("binds workspace backup listing to the Board actor, organization and private Rust route", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture);
+    const orgId = "organization-backup-list";
+    const actor = {
+      type: "board" as const,
+      userId: "board-user",
+      source: "local_implicit" as const,
+      sessionId: "board-session",
+      authEpoch: 7,
+    };
+    const req = { actor } as unknown as Request;
+
+    await bridge.start();
+    const response = await bridge.workspaceBackupList(req, orgId);
+    const captured = await fixture.readRequest();
+    const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/workspace/backups`;
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("application/json");
+    expect(JSON.parse(response.body.toString("utf8"))).toEqual({ backups: [{ id: "fixture-backup" }] });
+    expect(captured.method).toBe("GET");
+    expect(captured.url).toBe(requestPath);
+    expectEnvelopeSignedWith(captured, {
+      actor,
+      organizationId: orgId,
+      method: "GET",
+      path: requestPath,
+      action: "organization.workspace.backups.list",
+      body: Buffer.alloc(0),
+    }, "bridge-test-secret");
+  });
+
+  it.each([
+    "stream-missing-terminal",
+    "stream-bad-checksum",
+    "stream-transport-error",
+    "stream-invalid-json",
+    "stream-invalid-frame",
+    "stream-invalid-utf8",
+    "stream-wrong-content-type",
+    "stream-count-mismatch",
+  ] as const)("rejects %s before exposing a partial public response", async (mode) => {
+    const fixture = await createFixture(mode);
+    const bridge = createBridge(fixture, { requestTimeoutMs: 1_000 });
+    const req = {
+      actor: {
+        type: "board" as const,
+        userId: "board-user",
+        source: "local_implicit" as const,
+        sessionId: "board-session",
+        authEpoch: 7,
+      },
+    } as unknown as Request;
+
+    await bridge.start();
+    await expect(bridge.workspaceBackupList(req, "organization-backup-list"))
+      .rejects.toMatchObject({ code: "request_failed" });
+  });
+
+  it("uses the dedicated workspace-backup-list timeout without extending Project creation", async () => {
+    const fixture = await createFixture("delayed");
+    const bridge = createBridge(fixture, {
+      projectGoalSetMode: "required",
+      requestTimeoutMs: 20,
+      workspaceBackupListTimeoutMs: 500,
+    });
+    const actor = {
+      type: "board" as const,
+      userId: "board-user",
+      source: "local_implicit" as const,
+      sessionId: "board-session",
+      authEpoch: 7,
+    };
+
+    await bridge.start();
+    await expect(bridge.workspaceBackupList({ actor } as unknown as Request, "organization-backup-list"))
+      .resolves.toMatchObject({ status: 200 });
+    await expect(bridge.projectCreate(
+      actor,
+      "organization-project-create",
+      { name: "slow project" },
+      "idempotency-key",
+      {},
+      { organizationWorkspaceRoot: "/tmp/org", projectCreateStateRoot: "/tmp/state" },
+    )).rejects.toMatchObject({ code: "request_failed" });
+  });
+
+  it("fails delayed workspace-backup-list requests at their configured timeout", async () => {
+    const fixture = await createFixture("delayed");
+    const bridge = createBridge(fixture, { requestTimeoutMs: 500, workspaceBackupListTimeoutMs: 20 });
+    const req = {
+      actor: {
+        type: "board" as const,
+        userId: "board-user",
+        source: "local_implicit" as const,
+        sessionId: "board-session",
+        authEpoch: 7,
+      },
+    } as unknown as Request;
+
+    await bridge.start();
+    await expect(bridge.workspaceBackupList(req, "organization-backup-list"))
+      .rejects.toMatchObject({ code: "request_failed" });
+  });
+
   it("owns an explicitly requested public listener and clears its identity on shutdown", async () => {
     const fixture = await createFixture("public-ready");
     const publicIngress = {

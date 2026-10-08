@@ -913,20 +913,20 @@ authority_rows:
   - id: read.workspace_backups
     domain: workspace_backup
     authority_kind: rust_product_runtime
-    current_authority: Node_public_route_and_workspaceBackupService
+    current_authority: Node_public_route_and_Board_org_auth_adapter; Rust_signed_private_Actix_SQLx_read; Node_create_restore_delete_file_scheduler_and_recovery_remain
     rust_asset: native/crates/server-foundation/src/lib.rs_workspace_backup_list_handler; native/bins/rudder-server-foundation/tests/black_box.rs
-    public_entrypoint: server/src/routes/orgs.ts_GET_orgId_workspace_backups_and_file_routes
+    public_entrypoint: server/src/routes/orgs.ts_GET_orgId_workspace_backups_to_signed_private_Rust_bridge; UI_uses_existing_public_API
     auth_scope: board_only_and_organization_access
-    transaction_boundary: read_only_backup_rows_and_artifacts_create_restore_delete_remain_Node
+    transaction_boundary: read_only_SQLx_query_org_scoped_ordered_live_rows; no_write_transaction; backup_mutations_remain_Node
     audit_side_effects: none_for_reads_backup_mutations_out_of_read_slice
-    recovery: artifact_missing_invalid_or_in_progress_failures_bounded_reads_and_restart
-    cli_mcp: no_Rust_public_bridge_caller_established
-    fence: no_write_authority_transfer
-    status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: existing_foundation_private_tests_and_948_native_CI_PASS_public_orgs_backup_GETs_still_Node_no_public_read_receipt
-    retirement_gate: connect_supported_public_read_paths_preserve_shape_auth_limits_errors_and_artifact_safety_then_default_and_old_reader_negative_checks
-    next_action: bind_existing_Actix_read_handlers_to_reviewed_real_entry_after_current_D1_write_dependency
+    recovery: complete_count_and_SHA256_NDJSON_terminal_required_before_public_response; fail_closed_on_timeout_transport_frame_or_checksum_error; no_Node_reader_fallback
+    cli_mcp: no_distinct_Rust_CLI_or_MCP_backup_list_caller; existing_UI_and_API_use_public_Node_route
+    fence: read_only_no_ownership_handoff_or_write_authority_transfer
+    status: real_entry_connected_private_verified_legacy_Node_list_reader_retired_final_review_accept; installed_default_pending
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: true}
+    evidence_status: v25_23_exact_dirty_candidate_8c9dbbff; public_Node_route_Board_org_auth_to_signed_Actix_SQLx; 11_source_paths; 41_bridge_tests_60_backup_route_service_real_entry_tests_typecheck_lint_fmt_and_Rust_PostgreSQL_black_box_pass; Hubble_independent_real_entry_PASS_1_of_1_and_route_bridge_50_of_50; verifier_system_identifier_7694020089018558177_fixture_ids_in_v25_23_packet; UI_E2E_before_timeout_delta_not_reused; no_installed_default_receipt
+    retirement_gate: exact_candidate_CI_then_installed_default_read_path; Node_public_route_and_auth_are_not_retired; create_restore_delete_file_scheduler_recovery_remain_Node
+    next_action: precommit_preservation_audit_and_scoped_checkpoint_commit; create_new_protected_PR_after_PR277_merge; run_exact_head_CI_then_merge_only_after_required_checks; refresh_Main_and_start_file_tree_preview_read_slice; retain_installed_default_and_global_Node_authority_gaps
   - id: runtime.http_public_listener
     domain: server
     authority_kind: rust_product_runtime
@@ -962,7 +962,7 @@ authority_rows:
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
     partial_scope: selected_D1_SQLx_transactions_not_general_database_authority
-    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
+    evidence_status: PR277_merged_ff287_v25_22_receipt_and_exact_PR_head_CI_cover_selected_D1_transactions_only; full_SQLx_query_transaction_and_migration_authority_remains_Node_Drizzle
     retirement_gate: historical migrations and old-version compatibility accepted
     next_action: phase_0_query/writer inventory then phase_6 migration authority
   - id: read.organization_member_directory
@@ -1044,17 +1044,17 @@ authority_rows:
     public_entrypoint: organization create/delete and authority handoff
     auth_scope: instance admin, organization, actor, deletion receipt constraints
     transaction_boundary: create provisioning and deletion ordering with organization transaction
-    audit_side_effects: provisioning receipt, deletion activity, mutation history retention
-    recovery: idempotent provisioning, missing-row repair, failed deletion rollback
+    audit_side_effects: create provisioning receipt; delete cascades child rows and purges tenant activity inside the transaction; no durable deletion event or retained mutation history
+    recovery: create provisioning repair; delete rollback is available only before commit; five post-commit local-directory cleanups are best-effort and failures are warning-only with no durable retry receipt
     cli_mcp: shared application service where organization lifecycle is exposed
     fence: baseline mutation version, owner, epoch, token
     status: partially_implemented
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
     partial_scope: D1_fence_state_consumption_not_Rust_org_create_delete_lifecycle
-    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
+    evidence_status: current_Main_ff287_org_delete_audit_confirms_Node-owned_cascade_purges_activity_in_transaction_then_runs_five_best-effort_local_directory_cleanups; no_persistent_delete_event_or_recoverable_cleanup_receipt; Rust_scope_is_only_selected_D1_fence_state
     retirement_gate: all existing and new organizations have a verified baseline row before D1 handoff
-    next_action: phase_0 state-row inventory and provisioning contract
+    next_action: keep_parent_delete_as_a_separate_atomic_authority; resolve_retention_and_cleanup_recovery_semantics_before_implementation; enumerate_and_fence_all_legacy_writers
   - id: audit.activity_outbox_terminal_effects
     domain: cross_cutting_effects
     authority_kind: rust_product_runtime
@@ -1071,7 +1071,7 @@ authority_rows:
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
     partial_scope: D1_atomic_receipts_activity_outbox_recovery_not_all_mutators_workers
-    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
+    evidence_status: PR277_merged_ff287_v25_22_receipt_activity_outbox_rollback_and_restart_replay_cover_selected_D1_mutations_only; all_other_HTTP_WS_CLI_MCP_worker_and_publisher_effects_remain_outside_scope
     retirement_gate: per-slice atomicity and recovery evidence plus no old effect writer
     next_action: phase_0 effect-writer inventory
   - id: domain.organization_branding
@@ -1090,9 +1090,9 @@ authority_rows:
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
     partial_scope: brandColor_and_logoAssetId_plus_selected_Chat_organization_proposal_approval_paths; organization_name_asset_upload_import_onboarding_and_other_writers_remain_Node; Chat_history_and_Side_Chat_unchanged
-    evidence_status: v25_20_author_Resource_3_of_3_content_equivalent_and_Chat_4_of_4_plus_server_typecheck_lint_changed_and_diff_check; issuer_rebound_stage_ACCEPT; independent_v25_20_verifier_running; no_default_path_or_old_writer_retirement_claim
+    evidence_status: v25_22_Goodall_stage_and_final_ACCEPT_and_McClintock_composite_PASS; complete_workflows_were_on_content_equivalent_6b17_and_exact_4fd_race_suite_was_3_of_3; PR277_head_06a645_CI_and_D1_smoke_pass; no_installed_default_or_global_Node_retirement_claim
     retirement_gate: real Actix/API path plus old writer fence/exit and verifier PASS
-    next_action: finish_v25_20_independent_verifier_and_exact_PR_CI_then_reconcile_all_branding_writers_and_default_path_before_retirement
+    next_action: verify_supported_installed_default_branding_path_then_inventory_and_fence_all_remaining_Node_branding_writers_before_retirement
   - id: domain.project_goal_link
     domain: organization_goal_project
     authority_kind: rust_product_runtime
@@ -1109,7 +1109,7 @@ authority_rows:
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
     partial_scope: D1_project_goal_operations_only_not_all_link_writers
-    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
+    evidence_status: PR277_merged_ff287_v25_22_real_entry_tests_cover_project_goal_create_update_replay_and_rollback; selected_link_capabilities_only; installed_default_and_other_link_writers_remain_unverified
     retirement_gate: real Actix/API path plus all Node link writers fenced/retired
     next_action: default_D1_writer_handoff_and_complete_link_writer_fence_exit_inventory
   - id: domain.project_goal_set_replacement
@@ -1126,7 +1126,7 @@ authority_rows:
     fence: organization_mutation_state owner/version/epoch/fence_token
     status: real_entry_connected
     capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    evidence_status: Hubble_v24_2_PASS_accepted948_equivalent_runtime_Node_API_CLI_MCP_to_Actix_SQLx_replay_conflict_scope_clear_all_restart_audit_rollback_outbox_recovery_Default_and_Node_retirement_not_proven
+    evidence_status: PR277_head_06a645_D1_smoke_passes_Project_Goal_link_workflow_on_content-equivalent-reviewed_sources; v25_22_composite_receipt_is_not_a_full-workflow_rerun_at_4fd; installed_default_and_Node-writer_retirement_not_proven
     retirement_gate: supported API/default path plus all project goal-set writers fenced/retired and verifier PASS
     next_action: default_D1_writer_ownership_and_old_writer_negative_proof_after_member_default_slice
   - id: domain.project_create_and_project_resource_mutation
@@ -1141,17 +1141,17 @@ authority_rows:
     recovery: replay_conflict_stale_fence_rejection_and_transaction_rollback; import_and_worktree_merge_recovery_remain_separate
     cli_mcp: existing_cli_and_MCP_clients_use_public_API_for_supported_operations; complete_Rust_default_dispatch_not_proven
     fence: persisted_Project_or_resource_owner_epoch_and_fencing_token; every_legacy_writer_must_check_ownership_before_business_write
-    status: real_entry_connected; current_candidate_project_create_edit_delete_smoke_pass_pending_independent_acceptance
+    status: real_entry_connected
     capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    evidence_status: PR236_merged_Rust_Project_create_and_supported_mutation_paths; candidate_real_entry_smoke_passes_resource_edit_delete_replay_after_restart_and_import_lost_response_retry; candidate_pending_stage_review_verifier_and_final_review
+    evidence_status: PR277_merged_ff287; exact_PR_head_D1_smoke_passes_Project_create_delete_recovery_and_resource_workflows; independent_v25_22_receipts_accept_bounded_candidate; import_and_onboarding_legacy_writers_remain_Node; installed_default_not_verified
     retirement_gate: create_edit_delete_and_import_onboarding_worktree_merge_workflows_pass_on_installed_default_candidate_and_all_stale_Node_writers_are_fenced_or_retired
-    next_action: complete_independent_acceptance_then_continue_Project_goal_owner_handoff_and_all_legacy_writer_negative_proof;default_path_still_unverified
+    next_action: verify_installed_default_create_edit_delete_and_import_onboarding_workflows; complete_old_writer_negative_proof_before_any_default_owner_handoff
   - id: domain.organization_resource_mutation
     domain: organization_resource_catalog
     authority_kind: rust_product_runtime
     current_authority: mixed_Node_resourceCatalogService_and_Rust_SQLx_for_Rust-owned_resource_rows
     rust_asset: native/crates/d1-persistence/src/organization_resources.rs; native/crates/server-foundation/src/lib.rs; server/src/services/organization-resource-rust-authority.ts
-    public_entrypoint: public_Node_API_organization_resource_and_Project_attachment_UPDATE_DELETE_forward_to_signed_private_Actix_SQLx_for_Rust-owned_rows; POST_GET_and_unowned_rows_remain_Node
+    public_entrypoint: public_Node_API_organization_resource_catalog_UPDATE_DELETE_forward_to_signed_private_Actix_SQLx_for_Rust-owned_rows; POST_GET_and_unowned_rows_remain_Node; Project_attachment_UPDATE_DETACH_belongs_to_domain.project_create_and_project_resource_mutation
     auth_scope: authenticated_actor_and_organization_resource_ownership; project_and_organization_scope_must_match
     transaction_boundary: resource_row_change_owner_fence_receipt_activity_and_outbox_effects_atomically
     audit_side_effects: resource_activity_and_idempotency_receipt_without_duplicate_Node_activity
@@ -1161,10 +1161,10 @@ authority_rows:
     status: partially_implemented_real_entry_connected_for_Rust-owned_update_delete_only
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    partial_scope: update_delete_for_Rust-owned_organization_resources_or_Project_attachments_only; creation_and_unowned_resource_writer_paths_remain_Node
-    evidence_status: verified_on_origin_main_e563_public_routes_use_owner_lookup_and_signed_Actix_bridge; exact_real_workflow_author_acceptance_is_bound_to_active_v25_candidate_and_remains_pending_review
+    partial_scope: update_delete_for_Rust-owned_organization_resource_catalog_rows_only; Project_attachment_update_detach_is_tracked_on_the_Project_resource_row; creation_and_unowned_resource_writer_paths_remain_Node
+    evidence_status: PR277_merged_ff287_v25_22_accepted_resource_update_delete_replay_and_fence_workflows; exact_full_workflow_evidence_is_composed_from_content-equivalent_6b17_plus_exact_4fd_races; public_Node_route_remains_and_installed_default_is_not_verified
     retirement_gate: all_resource_creating_importing_and_legacy_Node_writers_obey_shared_owner_fence_or_are_retired_before_default_handoff
-    next_action: accept_current_D1_compatibility_candidate_then_extend_owner_handoff_and_negative_proof_across_every_resource_writer
+    next_action: inventory_resource_creation_import_onboarding_and_storage_writers; prove_shared_fence_or_retirement_before_default_owner_handoff
   - id: runtime.migration_journal_authority
     domain: database_lifecycle
     authority_kind: rust_product_runtime
@@ -1200,7 +1200,7 @@ authority_rows:
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
     partial_scope: selected_D1_operations_via_Node_clients_plus_explicit_native_CLI_member_directory_historical_independent_PASS_and_native_MCP_member_directory_local_checkpoint_only
-    evidence_status: native_CLI_historical2c_PASS_finalACCEPT_and_tests_only7ee_platform_CI_separate_from_native_MCP_234f_v10_real_Actix_verifier_FAIL_required_missing_auth_Node_grant_successor_pending_no_default_or_retirement_claim
+    evidence_status: PR277_merged_ff287_extends_Node_CLI_and_stdio_MCP_callers_for_branding_and_Project_Goal; logo_link_clear_and_invalid_logo_cases_are_in_v25_22_composite_scope; Node_still_implements_first_party_CLI_and_MCP_runtimes; no_default_or_retirement_claim
     retirement_gate: installed CLI/MCP workflow and missing-Rust-binary negative proof
     next_action: phase_0 capability and fallback inventory
   - id: runtime.first_party_node_fallback_guards
@@ -1356,8 +1356,8 @@ authority_rows:
     status: partially_implemented
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    partial_scope: run_evidence_and_live_run_selection_reads_through_Rust_Actix_SQLx;_public_listener_auth_and_run_writes_events_cancel_Chat_Side_Chat_scheduler_workers_remain_Node
-    evidence_status: PR274_merged_live_run_read_real_entry_tests_and_SQLx_query_coverage;_this_changes_read_selection_only_and_does_not_verify_execution_or_Chat_authority
+    partial_scope: run_evidence_and_live_run_selection_reads_through_Rust_Actix_SQLx_plus_selected_organization-branding_approval_effect;_Chat_workflow_and_history_non-branding_mutations,_stream_cancel_reconnect,_Side_Chat_lifecycle,_run_writes_events_and_scheduler_workers_remain_Node
+    evidence_status: PR274_live-run-read_slice_and_PR277_selected_branding-effect_handoff_are_merged; v25_22_preserves_Node-owned_non-branding_Chat_proposal_and_history_paths; no_Chat_or_Side_Chat_authority_transfer_claim
     retirement_gate: public workflow and full continuity/recovery verifier PASS
     next_action: phase_0 route/writer/workflow inventory;_preserve_existing_partial_read_receipt_and_verify_installed_default_path_separately
   - id: runtime.scheduler_workers_adapters
@@ -1827,3 +1827,48 @@ current_delivery_checkpoint_2026_10_07T1605Z:
   claims: {implementation_complete: false, release_ready: false, production_verified: false, default_path_verified: false, old_authority_retired: false, production_mutation: none}
   preservation: {isolated_candidate_worktree: true, staged_diff_empty_before_scoped_metadata_commit: true, current_source_refresh_and_historical_packets_preserved: true, production_or_shared_data_untouched: true}
   next_executable: commit_only_scoped_plan_status_ledger_v25_22_packet_and_verifier_artifacts; rebind_receipts_for_metadata_only_identity_change; fast_forward_update_PR277; run_exact_head_CI_including_x86_64_apple; merge_only_after_current_receipts_and_required_checks; refresh_Main_then_start_organization_lifecycle_parent_delete_slice; continue_Phases_0_to_7
+current_authority_checkpoint_2026_10_08:
+  main_sha: ff287a248b02ef4b4d54db012c814f334e1c4b70
+  main_tree: 94dba2e225a4276f6b9cbdc9978393c8829ad686
+  audit_agent: Hegel_01a11794-d10f-71f3-bfa3-3e5c4045a542
+  audit_result: 28_rows_cover_server_and_non_server_authority_families; PR277_adds_no_new_authority_family
+  audit_counts: {whole_row_implemented: 7, private_verified: 7, real_entry_connected: 6, default_path_verified: 1, old_authority_retired: 0, partial_capability_rows: 15, flags_overlap_not_percentages: true}
+  merge: {PR: 277, head: 06a6450491392e1e8f064f1eba060b4a5cc5d7e5, merge_commit: ff287a248b02ef4b4d54db012c814f334e1c4b70, exact_head_test_run: 37659806482, exact_head_D1_smoke_run: 37659806518}
+  refreshed_rows: [read.workspace_backups, runtime.sqlx_database_authority, lifecycle.organization_mutation_state_provisioning, audit.activity_outbox_terminal_effects, domain.organization_branding, domain.project_goal_link, domain.project_goal_set_replacement, domain.project_create_and_project_resource_mutation, domain.organization_resource_mutation, runtime.first_party_cli_and_mcp_dispatch, workflow.agent_run_chat_side_chat]
+  corrected_overlap: organization_resource_catalog_update_delete_excludes_Project_attachment_update_detach; Project_attachment_workflow_remains_in_Project_resource_row
+  corrected_org_delete_semantics: Node_transaction_purges_tenant_activity_and_children; five_postcommit_local_directory_cleanups_are_best_effort; no_durable_delete_event_or_cleanup_retry_receipt
+  packet: {version: v25.22, status: integration_pending, merge_and_CI_recorded: true, terminal_delivery_receipt_withheld_for_missing_preintegration_index_fingerprint}
+  next_authority_slice: read.workspace_backups
+  deferred_authority_slice: lifecycle.organization_mutation_state_provisioning_parent_delete_waits_for_user_retention_cleanup_semantics_and_complete_old_writer_fence_review
+  global_claims: {implementation_complete: false, release_ready: false, production_verified: false}
+
+current_delivery_checkpoint_2026_10_08_v25_23:
+  authoritative: false
+  superseded_by: current_delivery_checkpoint_2026_10_08T2043Z_v25_23_committed_product_rebound
+  observed_at_utc: '2026-10-07T19:09:14Z'
+  main: {ref: origin/main, sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, tree: 94dba2e225a4276f6b9cbdc9978393c8829ad686, remote_ls_remote_rechecked: true}
+  candidate: {worktree: /Users/zeeland/.codex/worktrees/rust-migration-main-refresh-20261008/rudder-oss, branch: codex/rudder-d1-closeout-and-next-slice-20261008, base_sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, source_sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, materialized_product_commit: b6a058061fd6a6802af0e163bef3e09932404c22, source_tree: 4702e9c28c2330b4cd1cba03a2c611b4df738920, source_fingerprint: 8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609, source_paths: 11}
+  packet: {version: v25.23, path: doc/plans/2026-10-08-rudder-full-rust-backend-completion-delivery-packet-v25.23.json, sha256: eda7b766dd786ced358736ba0da4f38165daa7ab9c0f077b1b2cca2e5819c46b, acceptance_fingerprint: 779803333ad31fd35e81dfed653a88388eb55973021bbe9cb2fda941c740d650, validator: VALID_acceptance_pending}
+  author_checks: {fresh_foundation_build: PASS_sha256_9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3, workspace_dependency_build: PASS, bridge: 41_of_41_PASS, backup_route_service_real_entry: 60_of_60_PASS_on_fresh_binary, server_typecheck: PASS, lint_changed_8_files: PASS, cargo_fmt_check: PASS, Rust_PostgreSQL_black_box: 1_of_1_PASS}
+  stale_artifact_correction: initial_real_entry_attempt_used_stale_binary_not_counted; exact_source_build_and_test_rerun_pass
+  prefreeze_finding: wrong_timeout_binding_extended_Project_Create_and_left_list_on_short_default; corrected_before_freeze_and_regression_covered
+  receipts: {stage_reviewer: Beauvoir_accept_rebound_to_b6a058_by_content_equivalence, independent_workflow_verifier: Hubble_PASS_on_equivalent_frozen_content, final_reviewer: Bohr_accept_on_equivalent_frozen_content, exact_head_CI: not_started}
+  integration: {protected_Main_base: ff287a248b02ef4b4d54db012c814f334e1c4b70, candidate_published: false, PR: not_opened, exact_head_CI: absent}
+  authority_snapshot: {units: 28, whole_row_implemented: 7, private_verified: 7, real_entry_connected: 7, default_path_verified: 1, scoped_legacy_reader_retired: 1, partial_capability_rows: 15, flags_overlap_not_percentages: true}
+  preservation: {live_index_tree_unchanged: 94dba2e225a4276f6b9cbdc9978393c8829ad686, alternate_index_source_patch_tree: 4702e9c28c2330b4cd1cba03a2c611b4df738920, commit_time_full_diff_audit: pending}
+  stage_reviewer_source_sha_rebind: {from: ff287a248b02ef4b4d54db012c814f334e1c4b70, to: b6a058061fd6a6802af0e163bef3e09932404c22, commit_parent: ff287a248b02ef4b4d54db012c814f334e1c4b70, tree: 4702e9c28c2330b4cd1cba03a2c611b4df738920, exact_paths_and_content_fingerprint_verified: true, build_runtime_and_acceptance_fingerprint_unchanged: true, actual_model_effort_metadata: not_exposed}
+  claims: {implementation_complete: false, release_ready: false, production_verified: false, installed_default_path_verified: false, global_Node_authority_retired: false}
+  next_executable: independent_public_workflow_verifier; final_review; commit_and_protected_PR_exact_head_CI; continue_Phase_0_to_7
+
+current_delivery_checkpoint_2026_10_08T2043Z_v25_23_committed_product_rebound:
+  authoritative: true
+  observed_at_utc: '2026-10-07T20:43:00Z'
+  source: {main: ff287a248b02ef4b4d54db012c814f334e1c4b70, candidate_parent: ff287a248b02ef4b4d54db012c814f334e1c4b70, candidate_commit: b6a058061fd6a6802af0e163bef3e09932404c22, candidate_tree: 4702e9c28c2330b4cd1cba03a2c611b4df738920, product_fingerprint: 8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609, product_paths: 11}
+  read.workspace_backups: {Node_public_route_auth_retained: true, signed_private_Actix_SQLx_query: connected, Node_list_reader: removed_for_this_route, no_silent_fallback: true, board_org_agent_foreign_scope_cases: independently_passed, large_ordered_rows_and_DST_expiry: independently_passed, read_side_effect_invariance: independently_passed, failure_transport_frame_checksum_timeout: fail_closed, default_path_verified: false}
+  adjacent_scope: {backup_create_restore_delete_file_read_scheduler_recovery: still_Node_owned, CLI_MCP_backup_list_capability: not_applicable_no_distinct_contract, global_Node_authority_retired: false}
+  evidence: {author_real_entry: 1_of_1_PASS, route_bridge: 50_of_50_PASS, fresh_binary: 9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3, author_typecheck_lint_fmt_and_postgres_smoke: PASS, stage_review: Beauvoir_accept, independent_verifier: Hubble_PASS, final_review: Bohr_accept, receipt_rebind: metadata_only_to_b6a0580, agent_runtime_model_effort_metadata: not_exposed}
+  integration: {candidate_published: false, PR: not_opened, exact_head_CI: absent, merge: not_attempted}
+  authority_snapshot: {units: 28, whole_rows_implemented: 7, privately_verified: 7, real_entry_connected: 7, default_path_verified: 1, scoped_legacy_reader_retired: 1, old_authority_retired: 0, partial_capability_rows: 15, flags_overlap_not_percentages: true}
+  preservation: {visible_dirty_paths_all_candidate_or_records: true, unrelated_dirty_paths: 0, live_index_tree: 94dba2e225a4276f6b9cbdc9978393c8829ad686, product_commit_used_alternate_index: true, other_workspace_backup_adaptation_branch_preserved: true}
+  claims: {implementation_complete: false, release_ready: false, production_verified: false, installed_default_path_verified: false, global_Node_authority_retired: false}
+  next_action: finalize_packet_preservation_fingerprint; publish_candidate_branch_and_open_protected_PR; wait_for_exact_head_CI; merge_after_required_checks; refresh_Main_and_start_file_tree_and_single_file_preview_read; continue_Phase_0_to_7

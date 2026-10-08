@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { organizationRoutes } from "../routes/orgs.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const mockWorkspaceBackupService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -79,14 +80,14 @@ vi.mock("../services/index.js", () => ({
   workspaceBackupService: () => mockWorkspaceBackupService,
 }));
 
-function createApp(actor: Record<string, unknown>) {
+function createApp(actor: Record<string, unknown>, rustFoundationBridge?: RustFoundationBridge) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api/orgs", organizationRoutes({} as any));
+  app.use("/api/orgs", organizationRoutes({} as any, undefined, undefined, rustFoundationBridge));
   app.use(errorHandler);
   return app;
 }
@@ -204,5 +205,77 @@ describe("workspace backup download route", () => {
     expect(res.status).toBe(422);
     expect(res.body.error).toBe("Workspace backup artifact checksum does not match the recorded backup metadata");
     expect(res.header["content-disposition"]).toBeUndefined();
+  });
+});
+
+describe("workspace backup list route", () => {
+  beforeEach(() => {
+    mockWorkspaceBackupService.list.mockReset();
+  });
+
+  it("uses the signed Rust read bridge after Board authorization", async () => {
+    const payload = { backups: [{ id: "backup-1", orgId: "organization-1", status: "succeeded" }] };
+    const workspaceBackupList = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(payload)),
+    });
+    const bridge = { workspaceBackupList } as unknown as RustFoundationBridge;
+    const board = { type: "board", userId: "user-1", source: "local_implicit" };
+    const app = createApp(board, bridge);
+
+    const res = await request(app).get("/api/orgs/organization-1/workspace/backups");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(payload);
+    expect(workspaceBackupList).toHaveBeenCalledWith(expect.objectContaining({ actor: board }), "organization-1");
+    expect(mockWorkspaceBackupService.list).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on Rust bridge failure without calling the Node reader", async () => {
+    const workspaceBackupList = vi.fn().mockRejectedValue(new Error("Rust read unavailable"));
+    const bridge = { workspaceBackupList } as unknown as RustFoundationBridge;
+    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" }, bridge);
+    mockWorkspaceBackupService.list.mockResolvedValue([{ id: "node-fallback-must-not-run" }]);
+
+    const res = await request(app).get("/api/orgs/organization-1/workspace/backups");
+
+    expect(res.status).toBe(500);
+    expect(workspaceBackupList).toHaveBeenCalledOnce();
+    expect(mockWorkspaceBackupService.list).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing missing-organization error contract", async () => {
+    const workspaceBackupList = vi.fn().mockResolvedValue({
+      status: 404,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ reason: "organization_not_found" })),
+    });
+    const bridge = { workspaceBackupList } as unknown as RustFoundationBridge;
+    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" }, bridge);
+
+    const res = await request(app).get("/api/orgs/missing/workspace/backups");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Organization not found" });
+    expect(mockWorkspaceBackupService.list).not.toHaveBeenCalled();
+  });
+
+  it("rejects agent actors before forwarding to Rust", async () => {
+    const workspaceBackupList = vi.fn();
+    const bridge = { workspaceBackupList } as unknown as RustFoundationBridge;
+    const app = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      source: "agent_key",
+      runId: "run-1",
+    }, bridge);
+
+    const res = await request(app).get("/api/orgs/organization-1/workspace/backups");
+
+    expect(res.status).toBe(403);
+    expect(workspaceBackupList).not.toHaveBeenCalled();
+    expect(mockWorkspaceBackupService.list).not.toHaveBeenCalled();
   });
 });

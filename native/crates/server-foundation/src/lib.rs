@@ -24,6 +24,7 @@ use rudder_project_goal_link_core::{
     GoalSetTargetVerifier, ProjectGoalSetReplacementCommand, ValidatedGoalSetContext,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
     future::Future,
@@ -76,6 +77,7 @@ pub const ACTOR_ENVELOPE_REQUEST_ID_HEADER: &str = "x-rudder-request-id";
 pub const IDEMPOTENCY_KEY_HEADER: &str = "x-rudder-idempotency-key";
 pub const ACTOR_ENVELOPE_AUDIENCE: &str = "rudder-server-foundation";
 pub const MEMBER_DIRECTORY_ACTION: &str = "organization.members.directory.read";
+pub const WORKSPACE_BACKUP_LIST_ACTION: &str = "organization.workspace.backups.list";
 pub const ORGANIZATION_BRANDING_ACTION: &str = "organization.branding.update";
 pub const PROJECT_GOAL_SET_ACTION: &str = "project.goal_set.replace";
 pub const PROJECT_DELETE_ACTION: &str = "project.delete";
@@ -139,7 +141,7 @@ SELECT jsonb_build_object(
   'error', error,
   'startedAt', CASE WHEN started_at IS NULL THEN NULL ELSE to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
   'finishedAt', CASE WHEN finished_at IS NULL THEN NULL ELSE to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
-  'expiresAt', to_char(COALESCE(expires_at, created_at + interval '30 days') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'expiresAt', to_char(COALESCE(expires_at, created_at + interval '720 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
   'restoredFromBackupId', restored_from_backup_id::text,
   'createdByUserId', created_by_user_id,
   'createdAt', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
@@ -894,9 +896,10 @@ struct CapabilitiesReceipt {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceBackupListReceipt {
-    backups: Vec<serde_json::Value>,
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WorkspaceBackupListStreamFrame {
+    Backup { backup: serde_json::Value },
+    End { count: usize, sha256: String },
 }
 
 #[derive(Clone)]
@@ -2081,7 +2084,37 @@ impl AppState {
         }
     }
 
-    async fn workspace_backups(&self, org_id: &str) -> HttpResponse {
+    async fn workspace_backups(
+        &self,
+        request: &HttpRequest,
+        org_id: &str,
+        body: &[u8],
+    ) -> HttpResponse {
+        let actor = match self.verify_actor_envelope(
+            request,
+            org_id,
+            WORKSPACE_BACKUP_LIST_ACTION,
+            None,
+            body,
+        ) {
+            Ok(actor) => actor,
+            Err(ActorEnvelopeVerificationError::Unconfigured) => {
+                return self.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "actor_envelope_unconfigured",
+                );
+            }
+            Err(ActorEnvelopeVerificationError::Invalid) => {
+                return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
+            }
+        };
+        if actor.actor().kind != "user" {
+            return self.json_error(StatusCode::FORBIDDEN, "board_actor_required");
+        }
+        self.workspace_backups_authorized(org_id).await
+    }
+
+    async fn workspace_backups_authorized(&self, org_id: &str) -> HttpResponse {
         let DatabaseState::Configured(pool) = &self.database else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
@@ -2105,31 +2138,76 @@ impl AppState {
             Ok(true) => {}
         }
 
-        match sqlx::query_scalar::<_, String>(WORKSPACE_BACKUP_LIST_SQL)
+        let rows = match sqlx::query_scalar::<_, String>(WORKSPACE_BACKUP_LIST_SQL)
             .bind(org_id)
             .fetch_all(pool)
             .await
         {
-            Ok(rows) => match rows
-                .into_iter()
-                .map(|row| serde_json::from_str::<serde_json::Value>(&row))
-                .collect::<Result<Vec<_>, _>>()
-            {
-                Ok(backups) => bounded_json(
-                    StatusCode::OK,
-                    &WorkspaceBackupListReceipt { backups },
-                    self.config.max_response_bytes,
-                ),
-                Err(_) => self.json_error(
+            Ok(rows) => rows,
+            Err(_) => {
+                return self.json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "workspace_backup_list_failed",
-                ),
+                );
+            }
+        };
+        let backups = match rows
+            .into_iter()
+            .map(|row| serde_json::from_str::<serde_json::Value>(&row))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(backups) => backups,
+            Err(_) => {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "workspace_backup_list_failed",
+                );
+            }
+        };
+
+        // The public API remains an unpaginated full-list JSON response. Frame
+        // the private bridge reply so Node can reject incomplete or corrupted
+        // reads before it sends any public rows.
+        let stream = futures_util::stream::try_unfold(
+            (backups.into_iter(), 0usize, Sha256::new(), false),
+            |(mut backups, count, mut digest, ended)| async move {
+                if ended {
+                    return Ok::<_, actix_web::Error>(None);
+                }
+                match backups.next() {
+                    Some(backup) => {
+                        let frame = workspace_backup_list_stream_frame(
+                            &WorkspaceBackupListStreamFrame::Backup { backup },
+                        )?;
+                        digest.update(&frame);
+                        Ok(Some((
+                            actix_web::web::Bytes::from(frame),
+                            (backups, count + 1, digest, false),
+                        )))
+                    }
+                    None => {
+                        let checksum = digest
+                            .finalize()
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>();
+                        let frame = workspace_backup_list_stream_frame(
+                            &WorkspaceBackupListStreamFrame::End {
+                                count,
+                                sha256: checksum,
+                            },
+                        )?;
+                        Ok(Some((
+                            actix_web::web::Bytes::from(frame),
+                            (backups, count, Sha256::new(), true),
+                        )))
+                    }
+                }
             },
-            Err(_) => self.json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "workspace_backup_list_failed",
-            ),
-        }
+        );
+        HttpResponse::Ok()
+            .content_type("application/x-rudder-workspace-backup-list+ndjson")
+            .streaming(stream)
     }
 
     async fn workspace_backup_files(
@@ -2424,6 +2502,15 @@ fn bounded_json<T: Serialize>(status: StatusCode, value: &T, max_bytes: usize) -
     }
 }
 
+fn workspace_backup_list_stream_frame<T: Serialize>(
+    frame: &T,
+) -> Result<Vec<u8>, actix_web::Error> {
+    let mut bytes =
+        serde_json::to_vec(frame).map_err(actix_web::error::ErrorInternalServerError)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
 async fn request_guard(
     state: web::Data<AppState>,
     payload: web::Payload,
@@ -2568,8 +2655,15 @@ async fn project_create(
         .await
 }
 
-async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
-    state.workspace_backups(org_id.as_str()).await
+async fn workspace_backups(
+    request: HttpRequest,
+    state: web::Data<AppState>,
+    org_id: web::Path<String>,
+    body: web::Bytes,
+) -> HttpResponse {
+    state
+        .workspace_backups(&request, org_id.as_str(), body.as_ref())
+        .await
 }
 
 async fn workspace_backup_files(
@@ -2644,7 +2738,7 @@ impl ServerRuntime {
                     web::post().to(project_reads::project_reads),
                 )
                 .route(
-                    "/api/orgs/{org_id}/workspace/backups",
+                    "/internal/orgs/{org_id}/workspace/backups",
                     web::get().to(workspace_backups),
                 )
                 .route(
@@ -3081,7 +3175,7 @@ mod tests {
     #[actix_web::test]
     async fn workspace_backup_list_fails_closed_without_database() {
         let state = AppState::new(ServerConfig::default()).unwrap();
-        let response = state.workspace_backups("organization-1").await;
+        let response = state.workspace_backups_authorized("organization-1").await;
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = actix_web::body::to_bytes(response.into_body())
             .await
@@ -3095,6 +3189,7 @@ mod tests {
         assert!(normalized.contains("where org_id::text = $1"));
         assert!(normalized.contains("status <> 'deleted'"));
         assert!(normalized.contains("order by created_at desc"));
+        assert!(normalized.contains("interval '720 hours'"));
         for mutation in ["insert ", "update ", "delete ", "truncate "] {
             assert!(!normalized.contains(mutation), "query contains {mutation}");
         }

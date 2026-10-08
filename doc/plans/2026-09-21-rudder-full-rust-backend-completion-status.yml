@@ -2209,3 +2209,70 @@ current_delivery_checkpoint_2026_10_07T1605Z:
   claims: {implementation_complete: false, release_ready: false, production_verified: false, default_path_verified: false, old_authority_retired: false}
   preservation: {candidate_worktree_isolated: true, current_source_refresh_preserved: true, historical_packets_preserved: true, user_and_production_data_untouched: true}
   next_action: scoped_metadata_commit_then_content_equivalence_rebind; push_PR277; exact_head_CI_including_x86_64_apple; merge_after_gates; refresh_Main_then_organization_lifecycle_parent_delete; continue_Phase_0_to_7
+current_delivery_checkpoint_2026_10_08_post_merge:
+  authoritative: true
+  observed_at_utc: '2026-10-07T18:36:28Z'
+  main: {ref: origin/main, sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, tree: 94dba2e225a4276f6b9cbdc9978393c8829ad686, verified_by_ls_remote: true}
+  PR_277: {state: MERGED, head: 06a6450491392e1e8f064f1eba060b4a5cc5d7e5, merge: ff287a248b02ef4b4d54db012c814f334e1c4b70, head_tree_matches_main: true, merged_at_utc: '2026-10-07T17:59:43Z'}
+  exact_head_CI: {test_run: 37659806482, conclusion: success, all_applicable_jobs: success, affected_qualification: skipped, qualification_summary: success, d1_smoke_run: 37659806518, d1_smoke_conclusion: success, packaged_macOS_arm64_smoke: success, four_native_targets: success}
+  v25_22: {reviewer: Goodall_accept, verifier: McClintock_composite_PASS, final_review: Goodall_accept, complete_workflows_at_exact_4fd: false, composite_scope: content_equivalent_6b17_full_workflows_plus_exact_4fd_ownership_races_3_of_3, default_Rust_ingress: not_proven, Node_authority_retirement: not_proven}
+  delivery_packet: {version: v25.22, path: doc/plans/2026-10-07-rudder-full-rust-backend-completion-delivery-packet-v25.22.json, recorded_PR_merge: true, packet_status: integration_pending, reason: original_preintegration_index_digest_missing_strict_preservation_reconciliation_pending, validator: VALID_integration_pending}
+  authority_inventory: {units: 28, whole_row_implemented: 7, private_verified: 7, real_entry_connected: 6, default_path_verified: 1, old_authority_retired: 0, partial_capability_rows: 15, flags_overlap_not_percentages: true, Hegel_audit_source: ff287a248b02ef4b4d54db012c814f334e1c4b70}
+  non_server_authorities_in_scope: [identity_session, analytics_collector, managed_mcp, embedded_postgres_lifecycle, migration_apply, update_recovery, first_party_cli_mcp, electron_backend_attachment]
+  org_delete: {current_owner: Node, observed_semantics: transactional_child_and_activity_delete_then_five_best_effort_postcommit_local_directory_cleanups, durable_deletion_event: false, durable_cleanup_retry: false, user_semantic_choice: pending, implementation_started: false}
+  next_slice: {authority: read.workspace_backups, current_Main_Node_list_query: true, Rust_private_handler: exists, old_candidate_reused: false, candidate_adaptation: in_progress_on_current_Main}
+  active_worker: {agent_id: 01a1179d-3fd8-7593-b664-577483308ad1, requested_model: gpt-6-luna, requested_reasoning_effort: xhigh, exact_arguments_passed: true, effective_runtime_metadata: not_exposed, followup_dispatch: none}
+  preservation: {no_production_or_user_data_mutation: true, original_candidate_unrelated_plan_work_still_present: true, original_preintegration_index_digest: unavailable, delivery_packet_terminal_receipt: withheld}
+  claims: {implementation_complete: false, release_ready: false, production_verified: false, default_path_verified: false, old_authority_retired: false}
+  next_action: reconcile_v25_22_preservation_record_without_touching_original_dirty_paths; complete_current_Main_workspace_backup_list_adaptation_and_real_entry_checks; stage_review_exact_candidate; independent_verifier_PASS; final_review_accept; PR_and_exact_head_CI; continue_Phases_0_to_7
+
+current_slice_checkpoint_2026_10_08_v25_23:
+  authoritative: true
+  observed_at_utc: '2026-10-07T19:09:14Z'
+  main: {ref: origin/main, sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, tree: 94dba2e225a4276f6b9cbdc9978393c8829ad686, remote_rechecked: true}
+  candidate: {worktree: /Users/zeeland/.codex/worktrees/rust-migration-main-refresh-20261008/rudder-oss, branch: codex/rudder-d1-closeout-and-next-slice-20261008, base_sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, product_fingerprint: 8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609, source_paths: 11, source_tree: 4702e9c28c2330b4cd1cba03a2c611b4df738920}
+  packet: {version: v25.23, path: doc/plans/2026-10-08-rudder-full-rust-backend-completion-delivery-packet-v25.23.json, sha256: 68952e4a97c07335db9962affc632916b4bcaf187acfe47301b2825f88405148, acceptance_fingerprint: 779803333ad31fd35e81dfed653a88388eb55973021bbe9cb2fda941c740d650, state: acceptance_pending, validator: VALID}
+  slice: {authority: read.workspace_backups, Node_public_route_and_auth_retained: true, Rust_signed_private_Actix_SQLx_query: true, legacy_Node_list_query_removed: true, fail_closed_without_fallback: true, backup_mutations_scheduler_recovery_remain_Node: true, CLI_MCP_list_capability: not_applicable}
+  author_checks: {fresh_foundation_build: PASS_sha256_9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3, workspace_dependency_build: PASS, bridge: 41_of_41_PASS, backup_service_route_and_real_entry: 60_of_60_PASS_on_fresh_binary, typecheck: PASS, lint_changed: PASS_8_files, cargo_fmt: PASS, Rust_PostgreSQL_black_box: 1_of_1_PASS, post_timeout_delta_UI_E2E: not_run}
+  prefreeze_correction: {project_create_timeout_restored_to_ordinary_request_timeout: true, workspace_backup_list_timeout_bound_to_list_only: true, regression_tests_added: 2}
+  artifact_correction: {stale_initial_foundation_binary_not_counted: true, fresh_exact_source_binary_sha256: 9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3, real_entry_suite_rerun_on_fresh_binary: 1_of_1_PASS}
+  receipts: {stage_reviewer: Beauvoir_accept_packet_ab9f1f4f_source_8c9dbbff, independent_exact_candidate_workflow_verifier: pending, final_reviewer: pending, exact_head_CI: not_started}
+  authority_snapshot: {units: 28, whole_row_implemented: 7, privately_verified: 7, real_entry_connected: 7, default_path_verified: 1, scoped_legacy_reader_retired: 1, partial_capability_rows: 15, flags_overlap_not_percentages: true}
+  integration: {candidate_published: false, PR: not_opened, exact_head_CI: absent, merge: not_attempted}
+  preservation: {live_index_tree_before_and_after_alt_index: 94dba2e225a4276f6b9cbdc9978393c8829ad686, source_patch_tree_built_in_alternate_index: 4702e9c28c2330b4cd1cba03a2c611b4df738920, current_index_unstaged: true, full_commit_time_preservation_audit: pending}
+  claims: {implementation_complete: false, release_ready: false, production_verified: false, installed_default_path_verified: false, global_Node_authority_retired: false}
+  next_executable: run_independent_public_workflow_and_UI_E2E_on_frozen_candidate; final_review; commit_publish_PR_exact_head_CI; continue_Phase_0_to_7
+
+current_delivery_checkpoint_2026_10_08T2031Z_v25_23_final_review_accept:
+  authoritative: false
+  superseded_by: current_delivery_checkpoint_2026_10_08T2043Z_v25_23_committed_product_rebound
+  observed_at_utc: '2026-10-07T20:31:06Z'
+  main: {ref: origin/main, sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, tree: 94dba2e225a4276f6b9cbdc9978393c8829ad686, remote_ls_remote_rechecked: true}
+  candidate: {worktree: /Users/zeeland/.codex/worktrees/rust-migration-main-refresh-20261008/rudder-oss, branch: codex/rudder-d1-closeout-and-next-slice-20261008, base_sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, source_sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, materialized_product_commit: b6a058061fd6a6802af0e163bef3e09932404c22, source_tree: 4702e9c28c2330b4cd1cba03a2c611b4df738920, product_fingerprint: 8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609, product_source_paths: 11}
+  packet: {version: v25.23, path: doc/plans/2026-10-08-rudder-full-rust-backend-completion-delivery-packet-v25.23.json, sha256: eda7b766dd786ced358736ba0da4f38165daa7ab9c0f077b1b2cca2e5819c46b, acceptance_fingerprint: 779803333ad31fd35e81dfed653a88388eb55973021bbe9cb2fda941c740d650, state: integration_pending, validator: VALID}
+  receipts: {stage_reviewer: Beauvoir_accept_rebound_to_b6a058_by_content_equivalence, independent_workflow_verifier: Hubble_PASS_on_equivalent_frozen_content, final_reviewer: Bohr_accept_on_equivalent_frozen_content, exact_head_CI: not_started}
+  verifier_runtime: {node: '22.23.1', postgres_system_identifier: '7694020089018558177', postgres_pid: 50945, postgres_port: 60586, node_pid: 50479, node_port: 60628, rust_bridge_pid: 51057, rust_port: 60624, data_identity_source: parent_concurrent_read_only_watcher_plus_verifier_test_logs}
+  verifier_fixtures: {primary: 798b55d1-30c6-473b-9d75-5f5def3bae00, foreign: 43bef6a7-3038-4c5d-85ac-d99f463a982d, medium: acfc422e-4603-4f95-bb72-54b97426443d, large: c6772bbf-e3cf-492f-b3e0-b14524d0ca04, dst: 71c219ab-7ace-481f-b470-2c450a4a885c, empty: 55af0da9-b661-4759-b0fa-4aaeeab98c80}
+  verification: {real_entry: 1_of_1_PASS, route_and_bridge_support: 50_of_50_PASS, bridge_children: "51057,51400_exit_0", shared_or_production_database_touched: false, earlier_unscoped_setup: QUESTION_preserved_in_packet_history}
+  stage_reviewer_rebind: {reviewer: Beauvoir_01a117cd-6fd1-7342-94fe-1300c38945e3, source_fingerprint_unchanged: true, acceptance_fingerprint_unchanged: true, metadata_only_data_id_rebind_confirmed: true}
+  stage_reviewer_source_sha_rebind: {from: ff287a248b02ef4b4d54db012c814f334e1c4b70, to: b6a058061fd6a6802af0e163bef3e09932404c22, commit_parent: ff287a248b02ef4b4d54db012c814f334e1c4b70, tree: 4702e9c28c2330b4cd1cba03a2c611b4df738920, exact_paths_and_content_fingerprint_verified: true, binary_runtime_data_and_acceptance_fingerprint_unchanged: true, actual_model_effort_metadata: not_exposed, replay_required: false}
+  authority_snapshot: {units: 28, whole_rows_implemented: 7, privately_verified: 7, real_entry_connected: 7, default_path_verified: 1, scoped_legacy_reader_retired: 1, old_authority_retired: 0, partial_capability_rows: 15, flags_overlap_not_percentages: true}
+  integration: {PR_277: MERGED_at_ff287a248b02ef4b4d54db012c814f334e1c4b70, candidate_committed: false, new_PR: not_opened, exact_head_CI: absent, merge_of_v25_23: not_attempted}
+  preservation: {candidate_worktree_isolated: true, current_index_not_updated: true, product_diff_fingerprint_rechecked: true, production_or_user_data_mutation: none, unrelated_historical_plan_work_preserved: true}
+  claims: {implementation_complete: false, release_ready: false, production_verified: false, installed_default_path_verified: false, global_Node_authority_retired: false}
+  next_executable: recheck_scoped_worktree_and_index_preservation; checkpoint_commit_exact_candidate_without_live_index_mutation; open_new_protected_PR_and_run_exact_head_CI; merge_after_required_checks; refresh_Main_then_stage_workspace_backup_file_tree_and_preview_read_slice; continue_Phases_0_to_7
+
+current_delivery_checkpoint_2026_10_08T2043Z_v25_23_committed_product_rebound:
+  authoritative: true
+  observed_at_utc: '2026-10-07T20:43:00Z'
+  main: {ref: origin/main, sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, tree: 94dba2e225a4276f6b9cbdc9978393c8829ad686, ls_remote_rechecked: true}
+  candidate: {worktree: /Users/zeeland/.codex/worktrees/rust-migration-main-refresh-20261008/rudder-oss, branch: codex/rudder-d1-closeout-and-next-slice-20261008, base_sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, source_sha: b6a058061fd6a6802af0e163bef3e09932404c22, parent_sha: ff287a248b02ef4b4d54db012c814f334e1c4b70, source_tree: 4702e9c28c2330b4cd1cba03a2c611b4df738920, product_fingerprint: 8c9dbbffe61fd47a4c29d96d9f00fcf3a32594f58ac8fa08deb8ed12eb8b0609, product_paths: 11}
+  packet: {version: v25.23, path: doc/plans/2026-10-08-rudder-full-rust-backend-completion-delivery-packet-v25.23.json, acceptance_fingerprint: 779803333ad31fd35e81dfed653a88388eb55973021bbe9cb2fda941c740d650, state: integration_pending, validator: VALID}
+  receipts: {stage_reviewer: Beauvoir_accept_rebound_to_b6a058_by_content_equivalence, independent_verifier: Hubble_PASS_rebound_to_b6a058, final_reviewer: Bohr_accept_rebound_to_b6a058, exact_head_CI: not_started, effective_agent_model_effort_metadata: not_exposed; exact_requested_arguments_recorded}
+  author_checks: {fresh_rust_binary_sha256: 9bedbbff84e7b743fd1b1009704b449653b74d1854a13996ecab7f695def19f3, route_bridge_real_entry_suites: 60_of_60_PASS, bridge_suite: 41_of_41_PASS, Rust_PostgreSQL_black_box: 1_of_1_PASS, server_typecheck: PASS, changed_file_lint: PASS, cargo_fmt: PASS}
+  integration: {product_commit_object_created: true, local_branch_ref_still_at_base: true, pushed: false, PR: not_opened, exact_head_CI: absent, merge: not_attempted}
+  parked_parallel_candidate: {branch: codex/workspace-backup-list-main-adapt-20261008, head: '701842f92be5d3d73ad0272e1df9cf98c1a80674', state: preserved_unpublished_unselected, worktree_untouched: true, reviewed_behavior: shared_3000ms_timeout_instead_of_b6a0580_dedicated_30000ms_list_timeout, disposition: do_not_import}
+  authority_snapshot: {units: 28, whole_rows_implemented: 7, privately_verified: 7, real_entry_connected: 7, default_path_verified: 1, scoped_legacy_reader_retired: 1, old_authority_retired: 0, partial_capability_rows: 15, flags_overlap_not_percentages: true}
+  preservation: {dirty_paths_all_candidate_or_records: true, unrelated_dirty_paths: 0, live_index_tree_before_after: 94dba2e225a4276f6b9cbdc9978393c8829ad686, live_index_staged_paths: 0, no_user_or_production_data_touched: true}
+  claims: {implementation_complete: false, release_ready: false, production_verified: false, installed_default_path_verified: false, global_Node_authority_retired: false}
+  next_executable: finalize_delivery_records_and_preservation_digest; push_candidate_branch_and_open_protected_PR; require_exact_head_CI; merge_only_when_required_checks_pass; refresh_Main_then_begin_workspace_backup_file_tree_and_single_file_preview_reads; continue_Phases_0_to_7

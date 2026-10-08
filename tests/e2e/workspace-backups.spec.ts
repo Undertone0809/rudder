@@ -38,7 +38,12 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await fs.writeFile(path.join(workspaceRoot, "plans", "roadmap.md"), "# Changed\n", "utf8");
 
   await selectOrganization(page, organization.id);
+  const backupListResponse = page.waitForResponse((response) =>
+    response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/workspace/backups`),
+  );
   await page.goto(`/${organization.urlKey}/workspaces/backups`);
+  expect((await backupListResponse).status()).toBe(200);
 
   await expect(page.getByRole("heading", { name: "Workspace backups" })).toBeVisible();
   await expect(page.getByTestId("primary-rail")).toBeVisible();

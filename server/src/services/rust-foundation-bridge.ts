@@ -29,6 +29,7 @@ export type RustFoundationBridgeOptions = {
   binaryPath?: string;
   actorEnvelopeKey?: string;
   requestTimeoutMs?: number;
+  workspaceBackupListTimeoutMs?: number;
   publicIngress?: RustPublicIngressOptions;
 };
 
@@ -65,6 +66,7 @@ export interface RustFoundationBridge {
     roots: { organizationWorkspaceRoot: string; projectCreateStateRoot: string },
   ): Promise<RustFoundationResponse>;
   memberDirectory(req: Request, orgId: string): Promise<RustFoundationResponse>;
+  workspaceBackupList(req: Request, orgId: string): Promise<RustFoundationResponse>;
   organizationBranding(
     req: Request,
     orgId: string,
@@ -140,6 +142,8 @@ type BridgeLifecycleState = "idle" | "starting" | "ready" | "closing";
 
 const ACTOR_ENVELOPE_AUDIENCE = "rudder-server-foundation";
 const ACTOR_ENVELOPE_ACTION = "organization.members.directory.read";
+const WORKSPACE_BACKUP_LIST_ACTION = "organization.workspace.backups.list";
+const WORKSPACE_BACKUP_LIST_STREAM_CONTENT_TYPE = "application/x-rudder-workspace-backup-list+ndjson";
 const ORGANIZATION_BRANDING_ACTION = "organization.branding.update";
 const ORGANIZATION_RESOURCE_ACTION = "organization.resource.mutate";
 const PROJECT_GOAL_SET_ACTION = "project.goal_set.replace";
@@ -151,10 +155,102 @@ const ACTOR_ENVELOPE_SCHEMA = "rudder.actor-envelope.v2";
 const ACTOR_ENVELOPE_LIFETIME_SECONDS = 60;
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 const DEFAULT_READY_TIMEOUT_MS = 5_000;
+const DEFAULT_WORKSPACE_BACKUP_LIST_TIMEOUT_MS = 30_000;
 
 function debugBridge(message: string) {
   if (process.env.RUDDER_RUST_BRIDGE_DEBUG === "true") {
     process.stderr.write(`[rudder-rust-bridge] ${message}\n`);
+  }
+}
+
+async function readWorkspaceBackupListResponse(response: Response): Promise<RustFoundationResponse> {
+  const contentType = response.headers.get("content-type") ?? "application/json";
+  if (response.status !== 200) {
+    return {
+      status: response.status,
+      contentType,
+      body: Buffer.from(await response.arrayBuffer()),
+    };
+  }
+
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== WORKSPACE_BACKUP_LIST_STREAM_CONTENT_TYPE) {
+    throw new Error("Rust workspace backup list response used an unexpected content type");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Rust workspace backup list stream has no body");
+
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const lineParts: string[] = [];
+  const backups: Record<string, unknown>[] = [];
+  const digest = createHash("sha256");
+  let ended = false;
+
+  const acceptLine = (line: string) => {
+    if (line.length === 0 || ended) throw new Error("Rust workspace backup list stream has an invalid frame sequence");
+    const frame = JSON.parse(line) as unknown;
+    if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
+      throw new Error("Rust workspace backup list stream frame is not an object");
+    }
+    const record = frame as Record<string, unknown>;
+    if (record.type === "backup") {
+      if (Object.keys(record).length !== 2
+        || !("backup" in record)
+        || !record.backup
+        || typeof record.backup !== "object"
+        || Array.isArray(record.backup)) {
+        throw new Error("Rust workspace backup list stream contains an invalid backup frame");
+      }
+      digest.update(`${line}\n`, "utf8");
+      backups.push(record.backup as Record<string, unknown>);
+      return;
+    }
+    if (record.type === "end") {
+      if (Object.keys(record).length !== 3
+        || typeof record.count !== "number"
+        || !Number.isSafeInteger(record.count)
+        || record.count !== backups.length
+        || typeof record.sha256 !== "string"
+        || !/^[a-f0-9]{64}$/.test(record.sha256)
+        || digest.digest("hex") !== record.sha256) {
+        throw new Error("Rust workspace backup list stream terminal integrity check failed");
+      }
+      ended = true;
+      return;
+    }
+    throw new Error("Rust workspace backup list stream contains an unknown frame");
+  };
+
+  const acceptText = (text: string) => {
+    let start = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      if (text.charCodeAt(index) !== 10) continue;
+      lineParts.push(text.slice(start, index));
+      acceptLine(lineParts.join(""));
+      lineParts.length = 0;
+      start = index + 1;
+    }
+    if (start < text.length) lineParts.push(text.slice(start));
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      acceptText(decoder.decode(value, { stream: true }));
+    }
+    acceptText(decoder.decode());
+    if (lineParts.length > 0 || !ended) {
+      throw new Error("Rust workspace backup list stream ended before its complete terminal frame");
+    }
+    return {
+      status: response.status,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ backups }), "utf8"),
+    };
+  } catch (error) {
+    await reader.cancel(error).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -425,6 +521,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
   let lifecycleTail: Promise<void> = Promise.resolve();
   let lastStderr = "";
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const workspaceBackupListTimeoutMs = options.workspaceBackupListTimeoutMs ?? DEFAULT_WORKSPACE_BACKUP_LIST_TIMEOUT_MS;
 
   const start = async (): Promise<void> => {
     lifecycleState = "starting";
@@ -827,6 +924,36 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         contentType: response.headers.get("content-type") ?? "application/json",
         body: Buffer.from(await response.arrayBuffer()),
       } satisfies RustFoundationResponse;
+    },
+    async workspaceBackupList(req, orgId) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/workspace/backups`;
+      const body = Buffer.alloc(0);
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({
+        actor: req.actor,
+        organizationId: orgId,
+        method: "GET",
+        path: requestPath,
+        action: WORKSPACE_BACKUP_LIST_ACTION,
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+      });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "GET",
+          headers: {
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+          },
+          signal: AbortSignal.timeout(workspaceBackupListTimeoutMs),
+        });
+        return await readWorkspaceBackupListResponse(response);
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust workspace backup list request failed", { cause: error });
+      }
     },
     async organizationBranding(req, orgId, body, requestPath = req.originalUrl) {
       const idempotencyKey = req.header("x-rudder-idempotency-key")?.trim();
