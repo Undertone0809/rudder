@@ -1,24 +1,25 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { repairEmbeddedPostgres } from "../../server/resources/postinstall-embedded-postgres.mjs";
 import { optimizeServerPackage } from "./optimize-server-package.mjs";
+import { prepareServerPackagingWorkspace } from "./server-packaging-workspace.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const targetDir = path.join(repoRoot, "desktop", ".packaged", "server-package");
 const postgresRuntimeDir = path.join(repoRoot, "desktop", ".packaged", "postgres-18.4");
 const preparePostgresRuntimeScript = path.join(scriptDir, "prepare-postgres-runtime.mjs");
-const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-const sourceManifestRoots = ["packages", "server", "cli"];
+const pnpmCli = path.join(path.dirname(createRequire(import.meta.url).resolve("pnpm")), "bin", "pnpm.cjs");
 
 function run(command, args, cwd, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       stdio: "inherit",
-      shell: process.platform === "win32",
+      shell: false,
       env: options.env ? { ...process.env, ...options.env } : process.env,
     });
     child.on("error", reject);
@@ -43,66 +44,6 @@ async function exists(targetPath) {
   } catch {
     return false;
   }
-}
-
-async function snapshotSourcePackageManifests() {
-  const snapshots = new Map();
-  const rootManifestPath = path.join(repoRoot, "package.json");
-  if (await exists(rootManifestPath)) {
-    snapshots.set(rootManifestPath, await fs.readFile(rootManifestPath, "utf8"));
-  }
-
-  async function walk(absDir) {
-    if (!(await exists(absDir))) return;
-
-    const manifestPath = path.join(absDir, "package.json");
-    if (await exists(manifestPath)) {
-      snapshots.set(manifestPath, await fs.readFile(manifestPath, "utf8"));
-      return;
-    }
-
-    const entries = await fs.readdir(absDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git") continue;
-      await walk(path.join(absDir, entry.name));
-    }
-  }
-
-  for (const relRoot of sourceManifestRoots) {
-    await walk(path.join(repoRoot, relRoot));
-  }
-
-  return snapshots;
-}
-
-async function allowNonAppliedPatchesForDeploy() {
-  const manifestPath = path.join(repoRoot, "package.json");
-  if (!await exists(manifestPath)) return;
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
-  manifest.pnpm = {
-    ...manifest.pnpm,
-    allowNonAppliedPatches: true,
-  };
-  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-}
-
-async function restoreSourcePackageManifests(snapshots) {
-  await Promise.all(
-    [...snapshots.entries()].map(([manifestPath, content]) => fs.writeFile(manifestPath, content, "utf8")),
-  );
-}
-
-async function restoreWorkspaceDependencyLinks() {
-  const args = [
-    "install",
-    "--frozen-lockfile",
-  ];
-  // Forced installs traverse optional packages that do not exist on the
-  // current platform. Windows also needs network access when a fresh lockfile
-  // references a tarball that is not present in the local store yet.
-  if (process.platform !== "win32") args.push("--offline");
-  await run(pnpmBin, args, repoRoot);
 }
 
 async function writeFileBreakingLinks(filePath, content) {
@@ -166,10 +107,10 @@ function postgresRuntimePlatformSegment() {
   return `${process.platform}-${arch}`;
 }
 
-async function execFileAsync(command, args) {
+async function execFileAsync(command, args, options = {}) {
   const { execFile } = await import("node:child_process");
   return await new Promise((resolve, reject) => {
-    execFile(command, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+    execFile(command, args, { encoding: "utf8", ...options }, (error, stdout, stderr) => {
       if (error) {
         error.stdout = stdout;
         error.stderr = stderr;
@@ -393,25 +334,25 @@ async function main() {
   await fs.rm(targetDir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
 
-  const sourceManifestSnapshots = await snapshotSourcePackageManifests();
-  try {
-    await allowNonAppliedPatchesForDeploy();
-    const deployTarget = path.relative(repoRoot, targetDir);
-    await run(pnpmBin, [
-      "--config.node-linker=hoisted",
-      "--filter",
-      "@rudderhq/server",
-      "--prod",
-      "deploy",
-      deployTarget,
-    ], repoRoot, {
-      env: {
-        PNPM_CONFIG_FORCE_LEGACY_DEPLOY: "true",
-      },
-    });
-  } finally {
-    await restoreSourcePackageManifests(sourceManifestSnapshots);
-    await restoreWorkspaceDependencyLinks();
+  const { stdout: storePath } = await execFileAsync(process.execPath, [pnpmCli, "store", "path", "--silent"], {
+    cwd: repoRoot,
+  });
+  const manifests = await prepareServerPackagingWorkspace(repoRoot, targetDir);
+  await run(process.execPath, [
+    pnpmCli,
+    "install",
+    "--prod",
+    "--frozen-lockfile",
+    "--offline",
+    "--config.node-linker=hoisted",
+    `--store-dir=${storePath.trim()}`,
+  ], targetDir);
+  for (const [packageDir, manifest] of manifests) {
+    await fs.writeFile(path.join(packageDir, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    await rewritePublishedManifest(packageDir);
+  }
+  for (const file of ["pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc", "patches"]) {
+    await fs.rm(path.join(targetDir, file), { recursive: true, force: true });
   }
   await rewritePublishedManifest(targetDir);
   await rewriteInternalPackages(targetDir);

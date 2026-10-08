@@ -1,3 +1,4 @@
+import { dump, load } from "js-yaml";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -10,10 +11,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { prepareServerPackagingWorkspace, serverPackagingLockfile } from "./server-packaging-workspace.mjs";
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -50,124 +53,87 @@ function writeFakePostgresBinDir(binDir, timezoneLayout = "nested") {
 function createStageServerRepo() {
   const repo = mkdtempSync(join(tmpdir(), "rudder-stage-server-test-"));
   tempRoots.push(repo);
-
   mkdirSync(join(repo, "desktop", "scripts"), { recursive: true });
-  mkdirSync(join(repo, "packages", "shared"), { recursive: true });
+  mkdirSync(join(repo, "packages", "shared", "dist"), { recursive: true });
   mkdirSync(join(repo, "server", "resources"), { recursive: true });
+  mkdirSync(join(repo, "server", "dist"), { recursive: true });
+  mkdirSync(join(repo, "patches"), { recursive: true });
+  writeFileSync(join(repo, "server", "dist", "index.js"), "export {};\n");
+  writeFileSync(join(repo, "packages", "shared", "dist", "index.js"), "export {};\n");
+  writeFileSync(join(repo, "patches", "ui-only-package.patch"), "fixture patch\n");
   cpSync(join(scriptsDir, "../../server/resources/postinstall-embedded-postgres.mjs"), join(repo, "server/resources/postinstall-embedded-postgres.mjs"));
   cpSync(join(scriptsDir, "../../scripts/fixtures/embedded-postgres-18.1.0-beta.16/index.js.txt"), join(repo, "embedded-postgres-original.txt"));
   const rootManifestPath = join(repo, "package.json");
   writeJson(rootManifestPath, {
     name: "rudder-stage-server-fixture",
     private: true,
+    packageManager: "pnpm@9.15.4",
     pnpm: {
-      patchedDependencies: {
-        "ui-only-package@1.0.0": "patches/ui-only-package.patch",
-      },
+      allowNonAppliedPatches: true,
+      patchedDependencies: { "ui-only-package@1.0.0": "patches/ui-only-package.patch" },
     },
   });
-  cpSync(join(scriptsDir, "stage-server.mjs"), join(repo, "desktop", "scripts", "stage-server.mjs"));
-  cpSync(
-    join(scriptsDir, "optimize-server-package.mjs"),
-    join(repo, "desktop", "scripts", "optimize-server-package.mjs"),
-  );
+  for (const file of ["stage-server.mjs", "server-packaging-workspace.mjs", "optimize-server-package.mjs"]) {
+    cpSync(join(scriptsDir, file), join(repo, "desktop", "scripts", file));
+  }
+  const require = createRequire(import.meta.url);
+  cpSync(dirname(require.resolve("js-yaml/package.json")), join(repo, "desktop/node_modules/js-yaml"), { recursive: true });
   writeFileSync(join(repo, "desktop", "scripts", "prepare-postgres-runtime.mjs"), [
     "const configuredBinDir = process.env.RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR;",
-    "if (!configuredBinDir) {",
-    "  console.error('missing RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR');",
-    "  process.exit(1);",
-    "}",
+    "if (!configuredBinDir) process.exit(1);",
     "console.log(configuredBinDir);",
     "",
   ].join("\n"));
-
   const sharedManifestPath = join(repo, "packages", "shared", "package.json");
-  const sharedManifest = {
-    name: "@rudderhq/shared",
-    version: "0.2.10",
-    type: "module",
-    exports: {
-      ".": "./src/index.ts",
-    },
-    publishConfig: {
-      access: "public",
-      exports: {
-        ".": {
-          types: "./dist/index.d.ts",
-          import: "./dist/index.js",
-        },
-      },
-      main: "./dist/index.js",
-      types: "./dist/index.d.ts",
-    },
+  const publishConfig = {
+    exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
+    main: "./dist/index.js",
+    types: "./dist/index.d.ts",
   };
-  writeJson(sharedManifestPath, sharedManifest);
-
-  writeJson(join(repo, "server", "package.json"), {
-    name: "@rudderhq/server",
-    version: "0.2.10",
-    type: "module",
-    exports: {
-      ".": "./src/index.ts",
-    },
-    publishConfig: {
-      exports: {
-        ".": {
-          types: "./dist/index.d.ts",
-          import: "./dist/index.js",
-        },
-      },
-      main: "./dist/index.js",
-      types: "./dist/index.d.ts",
-    },
+  writeJson(sharedManifestPath, {
+    name: "@rudderhq/shared", version: "0.2.10", type: "module", files: ["dist"],
+    exports: { ".": "./src/index.ts" }, publishConfig,
   });
-
+  writeJson(join(repo, "server", "package.json"), {
+    name: "@rudderhq/server", version: "0.2.10", type: "module", files: ["dist", "resources"],
+    exports: { ".": "./src/index.ts" }, publishConfig,
+    dependencies: { "@rudderhq/shared": "workspace:*" },
+  });
+  writeFileSync(join(repo, "pnpm-lock.yaml"), dump({
+    lockfileVersion: "9.0",
+    settings: { autoInstallPeers: true, excludeLinksFromLockfile: false },
+    patchedDependencies: { "ui-only-package@1.0.0": { hash: "fixture", path: "patches/ui-only-package.patch" } },
+    importers: {
+      ".": {},
+      server: { dependencies: { "@rudderhq/shared": { specifier: "workspace:*", version: "link:../packages/shared" } } },
+      "packages/shared": {},
+    },
+    packages: {}, snapshots: {},
+  }));
   const binDir = join(repo, "bin");
   mkdirSync(binDir, { recursive: true });
-  const pnpmFixturePath = join(binDir, "pnpm-fixture.cjs");
+  const pnpmFixturePath = join(repo, "desktop/node_modules/pnpm/bin/pnpm.cjs");
+  mkdirSync(dirname(pnpmFixturePath), { recursive: true });
+  writeJson(join(repo, "desktop/node_modules/pnpm/package.json"), { name: "pnpm", exports: { ".": "./package.json" } });
   writeFileSync(pnpmFixturePath, [
-    "#!/usr/bin/env node",
     "const fs = require('node:fs');",
     "const path = require('node:path');",
-    "const repo = process.cwd();",
-    "if (process.argv.includes('install')) {",
-    "  const required = process.platform === 'win32'",
-    "    ? ['--frozen-lockfile']",
-    "    : ['--offline', '--frozen-lockfile'];",
-    "  if (process.argv.includes('--force')) process.exit(47);",
-    "  if (process.platform === 'win32' && process.argv.includes('--offline')) process.exit(48);",
-    "  if (process.argv.includes('--ignore-scripts')) process.exit(46);",
-    "  if (!required.every((arg) => process.argv.includes(arg))) process.exit(45);",
-    "  fs.writeFileSync(path.join(repo, '.workspace-install-restored'), 'ok\\n');",
+    "if (process.argv.includes('store')) {",
+    "  console.log(path.join(process.cwd(), '.pnpm-store/v3'));",
     "  process.exit(0);",
     "}",
-    "if (process.argv.includes('--legacy')) {",
-    "  console.error('pnpm deploy --legacy is no longer supported');",
-    "  process.exit(42);",
+    "const target = process.cwd();",
+    "const repo = path.resolve(target, '../../..');",
+    "const required = ['install', '--prod', '--frozen-lockfile', '--offline', '--config.node-linker=hoisted'];",
+    "if (!required.every((arg) => process.argv.includes(arg)) || process.argv.includes('deploy') || process.argv.includes('--ignore-scripts')) process.exit(45);",
+    "if (!process.argv.includes('--store-dir=' + path.join(repo, '.pnpm-store/v3'))) process.exit(46);",
+    "const rootManifest = JSON.parse(fs.readFileSync(path.join(target, 'package.json'), 'utf8'));",
+    "if (rootManifest.pnpm?.allowNonAppliedPatches !== true) process.exit(44);",
+    "if (process.env.RUDDER_FAKE_INSTALL_FAILURE === '1') {",
+    "  console.error('fixture: locked package is unavailable in the offline store');",
+    "  process.exit(50);",
     "}",
-    "if (process.env.PNPM_CONFIG_FORCE_LEGACY_DEPLOY !== 'true') {",
-    "  console.error('pnpm deploy requires force-legacy-deploy config for non-injected workspace packages');",
-    "  process.exit(43);",
-    "}",
-    "const rootManifest = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));",
-    "if (rootManifest.pnpm?.allowNonAppliedPatches !== true) {",
-    "  console.error('pnpm deploy requires temporary non-applied patch allowance');",
-    "  process.exit(44);",
-    "}",
-    "const target = process.argv.at(-1);",
-    "const publishedShared = {",
-    "  name: '@rudderhq/shared',",
-    "  version: '0.2.10',",
-    "  type: 'module',",
-    "  exports: { '.': { types: './dist/index.d.ts', import: './dist/index.js', default: './dist/index.js' } },",
-    "  publishConfig: { main: './dist/index.js', types: './dist/index.d.ts' },",
-    "  main: './dist/index.js',",
-    "  types: './dist/index.d.ts'",
-    "};",
-    "fs.writeFileSync(path.join(repo, 'packages/shared/package.json'), JSON.stringify(publishedShared, null, 2) + '\\n');",
-    "fs.mkdirSync(path.join(target, 'dist'), { recursive: true });",
-    "fs.writeFileSync(path.join(target, 'dist/index.js'), 'export {};\\n');",
-    "fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name: '@rudderhq/server', publishConfig: { exports: { '.': { types: './dist/index.d.ts', import: './dist/index.js' } }, main: './dist/index.js', types: './dist/index.d.ts' } }, null, 2) + '\\n');",
+    "fs.writeFileSync(path.join(repo, '.packaging-install-complete'), 'ok\\n');",
     "const postgresRoot = path.join(target, 'node_modules/embedded-postgres');",
     "fs.mkdirSync(path.join(postgresRoot, 'dist'), { recursive: true });",
     "fs.writeFileSync(path.join(postgresRoot, 'package.json'), JSON.stringify({ name: 'embedded-postgres', version: '18.1.0-beta.16', exports: './dist/index.js' }));",
@@ -175,23 +141,9 @@ function createStageServerRepo() {
     "const dbRoot = path.join(target, 'node_modules/@rudderhq/db');",
     "fs.mkdirSync(dbRoot, { recursive: true });",
     "fs.writeFileSync(path.join(dbRoot, 'package.json'), JSON.stringify({ name: '@rudderhq/db' }));",
-    "const sharedStore = path.join(target, 'node_modules/.pnpm/@rudderhq+shared@file+packages+shared/node_modules/@rudderhq/shared');",
-    "fs.mkdirSync(sharedStore, { recursive: true });",
-    "fs.linkSync(path.join(repo, 'packages/shared/package.json'), path.join(sharedStore, 'package.json'));",
-    "const sharedTarget = path.join(target, 'node_modules/@rudderhq');",
-    "fs.mkdirSync(sharedTarget, { recursive: true });",
-    "fs.cpSync(sharedStore, path.join(sharedTarget, 'shared'), { recursive: true });",
+    "fs.cpSync(path.join(target, 'packages/shared'), path.join(target, 'node_modules/@rudderhq/shared'), { recursive: true });",
     "",
   ].join("\n"));
-
-  const pnpmPath = join(binDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
-  if (process.platform === "win32") {
-    writeFileSync(pnpmPath, `@echo off\r\nnode "%~dp0\\pnpm-fixture.cjs" %*\r\n`);
-  } else {
-    writeFileSync(pnpmPath, `#!/bin/sh\nexec node "$(dirname "$0")/pnpm-fixture.cjs" "$@"\n`);
-  }
-  chmodSync(pnpmPath, 0o755);
-
   return { repo, binDir, rootManifestPath, sharedManifestPath };
 }
 
@@ -202,6 +154,96 @@ afterEach(() => {
 });
 
 describe("desktop stage-server", () => {
+  it("relocates only workspace importers while preserving the locked registry graph", () => {
+    const source = load(readFileSync(join(scriptsDir, "../../pnpm-lock.yaml"), "utf8"));
+    const original = structuredClone(source);
+    const { lockfile, workspaceIds } = serverPackagingLockfile(source);
+
+    expect(source).toEqual(original);
+    const { importers: _originalImporters, ...originalRegistry } = original;
+    const { importers: _stagedImporters, ...stagedRegistry } = lockfile;
+    expect(stagedRegistry).toEqual(originalRegistry);
+    expect(lockfile.importers["."].dependencies["@rudderhq/shared"]).toEqual({
+      specifier: "workspace:*", version: "link:packages/shared",
+    });
+    expect(lockfile.importers["packages/agent-runtimes/claude-local"].dependencies["@rudderhq/agent-runtime-utils"])
+      .toEqual({ specifier: "workspace:*", version: "link:../../agent-runtime-utils" });
+    expect(workspaceIds).toContain("packages/db");
+    expect(workspaceIds).not.toContain("ui");
+    expect(workspaceIds).not.toContain("desktop");
+    expect(lockfile.importers.server).toBeUndefined();
+  });
+
+  it("rewrites workspace links back to the server and rejects missing or escaped importers", () => {
+    const source = {
+      lockfileVersion: "9.0",
+      importers: {
+        server: { dependencies: { shared: { specifier: "workspace:*", version: "link:../packages/shared" } } },
+        "packages/shared": { devDependencies: { server: { specifier: "workspace:*", version: "link:../../server" } } },
+      },
+      packages: {}, snapshots: {},
+    };
+    expect(serverPackagingLockfile(source).lockfile.importers["packages/shared"].devDependencies.server.version)
+      .toBe("link:../..");
+    delete source.importers["packages/shared"];
+    expect(() => serverPackagingLockfile(source)).toThrow("Invalid server workspace dependency");
+    source.importers.server.dependencies.shared.version = "link:../../outside";
+    expect(() => serverPackagingLockfile(source)).toThrow("Invalid server workspace dependency");
+  });
+
+  it("installs the locked hoisted graph offline and resolves it after symlink materialization", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "rudder-frozen-packaging-test-"));
+    tempRoots.push(repo);
+    const sourceLock = load(readFileSync(join(scriptsDir, "../../pnpm-lock.yaml"), "utf8"));
+    const lockedVersion = "1.1.1";
+    const packageId = `picocolors@${lockedVersion}`;
+    const dependency = { specifier: "^1.1.0", version: lockedVersion };
+    writeJson(join(repo, "package.json"), { private: true, packageManager: "pnpm@9.15.4" });
+    for (const [id, name] of [["server", "@rudderhq/server"], ["packages/shared", "@rudderhq/shared"]]) {
+      mkdirSync(join(repo, id, "dist"), { recursive: true });
+      writeFileSync(join(repo, id, "dist/index.js"), "module.exports = require('picocolors');\n");
+      writeJson(join(repo, id, "package.json"), {
+        name, version: "1.0.0", files: ["dist"], main: "dist/index.js",
+        dependencies: { picocolors: dependency.specifier, ...(id === "server" ? { "@rudderhq/shared": "workspace:*" } : {}) },
+      });
+    }
+    const lock = {
+      lockfileVersion: "9.0", settings: sourceLock.settings,
+      importers: {
+        server: { dependencies: { picocolors: dependency, "@rudderhq/shared": { specifier: "workspace:*", version: "link:../packages/shared" } } },
+        "packages/shared": { dependencies: { picocolors: dependency } },
+      },
+      packages: { [packageId]: sourceLock.packages[packageId] },
+      snapshots: { [packageId]: sourceLock.snapshots[packageId] },
+    };
+    const originalLock = dump(lock);
+    writeFileSync(join(repo, "pnpm-lock.yaml"), originalLock);
+    const target = join(repo, "staged");
+    await prepareServerPackagingWorkspace(repo, target);
+    const pnpmCli = join(dirname(createRequire(import.meta.url).resolve("pnpm")), "bin", "pnpm.cjs");
+    const store = spawnSync(process.execPath, [pnpmCli, "store", "path", "--silent"], {
+      cwd: join(scriptsDir, "../.."), encoding: "utf8",
+    });
+    expect(store.status, store.stderr).toBe(0);
+    const install = spawnSync(process.execPath, [
+      pnpmCli, "install", "--prod", "--offline", "--frozen-lockfile",
+      "--config.node-linker=hoisted", `--store-dir=${store.stdout.trim()}`,
+    ], { cwd: target, encoding: "utf8" });
+    expect(install.status, `${install.stdout}\n${install.stderr}`).toBe(0);
+    expect(install.stdout).toContain("resolution step is skipped");
+    expect(readFileSync(join(repo, "pnpm-lock.yaml"), "utf8")).toBe(originalLock);
+    expect(JSON.parse(readFileSync(join(target, "node_modules/picocolors/package.json"), "utf8")).version).toBe(lockedVersion);
+    const relocated = join(repo, "relocated");
+    // Mirrors Windows after-pack's materialized workspace junctions. Transitive
+    // packages must remain reachable from the copied package's new location.
+    cpSync(target, relocated, { recursive: true, dereference: true });
+    const probe = spawnSync(process.execPath, ["-e", "require('@rudderhq/shared'); console.log(require('picocolors/package.json').version)"], {
+      cwd: relocated, encoding: "utf8",
+    });
+    expect(probe.status, `${probe.stdout}\n${probe.stderr}`).toBe(0);
+    expect(probe.stdout.trim()).toBe(lockedVersion);
+  });
+
   it.skipIf(process.platform === "win32")("caches prepared PostgreSQL runtime from a sibling work directory", async () => {
     const root = mkdtempSync(join(tmpdir(), "rudder-prepare-postgres-test-"));
     tempRoots.push(root);
@@ -476,10 +518,34 @@ describe("desktop stage-server", () => {
     expect(result.stderr).toContain("postgres.bki");
   }, 15_000);
 
-  it("restores source package manifests after pnpm deploy rewrites them", () => {
+  it("fails closed without mutating the source when offline staging fails", () => {
+    const { repo, binDir, rootManifestPath, sharedManifestPath } = createStageServerRepo();
+    const rootBefore = readFileSync(rootManifestPath, "utf8");
+    const sharedBefore = readFileSync(sharedManifestPath, "utf8");
+
+    const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
+        RUDDER_FAKE_INSTALL_FAILURE: "1",
+        RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("locked package is unavailable in the offline store");
+    expect(() => readFileSync(join(repo, ".packaging-install-complete"))).toThrow();
+    expect(readFileSync(rootManifestPath, "utf8")).toBe(rootBefore);
+    expect(readFileSync(sharedManifestPath, "utf8")).toBe(sharedBefore);
+  });
+
+  it("leaves source manifests and lockfile unchanged after staging", () => {
     const { repo, binDir, rootManifestPath, sharedManifestPath } = createStageServerRepo();
     const rootBefore = readFileSync(rootManifestPath, "utf8");
     const before = readFileSync(sharedManifestPath, "utf8");
+    const lockBefore = readFileSync(join(repo, "pnpm-lock.yaml"), "utf8");
 
     const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
       cwd: repo,
@@ -492,9 +558,10 @@ describe("desktop stage-server", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(readFileSync(join(repo, ".workspace-install-restored"), "utf8")).toBe("ok\n");
+    expect(readFileSync(join(repo, ".packaging-install-complete"), "utf8")).toBe("ok\n");
     expect(readFileSync(rootManifestPath, "utf8")).toBe(rootBefore);
     expect(readFileSync(sharedManifestPath, "utf8")).toBe(before);
+    expect(readFileSync(join(repo, "pnpm-lock.yaml"), "utf8")).toBe(lockBefore);
     expect(readFileSync(join(repo, "desktop/.packaged/server-package/package.json"), "utf8")).toContain(
       '"default": "./dist/index.js"',
     );
