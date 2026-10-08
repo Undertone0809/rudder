@@ -2031,6 +2031,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         startup["privateMutationAuthorities"],
         serde_json::json!([
             "messenger_state",
+            "calendar",
             "organization_branding",
             "project_goal_set_replacement",
             "project_delete",
