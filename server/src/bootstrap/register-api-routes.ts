@@ -107,7 +107,7 @@ export function registerApiRoutes(
     rustFoundationBridge,
   ));
   api.use(automationRoutes(db));
-  api.use(calendarRoutes(db));
+  api.use(calendarRoutes(db, rustFoundationBridge));
   api.use(runWorkspaceRoutes(db));
   api.use(integrationRoutes(db));
   api.use(managedMcpConnectionRoutes(db, {

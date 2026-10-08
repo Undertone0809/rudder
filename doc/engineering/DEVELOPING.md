@@ -88,13 +88,17 @@ consumption or disconnect, and transfers are not cut off by the header timeout.
 Invalid V2 archives retain their rejection status/category; low-level parser
 error details may be summarized rather than exposing implementation-specific text.
 
-Goal list, detail, activity-list, history, and dependency GETs execute SQL and
-public projection in Rust for all legacy and current Goals. Node retains actor
-authentication, organization authorization, and typed-reference resolution.
-These reads are independent of mutation pilots and fail closed if foundation
-is unavailable. History keeps bounded cursor pagination; detail and activities
-keep the existing 100-entry window. Workspace, assigned, agent-context, timeline,
-and Goal mutations retain their existing execution paths.
+Goal list, detail, activity-list, history, dependency, organization workspace,
+assigned-Goal, Goal workspace, Agent context, and merged timeline GETs execute
+SQL and public projection in Rust for all legacy and current Goals. Node retains
+actor authentication, organization authorization, assigned-filter validation,
+Agent ownership authorization for runtime context, and typed-reference
+resolution. The signed Rust request carries the verified board-user owner only
+as a trust boundary for Side Chat Run visibility; callers cannot supply it in
+request JSON. These reads are independent of mutation pilots and fail closed if
+foundation is unavailable. History and timeline keep bounded cursor
+pagination; detail and activities keep the existing 100-entry window. Goal
+mutations retain their existing execution paths.
 
 The same required read authority covers organization heartbeat/agent run lists,
 agent-run overview, both detail/event/workspace-operation aliases, and issue

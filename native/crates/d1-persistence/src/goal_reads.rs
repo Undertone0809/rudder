@@ -14,6 +14,8 @@ use std::{collections::HashMap, sync::OnceLock};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::Url;
 
+mod workspace;
+
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum GoalReadView {
@@ -22,6 +24,11 @@ pub enum GoalReadView {
     Activities,
     History,
     Dependencies,
+    WorkspaceCards,
+    Assigned,
+    Workspace,
+    AgentContext,
+    Timeline,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +39,10 @@ pub struct GoalReadRequest {
     pub goal_id: Option<String>,
     pub cursor: Option<String>,
     pub limit: Option<String>,
+    pub agent_id: Option<String>,
+    pub lifecycle: Option<String>,
+    pub focus: Option<bool>,
+    pub facet: Option<String>,
 }
 fn required_goal_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     Option::<String>::deserialize(d)
@@ -43,6 +54,8 @@ pub enum GoalReadError {
     Cursor,
     #[error("Goal history limit must be between 1 and 100")]
     Limit,
+    #[error("Goal activity timeline limit must be between 1 and 100")]
+    TimelineLimit,
     #[error(transparent)]
     Store(#[from] StoreError),
 }
@@ -73,6 +86,7 @@ fn row_sql(table: &str, date_columns: &[&str]) -> String {
             "outcome_statement",
             "owner_agent_id",
             "focus",
+            "continuation_kind",
             "continuation_summary",
             "wake_condition",
             "alignment_question",
@@ -416,17 +430,46 @@ pub async fn read_goals(
     organization_id: &str,
     input: &GoalReadRequest,
 ) -> Result<String, GoalReadError> {
+    read_goals_for_actor(pool, organization_id, input, None).await
+}
+
+/// Execute a Goal read with the owner identity derived from a verified actor
+/// envelope. The owner is deliberately not part of the signed request JSON.
+pub async fn read_goals_for_actor(
+    pool: &PgPool,
+    organization_id: &str,
+    input: &GoalReadRequest,
+    verified_run_owner: Option<&str>,
+) -> Result<String, GoalReadError> {
     let org = organization_id.to_ascii_lowercase();
     transaction::uuid(&org)?;
     let goal_id = input.goal_id.as_ref().map(|s| s.to_ascii_lowercase());
     if let Some(id) = &goal_id {
         transaction::uuid(id)?;
     }
-    if (input.view == GoalReadView::List) != goal_id.is_none()
-        || (input.view != GoalReadView::History
-            && (input.cursor.is_some() || input.limit.is_some()))
+    let collection_view = matches!(
+        input.view,
+        GoalReadView::List | GoalReadView::WorkspaceCards | GoalReadView::Assigned
+    );
+    if collection_view != goal_id.is_none()
+        || (!matches!(input.view, GoalReadView::History | GoalReadView::Timeline)
+            && input.cursor.is_some())
+        || (!matches!(
+            input.view,
+            GoalReadView::History | GoalReadView::Timeline | GoalReadView::Assigned
+        ) && input.limit.is_some())
     {
         return Err(StoreError::InvalidInput.into());
+    }
+    if matches!(
+        input.view,
+        GoalReadView::WorkspaceCards
+            | GoalReadView::Assigned
+            | GoalReadView::Workspace
+            | GoalReadView::AgentContext
+            | GoalReadView::Timeline
+    ) {
+        return workspace::read_workspace(pool, &org, input, verified_run_owner).await;
     }
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -512,6 +555,13 @@ pub async fn read_goals(
             GoalReadView::History => history(&mut tx, &org, &id, input).await?,
             GoalReadView::Dependencies => dependencies(&mut tx, &org, goal).await?,
             GoalReadView::List => unreachable!(),
+            GoalReadView::WorkspaceCards
+            | GoalReadView::Assigned
+            | GoalReadView::Workspace
+            | GoalReadView::AgentContext
+            | GoalReadView::Timeline => {
+                unreachable!("workspace views returned before list selection")
+            }
         }
     };
     tx.commit().await?;

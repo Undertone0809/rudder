@@ -54,6 +54,8 @@ mod run_visibility;
 pub use live_run_reads::LIVE_RUN_READ_ACTION;
 pub use run_reads::RUN_READ_ACTION;
 
+mod calendar;
+pub use calendar::CALENDAR_ACTION;
 mod cost_reads;
 mod goal_reads;
 mod project_reads;
@@ -98,6 +100,7 @@ pub const ORGANIZATION_RESOURCE_ACTION: &str = "organization.resource.mutate";
 
 const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
     "messenger_state",
+    "calendar",
     "organization_branding",
     "project_goal_set_replacement",
     "project_delete",
@@ -2761,6 +2764,10 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .route(
+                    "/internal/orgs/{org_id}/calendar",
+                    web::post().to(calendar::calendar),
+                )
                 .route(
                     "/internal/orgs/{org_id}/messenger-state",
                     web::post().to(messenger_state::messenger_state),
