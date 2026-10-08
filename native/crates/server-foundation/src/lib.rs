@@ -50,6 +50,7 @@ pub use messenger_state::MESSENGER_STATE_ACTION;
 
 mod live_run_reads;
 mod run_reads;
+mod run_visibility;
 pub use live_run_reads::LIVE_RUN_READ_ACTION;
 pub use run_reads::RUN_READ_ACTION;
 

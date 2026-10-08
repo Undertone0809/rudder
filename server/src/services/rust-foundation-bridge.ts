@@ -74,7 +74,17 @@ export interface RustFoundationBridge {
   goalRead(
     actor: RustFoundationActor,
     orgId: string,
-    input: { view: "list" | "detail" | "activities" | "history" | "dependencies"; goalId: string | null; cursor?: string | null; limit?: string | null },
+    input: {
+      view: "list" | "detail" | "activities" | "history" | "dependencies"
+        | "workspaceCards" | "assigned" | "workspace" | "agentContext" | "timeline";
+      goalId: string | null;
+      cursor?: string | null;
+      limit?: string | null;
+      agentId?: string | null;
+      lifecycle?: "draft" | "active" | "closed" | "all";
+      focus?: boolean | null;
+      facet?: string | null;
+    },
   ): Promise<RustFoundationResponse>;
   costRead(
     actor: RustFoundationActor,
