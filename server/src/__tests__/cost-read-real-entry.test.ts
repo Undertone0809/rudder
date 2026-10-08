@@ -140,7 +140,15 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
 
   beforeAll(async () => {
     const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-    const binary = process.env.RUDDER_SERVER_FOUNDATION_PATH ?? path.resolve(repoRoot, process.env.CARGO_TARGET_DIR ?? "native/target", "debug", process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation");
+    const binaryTarget = path.resolve(repoRoot, process.env.CARGO_TARGET_DIR ?? "native/target");
+    const binaryName = process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation";
+    const explicitBinary = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim();
+    const candidates = explicitBinary ? [path.resolve(repoRoot, explicitBinary)]
+      : [path.join(binaryTarget, "debug", binaryName), path.join(binaryTarget, "release", binaryName)];
+    const binary = candidates.find((candidate) => {
+      try { fs.accessSync(candidate, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK); return fs.statSync(candidate).isFile(); }
+      catch { return false; }
+    }) ?? candidates[0]!;
     fs.accessSync(binary, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-cost-read-postgres-"));
     const dbPort = await port();
