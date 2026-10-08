@@ -35,6 +35,9 @@ const HIGH_RISK_RULES = [
   ["shared contracts changed", (areas) => areas.has("shared")],
   ["database schema or migration changed", (areas) => areas.has("db")],
   ["native or Desktop packaging changed", (areas) => areas.has("native") || areas.has("desktop")],
+  ["native workspace child process boundary changed", (_areas, files) => files.some((file) =>
+    file === "server/src/services/workspace-file-native.ts"
+      || file === "server/src/__tests__/workspace-file-native.test.ts")],
   ["comparison scope is not bounded", (areas) => areas.has("other")],
 ];
 
