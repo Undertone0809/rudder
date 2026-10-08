@@ -470,17 +470,15 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
         const existingOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
         if (!existingOwner) {
           const entries = await fs.readdir(lockPath).catch(() => []);
-          if (
-            entries.length === 0
-            && await quarantineStaleEmptyOrganizationWorkspaceMapLock(lockPath)
-          ) {
-            continue;
-          }
-          if (entries.length === 0 && Date.now() - startedAt < ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
+          const currentLock = await lstatIfExists(lockPath);
+          // Owner reads span multiple syscalls. A replacement directory must be
+          // inspected afresh, not classified using the previous owner's absence.
+          if (!currentLock || currentLock.dev !== existingLock.dev || currentLock.ino !== existingLock.ino) continue;
+          if (entries.length > 0) throw organizationWorkspaceMapLockCollision(lockPath);
+          if (!await quarantineStaleEmptyOrganizationWorkspaceMapLock(lockPath)) {
             await new Promise((resolve) => setTimeout(resolve, 25));
-            continue;
           }
-          throw organizationWorkspaceMapLockCollision(lockPath);
+          continue;
         }
         const ownerAgeMs = Date.now() - Date.parse(existingOwner.createdAt);
         if (
