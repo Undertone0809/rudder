@@ -116,6 +116,16 @@ organization scope, permissions, old flows, error handling, async transitions,
 and the highest-risk downstream consumer. Passing typecheck or unit tests does
 not prove the user-visible workflow.
 
+For backend features and migration claims, read
+`doc/engineering/BACKEND_ARCHITECTURE.md`. Trace public entry through business
+authority, including auth, domain state, queries, writes, and effects. Reject new
+Node/TypeScript backend business logic, untracked adapter responsibilities, or
+hidden Node fallback. Check native-failure evidence and the current method/path
+inventory before accepting coverage claims. A Rust proxy is transport coverage,
+not Rust business-authority coverage; an intermediate milestone cannot satisfy
+the 100% target. Treat existing legacy behavior as migration debt, not a design
+precedent. Artifact-only policy changes still use proportional review.
+
 ### 3. Adversarial Risk
 
 Actively look for what the implementer was least likely to test:
