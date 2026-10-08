@@ -299,17 +299,17 @@ pub async fn read_costs(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    if input.operation == CostReadOperation::FinanceEvents {
-        if let Some(zone) = &input.legacy_date_timezone {
-            // SQLx starts sessions in UTC; postgres-js used the host connection's
-            // timezone when parsing historical timestamp text. The signed host
-            // context preserves that parsing behavior. Parameter binding prevents
-            // SQL interpolation, and LOCAL configuration ends with this read-only tx.
-            sqlx::query("SELECT set_config('TimeZone', $1, true)")
-                .bind(zone)
-                .execute(&mut *tx)
-                .await?;
-        }
+    if input.operation == CostReadOperation::FinanceEvents
+        && let Some(zone) = &input.legacy_date_timezone
+    {
+        // SQLx starts sessions in UTC; postgres-js used the host connection's
+        // timezone when parsing historical timestamp text. The signed host
+        // context preserves that parsing behavior. Parameter binding prevents
+        // SQL interpolation, and LOCAL configuration ends with this read-only tx.
+        sqlx::query("SELECT set_config('TimeZone', $1, true)")
+            .bind(zone)
+            .execute(&mut *tx)
+            .await?;
     }
     let rows: Vec<String> = sqlx::query_scalar(&query(input))
         .bind(&org)
