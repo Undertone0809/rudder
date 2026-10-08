@@ -55,6 +55,16 @@ pilot switches. Node keeps authentication, organization authorization, and
 issue identifier/alias resolution. A missing or failed native read returns an
 error instead of executing the former Node live-run query.
 
+Workspace backup listing, browsing, previews, and ZIP downloads now use the Rust
+foundation by default, including legacy JSON backups. Node retains Board and
+organization authorization and streams the native HTTP response without a
+business-reader fallback. Legacy JSON's base64 envelope is sized separately from
+V2 ZIPs so the existing 100 MiB source budget remains readable. Legacy ZIP wire
+metadata and host timezone are preserved. Download admission lasts through body
+consumption or disconnect, and transfers are not cut off by the header timeout.
+Invalid V2 archives retain their rejection status/category; low-level parser
+error details may be summarized rather than exposing implementation-specific text.
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.

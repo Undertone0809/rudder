@@ -2,7 +2,6 @@ import express from "express";
 import { Readable } from "node:stream";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { organizationRoutes } from "../routes/orgs.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
@@ -92,26 +91,38 @@ function createApp(actor: Record<string, unknown>, rustFoundationBridge?: RustFo
   return app;
 }
 
+const workspaceBackupRead = vi.fn();
+const readBridge = { workspaceBackupRead } as unknown as RustFoundationBridge;
+function downloadResponse(input: { filename: string; byteSize: number; archiveSha256?: string; content?: Buffer; contentStream?: Readable }) {
+  return new Response(input.contentStream ? Readable.toWeb(input.contentStream) as ReadableStream<Uint8Array> : input.content, {
+    headers: {
+      "content-type": "application/zip", "content-length": String(input.byteSize),
+      "cache-control": "private, max-age=60", "x-content-type-options": "nosniff",
+      "content-disposition": `attachment; filename="${input.filename}"`,
+      ...(input.archiveSha256 ? { "x-rudder-archive-sha256": input.archiveSha256 } : {}),
+    },
+  });
+}
+
 describe("workspace backup download route", () => {
   beforeEach(() => {
     mockWorkspaceBackupService.getDownload.mockReset();
+    workspaceBackupRead.mockReset();
   });
 
   it("downloads the selected backup zip with attachment headers", async () => {
     const content = Buffer.from("PK\u0003\u0004workspace.zip", "utf8");
-    mockWorkspaceBackupService.getDownload.mockResolvedValue({
-      artifactRef: "/tmp/.rudder-backups/workspace-20260621.json",
+    workspaceBackupRead.mockResolvedValue(downloadResponse({
       filename: "workspace-20260621.zip",
-      contentType: "application/zip",
       byteSize: content.byteLength,
       archiveSha256: "abc123",
       content,
-    });
+    }));
     const app = createApp({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
-    });
+    }, readBridge);
 
     const res = await request(app).get("/api/orgs/organization-1/workspace/backups/backup-1/download");
 
@@ -123,20 +134,19 @@ describe("workspace backup download route", () => {
     expect(res.header["x-rudder-archive-sha256"]).toBe("abc123");
     expect(res.header["content-disposition"]).toBe("attachment; filename=\"workspace-20260621.zip\"");
     expect(res.text).toBe(content.toString("utf8"));
-    expect(mockWorkspaceBackupService.getDownload).toHaveBeenCalledWith("organization-1", "backup-1");
+    expect(workspaceBackupRead).toHaveBeenCalledWith(expect.anything(), "organization-1", { backupId: "backup-1", operation: "download", path: "" }, expect.any(AbortSignal));
+    expect(mockWorkspaceBackupService.getDownload).not.toHaveBeenCalled();
   });
 
   it("streams a file-backed v2 archive through the public response", async () => {
     const content = Buffer.from("streamed-v2-archive");
-    mockWorkspaceBackupService.getDownload.mockResolvedValue({
-      artifactRef: "/tmp/workspace.zip",
+    workspaceBackupRead.mockResolvedValue(downloadResponse({
       filename: "workspace.zip",
-      contentType: "application/zip",
       byteSize: content.byteLength,
       archiveSha256: "def456",
       contentStream: Readable.from([content.subarray(0, 8), content.subarray(8)]),
-    });
-    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+    }));
+    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" }, readBridge);
 
     const res = await request(app)
       .get("/api/orgs/organization-1/workspace/backups/backup-1/download")
@@ -160,15 +170,13 @@ describe("workspace backup download route", () => {
         this.destroy(new Error("injected archive read failure"));
       },
     });
-    mockWorkspaceBackupService.getDownload.mockResolvedValue({
-      artifactRef: "/tmp/workspace.zip",
+    workspaceBackupRead.mockResolvedValue(downloadResponse({
       filename: "workspace.zip",
-      contentType: "application/zip",
       byteSize: 100,
       archiveSha256: "def456",
       contentStream: source,
-    });
-    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+    }));
+    const app = createApp({ type: "board", userId: "user-1", source: "local_implicit" }, readBridge);
 
     await expect(request(app).get("/api/orgs/organization-1/workspace/backups/backup-1/download"))
       .rejects.toThrow(/aborted|closed|socket hang up/i);
@@ -181,7 +189,7 @@ describe("workspace backup download route", () => {
       orgId: "organization-1",
       source: "agent_key",
       runId: "run-1",
-    });
+    }, readBridge);
 
     const res = await request(app).get("/api/orgs/organization-1/workspace/backups/backup-1/download");
 
@@ -191,14 +199,12 @@ describe("workspace backup download route", () => {
   });
 
   it("returns artifact validation errors without streaming untrusted content", async () => {
-    mockWorkspaceBackupService.getDownload.mockRejectedValue(
-      unprocessable("Workspace backup artifact checksum does not match the recorded backup metadata"),
-    );
+    workspaceBackupRead.mockResolvedValue(Response.json({ error: "Workspace backup artifact checksum does not match the recorded backup metadata" }, { status: 422 }));
     const app = createApp({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
-    });
+    }, readBridge);
 
     const res = await request(app).get("/api/orgs/organization-1/workspace/backups/backup-1/download");
 
@@ -277,5 +283,33 @@ describe("workspace backup list route", () => {
     expect(res.status).toBe(403);
     expect(workspaceBackupList).not.toHaveBeenCalled();
     expect(mockWorkspaceBackupService.list).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("workspace backup native read authority", () => {
+  beforeEach(() => { workspaceBackupRead.mockReset(); vi.clearAllMocks(); });
+  const board = { type: "board", userId: "user-1", source: "local_implicit" };
+  it.each(["files", "file", "download"])("fails closed for %s without the native bridge", async (operation) => {
+    const response = await request(createApp(board)).get(`/api/orgs/organization-1/workspace/backups/backup-1/${operation}`);
+    expect(response.status).toBe(503);
+    expect(mockWorkspaceBackupService.listFiles).not.toHaveBeenCalled();
+    expect(mockWorkspaceBackupService.readFile).not.toHaveBeenCalled();
+    expect(mockWorkspaceBackupService.getDownload).not.toHaveBeenCalled();
+  });
+  it.each(["files", "file"] as const)("forwards %s and path to the Rust reader without calling Node", async (operation) => {
+    workspaceBackupRead.mockResolvedValue(Response.json({ native: operation }));
+    const response = await request(createApp(board, readBridge)).get(`/api/orgs/organization-1/workspace/backups/backup-1/${operation}?path=notes%2Fhello.md`);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ native: operation });
+    expect(workspaceBackupRead).toHaveBeenCalledWith(expect.anything(), "organization-1", { backupId: "backup-1", operation, path: "notes/hello.md" }, expect.any(AbortSignal));
+    expect(mockWorkspaceBackupService.listFiles).not.toHaveBeenCalled();
+    expect(mockWorkspaceBackupService.readFile).not.toHaveBeenCalled();
+  });
+  it("fails closed on a native transport failure", async () => {
+    workspaceBackupRead.mockRejectedValue(new Error("injected native outage"));
+    const response = await request(createApp(board, readBridge)).get("/api/orgs/organization-1/workspace/backups/backup-1/files");
+    expect(response.status).toBe(503);
+    expect(mockWorkspaceBackupService.listFiles).not.toHaveBeenCalled();
   });
 });

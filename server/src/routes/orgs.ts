@@ -25,7 +25,6 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -48,6 +47,7 @@ import { libraryEntryService } from "../services/library-entries.js";
 import { forwardRustOrganizationResourceMutation } from "../services/organization-resource-rust-authority.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import { RustFoundationBridgeError, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { sendWorkspaceBackupRead } from "../services/workspace-backup-read-bridge.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -976,8 +976,7 @@ export function organizationRoutes(
     assertCompanyAccess(req, orgId);
     assertBoard(req);
     const directoryPath = typeof req.query.path === "string" ? req.query.path : "";
-    const result = await workspaceBackups.listFiles(orgId, backupId, directoryPath);
-    res.json(result);
+    await sendWorkspaceBackupRead(req, res, rustFoundationBridge, orgId, { backupId, operation: "files", path: directoryPath });
   });
 
   router.get("/:orgId/workspace/backups/:backupId/file", async (req, res) => {
@@ -986,8 +985,7 @@ export function organizationRoutes(
     assertCompanyAccess(req, orgId);
     assertBoard(req);
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
-    const result = await workspaceBackups.readFile(orgId, backupId, filePath);
-    res.json(result);
+    await sendWorkspaceBackupRead(req, res, rustFoundationBridge, orgId, { backupId, operation: "file", path: filePath });
   });
 
   router.get("/:orgId/workspace/backups/:backupId/download", async (req, res) => {
@@ -995,20 +993,7 @@ export function organizationRoutes(
     const backupId = req.params.backupId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
-    const result = await workspaceBackups.getDownload(orgId, backupId);
-    res.setHeader("Content-Type", result.contentType);
-    res.setHeader("Content-Length", String(result.byteSize));
-    res.setHeader("Cache-Control", "private, max-age=60");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    if (result.archiveSha256) {
-      res.setHeader("X-Rudder-Archive-Sha256", result.archiveSha256);
-    }
-    res.setHeader("Content-Disposition", `attachment; filename="${result.filename.replaceAll("\"", "")}"`);
-    if (result.contentStream) {
-      await pipeline(result.contentStream, res);
-      return;
-    }
-    res.end(result.content);
+    await sendWorkspaceBackupRead(req, res, rustFoundationBridge, orgId, { backupId, operation: "download", path: "" });
   });
 
   router.post("/:orgId/workspace/backups/:backupId/restore", validate(restoreWorkspaceBackupSchema), async (req, res) => {

@@ -1860,6 +1860,7 @@ dependencies = [
  "actix-ws",
  "awc",
  "base64",
+ "crc32fast",
  "futures-util",
  "percent-encoding",
  "rudder-archive-core",
