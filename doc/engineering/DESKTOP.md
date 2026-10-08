@@ -532,9 +532,15 @@ Linux release packaging builds PostgreSQL from the official pinned source
 archive without `--with-system-tzdata`, so its portable payload keeps both
 relocatable initdb templates and the PostgreSQL-owned timezone database instead
 of depending on files installed on the CI host.
-`desktop/scripts/stage-server.mjs` runs `pnpm deploy` with the legacy deploy
-config scoped to that child process so pnpm 10+ and 11+ can still package the
-server from a workspace that does not use injected workspace packages.
+`desktop/scripts/stage-server.mjs` prepares a disposable packaging workspace with
+its own server-rooted lockfile. It preserves the repository's registry package
+snapshots, integrity hashes, overrides, and patches, and only relocates workspace
+importers and their relative links. The Desktop dependency pins the pnpm CLI used
+for a normal hoisted, production, frozen-lockfile, offline install. Run the
+repository's frozen workspace install first to populate the shared store.
+The legacy hoisted `pnpm deploy` path is deliberately avoided because it disables
+lockfile reads and can resolve untested dependency versions while packaging.
+Staging never rewrites source manifests or repairs the development install.
 The server npm postinstall and Desktop staging both apply the pinned
 `embedded-postgres` initdb diagnostics repair to the dependency resolved by the
 server and by `@rudderhq/db`, including separate nested copies. The repair accepts
