@@ -1,8 +1,9 @@
 import type { Db } from "@rudderhq/db";
 import { heartbeatRuns } from "@rudderhq/db";
 import { isUuidLike, parseShortRef, shortRefFor } from "@rudderhq/shared";
-import { and, desc, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { conflict, notFound } from "../errors.js";
+import { sideChatVisibilityCondition } from "./run-reference-visibility.js";
 
 export const MIN_SHORT_RUN_ID_LENGTH = 8;
 export const DEFAULT_SHORT_RUN_ID_LENGTH = 12;
@@ -23,22 +24,24 @@ export function isShortRunIdReference(value: string): boolean {
 export async function resolveHeartbeatRunIdReference(
   db: Db,
   runIdRef: string,
-  scope: { orgIds?: string[]; notFoundMessage?: string } = {},
+  scope: { orgIds?: string[]; notFoundMessage?: string; sideChatOwnerId?: string | null } = {},
 ): Promise<string> {
   const typedRef = parseShortRef(runIdRef);
   const normalized = typedRef?.kind === "run"
     ? typedRef.prefix
     : runIdRef.trim().toLowerCase();
-  if (!isShortRunIdReference(normalized)) return runIdRef;
+  const short = isShortRunIdReference(normalized);
+  if (!short && scope.sideChatOwnerId === undefined) return runIdRef;
   const notFoundMessage = scope.notFoundMessage ?? "Agent run not found";
-  if (scope.orgIds?.length === 0) throw notFound(notFoundMessage);
+  if (short && scope.orgIds?.length === 0) throw notFound(notFoundMessage);
 
   const rows = await db
     .select({ id: heartbeatRuns.id })
     .from(heartbeatRuns)
     .where(and(
-      sql`replace(${heartbeatRuns.id}::text, '-', '') like ${`${normalized}%`}`,
-      ...(scope.orgIds ? [inArray(heartbeatRuns.orgId, scope.orgIds)] : []),
+      short ? sql`replace(${heartbeatRuns.id}::text, '-', '') like ${`${normalized}%`}` : eq(heartbeatRuns.id, runIdRef),
+      ...(scope.sideChatOwnerId !== undefined ? [sideChatVisibilityCondition(scope.sideChatOwnerId)] : []),
+      ...(short && scope.orgIds ? [inArray(heartbeatRuns.orgId, scope.orgIds)] : []),
     ))
     .orderBy(desc(heartbeatRuns.createdAt))
     .limit(2);

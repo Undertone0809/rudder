@@ -35,6 +35,12 @@ enum RunReadRequest {
         limit: Option<u32>,
     },
     Overview {},
+    Visibility {
+        run_id: String,
+    },
+    WorkspaceOperationAccess {
+        operation_id: String,
+    },
     Detail {
         surface: Surface,
         run_id: String,
@@ -91,6 +97,7 @@ async fn runs(
     projection: RunProjection,
     binds: &[Option<String>],
     limit: Option<u32>,
+    owner: Option<&str>,
 ) -> Result<Vec<String>, sqlx::Error> {
     let RunProjection {
         surface,
@@ -103,14 +110,16 @@ async fn runs(
         projection::origin_projection(),
         projection::summary_projection()
     );
+    let has_limit = list && suffix.contains("$6");
+    let sql = crate::run_visibility::scoped_query(&sql, binds.len() + 2 + usize::from(has_limit));
     let mut query = sqlx::query(&sql).bind(org);
     for bind in binds {
         query = query.bind(bind);
     }
-    if list && suffix.contains("$6") {
+    if has_limit {
         query = query.bind(limit.map(i64::from));
     }
-    let rows = query.fetch_all(pool).await?;
+    let rows = query.bind(owner).fetch_all(pool).await?;
     let mut skills_by_run = std::collections::HashMap::<String, Vec<String>>::new();
     if skills && !rows.is_empty() {
         let run_ids = rows
@@ -215,12 +224,59 @@ FROM instance_settings WHERE singleton_key='default' LIMIT 1"#).fetch_optional(p
         && row.try_get::<bool, _>("enabled")?)
 }
 
+async fn visible_run_exists(
+    pool: &PgPool,
+    org: &str,
+    run_id: &str,
+    owner: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let query = crate::run_visibility::scoped_query(
+        "SELECT EXISTS(SELECT 1 FROM heartbeat_runs r WHERE r.org_id=$1::uuid AND r.id=$2::uuid)",
+        3,
+    );
+    sqlx::query_scalar(&query)
+        .bind(org)
+        .bind(run_id)
+        .bind(owner)
+        .fetch_one(pool)
+        .await
+}
+
 async fn read(
     pool: &PgPool,
     org: &str,
     input: RunReadRequest,
+    owner: Option<&str>,
 ) -> Result<HttpResponse, sqlx::Error> {
     match input {
+        RunReadRequest::Visibility { run_id } => {
+            if visible_run_exists(pool, org, &run_id, owner).await? {
+                Ok(HttpResponse::NoContent().finish())
+            } else {
+                Ok(json_error(StatusCode::NOT_FOUND, "Agent run not found"))
+            }
+        }
+        RunReadRequest::WorkspaceOperationAccess { operation_id } => {
+            let unbound = crate::run_visibility::unbound_workspace_visible("w");
+            let query = format!(
+                "SELECT EXISTS(SELECT 1 FROM workspace_operations w WHERE w.org_id=$1::uuid AND w.id=$2::uuid AND ((w.heartbeat_run_id IS NOT NULL AND EXISTS(SELECT 1 FROM visible_runs admitted WHERE admitted.id=w.heartbeat_run_id)) OR (w.heartbeat_run_id IS NULL AND ({unbound}))))"
+            );
+            let query = crate::run_visibility::scoped_query(&query, 3);
+            let visible: bool = sqlx::query_scalar(&query)
+                .bind(org)
+                .bind(operation_id)
+                .bind(owner)
+                .fetch_one(pool)
+                .await?;
+            if visible {
+                Ok(HttpResponse::NoContent().finish())
+            } else {
+                Ok(json_error(
+                    StatusCode::NOT_FOUND,
+                    "Workspace operation not found",
+                ))
+            }
+        }
         RunReadRequest::List {
             surface,
             agent_id,
@@ -232,12 +288,12 @@ async fn read(
             let has_skills = agent_id.is_some();
             // UUID casts retain the legacy database's accepted UUID syntax.
             let values = [agent_id, goal_id, start_date, end_date];
-            let rows = runs(pool, org, "WHERE r.org_id=$1::uuid AND ($2::uuid IS NULL OR r.agent_id=$2::uuid) AND ($3::uuid IS NULL OR r.goal_id=$3::uuid) AND ($4::timestamptz IS NULL OR r.created_at >= $4::timestamptz) AND ($5::timestamptz IS NULL OR r.created_at <= $5::timestamptz) ORDER BY r.created_at DESC, r.id DESC LIMIT $6", RunProjection { surface, list: true, skills: has_skills }, &values, limit).await?;
+            let rows = runs(pool, org, "WHERE r.org_id=$1::uuid AND ($2::uuid IS NULL OR r.agent_id=$2::uuid) AND ($3::uuid IS NULL OR r.goal_id=$3::uuid) AND ($4::timestamptz IS NULL OR r.created_at >= $4::timestamptz) AND ($5::timestamptz IS NULL OR r.created_at <= $5::timestamptz) ORDER BY r.created_at DESC, r.id DESC LIMIT $6", RunProjection { surface, list: true, skills: has_skills }, &values, limit, owner).await?;
             Ok(response(list_json(rows)))
         }
         RunReadRequest::Overview {} => {
-            let latest = runs(pool, org, "INNER JOIN (SELECT DISTINCT ON (r.agent_id) r.id FROM heartbeat_runs r INNER JOIN agents a ON a.id=r.agent_id WHERE r.org_id=$1::uuid AND a.org_id=$1::uuid AND a.status <> 'terminated' ORDER BY r.agent_id, r.created_at DESC, r.id DESC) latest ON latest.id=r.id ORDER BY r.agent_id", RunProjection { surface: Surface::Agent, list: true, skills: false }, &[], None).await?;
-            let recent = runs(pool, org, "INNER JOIN agents a ON a.id=r.agent_id WHERE r.org_id=$1::uuid AND a.org_id=$1::uuid ORDER BY r.created_at DESC, r.id DESC LIMIT 6", RunProjection { surface: Surface::Agent, list: true, skills: false }, &[], None).await?;
+            let latest = runs(pool, org, "INNER JOIN (SELECT DISTINCT ON (r.agent_id) r.id FROM heartbeat_runs r INNER JOIN agents a ON a.id=r.agent_id WHERE r.org_id=$1::uuid AND a.org_id=$1::uuid AND a.status <> 'terminated' ORDER BY r.agent_id, r.created_at DESC, r.id DESC) latest ON latest.id=r.id ORDER BY r.agent_id", RunProjection { surface: Surface::Agent, list: true, skills: false }, &[], None, owner).await?;
+            let recent = runs(pool, org, "INNER JOIN agents a ON a.id=r.agent_id WHERE r.org_id=$1::uuid AND a.org_id=$1::uuid ORDER BY r.created_at DESC, r.id DESC LIMIT 6", RunProjection { surface: Surface::Agent, list: true, skills: false }, &[], None, owner).await?;
             Ok(response(format!(
                 "{{\"latestByAgent\":{},\"recent\":{}}}",
                 list_json(latest),
@@ -261,6 +317,7 @@ async fn read(
                 },
                 &[Some(run_id)],
                 None,
+                owner,
             )
             .await?;
             match rows.into_iter().next() {
@@ -282,16 +339,21 @@ async fn read(
             limit,
             mut redaction,
         } => {
+            if !visible_run_exists(pool, org, &run_id, owner).await? {
+                return Ok(json_error(StatusCode::NOT_FOUND, "Agent run not found"));
+            }
             redaction.enabled = log_redaction_enabled(pool).await?;
             let query = format!(
                 "SELECT ({})::text FROM heartbeat_run_events e INNER JOIN heartbeat_runs r ON r.id=e.run_id AND r.org_id=e.org_id WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND e.seq > $3::integer AND e.event_type <> 'issue.execution_released' ORDER BY e.seq ASC LIMIT $4::bigint",
                 projection::event_projection()
             );
+            let query = crate::run_visibility::scoped_query(&query, 5);
             let rows = sqlx::query_scalar::<_, String>(&query)
                 .bind(org)
                 .bind(run_id)
                 .bind(after_seq.to_string())
                 .bind(limit.clamp(1.0, 1000.0).to_string())
+                .bind(owner)
                 .fetch_all(pool)
                 .await?;
             let result = rows
@@ -307,6 +369,9 @@ async fn read(
             run_id,
             mut redaction,
         } => {
+            if !visible_run_exists(pool, org, &run_id, owner).await? {
+                return Ok(json_error(StatusCode::NOT_FOUND, "Agent run not found"));
+            }
             redaction.enabled = log_redaction_enabled(pool).await?;
             let workspace = sqlx::query_scalar::<_,Option<String>>("SELECT CASE WHEN jsonb_typeof(context_snapshot->'executionWorkspaceId')='string' THEN context_snapshot->>'executionWorkspaceId' END FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid")
                 .bind(org).bind(&run_id).fetch_optional(pool).await?.flatten();
@@ -314,14 +379,17 @@ async fn read(
                 .as_deref()
                 .map(redaction::js_trim)
                 .filter(|value| !value.is_empty());
+            let unbound = crate::run_visibility::unbound_workspace_visible("w");
             let query = format!(
-                "SELECT ({})::text FROM workspace_operations w WHERE w.org_id=$1::uuid AND (w.heartbeat_run_id=$2::uuid OR ($3::uuid IS NOT NULL AND w.heartbeat_run_id IS NULL AND w.execution_workspace_id=$3::uuid)) ORDER BY w.started_at ASC,w.created_at ASC,w.id ASC",
+                "SELECT ({})::text FROM workspace_operations w INNER JOIN heartbeat_runs r ON r.id=$2::uuid AND r.org_id=w.org_id WHERE w.org_id=$1::uuid AND (w.heartbeat_run_id=$2::uuid OR ($3::uuid IS NOT NULL AND w.heartbeat_run_id IS NULL AND w.execution_workspace_id=$3::uuid AND ({unbound}))) ORDER BY w.started_at ASC,w.created_at ASC,w.id ASC",
                 projection::workspace_projection()
             );
+            let query = crate::run_visibility::scoped_query(&query, 4);
             let rows = sqlx::query_scalar::<_, String>(&query)
                 .bind(org)
                 .bind(run_id)
                 .bind(workspace)
+                .bind(owner)
                 .fetch_all(pool)
                 .await?;
             let result = rows
@@ -336,13 +404,20 @@ async fn read(
         } => {
             redaction.enabled = log_redaction_enabled(pool).await?;
             // Pinned execution wins even for terminal runs with effects pending.
-            // Fallback first selects the agent's latest active run, THEN checks
-            // its issue context; filtering before LIMIT would change selection.
-            let selected = sqlx::query(r#"
+            // Visibility applies before candidate selection. Among visible runs,
+            // select the latest active run, THEN check its issue context.
+            let selected_sql = r#"
 WITH issue AS (SELECT id, execution_run_id, assignee_agent_id, status FROM issues WHERE org_id=$1::uuid AND id=$2::uuid),
 pinned AS (SELECT r.id FROM issue i INNER JOIN heartbeat_runs r ON r.id=i.execution_run_id AND r.org_id=$1::uuid WHERE r.status IN ('queued','running') OR r.terminal_effects_pending=true),
 candidate AS (SELECT r.id,CASE WHEN jsonb_typeof(r.context_snapshot->'issueId')='string' THEN r.context_snapshot->>'issueId' END AS issue_id FROM issue i INNER JOIN heartbeat_runs r ON r.agent_id=i.assignee_agent_id AND r.org_id=$1::uuid WHERE i.status='in_progress' AND (r.status='running' OR r.terminal_effects_pending=true) ORDER BY r.started_at DESC LIMIT 1)
-SELECT id::text, true AS pinned, NULL::text AS issue_id FROM pinned UNION ALL SELECT id::text, false AS pinned, issue_id FROM candidate WHERE NOT EXISTS(SELECT 1 FROM pinned) LIMIT 1"#).bind(org).bind(&issue_id).fetch_all(pool).await?;
+SELECT id::text, true AS pinned, NULL::text AS issue_id FROM pinned UNION ALL SELECT id::text, false AS pinned, issue_id FROM candidate WHERE NOT EXISTS(SELECT 1 FROM pinned) LIMIT 1"#;
+            let selected_sql = crate::run_visibility::scoped_query(selected_sql, 3);
+            let selected = sqlx::query(&selected_sql)
+                .bind(org)
+                .bind(&issue_id)
+                .bind(owner)
+                .fetch_all(pool)
+                .await?;
             let Some(selected) = selected.into_iter().next() else {
                 return Ok(response("null".into()));
             };
@@ -356,7 +431,7 @@ SELECT id::text, true AS pinned, NULL::text AS issue_id FROM pinned UNION ALL SE
                 return Ok(response("null".into()));
             }
             let run_id: String = selected.try_get("id")?;
-            let rows = runs(pool, org, "INNER JOIN agents a ON a.id=r.agent_id AND a.org_id=r.org_id WHERE r.org_id=$1::uuid AND r.id=$2::uuid",RunProjection {surface: Surface::Heartbeat,list:false,skills:false},&[Some(run_id.clone())],None).await?;
+            let rows = runs(pool, org, "INNER JOIN agents a ON a.id=r.agent_id AND a.org_id=r.org_id WHERE r.org_id=$1::uuid AND r.id=$2::uuid",RunProjection {surface: Surface::Heartbeat,list:false,skills:false},&[Some(run_id.clone())],None,owner).await?;
             let Some(raw) = rows.into_iter().next() else {
                 return Ok(response("null".into()));
             };
@@ -378,8 +453,8 @@ pub(super) async fn run_reads(
 }
 impl AppState {
     async fn run_read(&self, request: &HttpRequest, org: &str, body: &[u8]) -> HttpResponse {
-        match self.verify_actor_envelope(request, org, RUN_READ_ACTION, None, body) {
-            Ok(_) => (),
+        let actor = match self.verify_actor_envelope(request, org, RUN_READ_ACTION, None, body) {
+            Ok(actor) => actor,
             Err(ActorEnvelopeVerificationError::Unconfigured) => {
                 return json_error(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -389,7 +464,7 @@ impl AppState {
             Err(ActorEnvelopeVerificationError::Invalid) => {
                 return json_error(StatusCode::UNAUTHORIZED, "Unauthorized");
             }
-        }
+        };
         let input = match serde_json::from_slice::<RunReadRequest>(body) {
             Ok(input) if !matches!(&input, RunReadRequest::List{limit:Some(n),..} if *n == 0 || *n > 1000) => {
                 input
@@ -402,7 +477,7 @@ impl AppState {
                 "Rust run reads are unavailable",
             );
         };
-        match read(pool, org, input).await {
+        match read(pool, org, input, crate::run_visibility::owner(&actor)).await {
             Ok(response) => response,
             Err(error) => db_error(error),
         }

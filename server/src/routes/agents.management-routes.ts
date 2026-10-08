@@ -33,7 +33,7 @@ import {
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
 import { sendLiveRunRead } from "../services/live-run-read-bridge.js";
-import { runReadRedaction, sendRunRead } from "../services/run-read-bridge.js";
+import { requireRunReadAccess, runReadRedaction, sendRunRead } from "../services/run-read-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
 
@@ -1316,6 +1316,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   async function getAuthorizedRunReference(req: Request, res: any, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
       orgIds: getAuthorizedOrgScope(req), notFoundMessage,
     });
     // Only identity is read here for the existing access check. Native code
@@ -1339,6 +1340,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   async function cancelRunForRequest(req: Request, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
       orgIds: getAuthorizedOrgScope(req),
       notFoundMessage,
     });
@@ -1380,6 +1382,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   async function retryRunForRequest(req: Request, res: any, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
       orgIds: getAuthorizedOrgScope(req),
       notFoundMessage,
     });
@@ -1446,6 +1449,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   async function readRunLogForRequest(req: Request, res: any, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
       orgIds: getAuthorizedOrgScope(req),
       notFoundMessage,
     });
@@ -1487,6 +1491,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
     assertCompanyAccess(req, operation.orgId);
+    await requireRunReadAccess(rustFoundationBridge, req.actor, operation.orgId,
+      { operation: "workspaceOperationAccess", operationId }, "Workspace operation not found");
 
     const offset = Number(req.query.offset ?? 0);
     const limitBytes = Number(req.query.limitBytes ?? 256000);

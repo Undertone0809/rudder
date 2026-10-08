@@ -4,6 +4,7 @@ import {
   applyPendingMigrations,
   authUsers,
   boardApiKeys,
+  chatConversations,
   createDb,
   ensurePostgresDatabase,
   executionWorkspaces,
@@ -19,7 +20,7 @@ import {
   workspaceOperations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey, toAgentRun, toAgentRuns, toHeartbeatRun } from "@rudderhq/shared";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import express from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -31,18 +32,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { resolveRudderInstanceRoot } from "../home-paths.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { redactEventPayload } from "../redaction.js";
 import { registerAgentManagementRoutes } from "../routes/agents.management-routes.js";
 import { heartbeatService } from "../services/heartbeat.js";
+import { getRunLogStore } from "../services/run-log-store.js";
 import { type RunReadInput, runReadRedaction } from "../services/run-read-bridge.js";
 import {
   createRustFoundationBridge,
   type RustFoundationActor,
   type RustFoundationBridge,
 } from "../services/rust-foundation-bridge.js";
+import { getWorkspaceOperationLogStore } from "../services/workspace-operation-log-store.js";
 import { workspaceOperationService } from "../services/workspace-operations.js";
 
 // This suite exercises the real entry path, not a mocked bridge response.
@@ -252,7 +256,7 @@ describe("Run reads through real public HTTP, Rust and PostgreSQL", () => {
     // Unrelated mutation/orchestration handlers remain uninvoked. Keeping the
     // actual route registrar retains real issueService UUID/alias lookup and
     // actual organization authorization without booting a heartbeat worker.
-    registerAgentManagementRoutes({ router, db: db!, heartbeat: {}, access: {}, rustFoundationBridge: selected,
+    registerAgentManagementRoutes({ router, db: db!, heartbeat: legacy, access: {}, workspaceOperations: workspaceOperationService(db!), rustFoundationBridge: selected,
       getRunReadEnvironment: () => runReadRedaction(redaction) });
     app.use("/api", router);
     app.use(errorHandler);
@@ -785,5 +789,207 @@ describe("Run reads through real public HTTP, Rust and PostgreSQL", () => {
       fs.rmSync(root,{recursive:true,force:true});
     }
   },45_000);
+
+  it("isolates SideChat Run reads by signed human owner, including markers, aliases and orphaned runs", async () => {
+    const otherUser = `run-privacy-other-${randomUUID()}`;
+    const otherToken = `run-privacy-token-${randomUUID()}`;
+    const ownerConversationIds = Array.from({ length: 5 }, () => randomUUID());
+    const regularConversation = randomUUID();
+    const foreignConversation = randomUUID();
+    const otherConversation = randomUUID();
+    const conversationIds = [...ownerConversationIds, regularConversation, foreignConversation, otherConversation];
+    // A private and a public run deliberately share the same typed short prefix.
+    const privateId = "fa121234-abcd-4000-8000-000000000001";
+    const publicId = "fa121234-abcd-4000-8000-000000000002";
+    const ownedIds = [privateId, ...Array.from({ length: 4 }, () => randomUUID())];
+    const orphanId = randomUUID();
+    const contradictoryId = randomUUID();
+    const foreignLinkedId = randomUUID();
+    const otherId = randomUUID();
+    const privacyAgentId = randomUUID();
+    const privateOperationId = randomUUID();
+    const unboundOperationId = randomUUID();
+    const ids = [...ownedIds, publicId, orphanId, contradictoryId, foreignLinkedId, otherId];
+    const originalIssue = (await db!.select().from(issues).where(eq(issues.id, issueId)))[0]!;
+    const logBase = path.join(resolveRudderInstanceRoot(), "data", "workspace-operation-logs");
+    const runLogBase = path.join(resolveRudderInstanceRoot(), "data", "run-logs");
+    const createdLogPaths: string[] = [];
+    try {
+      await db!.insert(authUsers).values({ id: otherUser, name: "Other private reader", email: `${otherUser}@example.test`, createdAt: early, updatedAt: later });
+      await db!.insert(organizationMemberships).values({ orgId, principalType: "user", principalId: otherUser, status: "active", membershipRole: "member" });
+      await db!.insert(boardApiKeys).values({ userId: otherUser, name: "Other private reader", keyHash: sha256(otherToken) });
+      await db!.insert(agents).values({ id: privacyAgentId, orgId, name: "Private run fixture", role: "general", status: "idle" });
+      await db!.insert(chatConversations).values([
+        ...ownerConversationIds.map(id => ({ id, orgId, conversationKind: "side_chat", createdByUserId: boardUserId })),
+        { id: regularConversation, orgId, conversationKind: "chat", createdByUserId: boardUserId },
+        { id: foreignConversation, orgId: foreignOrgId, conversationKind: "side_chat", createdByUserId: boardUserId },
+        { id: otherConversation, orgId, conversationKind: "side_chat", createdByUserId: otherUser },
+      ]);
+      const now = new Date("2030-01-01T00:00:00.000Z");
+      const base = { orgId, agentId: privacyAgentId, status: "running", createdAt: now, startedAt: now, contextSnapshot: { issueId } };
+      const columnMarker = {
+        scene: "side_chat", targetType: "chat_conversation", targetId: ownerConversationIds[0],
+        idempotencyKey: `private-marker-${randomUUID()}`, sessionReuseScope: "none",
+        sessionIntentJson: { kind: "fresh", reuseScope: "none", sourceRunId: null, sessionId: null, sessionParams: null },
+      };
+      await db!.insert(heartbeatRuns).values([
+        { ...base, ...columnMarker, id: ownedIds[0], chatConversationId: ownerConversationIds[0], contextSnapshot: { issueId, executionWorkspaceId: workspaceId }, stdoutExcerpt: "PRIVATE_OWNER_PAYLOAD" },
+        { ...base, id: ownedIds[1], chatConversationId: ownerConversationIds[1], contextSnapshot: { issueId, scene: "side_chat" } },
+        { ...base, id: ownedIds[2], chatConversationId: ownerConversationIds[2], contextSnapshot: { issueId, rudderScene: "side_chat" } },
+        { ...base, id: ownedIds[3], chatConversationId: ownerConversationIds[3], contextSnapshot: { issueId, unifiedAgentRun: { scene: "side_chat" } } },
+        { ...base, id: ownedIds[4], chatConversationId: ownerConversationIds[4], contextSnapshot: { issueId, scene: "chat" } },
+        { ...base, id: orphanId, contextSnapshot: { issueId, scene: "side_chat" } },
+        { ...base, id: contradictoryId, chatConversationId: regularConversation, contextSnapshot: { issueId, scene: "side_chat" } },
+        { ...base, id: foreignLinkedId, chatConversationId: foreignConversation },
+        { ...base, id: otherId, chatConversationId: otherConversation },
+        { ...base, id: publicId, createdAt: new Date(now.getTime() - 1000), contextSnapshot: { issueId, public: true } },
+      ]);
+      await db!.insert(heartbeatRunEvents).values({ orgId, agentId: privacyAgentId, runId: privateId, seq: 1, eventType: "adapter.output", payload: { text: "PRIVATE_EVENT_PAYLOAD" } });
+      await db!.insert(workspaceOperations).values([
+        { id: privateOperationId, orgId, heartbeatRunId: privateId, phase: "test", status: "succeeded", stdoutExcerpt: "PRIVATE_OPERATION_PAYLOAD" },
+        { id: unboundOperationId, orgId, executionWorkspaceId: workspaceId, phase: "cleanup", status: "succeeded", stdoutExcerpt: "PRIVATE_UNBOUND_CLEANUP" },
+      ]);
+      const runLogStore = getRunLogStore();
+      const runLogHandle = await runLogStore.begin({ orgId, agentId: privacyAgentId, runId: privateId });
+      const runLogPath = path.join(runLogBase, runLogHandle.logRef);
+      createdLogPaths.push(runLogPath);
+      await runLogStore.append(runLogHandle, { stream: "stdout", chunk: "PRIVATE_RUN_FILE_SENTINEL", ts: now.toISOString() });
+      await db!.update(heartbeatRuns).set({ logStore: runLogHandle.store, logRef: runLogHandle.logRef, logBytes: fs.statSync(runLogPath).size }).where(eq(heartbeatRuns.id, privateId));
+      for (const surface of ["heartbeat-runs", "agent-runs"]) {
+        const ownerLog = await get(`/api/${surface}/${privateId}/log`, boardToken);
+        expect(ownerLog.status, ownerLog.text).toBe(200);
+        expect(ownerLog.body.content).toContain("PRIVATE_RUN_FILE_SENTINEL");
+        for (const token of [otherToken, agentToken]) {
+          const hiddenLog = await get(`/api/${surface}/${privateId}/log`, token);
+          expect(hiddenLog.status, hiddenLog.text).toBe(404);
+          expect(hiddenLog.text).not.toContain("PRIVATE_RUN_FILE_SENTINEL");
+        }
+      }
+      const logStore = getWorkspaceOperationLogStore();
+      for (const [operationId, sentinel] of [[privateOperationId, "PRIVATE_BOUND_FILE_SENTINEL"], [unboundOperationId, "PRIVATE_UNBOUND_FILE_SENTINEL"]] as const) {
+        const handle = await logStore.begin({ orgId, operationId });
+        createdLogPaths.push(path.join(logBase, handle.logRef));
+        await logStore.append(handle, { stream: "stdout", chunk: sentinel, ts: now.toISOString() });
+        const summary = await logStore.finalize(handle);
+        await db!.update(workspaceOperations).set({ logStore: handle.store, logRef: handle.logRef, logBytes: summary.bytes, logSha256: summary.sha256 }).where(eq(workspaceOperations.id, operationId));
+        const ownerLog = await get(`/api/workspace-operations/${operationId}/log`, boardToken);
+        expect(ownerLog.status, ownerLog.text).toBe(200);
+        expect(ownerLog.body.content).toContain(sentinel);
+      }
+      await db!.execute(sql`UPDATE issues SET execution_run_id=${privateId}::uuid WHERE id=${issueId}::uuid`);
+
+      for (const [token, own, hidden] of [
+        [boardToken, ownedIds, [orphanId, contradictoryId, foreignLinkedId, otherId]],
+        [otherToken, [otherId], [...ownedIds, orphanId, contradictoryId, foreignLinkedId]],
+        [agentToken, [], [...ownedIds, orphanId, contradictoryId, foreignLinkedId, otherId]],
+      ] as const) {
+        for (const suffix of ["heartbeat-runs?limit=1000", "agent-runs?limit=1000", "live-runs?minCount=20"]) {
+          const result = await get(`/api/orgs/${orgId}/${suffix}&sideChatOwnerId=${boardUserId}`, token);
+          expect(result.status, result.text).toBe(200);
+          const returned = result.body.map((run: { id: string }) => run.id);
+          expect(returned).toContain(publicId);
+          for (const id of own) expect(returned).toContain(id);
+          for (const id of hidden) expect(returned).not.toContain(id);
+        }
+        const issueLive = await get(`/api/issues/${issueId}/live-runs`, token);
+        expect(issueLive.status, issueLive.text).toBe(200);
+        for (const id of hidden) expect(issueLive.body.map((run: { id: string }) => run.id)).not.toContain(id);
+        const overview = await get(`/api/orgs/${orgId}/agent-runs/overview`, token);
+        expect(overview.status, overview.text).toBe(200);
+        for (const id of hidden) expect(overview.text).not.toContain(id);
+        const active = await get(`/api/issues/${issueId}/active-run`, token);
+        expect(active.status, active.text).toBe(200);
+        if (token === boardToken) expect(active.body.id).toBe(privateId);
+        else expect(active.body).toBeNull();
+      }
+      for (const surface of ["heartbeat-runs", "agent-runs"]) {
+        for (const suffix of ["", "/events", "/workspace-operations"]) {
+          expect((await get(`/api/${surface}/${privateId}${suffix}`, boardToken)).status).toBe(200);
+          for (const token of [otherToken, agentToken]) {
+            const hidden = await get(`/api/${surface}/${privateId}${suffix}`, token);
+            expect(hidden.status, hidden.text).toBe(404);
+            expect(hidden.text).not.toContain("PRIVATE_");
+          }
+        }
+        expect((await get(`/api/${surface}/${privateId}/log`, otherToken)).status).toBe(404);
+      }
+      for (const token of [otherToken, agentToken]) {
+        for (const operationId of [privateOperationId, unboundOperationId]) {
+          const hidden = await get(`/api/workspace-operations/${operationId}/log`, token);
+          expect(hidden.status, hidden.text).toBe(404);
+          expect(hidden.text).not.toContain("PRIVATE_");
+        }
+        const shared = await get(`/api/agent-runs/${runningId}/workspace-operations`, token);
+        expect(shared.status, shared.text).toBe(200);
+        expect(shared.text).not.toContain("PRIVATE_UNBOUND_CLEANUP");
+      }
+      const ownerActor = { type: "board" as const, source: "local_implicit" as const, userId: boardUserId };
+      const agentActor = { type: "agent" as const, source: "agent_key" as const, agentId, orgId };
+      expect((await bridge!.runRead!(ownerActor, orgId, { operation: "visibility", runId: privateId })).status).toBe(204);
+      expect((await bridge!.runRead!(agentActor, orgId, { operation: "visibility", runId: privateId })).status).toBe(404);
+      expect((await bridge!.runRead!(ownerActor, orgId, { operation: "workspaceOperationAccess", operationId: privateOperationId })).status).toBe(204);
+      expect((await bridge!.runRead!(agentActor, orgId, { operation: "workspaceOperationAccess", operationId: unboundOperationId })).status).toBe(404);
+
+      // Private latest activity must not suppress an older visible fallback.
+      await db!.execute(sql`UPDATE issues SET execution_run_id=NULL, status='in_progress', assignee_agent_id=${privacyAgentId}::uuid WHERE id=${issueId}::uuid`);
+      await db!.execute(sql`UPDATE heartbeat_runs SET status='succeeded' WHERE id=${otherId}::uuid`);
+      await db!.execute(sql`UPDATE heartbeat_runs SET started_at=${new Date(now.getTime() + 10_000).toISOString()}::timestamptz WHERE id=${privateId}::uuid`);
+      await db!.execute(sql`UPDATE heartbeat_runs SET started_at=${new Date(now.getTime() - 1000).toISOString()}::timestamptz WHERE id=${publicId}::uuid`);
+      expect((await get(`/api/issues/${issueId}/active-run`, boardToken)).body.id).toBe(privateId);
+      for (const token of [otherToken, agentToken]) {
+        const selected = await get(`/api/issues/${issueId}/active-run`, token);
+        expect(selected.status, selected.text).toBe(200);
+        expect(selected.body.id).toBe(publicId);
+      }
+
+      // Prefix ambiguity sees only admitted identities, never a hidden match.
+      const short = await get("/api/agent-runs/run_fa121234abcd", otherToken);
+      expect(short.status, short.text).toBe(200);
+      expect(short.body.id).toBe(publicId);
+      for (const operation of ["detail", "events", "workspaceOperations"] as const) {
+        const input = operation === "detail"
+          ? { operation, surface: "agent" as const, runId: privateId, redaction: runReadRedaction(redaction) }
+          : operation === "events"
+            ? { operation, runId: privateId, afterSeq: 0, limit: 100, redaction: runReadRedaction(redaction) }
+            : { operation, runId: privateId, redaction: runReadRedaction(redaction) };
+        // A valid signed agent request bypasses Node reference admission here;
+        // the Rust data authority must independently return the private 404.
+        const direct = await bridge!.runRead!({ type: "agent", agentId, orgId, source: "agent_key" }, orgId, input);
+        expect(direct.status).toBe(404);
+      }
+      // Deleting a private conversation clears its FK, but the retained marker
+      // must continue hiding that run even from the former human owner.
+      await db!.delete(chatConversations).where(inArray(chatConversations.id, [ownerConversationIds[0]!, ownerConversationIds[4]!]));
+      for (const deletedId of [privateId, ownedIds[4]!]) {
+        for (const token of [boardToken, otherToken, agentToken]) {
+          expect((await get(`/api/agent-runs/${deletedId}`, token)).status).toBe(404);
+          const live = await get(`/api/orgs/${orgId}/live-runs`, token);
+          expect(live.status, live.text).toBe(200);
+          expect(live.body.map((run: { id: string }) => run.id)).not.toContain(deletedId);
+        }
+      }
+    } finally {
+      await db!.execute(sql`UPDATE issues SET execution_run_id=${originalIssue.executionRunId}::uuid, status=${originalIssue.status}, assignee_agent_id=${originalIssue.assigneeAgentId}::uuid WHERE id=${issueId}::uuid`);
+      await db!.delete(workspaceOperations).where(inArray(workspaceOperations.id, [privateOperationId, unboundOperationId]));
+      await db!.delete(heartbeatRunEvents).where(inArray(heartbeatRunEvents.runId, ids));
+      await db!.delete(heartbeatRuns).where(inArray(heartbeatRuns.id, ids));
+      await db!.delete(chatConversations).where(inArray(chatConversations.id, conversationIds));
+      await db!.delete(boardApiKeys).where(eq(boardApiKeys.userId, otherUser));
+      await db!.delete(organizationMemberships).where(eq(organizationMemberships.principalId, otherUser));
+      await db!.delete(authUsers).where(eq(authUsers.id, otherUser));
+      await db!.delete(agents).where(eq(agents.id, privacyAgentId));
+      for (const logPath of createdLogPaths) fs.rmSync(logPath, { force: true });
+      // Remove only empty directories created by this disposable log fixture.
+      for (const initial of [path.join(logBase, orgId), logBase, path.join(runLogBase, orgId, privacyAgentId), path.join(runLogBase, orgId), runLogBase]) {
+        let directory = initial;
+        while (directory.startsWith(`${home}${path.sep}`)
+          && baselineFilesystem[path.relative(home, directory)] === undefined
+          && fs.existsSync(directory) && fs.readdirSync(directory).length === 0) {
+          fs.rmdirSync(directory);
+          directory = path.dirname(directory);
+        }
+      }
+    }
+  }, 45_000);
 
 });
