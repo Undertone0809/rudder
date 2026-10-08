@@ -16,6 +16,8 @@ const mockHeartbeatService = vi.hoisted(() => ({
   retryRun: vi.fn(),
 }));
 
+const mockRunRead = vi.hoisted(() => vi.fn());
+
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
@@ -98,7 +100,7 @@ async function createApp(
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes({} as any));
+  app.use("/api", agentRoutes({} as any, undefined, { runRead: mockRunRead } as any));
   app.use(errorHandler);
   return startApp(app);
 }
@@ -117,6 +119,7 @@ async function createManagementApp(db: Record<string, unknown>, actor: Record<st
     svc: mockAgentService,
     heartbeat: mockHeartbeatService,
     workspaceOperations: {},
+    rustFoundationBridge: { runRead: mockRunRead },
     getCurrentUserRedactionOptions: vi.fn(async () => ({ censorUsernameInLogs: false })),
   } as any);
   app.use("/api", router);
@@ -129,6 +132,7 @@ function createRunIdLookupDb(rows: Array<{ id: string }>) {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({
+          limit: vi.fn(async () => rows),
           orderBy: vi.fn(() => ({
             limit: vi.fn(async () => rows),
           })),
@@ -141,6 +145,7 @@ function createRunIdLookupDb(rows: Array<{ id: string }>) {
 describe("agent run retry route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRunRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("[]") });
   });
 
   afterEach(async () => {
@@ -150,201 +155,52 @@ describe("agent run retry route", () => {
     activeServers.clear();
   });
 
-  it("lists agent runs by date range without applying the default recency limit", async () => {
-    mockHeartbeatService.list.mockResolvedValue([]);
-
-    const res = await request(await createApp())
-      .get("/api/orgs/organization-1/heartbeat-runs")
-      .query({
-        startDate: "2026-06-10T00:00:00.000Z",
-        endDate: "2026-06-16T12:00:00.000Z",
-      });
-
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockHeartbeatService.list).toHaveBeenCalledWith(
-      "organization-1",
-      undefined,
-      undefined,
-      {
-        startDate: new Date("2026-06-10T00:00:00.000Z"),
-        endDate: new Date("2026-06-16T12:00:00.000Z"),
-      },
-    );
-  });
-
-  it("loads the organization-scoped agent run overview", async () => {
-    mockHeartbeatService.overview.mockResolvedValue({
-      latestByAgent: [],
-      recent: [],
+  it("forwards normalized date filters to Rust without applying the default limit", async () => {
+    const res = await request(await createApp()).get("/api/orgs/organization-1/heartbeat-runs")
+      .query({ startDate: "2026-06-10T00:00:00.000Z", endDate: "2026-06-16T12:00:00.000Z" });
+    expect(res.status).toBe(200);
+    expect(mockRunRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "list", surface: "heartbeat", agentId: null, goalId: null,
+      startDate: "2026-06-10T00:00:00.000Z", endDate: "2026-06-16T12:00:00.000Z", limit: null,
     });
-
-    const res = await request(await createApp())
-      .get("/api/orgs/organization-1/agent-runs/overview");
-
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockHeartbeatService.overview).toHaveBeenCalledWith("organization-1");
-    expect(res.body).toEqual({ latestByAgent: [], recent: [] });
+    expect(mockHeartbeatService.list).not.toHaveBeenCalled();
   });
 
-  it("projects every public full-row run route through an explicit allowlist", async () => {
+  it("dispatches the org overview to Rust with its public response unchanged", async () => {
+    const body = { latestByAgent: [], recent: [] };
+    mockRunRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(body)) });
+    const res = await request(await createApp()).get("/api/orgs/organization-1/agent-runs/overview");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(body);
+    expect(mockRunRead).toHaveBeenCalledWith(expect.anything(), "organization-1", { operation: "overview" });
+    expect(mockHeartbeatService.overview).not.toHaveBeenCalled();
+  });
+
+  it("keeps full-row GET projection authority native after identity-only access checks", async () => {
     const runId = "609695f1-f90a-4b17-be61-4f0c6fe37c42";
-    mockHeartbeatService.getRun.mockResolvedValue({
-      id: runId,
-      orgId: "organization-1",
-      agentId: "agent-1",
-      invocationSource: "on_demand",
-      triggerDetail: "manual",
-      status: "failed",
-      contextSnapshot: {
-        resumeFromRunId: "source-run-id",
-        resumeSessionDisplayId: "public-display-id",
-        resumeSessionParams: {
-          sessionId: "nested-private-session",
-          cwd: "/nested/private/cwd",
-          workspaceId: "private-workspace",
-          repoUrl: "https://private.example/repo.git",
-          repoRef: "private-ref",
-        },
-        forceFreshSession: true,
-        sessionResumeSuppressed: true,
-        sessionReuseSuppression: {
-          kind: "source_session_cleared",
-          sourceRunId: "source-run-id",
-        },
-      },
-      sessionReuseScope: "explicit",
-      sessionParamsBeforeJson: { sessionId: "private-before" },
-      sessionParamsAfterJson: { sessionId: "private-after" },
-      executionOwnerToken: "owner-secret",
-      executionLeaseExpiresAt: new Date(),
-      processExitedAt: new Date(),
-      terminalEffectsPending: true,
-      terminalEffectsJson: { transcript: "large-secret" },
-      terminalEffectsClaimToken: "claim-secret",
-      terminalEffectsLastError: "internal-error",
+    const body = { id: runId, contextSnapshot: { public: true } };
+    mockRunRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(body)) });
+    mockIssueService.getByIdentifier.mockResolvedValue({ id: "issue-1", orgId: "organization-1" });
+    const app = await createManagementApp(createRunIdLookupDb([{ id: runId, orgId: "organization-1" } as any]), {
+      type: "board", userId: "board-user", orgIds: ["organization-1"], source: "session", isInstanceAdmin: false,
     });
-    mockIssueService.getByIdentifier.mockResolvedValue({
-      id: "issue-1",
-      orgId: "organization-1",
-      identifier: "ZST-776",
-      status: "in_progress",
-      executionRunId: runId,
-      assigneeAgentId: "agent-1",
-    });
-    mockAgentService.getById.mockResolvedValue({
-      id: "agent-1",
-      name: "Wesley",
-      agentRuntimeType: "codex_local",
-    });
-    const app = await createManagementApp({}, {
-      type: "board",
-      userId: "board-user",
-      orgIds: ["organization-1"],
-      source: "session",
-      isInstanceAdmin: false,
-    });
-
-    for (const path of [
-      `/api/heartbeat-runs/${runId}`,
-      `/api/agent-runs/${runId}`,
-      "/api/issues/ZST-776/active-run",
-    ]) {
+    for (const path of [`/api/heartbeat-runs/${runId}`, `/api/agent-runs/${runId}`, "/api/issues/ZST-776/active-run"]) {
       const res = await request(app).get(path);
-      expect(res.status, `${path}: ${JSON.stringify(res.body)}`).toBe(200);
-      expect(res.body.id).toBe(runId);
-      expect(res.body.sessionReuseScope).toBe("explicit");
-      expect(res.body).not.toHaveProperty("sessionParamsBeforeJson");
-      expect(res.body).not.toHaveProperty("sessionParamsAfterJson");
-      expect(res.body.contextSnapshot).toEqual({
-        resumeFromRunId: "source-run-id",
-        sessionReuseSuppression: {
-          kind: "source_session_cleared",
-          sourceRunId: "source-run-id",
-        },
-      });
-      expect(res.body).not.toHaveProperty("executionOwnerToken");
-      expect(res.body).not.toHaveProperty("executionLeaseExpiresAt");
-      expect(res.body).not.toHaveProperty("processExitedAt");
-      expect(res.body).not.toHaveProperty("terminalEffectsPending");
-      expect(res.body).not.toHaveProperty("terminalEffectsJson");
-      expect(res.body).not.toHaveProperty("terminalEffectsClaimToken");
-      expect(res.body).not.toHaveProperty("terminalEffectsLastError");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(body);
     }
+    expect(mockRunRead.mock.calls.map((call) => call[2].operation)).toEqual(["detail", "detail", "active"]);
+    expect(mockHeartbeatService.getRun).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.getActiveRunForAgent).not.toHaveBeenCalled();
   });
 
-  it("lists normalized agent runs through the agent-runs alias", async () => {
-    mockHeartbeatService.list.mockResolvedValue([
-      {
-        id: "run-1",
-        orgId: "organization-1",
-        agentId: "agent-1",
-        invocationSource: "chat",
-        triggerDetail: "chat_assistant_reply_stream",
-        status: "succeeded",
-        startedAt: null,
-        finishedAt: null,
-        error: null,
-        wakeupRequestId: null,
-        exitCode: null,
-        signal: null,
-        usageJson: null,
-        resultJson: null,
-        sessionIdBefore: null,
-        sessionIdAfter: null,
-        sessionReuseScope: "none",
-        logStore: null,
-        logRef: null,
-        logBytes: null,
-        logSha256: null,
-        logCompressed: false,
-        stdoutExcerpt: null,
-        stderrExcerpt: null,
-        errorCode: null,
-        externalRunId: null,
-        chatConversationId: "conversation-1",
-        processPid: null,
-        processStartedAt: null,
-        retryOfRunId: null,
-        processLossRetryCount: 0,
-        contextSnapshot: {
-          assistantMessageId: "assistant-message-1",
-        },
-        createdAt: new Date("2026-06-20T00:00:00.000Z"),
-        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
-      },
-    ]);
-
-    const res = await request(await createApp())
-      .get("/api/orgs/organization-1/agent-runs")
-      .query({
-        agentId: "agent-1",
-        limit: "25",
-      });
-
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockHeartbeatService.list).toHaveBeenCalledWith(
-      "organization-1",
-      "agent-1",
-      25,
-      {
-        startDate: undefined,
-        endDate: undefined,
-      },
-    );
-    expect(res.body).toEqual([
-      expect.objectContaining({
-        id: "run-1",
-        scene: "chat",
-        triggerKind: "chat_assistant_reply_stream",
-        targetType: "chat_conversation",
-        targetId: "conversation-1",
-        conversationId: "conversation-1",
-        messageId: "assistant-message-1",
-        automationRunId: null,
-        automationId: null,
-        wakeupRequestId: null,
-      }),
-    ]);
+  it("forwards the agent-runs alias and explicit pagination to native authority", async () => {
+    const res = await request(await createApp()).get("/api/orgs/organization-1/agent-runs").query({ agentId: "agent-1", limit: "25" });
+    expect(res.status).toBe(200);
+    expect(mockRunRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "list", surface: "agent", agentId: "agent-1", goalId: null, startDate: null, endDate: null, limit: 25,
+    });
+    expect(mockHeartbeatService.list).not.toHaveBeenCalled();
   });
 
   it("retries a failed run through the dedicated recovery endpoint", async () => {

@@ -10,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
+import type { RunReadInput } from "./run-read-bridge.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -47,6 +48,7 @@ export interface RustFoundationBridge {
   readonly publicIngressBaseUrl?: string | null;
   waitForPublicIngressReady?(): Promise<void>;
   start(): Promise<void>;
+  runRead?(actor: RustFoundationActor, orgId: string, input: RunReadInput): Promise<RustFoundationResponse>;
   liveRunRead?(
     actor: RustFoundationActor,
     orgId: string,
@@ -798,6 +800,42 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         } satisfies RustFoundationResponse;
       } catch (error) {
         throw new RustFoundationBridgeError("request_failed", "Rust Project read request failed", { cause: error });
+      }
+    },
+    async runRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/run-reads`;
+      const body = Buffer.from(JSON.stringify(input));
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({
+        actor,
+        organizationId: orgId,
+        method: "POST",
+        path: requestPath,
+        action: "run.read",
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+      });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+          },
+          body: body as unknown as BodyInit,
+          signal: AbortSignal.timeout(requestTimeoutMs),
+        });
+        return {
+          status: response.status,
+          contentType: response.headers.get("content-type") ?? "application/json",
+          body: Buffer.from(await response.arrayBuffer()),
+        } satisfies RustFoundationResponse;
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
       }
     },
     async liveRunRead(actor, orgId, input) {

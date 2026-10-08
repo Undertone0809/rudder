@@ -55,6 +55,16 @@ pilot switches. Node keeps authentication, organization authorization, and
 issue identifier/alias resolution. A missing or failed native read returns an
 error instead of executing the former Node live-run query.
 
+The same required read authority covers organization heartbeat/agent run lists,
+agent-run overview, both detail/event/workspace-operation aliases, and issue
+active-run selection. Node retains only authentication, reference resolution,
+organization access checks, and current-user redaction environment metadata.
+Rust owns domain SQL, public field projection, provenance, summary/skill
+selection, event sanitizing, read-only redaction-settings lookup, and username masking. Date-window lists preserve
+legacy unbounded reads unless an explicit limit is supplied. Private run fields
+are removed in the SQL projection before JSON decoding; deep legacy public JSON
+is processed iteratively. Log-file endpoints retain their existing implementation.
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.

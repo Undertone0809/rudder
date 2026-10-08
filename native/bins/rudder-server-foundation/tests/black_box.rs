@@ -2046,7 +2046,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "workspace_backup_download",
             "organization_member_directory",
             "project_read",
-            "live_run_read"
+            "live_run_read",
+            "run_read"
         ])
     );
 
@@ -2070,6 +2071,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("organization_member_directory"));
     assert!(capabilities.contains("project_read"));
     assert!(capabilities.contains("live_run_read"));
+    assert!(capabilities.contains("\"run_read\""));
 
     let unconfigured_directory = get_with_retry(
         bound_addr,
