@@ -12,6 +12,16 @@ pass before PR merge. Administrators and automation have no direct-push bypass.
 See [release automation setup](RELEASE-AUTOMATION-SETUP.md#7-protected-main-release-flow)
 for the enforced branch rules and automatic version-handoff PRs.
 
+## Backend Development Policy
+
+All new backend features, including native chat, must be implemented in Rust.
+Keep TypeScript for the frontend and client surfaces; existing Node backend
+code is migration debt. Read [Backend Architecture](BACKEND_ARCHITECTURE.md)
+for the canonical ownership boundary, temporary adapter inventory, 100% public
+API authority target, and required failure/no-fallback evidence before choosing
+where a feature belongs. A Rust listener forwarding to Node does not meet that
+target.
+
 ## Deployment Modes
 
 For mode definitions and intended CLI behavior, see `doc/engineering/DEPLOYMENT-MODES.md`.
@@ -24,6 +34,7 @@ Current implementation status:
 
 - Node.js 20+
 - pnpm 9+
+- Rust/Cargo toolchain compatible with the `native/` workspace (Rust 2024 edition) for source development that builds or changes the backend
 
 ## Workspace Builds
 
@@ -49,6 +60,10 @@ CARGO_TARGET_DIR=/path/to/native/target pnpm --filter @rudderhq/server build
 Installed npm packages use the bundled foundation executable and do not need
 Rust or Cargo at install time. The six-target npm artifact layout and packaging
 checks are documented in [PUBLISHING.md](PUBLISHING.md#server-foundation-payload).
+
+The following describes existing migration slices, not the permitted location
+for new backend features or a claim of completed migration. See
+[Backend Architecture](BACKEND_ARCHITECTURE.md) for the target and claim rules.
 
 Project list, detail, and resource-list APIs use the Rust foundation for all
 projects, including existing Node-owned projects. They read the same PostgreSQL
@@ -507,6 +522,11 @@ that failure mode. For list or timeline workflows, include the pagination, filte
 or refresh behavior that protects the user from loading an unbounded dataset. Use lower-level tests
 only when the E2E version would be too expensive or impossible, and document that tradeoff in the
 hand-off.
+
+For backend feature or migration work, also apply the
+[backend testing and evidence gates](BACKEND_ARCHITECTURE.md#testing-and-evidence).
+Rust unit tests alone do not prove that the public API uses Rust authority;
+exercise the actual public entry, persistence, and native-failure path.
 
 Useful variants:
 

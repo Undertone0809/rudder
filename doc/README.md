@@ -25,6 +25,7 @@ Use this page to choose the current source of truth. Do not scan all of
 - Current product logic: relevant implementation and tests
 - Design proposals: `doc/plans/`
 - Development setup: `doc/engineering/DEVELOPING.md`
+- Backend architecture, Rust ownership, and migration acceptance: `doc/engineering/BACKEND_ARCHITECTURE.md`
 - Database and migrations: `doc/engineering/DATABASE.md`
 - CLI behavior: `doc/engineering/CLI.md`
 - Desktop and packaging: `doc/engineering/DESKTOP.md`

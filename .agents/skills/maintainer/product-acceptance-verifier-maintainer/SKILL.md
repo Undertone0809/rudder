@@ -79,6 +79,19 @@ for an unresolvable identity mismatch; do not reuse inapplicable proof.
 8. Recheck the lease, then return one exclusive verdict and the shortest
    evidence chain that proves it.
 
+## Backend Authority Acceptance
+
+For backend features or migration claims, apply the observable criteria in
+`doc/engineering/BACKEND_ARCHITECTURE.md#testing-and-evidence` to the exact
+candidate. Exercise the real public API/workflow, persistence or terminal state,
+and a native dependency failure. Observe the documented error and evidence
+that no Node business fallback or duplicate effect ran. A health response,
+private Rust call, or successful proxy request alone cannot prove Rust business
+authority. The reviewer owns source-level authority tracing; do not replace it
+with black-box inference. Return `QUESTION` when the required owner/fallback
+observations cannot be established, rather than promoting a partial slice to
+100% completion. Docs-only policy changes still need no product verifier.
+
 ## UI Black-Box Matrix
 
 For visible UI, the terminal result is the rendered and interactive workflow,
