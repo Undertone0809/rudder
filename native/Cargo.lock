@@ -1658,6 +1658,8 @@ dependencies = [
 name = "rudder-d1-persistence"
 version = "0.7.24"
 dependencies = [
+ "base64",
+ "regex-lite",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",
  "serde",
@@ -1666,7 +1668,9 @@ dependencies = [
  "sqlx",
  "tempfile",
  "thiserror 2.0.20",
+ "time",
  "tokio",
+ "url",
  "uuid",
  "windows-sys 0.61.2",
 ]

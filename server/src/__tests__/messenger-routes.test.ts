@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { messengerRoutes } from "../routes/messenger.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const mockMessengerService = vi.hoisted(() => ({
   listCustomGroups: vi.fn(),
@@ -26,7 +27,7 @@ const mockProductIntelligence = vi.hoisted(() => ({
   execute: vi.fn(),
 }));
 
-const mockSavedViewsService = vi.hoisted(() => ({
+const mockNativeSavedViewResponses = vi.hoisted(() => ({
   list: vi.fn(),
   get: vi.fn(),
   keep: vi.fn(),
@@ -43,9 +44,20 @@ vi.mock("../services/product-intelligence.js", () => ({
   productIntelligenceService: () => mockProductIntelligence,
 }));
 
-vi.mock("../services/messenger-saved-views.js", () => ({
-  messengerSavedViewsService: () => mockSavedViewsService,
-}));
+const mockMessengerState = vi.fn<NonNullable<RustFoundationBridge["messengerState"]>>(async (actor, orgId, input) => {
+  const userId = actor.userId ?? "local-board";
+  let value: unknown;
+  switch (input.operation) {
+    case "savedViewList": value = await mockNativeSavedViewResponses.list(orgId, userId, input.query); break;
+    case "savedViewGet": value = await mockNativeSavedViewResponses.get(orgId, userId, input.id); break;
+    case "savedViewKeep": value = await mockNativeSavedViewResponses.keep(orgId, userId, input.input); break;
+    case "savedViewUpdate": value = await mockNativeSavedViewResponses.update(orgId, userId, input.id, input.patch); break;
+    case "savedViewDelete": value = await mockNativeSavedViewResponses.remove(orgId, userId, input.id); break;
+    case "savedViewReorder": value = await mockNativeSavedViewResponses.reorder(orgId, userId, input.ids); break;
+    default: value = {};
+  }
+  return { status: input.operation === "savedViewKeep" ? 201 : 200, contentType: "application/json", body: Buffer.from(JSON.stringify(value)) };
+});
 
 function createApp(actor: Record<string, unknown> = {
   type: "board",
@@ -59,7 +71,7 @@ function createApp(actor: Record<string, unknown> = {
     (req as typeof req & { actor: Record<string, unknown> }).actor = actor;
     next();
   });
-  app.use("/api", messengerRoutes({} as any));
+  app.use("/api", messengerRoutes({} as any, { messengerState: mockMessengerState } as unknown as RustFoundationBridge));
   app.use(errorHandler);
   return app;
 }
@@ -217,12 +229,12 @@ describe("Messenger custom group title routes", () => {
 describe("Messenger Saved View and generic group routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSavedViewsService.list.mockResolvedValue([]);
-    mockSavedViewsService.get.mockResolvedValue({ id: "view-1" });
-    mockSavedViewsService.keep.mockResolvedValue({ savedView: { id: "view-1" }, group: { id: "group-1", name: "Work" } });
-    mockSavedViewsService.update.mockResolvedValue({ id: "view-1" });
-    mockSavedViewsService.reorder.mockReset().mockResolvedValue([]);
-    mockSavedViewsService.remove.mockResolvedValue({ id: "view-1" });
+    mockNativeSavedViewResponses.list.mockResolvedValue([]);
+    mockNativeSavedViewResponses.get.mockResolvedValue({ id: "view-1" });
+    mockNativeSavedViewResponses.keep.mockResolvedValue({ savedView: { id: "view-1" }, group: { id: "group-1", name: "Work" } });
+    mockNativeSavedViewResponses.update.mockResolvedValue({ id: "view-1" });
+    mockNativeSavedViewResponses.reorder.mockReset().mockResolvedValue([]);
+    mockNativeSavedViewResponses.remove.mockResolvedValue({ id: "view-1" });
     mockMessengerService.assignThreadToCustomGroup.mockResolvedValue({ itemKey: "saved-view:11111111-1111-4111-8111-111111111111" });
     mockMessengerService.reorderCustomGroupEntries.mockResolvedValue({ groups: [] });
   });
@@ -231,7 +243,8 @@ describe("Messenger Saved View and generic group routes", () => {
     const app = await createClient();
     const savedViewId = "33333333-3333-4333-8333-333333333333";
     expect((await app.get("/api/orgs/org-1/messenger/saved-views?visibility=hidden&limit=20&offset=40")).status).toBe(200);
-    expect(mockSavedViewsService.list).toHaveBeenCalledWith("org-1", "user-1", {
+    expect(mockMessengerState).toHaveBeenCalledWith(expect.objectContaining({ type: "board", userId: "user-1" }), "org-1", expect.objectContaining({ operation: "savedViewList" }));
+    expect(mockNativeSavedViewResponses.list).toHaveBeenCalledWith("org-1", "user-1", {
       visibility: "hidden",
       limit: 20,
       offset: 40,
@@ -245,7 +258,7 @@ describe("Messenger Saved View and generic group routes", () => {
       });
     expect(deprecatedCreate.status).toBe(409);
     expect(deprecatedCreate.body.error).toContain("/keep");
-    expect(mockSavedViewsService.keep).not.toHaveBeenCalled();
+    expect(mockNativeSavedViewResponses.keep).not.toHaveBeenCalled();
 
     const kept = await app
       .post("/api/orgs/org-1/messenger/saved-views/keep")
@@ -256,12 +269,12 @@ describe("Messenger Saved View and generic group routes", () => {
         placement: { kind: "group", groupId: "55555555-5555-4555-8555-555555555555" },
       });
     expect(kept.status).toBe(201);
-    expect(mockSavedViewsService.keep).toHaveBeenCalledWith("org-1", "user-1", expect.objectContaining({
+    expect(mockNativeSavedViewResponses.keep).toHaveBeenCalledWith("org-1", "user-1", expect.objectContaining({
       target: expect.objectContaining({ kind: "browser", viewInstanceId: "view-1" }),
       placement: { kind: "group", groupId: "55555555-5555-4555-8555-555555555555" },
     }));
 
-    mockSavedViewsService.keep.mockResolvedValueOnce({ savedView: { id: "view-2" }, group: null });
+    mockNativeSavedViewResponses.keep.mockResolvedValueOnce({ savedView: { id: "view-2" }, group: null });
     const keptLoose = await app
       .post("/api/orgs/org-1/messenger/saved-views/keep")
       .send({
@@ -272,20 +285,20 @@ describe("Messenger Saved View and generic group routes", () => {
       });
     expect(keptLoose.status).toBe(201);
     expect(keptLoose.body).toEqual({ savedView: { id: "view-2" }, group: null });
-    expect(mockSavedViewsService.keep).toHaveBeenLastCalledWith("org-1", "user-1", expect.objectContaining({
+    expect(mockNativeSavedViewResponses.keep).toHaveBeenLastCalledWith("org-1", "user-1", expect.objectContaining({
       placement: { kind: "loose" },
     }));
 
     expect((await app.get(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
-    expect(mockSavedViewsService.get).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
+    expect(mockNativeSavedViewResponses.get).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
     expect((await app.patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: true })).status).toBe(400);
-    expect(mockSavedViewsService.update).not.toHaveBeenCalled();
+    expect(mockNativeSavedViewResponses.update).not.toHaveBeenCalled();
     expect((await app.patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ title: "Updated" })).status).toBe(200);
-    expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { title: "Updated" });
+    expect(mockNativeSavedViewResponses.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { title: "Updated" });
     expect((await app.patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: false })).status).toBe(200);
-    expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { hidden: false });
+    expect(mockNativeSavedViewResponses.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { hidden: false });
     expect((await app.delete(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
-    expect(mockSavedViewsService.remove).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
+    expect(mockNativeSavedViewResponses.remove).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
 
     expect((await app.get("/api/orgs/org-1/messenger/saved-views/not-a-uuid")).status).toBe(400);
   });
@@ -300,7 +313,7 @@ describe("Messenger Saved View and generic group routes", () => {
         placement: { kind: "group", groupId: "55555555-5555-4555-8555-555555555555" },
       });
     expect(invalid.status).toBe(400);
-    expect(mockSavedViewsService.keep).not.toHaveBeenCalled();
+    expect(mockNativeSavedViewResponses.keep).not.toHaveBeenCalled();
 
     expect((await (await createClient()).get("/api/orgs/org-1/messenger/saved-views?limit=101")).status).toBe(400);
 
@@ -311,7 +324,7 @@ describe("Messenger Saved View and generic group routes", () => {
       orgId: "org-1",
     })).get("/api/orgs/org-1/messenger/saved-views");
     expect(forbidden.status).toBe(403);
-    expect(mockSavedViewsService.list).not.toHaveBeenCalled();
+    expect(mockNativeSavedViewResponses.list).not.toHaveBeenCalled();
   });
 
   it("normalizes canonical and legacy custom-group item aliases", async () => {
@@ -346,7 +359,7 @@ describe("Messenger Saved View and generic group routes", () => {
   it("validates and forwards Saved View reorder requests for the current board user", async () => {
     const firstId = "11111111-1111-4111-8111-111111111111";
     const secondId = "22222222-2222-4222-8222-222222222222";
-    mockSavedViewsService.reorder.mockReset().mockResolvedValue({
+    mockNativeSavedViewResponses.reorder.mockReset().mockResolvedValue({
       items: [
         { id: secondId, sortOrder: 0 },
         { id: firstId, sortOrder: 1 },
@@ -365,12 +378,12 @@ describe("Messenger Saved View and generic group routes", () => {
       ],
       pageInfo: { limit: 50, offset: 0, total: 2, hasMore: false, nextOffset: null },
     });
-    expect(mockSavedViewsService.reorder).toHaveBeenCalledWith("org-1", "user-1", [secondId, firstId]);
+    expect(mockNativeSavedViewResponses.reorder).toHaveBeenCalledWith("org-1", "user-1", [secondId, firstId]);
 
     const invalid = await (await createClient())
       .patch("/api/orgs/org-1/messenger/saved-views/reorder")
       .send({ ids: [firstId, firstId] });
     expect(invalid.status).toBe(400);
-    expect(mockSavedViewsService.reorder).toHaveBeenCalledTimes(1);
+    expect(mockNativeSavedViewResponses.reorder).toHaveBeenCalledTimes(1);
   });
 });

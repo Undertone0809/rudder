@@ -79,6 +79,13 @@ jobs:
             src/__tests__/project-read-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+      - name: Verify API-wide Rust Cost and Finance reads against legacy data
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/cost-read-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Verify Chat branding recovery through authenticated API and Rust
         run: |
           set -o pipefail

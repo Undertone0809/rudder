@@ -55,6 +55,29 @@ pilot switches. Node keeps authentication, organization authorization, and
 issue identifier/alias resolution. A missing or failed native read returns an
 error instead of executing the former Node live-run query.
 
+Cost and Finance read APIs (`summary`, `by-agent`, `trend`, `by-agent-model`,
+`by-provider`, `by-biller`, `by-project`, `window-spend`, `finance-summary`,
+`finance-by-biller`, `finance-by-kind`, and `finance-events`) also use Rust by
+default with no Node fallback. Rust owns domain SQL, aggregation, attribution,
+ordering and response projection in a read-only PostgreSQL snapshot. Node keeps
+actor checks, query/date validation and a signed connection-timezone context for
+legacy Finance timestamp parsing; it sends no cost or finance rows to Rust.
+Token additions and Finance totals use wide aggregates, avoiding signed 32-bit
+overflow for large organizations. Writes, budgets and provider quota fetching
+retain their existing owners.
+
+To verify the complete Cost/Finance path, build the foundation binary, then run:
+
+```sh
+cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --test cost_reads
+pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/cost-read-real-entry.test.ts
+```
+
+The SQL fixture needs PostgreSQL tools on `PATH` or `RUDDER_POSTGRES_BIN_DIR`.
+For runners that support only TCP loopback, set `RUDDER_POSTGRES_NO_UNIX_SOCKET=1`.
+The real-entry suite covers both default and Rust public ingress against real
+PostgreSQL with authentication, legacy parity and fail-closed behavior.
+
 Workspace backup listing, browsing, previews, and ZIP downloads now use the Rust
 foundation by default, including legacy JSON backups. Node retains Board and
 organization authorization and streams the native HTTP response without a
@@ -64,6 +87,24 @@ metadata and host timezone are preserved. Download admission lasts through body
 consumption or disconnect, and transfers are not cut off by the header timeout.
 Invalid V2 archives retain their rejection status/category; low-level parser
 error details may be summarized rather than exposing implementation-specific text.
+
+Goal list, detail, activity-list, history, and dependency GETs execute SQL and
+public projection in Rust for all legacy and current Goals. Node retains actor
+authentication, organization authorization, and typed-reference resolution.
+These reads are independent of mutation pilots and fail closed if foundation
+is unavailable. History keeps bounded cursor pagination; detail and activities
+keep the existing 100-entry window. Workspace, assigned, agent-context, timeline,
+and Goal mutations retain their existing execution paths.
+
+The same required read authority covers organization heartbeat/agent run lists,
+agent-run overview, both detail/event/workspace-operation aliases, and issue
+active-run selection. Node retains only authentication, reference resolution,
+organization access checks, and current-user redaction environment metadata.
+Rust owns domain SQL, public field projection, provenance, summary/skill
+selection, event sanitizing, read-only redaction-settings lookup, and username masking. Date-window lists preserve
+legacy unbounded reads unless an explicit limit is supplied. Private run fields
+are removed in the SQL projection before JSON decoding; deep legacy public JSON
+is processed iteratively. Log-file endpoints retain their existing implementation.
 
 ## Code Reasoning Comments
 
@@ -567,3 +608,48 @@ Use these focused docs for detailed operations and full command references:
 - Desktop runtime/packaging behavior: `doc/engineering/DESKTOP.md`
 - CLI command reference: `doc/engineering/CLI.md`
 - Database model and migrations: `doc/engineering/DATABASE.md`
+
+### Messenger persistent-state authority
+
+Messenger Saved View list, detail, keep, update, delete and reorder requests,
+custom-group create/update/delete/separate and entry-removal requests, and
+thread pin-state requests always execute their domain SQL in the Rust foundation.
+Node retains board authentication, organization authorization and public schema
+parsing. An unavailable foundation returns an error; these routes never fall back
+to the old Node services.
+
+The signed private `messenger.state` capability derives the owner from the
+verified user actor and accepts a closed operation enum. Placement writes reuse
+the existing owner advisory lock, then sorted custom-group locks, so legacy
+thread deletion, group aggregation cleanup, merge and assignment continue to
+coordinate with native writers. UUID lock components are canonicalized in both
+writers. Thread pinning does not acquire that placement lock: Chat deletion
+locks its parent/cascade rows before cleanup takes placement locks. Native Chat
+pinning instead takes an organization-scoped parent key-share lock before its
+user-state upsert, so delete-first returns 404 and pin-first commits before the
+subsequent delete cascade. Keep receipts retain the existing fingerprint and
+replay semantics.
+Activities and live-event intents commit together in the existing organization
+mutation outbox. Its existing Node publisher is a transport adapter, including
+persisted retry leases and event dedupe keys; it does not decide Messenger state.
+
+Group listing, grouping assignment, group/entry reorder, model-generated names,
+thread aggregation and thread-read advancement remain Node-owned. The retired
+ungrouped Saved View create endpoint remains its existing 409 response and is
+not a migrated endpoint.
+
+The real HTTP/database differential suite is
+`server/src/__tests__/messenger-state-rust.integration.test.ts`. Build an isolated
+foundation executable first and set `RUDDER_SERVER_FOUNDATION_PATH` to it. Set
+`RUDDER_HOME` to a disposable temporary directory before loading the test process.
+The suite uses a newly created PostgreSQL database, real public actor middleware,
+the signed native bridge, exact scoped persistence/audit comparisons, concurrent
+placement locks, rollback faults and an actual missing-native-binary check.
+
+The pin-state path also closes an old isolation defect: a foreign-organization
+Chat is rejected before hydration. The old Node lookup could create a user-state
+row in that foreign organization before returning 404. Native pinning preserves
+the 404 response and performs no foreign-organization write.
+
+See [the Messenger native-state acceptance packet](MESSENGER-STATE-NATIVE-ACCEPTANCE.md)
+for the exact route inventory, test boundary and remaining delivery gates.

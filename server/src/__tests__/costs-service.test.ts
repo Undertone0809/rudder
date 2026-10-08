@@ -5,6 +5,10 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { costRoutes } from "../routes/costs.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+
+const costRead = vi.fn();
+const readBridge = { costRead } as unknown as RustFoundationBridge;
 
 function makeDb(overrides: Record<string, unknown> = {}) {
   const selectChain = {
@@ -22,6 +26,7 @@ function makeDb(overrides: Record<string, unknown> = {}) {
 
   return {
     select: vi.fn().mockReturnValue(thenableChain),
+    execute: vi.fn().mockResolvedValue([{ timezone: "UTC" }]),
     insert: vi.fn().mockReturnValue({
       values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) }),
     }),
@@ -113,7 +118,7 @@ async function createApp() {
     req.actor = { type: "board", userId: "board-user", source: "local_implicit" };
     next();
   });
-  app.use("/api", costRoutes(makeDb() as any));
+  app.use("/api", costRoutes(makeDb() as any, readBridge));
   app.use(errorHandler);
   return await startApp(app);
 }
@@ -125,7 +130,7 @@ async function createAppWithActor(actor: any) {
     req.actor = actor;
     next();
   });
-  app.use("/api", costRoutes(makeDb() as any));
+  app.use("/api", costRoutes(makeDb() as any, readBridge));
   app.use(errorHandler);
   return await startApp(app);
 }
@@ -139,6 +144,7 @@ afterEach(async () => {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  costRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("[]") });
   mockCompanyService.update.mockResolvedValue({
     id: "organization-1",
     name: "Rudder",
@@ -190,10 +196,11 @@ describe("cost routes", () => {
       .query({ from: "2026-03-01T00:00:00.000Z", to: "2026-03-07T23:59:59.999Z" });
 
     expect(res.status).toBe(200);
-    expect(mockCostService.trend).toHaveBeenCalledWith("organization-1", {
-      from: new Date("2026-03-01T00:00:00.000Z"),
-      to: new Date("2026-03-07T23:59:59.999Z"),
-    }, "day", undefined);
+    expect(costRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "trend", fromMs: Date.parse("2026-03-01T00:00:00.000Z"),
+      toMs: Date.parse("2026-03-07T23:59:59.999Z"), granularity: "day",
+    });
+    expect(mockCostService.trend).not.toHaveBeenCalled();
   });
 
   it("passes agent and project filters to cost trend routes", async () => {
@@ -208,12 +215,9 @@ describe("cost routes", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(mockCostService.trend).toHaveBeenCalledWith("organization-1", {
-      from: new Date("2026-03-01T00:00:00.000Z"),
-      to: undefined,
-    }, "hour", {
-      agentId: "agent-1",
-      projectId: "project-1",
+    expect(costRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "trend", fromMs: Date.parse("2026-03-01T00:00:00.000Z"), toMs: undefined,
+      granularity: "hour", agentId: "agent-1", projectId: "project-1",
     });
   });
 
@@ -244,7 +248,8 @@ describe("cost routes", () => {
       .get("/api/orgs/organization-1/costs/finance-summary")
       .query({ from: "2026-02-01T00:00:00.000Z", to: "2026-02-28T23:59:59.999Z" });
     expect(res.status).toBe(200);
-    expect(mockFinanceService.summary).toHaveBeenCalled();
+    expect(costRead).toHaveBeenCalledWith(expect.anything(), "organization-1", expect.objectContaining({ operation: "finance-summary" }));
+    expect(mockFinanceService.summary).not.toHaveBeenCalled();
   });
 
   it("returns 400 for invalid finance event list limits", async () => {
@@ -262,7 +267,29 @@ describe("cost routes", () => {
       .get("/api/orgs/organization-1/costs/finance-events")
       .query({ limit: "25" });
     expect(res.status).toBe(200);
-    expect(mockFinanceService.list).toHaveBeenCalledWith("organization-1", undefined, 25);
+    expect(costRead).toHaveBeenCalledWith(expect.anything(), "organization-1", { operation: "finance-events", fromMs: undefined, toMs: undefined, limit: 25, legacyDateTimezone: "UTC" });
+  });
+
+  it.each(["summary", "by-agent", "trend", "by-agent-model", "by-provider", "by-biller", "by-project", "window-spend", "finance-summary", "finance-by-biller", "finance-by-kind", "finance-events"])("forwards %s to Rust and preserves its response bytes", async (operation) => {
+    costRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from('{"native":true}') });
+    const app = await createApp();
+    const response = await request(app).get(`/api/orgs/organization-1/costs/${operation}`);
+    expect(response.status).toBe(200);
+    expect(response.text).toBe('{"native":true}');
+    expect(costRead).toHaveBeenCalledWith(expect.anything(), "organization-1", expect.objectContaining({ operation }));
+    for (const name of ["summary", "trend", "byAgent", "byAgentModel", "byProvider", "byBiller", "windowSpend", "byProject"] as const) expect(mockCostService[name]).not.toHaveBeenCalled();
+    for (const name of ["summary", "byBiller", "byKind", "list"] as const) expect(mockFinanceService[name]).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on native errors and authenticates before the bridge", async () => {
+    costRead.mockRejectedValue(new Error("unavailable"));
+    const app = await createApp();
+    expect((await request(app).get("/api/orgs/organization-1/costs/summary")).status).toBe(503);
+    expect(mockCostService.summary).not.toHaveBeenCalled();
+    costRead.mockClear();
+    const foreign = await createAppWithActor({ type: "agent", agentId: "foreign", orgId: "organization-2" });
+    expect((await request(foreign).get("/api/orgs/organization-1/costs/summary")).status).toBe(403);
+    expect(costRead).not.toHaveBeenCalled();
   });
 
   it("rejects organization budget updates for board users outside the organization", async () => {
