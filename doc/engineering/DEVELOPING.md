@@ -557,3 +557,48 @@ Use these focused docs for detailed operations and full command references:
 - Desktop runtime/packaging behavior: `doc/engineering/DESKTOP.md`
 - CLI command reference: `doc/engineering/CLI.md`
 - Database model and migrations: `doc/engineering/DATABASE.md`
+
+### Messenger persistent-state authority
+
+Messenger Saved View list, detail, keep, update, delete and reorder requests,
+custom-group create/update/delete/separate and entry-removal requests, and
+thread pin-state requests always execute their domain SQL in the Rust foundation.
+Node retains board authentication, organization authorization and public schema
+parsing. An unavailable foundation returns an error; these routes never fall back
+to the old Node services.
+
+The signed private `messenger.state` capability derives the owner from the
+verified user actor and accepts a closed operation enum. Placement writes reuse
+the existing owner advisory lock, then sorted custom-group locks, so legacy
+thread deletion, group aggregation cleanup, merge and assignment continue to
+coordinate with native writers. UUID lock components are canonicalized in both
+writers. Thread pinning does not acquire that placement lock: Chat deletion
+locks its parent/cascade rows before cleanup takes placement locks. Native Chat
+pinning instead takes an organization-scoped parent key-share lock before its
+user-state upsert, so delete-first returns 404 and pin-first commits before the
+subsequent delete cascade. Keep receipts retain the existing fingerprint and
+replay semantics.
+Activities and live-event intents commit together in the existing organization
+mutation outbox. Its existing Node publisher is a transport adapter, including
+persisted retry leases and event dedupe keys; it does not decide Messenger state.
+
+Group listing, grouping assignment, group/entry reorder, model-generated names,
+thread aggregation and thread-read advancement remain Node-owned. The retired
+ungrouped Saved View create endpoint remains its existing 409 response and is
+not a migrated endpoint.
+
+The real HTTP/database differential suite is
+`server/src/__tests__/messenger-state-rust.integration.test.ts`. Build an isolated
+foundation executable first and set `RUDDER_SERVER_FOUNDATION_PATH` to it. Set
+`RUDDER_HOME` to a disposable temporary directory before loading the test process.
+The suite uses a newly created PostgreSQL database, real public actor middleware,
+the signed native bridge, exact scoped persistence/audit comparisons, concurrent
+placement locks, rollback faults and an actual missing-native-binary check.
+
+The pin-state path also closes an old isolation defect: a foreign-organization
+Chat is rejected before hydration. The old Node lookup could create a user-state
+row in that foreign organization before returning 404. Native pinning preserves
+the 404 response and performs no foreign-organization write.
+
+See [the Messenger native-state acceptance packet](MESSENGER-STATE-NATIVE-ACCEPTANCE.md)
+for the exact route inventory, test boundary and remaining delivery gates.

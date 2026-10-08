@@ -98,7 +98,7 @@ export function registerApiRoutes(
   api.use(onboardingRoutes(db, rustFoundationBridge));
   api.use(productAnalyticsRoutes(db));
   api.use(issueRoutes(db, opts.storageService));
-  api.use(messengerRoutes(db));
+  api.use(messengerRoutes(db, rustFoundationBridge));
   api.use(chatRoutes(
     db,
     opts.storageService,

@@ -17,9 +17,10 @@ import {
 } from "@rudderhq/shared";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
-import { messengerSavedViewsService } from "../services/messenger-saved-views.js";
+import { sendMessengerState } from "../services/messenger-state-bridge.js";
 import { messengerService } from "../services/messenger.js";
 import { productIntelligenceService } from "../services/product-intelligence.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import {
   buildMessengerGroupTitlePrompt,
   runtimeResultText,
@@ -49,10 +50,9 @@ function parseThreadKey(threadKey: string) {
   return null;
 }
 
-export function messengerRoutes(db: Db) {
+export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = messengerService(db);
-  const savedViews = messengerSavedViewsService(db);
   const productIntelligence = productIntelligenceService(db);
 
   async function generateCustomGroupTitle(orgId: string, titles: string[]) {
@@ -70,9 +70,9 @@ export function messengerRoutes(db: Db) {
   router.get("/orgs/:orgId/messenger/saved-views", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const userId = boardUserId(req);
+    boardUserId(req);
     const query = listMessengerSavedViewsQuerySchema.parse(req.query);
-    res.json(await savedViews.list(orgId, userId, query));
+    await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "savedViewList", query });
   });
 
   router.post(
@@ -81,8 +81,8 @@ export function messengerRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
-      const userId = boardUserId(req);
-      res.status(201).json(await savedViews.keep(orgId, userId, req.body));
+      boardUserId(req);
+      await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "savedViewKeep", input: req.body });
     },
   );
 
@@ -101,17 +101,17 @@ export function messengerRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
-      const userId = boardUserId(req);
-      res.json(await savedViews.reorder(orgId, userId, req.body.ids));
+      boardUserId(req);
+      await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "savedViewReorder", ids: req.body.ids });
     },
   );
 
   router.get("/orgs/:orgId/messenger/saved-views/:id", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const userId = boardUserId(req);
+    boardUserId(req);
     const id = messengerSavedViewIdSchema.parse(req.params.id);
-    res.json(await savedViews.get(orgId, userId, id));
+    await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "savedViewGet", id });
   });
 
   router.patch(
@@ -120,18 +120,18 @@ export function messengerRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
-      const userId = boardUserId(req);
+      boardUserId(req);
       const id = messengerSavedViewIdSchema.parse(req.params.id);
-      res.json(await savedViews.update(orgId, userId, id, req.body));
+      await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "savedViewUpdate", id, patch: req.body });
     },
   );
 
   router.delete("/orgs/:orgId/messenger/saved-views/:id", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const userId = boardUserId(req);
+    boardUserId(req);
     const id = messengerSavedViewIdSchema.parse(req.params.id);
-    res.json(await savedViews.remove(orgId, userId, id));
+    await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "savedViewDelete", id });
   });
 
   router.get("/orgs/:orgId/messenger/groups", async (req, res) => {
@@ -147,8 +147,8 @@ export function messengerRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
-      const userId = boardUserId(req);
-      res.status(201).json(await svc.createCustomGroup(orgId, userId, req.body.name, req.body.icon ?? null));
+      boardUserId(req);
+      await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "groupCreate", name: req.body.name, icon: req.body.icon ?? null });
     },
   );
 
@@ -191,8 +191,8 @@ export function messengerRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
-      const userId = boardUserId(req);
-      res.json(await svc.updateCustomGroup(orgId, userId, req.params.groupId as string, req.body));
+      boardUserId(req);
+      await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "groupUpdate", groupId: req.params.groupId as string, patch: req.body });
     },
   );
 
@@ -213,15 +213,15 @@ export function messengerRoutes(db: Db) {
   router.post("/orgs/:orgId/messenger/groups/:groupId/separate", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const userId = boardUserId(req);
-    res.json(await svc.separateCustomGroup(orgId, userId, req.params.groupId as string));
+    boardUserId(req);
+    await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "groupSeparate", groupId: req.params.groupId as string });
   });
 
   router.delete("/orgs/:orgId/messenger/groups/:groupId", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const userId = boardUserId(req);
-    res.json(await svc.deleteCustomGroup(orgId, userId, req.params.groupId as string));
+    boardUserId(req);
+    await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "groupDelete", groupId: req.params.groupId as string });
   });
 
   router.post(
@@ -249,8 +249,8 @@ export function messengerRoutes(db: Db) {
   router.delete("/orgs/:orgId/messenger/groups/entries/:threadKey", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const userId = boardUserId(req);
-    res.json(await svc.removeThreadFromCustomGroups(orgId, userId, req.params.threadKey as string));
+    boardUserId(req);
+    await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "groupEntryRemove", itemKey: req.params.threadKey as string });
   });
 
   router.get("/orgs/:orgId/messenger/threads", async (req, res) => {
@@ -342,7 +342,7 @@ export function messengerRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
-      const userId = boardUserId(req);
+      boardUserId(req);
       const threadKey = req.params.threadKey as string;
       const parsed = parseThreadKey(threadKey);
       if (!parsed) {
@@ -350,17 +350,9 @@ export function messengerRoutes(db: Db) {
         return;
       }
 
-      if (typeof req.body.pinned === "boolean") {
-        const state = await svc.setThreadPinned(orgId, userId, threadKey, req.body.pinned);
-        if (!state) {
-          res.status(404).json({ error: "Messenger thread not found" });
-          return;
-        }
-        res.json(state);
-        return;
-      }
-
-      res.json({ threadKey });
+      await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, {
+        operation: "threadUserState", threadKey, pinned: req.body.pinned,
+      });
     },
   );
 

@@ -45,6 +45,9 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
+mod messenger_state;
+pub use messenger_state::MESSENGER_STATE_ACTION;
+
 mod live_run_reads;
 pub use live_run_reads::LIVE_RUN_READ_ACTION;
 
@@ -85,6 +88,7 @@ pub const PROJECT_CREATE_ACTION: &str = "project.create";
 pub const ORGANIZATION_RESOURCE_ACTION: &str = "organization.resource.mutate";
 
 const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
+    "messenger_state",
     "organization_branding",
     "project_goal_set_replacement",
     "project_delete",
@@ -2729,6 +2733,10 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .route(
+                    "/internal/orgs/{org_id}/messenger-state",
+                    web::post().to(messenger_state::messenger_state),
+                )
                 .route(
                     "/internal/orgs/{org_id}/live-run-reads",
                     web::post().to(live_run_reads::live_run_reads),

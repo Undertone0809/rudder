@@ -2030,6 +2030,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(
         startup["privateMutationAuthorities"],
         serde_json::json!([
+            "messenger_state",
             "organization_branding",
             "project_goal_set_replacement",
             "project_delete",
@@ -2070,6 +2071,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("organization_member_directory"));
     assert!(capabilities.contains("project_read"));
     assert!(capabilities.contains("live_run_read"));
+    assert!(capabilities.contains("messenger_state"));
 
     let unconfigured_directory = get_with_retry(
         bound_addr,
