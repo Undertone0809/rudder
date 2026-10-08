@@ -56,7 +56,9 @@ pub mod public_ingress_proxy;
 pub mod public_ingress_websocket;
 pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
+mod workspace_backup_reads;
 pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
+pub use workspace_backup_reads::WORKSPACE_BACKUP_READ_ACTION;
 
 pub use project_reads::PROJECT_READ_ACTION;
 
@@ -2266,7 +2268,12 @@ impl AppState {
                     "workspace_backup_artifact_invalid",
                 );
             }
-            Ok(Err(BackupArtifactError::Invalid)) => {
+            Ok(Err(
+                BackupArtifactError::Invalid
+                | BackupArtifactError::ArchiveChecksumMismatch
+                | BackupArtifactError::OrganizationMismatch
+                | BackupArtifactError::FileChecksumMismatch,
+            )) => {
                 return self.json_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "workspace_backup_artifact_invalid",
@@ -2349,7 +2356,12 @@ impl AppState {
             Ok(Err(BackupArtifactError::FileNotFound)) => {
                 return self.json_error(StatusCode::NOT_FOUND, "workspace_backup_file_not_found");
             }
-            Ok(Err(BackupArtifactError::Invalid)) => {
+            Ok(Err(
+                BackupArtifactError::Invalid
+                | BackupArtifactError::ArchiveChecksumMismatch
+                | BackupArtifactError::OrganizationMismatch
+                | BackupArtifactError::FileChecksumMismatch,
+            )) => {
                 return self.json_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "workspace_backup_artifact_invalid",
@@ -2431,7 +2443,13 @@ impl AppState {
                 return self
                     .json_error(StatusCode::NOT_FOUND, "workspace_backup_artifact_not_found");
             }
-            Ok(Err(BackupArtifactError::FileNotFound | BackupArtifactError::Invalid)) => {
+            Ok(Err(
+                BackupArtifactError::FileNotFound
+                | BackupArtifactError::Invalid
+                | BackupArtifactError::ArchiveChecksumMismatch
+                | BackupArtifactError::OrganizationMismatch
+                | BackupArtifactError::FileChecksumMismatch,
+            )) => {
                 return self.json_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "workspace_backup_artifact_invalid",
@@ -2736,6 +2754,10 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/project-reads",
                     web::post().to(project_reads::project_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/workspace/backup-reads",
+                    web::post().to(workspace_backup_reads::workspace_backup_reads),
                 )
                 .route(
                     "/internal/orgs/{org_id}/workspace/backups",

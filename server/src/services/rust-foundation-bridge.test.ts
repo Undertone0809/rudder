@@ -76,7 +76,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
+    if (req.url?.includes("/project-reads") || req.url?.includes("/workspace/backup-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -124,7 +124,7 @@ if (mode === "invalid") {
           return;
         }
         res.setHeader("content-type", "application/json");
-        if (req.method === "POST" && !req.url?.includes("/project-reads")) res.statusCode = 201;
+        if (req.method === "POST" && !req.url?.includes("/project-reads") && !req.url?.includes("/workspace/backup-reads")) res.statusCode = 201;
         const finish = () => res.end(JSON.stringify({ status: "accepted" }));
         if (mode === "delayed") setTimeout(finish, 75);
         else finish();
@@ -434,10 +434,12 @@ describe("rust foundation bridge lifecycle", () => {
 
   it("passes only the foundation startup environment to the child", async () => {
     const previousEnv = {
+      TZ: process.env.TZ,
       AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
       DATABASE_URL: process.env.DATABASE_URL,
       RUDDER_PRIVATE_TEST_SECRET: process.env.RUDDER_PRIVATE_TEST_SECRET,
     };
+    process.env.TZ = "Asia/Shanghai";
     process.env.AWS_SECRET_ACCESS_KEY = "should-not-reach-rust";
     process.env.DATABASE_URL = "postgres://unrelated-parent-secret";
     process.env.RUDDER_PRIVATE_TEST_SECRET = "should-not-reach-rust-either";
@@ -449,6 +451,7 @@ describe("rust foundation bridge lifecycle", () => {
       await expect(bridge.start()).resolves.toBeUndefined();
       const childEnv = await fixture.readEnv();
       const requiredEnv = {
+        TZ: "Asia/Shanghai",
         RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: "bridge-test-secret",
         RUDDER_NATIVE_DATABASE_REQUIRED: "true",
         RUDDER_NATIVE_DATABASE_URL: "postgres://bridge-test",
@@ -866,6 +869,22 @@ describe("rust foundation bridge lifecycle", () => {
       action: "project.read",
       body: Buffer.from(JSON.stringify(input)),
     }, "bridge-test-secret");
+  });
+
+  it.each(["files", "file", "download"] as const)("signs default backup %s reads with mutation pilots off", async (operation) => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "off" });
+    const actor = { type: "board", source: "local_implicit", userId: "user-1" } as const;
+    const input = { backupId: "backup-1", operation, path: "notes/中文.md" };
+    const response = await bridge.workspaceBackupRead!({ actor } as unknown as Request, "org-1", input);
+    expect(response.status).toBe(200);
+    await response.arrayBuffer();
+    const captured = await fixture.readRequest();
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("/internal/orgs/org-1/workspace/backup-reads");
+    expect(JSON.parse(captured.body)).toEqual(input);
+    expectEnvelopeSignedWith(captured, { actor, organizationId: "org-1", method: "POST", path: captured.url,
+      action: "organization.workspace.backup.read", body: Buffer.from(JSON.stringify(input)) }, "bridge-test-secret");
   });
 
   it("binds branding requests to the private Actix contract", async () => {

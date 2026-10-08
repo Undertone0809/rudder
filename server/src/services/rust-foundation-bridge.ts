@@ -67,6 +67,12 @@ export interface RustFoundationBridge {
   ): Promise<RustFoundationResponse>;
   memberDirectory(req: Request, orgId: string): Promise<RustFoundationResponse>;
   workspaceBackupList(req: Request, orgId: string): Promise<RustFoundationResponse>;
+  workspaceBackupRead?(
+    req: Request,
+    orgId: string,
+    input: { backupId: string; operation: "files" | "file" | "download"; path: string },
+    signal?: AbortSignal,
+  ): Promise<globalThis.Response>;
   organizationBranding(
     req: Request,
     orgId: string,
@@ -422,6 +428,9 @@ function createFoundationChildEnvironment(input: {
   publicIngress?: RustPublicIngressOptions;
 }): Record<string, string> {
   return {
+    // ZIP DOS timestamps follow the Node host's local Date semantics. Keep
+    // this explicit non-secret locale setting without inheriting other env.
+    ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
     RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
     RUDDER_NATIVE_DATABASE_URL: input.databaseUrl,
     RUDDER_NATIVE_DATABASE_REQUIRED: "true",
@@ -924,6 +933,44 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         contentType: response.headers.get("content-type") ?? "application/json",
         body: Buffer.from(await response.arrayBuffer()),
       } satisfies RustFoundationResponse;
+    },
+    async workspaceBackupRead(req, orgId, input, signal) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/workspace/backup-reads`;
+      const body = Buffer.from(JSON.stringify(input), "utf8");
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({
+        actor: req.actor,
+        organizationId: orgId,
+        method: "POST",
+        path: requestPath,
+        action: "organization.workspace.backup.read",
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+      });
+      const headerDeadline = new AbortController();
+      const deadlineTimer = setTimeout(() => headerDeadline.abort(), workspaceBackupListTimeoutMs);
+      try {
+        // Keep the response streaming. A large archive must not be buffered in
+        // Node, and disconnects must cancel its native producer.
+        return await fetch(`${baseUrl}${requestPath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+          },
+          body: body as unknown as BodyInit,
+          signal: signal ? AbortSignal.any([signal, headerDeadline.signal]) : headerDeadline.signal,
+        });
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust workspace backup read request failed", { cause: error });
+      } finally {
+        // Bound header preparation, not the client's archive transfer speed.
+        clearTimeout(deadlineTimer);
+      }
     },
     async workspaceBackupList(req, orgId) {
       await ensureStarted();

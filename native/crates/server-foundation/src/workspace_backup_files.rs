@@ -9,13 +9,16 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet},
     fs::File,
-    io::{Cursor, Read, Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom},
     path::Path,
     sync::atomic::{AtomicBool, Ordering as AtomicOrdering},
 };
 use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
 const MAX_ARCHIVE_BYTES: u64 = 116 * 1024 * 1024;
+// V1 stores the writer's 100 MiB file budget as base64 JSON. The V2 ZIP
+// envelope limit must not reject valid legacy payloads at that documented cap.
+const MAX_V1_ARTIFACT_BYTES: u64 = (100 * 1024 * 1024_u64).div_ceil(3) * 4 + 32 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_TOTAL_FILE_BYTES: u64 = 100 * 1024 * 1024;
@@ -149,6 +152,9 @@ pub(crate) struct FileReadReceipt {
 pub(crate) enum ArtifactError {
     NotFound,
     FileNotFound,
+    ArchiveChecksumMismatch,
+    OrganizationMismatch,
+    FileChecksumMismatch,
     Invalid,
     Cancelled,
 }
@@ -180,6 +186,14 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, ArtifactError> {
 }
 
 fn read_bounded_with_cancel(path: &Path, cancelled: &AtomicBool) -> Result<Vec<u8>, ArtifactError> {
+    let limit = if path
+        .extension()
+        .is_some_and(|value| value.eq_ignore_ascii_case("zip"))
+    {
+        MAX_ARCHIVE_BYTES
+    } else {
+        MAX_V1_ARTIFACT_BYTES
+    };
     let metadata = path.metadata().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ArtifactError::NotFound
@@ -187,7 +201,7 @@ fn read_bounded_with_cancel(path: &Path, cancelled: &AtomicBool) -> Result<Vec<u
             ArtifactError::Invalid
         }
     })?;
-    if !metadata.is_file() || metadata.len() > MAX_ARCHIVE_BYTES {
+    if !metadata.is_file() || metadata.len() > limit {
         return Err(ArtifactError::Invalid);
     }
     let capacity = usize::try_from(metadata.len()).map_err(|_| ArtifactError::Invalid)?;
@@ -202,7 +216,7 @@ fn read_bounded_with_cancel(path: &Path, cancelled: &AtomicBool) -> Result<Vec<u
         if read == 0 {
             break;
         }
-        if bytes.len().saturating_add(read) > MAX_ARCHIVE_BYTES as usize {
+        if bytes.len().saturating_add(read) > limit as usize {
             return Err(ArtifactError::Invalid);
         }
         bytes.extend_from_slice(&buffer[..read]);
@@ -215,7 +229,7 @@ fn read_bounded_with_cancel(path: &Path, cancelled: &AtomicBool) -> Result<Vec<u
 
 fn verify_sha256(bytes: &[u8], expected: Option<&str>) -> Result<(), ArtifactError> {
     if expected.is_some_and(|expected| format!("{:x}", Sha256::digest(bytes)) != expected) {
-        return Err(ArtifactError::Invalid);
+        return Err(ArtifactError::ArchiveChecksumMismatch);
     }
     Ok(())
 }
@@ -248,10 +262,11 @@ fn verify_sha256_file(path: &Path, expected: Option<&str>) -> Result<(), Artifac
         }
         hash.update(&buffer[..read]);
     }
-    if total != metadata.len()
-        || expected.is_some_and(|expected| format!("{:x}", hash.finalize()) != expected)
-    {
+    if total != metadata.len() {
         return Err(ArtifactError::Invalid);
+    }
+    if expected.is_some_and(|expected| format!("{:x}", hash.finalize()) != expected) {
+        return Err(ArtifactError::ArchiveChecksumMismatch);
     }
     Ok(())
 }
@@ -307,9 +322,11 @@ fn validate_manifest(
     archive_entries: &[ArchiveEntryInspection],
     org_id: &str,
 ) -> Result<Vec<ArtifactEntry>, ArtifactError> {
+    if manifest.identity.org_id != org_id {
+        return Err(ArtifactError::OrganizationMismatch);
+    }
     if manifest.version != 2
         || manifest.policy_version != V2_POLICY_VERSION
-        || manifest.identity.org_id != org_id
         || [
             &manifest.identity.org_id,
             &manifest.identity.instance_id,
@@ -406,15 +423,37 @@ fn validate_manifest(
 
 fn validate_v1_entries(entries: &[V1ArtifactEntry]) -> Result<(), ArtifactError> {
     let mut paths = HashSet::new();
-    let mut folded_paths = HashSet::new();
     let mut total_file_bytes = 0u64;
+    let mut decoded_file_bytes = 0u64;
     for entry in entries {
         validate_entry_path(&entry.path)?;
         if entry.kind != "directory" && entry.kind != "file" {
             return Err(ArtifactError::Invalid);
         }
-        if !paths.insert(entry.path.clone()) || !folded_paths.insert(fold_case(&entry.path)) {
+        // V1 writers on case-sensitive systems legitimately recorded A/a.
+        // Reads and ZIP export preserve both names without extracting either.
+        // V2's stricter manifest case-collision invariant remains unchanged.
+        if !paths.insert(entry.path.clone()) {
             return Err(ArtifactError::Invalid);
+        }
+        if entry.kind == "file" {
+            let encoded = entry.data_base64.as_deref().unwrap_or("");
+            let padding = encoded
+                .as_bytes()
+                .iter()
+                .rev()
+                .take_while(|byte| **byte == b'=')
+                .count()
+                .min(2);
+            let decoded = ((encoded.len() as u64 / 4) * 3)
+                .checked_sub(padding as u64)
+                .ok_or(ArtifactError::Invalid)?;
+            decoded_file_bytes = decoded_file_bytes
+                .checked_add(decoded)
+                .ok_or(ArtifactError::Invalid)?;
+            if decoded > MAX_FILE_BYTES || decoded_file_bytes > MAX_TOTAL_FILE_BYTES {
+                return Err(ArtifactError::Invalid);
+            }
         }
         if let Some(byte_size) = entry.byte_size {
             if byte_size > MAX_FILE_BYTES
@@ -499,66 +538,104 @@ fn zip_datetime_at_offset(value: OffsetDateTime, offset: UtcOffset) -> zip::Date
 }
 
 fn legacy_zip(artifact: &V1Artifact, cancelled: &AtomicBool) -> Result<Vec<u8>, ArtifactError> {
-    let cursor = Cursor::new(Vec::new());
-    let mut writer = zip::ZipWriter::new(cursor);
+    // This is a wire-compatibility serializer, not a general ZIP writer. The
+    // legacy Node API fixes DOS creator/version, UTF-8 flags and external attrs;
+    // ZipWriter defaults change the archive bytes and published SHA-256.
     let created_at = OffsetDateTime::parse(&artifact.created_at, &Rfc3339)
         .map_err(|_| ArtifactError::Invalid)?;
-    let root_options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored)
-        .last_modified_time(zip_datetime(created_at));
     let root = legacy_download_root(artifact);
-    writer
-        .add_directory(format!("{root}/"), root_options)
-        .map_err(|_| ArtifactError::Invalid)?;
-
+    let mut body = Vec::new();
+    let mut central = Vec::new();
     let mut entries: Vec<_> = artifact.entries.iter().collect();
     entries.sort_by(|left, right| compare_js_strings(&left.path, &right.path));
+    let count = u16::try_from(entries.len() + 1).map_err(|_| ArtifactError::Invalid)?;
+    let mut append = |name: &str,
+                      data: &[u8],
+                      directory: bool,
+                      modified: OffsetDateTime|
+     -> Result<(), ArtifactError> {
+        let offset = u32::try_from(body.len()).map_err(|_| ArtifactError::Invalid)?;
+        let size = u32::try_from(data.len()).map_err(|_| ArtifactError::Invalid)?;
+        let name = name.as_bytes();
+        let name_len = u16::try_from(name.len()).map_err(|_| ArtifactError::Invalid)?;
+        let checksum = crc32fast::hash(data);
+        let date = zip_datetime(modified);
+        let dos_time = ((date.hour() as u16) << 11)
+            | ((date.minute() as u16) << 5)
+            | ((date.second() as u16) / 2);
+        let dos_date =
+            ((date.year() - 1980) << 9) | ((date.month() as u16) << 5) | (date.day() as u16);
+        body.extend_from_slice(&0x04034b50_u32.to_le_bytes());
+        for value in [20_u16, 0x0800, 0, dos_time, dos_date] {
+            body.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [checksum, size, size] {
+            body.extend_from_slice(&value.to_le_bytes());
+        }
+        body.extend_from_slice(&name_len.to_le_bytes());
+        body.extend_from_slice(&0_u16.to_le_bytes());
+        body.extend_from_slice(name);
+        body.extend_from_slice(data);
+        central.extend_from_slice(&0x02014b50_u32.to_le_bytes());
+        for value in [20_u16, 20, 0x0800, 0, dos_time, dos_date] {
+            central.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [checksum, size, size] {
+            central.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [name_len, 0, 0, 0, 0] {
+            central.extend_from_slice(&value.to_le_bytes());
+        }
+        central.extend_from_slice(&(if directory { 0x10_u32 } else { 0 }).to_le_bytes());
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name);
+        Ok(())
+    };
+    append(&format!("{root}/"), &[], true, created_at)?;
+    let mut total_file_bytes = 0_u64;
     for entry in entries {
         if cancelled.load(AtomicOrdering::Relaxed) {
             return Err(ArtifactError::Cancelled);
         }
-        let archive_path = format!(
-            "{root}/{}{}",
-            entry.path,
-            if entry.kind == "directory" { "/" } else { "" }
-        );
-        let modified_at = entry
+        let directory = entry.kind == "directory";
+        let name = format!("{root}/{}{}", entry.path, if directory { "/" } else { "" });
+        // JavaScript Date truncates fractional milliseconds toward zero.
+        let modified = entry
             .mtime_ms
             .and_then(|value| {
-                OffsetDateTime::from_unix_timestamp_nanos((value * 1_000_000.0) as i128).ok()
+                OffsetDateTime::from_unix_timestamp_nanos((value.trunc() as i128) * 1_000_000).ok()
             })
             .unwrap_or(created_at);
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored)
-            .last_modified_time(zip_datetime(modified_at));
-        if entry.kind == "directory" {
-            writer
-                .add_directory(archive_path, options)
-                .map_err(|_| ArtifactError::Invalid)?;
-            continue;
-        }
-        let data_base64 = entry.data_base64.as_deref().unwrap_or("");
-        let max_base64_length = (MAX_FILE_BYTES as usize).div_ceil(3) * 4;
-        if data_base64.len() > max_base64_length {
+        let data = if directory {
+            Vec::new()
+        } else {
+            let encoded = entry.data_base64.as_deref().unwrap_or("");
+            if encoded.len() > (MAX_FILE_BYTES as usize).div_ceil(3) * 4 {
+                return Err(ArtifactError::Invalid);
+            }
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|_| ArtifactError::Invalid)?
+        };
+        total_file_bytes = total_file_bytes
+            .checked_add(data.len() as u64)
+            .ok_or(ArtifactError::Invalid)?;
+        if data.len() as u64 > MAX_FILE_BYTES || total_file_bytes > MAX_TOTAL_FILE_BYTES {
             return Err(ArtifactError::Invalid);
         }
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(data_base64)
-            .map_err(|_| ArtifactError::Invalid)?;
-        if data.len() as u64 > MAX_FILE_BYTES {
-            return Err(ArtifactError::Invalid);
-        }
-        writer
-            .start_file(archive_path, options)
-            .map_err(|_| ArtifactError::Invalid)?;
-        writer
-            .write_all(&data)
-            .map_err(|_| ArtifactError::Invalid)?;
+        append(&name, &data, directory, modified)?;
     }
-    writer
-        .finish()
-        .map(|cursor| cursor.into_inner())
-        .map_err(|_| ArtifactError::Invalid)
+    let central_offset = u32::try_from(body.len()).map_err(|_| ArtifactError::Invalid)?;
+    let central_size = u32::try_from(central.len()).map_err(|_| ArtifactError::Invalid)?;
+    body.extend_from_slice(&central);
+    body.extend_from_slice(&0x06054b50_u32.to_le_bytes());
+    for value in [0_u16, 0, count, count] {
+        body.extend_from_slice(&value.to_le_bytes());
+    }
+    body.extend_from_slice(&central_size.to_le_bytes());
+    body.extend_from_slice(&central_offset.to_le_bytes());
+    body.extend_from_slice(&0_u16.to_le_bytes());
+    Ok(body)
 }
 
 pub(crate) fn prepare_download(
@@ -596,7 +673,7 @@ pub(crate) fn prepare_download(
                 hash.update(&buffer[..read]);
             }
             if format!("{:x}", hash.finalize()) != expected {
-                return Err(ArtifactError::Invalid);
+                return Err(ArtifactError::ArchiveChecksumMismatch);
             }
             file.seek(SeekFrom::Start(0))
                 .map_err(|_| ArtifactError::Invalid)?;
@@ -710,17 +787,20 @@ pub(crate) fn read_file(
             .entries
             .iter()
             .find(|entry| entry.path == normalized_path && entry.kind == "file")
-            .cloned()
-            .ok_or(ArtifactError::FileNotFound)?;
+            .cloned();
+        // Authenticate the complete archive identity before disclosing whether
+        // a requested filename exists in it.
         validate_manifest(manifest, &inspection.entries, org_id)?;
+        let target = target.ok_or(ArtifactError::FileNotFound)?;
         let archive_path = format!("{root}/{normalized_path}");
         let (bytes, extracted) =
             read_archive_file(path, &archive_path, MAX_ARCHIVE_BYTES, MAX_FILE_BYTES)
                 .map_err(|_| ArtifactError::Invalid)?;
-        if extracted.byte_size != target.byte_size
-            || target.sha256.as_deref() != Some(extracted.sha256.as_str())
-        {
+        if extracted.byte_size != target.byte_size {
             return Err(ArtifactError::Invalid);
+        }
+        if target.sha256.as_deref() != Some(extracted.sha256.as_str()) {
+            return Err(ArtifactError::FileChecksumMismatch);
         }
         return Ok(bytes);
     }
@@ -751,12 +831,15 @@ pub(crate) fn read_file(
         || target
             .byte_size
             .is_some_and(|size| size != data.len() as u64)
-        || target
-            .sha256
-            .as_deref()
-            .is_some_and(|sha256| format!("{:x}", Sha256::digest(&data)) != sha256)
     {
         return Err(ArtifactError::Invalid);
+    }
+    if target
+        .sha256
+        .as_deref()
+        .is_some_and(|sha256| format!("{:x}", Sha256::digest(&data)) != sha256)
+    {
+        return Err(ArtifactError::FileChecksumMismatch);
     }
     Ok(data)
 }
