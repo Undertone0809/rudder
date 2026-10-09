@@ -1,197 +1,76 @@
 import type { Db } from "@rudderhq/db";
 import {
-  calendarEventListQuerySchema,
-  createCalendarEventSchema,
-  createCalendarSourceSchema,
   googleCalendarSyncSchema,
-  updateCalendarEventSchema,
-  updateCalendarSourceSchema,
   updateGoogleCalendarOAuthConfigSchema,
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
 import { validate } from "../middleware/validate.js";
 import { logActivity } from "../services/activity-log.js";
-import { calendarService, type CalendarEventFilters } from "../services/calendar.js";
+import { calendarService } from "../services/calendar.js";
+import { calendarNativeRequest, type CalendarNativeBridge } from "../services/calendar-native-bridge.js";
+import { RustFoundationBridgeError } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
-
-function csv(value: string | undefined) {
-  return value
-    ?.split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
 
 function redirectUri(req: Request) {
   return `${req.protocol}://${req.get("host")}/api/orgs/${encodeURIComponent(req.params.orgId as string)}/calendar/google/callback`;
 }
 
-export function calendarRoutes(db: Db) {
+export function calendarRoutes(db: Db, native?: CalendarNativeBridge) {
   const router = Router();
   const svc = calendarService(db);
 
+  async function nativeRequest(req: Request, res: import("express").Response, body: Record<string, unknown>) {
+    assertBoard(req);
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    if (!native?.calendar) {
+      res.status(503).json({ error: "Rust Calendar is unavailable", code: "rust_foundation_calendar_unavailable" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    try {
+      const result = await native.calendar(req.actor, orgId, calendarNativeRequest(body, actor.runId ?? null));
+      res.status(result.status).setHeader("content-type", result.contentType).send(result.body);
+    } catch (error) {
+      if (!(error instanceof RustFoundationBridgeError)) throw error;
+      res.status(503).json({ error: "Rust Calendar is unavailable", code: "rust_foundation_calendar_unavailable" });
+    }
+  }
+
   router.get("/orgs/:orgId/calendar/sources", async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    res.json(await svc.listSources(orgId));
+    await nativeRequest(req, res, { operation: "source.list" });
   });
 
-  router.post("/orgs/:orgId/calendar/sources", validate(createCalendarSourceSchema), async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const actor = getActorInfo(req);
-    const source = await svc.createSource(orgId, req.body, { userId: actor.actorId });
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "calendar.source_created",
-      entityType: "calendar_source",
-      entityId: source.id,
-      details: { name: source.name, type: source.type, visibilityDefault: source.visibilityDefault },
-    });
-    res.status(201).json(source);
+  router.post("/orgs/:orgId/calendar/sources", async (req, res) => {
+    await nativeRequest(req, res, { operation: "source.create", input: req.body });
   });
 
-  router.patch("/orgs/:orgId/calendar/sources/:sourceId", validate(updateCalendarSourceSchema), async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const actor = getActorInfo(req);
-    const source = await svc.updateSource(orgId, req.params.sourceId as string, req.body, { userId: actor.actorId });
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "calendar.source_updated",
-      entityType: "calendar_source",
-      entityId: source.id,
-      details: { name: source.name, status: source.status, visibilityDefault: source.visibilityDefault },
-    });
-    res.json(source);
+  router.patch("/orgs/:orgId/calendar/sources/:sourceId", async (req, res) => {
+    await nativeRequest(req, res, { operation: "source.update", id: req.params.sourceId as string, input: req.body });
   });
 
   router.delete("/orgs/:orgId/calendar/sources/:sourceId", async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const actor = getActorInfo(req);
-    await svc.deleteSource(orgId, req.params.sourceId as string);
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "calendar.source_deleted",
-      entityType: "calendar_source",
-      entityId: req.params.sourceId as string,
-    });
-    res.json({ ok: true });
+    await nativeRequest(req, res, { operation: "source.delete", id: req.params.sourceId as string });
   });
 
   router.get("/orgs/:orgId/calendar/events", async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const parsed = calendarEventListQuerySchema.parse(req.query);
-    const filters: CalendarEventFilters = {
-      start: parsed.start,
-      end: parsed.end,
-      agentIds: csv(parsed.agentIds),
-      sourceIds: csv(parsed.sourceIds),
-      eventKinds: csv(parsed.eventKinds),
-      statuses: csv(parsed.statuses),
-    };
-    res.json({ events: await svc.listEvents(orgId, filters) });
+    await nativeRequest(req, res, { operation: "event.list", filters: req.query as Record<string, unknown> });
   });
 
-  router.post("/orgs/:orgId/calendar/events", validate(createCalendarEventSchema), async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const actor = getActorInfo(req);
-    const event = await svc.createEvent(orgId, req.body, { userId: actor.actorId });
-    if (!event) {
-      res.status(500).json({ error: "Calendar event was not created" });
-      return;
-    }
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "calendar.event_created",
-      entityType: "calendar_event",
-      entityId: event.id,
-      details: svc.eventSummary(event),
-    });
-    res.status(201).json(event);
+  router.post("/orgs/:orgId/calendar/events", async (req, res) => {
+    await nativeRequest(req, res, { operation: "event.create", input: req.body });
   });
 
   router.get("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const event = await svc.getEvent(orgId, req.params.eventId as string);
-    if (!event) {
-      res.status(404).json({ error: "Calendar event not found" });
-      return;
-    }
-    res.json(event);
+    await nativeRequest(req, res, { operation: "event.detail", id: req.params.eventId as string });
   });
 
-  router.patch("/orgs/:orgId/calendar/events/:eventId", validate(updateCalendarEventSchema), async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const actor = getActorInfo(req);
-    const { previous, event } = await svc.updateEvent(orgId, req.params.eventId as string, req.body, { userId: actor.actorId });
-    if (!event) {
-      res.status(500).json({ error: "Calendar event was not updated" });
-      return;
-    }
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "calendar.event_updated",
-      entityType: "calendar_event",
-      entityId: event.id,
-      details: {
-        previous: svc.eventSummary(previous),
-        current: svc.eventSummary(event),
-      },
-    });
-    res.json(event);
+  router.patch("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
+    await nativeRequest(req, res, { operation: "event.update", id: req.params.eventId as string, input: req.body });
   });
 
   router.delete("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const actor = getActorInfo(req);
-    const deleted = await svc.deleteEvent(orgId, req.params.eventId as string, { userId: actor.actorId });
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "calendar.event_deleted",
-      entityType: "calendar_event",
-      entityId: deleted.id,
-      details: svc.eventSummary(deleted),
-    });
-    res.json({ ok: true });
+    await nativeRequest(req, res, { operation: "event.delete", id: req.params.eventId as string });
   });
 
   router.post("/orgs/:orgId/calendar/google/connect", async (req, res) => {

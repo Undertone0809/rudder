@@ -24,6 +24,7 @@ const mockCalendarService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
+const mockCalendarNative = vi.hoisted(() => ({ calendar: vi.fn() }));
 
 vi.mock("../services/calendar.js", () => ({
   calendarService: () => mockCalendarService,
@@ -64,7 +65,7 @@ function createApp(actor = createBoardActor()) {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", calendarRoutes({} as any));
+  app.use("/api", calendarRoutes({} as any, mockCalendarNative as any));
   app.use(errorHandler);
   return app;
 }
@@ -128,11 +129,20 @@ describe("calendar routes", () => {
     vi.clearAllMocks();
     mockCalendarService.listSources.mockResolvedValue([]);
     mockCalendarService.listEvents.mockResolvedValue([]);
+    mockCalendarNative.calendar.mockImplementation(async (_actor, _org, input) => ({
+      status: input.operation === "event.create" || input.operation === "source.create" ? 201 : 200,
+      contentType: "application/json; charset=utf-8",
+      body: Buffer.from(JSON.stringify(input.operation === "event.create" ? makeCalendarEvent() : [])),
+    }));
   });
 
-  it("creates planned agent work blocks as board-only calendar annotations and logs activity", async () => {
+  it("transports board-only calendar writes to the native authority", async () => {
     const created = makeCalendarEvent();
-    mockCalendarService.createEvent.mockResolvedValue(created);
+    mockCalendarNative.calendar.mockResolvedValueOnce({
+      status: 201,
+      contentType: "application/json; charset=utf-8",
+      body: Buffer.from(JSON.stringify(created)),
+    });
 
     const res = await request(createApp())
       .post(`/api/orgs/${ORG_ID}/calendar/events`)
@@ -147,27 +157,17 @@ describe("calendar routes", () => {
       issueId: ISSUE_ID,
       sourceMode: "manual",
     });
-    expect(mockCalendarService.createEvent).toHaveBeenCalledWith(
+    expect(mockCalendarNative.calendar).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "board", userId: "local-board" }),
       ORG_ID,
       expect.objectContaining({
-        eventKind: "agent_work_block",
-        eventStatus: "planned",
-        ownerAgentId: AGENT_ID,
-        issueId: ISSUE_ID,
-      }),
-      { userId: "local-board" },
-    );
-    expect(mockLogActivity).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        orgId: ORG_ID,
-        actorType: "user",
-        actorId: "local-board",
-        action: "calendar.event_created",
-        entityType: "calendar_event",
-        entityId: created.id,
+        operation: "event.create",
+        auditRunId: null,
+        input: expect.objectContaining({ eventKind: "agent_work_block", ownerAgentId: AGENT_ID, issueId: ISSUE_ID }),
       }),
     );
+    expect(mockCalendarService.createEvent).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("rejects agent keys for calendar reads", async () => {
@@ -180,7 +180,7 @@ describe("calendar routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body).toMatchObject({ error: "Board access required" });
-    expect(mockCalendarService.listEvents).not.toHaveBeenCalled();
+    expect(mockCalendarNative.calendar).not.toHaveBeenCalled();
   });
 
   it("rejects agent keys for calendar mutations", async () => {
@@ -190,7 +190,7 @@ describe("calendar routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body).toMatchObject({ error: "Board access required" });
-    expect(mockCalendarService.createEvent).not.toHaveBeenCalled();
+    expect(mockCalendarNative.calendar).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 });

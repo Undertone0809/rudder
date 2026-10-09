@@ -5,6 +5,7 @@ import path from "node:path";
 import { createDb, workspaceBackups } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 import { resolveE2EOrganizationWorkspaceRoot } from "./support/organization-storage";
+import { withWorkspaceBackupPreviewDiagnostics } from "./support/workspace-backup-preview-diagnostics";
 
 test.use({ serviceWorkers: "block" });
 
@@ -19,7 +20,7 @@ async function selectOrganization(page: Page, orgId: string) {
   }, orgId);
 }
 
-test("browses, restores, and deletes workspace backup versions", async ({ page }) => {
+test("browses, restores, and deletes workspace backup versions", async ({ page }, testInfo) => {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name: `Workspace-Backups-${Date.now()}`,
@@ -65,10 +66,12 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await page.goto(`/${organization.urlKey}/workspaces/backups`);
 
   await page.getByRole("button", { name: "plans" }).click();
-  await page.getByRole("button", { name: "roadmap.md" }).click();
-  const backupPreview = page.getByTestId("workspace-main-card").locator("pre code");
-  await expect(backupPreview).toBeVisible();
-  await expect(backupPreview).toHaveText("# Roadmap");
+  await withWorkspaceBackupPreviewDiagnostics(page, testInfo, organization.id, "plans/roadmap.md", async () => {
+    await page.getByRole("button", { name: "roadmap.md" }).click();
+    const backupPreview = page.getByTestId("workspace-main-card").locator("pre code");
+    await expect(backupPreview).toBeVisible();
+    await expect(backupPreview).toHaveText("# Roadmap");
+  });
 
   const download = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download" }).click();
