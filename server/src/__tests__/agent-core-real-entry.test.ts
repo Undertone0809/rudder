@@ -781,10 +781,17 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         } finally {fs.rmSync(lock,{recursive:true,force:true});}
         const retry=await call(nodeUrl,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);expect(retry.status,retry.text).toBe(200);expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(1);
     },20000);
-    it("Agent detail file-lock wait rechecks credentials and preserves transaction rollback", async () => {
+    it.each(["configured", "unset"])("Agent detail file-lock wait rechecks credentials and preserves transaction rollback with %s RUDDER_HOME", async (homeMode) => {
+        const originalHome = process.env.RUDDER_HOME;
+        const originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+        const homeDirectory = vi.spyOn(os, "homedir").mockReturnValue(path.join(root, `synthetic-${homeMode}-user-home`));
+        delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+        if (homeMode === "unset") delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = path.join(root, "configured-rudder-home");
+        try {
         const subject=await detailSubject();const home=path.dirname(resolveOrganizationAgentsDir(org));
-        // The map lock belongs to the workspace home, not this organization root.
-        const workspaceHome=process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim() || path.join(process.env.RUDDER_HOME!,"instances","default","organizations");
+        // Use the same canonical home resolver as the production map lock.
+        const workspaceHome=resolveOrganizationWorkspaceHomeDir();
         fs.mkdirSync(workspaceHome,{recursive:true});const lock=path.join(workspaceHome,".rudder-organizations.lock");const token=randomUUID();fs.mkdirSync(lock,{mode:0o700});
         fs.writeFileSync(path.join(lock,`.rudder-lock-owner-${token}.json`),JSON.stringify({kind:"rudder-organization-workspace-map-lock",version:1,token,pid:process.pid,hostname:os.hostname(),createdAt:new Date().toISOString()}),{flag:"wx",mode:0o600});
         const pending=call(nodeUrl,"patch",`/api/agents/${subject.id}/permissions`,otherToken,{canCreateAgents:true,canAssignTasks:true}).then(response=>response);
@@ -796,5 +803,10 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id}`)).toBe(0);
             expect(fs.existsSync(path.join(home,"agents",subject.workspace))).toBe(false);
         } finally {fs.rmSync(lock,{recursive:true,force:true});await db.execute(sql`UPDATE board_api_keys SET revoked_at=NULL WHERE key_hash=${hash(otherToken)}`);await pending;}
+        } finally {
+            homeDirectory.mockRestore();
+            if (originalHome === undefined) delete process.env.RUDDER_HOME; else process.env.RUDDER_HOME = originalHome;
+            if (originalWorkspaceHome === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME; else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
+        }
     },20000);
 });
