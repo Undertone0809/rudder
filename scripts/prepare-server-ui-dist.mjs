@@ -41,9 +41,17 @@ async function pathExists(filePath) {
   }
 }
 
-console.log("  -> Building @rudderhq/ui...");
-const packageManager = resolvePackageManagerCommand();
-run(packageManager.command, [...packageManager.argsPrefix, "--filter", "@rudderhq/ui", "build"]);
+const args = process.argv.slice(2);
+if (args.some((arg) => arg !== "--skip-build")) {
+  throw new Error(`Unknown UI preparation argument: ${args.join(" ")}`);
+}
+// The root build has already completed the UI before Desktop staging starts.
+// Direct Desktop/server packaging still builds it here by default.
+if (!args.includes("--skip-build")) {
+  console.log("  -> Building @rudderhq/ui...");
+  const packageManager = resolvePackageManagerCommand();
+  run(packageManager.command, [...packageManager.argsPrefix, "--filter", "@rudderhq/ui", "build"]);
+}
 
 if (!(await pathExists(path.join(uiDist, "index.html")))) {
   throw new Error(`UI build output missing at ${path.join(uiDist, "index.html")}`);

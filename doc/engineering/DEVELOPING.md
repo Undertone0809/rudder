@@ -25,6 +25,15 @@ Current implementation status:
 - Node.js 20+
 - pnpm 9+
 
+## Workspace Builds
+
+Use `pnpm build` for the complete repository build. It finishes the recursive
+non-Desktop workspace build before staging Desktop from those outputs, so a
+Desktop dependency build cannot clean files another package is still writing.
+Do not replace it with raw `pnpm -r build`: Desktop's standalone build also
+builds its server dependencies and UI. `pnpm desktop:build` and
+`pnpm desktop:dist` remain self-contained when run directly.
+
 ## Server Foundation Development Build
 
 The server's Rust foundation executable is built incrementally and staged into
