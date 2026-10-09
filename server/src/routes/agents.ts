@@ -1382,37 +1382,6 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
 
 
 
-  router.get("/agents/me", async (req, res) => {
-    if (req.actor.type !== "agent" || !req.actor.agentId) {
-      res.status(401).json({ error: "Agent authentication required" });
-      return;
-    }
-    const agent = await svc.getById(req.actor.agentId);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    res.json(await buildAgentDetail(agent));
-  });
-
-  router.get("/agents/:id", async (req, res) => {
-    const id = req.params.id as string;
-    const agent = await svc.getById(id);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    assertCompanyAccess(req, agent.orgId);
-    if (req.actor.type === "agent" && req.actor.agentId !== id) {
-      const canRead = await actorCanReadConfigurationsForCompany(req, agent.orgId);
-      if (!canRead) {
-        res.json(await buildAgentDetail(agent, { restricted: true }));
-        return;
-      }
-    }
-    res.json(await buildAgentDetail(agent));
-  });
-
   router.get("/agents/:id/integrations", async (req, res) => {
     const id = req.params.id as string;
     const agent = await svc.getById(id);

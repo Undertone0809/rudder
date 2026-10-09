@@ -1,6 +1,6 @@
 /** Synthetic PostgreSQL and the source-built foundation, through production routers/auth. */
 import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudderhq/db";
-import { createAgentKeySchema, resetAgentSessionSchema } from "@rudderhq/shared";
+import { createAgentKeySchema, resetAgentSessionSchema, RUDDER_BROWSER_MCP_TOOL_NAMES, RUDDER_CORE_MCP_TOOL_NAMES, updateAgentPermissionsSchema } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import express from "express";
 import { createHash, randomUUID } from "node:crypto";
@@ -12,14 +12,15 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { resolveOrganizationAgentsDir } from "../home-paths.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ensureOrganizationWorkspaceLayout, resolveOrganizationAgentsDir, resolveOrganizationWorkspaceHomeDir, resolveRudderInstanceRoot } from "../home-paths.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { validate } from "../middleware/validate.js";
 import { omitSecretPayloadFields, redactEventPayload } from "../redaction.js";
 import { agentRoutes } from "../routes/agents.js";
 import { agentService } from "../services/agents.js";
+import { configureBrowserCapabilityDeployment } from "../services/browser-capability.js";
 import { startOrganizationMutationOutboxPublisher } from "../services/organization-mutation-outbox.js";
 import { createRustFoundationBridge, type RustFoundationActor, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 type Pg = {
@@ -119,7 +120,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     const ownerToken = `synthetic-board-${randomUUID()}`, otherToken = `synthetic-board-${randomUUID()}`, outsiderToken = `synthetic-board-${randomUUID()}`, agentToken = `synthetic-agent-${randomUUID()}`;
     const publicRun = randomUUID(), privateRun = randomUUID(), privateChat = randomUUID();
     const snapshot = { name: "Delta restored", role: "engineer", title: null, capabilities: null, agentRuntimeType: "process", agentRuntimeConfig: { opaque: "h.p.s", env: { VISIBLE: { type: "plain", value: "ordinary" }, API_TOKEN: { type: "secret_ref", secretId: randomUUID(), version: "latest" } }, nested: { password: "synthetic-only", keep: ["h.p.s", { "$serde_json::private::Number": "literal" }] } }, runtimeConfig: { heartbeat: { enabled: "yes", intervalSec: "0x3c" } }, budgetMonthlyCents: 0, metadata: { nested: { "$serde_json::private::RawValue": "not parsed" } } };
-    function call(base: string, method: "get" | "post" | "delete", url: string, token = ownerToken, input?: unknown) { let r = request(base)[method](url); if (token)
+    function call(base: string, method: "get" | "post" | "delete" | "patch", url: string, token = ownerToken, input?: unknown) { let r = request(base)[method](url); if (token)
         r = r.set("authorization", `Bearer ${token}`); if (input !== undefined)
         r = r.send(input); return r; }
     async function scalar(query: ReturnType<typeof sql>) { const rows = await db.execute(query); return Number(rows[0]?.value ?? 0); }
@@ -160,7 +161,8 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         server = app.listen(0, "127.0.0.1");
         await once(server, "listening");
         nodeUrl = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
-        bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10000, actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes", publicIngress: { listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl, authorizationKey: "synthetic-public-ingress-key-32-bytes" } });
+        bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes", publicIngress: { listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl, authorizationKey: "synthetic-public-ingress-key-32-bytes" } });
+        configureBrowserCapabilityDeployment(db, "local_trusted");
         app.use("/api", agentRoutes(db, undefined, bridge));
         app.use(errorHandler);
         await bridge.start();
@@ -542,4 +544,219 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             expect(response.body.some((row: { id: string }) => row.id === deniedAgent)).toBe(true);
         }
     });
+    async function detailSubject(role = "engineer", permissions: Record<string, unknown> = { canCreateAgents: false, canManageSkills: false }) {
+        const id = randomUUID(), token = `synthetic-detail-${randomUUID()}`, workspace = `detail-${id}`;
+        await db.execute(sql`INSERT INTO agents(id,org_id,name,role,status,permissions,workspace_key) VALUES(${id}::uuid,${org}::uuid,${`Detail ${id}`},${role},'idle',${JSON.stringify(permissions)}::jsonb,${workspace})`);
+        await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${id}::uuid,'synthetic detail',${hash(token)})`);
+        return { id, token, workspace };
+    }
+    it("Agent detail preserves complete self, explicit access, integrations and current spend through both public ingresses", async () => {
+        const subject = await detailSubject();
+        const secret = randomUUID();
+        await db.execute(sql`INSERT INTO organization_secrets(id,org_id,name) VALUES(${secret}::uuid,${org}::uuid,${secret})`);
+        await db.execute(sql`INSERT INTO agent_integrations(org_id,agent_id,provider,app_credential_secret_id,external_app_id,settings) VALUES(${org}::uuid,${subject.id}::uuid,'feishu',${secret}::uuid,'synthetic-app','{"feishu":{},"opaque":"stripped"}')`);
+        await db.execute(sql`INSERT INTO organization_memberships(org_id,principal_type,principal_id,status,membership_role) VALUES(${org}::uuid,'agent',${subject.id},'suspended','member')`);
+        await db.execute(sql`INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key,scope) VALUES(${org}::uuid,'agent',${subject.id},'tasks:assign','{"opaque":"keep"}')`);
+        await db.execute(sql`UPDATE agents SET spent_monthly_cents=999,agent_runtime_config='{"opaque":"literal","password":"synthetic-hidden"}' WHERE id=${subject.id}::uuid`);
+        for (const base of [nodeUrl, publicUrl]) for (const [url, token] of [[`/api/agents/${subject.id}`, ownerToken], ["/api/agents/me", subject.token]]) {
+            const response = await call(base, "get", url!, token!);
+            expect(response.status, response.text).toBe(200);
+            expect(response.body).toMatchObject({ id: subject.id, spentMonthlyCents: 0, access: { canAssignTasks: true, taskAssignSource: "explicit_grant", membership: { status: "suspended" }, grants: [{ permissionKey: "tasks:assign", scope: { opaque: "keep" } }] }, instructionsLibraryPath: null });
+            expect(response.body.agentRuntimeConfig).toEqual({ opaque: "literal" });
+            expect(response.body.integrations[0]).toMatchObject({ externalAppId: "synthetic-app", hasCredentialSecret: true, settings: { feishu: { dailySessionRolloverEnabled: true, dailySessionRolloverHours: 24, dailySessionRolloverNotifyFeishu: true } } });
+            expect(response.body.integrations[0]).not.toHaveProperty("appCredentialSecretId");
+            expect(response.body).not.toHaveProperty("workspaceKey");
+            expect(response.body.rudderTools[0].tools).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
+        }
+    });
+    it("Agent detail retains supported, disabled, unsupported and malformed browser settings contracts", async () => {
+        const subject = await detailSubject();
+        for (const [runtime, browser, available] of [["codex_local", { enabled: true }, true], ["codex_local", { enabled: false }, false], ["process", { enabled: true }, false], ["claude_local", { enabled: false, unknown: 1 }, true]] as const) {
+            await db.execute(sql`UPDATE agents SET agent_runtime_type=${runtime} WHERE id=${subject.id}::uuid`);
+            await db.execute(sql`INSERT INTO instance_settings(singleton_key,browser) VALUES('default',${JSON.stringify(browser)}::jsonb) ON CONFLICT(singleton_key) DO UPDATE SET browser=excluded.browser`);
+            for (const base of [nodeUrl, publicUrl]) {
+                const response = await call(base, "get", `/api/agents/${subject.id}`);
+                expect(response.status, response.text).toBe(200);
+                expect(response.body.rudderTools[0]).toMatchObject({ id: "rudder-tools", kind: "rudder_mcp", status: "available", serverName: "rudder-tools", contract: "agent-v1", authMode: "runtime_managed", toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length });
+                expect(response.body.rudderTools[1]).toMatchObject({ id: "rudder-browser", kind: "rudder_browser_mcp", serverName: "rudder-browser", contract: "browser-v1", authMode: "runtime_managed", status: available ? "available" : "disabled", tools: available ? [...RUDDER_BROWSER_MCP_TOOL_NAMES] : [], toolCount: available ? RUDDER_BROWSER_MCP_TOOL_NAMES.length : 0 });
+            }
+        }
+    });
+    it("Agent detail keeps restricted existing-key responses independent of corrupt friendly maps", async () => {
+        const subject = await detailSubject(), caller = await detailSubject();
+        const original = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+        const friendly = path.join(root, "corrupt-friendly-map"); fs.mkdirSync(friendly); fs.writeFileSync(path.join(friendly, ".rudder-organizations.json"), "invalid JSON");
+        process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = friendly;
+        try {
+            for (const base of [nodeUrl, publicUrl]) {
+                const response = await call(base, "get", `/api/agents/${subject.id}`, caller.token);
+                expect(response.status, response.text).toBe(200);
+                expect(response.body).toMatchObject({ agentRuntimeConfig: {}, runtimeConfig: {}, instructionsLibraryPath: null });
+                expect(response.body).not.toHaveProperty("rudderTools"); expect(response.body).not.toHaveProperty("integrations");
+                expect(fs.readdirSync(friendly)).toEqual([".rudder-organizations.json"]);
+                expect((await call(base, "get", `/api/agents/${subject.id}`)).status).toBe(500);
+                for(const config of [null,false,3,"opaque",[]]) {
+                    const malformed=await detailSubject();await db.execute(sql`UPDATE agents SET workspace_key=NULL,agent_runtime_config=${JSON.stringify(config)}::jsonb WHERE id=${malformed.id}::uuid`);
+                    const restricted=await call(base,"get",`/api/agents/${malformed.id}`,caller.token);expect(restricted.status,restricted.text).toBe(200);
+                    expect(await scalar(sql`SELECT count(*) AS value FROM agents WHERE id=${malformed.id}::uuid AND workspace_key IS NOT NULL`)).toBe(1);
+                }
+                const blank=await detailSubject();await db.execute(sql`UPDATE agents SET workspace_key='   ',agent_runtime_config='{}' WHERE id=${blank.id}::uuid`);
+                expect((await call(base,"get",`/api/agents/${blank.id}`,caller.token)).status).toBe(500);
+                await db.execute(sql`UPDATE agents SET workspace_key=${blank.workspace} WHERE id=${blank.id}::uuid`);
+
+            }
+        } finally { if (original === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME; else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = original; }
+    });
+    it("Agent detail preserves managed, explicit external, legacy external and recovered historical instruction semantics", async () => {
+        const subject = await detailSubject();
+        const directory = path.join(resolveOrganizationAgentsDir(org), subject.workspace, "instructions"); fs.mkdirSync(directory, { recursive: true }); fs.writeFileSync(path.join(directory, "USER.md"), "Do not replace my instructions");
+        const external = path.join(root, "external-instructions"); fs.mkdirSync(external); fs.writeFileSync(path.join(external, "SOUL.md"), "External content");
+        for (const [config, expected] of [[{}, `agents/${subject.workspace}/instructions`], [{ instructionsBundleMode: "external", instructionsRootPath: external }, null], [{ instructionsFilePath: path.join(external, "SOUL.md") }, null]] as const) {
+            await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify(config)}::jsonb WHERE id=${subject.id}::uuid`);
+            for (const base of [nodeUrl, publicUrl]) { const response = await call(base, "get", `/api/agents/${subject.id}`); expect(response.status, response.text).toBe(200); expect(response.body.instructionsLibraryPath).toBe(expected); }
+        }
+        expect(fs.readFileSync(path.join(directory, "USER.md"), "utf8")).toBe("Do not replace my instructions");
+    });
+    it("Agent detail recovers historical files without a size cap and matches public default template bytes", async () => {
+        const subject=await detailSubject();const legacy=path.join(path.dirname(resolveRudderInstanceRoot()),"historical-fixture","organizations",org.replaceAll("-","").slice(0,12),"workspaces","agents",subject.workspace,"instructions");
+        fs.mkdirSync(path.join(legacy,"folder"),{recursive:true});const body="synthetic-large-file\n".repeat(70000);fs.writeFileSync(path.join(legacy,"SOUL.md"),body);
+        await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify({instructionsFilePath:path.join(legacy,"folder")+"/../SOUL.md"})}::jsonb WHERE id=${subject.id}::uuid`);
+        for(const base of [nodeUrl,publicUrl]) {const response=await call(base,"get",`/api/agents/${subject.id}`);expect(response.status,response.text).toBe(200);expect(response.body.instructionsLibraryPath).toBe(`agents/${subject.workspace}/instructions`);}
+        const directory=path.join(resolveOrganizationAgentsDir(org),subject.workspace,"instructions");expect(fs.readFileSync(path.join(directory,"SOUL.md"),"utf8")).toBe(body);
+        for(const name of ["MEMORY.md","TOOLS.md"]) expect(fs.readFileSync(path.join(directory,name),"utf8")).toBe(fs.readFileSync(path.resolve("server/src/onboarding-assets/default",name),"utf8"));
+        const opaque="synthetic-large-response".repeat(60000);await db.execute(sql`UPDATE agents SET runtime_config=${JSON.stringify({opaque})}::jsonb WHERE id=${subject.id}::uuid`);
+        for(const base of [nodeUrl,publicUrl]) {const response=await call(base,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,{canCreateAgents:false,canAssignTasks:false,ignored:"x".repeat(150000)});expect(response.status,response.text.slice(0,200)).toBe(200);expect(response.body.runtimeConfig.opaque).toBe(opaque);}
+    });
+    it("Agent detail default bridge survives a real Node helper holding the shared filesystem lock beyond three seconds", async () => {
+        const subject=await detailSubject();const workspace=path.dirname(resolveOrganizationAgentsDir(org));
+        for(const base of [nodeUrl,publicUrl]) {
+            let acquired!:()=>void,release!:()=>void;const ready=new Promise<void>(resolve=>{acquired=resolve}),hold=new Promise<void>(resolve=>{release=resolve});
+            const mkdir=fs.promises.mkdir.bind(fs.promises);let stopped=false;
+            const spy=vi.spyOn(fs.promises,"mkdir").mockImplementation((async(target:Parameters<typeof mkdir>[0],options:Parameters<typeof mkdir>[1])=>{
+                if(!stopped&&String(target)===workspace&&fs.existsSync(path.join(resolveOrganizationWorkspaceHomeDir(),".rudder-organizations.lock"))){stopped=true;acquired();await hold;}
+                return mkdir(target,options);
+            }) as typeof fs.promises.mkdir);
+            const nodeLayout=ensureOrganizationWorkspaceLayout(org);
+            try {await ready;const started=Date.now();const pending=call(base,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,{canCreateAgents:false,canAssignTasks:true}).then(response=>response);
+                await new Promise(resolve=>setTimeout(resolve,4100));release();await nodeLayout;const response=await pending;
+                expect(Date.now()-started).toBeGreaterThan(4000);expect(response.status,response.text).toBe(200);expect(response.body.access.taskAssignSource).toBe("explicit_grant");
+            } finally {release();spy.mockRestore();await nodeLayout;}
+        }
+    },30000);
+    it("Agent detail projects falsy and opaque persisted configuration roots exactly for all three routes", async () => {
+        const subject = await detailSubject();
+        for (const value of [null, false, 0, "", true, 3, "opaque", [0, { literal: "keep" }]]) {
+            await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify(value)}::jsonb,runtime_config=${JSON.stringify(value)}::jsonb WHERE id=${subject.id}::uuid`);
+            const expected = omitSecretPayloadFields(redactEventPayload((value ?? {}) as Record<string, unknown>) ?? {});
+            for (const base of [nodeUrl, publicUrl]) for (const [method, url, token, input] of [["get", `/api/agents/${subject.id}`, ownerToken, undefined], ["get", "/api/agents/me", subject.token, undefined], ["patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: false, canAssignTasks: false }]] as const) {
+                const response = await call(base, method, url, token, input);
+                expect(response.status, response.text).toBe(200); expect(response.body.agentRuntimeConfig).toEqual(expected); expect(response.body.runtimeConfig).toEqual(expected);
+            }
+        }
+    },30000);
+    it("Agent detail permissions preserve creator assignment, optional skills, current CEO authority and private audit references", async () => {
+        const subject = await detailSubject(), ceo = await detailSubject("ceo");
+        for (const base of [nodeUrl, publicUrl]) {
+            let response = await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: true, canAssignTasks: false });
+            expect(response.status, response.text).toBe(200); expect(response.body.permissions).toEqual({ canCreateAgents: true, canManageSkills: false }); expect(response.body.access.taskAssignSource).toBe("agent_creator");
+            expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id} AND permission_key='tasks:assign' AND granted_by_user_id=${owner}`)).toBe(1);
+            response = await call(base, "patch", `/api/agents/${subject.id}/permissions`, ceo.token, { canCreateAgents: false, canAssignTasks: true });
+            expect(response.status, response.text).toBe(200); expect(response.body.access.taskAssignSource).toBe("explicit_grant"); expect(response.body.access.grants[0].grantedByUserId).toBeNull();
+            expect((await call(base, "patch", `/api/agents/${subject.id}/permissions`, subject.token, { canCreateAgents: false, canAssignTasks: false })).body).toEqual({ error: "Only CEO can manage permissions" });
+            response = await call(base, "patch", `/api/agents/${subject.id}/permissions`, otherToken, { canCreateAgents: false, canAssignTasks: false });
+            expect(response.status, response.text).toBe(200); expect(response.body.access.canAssignTasks).toBe(false); expect(response.body.access.grants).toEqual([]);
+            for (const [token, runId] of [[ownerToken, null], [otherToken, privateRun]]) {
+                const result = await request(base).patch(`/api/agents/${subject.id}/permissions`).set("authorization", `Bearer ${token}`).set("x-rudder-run-id", privateRun).send({ canCreateAgents: false, canAssignTasks: false });
+                expect(result.status, result.text).toBe(200);
+                const rows = await db.execute(sql`SELECT run_id FROM activity_log WHERE entity_id=${subject.id} AND action='agent.permissions_updated' ORDER BY created_at DESC LIMIT 1`);
+                expect(rows[0]?.run_id).toBe(runId);
+            }
+        }
+    });
+    it("Agent detail permissions roll back Agent, membership, grant, audit and non-null outbox together", async () => {
+        const subject = await detailSubject();
+        const snapshot = async () => JSON.stringify(await db.execute(sql`SELECT to_jsonb(a) AS agent,(SELECT jsonb_agg(m) FROM organization_memberships m WHERE principal_id=${subject.id}) AS membership,(SELECT jsonb_agg(g) FROM principal_permission_grants g WHERE principal_id=${subject.id}) AS grants,(SELECT count(*) FROM activity_log WHERE entity_id=${subject.id}) AS audit FROM agents a WHERE id=${subject.id}::uuid`));
+        const before = await snapshot();
+        await db.execute(sql`CREATE FUNCTION agent_detail_reject_outbox() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic rollback'; END $$`);
+        await db.execute(sql`CREATE TRIGGER agent_detail_reject_outbox BEFORE INSERT ON organization_mutation_outbox FOR EACH ROW EXECUTE FUNCTION agent_detail_reject_outbox()`);
+        try { for (const base of [nodeUrl, publicUrl]) {expect((await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: true, canAssignTasks: true })).status).toBe(500);expect(await snapshot()).toBe(before);} }
+        finally {await db.execute(sql`DROP TRIGGER agent_detail_reject_outbox ON organization_mutation_outbox`);await db.execute(sql`DROP FUNCTION agent_detail_reject_outbox()`);}
+        const response = await call(nodeUrl, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: true, canAssignTasks: true });expect(response.status,response.text).toBe(200);
+        expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id AND a.org_id=o.org_id WHERE a.entity_id=${subject.id}`)).toBe(1);
+    });
+    it("Agent detail enforces request and reference boundaries without Node fallback", async () => {
+        const subject = await detailSubject();
+        const valid = { canCreateAgents: false, canAssignTasks: false };
+        for (const base of [nodeUrl, publicUrl]) {
+            expect((await call(base, "get", "/api/agents/me", ownerToken)).status).toBe(401);
+            expect((await call(base, "get", `/api/agents/${foreignAgent}`, otherToken)).status).toBe(403);
+            for (const ref of [subject.id.toUpperCase(), `agt_${subject.id.replaceAll("-", "").slice(0,8)}`, `agt_${subject.id.replaceAll("-", "").slice(0,12)}`, `agt_${subject.id.replaceAll("-", "")}`]) {const response=await call(base,"get",`/api/agents/${ref}?orgId=${org}`);expect(response.status,response.text).toBe(200);expect(response.body.id).toBe(subject.id);}
+            expect((await call(base,"get",`/api/agents/agt_${subject.id.replaceAll("-", "").slice(0,8)}`)).status).toBe(422);
+            expect((await call(base,"get",`/api/agents/agt_${subject.id.replaceAll("-", "").slice(0,8)}?orgId=${org}&orgId=${org}`)).status).toBe(422);
+            for (const input of [{}, { canCreateAgents: null }, { ...valid, canManageSkills: "true" }, { ...valid, authority: { actorId: subject.id } }]) {
+                const parsed=updateAgentPermissionsSchema.safeParse(input);const response=await call(base,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);
+                if(parsed.success) expect(response.status,response.text).toBe(200);else expect(response.body).toEqual({error:"Validation error",details:parsed.error.issues});
+            }
+        }
+        const original=bridge!.agentCore;bridge!.agentCore=async()=>{throw new Error("synthetic native outage")};
+        try {for(const base of [nodeUrl,publicUrl])for(const [method,url,token,input] of [["get",`/api/agents/${subject.id}`,ownerToken,undefined],["get","/api/agents/me",subject.token,undefined],["patch",`/api/agents/${subject.id}/permissions`,ownerToken,valid]] as const){expect((await call(base,method,url,token,input)).status).toBe(503);}}
+        finally{bridge!.agentCore=original;}
+    });
+    async function waitFor(check: () => Promise<boolean> | boolean, label: string) {
+        const deadline=Date.now()+8000;
+        while(!await check()){if(Date.now()>deadline)throw new Error(`Timed out waiting for ${label}`);await new Promise(resolve=>setTimeout(resolve,20));}
+    }
+    it("Agent detail permissions recheck a revoked administrator while blocked on actual Agent locks", async () => {
+        const subject=await detailSubject();const valid={canCreateAgents:true,canAssignTasks:true};
+        for(const base of [nodeUrl,publicUrl]) {
+            await db.execute(sql`INSERT INTO instance_user_roles(user_id,role) VALUES(${outsider},'instance_admin') ON CONFLICT DO NOTHING`);
+            const connection=await db.$client.reserve();await connection.unsafe("BEGIN");await connection`SELECT id FROM agents WHERE org_id=${org}::uuid ORDER BY id FOR UPDATE`;
+            const pending=call(base,"patch",`/api/agents/${subject.id}/permissions`,outsiderToken,valid).then(response=>response);
+            try {
+                await waitFor(async()=>await scalar(sql`SELECT count(*) AS value FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT id FROM agents WHERE org_id=%'`)>0,"Rust Agent mutation lock wait");
+                await db.execute(sql`DELETE FROM instance_user_roles WHERE user_id=${outsider} AND role='instance_admin'`);
+                await connection.unsafe("COMMIT");const response=await pending;expect(response.status,response.text).toBe(403);
+                expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
+                expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id}`)).toBe(0);
+            } finally {await connection.unsafe("ROLLBACK").catch(()=>{});connection.release();await db.execute(sql`DELETE FROM instance_user_roles WHERE user_id=${outsider} AND role='instance_admin'`);await pending;}
+        }
+    },30000);
+    it("Agent detail permissions recheck current CEO role after an actual transaction lock wait", async () => {
+        const subject=await detailSubject(),ceo=await detailSubject("ceo");
+        for(const base of [nodeUrl,publicUrl]) {
+            await db.execute(sql`UPDATE agents SET role='ceo' WHERE id=${ceo.id}::uuid`);
+            const connection=await db.$client.reserve();await connection.unsafe("BEGIN");await connection`SELECT id FROM agents WHERE org_id=${org}::uuid ORDER BY id FOR UPDATE`;
+            const pending=call(base,"patch",`/api/agents/${subject.id}/permissions`,ceo.token,{canCreateAgents:true,canAssignTasks:true}).then(response=>response);
+            try {await waitFor(async()=>await scalar(sql`SELECT count(*) AS value FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT id FROM agents WHERE org_id=%'`)>0,"CEO mutation lock wait");
+                await connection`UPDATE agents SET role='engineer' WHERE id=${ceo.id}::uuid`;await connection.unsafe("COMMIT");const response=await pending;expect(response.status,response.text).toBe(403);expect(response.body.error).toBe("Only CEO can manage permissions");
+                expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
+            } finally {await connection.unsafe("ROLLBACK").catch(()=>{});connection.release();await pending;}
+        }
+    },30000);
+    it("Agent detail native lock timeout rolls back its mutation and allows a fresh retry", async () => {
+        const subject=await detailSubject(),workspaceHome=resolveOrganizationWorkspaceHomeDir(),lock=path.join(workspaceHome,".rudder-organizations.lock"),token=randomUUID();
+        fs.mkdirSync(lock,{mode:0o700});fs.writeFileSync(path.join(lock,`.rudder-lock-owner-${token}.json`),JSON.stringify({kind:"rudder-organization-workspace-map-lock",version:1,token,pid:process.pid,hostname:os.hostname(),createdAt:new Date().toISOString()}),{flag:"wx",mode:0o600});
+        const input={canCreateAgents:true,canAssignTasks:true};
+        try {const started=Date.now();const response=await call(nodeUrl,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);expect(response.status,response.text).toBe(500);expect(Date.now()-started).toBeGreaterThanOrEqual(9900);
+            expect(fs.existsSync(path.join(lock,`.rudder-lock-owner-${token}.json`))).toBe(true);expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id}`)).toBe(0);
+            expect((await db.execute(sql`SELECT permissions FROM agents WHERE id=${subject.id}::uuid`))[0]?.permissions).toEqual({canCreateAgents:false,canManageSkills:false});
+        } finally {fs.rmSync(lock,{recursive:true,force:true});}
+        const retry=await call(nodeUrl,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);expect(retry.status,retry.text).toBe(200);expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(1);
+    },20000);
+    it("Agent detail file-lock wait rechecks credentials and preserves transaction rollback", async () => {
+        const subject=await detailSubject();const home=path.dirname(resolveOrganizationAgentsDir(org));
+        // The map lock belongs to the workspace home, not this organization root.
+        const workspaceHome=process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim() || path.join(process.env.RUDDER_HOME!,"instances","default","organizations");
+        fs.mkdirSync(workspaceHome,{recursive:true});const lock=path.join(workspaceHome,".rudder-organizations.lock");const token=randomUUID();fs.mkdirSync(lock,{mode:0o700});
+        fs.writeFileSync(path.join(lock,`.rudder-lock-owner-${token}.json`),JSON.stringify({kind:"rudder-organization-workspace-map-lock",version:1,token,pid:process.pid,hostname:os.hostname(),createdAt:new Date().toISOString()}),{flag:"wx",mode:0o600});
+        const pending=call(nodeUrl,"patch",`/api/agents/${subject.id}/permissions`,otherToken,{canCreateAgents:true,canAssignTasks:true}).then(response=>response);
+        try {
+            await waitFor(()=>fs.readdirSync(workspaceHome).some(name=>name.startsWith(".rudder-organizations.lock.acquire-")),"native filesystem lock acquisition");
+            await db.execute(sql`UPDATE board_api_keys SET revoked_at=now() WHERE key_hash=${hash(otherToken)}`);
+            fs.rmSync(lock,{recursive:true});const response=await pending;expect(response.status,response.text).toBe(401);
+            expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
+            expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id}`)).toBe(0);
+            expect(fs.existsSync(path.join(home,"agents",subject.workspace))).toBe(false);
+        } finally {fs.rmSync(lock,{recursive:true,force:true});await db.execute(sql`UPDATE board_api_keys SET revoked_at=NULL WHERE key_hash=${hash(otherToken)}`);await pending;}
+    },20000);
 });

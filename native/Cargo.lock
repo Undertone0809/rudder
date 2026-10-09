@@ -1743,6 +1743,7 @@ dependencies = [
  "getrandom 0.2.17",
  "icu_collator",
  "icu_locale_core",
+ "libc",
  "regex-lite",
  "rudder-auth-core",
  "rudder-organization-mutation-core",

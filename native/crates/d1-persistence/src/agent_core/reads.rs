@@ -72,7 +72,13 @@ pub(super) async fn ensure_workspace_key(
 ) -> Result<Value> {
     // The legacy service persists a derived key only for SQL NULL. Blank
     // stored strings are returned unchanged by its conditional UPDATE.
-    if !row["workspaceKey"].is_null() {
+    let detail = matches!(
+        ctx.request.operation.as_str(),
+        "detail" | "me" | "permissions"
+    );
+    if !row["workspaceKey"].is_null()
+        && (!detail || !js_trim(text(&row, "workspaceKey")).is_empty())
+    {
         return Ok(row);
     }
     let rows = sqlx::query_scalar::<_, String>(
@@ -84,14 +90,24 @@ pub(super) async fn ensure_workspace_key(
     let mut keys = std::collections::BTreeSet::new();
     for raw in rows {
         let agent = decode(&raw)?;
-        if agent["id"] == row["id"] && !agent["workspaceKey"].is_null() {
+        if agent["id"] == row["id"]
+            && !agent["workspaceKey"].is_null()
+            && (!detail || !js_trim(text(&agent, "workspaceKey")).is_empty())
+        {
             return Ok(agent);
         }
         if agent["id"] != row["id"] {
             keys.insert(js_trim(text(&agent, "workspaceKey")).to_owned());
         }
     }
-    let root = std::path::Path::new(&ctx.request.organization_agents_root);
+    let native_root = if detail && row["agentRuntimeConfig"].is_object() {
+        Some(super::instructions::agents_root(ctx)?)
+    } else {
+        None
+    };
+    let root = native_root
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new(&ctx.request.organization_agents_root));
     let mut preferred = None;
     for field in [
         "instructionsRootPath",
@@ -99,7 +115,7 @@ pub(super) async fn ensure_workspace_key(
         "agentsMdPath",
     ] {
         let raw = js_trim(text(&row["agentRuntimeConfig"], field));
-        if raw.is_empty() || ctx.request.organization_agents_root.is_empty() {
+        if raw.is_empty() || root.as_os_str().is_empty() {
             continue;
         }
         let raw = if let Some(tail) = raw.strip_prefix("~/") {
@@ -157,6 +173,9 @@ pub(super) async fn ensure_workspace_key(
         }
         key
     };
+    if !row["workspaceKey"].is_null() {
+        return Ok(row);
+    }
     update(
         tx,
         ctx.org,

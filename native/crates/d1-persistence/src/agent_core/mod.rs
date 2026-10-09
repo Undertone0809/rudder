@@ -2,6 +2,8 @@
 //! carries authenticated ingress facts; SQL determines all effective authority.
 mod common;
 mod constants;
+mod detail;
+mod instructions;
 mod json_boundary;
 mod reads;
 mod redaction;
@@ -47,6 +49,9 @@ pub struct AgentCoreRequest {
     pub process_working_directory: String,
     #[serde(default)]
     pub canonical_locale: String,
+    #[serde(default)]
+    pub deployment_mode: String,
+    pub instructions_host: Option<instructions::Host>,
 }
 impl AgentCoreRequest {
     pub fn parse(body: &[u8]) -> std::result::Result<Self, serde_json::Error> {
@@ -88,7 +93,9 @@ fn board(actor: &VerifiedActor) -> Result<()> {
 }
 fn early_authorization(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
     match r.operation.as_str() {
-        "inbox" if actor.actor().kind != "agent" => Err(http(401, "Agent authentication required")),
+        "inbox" | "me" if actor.actor().kind != "agent" => {
+            Err(http(401, "Agent authentication required"))
+        }
         "keys"
         | "key-create"
         | "key-revoke"
@@ -114,6 +121,9 @@ pub fn admit_agent(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
 fn admit_inner(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
     if ![
         "list",
+        "detail",
+        "me",
+        "permissions",
         "configurations",
         "name-suggestion",
         "inbox",
@@ -162,7 +172,7 @@ pub async fn execute_agent(
         }else if r.operation=="keys"{tx.commit().await?;return Ok((200,"[]".into()))}else{return Err(http(404,"Agent not found"))};
         let ctx=Context{org:&org,actor,request:r,admin};authorize_org(&mut tx,&ctx).await?;
         if r.resolve_only{tx.commit().await?;return Ok((200,json!({"orgId":org,"id":id}).to_string()))}
-        let op=r.operation.as_str();let is_write=matches!(op,"key-create"|"key-revoke"|"rollback"|"reset-session");
+        let op=r.operation.as_str();let is_write=matches!(op,"key-create"|"key-revoke"|"rollback"|"reset-session"|"permissions");
         if is_write{
             // Match runtime admission lock order: Issues, Agents, organization.
             sqlx::query("SELECT id FROM issues WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
@@ -173,10 +183,21 @@ pub async fn execute_agent(
             let current=if let Some(id)=&id{stored(&mut tx,id).await?}else{None};
             let current=if op!="key-revoke"{if let Some(row)=current{Some(reads::ensure_workspace_key(&mut tx,&ctx,row).await?)}else{None}}else{current};
             if id.is_some()&&current.is_none(){return Err(http(404,"Agent not found"))}
+            let fresh_admin=if op=="permissions" && ctx.user().is_some(){sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut *tx).await?}else{ctx.admin};
+            let ctx=Context{admin:fresh_admin,..ctx};
             authorize_org(&mut tx,&ctx).await?;
             let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input).await?;
             sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(&org).execute(&mut *tx).await?;
             tx.commit().await?;return Ok((if op=="key-create"{201}else{200},body.to_string()));
+        }
+        if matches!(op,"detail"|"me") {
+            sqlx::query("SELECT id FROM agents WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
+            let current=stored(&mut tx,id.as_deref().unwrap_or("")).await?.ok_or_else(||http(404,"Agent not found"))?;
+            let admin=ctx.user().is_some()&&sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut *tx).await?;
+            let ctx=Context{admin,..ctx};authorize_org(&mut tx,&ctx).await?;
+            let restricted=ctx.agent().is_some() && ctx.agent()!=id.as_deref() && !can_read_configs(&mut tx,&ctx).await?;
+            let row=reads::ensure_workspace_key(&mut tx,&ctx,current).await?;
+            let body=detail::build(&mut tx,&ctx,row,restricted).await?;tx.commit().await?;return Ok((200,body.to_string()));
         }
         let row=current.unwrap_or(Value::Null);
         let row=if !row.is_null()&&!matches!(op,"keys"|"inbox"){reads::ensure_workspace_key(&mut tx,&ctx,row).await?}else{row};
@@ -200,7 +221,7 @@ async fn resolve_id(
     r: &AgentCoreRequest,
     admin: bool,
 ) -> Result<Option<String>> {
-    if r.operation == "inbox" {
+    if matches!(r.operation.as_str(), "inbox" | "me") {
         return Ok(Some(actor.actor().id.clone()));
     }
     let Some(raw) = r.id.as_deref() else {
