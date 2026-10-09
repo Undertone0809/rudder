@@ -5,6 +5,9 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+
+const mockAgentCore = vi.fn();
 
 const mockIssueService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -56,7 +59,7 @@ vi.mock("@rudderhq/agent-runtime-opencode-local/server", () => ({
 
 const activeServers = new Set<Server>();
 
-async function createApp() {
+async function createApp(withBridge = true) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -69,28 +72,12 @@ async function createApp() {
     };
     next();
   });
-  app.use("/api", agentRoutes({} as any, {} as any));
+  app.use("/api", agentRoutes({} as any, {} as any, withBridge ? { agentCore: mockAgentCore } as unknown as RustFoundationBridge : undefined));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
   await once(server, "listening");
   return server;
-}
-
-function issue(overrides: Record<string, unknown>) {
-  return {
-    id: "issue-1",
-    identifier: "RUD-1",
-    title: "Issue",
-    status: "todo",
-    priority: "medium",
-    projectId: null,
-    goalId: null,
-    parentId: null,
-    updatedAt: new Date("2026-05-07T10:00:00.000Z"),
-    activeRun: null,
-    ...overrides,
-  };
 }
 
 describe("agent inbox reviewer rows", () => {
@@ -105,76 +92,33 @@ describe("agent inbox reviewer rows", () => {
     activeServers.clear();
   });
 
-  it("returns assignee and reviewer work with relationships", async () => {
-    mockIssueService.list
-      .mockResolvedValueOnce([
-        issue({
-          id: "assignee-issue",
-          identifier: "RUD-1",
-          title: "Implement fix",
-          status: "in_progress",
-          priority: "medium",
-          updatedAt: new Date("2026-05-07T11:00:00.000Z"),
-        }),
-        issue({
-          id: "blocked-review-issue",
-          identifier: "RUD-3",
-          title: "Review blocker",
-          status: "blocked",
-          priority: "low",
-          updatedAt: new Date("2026-05-07T08:00:00.000Z"),
-        }),
-      ])
-      .mockResolvedValueOnce([
-        issue({
-          id: "review-issue",
-          identifier: "RUD-2",
-          title: "Review fix",
-          status: "in_review",
-          priority: "high",
-          updatedAt: new Date("2026-05-07T09:00:00.000Z"),
-        }),
-        issue({
-          id: "blocked-review-issue",
-          identifier: "RUD-3",
-          title: "Review blocker",
-          status: "blocked",
-          priority: "low",
-          updatedAt: new Date("2026-05-07T08:00:00.000Z"),
-        }),
-      ]);
+  // Business selection, deduplication and ordering are exercised against actual
+  // Rust + PostgreSQL in agent-core-real-entry.test.ts ("preserves legacy inbox").
+  it("relays the Rust inbox result and authenticated actor without querying Node issue policy", async () => {
+    const rows = [
+      { id: "review-issue", relationship: "reviewer", status: "in_review" },
+      { id: "assignee-issue", relationship: "assignee", status: "in_progress" },
+      { id: "blocked-review-issue", relationship: "reviewer", status: "blocked" },
+    ];
+    mockAgentCore.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(rows)) });
 
     const res = await request(await createApp()).get("/api/agents/me/inbox-lite");
 
     expect(res.status).toBe(200);
-    expect(mockIssueService.list).toHaveBeenNthCalledWith(1, "org-1", {
-      assigneeAgentId: "agent-1",
-      includeAutomationExecutions: true,
-      status: "todo,in_progress,blocked",
-    });
-    expect(mockIssueService.list).toHaveBeenNthCalledWith(2, "org-1", {
-      includeAutomationExecutions: true,
-      reviewerAgentId: "agent-1",
-      status: "in_review,blocked",
-      excludeReviewerRecordedBlockedDecision: true,
-    });
-    expect(res.body).toMatchObject([
-      {
-        id: "review-issue",
-        relationship: "reviewer",
-        status: "in_review",
-      },
-      {
-        id: "assignee-issue",
-        relationship: "assignee",
-        status: "in_progress",
-      },
-      {
-        id: "blocked-review-issue",
-        relationship: "reviewer",
-        status: "blocked",
-      },
-    ]);
-    expect(res.body).toHaveLength(3);
+    expect(res.body).toEqual(rows);
+    expect(mockAgentCore).toHaveBeenCalledExactlyOnceWith(
+      { type: "agent", agentId: "agent-1", orgId: "org-1", orgIds: ["org-1"], runId: "run-1" },
+      expect.objectContaining({ operation: "inbox", orgId: null, id: null, query: {} }),
+    );
+    expect(mockIssueService.list).not.toHaveBeenCalled();
+  });
+
+  it("fails closed without a Rust bridge and never falls back to Node issue queries", async () => {
+    const res = await request(await createApp(false)).get("/api/agents/me/inbox-lite");
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: "Rust Agent core is unavailable", code: "rust_foundation_agent_core_unavailable" });
+    expect(mockAgentCore).not.toHaveBeenCalled();
+    expect(mockIssueService.list).not.toHaveBeenCalled();
   });
 });

@@ -10,6 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
 import { configureBrowserCapabilityDeployment } from "../services/browser-capability.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+
+const mockAgentCore = vi.fn();
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -155,10 +158,7 @@ vi.mock("../services/instance-settings.js", () => ({
   instanceSettingsService: () => mockInstanceSettingsService,
 }));
 
-function createDbStub(options?: {
-  schedulerRows?: Array<Record<string, unknown>>;
-}) {
-  const schedulerRows = options?.schedulerRows ?? [];
+function createDbStub() {
   return {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
@@ -169,9 +169,6 @@ function createDbStub(options?: {
             requireBoardApprovalForNewAgents: false,
           }]),
         }),
-        innerJoin: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockResolvedValue(schedulerRows),
-        }),
       }),
     }),
   };
@@ -181,19 +178,16 @@ const activeServers = new Set<Server>();
 
 async function createApp(
   actor: Record<string, unknown>,
-  options?: {
-    schedulerRows?: Array<Record<string, unknown>>;
-  },
 ) {
   const app = express();
-  const db = createDbStub(options) as any;
+  const db = createDbStub() as any;
   configureBrowserCapabilityDeployment(db, "local_trusted");
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes(db));
+  app.use("/api", agentRoutes(db, undefined, { agentCore: mockAgentCore } as unknown as RustFoundationBridge));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -305,73 +299,20 @@ describe("agent permission routes", () => {
     expect(mockHeartbeatService.resumeDeferredWakeupsForAgent).toHaveBeenCalledWith(agentId);
   });
 
-  it("omits system-managed copilot agents from instance scheduler heartbeats", async () => {
-    const app = await createApp(
-      {
-        type: "board",
-        userId: "board-user",
-        source: "local_implicit",
-        isInstanceAdmin: true,
-        orgIds: [orgId],
-      },
-      {
-        schedulerRows: [
-          {
-            id: agentId,
-            orgId,
-            agentName: "Builder",
-            role: "engineer",
-            title: "Builder",
-            status: "idle",
-            agentRuntimeType: "codex_local",
-            runtimeConfig: {
-              heartbeat: {
-                enabled: true,
-                intervalSec: 300,
-              },
-            },
-            lastHeartbeatAt: null,
-            metadata: null,
-            organizationName: "Rudder",
-            organizationIssuePrefix: "R",
-          },
-          {
-            id: "33333333-3333-4333-8333-333333333333",
-            orgId,
-            agentName: "Rudder Copilot (system)",
-            role: "engineer",
-            title: "System-managed chat copilot",
-            status: "idle",
-            agentRuntimeType: "codex_local",
-            runtimeConfig: {
-              heartbeat: {
-                enabled: true,
-                intervalSec: 0,
-              },
-            },
-            lastHeartbeatAt: null,
-            metadata: {
-              systemManaged: "rudder_copilot",
-            },
-            organizationName: "Rudder",
-            organizationIssuePrefix: "R",
-          },
-        ],
-      },
-    );
+  // System-copilot filtering is proved with persisted agents in the real Rust
+  // fixture (agent-core-real-entry.test.ts, "preserves legacy scheduler").
+  it("relays the Rust scheduler receipt and authenticated board actor", async () => {
+    const actor = { type: "board", userId: "board-user", source: "local_implicit", isInstanceAdmin: true, orgIds: [orgId] };
+    const rows = [{ id: agentId, agentName: "Builder", heartbeatEnabled: true, schedulerActive: true }];
+    mockAgentCore.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(rows)) });
+    const app = await createApp(actor);
 
     const res = await request(app).get("/api/instance/scheduler-heartbeats");
-    const items = (Array.isArray(res.body) ? res.body : JSON.parse(res.text)) as Array<Record<string, unknown>>;
 
     expect(res.status).toBe(200);
-    expect(items).toEqual([
-      expect.objectContaining({
-        id: agentId,
-        agentName: "Builder",
-        heartbeatEnabled: true,
-        schedulerActive: true,
-      }),
-    ]);
+    expect(res.body).toEqual(rows);
+    expect(mockAgentCore).toHaveBeenCalledExactlyOnceWith(actor, expect.objectContaining({ operation: "scheduler-heartbeats", orgId: null, id: null, query: {} }));
+    expect(mockAgentService.list).not.toHaveBeenCalled();
   });
 
   it("grants tasks:assign by default when board creates a new agent", async () => {
@@ -660,20 +601,19 @@ describe("agent permission routes", () => {
     expect(mockAgentService.create).not.toHaveBeenCalled();
   });
 
-  it("does not let a legacy agents:create grant expose agent configurations after explicit denial", async () => {
+  // Explicit false taking precedence over an existing agents:create grant is
+  // proved in PostgreSQL by the real Rust fixture ("preserves legacy explicit").
+  it("relays Rust configuration permission denial without evaluating Node grants", async () => {
     mockAccessService.hasPermission.mockResolvedValue(true);
-
-    const app = await createApp({
-      type: "agent",
-      agentId,
-      orgId,
-      runId: "run-1",
-    });
+    mockAgentCore.mockResolvedValue({ status: 403, contentType: "application/json", body: Buffer.from(JSON.stringify({ error: "Missing permission: can create agents" })) });
+    const actor = { type: "agent", agentId, orgId, runId: "run-1" };
+    const app = await createApp(actor);
 
     const res = await request(app).get(`/api/orgs/${orgId}/agent-configurations`);
 
     expect(res.status).toBe(403);
     expect(res.body).toEqual({ error: "Missing permission: can create agents" });
+    expect(mockAgentCore).toHaveBeenCalledExactlyOnceWith(actor, expect.objectContaining({ operation: "configurations", orgId, id: null, query: {} }));
     expect(mockAccessService.hasPermission).not.toHaveBeenCalled();
     expect(mockAgentService.list).not.toHaveBeenCalled();
   });

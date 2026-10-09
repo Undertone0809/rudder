@@ -1303,7 +1303,14 @@ impl AppState {
         request_id: &str,
     ) -> Result<VerifiedActor, ActorEnvelopeVerificationError> {
         let actor = envelope.actor.clone();
-        if !matches!(actor.kind.as_str(), "user" | "agent") && !(actor.kind == "anonymous" && actor.id == "anonymous" && org_id == "agent-core" && action == "agent.core.execute" && request.path() == "/internal/agent-core" && request.method() == actix_web::http::Method::POST) {
+        if !matches!(actor.kind.as_str(), "user" | "agent")
+            && !(actor.kind == "anonymous"
+                && actor.id == "anonymous"
+                && org_id == "agent-core"
+                && action == "agent.core.execute"
+                && request.path() == "/internal/agent-core"
+                && request.method() == actix_web::http::Method::POST)
+        {
             return Err(ActorEnvelopeVerificationError::Invalid);
         }
 
@@ -2566,11 +2573,12 @@ async fn request_guard(
     };
 
     // Buffer once at the admission boundary so routes that ignore their body cannot bypass the cap.
-    let limit=if req.path()=="/internal/agent-core"{20*1024*1024}else{state.config.max_request_bytes};
-    let body = match payload
-        .to_bytes_limited(limit)
-        .await
-    {
+    let limit = if req.path() == "/internal/agent-core" {
+        20 * 1024 * 1024
+    } else {
+        state.config.max_request_bytes
+    };
+    let body = match payload.to_bytes_limited(limit).await {
         Ok(Ok(body)) => body,
         Ok(Err(_)) => {
             return Ok(req
@@ -2767,7 +2775,11 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
-                .service(web::resource("/internal/agent-core").app_data(web::PayloadConfig::new(20*1024*1024)).route(web::post().to(agent_core::agent_core)))
+                .service(
+                    web::resource("/internal/agent-core")
+                        .app_data(web::PayloadConfig::new(20 * 1024 * 1024))
+                        .route(web::post().to(agent_core::agent_core)),
+                )
                 .route(
                     "/internal/orgs/{org_id}/calendar",
                     web::post().to(calendar::calendar),

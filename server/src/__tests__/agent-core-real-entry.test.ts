@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resolveOrganizationAgentsDir } from "../home-paths.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
@@ -31,6 +31,79 @@ async function port() { const server = net.createServer().listen(0, "127.0.0.1")
 async function stop(server?: Server) { if (server)
     await new Promise<void>((resolve, reject) => { server.close(e => e ? reject(e) : resolve()); server.closeAllConnections(); }); }
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+const foundationBinaryName = process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation";
+function resolveFoundationBinary(repo: string, env: NodeJS.ProcessEnv = process.env) {
+    const targetDir = path.resolve(repo, env.CARGO_TARGET_DIR ?? "native/target");
+    const explicit = env.RUDDER_SERVER_FOUNDATION_PATH?.trim();
+    const candidates = explicit ? [path.resolve(repo, explicit)] : [
+        path.join(targetDir, "debug", foundationBinaryName), path.join(targetDir, "release", foundationBinaryName),
+    ];
+    const binary = candidates.find((candidate) => {
+        try {
+            fs.accessSync(candidate, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
+            return fs.statSync(candidate).isFile();
+        }
+        catch { return false; }
+    });
+    if (!binary)
+        throw new Error(`Agent core requires an executable foundation binary. Checked: ${candidates.join(", ")}`);
+    return binary;
+}
+describe("Agent core foundation binary resolution", () => {
+    let repo = "";
+    beforeEach(() => { repo = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-agent-core-binary-")); });
+    afterEach(() => { fs.rmSync(repo, { recursive: true, force: true }); });
+    function fixtureBinary(relative: string) {
+        const binary = path.join(repo, relative, foundationBinaryName);
+        fs.mkdirSync(path.dirname(binary), { recursive: true });
+        fs.writeFileSync(binary, "fixture", { mode: 0o755 });
+        return binary;
+    }
+    it("resolves a release-only build in the default target directory", () => {
+        const release = fixtureBinary("native/target/release");
+        expect(resolveFoundationBinary(repo, {})).toBe(release);
+    });
+    it("resolves a release-only build in relative and absolute Cargo target directories", () => {
+        const release = fixtureBinary("custom-target/release");
+        for (const target of ["custom-target", path.join(repo, "custom-target")])
+            expect(resolveFoundationBinary(repo, { CARGO_TARGET_DIR: target })).toBe(release);
+    });
+    it("prefers debug when both default build profiles are executable files", () => {
+        fixtureBinary("native/target/release");
+        const debug = fixtureBinary("native/target/debug");
+        expect(resolveFoundationBinary(repo, {})).toBe(debug);
+    });
+    it("honors relative and absolute explicit paths ahead of build profiles", () => {
+        fixtureBinary("native/target/debug");
+        const explicit = fixtureBinary("selected");
+        for (const selected of [path.relative(repo, explicit), explicit])
+            expect(resolveFoundationBinary(repo, { RUDDER_SERVER_FOUNDATION_PATH: ` ${selected} ` })).toBe(explicit);
+    });
+    it("fails closed for an explicit missing path even when both build profiles exist", () => {
+        fixtureBinary("native/target/debug");
+        fixtureBinary("native/target/release");
+        const missing = path.join(repo, "missing", foundationBinaryName);
+        expect(() => resolveFoundationBinary(repo, { RUDDER_SERVER_FOUNDATION_PATH: missing })).toThrow(missing);
+    });
+    it("rejects directories and skips an unusable debug candidate", () => {
+        const debug = path.join(repo, "native/target/debug", foundationBinaryName);
+        fs.mkdirSync(debug, { recursive: true });
+        const release = fixtureBinary("native/target/release");
+        expect(resolveFoundationBinary(repo, {})).toBe(release);
+        expect(() => resolveFoundationBinary(repo, { RUDDER_SERVER_FOUNDATION_PATH: debug })).toThrow(debug);
+    });
+    it("checks platform access for both build candidates and explicit paths", () => {
+        const debug = fixtureBinary("native/target/debug");
+        fs.chmodSync(debug, 0o600);
+        const release = fixtureBinary("native/target/release");
+        expect(resolveFoundationBinary(repo, {})).toBe(process.platform === "win32" ? debug : release);
+        const explicit = () => resolveFoundationBinary(repo, { RUDDER_SERVER_FOUNDATION_PATH: debug });
+        if (process.platform === "win32")
+            expect(explicit()).toBe(debug);
+        else
+            expect(explicit).toThrow(debug);
+    });
+});
 describe("Agent core fifteen-route real HTTP authority", () => {
     let db: ReturnType<typeof createDb>;
     let pg: Pg | undefined;
@@ -52,8 +125,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     async function scalar(query: ReturnType<typeof sql>) { const rows = await db.execute(query); return Number(rows[0]?.value ?? 0); }
     beforeAll(async () => {
         const repo = fileURLToPath(new URL("../../../", import.meta.url));
-        binary = path.resolve(process.env.RUDDER_SERVER_FOUNDATION_PATH ?? path.join(process.env.CARGO_TARGET_DIR ?? path.join(repo, "native/target"), "debug/rudder-server-foundation"));
-        fs.accessSync(binary, fs.constants.X_OK);
+        binary = resolveFoundationBinary(repo);
         console.info("Agent core source binary", { sha256: createHash("sha256").update(fs.readFileSync(binary)).digest("hex"), binary });
         root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-agent-core-http-"));
         const PgConstructor = (await import("embedded-postgres")).default;
@@ -393,6 +465,81 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
         finally {
             await publisher.close();
+        }
+    });
+    it("preserves legacy inbox assignee/reviewer deduplication, priority and age ordering in Rust", async () => {
+        const inboxAgent = randomUUID(), inboxToken = `synthetic-inbox-${randomUUID()}`;
+        await db.execute(sql `INSERT INTO agents(id,org_id,name,role,status,workspace_key) VALUES(${inboxAgent}::uuid,${org}::uuid,'Inbox regression','engineer','idle',${inboxAgent})`);
+        await db.execute(sql `INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${inboxAgent}::uuid,'synthetic inbox',${hash(inboxToken)})`);
+        const assigned = randomUUID(), reviewed = randomUUID(), both = randomUUID(), older = randomUUID(), newer = randomUUID(), reviewerOnly = randomUUID();
+        const fixtures = [
+            { id: assigned, title: "Implement fix", status: "in_progress", priority: "medium", time: "11:00", assignee: inboxAgent, reviewer: null },
+            { id: reviewed, title: "Review fix", status: "in_review", priority: "high", time: "09:00", assignee: null, reviewer: inboxAgent },
+            { id: both, title: "Review blocker", status: "blocked", priority: "low", time: "08:00", assignee: inboxAgent, reviewer: inboxAgent },
+            { id: older, title: "Older task", status: "todo", priority: "medium", time: "10:00", assignee: inboxAgent, reviewer: null },
+            { id: newer, title: "Newer task", status: "todo", priority: "medium", time: "12:00", assignee: inboxAgent, reviewer: null },
+            { id: reviewerOnly, title: "Reviewer decision", status: "blocked", priority: "low", time: "09:00", assignee: null, reviewer: inboxAgent },
+        ];
+        for (const row of fixtures) {
+            await db.execute(sql `INSERT INTO issues(id,org_id,title,status,priority,assignee_agent_id,reviewer_agent_id,updated_at) VALUES(${row.id}::uuid,${org}::uuid,${row.title},${row.status},${row.priority},${row.assignee}::uuid,${row.reviewer}::uuid,${`2026-05-07T${row.time}:00.000Z`}::timestamptz)`);
+        }
+        const expected = [
+            { id: reviewed, relationship: "reviewer", status: "in_review" },
+            { id: older, relationship: "assignee", status: "todo" },
+            { id: assigned, relationship: "assignee", status: "in_progress" },
+            { id: newer, relationship: "assignee", status: "todo" },
+            { id: both, relationship: "reviewer", status: "blocked" },
+            { id: reviewerOnly, relationship: "reviewer", status: "blocked" },
+        ];
+        async function assertInbox(rows: typeof expected) {
+            for (const base of [nodeUrl, publicUrl]) {
+                const response = await call(base, "get", "/api/agents/me/inbox-lite", inboxToken);
+                expect(response.status, response.text).toBe(200);
+                expect(response.body.map(({ id, relationship, status }: typeof expected[number]) => ({ id, relationship, status }))).toEqual(rows);
+                expect(response.body.filter((row: { id: string }) => row.id === both)).toHaveLength(1);
+            }
+        }
+        await assertInbox(expected);
+        for (const issueId of [both, reviewerOnly]) {
+            await db.execute(sql `INSERT INTO activity_log(org_id,actor_type,actor_id,action,entity_type,entity_id,details,created_at) VALUES(${org}::uuid,'agent',${inboxAgent},'issue.review_decision_recorded','issue',${issueId},'{"decision":"blocked"}','2026-05-07T13:00:00Z')`);
+        }
+        await assertInbox(expected.filter(row => row.id !== reviewerOnly).map(row => row.id === both ? { ...row, relationship: "assignee" } : row));
+        // A different actor's later comment makes the blocked review actionable again.
+        for (const issueId of [both, reviewerOnly]) {
+            await db.execute(sql `INSERT INTO activity_log(org_id,actor_type,actor_id,action,entity_type,entity_id,details,created_at) VALUES(${org}::uuid,'user',${owner},'issue.comment_added','issue',${issueId},'{}','2026-05-07T14:00:00Z')`);
+        }
+        await assertInbox(expected);
+    });
+    it("preserves legacy scheduler system-copilot exclusion in Rust", async () => {
+        const visible = randomUUID(), copilot = randomUUID();
+        for (const [id, name, metadata, interval] of [[visible, "Scheduler Builder", {}, 300], [copilot, "Rudder Copilot (system)", { systemManaged: "rudder_copilot" }, 0]] as const) {
+            await db.execute(sql `INSERT INTO agents(id,org_id,name,role,status,agent_runtime_type,runtime_config,metadata,workspace_key) VALUES(${id}::uuid,${org}::uuid,${name},'engineer','idle','codex_local',${JSON.stringify({ heartbeat: { enabled: true, intervalSec: interval } })}::jsonb,${JSON.stringify(metadata)}::jsonb,${id})`);
+        }
+        for (const base of [nodeUrl, publicUrl]) {
+            const response = await call(base, "get", "/api/instance/scheduler-heartbeats");
+            expect(response.status, response.text).toBe(200);
+            expect(response.body.filter((row: { id: string }) => [visible, copilot].includes(row.id))).toEqual([
+                expect.objectContaining({ id: visible, agentName: "Scheduler Builder", heartbeatEnabled: true, schedulerActive: true, intervalSec: 300 }),
+            ]);
+        }
+    });
+    it("preserves legacy explicit configuration denial despite a persisted agents:create grant in Rust", async () => {
+        const deniedAgent = randomUUID(), deniedToken = `synthetic-denied-${randomUUID()}`;
+        await db.execute(sql `INSERT INTO agents(id,org_id,name,role,status,permissions,workspace_key) VALUES(${deniedAgent}::uuid,${org}::uuid,'Explicitly denied','engineer','idle','{"canCreateAgents":false}',${deniedAgent})`);
+        await db.execute(sql `INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${deniedAgent}::uuid,'synthetic denied',${hash(deniedToken)})`);
+        await db.execute(sql `INSERT INTO organization_memberships(org_id,principal_type,principal_id,status,membership_role) VALUES(${org}::uuid,'agent',${deniedAgent},'active','member')`);
+        await db.execute(sql `INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key) VALUES(${org}::uuid,'agent',${deniedAgent},'agents:create')`);
+        for (const base of [nodeUrl, publicUrl]) {
+            const response = await call(base, "get", `/api/orgs/${org}/agent-configurations`, deniedToken);
+            expect(response.status, response.text).toBe(403);
+            expect(response.body).toEqual({ error: "Missing permission: can create agents" });
+        }
+        expect(await scalar(sql `SELECT count(*) AS value FROM principal_permission_grants WHERE org_id=${org}::uuid AND principal_id=${deniedAgent} AND permission_key='agents:create'`)).toBe(1);
+        await db.execute(sql `UPDATE agents SET permissions='{"canCreateAgents":true}' WHERE id=${deniedAgent}::uuid`);
+        for (const base of [nodeUrl, publicUrl]) {
+            const response = await call(base, "get", `/api/orgs/${org}/agent-configurations`, deniedToken);
+            expect(response.status, response.text).toBe(200);
+            expect(response.body.some((row: { id: string }) => row.id === deniedAgent)).toBe(true);
         }
     });
 });
