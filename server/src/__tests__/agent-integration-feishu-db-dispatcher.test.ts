@@ -1130,6 +1130,21 @@ describe("Feishu inbound dispatcher DB deps", () => {
     expect(first.status).toBe("accepted");
     if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
 
+    // Coalescing applies to commands that observed the same session. Starting
+    // both dispatches with Promise.all alone also permits a later binding read
+    // after the first switch commits, which legitimately starts another session.
+    const ensureChatBinding = deps.ensureChatBinding;
+    const observedConversationIds: string[] = [];
+    let releaseBindingReads!: () => void;
+    const bindingReadsReady = new Promise<void>((resolve) => { releaseBindingReads = resolve; });
+    deps.ensureChatBinding = async (...args) => {
+      const chat = await ensureChatBinding(...args);
+      observedConversationIds.push(chat.conversationId);
+      if (observedConversationIds.length === 2) releaseBindingReads();
+      await bindingReadsReady;
+      return chat;
+    };
+
     const [newOne, newTwo] = await Promise.all([
       dispatchFeishuInboundMessage(
         inboundEvent({
@@ -1151,6 +1166,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       ),
     ]);
 
+    expect(observedConversationIds).toEqual([first.conversationId, first.conversationId]);
     expect(newOne.status).toBe("quick_command");
     expect(newTwo.status).toBe("quick_command");
     if (newOne.status !== "quick_command" || newTwo.status !== "quick_command") {
@@ -1182,6 +1198,110 @@ describe("Feishu inbound dispatcher DB deps", () => {
       first.conversationId,
       newOne.conversationId,
     ].sort());
+  });
+
+  it("starts another Feishu session when a concurrent /new reads the committed binding, but dedupes redelivery", async () => {
+    const seeded = await seedIntegration();
+    const deps = createFeishuInboundDispatcherDbDeps(db, { startTitleGeneration: false });
+    const first = await dispatchFeishuInboundMessage(inboundEvent({ body: "seed the original session" }), deps);
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+    const newOneEvent = inboundEvent({ body: "/new", commandBody: "/new" });
+    const newTwoEvent = inboundEvent({ body: "/new", commandBody: "/new" });
+    const newOnePending = dispatchFeishuInboundMessage(newOneEvent, deps);
+    let laterObservedConversationId: string | undefined;
+    const [newOne, newTwo] = await Promise.all([
+      newOnePending,
+      dispatchFeishuInboundMessage(newTwoEvent, {
+        ...deps,
+        ensureChatBinding: async (...args) => {
+          // Both dispatches are in flight, but this command reads the session
+          // only after the first command has committed its switch.
+          await newOnePending;
+          const chat = await deps.ensureChatBinding(...args);
+          laterObservedConversationId = chat.conversationId;
+          return chat;
+        },
+      }),
+    ]);
+    if (newOne.status !== "quick_command" || newTwo.status !== "quick_command") {
+      throw new Error("Expected both /new commands to be handled");
+    }
+    expect(laterObservedConversationId).toBe(newOne.conversationId);
+    expect(newOne.command).toBe("new");
+    expect(newTwo.command).toBe("new");
+    expect(new Set([first.conversationId, newOne.conversationId, newTwo.conversationId]).size).toBe(3);
+
+    for (const event of [newOneEvent, newTwoEvent]) {
+      await expect(dispatchFeishuInboundMessage({ ...event, eventId: `retry-${event.eventId}` }, deps))
+        .resolves.toEqual({ status: "dropped", reason: "duplicate" });
+    }
+    const [binding] = await db.select().from(agentIntegrationChatBindings);
+    expect(binding).toMatchObject({
+      integrationId: seeded.integrationId,
+      externalChatId: "oc_chat",
+      conversationId: newTwo.conversationId,
+    });
+    const conversations = await db.select().from(chatConversations);
+    expect(conversations.map((conversation) => conversation.id).sort()).toEqual([
+      first.conversationId,
+      newOne.conversationId,
+      newTwo.conversationId,
+    ].sort());
+    const messages = await db.select().from(chatMessages);
+    expect(messages.filter((message) => message.role === "user").map((message) => message.body))
+      .toEqual(["seed the original session"]);
+    expect(messages.filter((message) => message.kind === "system_event")).toHaveLength(4);
+    for (const [previousConversationId, nextConversationId] of [
+      [first.conversationId, newOne.conversationId],
+      [newOne.conversationId, newTwo.conversationId],
+    ]) {
+      expect(messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          conversationId: previousConversationId,
+          structuredPayload: expect.objectContaining({ previousConversationId, nextConversationId }),
+        }),
+      ]));
+    }
+  });
+
+  it("rolls back a Feishu /new session switch when its transaction fails before commit", async () => {
+    await seedIntegration();
+    const deps = createFeishuInboundDispatcherDbDeps(db, { startTitleGeneration: false });
+    const first = await dispatchFeishuInboundMessage(inboundEvent({ body: "keep the original session" }), deps);
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+    const originalBindings = await db.select().from(agentIntegrationChatBindings);
+    const originalMessages = await db.select().from(chatMessages);
+    const originalLinks = await db.select().from(chatContextLinks);
+    const originalActivity = await db.select().from(activityLog).orderBy(activityLog.id);
+    const transaction = db.transaction.bind(db);
+    const failure = new Error("Injected failure before session switch commit");
+    const transactionSpy = vi.spyOn(db, "transaction").mockImplementationOnce(async (callback) =>
+      transaction(async (tx) => {
+        await callback(tx);
+        throw failure;
+      }),
+    );
+    try {
+      await expect(dispatchFeishuInboundMessage(inboundEvent({ body: "/new", commandBody: "/new" }), deps))
+        .rejects.toThrow(failure);
+    } finally {
+      transactionSpy.mockRestore();
+    }
+
+    await expect(db.select().from(agentIntegrationChatBindings)).resolves.toEqual(originalBindings);
+    await expect(db.select().from(chatMessages)).resolves.toEqual(originalMessages);
+    await expect(db.select().from(chatContextLinks)).resolves.toEqual(originalLinks);
+    await expect(db.select().from(activityLog).orderBy(activityLog.id)).resolves.toEqual(originalActivity);
+    const conversations = await db.select().from(chatConversations);
+    expect(conversations.map((conversation) => conversation.id)).toEqual([first.conversationId]);
+
+    const next = await dispatchFeishuInboundMessage(inboundEvent({ body: "/new", commandBody: "/new" }), deps);
+    if (next.status !== "quick_command") throw new Error("Expected the next /new command to be handled");
+    expect(next.conversationId).not.toBe(first.conversationId);
+    const [binding] = await db.select().from(agentIntegrationChatBindings);
+    expect(binding?.conversationId).toBe(next.conversationId);
+    await expect(db.select().from(chatConversations)).resolves.toHaveLength(2);
+    await expect(db.select().from(chatMessages)).resolves.toHaveLength(3);
   });
 
   it("generates Feishu chat titles through the same fallback and lightweight replacement flow as normal chat", async () => {
