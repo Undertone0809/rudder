@@ -15,17 +15,14 @@ import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-opencode-local/server";
 import { ensurePiModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-pi-local/server";
 import type { Db } from "@rudderhq/db";
-import { agents as agentsTable, organizations } from "@rudderhq/db";
 import {
   agentSkillEnableSchema,
   agentSkillSyncSchema,
   connectAgentIntegrationSchema,
   createCustomIntegrationSchema,
   createCustomIntegrationToolCallSchema,
-  deriveAgentUrlKey,
   isUuidLike,
   organizationSkillCreateSchema,
-  resetAgentSessionSchema,
   RUDDER_AGENT_V1_MCP_SERVER_NAME,
   RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
@@ -38,10 +35,8 @@ import {
   type AgentIntegrationSetupSession,
   type AgentRudderToolSummary,
   type AgentSkillAnalytics,
-  type AgentSkillSnapshot,
-  type InstanceSchedulerHeartbeatAgent
+  type AgentSkillSnapshot
 } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { generateKeyPairSync } from "node:crypto";
@@ -72,7 +67,6 @@ import {
   budgetService,
   heartbeatService,
   issueApprovalService,
-  issueService,
   logActivity,
   organizationIntelligenceProfileService,
   organizationIntelligenceRuntimeChainService,
@@ -92,8 +86,9 @@ import {
 import { feishuIntegrationUserBindingService } from "../services/integrations/feishu/user-bindings.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
+import { agentCoreRoutes } from "./agents.core.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
-import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
+import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const AGENT_AVATAR_CONTENT_TYPES = new Set([
   "image/png",
@@ -291,6 +286,7 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
   ] as const;
 
   const router = Router();
+  router.use(agentCoreRoutes(rustFoundationBridge, resolveBrowserCapabilityDeployment(db)));
   const svc = agentService(db);
   const assets = assetService(db);
   const access = accessService(db);
@@ -810,26 +806,6 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
     return null;
   }
 
-  function parseNumberLike(value: unknown): number | null {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value !== "string") return null;
-    const parsed = Number(value.trim());
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  function parseSchedulerHeartbeatPolicy(runtimeConfig: unknown) {
-    const heartbeat = asRecord(asRecord(runtimeConfig)?.heartbeat) ?? {};
-    return {
-      enabled: parseBooleanLike(heartbeat.enabled) ?? true,
-      intervalSec: Math.max(0, parseNumberLike(heartbeat.intervalSec) ?? 0),
-    };
-  }
-
-  function isHiddenSystemAgentMetadata(metadata: unknown) {
-    const parsed = asRecord(metadata);
-    return parsed?.hidden === true || parsed?.systemManaged === "rudder_copilot";
-  }
-
   function generateEd25519PrivateKeyPem(): string {
     const { privateKey } = generateKeyPairSync("ed25519");
     return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -1099,38 +1075,6 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
       runtimeConfig: redactRuntimeConfigForResponse(agent.runtimeConfig),
       permissions: agent.permissions,
       updatedAt: agent.updatedAt,
-    };
-  }
-
-  function redactRevisionSnapshot(snapshot: unknown): Record<string, unknown> {
-    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return {};
-    const record = snapshot as Record<string, unknown>;
-    return {
-      ...record,
-      agentRuntimeConfig: redactEventPayload(
-        typeof record.agentRuntimeConfig === "object" && record.agentRuntimeConfig !== null
-          ? (record.agentRuntimeConfig as Record<string, unknown>)
-          : {},
-      ),
-      runtimeConfig: redactEventPayload(
-        typeof record.runtimeConfig === "object" && record.runtimeConfig !== null
-          ? (record.runtimeConfig as Record<string, unknown>)
-          : {},
-      ),
-      metadata:
-        typeof record.metadata === "object" && record.metadata !== null
-          ? redactEventPayload(record.metadata as Record<string, unknown>)
-          : record.metadata ?? null,
-    };
-  }
-
-  function redactConfigRevision(
-    revision: Record<string, unknown> & { beforeConfig: unknown; afterConfig: unknown },
-  ) {
-    return {
-      ...revision,
-      beforeConfig: redactRevisionSnapshot(revision.beforeConfig),
-      afterConfig: redactRevisionSnapshot(revision.afterConfig),
     };
   }
 
@@ -1422,96 +1366,21 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
     },
   );
 
-  router.get("/orgs/:orgId/agents", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const result = await svc.list(orgId);
-    const canReadConfigs = await actorCanReadConfigurationsForCompany(req, orgId);
-    if (canReadConfigs || req.actor.type === "board") {
-      res.json(result.map((agent) => redactAgentForResponse(agent)));
-      return;
-    }
-    res.json(result.map((agent) => redactForRestrictedAgentView(agent)));
-  });
 
-  router.get("/orgs/:orgId/agents/name-suggestion", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    await assertCanCreateAgentsForCompany(req, orgId);
-    const name = await svc.suggestName(orgId);
-    res.json({ name });
-  });
 
-  router.get("/instance/scheduler-heartbeats", async (req, res) => {
-    assertInstanceAdmin(req);
 
-    const rows = await db
-      .select({
-        id: agentsTable.id,
-        orgId: agentsTable.orgId,
-        agentName: agentsTable.name,
-        role: agentsTable.role,
-        title: agentsTable.title,
-        status: agentsTable.status,
-        agentRuntimeType: agentsTable.agentRuntimeType,
-        runtimeConfig: agentsTable.runtimeConfig,
-        lastHeartbeatAt: agentsTable.lastHeartbeatAt,
-        metadata: agentsTable.metadata,
-        organizationName: organizations.name,
-        organizationIssuePrefix: organizations.issuePrefix,
-      })
-      .from(agentsTable)
-      .innerJoin(organizations, eq(agentsTable.orgId, organizations.id))
-      .orderBy(organizations.name, agentsTable.name);
 
-    const items: InstanceSchedulerHeartbeatAgent[] = rows
-      .filter((row) => !isHiddenSystemAgentMetadata(row.metadata))
-      .map((row) => {
-        const policy = parseSchedulerHeartbeatPolicy(row.runtimeConfig);
-        const statusEligible =
-          row.status !== "paused" &&
-          row.status !== "terminated" &&
-          row.status !== "pending_approval";
 
-        return {
-          id: row.id,
-          orgId: row.orgId,
-          organizationName: row.organizationName,
-          organizationIssuePrefix: row.organizationIssuePrefix,
-          agentName: row.agentName,
-          agentUrlKey: deriveAgentUrlKey(row.agentName, row.id),
-          role: row.role as InstanceSchedulerHeartbeatAgent["role"],
-          title: row.title,
-          status: row.status as InstanceSchedulerHeartbeatAgent["status"],
-          agentRuntimeType: row.agentRuntimeType,
-          intervalSec: policy.intervalSec,
-          heartbeatEnabled: policy.enabled,
-          schedulerActive: statusEligible && policy.enabled && policy.intervalSec > 0,
-          lastHeartbeatAt: row.lastHeartbeatAt,
-        };
-      })
-      .filter((item) =>
-        item.status !== "paused" &&
-        item.status !== "terminated" &&
-        item.status !== "pending_approval",
-      )
-      .sort((left, right) => {
-        if (left.schedulerActive !== right.schedulerActive) {
-          return left.schedulerActive ? -1 : 1;
-        }
-        const organizationOrder = left.organizationName.localeCompare(right.organizationName);
-        if (organizationOrder !== 0) return organizationOrder;
-        return left.agentName.localeCompare(right.agentName);
-      });
 
-    res.json(items);
-  });
 
-  router.get("/orgs/:orgId/agent-configurations", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    await assertCanReadConfigurations(req, orgId);
-    const rows = await svc.list(orgId);
-    res.json(rows.map((row) => redactAgentConfiguration(row)));
-  });
+
+
+
+
+
+
+
+
 
   router.get("/agents/me", async (req, res) => {
     if (req.actor.type !== "agent" || !req.actor.agentId) {
@@ -1524,61 +1393,6 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
       return;
     }
     res.json(await buildAgentDetail(agent));
-  });
-
-  router.get("/agents/me/inbox-lite", async (req, res) => {
-    if (req.actor.type !== "agent" || !req.actor.agentId || !req.actor.orgId) {
-      res.status(401).json({ error: "Agent authentication required" });
-      return;
-    }
-
-    const issuesSvc = issueService(db);
-    const assigneeRows = await issuesSvc.list(req.actor.orgId, {
-      assigneeAgentId: req.actor.agentId,
-      includeAutomationExecutions: true,
-      status: "todo,in_progress,blocked",
-    });
-    const reviewerRows = await issuesSvc.list(req.actor.orgId, {
-      includeAutomationExecutions: true,
-      reviewerAgentId: req.actor.agentId,
-      status: "in_review,blocked",
-      excludeReviewerRecordedBlockedDecision: true,
-    });
-
-    const rowsByIssueId = new Map<string, {
-      issue: (typeof assigneeRows)[number];
-      relationship: "assignee" | "reviewer";
-    }>();
-    for (const issue of assigneeRows) {
-      rowsByIssueId.set(issue.id, { issue, relationship: "assignee" });
-    }
-    for (const issue of reviewerRows) {
-      rowsByIssueId.set(issue.id, { issue, relationship: "reviewer" });
-    }
-
-    const rows = Array.from(rowsByIssueId.values()).sort((a: any, b: any) => {
-      const priorityRank: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-      const aPriority = priorityRank[a.issue.priority] ?? 9;
-      const bPriority = priorityRank[b.issue.priority] ?? 9;
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      return new Date(a.issue.updatedAt).getTime() - new Date(b.issue.updatedAt).getTime();
-    });
-
-    res.json(
-      rows.map(({ issue, relationship }) => ({
-        id: issue.id,
-        identifier: issue.identifier,
-        title: issue.title,
-        relationship,
-        status: issue.status,
-        priority: issue.priority,
-        projectId: issue.projectId,
-        goalId: issue.goalId,
-        parentId: issue.parentId,
-        updatedAt: issue.updatedAt,
-        activeRun: issue.activeRun,
-      })),
-    );
   });
 
   router.get("/agents/:id", async (req, res) => {
@@ -1597,17 +1411,6 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
       }
     }
     res.json(await buildAgentDetail(agent));
-  });
-
-  router.get("/agents/:id/configuration", async (req, res) => {
-    const id = req.params.id as string;
-    const agent = await svc.getById(id);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    await assertCanReadConfigurations(req, agent.orgId);
-    res.json(redactAgentConfiguration(agent));
   });
 
   router.get("/agents/:id/integrations", async (req, res) => {
@@ -1855,131 +1658,17 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
     },
   );
 
-  router.get("/agents/:id/config-revisions", async (req, res) => {
-    const id = req.params.id as string;
-    const agent = await svc.getById(id);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    await assertCanReadConfigurations(req, agent.orgId);
-    const revisions = await svc.listConfigRevisions(id);
-    res.json(revisions.map((revision) => redactConfigRevision(revision)));
-  });
 
-  router.get("/agents/:id/config-revisions/:revisionId", async (req, res) => {
-    const id = req.params.id as string;
-    const revisionId = req.params.revisionId as string;
-    const agent = await svc.getById(id);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    await assertCanReadConfigurations(req, agent.orgId);
-    const revision = await svc.getConfigRevision(id, revisionId);
-    if (!revision) {
-      res.status(404).json({ error: "Revision not found" });
-      return;
-    }
-    res.json(redactConfigRevision(revision));
-  });
 
-  router.post("/agents/:id/config-revisions/:revisionId/rollback", async (req, res) => {
-    const id = req.params.id as string;
-    const revisionId = req.params.revisionId as string;
-    const existing = await svc.getById(id);
-    if (!existing) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    await assertCanUpdateAgent(req, existing);
 
-    const actor = getActorInfo(req);
-    const updated = await svc.rollbackConfigRevision(id, revisionId, {
-      agentId: actor.agentId,
-      userId: actor.actorType === "user" ? actor.actorId : null,
-    });
-    if (!updated) {
-      res.status(404).json({ error: "Revision not found" });
-      return;
-    }
 
-    await logActivity(db, {
-      orgId: updated.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "agent.config_rolled_back",
-      entityType: "agent",
-      entityId: updated.id,
-      details: { revisionId },
-    });
 
-    res.json(redactAgentForResponse(updated));
-  });
 
-  router.get("/agents/:id/runtime-state", async (req, res) => {
-    assertBoard(req);
-    const id = req.params.id as string;
-    const agent = await svc.getById(id);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    assertCompanyAccess(req, agent.orgId);
 
-    const state = await heartbeat.getRuntimeState(id);
-    res.json(state);
-  });
 
-  router.get("/agents/:id/task-sessions", async (req, res) => {
-    assertBoard(req);
-    const id = req.params.id as string;
-    const agent = await svc.getById(id);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    assertCompanyAccess(req, agent.orgId);
 
-    const sessions = await heartbeat.listTaskSessions(id);
-    res.json(
-      sessions.map((session) => ({
-        ...session,
-        sessionParamsJson: redactEventPayload(session.sessionParamsJson ?? null),
-      })),
-    );
-  });
 
-  router.post("/agents/:id/runtime-state/reset-session", validate(resetAgentSessionSchema), async (req, res) => {
-    assertBoard(req);
-    const id = req.params.id as string;
-    const agent = await svc.getById(id);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    assertCompanyAccess(req, agent.orgId);
 
-    const taskKey =
-      typeof req.body.taskKey === "string" && req.body.taskKey.trim().length > 0
-        ? req.body.taskKey.trim()
-        : null;
-    const state = await heartbeat.resetRuntimeSession(id, { taskKey });
-
-    await logActivity(db, {
-      orgId: agent.orgId,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "agent.runtime_session_reset",
-      entityType: "agent",
-      entityId: id,
-      details: { taskKey: taskKey ?? null },
-    });
-
-    res.json(state);
-  });
 
   registerAgentManagementRoutes({
     router, db, storage, rustFoundationBridge,

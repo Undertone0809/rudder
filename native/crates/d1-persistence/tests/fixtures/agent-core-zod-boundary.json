@@ -1,0 +1,1370 @@
+{
+  "schemaSource": "packages/shared/src/validators/agent.ts",
+  "cases": [
+    {
+      "operation": "key-create",
+      "index": 0,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "undefined",
+            "path": [],
+            "message": "Required"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 1,
+      "input": null,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "null",
+            "path": [],
+            "message": "Expected object, received null"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 2,
+      "input": false,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 3,
+      "input": true,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 4,
+      "input": 0,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 5,
+      "input": 1.5,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 6,
+      "input": "",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 7,
+      "input": " ",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 8,
+      "input": "\t\n",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 9,
+      "input": "a",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 10,
+      "input": "任务",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 11,
+      "input": "a\u0000b",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 12,
+      "input": "h.p.s",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 13,
+      "input": "***REDACTED***",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 14,
+      "input": "𝌆",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 15,
+      "input": [],
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 16,
+      "input": {},
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "default"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 17,
+      "input": [
+        "x"
+      ],
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 18,
+      "input": {
+        "nested": "opaque"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "default"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 19,
+      "input": {},
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "default"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 20,
+      "input": {
+        "name": null
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "null",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received null"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 21,
+      "input": {
+        "name": false
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "boolean",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 22,
+      "input": {
+        "name": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "boolean",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 23,
+      "input": {
+        "name": 0
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "number",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received number"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 24,
+      "input": {
+        "name": 1.5
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "number",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received number"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 25,
+      "input": {
+        "name": ""
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "too_small",
+            "minimum": 1,
+            "type": "string",
+            "inclusive": true,
+            "exact": false,
+            "message": "String must contain at least 1 character(s)",
+            "path": [
+              "name"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 26,
+      "input": {
+        "name": " "
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": " "
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 27,
+      "input": {
+        "name": "\t\n"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "\t\n"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 28,
+      "input": {
+        "name": "a"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "a"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 29,
+      "input": {
+        "name": "任务"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "任务"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 30,
+      "input": {
+        "name": "a\u0000b"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "a\u0000b"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 31,
+      "input": {
+        "name": "h.p.s"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "h.p.s"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 32,
+      "input": {
+        "name": "***REDACTED***"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "***REDACTED***"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 33,
+      "input": {
+        "name": "𝌆"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "𝌆"
+        }
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 34,
+      "input": {
+        "name": []
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "array",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received array"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 35,
+      "input": {
+        "name": {}
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "object",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received object"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 36,
+      "input": {
+        "name": [
+          "x"
+        ]
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "array",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received array"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 37,
+      "input": {
+        "name": {
+          "nested": "opaque"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "object",
+            "path": [
+              "name"
+            ],
+            "message": "Expected string, received object"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "key-create",
+      "index": 38,
+      "input": {
+        "name": "ordinary",
+        "actor": {
+          "kind": "user",
+          "id": "forged"
+        },
+        "unknown": "strip"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "name": "ordinary"
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 0,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "undefined",
+            "path": [],
+            "message": "Required"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 1,
+      "input": null,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "null",
+            "path": [],
+            "message": "Expected object, received null"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 2,
+      "input": false,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 3,
+      "input": true,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 4,
+      "input": 0,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 5,
+      "input": 1.5,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 6,
+      "input": "",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 7,
+      "input": " ",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 8,
+      "input": "\t\n",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 9,
+      "input": "a",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 10,
+      "input": "任务",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 11,
+      "input": "a\u0000b",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 12,
+      "input": "h.p.s",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 13,
+      "input": "***REDACTED***",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 14,
+      "input": "𝌆",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 15,
+      "input": [],
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 16,
+      "input": {},
+      "expected": {
+        "status": 200,
+        "value": {}
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 17,
+      "input": [
+        "x"
+      ],
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 18,
+      "input": {
+        "nested": "opaque"
+      },
+      "expected": {
+        "status": 200,
+        "value": {}
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 19,
+      "input": {},
+      "expected": {
+        "status": 200,
+        "value": {}
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 20,
+      "input": {
+        "taskKey": null
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": null
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 21,
+      "input": {
+        "taskKey": false
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "boolean",
+            "path": [
+              "taskKey"
+            ],
+            "message": "Expected string, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 22,
+      "input": {
+        "taskKey": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "boolean",
+            "path": [
+              "taskKey"
+            ],
+            "message": "Expected string, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 23,
+      "input": {
+        "taskKey": 0
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "number",
+            "path": [
+              "taskKey"
+            ],
+            "message": "Expected string, received number"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 24,
+      "input": {
+        "taskKey": 1.5
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "number",
+            "path": [
+              "taskKey"
+            ],
+            "message": "Expected string, received number"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 25,
+      "input": {
+        "taskKey": ""
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "too_small",
+            "minimum": 1,
+            "type": "string",
+            "inclusive": true,
+            "exact": false,
+            "message": "String must contain at least 1 character(s)",
+            "path": [
+              "taskKey"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 26,
+      "input": {
+        "taskKey": " "
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": " "
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 27,
+      "input": {
+        "taskKey": "\t\n"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": "\t\n"
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 28,
+      "input": {
+        "taskKey": "a"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": "a"
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 29,
+      "input": {
+        "taskKey": "任务"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": "任务"
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 30,
+      "input": {
+        "taskKey": "a\u0000b"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": "a\u0000b"
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 31,
+      "input": {
+        "taskKey": "h.p.s"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": "h.p.s"
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 32,
+      "input": {
+        "taskKey": "***REDACTED***"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": "***REDACTED***"
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 33,
+      "input": {
+        "taskKey": "𝌆"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": "𝌆"
+        }
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 34,
+      "input": {
+        "taskKey": []
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "array",
+            "path": [
+              "taskKey"
+            ],
+            "message": "Expected string, received array"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 35,
+      "input": {
+        "taskKey": {}
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "object",
+            "path": [
+              "taskKey"
+            ],
+            "message": "Expected string, received object"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 36,
+      "input": {
+        "taskKey": [
+          "x"
+        ]
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "array",
+            "path": [
+              "taskKey"
+            ],
+            "message": "Expected string, received array"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 37,
+      "input": {
+        "taskKey": {
+          "nested": "opaque"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "received": "object",
+            "path": [
+              "taskKey"
+            ],
+            "message": "Expected string, received object"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "reset-session",
+      "index": 38,
+      "input": {
+        "taskKey": "ordinary",
+        "actor": {
+          "kind": "user",
+          "id": "forged"
+        },
+        "unknown": "strip"
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "taskKey": "ordinary"
+        }
+      }
+    }
+  ]
+}

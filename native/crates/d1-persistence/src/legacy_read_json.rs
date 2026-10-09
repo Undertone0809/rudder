@@ -30,15 +30,24 @@ pub fn normalize_legacy_read_json(raw: &str) -> Result<String, serde_json::Error
 /// prevent user-provided metadata from exhausting the native stack. Callers
 /// needing opaque deeper payloads should use normalize_legacy_read_json.
 pub fn parse_legacy_read_json(raw: &str) -> Result<Value, serde_json::Error> {
+    parse_numeric_json(raw, 512)
+}
+
+/// Agent command callers execute parsing, cloning and dropping on a grown stack.
+pub(crate) fn parse_legacy_command_json(raw: &str) -> Result<Value, serde_json::Error> {
+    parse_numeric_json(raw, 8192)
+}
+
+fn parse_numeric_json(raw: &str, maximum_depth: usize) -> Result<Value, serde_json::Error> {
     let mut numbers = Vec::new();
-    let indexed = replace_numbers(raw, Some(512), |number| {
+    let indexed = replace_numbers(raw, Some(maximum_depth), |number| {
         let index = numbers.len();
         numbers.push(legacy_number(number));
         index.to_string()
     })?;
     let mut deserializer = serde_json::Deserializer::from_str(&indexed);
     deserializer.disable_recursion_limit();
-    let mut value = Value::deserialize(&mut deserializer)?;
+    let mut value = LiteralJson::deserialize(&mut deserializer)?.0;
     deserializer.end()?;
     let mut pending = vec![&mut value];
     while let Some(value) = pending.pop() {
@@ -52,6 +61,61 @@ pub fn parse_legacy_read_json(raw: &str) -> Result<Value, serde_json::Error> {
         }
     }
     Ok(value)
+}
+
+// Value's visitor recognizes serde-private sentinel keys when transitive
+// dependencies enable raw_value. At a product JSON boundary those keys are
+// ordinary user data, including when they are the only key in an object.
+struct LiteralJson(Value);
+impl<'de> Deserialize<'de> for LiteralJson {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = LiteralJson;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON value")
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(LiteralJson(Value::Null))
+            }
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(LiteralJson(Value::Bool(value)))
+            }
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(LiteralJson(Value::Number(value.into())))
+            }
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(LiteralJson(Value::Number(value.into())))
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(LiteralJson(Value::String(value.into())))
+            }
+            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
+                Ok(LiteralJson(Value::String(value)))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut values = Vec::new();
+                while let Some(value) = sequence.next_element::<LiteralJson>()? {
+                    values.push(value.0);
+                }
+                Ok(LiteralJson(Value::Array(values)))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut values = serde_json::Map::new();
+                while let Some((key, value)) = map.next_entry::<String, LiteralJson>()? {
+                    values.insert(key, value.0);
+                }
+                Ok(LiteralJson(Value::Object(values)))
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
 }
 
 fn replace_numbers(
@@ -123,6 +187,9 @@ mod tests {
         let value = parse_legacy_read_json(r#"{"$serde_json::private::Number":"123","$serde_json::private::RawValue":"[1]","nested":[true,false,null,"snowman ☃",{"empty":{}}]}"#).unwrap();
         assert_eq!(value["$serde_json::private::Number"], "123");
         assert_eq!(value["$serde_json::private::RawValue"], "[1]");
+        let sentinels = parse_legacy_read_json(r#"[{"$serde_json::private::RawValue":"not parsed"},{"$serde_json::private::Number":"literal"}]"#).unwrap();
+        assert_eq!(sentinels[0]["$serde_json::private::RawValue"], "not parsed");
+        assert_eq!(sentinels[1]["$serde_json::private::Number"], "literal");
         assert_eq!(value["nested"][3], "snowman ☃");
         assert!(value["nested"][4]["empty"].as_object().unwrap().is_empty());
     }
