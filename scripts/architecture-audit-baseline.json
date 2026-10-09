@@ -242,14 +242,6 @@
       "expiry": "2027-03-31"
     },
     {
-      "path": "server/src/routes/agents.management-routes.ts",
-      "lines": 1501,
-      "owner": "agents-server",
-      "rationale": "Agent management transport remains slightly above the ceiling after initial route extraction.",
-      "target": "Move remaining use-case logic to agent facades and reduce below 1500 lines.",
-      "expiry": "2026-12-31"
-    },
-    {
       "path": "server/src/services/issues.ts",
       "lines": 1530,
       "owner": "issues-server",

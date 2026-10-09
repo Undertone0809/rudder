@@ -1,7 +1,3 @@
-import {
-  RUDDER_BROWSER_MCP_TOOL_NAMES,
-  RUDDER_CORE_MCP_TOOL_NAMES,
-} from "@rudderhq/shared";
 import express from "express";
 import { once } from "node:events";
 import type { Server } from "node:http";
@@ -351,228 +347,24 @@ describe("agent permission routes", () => {
     );
   });
 
-  it("exposes explicit task assignment access on agent detail", async () => {
-    mockAccessService.listPrincipalGrants.mockResolvedValue([
-      {
-        id: "grant-1",
-        orgId,
-        principalType: "agent",
-        principalId: agentId,
-        permissionKey: "tasks:assign",
-        scope: null,
-        grantedByUserId: "board-user",
-        createdAt: new Date("2026-03-19T00:00:00.000Z"),
-        updatedAt: new Date("2026-03-19T00:00:00.000Z"),
-      },
-    ]);
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.access.canAssignTasks).toBe(true);
-    expect(res.body.access.taskAssignSource).toBe("explicit_grant");
-  });
-
-  it("exposes separate core and Browser runtime integrations for a supported agent", async () => {
-    mockAgentService.getById.mockResolvedValue({
-      ...baseAgent,
-      agentRuntimeType: "codex_local",
-    });
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.rudderTools).toEqual([
-      expect.objectContaining({
-        id: "rudder-tools",
-        kind: "rudder_mcp",
-        status: "available",
-        serverName: "rudder-tools",
-        contract: "agent-v1",
-        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
-        tools: [...RUDDER_CORE_MCP_TOOL_NAMES],
-        authMode: "runtime_managed",
-      }),
-      expect.objectContaining({
-        id: "rudder-browser",
-        kind: "rudder_browser_mcp",
-        status: "available",
-        serverName: "rudder-browser",
-        contract: "browser-v1",
-        toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
-        tools: [...RUDDER_BROWSER_MCP_TOOL_NAMES],
-        authMode: "runtime_managed",
-      }),
-    ]);
-  });
-
-  it("reports Browser as disabled with no exposed tools when the instance setting is off", async () => {
-    mockAgentService.getById.mockResolvedValue({
-      ...baseAgent,
-      agentRuntimeType: "codex_local",
-    });
-    mockInstanceSettingsService.getBrowser.mockResolvedValue({
-      enabled: false,
-      openLinksIn: "built_in",
-    });
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.rudderTools[0]).toMatchObject({
-      id: "rudder-tools",
-      status: "available",
-      toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
-    });
-    expect(res.body.rudderTools[1]).toMatchObject({
-      id: "rudder-browser",
-      status: "disabled",
-      toolCount: 0,
-      tools: [],
-    });
-  });
-
-  it("reports Browser as disabled for an unsupported runtime while core tools remain available", async () => {
-    mockAgentService.getById.mockResolvedValue({
-      ...baseAgent,
-      agentRuntimeType: "process",
-    });
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.rudderTools).toEqual([
-      expect.objectContaining({
-        id: "rudder-tools",
-        status: "available",
-        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
-      }),
-      expect.objectContaining({
-        id: "rudder-browser",
-        status: "disabled",
-        toolCount: 0,
-        tools: [],
-      }),
-    ]);
-  });
-
-  it("does not leak runtime integration or Browser setting metadata in a restricted agent detail", async () => {
-    const app = await createApp({
-      type: "agent",
-      agentId: peerAgentId,
-      orgId,
-      runId: "run-1",
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.rudderTools).toBeUndefined();
-    expect(res.body.integrations).toBeUndefined();
-    expect(mockInstanceSettingsService.getBrowser).not.toHaveBeenCalled();
-  });
-
-  it("exposes the instructions Library path for managed instruction bundles", async () => {
-    mockAgentService.getInternalById.mockResolvedValue({
-      ...baseAgent,
-      workspaceKey: "builder--11111111",
-    });
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.workspaceKey).toBeUndefined();
-    expect(res.body.instructionsLibraryPath).toBe("agents/builder--11111111/instructions");
-    expect(mockAgentInstructionsService.getBundle).toHaveBeenCalledWith(expect.objectContaining({
-      id: agentId,
-      workspaceKey: "builder--11111111",
-    }));
-  });
-
-  it("does not expose the instructions Library path for explicit external bundles", async () => {
-    mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "external" });
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.instructionsLibraryPath).toBeNull();
-  });
-
-  it("does not expose the instructions Library path for legacy external file configs", async () => {
-    mockAgentService.getInternalById.mockResolvedValue({
-      ...baseAgent,
-      workspaceKey: "builder--11111111",
-      agentRuntimeConfig: {
-        instructionsFilePath: "/tmp/external-agent-instructions/AGENTS.md",
-      },
-    });
-    mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "external" });
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.instructionsLibraryPath).toBeNull();
-    expect(mockAgentInstructionsService.getBundle).toHaveBeenCalledWith(expect.objectContaining({
-      agentRuntimeConfig: expect.objectContaining({
-        instructionsFilePath: "/tmp/external-agent-instructions/AGENTS.md",
-      }),
-    }));
+  // Business assertions for these migrated routes execute against real Rust/PG
+  // in agent-core-real-entry.test.ts, the "Agent detail" groups: explicit grant,
+  // core/browser enabled/disabled/unsupported, restricted projection and all
+  // managed/external/legacy Library paths. Here only the transport is mocked.
+  it.each(["detail", "me", "permissions"])("relays %s receipts and trusted host facts without Node business callbacks", async (operation) => {
+    const actor = { type: "board", userId: "board-user", source: "local_implicit", isInstanceAdmin: true, orgIds: [orgId] };
+    const receipt = { opaque: "native receipt", instructionsLibraryPath: null };
+    mockAgentCore.mockResolvedValueOnce({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify({ orgId, id: agentId })) })
+      .mockResolvedValueOnce({ status: 207, contentType: "application/json", body: Buffer.from(JSON.stringify(receipt)) });
+    const app = await createApp(actor);
+    const response = operation === "permissions"
+      ? await request(app).patch(`/api/agents/${agentId}/permissions`).send({ canCreateAgents: false, canAssignTasks: true })
+      : await request(app).get(operation === "me" ? "/api/agents/me" : `/api/agents/${agentId}`);
+    expect(response.status).toBe(207);expect(response.body).toEqual(receipt);
+    expect(mockAgentCore).toHaveBeenNthCalledWith(1,actor,expect.objectContaining({ operation, resolveOnly: true }));
+    expect(mockAgentCore).toHaveBeenNthCalledWith(2,actor,expect.objectContaining({ operation, id:agentId, instructionsHost:expect.objectContaining({ instanceRoot:expect.any(String), workspaceHome:expect.any(String), hostname:expect.any(String) }) }));
+    expect(mockAgentService.getById).not.toHaveBeenCalled();expect(mockAgentService.updatePermissions).not.toHaveBeenCalled();
+    expect(mockAgentInstructionsService.getBundle).not.toHaveBeenCalled();expect(mockAccessService.setPrincipalPermission).not.toHaveBeenCalled();expect(mockInstanceSettingsService.getBrowser).not.toHaveBeenCalled();
   });
 
   it("does not let a legacy agents:create grant bypass an explicit agent creation denial", async () => {
@@ -712,60 +504,6 @@ describe("agent permission routes", () => {
     expect(mockAgentService.update).not.toHaveBeenCalled();
   });
 
-  it("keeps task assignment enabled when agent creation privilege is enabled", async () => {
-    mockAgentService.updatePermissions.mockResolvedValue({
-      ...baseAgent,
-      permissions: { canCreateAgents: true, canManageSkills: true },
-    });
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app)
-      .patch(`/api/agents/${agentId}/permissions`)
-      .send({ canCreateAgents: true, canManageSkills: true, canAssignTasks: false });
-
-    expect(res.status).toBe(200);
-    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
-      orgId,
-      "agent",
-      agentId,
-      "tasks:assign",
-      true,
-      "board-user",
-    );
-    expect(res.body.access.canAssignTasks).toBe(true);
-    expect(res.body.access.taskAssignSource).toBe("agent_creator");
-  });
-
-  it("does not require clients to send skill management when updating other permissions", async () => {
-    mockAgentService.updatePermissions.mockResolvedValue({
-      ...baseAgent,
-      permissions: { canCreateAgents: false, canManageSkills: false },
-    });
-
-    const app = await createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      orgIds: [orgId],
-    });
-
-    const res = await request(app)
-      .patch(`/api/agents/${agentId}/permissions`)
-      .send({ canCreateAgents: false, canAssignTasks: true });
-
-    expect(res.status).toBe(200);
-    expect(mockAgentService.updatePermissions).toHaveBeenCalledWith(agentId, {
-      canCreateAgents: false,
-      canAssignTasks: true,
-    });
-    expect(res.body.permissions.canManageSkills).toBe(false);
-  });
+  // Creator-implies-assignment and omitted canManageSkills preservation are
+  // covered by the real Rust permission transaction group in the same fixture.
 });

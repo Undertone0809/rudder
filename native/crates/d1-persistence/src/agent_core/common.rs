@@ -215,7 +215,7 @@ pub(super) async fn authorize_user(tx: &mut Tx<'_>, ctx: &Context<'_>) -> Result
         return Err(http(403, "Board access required"));
     }
     if let Some(key) = ctx.actor.session_id().strip_prefix("board-key:") {
-        let valid=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM board_api_keys WHERE id::text=$1 AND user_id=$2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()))").bind(key).bind(ctx.user()).fetch_one(&mut **tx).await?;
+        let valid=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM board_api_keys WHERE id::text=$1 AND user_id=$2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()))").bind(key).bind(ctx.user()).fetch_one(&mut **tx).await?;
         if !valid {
             return Err(http(401, "Unauthorized"));
         }

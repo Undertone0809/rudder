@@ -9,7 +9,6 @@ import {
   toHeartbeatRun,
   updateAgentInstructionsBundleSchema,
   updateAgentInstructionsPathSchema,
-  updateAgentPermissionsSchema,
   updateAgentSchema,
   upsertAgentInstructionsFileSchema,
   wakeAgentSchema
@@ -429,65 +428,6 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
 
-
-  router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {
-    const id = req.params.id as string;
-    const existing = await svc.getById(id);
-    if (!existing) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    assertCompanyAccess(req, existing.orgId);
-
-    if (req.actor.type === "agent") {
-      const actorAgent = req.actor.agentId ? await svc.getById(req.actor.agentId) : null;
-      if (!actorAgent || actorAgent.orgId !== existing.orgId) {
-        res.status(403).json({ error: "Forbidden" });
-        return;
-      }
-      if (actorAgent.role !== "ceo") {
-        res.status(403).json({ error: "Only CEO can manage permissions" });
-        return;
-      }
-    }
-
-    const agent = await svc.updatePermissions(id, req.body);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-
-    const effectiveCanAssignTasks =
-      agent.role === "ceo" || Boolean(agent.permissions?.canCreateAgents) || req.body.canAssignTasks;
-    await access.ensureMembership(agent.orgId, "agent", agent.id, "member", "active");
-    await access.setPrincipalPermission(
-      agent.orgId,
-      "agent",
-      agent.id,
-      "tasks:assign",
-      effectiveCanAssignTasks,
-      req.actor.type === "board" ? (req.actor.userId ?? null) : null,
-    );
-
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: agent.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "agent.permissions_updated",
-      entityType: "agent",
-      entityId: agent.id,
-      details: {
-        canCreateAgents: agent.permissions?.canCreateAgents ?? false,
-        canManageSkills: agent.permissions?.canManageSkills ?? true,
-        canAssignTasks: effectiveCanAssignTasks,
-      },
-    });
-
-    res.json(await buildAgentDetail(agent));
-  });
 
   router.post("/agents/:id/avatar", async (req, res) => {
     if (!storage) {

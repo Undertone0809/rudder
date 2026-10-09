@@ -827,7 +827,13 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       try {
         const response = await fetch(`${baseUrl}${requestPath}`, { method: "POST", headers: {
           "content-type": "application/json", "x-rudder-actor-envelope": JSON.stringify(envelope), "x-rudder-request-id": requestId },
-          body: body as unknown as BodyInit, signal: AbortSignal.timeout(requestTimeoutMs) });
+          body: body as unknown as BodyInit,
+          // These operations retain the legacy ten-second filesystem-lock wait
+          // and migration I/O without a new total deadline. A short timer can report a
+          // false failure while the admitted transaction is still committing.
+          // Explicit caller timeouts remain an opt-in with ambiguous outcomes.
+          signal: input.resolveOnly !== true && ["detail", "me", "permissions"].includes(String(input.operation)) && options.requestTimeoutMs === undefined
+            ? undefined : AbortSignal.timeout(requestTimeoutMs) });
         return { status: response.status, contentType: response.headers.get("content-type") ?? "application/json", body: Buffer.from(await response.arrayBuffer()) };
       } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust Agent core request failed", { cause: error }); }
     },

@@ -1,0 +1,3030 @@
+{
+  "source": "public e2ba0f1b actual shared Zod validators",
+  "permissions": [
+    {
+      "index": 0,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "undefined",
+            "path": [],
+            "message": "Required"
+          }
+        ]
+      }
+    },
+    {
+      "index": 1,
+      "input": null,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "null",
+            "path": [],
+            "message": "Expected object, received null"
+          }
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "input": false,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "index": 3,
+      "input": true,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "index": 4,
+      "input": 0,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 5,
+      "input": 1,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 6,
+      "input": -1,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 7,
+      "input": 1.5,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 8,
+      "input": "",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 9,
+      "input": "true",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 10,
+      "input": [],
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 11,
+      "input": [
+        true
+      ],
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 12,
+      "input": {},
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "undefined",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Required"
+          },
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "undefined",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Required"
+          }
+        ]
+      }
+    },
+    {
+      "index": 13,
+      "input": {
+        "canCreateAgents": false,
+        "canAssignTasks": false
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": false,
+          "canAssignTasks": false
+        }
+      }
+    },
+    {
+      "index": 14,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "opaque": {
+          "$serde_json": 4
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": true,
+          "canAssignTasks": true
+        }
+      }
+    },
+    {
+      "index": 15,
+      "input": {
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "undefined",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Required"
+          }
+        ]
+      }
+    },
+    {
+      "index": 16,
+      "input": {
+        "canCreateAgents": null,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "null",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received null"
+          }
+        ]
+      }
+    },
+    {
+      "index": 17,
+      "input": {
+        "canCreateAgents": false,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": false,
+          "canAssignTasks": true
+        }
+      }
+    },
+    {
+      "index": 18,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": true,
+          "canAssignTasks": true
+        }
+      }
+    },
+    {
+      "index": 19,
+      "input": {
+        "canCreateAgents": 0,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 20,
+      "input": {
+        "canCreateAgents": 1,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 21,
+      "input": {
+        "canCreateAgents": -1,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 22,
+      "input": {
+        "canCreateAgents": 1.5,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 23,
+      "input": {
+        "canCreateAgents": "",
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 24,
+      "input": {
+        "canCreateAgents": "true",
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 25,
+      "input": {
+        "canCreateAgents": [],
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 26,
+      "input": {
+        "canCreateAgents": [
+          true
+        ],
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 27,
+      "input": {
+        "canCreateAgents": {},
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "object",
+            "path": [
+              "canCreateAgents"
+            ],
+            "message": "Expected boolean, received object"
+          }
+        ]
+      }
+    },
+    {
+      "index": 28,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": true,
+          "canAssignTasks": true
+        }
+      }
+    },
+    {
+      "index": 29,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": null
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "null",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received null"
+          }
+        ]
+      }
+    },
+    {
+      "index": 30,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": false
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": true,
+          "canManageSkills": false,
+          "canAssignTasks": true
+        }
+      }
+    },
+    {
+      "index": 31,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": true
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": true,
+          "canManageSkills": true,
+          "canAssignTasks": true
+        }
+      }
+    },
+    {
+      "index": 32,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": 0
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 33,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": 1
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 34,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": -1
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 35,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": 1.5
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 36,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": ""
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 37,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": "true"
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 38,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": []
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 39,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": [
+          true
+        ]
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 40,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true,
+        "canManageSkills": {}
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "object",
+            "path": [
+              "canManageSkills"
+            ],
+            "message": "Expected boolean, received object"
+          }
+        ]
+      }
+    },
+    {
+      "index": 41,
+      "input": {
+        "canCreateAgents": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "undefined",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Required"
+          }
+        ]
+      }
+    },
+    {
+      "index": 42,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": null
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "null",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received null"
+          }
+        ]
+      }
+    },
+    {
+      "index": 43,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": false
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": true,
+          "canAssignTasks": false
+        }
+      }
+    },
+    {
+      "index": 44,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": true
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "canCreateAgents": true,
+          "canAssignTasks": true
+        }
+      }
+    },
+    {
+      "index": 45,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": 0
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 46,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": 1
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 47,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": -1
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 48,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": 1.5
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 49,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": ""
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 50,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": "true"
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 51,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": []
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 52,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": [
+          true
+        ]
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 53,
+      "input": {
+        "canCreateAgents": true,
+        "canAssignTasks": {}
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "object",
+            "path": [
+              "canAssignTasks"
+            ],
+            "message": "Expected boolean, received object"
+          }
+        ]
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "index": 0,
+      "input": null,
+      "expected": {
+        "status": 200,
+        "value": {}
+      }
+    },
+    {
+      "index": 1,
+      "input": null,
+      "expected": {
+        "status": 200,
+        "value": {}
+      }
+    },
+    {
+      "index": 2,
+      "input": false,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "index": 3,
+      "input": true,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "index": 4,
+      "input": 0,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 5,
+      "input": 1,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 6,
+      "input": -1,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 7,
+      "input": 1.5,
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 8,
+      "input": "",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 9,
+      "input": "true",
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 10,
+      "input": [],
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 11,
+      "input": [
+        true
+      ],
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 12,
+      "input": {},
+      "expected": {
+        "status": 200,
+        "value": {}
+      }
+    },
+    {
+      "index": 13,
+      "input": {
+        "feishu": {}
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 14,
+      "input": {
+        "feishu": {},
+        "unknown": 3
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 15,
+      "input": {},
+      "expected": {
+        "status": 200,
+        "value": {}
+      }
+    },
+    {
+      "index": 16,
+      "input": {
+        "feishu": null
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "null",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received null"
+          }
+        ]
+      }
+    },
+    {
+      "index": 17,
+      "input": {
+        "feishu": false
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "index": 18,
+      "input": {
+        "feishu": true
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "boolean",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "index": 19,
+      "input": {
+        "feishu": 0
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 20,
+      "input": {
+        "feishu": 1
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 21,
+      "input": {
+        "feishu": -1
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 22,
+      "input": {
+        "feishu": 1.5
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "number",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 23,
+      "input": {
+        "feishu": ""
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 24,
+      "input": {
+        "feishu": "true"
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "string",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 25,
+      "input": {
+        "feishu": []
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 26,
+      "input": {
+        "feishu": [
+          true
+        ]
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "received": "array",
+            "path": [
+              "feishu"
+            ],
+            "message": "Expected object, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 27,
+      "input": {
+        "feishu": {}
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 28,
+      "input": {
+        "feishu": {
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 29,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": null,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "null",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received null"
+          }
+        ]
+      }
+    },
+    {
+      "index": 30,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": false,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": false,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 31,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": true,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 32,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": 0,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 33,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": 1,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 34,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": -1,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 35,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": 1.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 36,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": "",
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 37,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": "true",
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 38,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": [],
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 39,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": [
+            true
+          ],
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 40,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": {},
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "object",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received object"
+          }
+        ]
+      }
+    },
+    {
+      "index": 41,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": 168,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 42,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": 169,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 43,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": -0.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 44,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverEnabled": 168.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverEnabled"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 45,
+      "input": {
+        "feishu": {
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 46,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": null,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "number",
+            "received": "null",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ],
+            "message": "Expected number, received null"
+          }
+        ]
+      }
+    },
+    {
+      "index": 47,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": false,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "number",
+            "received": "boolean",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ],
+            "message": "Expected number, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "index": 48,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": true,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "number",
+            "received": "boolean",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ],
+            "message": "Expected number, received boolean"
+          }
+        ]
+      }
+    },
+    {
+      "index": 49,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": 0,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "too_small",
+            "minimum": 1,
+            "type": "number",
+            "inclusive": true,
+            "exact": false,
+            "message": "Number must be greater than or equal to 1",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "index": 50,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": 1,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 1,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 51,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": -1,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "too_small",
+            "minimum": 1,
+            "type": "number",
+            "inclusive": true,
+            "exact": false,
+            "message": "Number must be greater than or equal to 1",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "index": 52,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": 1.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "integer",
+            "received": "float",
+            "message": "Expected integer, received float",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "index": 53,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": "",
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "number",
+            "received": "string",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ],
+            "message": "Expected number, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 54,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": "true",
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "number",
+            "received": "string",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ],
+            "message": "Expected number, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 55,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": [],
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "number",
+            "received": "array",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ],
+            "message": "Expected number, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 56,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": [
+            true
+          ],
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "number",
+            "received": "array",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ],
+            "message": "Expected number, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 57,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": {},
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "number",
+            "received": "object",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ],
+            "message": "Expected number, received object"
+          }
+        ]
+      }
+    },
+    {
+      "index": 58,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": 168,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 168,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 59,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": 169,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "too_big",
+            "maximum": 168,
+            "type": "number",
+            "inclusive": true,
+            "exact": false,
+            "message": "Number must be less than or equal to 168",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "index": 60,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": -0.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "integer",
+            "received": "float",
+            "message": "Expected integer, received float",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ]
+          },
+          {
+            "code": "too_small",
+            "minimum": 1,
+            "type": "number",
+            "inclusive": true,
+            "exact": false,
+            "message": "Number must be greater than or equal to 1",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "index": 61,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverHours": 168.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "integer",
+            "received": "float",
+            "message": "Expected integer, received float",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ]
+          },
+          {
+            "code": "too_big",
+            "maximum": 168,
+            "type": "number",
+            "inclusive": true,
+            "exact": false,
+            "message": "Number must be less than or equal to 168",
+            "path": [
+              "feishu",
+              "dailySessionRolloverHours"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "index": 62,
+      "input": {
+        "feishu": {
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 63,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": null,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "null",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received null"
+          }
+        ]
+      }
+    },
+    {
+      "index": 64,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": false,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": false
+          }
+        }
+      }
+    },
+    {
+      "index": 65,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": true,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "value": {
+          "feishu": {
+            "dailySessionRolloverEnabled": true,
+            "dailySessionRolloverHours": 24,
+            "dailySessionRolloverNotifyFeishu": true
+          }
+        }
+      }
+    },
+    {
+      "index": 66,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": 0,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 67,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": 1,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 68,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": -1,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 69,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": 1.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 70,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": "",
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 71,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": "true",
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "string",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received string"
+          }
+        ]
+      }
+    },
+    {
+      "index": 72,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": [],
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 73,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": [
+            true
+          ],
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "array",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received array"
+          }
+        ]
+      }
+    },
+    {
+      "index": 74,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": {},
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "object",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received object"
+          }
+        ]
+      }
+    },
+    {
+      "index": 75,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": 168,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 76,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": 169,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 77,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": -0.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    },
+    {
+      "index": 78,
+      "input": {
+        "feishu": {
+          "dailySessionRolloverNotifyFeishu": 168.5,
+          "unknown": "drop"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "Validation error",
+        "details": [
+          {
+            "code": "invalid_type",
+            "expected": "boolean",
+            "received": "number",
+            "path": [
+              "feishu",
+              "dailySessionRolloverNotifyFeishu"
+            ],
+            "message": "Expected boolean, received number"
+          }
+        ]
+      }
+    }
+  ],
+  "browser": [
+    {
+      "input": null,
+      "enabled": true
+    },
+    {
+      "input": null,
+      "enabled": true
+    },
+    {
+      "input": false,
+      "enabled": true
+    },
+    {
+      "input": true,
+      "enabled": true
+    },
+    {
+      "input": 0,
+      "enabled": true
+    },
+    {
+      "input": 1,
+      "enabled": true
+    },
+    {
+      "input": -1,
+      "enabled": true
+    },
+    {
+      "input": 1.5,
+      "enabled": true
+    },
+    {
+      "input": "",
+      "enabled": true
+    },
+    {
+      "input": "true",
+      "enabled": true
+    },
+    {
+      "input": [],
+      "enabled": true
+    },
+    {
+      "input": [
+        true
+      ],
+      "enabled": true
+    },
+    {
+      "input": {},
+      "enabled": true
+    },
+    {
+      "input": {
+        "enabled": false
+      },
+      "enabled": false
+    },
+    {
+      "input": {
+        "enabled": false,
+        "unknown": true
+      },
+      "enabled": true
+    },
+    {
+      "input": {
+        "enabled": false,
+        "openLinksIn": "bad"
+      },
+      "enabled": true
+    },
+    {
+      "input": {
+        "enabled": false,
+        "openLinksIn": "default_browser"
+      },
+      "enabled": false
+    },
+    {
+      "input": {
+        "enabled": true
+      },
+      "enabled": true
+    }
+  ],
+  "tools": [
+    "rudder_agent_me",
+    "rudder_agent_inbox",
+    "rudder_organization_members_list",
+    "rudder_organization_brand_color_update",
+    "rudder_agent_capabilities",
+    "rudder_agent_update",
+    "rudder_agent_skills_create",
+    "rudder_agent_skills_enable",
+    "rudder_agent_skills_sync",
+    "rudder_goal_list",
+    "rudder_goal_context",
+    "rudder_goal_progress",
+    "rudder_goal_checkpoint",
+    "rudder_goal_change_propose",
+    "rudder_goal_result_propose",
+    "rudder_issue_get",
+    "rudder_issue_list",
+    "rudder_issue_search",
+    "rudder_issue_context",
+    "rudder_issue_checkout",
+    "rudder_issue_comment",
+    "rudder_issue_comments_list",
+    "rudder_issue_comments_get",
+    "rudder_issue_update",
+    "rudder_issue_review",
+    "rudder_issue_commit",
+    "rudder_issue_done",
+    "rudder_issue_block",
+    "rudder_project_list",
+    "rudder_project_get",
+    "rudder_project_create",
+    "rudder_project_update",
+    "rudder_user_activity",
+    "rudder_library_file_list",
+    "rudder_library_file_get",
+    "rudder_library_file_ref",
+    "rudder_library_file_link",
+    "rudder_library_file_put",
+    "rudder_issue_create",
+    "rudder_approval_get",
+    "rudder_approval_issues",
+    "rudder_approval_comment",
+    "rudder_skill_list",
+    "rudder_skill_search",
+    "rudder_skill_get",
+    "rudder_skill_file",
+    "rudder_skill_import",
+    "rudder_skill_scan_local",
+    "rudder_skill_scan_projects",
+    "rudder_plugin_search",
+    "rudder_plugin_get",
+    "rudder_browser_tabs",
+    "rudder_browser_user_tabs",
+    "rudder_browser_open",
+    "rudder_browser_navigate",
+    "rudder_browser_back",
+    "rudder_browser_forward",
+    "rudder_browser_reload",
+    "rudder_browser_viewport",
+    "rudder_browser_visibility",
+    "rudder_browser_snapshot",
+    "rudder_browser_locator",
+    "rudder_browser_cua",
+    "rudder_browser_dom_cua",
+    "rudder_browser_dialog",
+    "rudder_browser_clipboard",
+    "rudder_browser_logs",
+    "rudder_browser_download",
+    "rudder_browser_assets",
+    "rudder_browser_content",
+    "rudder_browser_wait",
+    "rudder_browser_read",
+    "rudder_browser_click",
+    "rudder_browser_type",
+    "rudder_browser_screenshot",
+    "rudder_browser_close",
+    "rudder_automation_list",
+    "rudder_automation_get",
+    "rudder_automation_runs",
+    "rudder_automation_triggers_list",
+    "rudder_automation_triggers_create",
+    "rudder_automation_triggers_update",
+    "rudder_automation_triggers_delete",
+    "rudder_automation_triggers_rotate_secret",
+    "rudder_automation_create",
+    "rudder_automation_update",
+    "rudder_automation_enable",
+    "rudder_automation_disable",
+    "rudder_automation_run",
+    "rudder_chat_list",
+    "rudder_chat_search",
+    "rudder_chat_get",
+    "rudder_chat_messages",
+    "rudder_chat_transcript",
+    "rudder_chat_read",
+    "rudder_chat_create",
+    "rudder_chat_send",
+    "rudder_chat_archive",
+    "rudder_runs_list",
+    "rudder_runs_by_skill",
+    "rudder_runs_get",
+    "rudder_runs_events",
+    "rudder_runs_log",
+    "rudder_runs_transcript",
+    "rudder_runs_errors",
+    "rudder_runs_cancel",
+    "rudder_runs_retry",
+    "rudder_runs_create"
+  ]
+}

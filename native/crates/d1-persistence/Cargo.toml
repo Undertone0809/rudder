@@ -21,10 +21,14 @@ serde_json = { version = "1.0", features = ["unbounded_depth"] }
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2.0"
+tokio = { version = "1.47", features = ["rt", "time"] }
 uuid = { version = "1", default-features = false, features = ["v5"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_IO"] }
 
 [dev-dependencies]
 tempfile = "3.23"
