@@ -1,0 +1,213 @@
+{
+  "baseCommit": "3df7c3bdd1a6fae90f9b5fdc224ce2e83a343e67",
+  "baseTree": "71469c8b5080f17b10ccdf49810e0525cd25b95e",
+  "count": 25,
+  "sourceSha256": {
+    "server/src/routes/agents.ts": "43a18f23c3d560f1c862494692df1ac698ab60fc037aa2dd056f7934571e94ce",
+    "server/src/routes/agents.management-routes.ts": "f581d06370b1ee12a797af43066f363cba3747417d017acb84391768b5bf2970"
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/orgs/:orgId/agents",
+      "operation": "list",
+      "source": "server/src/routes/agents.ts",
+      "line": 1425,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/orgs/:orgId/agent-configurations",
+      "operation": "configurations",
+      "source": "server/src/routes/agents.ts",
+      "line": 1509,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/orgs/:orgId/agents/name-suggestion",
+      "operation": "name-suggestion",
+      "source": "server/src/routes/agents.ts",
+      "line": 1437,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/:id",
+      "operation": "get",
+      "source": "server/src/routes/agents.ts",
+      "line": 1584,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/me",
+      "operation": "me",
+      "source": "server/src/routes/agents.ts",
+      "line": 1516,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/me/inbox-lite",
+      "operation": "inbox",
+      "source": "server/src/routes/agents.ts",
+      "line": 1529,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/:id/configuration",
+      "operation": "configuration",
+      "source": "server/src/routes/agents.ts",
+      "line": 1602,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/:id/config-revisions",
+      "operation": "revisions",
+      "source": "server/src/routes/agents.ts",
+      "line": 1858,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/:id/config-revisions/:revisionId",
+      "operation": "revision",
+      "source": "server/src/routes/agents.ts",
+      "line": 1870,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/:id/config-revisions/:revisionId/rollback",
+      "operation": "rollback",
+      "source": "server/src/routes/agents.ts",
+      "line": 1887,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "POST",
+      "path": "/api/orgs/:orgId/agents",
+      "operation": "create",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 322,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "POST",
+      "path": "/api/orgs/:orgId/agent-hires",
+      "operation": "hire",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 135,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/agents/:id",
+      "operation": "update",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 831,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/agents/:id",
+      "operation": "delete",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 1017,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/:id/pause",
+      "operation": "pause",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 948,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/:id/resume",
+      "operation": "resume",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 971,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/:id/terminate",
+      "operation": "terminate",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 994,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/agents/:id/permissions",
+      "operation": "permissions",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 432,
+      "cohort": "remaining-node"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/:id/keys",
+      "operation": "keys",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 1038,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/:id/keys",
+      "operation": "key-create",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 1045,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/agents/:id/keys/:keyId",
+      "operation": "key-revoke",
+      "source": "server/src/routes/agents.management-routes.ts",
+      "line": 1066,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/:id/runtime-state",
+      "operation": "runtime-state",
+      "source": "server/src/routes/agents.ts",
+      "line": 1922,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/:id/runtime-state/reset-session",
+      "operation": "reset-session",
+      "source": "server/src/routes/agents.ts",
+      "line": 1955,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/:id/task-sessions",
+      "operation": "task-sessions",
+      "source": "server/src/routes/agents.ts",
+      "line": 1936,
+      "cohort": "native-candidate-unverified"
+    },
+    {
+      "method": "GET",
+      "path": "/api/instance/scheduler-heartbeats",
+      "operation": "scheduler-heartbeats",
+      "source": "server/src/routes/agents.ts",
+      "line": 1444,
+      "cohort": "native-candidate-unverified"
+    }
+  ],
+  "currentCohortCount": 15,
+  "unmigratedCount": 10
+}

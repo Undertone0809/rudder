@@ -57,6 +57,7 @@ export type CostReadInput = {
 };
 
 export interface RustFoundationBridge {
+  agentCore?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   readonly mode: RustFoundationMode;
   readonly organizationBrandingMode: RustFoundationMode;
   readonly projectGoalSetMode: RustFoundationMode;
@@ -395,11 +396,12 @@ export function createRustActorEnvelope(input: {
   requestId?: string;
   nonce?: string;
   idempotencyKey?: string;
+  allowAnonymous?: boolean;
 }) {
   const now = input.nowSeconds ?? Math.floor(Date.now() / 1000);
   const requestId = input.requestId ?? randomUUID();
   const nonce = input.nonce ?? randomUUID();
-  const actor = actorIdentity(input.actor);
+  const actor = input.allowAnonymous && input.actor.type === "none" ? { kind: "anonymous", id: "anonymous" } : actorIdentity(input.actor);
   const sessionId = actorSession(input.actor);
   const authEpoch = Number.isSafeInteger(input.actor.authEpoch) && (input.actor.authEpoch ?? 0) > 0
     ? input.actor.authEpoch!
@@ -813,6 +815,22 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       throw new RustFoundationBridgeError("not_ready", "Rust public ingress did not become ready");
     },
     start: ensureStarted,
+    async agentCore(actor, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = "/internal/agent-core";
+      const body = Buffer.from(JSON.stringify({ ...input, actorRunId: actor.runId ?? null,
+        localImplicit: actor.type === "board" && actor.source === "local_implicit", canonicalLocale: Intl.Collator().resolvedOptions().locale }), "utf8");
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({ actor, organizationId: "agent-core", method: "POST", path: requestPath,
+        action: "agent.core.execute", body, secret: actorEnvelopeKey, requestId, allowAnonymous: true });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, { method: "POST", headers: {
+          "content-type": "application/json", "x-rudder-actor-envelope": JSON.stringify(envelope), "x-rudder-request-id": requestId },
+          body: body as unknown as BodyInit, signal: AbortSignal.timeout(requestTimeoutMs) });
+        return { status: response.status, contentType: response.headers.get("content-type") ?? "application/json", body: Buffer.from(await response.arrayBuffer()) };
+      } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust Agent core request failed", { cause: error }); }
+    },
     async goalRead(actor, orgId, input) {
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");

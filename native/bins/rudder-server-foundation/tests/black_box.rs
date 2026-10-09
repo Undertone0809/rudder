@@ -2032,6 +2032,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         serde_json::json!([
             "messenger_state",
             "calendar",
+            "agent_core",
             "organization_branding",
             "project_goal_set_replacement",
             "project_delete",
@@ -2079,6 +2080,13 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("goal_read"));
     assert!(capabilities.contains("messenger_state"));
     assert!(capabilities.contains("\"run_read\""));
+    let capabilities_body: Value =
+        serde_json::from_slice(&decoded_http_body(capabilities.as_bytes()))
+            .expect("capabilities JSON");
+    assert_eq!(
+        capabilities_body["privateMutationAuthorities"],
+        startup["privateMutationAuthorities"]
+    );
 
     let unconfigured_directory = get_with_retry(
         bound_addr,

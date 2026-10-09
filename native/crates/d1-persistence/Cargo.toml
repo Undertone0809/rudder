@@ -5,6 +5,11 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+rudder-auth-core = { path = "../auth-core" }
+getrandom = "0.2"
+stacker = "0.1"
+icu_collator = "2.3.1"
+icu_locale_core = "2.3.0"
 base64 = "0.22"
 regex-lite = "0.1"
 url = "2.5"

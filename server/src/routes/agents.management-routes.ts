@@ -3,7 +3,6 @@ import type { Db } from "@rudderhq/db";
 import { agents as agentsTable, heartbeatRuns, organizations } from "@rudderhq/db";
 import {
   createAgentHireSchema,
-  createAgentKeySchema,
   createAgentSchema,
   createDelegationRunSchema,
   toAgentRun,
@@ -428,6 +427,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const agent = await svc.markReady(id, { resultCode, isDefaultAgent: req.body?.isDefaultAgent === true });
     res.json(redactAgentForResponse(agent));
   });
+
+
 
   router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {
     const id = req.params.id as string;
@@ -1035,44 +1036,11 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     res.json({ ok: true });
   });
 
-  router.get("/agents/:id/keys", async (req, res) => {
-    assertBoard(req);
-    const id = req.params.id as string;
-    const keys = await svc.listKeys(id);
-    res.json(keys);
-  });
 
-  router.post("/agents/:id/keys", validate(createAgentKeySchema), async (req, res) => {
-    assertBoard(req);
-    const id = req.params.id as string;
-    const key = await svc.createApiKey(id, req.body.name);
 
-    const agent = await svc.getById(id);
-    if (agent) {
-      await logActivity(db, {
-        orgId: agent.orgId,
-        actorType: "user",
-        actorId: req.actor.userId ?? "board",
-        action: "agent.key_created",
-        entityType: "agent",
-        entityId: agent.id,
-        details: { keyId: key.id, name: key.name },
-      });
-    }
 
-    res.status(201).json(key);
-  });
 
-  router.delete("/agents/:id/keys/:keyId", async (req, res) => {
-    assertBoard(req);
-    const keyId = req.params.keyId as string;
-    const revoked = await svc.revokeKey(keyId);
-    if (!revoked) {
-      res.status(404).json({ error: "Key not found" });
-      return;
-    }
-    res.json({ ok: true });
-  });
+
 
   router.post("/agents/:id/wakeup", validate(wakeAgentSchema), async (req, res) => {
     const id = req.params.id as string;
