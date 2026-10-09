@@ -721,6 +721,44 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             } finally {await connection.unsafe("ROLLBACK").catch(()=>{});connection.release();await db.execute(sql`DELETE FROM instance_user_roles WHERE user_id=${outsider} AND role='instance_admin'`);await pending;}
         }
     },30000);
+    it.each(["node", "required"] as const)("Agent detail permissions reject a board key expiring during an actual Agent lock wait (%s)", async (ingress) => {
+        const subject = await detailSubject();
+        const base = ingress === "node" ? nodeUrl : publicUrl;
+        const input = { canCreateAgents: true, canAssignTasks: true };
+        const connection = await db.$client.reserve();
+        let pending: Promise<{ status: number; text: string; body: unknown }> | undefined;
+        const state = async () => ({
+            agent: (await db.execute(sql`SELECT permissions FROM agents WHERE id=${subject.id}::uuid`))[0],
+            grants: await db.execute(sql`SELECT * FROM principal_permission_grants WHERE principal_id=${subject.id} ORDER BY id`),
+            membership: await db.execute(sql`SELECT * FROM organization_memberships WHERE principal_id=${subject.id} ORDER BY id`),
+            activity: await db.execute(sql`SELECT * FROM activity_log WHERE entity_id=${subject.id} ORDER BY id`),
+            outbox: await db.execute(sql`SELECT o.* FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id AND a.org_id=o.org_id WHERE a.entity_id=${subject.id} ORDER BY o.id`),
+        });
+        try {
+            const before = await state();
+            await connection.unsafe("BEGIN");
+            await connection`SELECT id FROM agents WHERE org_id=${org}::uuid ORDER BY id FOR UPDATE`;
+            await db.execute(sql`UPDATE board_api_keys SET expires_at=clock_timestamp()+interval '2 seconds' WHERE key_hash=${hash(ownerToken)}`);
+            pending = call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, input).then(response => response);
+            await waitFor(async () => await scalar(sql`SELECT count(*) AS value FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT id FROM agents WHERE org_id=%'`) > 0, "permissions request blocked before key expiry");
+            await waitFor(async () => await scalar(sql`SELECT count(*) AS value FROM board_api_keys WHERE key_hash=${hash(ownerToken)} AND expires_at <= clock_timestamp()`) === 1, "actual wall-clock key expiry");
+            await connection.unsafe("COMMIT");
+            const response = await pending;
+            expect(response.status, response.text).toBe(401);
+            expect(response.body).toEqual({ error: "Unauthorized" });
+            expect(await state()).toEqual(before);
+            await db.execute(sql`UPDATE board_api_keys SET expires_at=clock_timestamp()+interval '60 seconds' WHERE key_hash=${hash(ownerToken)}`);
+            const retry = await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, input);
+            expect(retry.status, retry.text).toBe(200);
+            expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(1);
+            expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id AND a.org_id=o.org_id WHERE a.entity_id=${subject.id}`)).toBe(1);
+        } finally {
+            await connection.unsafe("ROLLBACK").catch(() => {});
+            connection.release();
+            await pending;
+            await db.execute(sql`UPDATE board_api_keys SET expires_at=NULL WHERE key_hash=${hash(ownerToken)}`);
+        }
+    }, 30000);
     it("Agent detail permissions recheck current CEO role after an actual transaction lock wait", async () => {
         const subject=await detailSubject(),ceo=await detailSubject("ceo");
         for(const base of [nodeUrl,publicUrl]) {

@@ -53,7 +53,10 @@ pub(super) fn sync_dir(p: &Path) -> io::Result<()> {
     Ok(())
 }
 pub(super) fn mkdir_private(p: &Path) -> io::Result<()> {
+    #[cfg(unix)]
     let mut builder = fs::DirBuilder::new();
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
