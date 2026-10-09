@@ -32,8 +32,22 @@ function run(command, args, cwd) {
 }
 
 async function main() {
-  await run(pnpmBin, ["--filter", "@rudderhq/server...", "build"], repoRoot);
-  await run(pnpmBin, ["--filter", "@rudderhq/server", "prepare:ui-dist"], repoRoot);
+  const args = process.argv.slice(2);
+  if (args.some((arg) => arg !== "--workspace-built")) {
+    throw new Error(`Unknown desktop build argument: ${args.join(" ")}`);
+  }
+  const workspaceBuilt = args.includes("--workspace-built");
+  // The root build waits for all workspace outputs before staging Desktop.
+  // Re-entering the workspace build from a recursive package job races its
+  // clean/write steps (notably db/dist). Standalone Desktop builds still own
+  // their dependency and UI builds.
+  if (!workspaceBuilt) {
+    await run(pnpmBin, ["--filter", "@rudderhq/server...", "build"], repoRoot);
+  }
+  await run(pnpmBin, [
+    "--filter", "@rudderhq/server", "prepare:ui-dist",
+    ...(workspaceBuilt ? ["--skip-build"] : []),
+  ], repoRoot);
   await run(process.execPath, ["scripts/stage-server.mjs"], desktopRoot);
   await run(process.execPath, ["scripts/stage-cli.mjs"], desktopRoot);
   await run(process.execPath, ["scripts/stage-native.mjs"], desktopRoot);
