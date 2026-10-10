@@ -48,6 +48,7 @@ Then choose the route that matches the work:
 - Server/runtime/database work:
   - `doc/README.md`
   - `doc/engineering/DEVELOPING.md`
+  - `doc/engineering/BACKEND_ARCHITECTURE.md`
   - `doc/engineering/DATABASE.md`
   - `doc/engineering/DEPLOYMENT-MODES.md`
 - CLI/task-surface work:
@@ -68,7 +69,8 @@ Then choose the route that matches the work:
 
 ## 3. Repo Map
 
-- `server/`: Express REST API and orchestration services
+- `native/`: Rust workspace; required home for new backend business logic
+- `server/`: existing Node/Express API, legacy services, and transport adapters; migrate backend authority to Rust under `doc/engineering/BACKEND_ARCHITECTURE.md`
 - `server/resources/bundled-skills/`: built-in Rudder runtime skills and their sibling reference docs
 - `ui/`: React + Vite board UI
 - `packages/db/`: Drizzle schema, migrations, DB clients
@@ -124,6 +126,18 @@ Notes:
 
 ## 5. Core Engineering Rules
 
+1. Implement all new backend features in Rust.
+
+Read `doc/engineering/BACKEND_ARCHITECTURE.md` before backend work. Native chat
+and every other new backend feature must put business rules, authoritative
+state transitions, persistence, and permission decisions in Rust. Do not add
+Node/TypeScript business implementations or hidden Node fallbacks. TypeScript
+remains the frontend/client language. Temporary transport adapters must have an
+explicit boundary inventory and tests; they do not permit new Node business
+logic. The migration target is 100% of public API business authority in Rust,
+not an 80% milestone or a Rust listener proxying Node handlers. Existing legacy
+behavior is migration debt, not permission to extend it with new features.
+
 1. Keep changes organization-scoped.
 
 Every domain entity should be scoped to a organization and organization boundaries must be enforced in routes/services.
@@ -134,7 +148,8 @@ If you change schema/API behavior, update all impacted layers:
 
 - `packages/db` schema and exports
 - `packages/shared` types/constants/validators
-- `server` routes/services
+- `native` Rust handlers, domain logic, persistence, and wire contracts
+- `server` transport adapters and affected legacy compatibility paths
 - `ui` API clients and pages
 
 1. Preserve product invariants.
@@ -228,6 +243,9 @@ failure, or unresolved risk. Attribute unrelated baseline failures explicitly.
 
 Task-specific additions:
 
+- Backend features or Rust migration claims:
+  - apply `doc/engineering/BACKEND_ARCHITECTURE.md` testing and completion gates
+  - prove public workflow behavior, native failures, and absence of hidden Node business fallback; report route authority separately from ingress/transport coverage
 - Changes affecting packaged boot, profiles, migrations, packaging, or installed behavior:
   - `pnpm desktop:verify`
 - Feature work or workflow changes:
@@ -247,6 +265,7 @@ Task-specific additions:
 
 When adding endpoints:
 
+- implement backend business authority in Rust and follow `doc/engineering/BACKEND_ARCHITECTURE.md`
 - apply organization access checks
 - enforce actor permissions (board vs agent)
 - write activity log entries for mutations
