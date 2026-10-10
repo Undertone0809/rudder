@@ -1,17 +1,53 @@
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { access, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NativeProcessUnavailableError, runNativeChildProcess, runNativeChildProcessOrFallback } from "./native-process-runner.js";
+
+const spawnSafety = vi.hoisted(() => ({ interceptedTaskkills: 0 }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  const { EventEmitter: Emitter } = await import("node:events");
+  return {
+    ...actual,
+    spawn: (...args: Parameters<typeof actual.spawn>) => {
+      const [command, argv] = args;
+      const pidIndex = Array.isArray(argv) ? argv.indexOf("/pid") : -1;
+      if (command === "taskkill.exe" && Array.isArray(argv) && pidIndex >= 0
+        && ["12345", "45678"].includes(argv[pidIndex + 1] ?? "")) {
+        spawnSafety.interceptedTaskkills++;
+        const fakeKiller = new Emitter();
+        queueMicrotask(() => fakeKiller.emit("close", 0, null));
+        return fakeKiller as ChildProcess;
+      }
+      return actual.spawn(...args);
+    },
+  };
+});
 
 const nativeHostPath = process.env.RUDDER_NATIVE_PROCESS_HOST_PATH;
 const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].includes(process.arch))
   || (process.platform === "win32" && process.arch === "x64")
   || (process.platform === "linux" && process.arch === "x64");
 const nativeOnly = it.skipIf(!nativeHostPath || !supportedTarget);
+
+// Fake lifecycle frames never authorize a signal to a real process or group.
+// Keep this guard in the fixture itself, including cleanup-negative tests.
+const kernelKill = process.kill.bind(process);
+let restoreSyntheticPidGuard: (() => void) | undefined;
+beforeAll(() => {
+  const syntheticPidGuard = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+    if ([12345, 45678].includes(Math.abs(pid))) {
+      throw Object.assign(new Error("Synthetic process identity has no OS owner"), { code: "ESRCH" });
+    }
+    return kernelKill(pid, signal);
+  });
+  restoreSyntheticPidGuard = () => syntheticPidGuard.mockRestore();
+});
+afterAll(() => restoreSyntheticPidGuard?.());
 
 function terminalHost(terminal: Record<string, unknown>, exitCode: number | null = 0) {
   const stdin = new PassThrough();
@@ -47,6 +83,31 @@ function terminalHost(terminal: Record<string, unknown>, exitCode: number | null
 }
 
 describe("Rust Agent Run process host", () => {
+  it("never signals a fabricated process or process group during fixture cleanup", () => {
+    for (const pid of [12345, -12345, 45678, -45678]) {
+      for (const signal of [0, "SIGTERM", "SIGKILL"] as const) {
+        expect(() => process.kill(pid, signal)).toThrow("Synthetic process identity has no OS owner");
+      }
+    }
+  });
+
+  it("intercepts synthetic Windows cleanup while preserving real child spawning", async () => {
+    const before = spawnSafety.interceptedTaskkills;
+    for (const pid of ["12345", "45678"]) {
+      const child = spawn("taskkill.exe", ["/pid", pid, "/t", "/f"]);
+      expect(child.pid).toBeUndefined();
+      await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    }
+    expect(spawnSafety.interceptedTaskkills - before).toBe(2);
+    const realChild = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+    expect(realChild.pid).toBeGreaterThan(1);
+    await expect(new Promise((resolve, reject) => {
+      realChild.once("error", reject);
+      realChild.once("close", resolve);
+    })).resolves.toBe(0);
+    expect(spawnSafety.interceptedTaskkills - before).toBe(2);
+  });
+
   it.each([0, 23, null])("rejects trusted failed terminal despite app exit %s without fallback, retaining drained diagnostics", async (exitCode) => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-terminal-failed-"));
     const errorCode = exitCode === null ? "child_wait_failed" : "stdin_write_failed";
@@ -90,6 +151,27 @@ describe("Rust Agent Run process host", () => {
       runtimeRoot: path.join(root, "receipts"), spawnHost: () => host,
       onLog: async () => {}, onLogError: () => {},
     })).rejects.toMatchObject({ accepted: true, fallbackCode: "cleanup_unproven" });
+  });
+  it.each([
+    { cleanupProven: false, receiptWritten: true },
+    { cleanupProven: true, receiptWritten: false },
+  ])("isolates the Windows host-loss branch for synthetic cleanup rejection: %j", async (proof) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-windows-proof-"));
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const before = spawnSafety.interceptedTaskkills;
+    try {
+      Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+      await expect(runNativeChildProcess("windows-proof", process.execPath, [], {
+        cwd: root, env: {}, timeoutSec: 10, graceSec: 1, binaryPath: "fake-process-host",
+        runtimeRoot: path.join(root, "receipts"),
+        spawnHost: () => terminalHost({ status: "succeeded", ...proof }),
+        onLog: async () => {}, onLogError: () => {},
+      })).rejects.toMatchObject({ accepted: true, fallbackCode: "cleanup_unproven" });
+      expect(spawnSafety.interceptedTaskkills - before).toBe(1);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      await rm(root, { recursive: true, force: true });
+    }
   });
   it("honors a per-run Node rollback mode before attempting the native host", async () => {
     const result = await runNativeChildProcessOrFallback("node-mode", process.execPath, ["-e", ""], {
