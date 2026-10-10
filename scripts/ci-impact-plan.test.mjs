@@ -63,6 +63,25 @@ test("uses the lifecycle profile for merge queue, exact-source, and main runs", 
   }
 });
 
+test("qualifies native child transport and its process tests on every native platform", () => {
+  for (const file of [
+    "server/src/services/workspace-file-native.ts",
+    "server/src/__tests__/workspace-file-native.test.ts",
+  ]) {
+    const plan = createImpactPlan({ event: "pull_request", files: [file] });
+    assert.equal(plan.fullQualification, true, file);
+    assert.deepEqual(plan.changedAreas, ["server"], file);
+    assert.deepEqual(plan.requiredFamilies, ["architecture", "docs", "verify", "native", "desktop"], file);
+    assert.ok(plan.escalationReasons.includes("native workspace child process boundary changed"), file);
+  }
+  const ordinaryServer = createImpactPlan({
+    event: "pull_request",
+    files: ["server/src/services/calendar.ts"],
+  });
+  assert.equal(ordinaryServer.fullQualification, false);
+  assert.deepEqual(ordinaryServer.requiredFamilies, ["architecture", "affected"]);
+});
+
 test("unknown events and unbounded file scopes use full qualification", () => {
   const unknownEvent = createImpactPlan({ event: "repository_dispatch", files: [] });
   const emptyPullRequest = createImpactPlan({ event: "pull_request", files: [] });
