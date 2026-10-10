@@ -17,6 +17,27 @@ Canary normally follows a successful exact `main` Test run:
 After the first stable exists, ordinary canary publication must not move
 `latest`.
 
+## Manual Canary
+
+A reviewed workflow on `main` also accepts explicit `release_channel: canary`
+with a full immutable `source_ref` from `main` history. This is useful for a
+qualified `[skip release]` source. The default manual channel remains `stable`.
+Require exact full Test, its aggregate receipt and impact-plan identity, and
+all six unexpired foundation outputs. The workflow builds the same fresh
+14-package/seven-Desktop candidate and re-verifies its immutable manifest.
+
+Use `dry_run: true` only for candidate verification; use `false` only for an
+authorized release. Keep `mirror_cos: false`. Manual canary rejects stable
+resume/reuse/recovery inputs (`resume_missing`, `candidate_run_id`,
+`mirror_recovery`, `recovery_tag`) when enabled or supplied. Its terminal result
+requires the complete candidate chain and either no publication (dry run) or
+all canary publication/install stages plus exact public-surface verification.
+Stable docs, cleanup, and next-version handoff do not run.
+
+Initiating this workflow from a Mac still runs builds and publication on
+GitHub Actions. Do not describe it as a complete local Mac publisher. See the
+manual canary section in `doc/engineering/RELEASING.md` for inputs and limits.
+
 ## First npm Bootstrap
 
 When public package names do not yet exist:

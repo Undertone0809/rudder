@@ -5,7 +5,7 @@ Maintainer runbook for shipping Rudder across npm, GitHub, and the website-facin
 The release model is now commit-driven:
 
 1. Every successful `Test` run for a `main` push publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
-2. Stable releases are manually promoted from a chosen tested commit SHA.
+2. Manual dispatch defaults to stable; an explicit `release_channel: canary` can release a chosen tested commit SHA from `main` history.
 3. Stable release notes live in `releases/vX.Y.Z.md`.
 4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop portable assets.
 
@@ -202,7 +202,7 @@ The `Test` plan also verifies the canary migration declaration before the
 qualification summary can turn green; `Release` repeats that check as a
 defense-in-depth preflight.
 
-Release builds are separated from publication. The candidate jobs build the 15
+Release builds are separated from publication. The candidate jobs build the 14
 npm payloads and seven Desktop assets once, then create the short-lived
 `release-candidate-manifest` artifact. The manifest binds the source commit and
 tree, release version, qualification run, candidate run, release workflow
@@ -244,6 +244,47 @@ It:
   GitHub `SHASUMS256.txt` directly, then runs the three-platform public install
   smoke; this path never receives a user-supplied `mirror_cos` opt-in
 
+#### Manual canary
+
+For an explicitly requested canary from a locked source, including a commit
+marked `[skip release]`, dispatch `release.yml` from `main` with:
+
+- `release_channel: canary` (the default remains `stable` for existing callers)
+- `source_ref`: the full 40-character commit SHA reachable from `main`
+- `dry_run: true` to build and verify only, or `false` for authorized publication
+- `mirror_cos: false`
+
+The workflow resolves successful full Test qualification for that exact SHA,
+including the aggregate receipt, impact-plan digest/source tree, and all six
+unexpired foundation artifacts. It checks out the frozen source as local `main`
+for canary preflight; later movement of remote `main` does not change the source.
+The selected version comes from the full-package preflight, not the latest
+GitHub Release name. Qualification and candidate artifacts expire after seven
+days and must still be valid at consumption.
+
+Manual canary builds a fresh immutable candidate containing all 14 npm packages
+and seven Desktop binaries. It rejects `resume_missing: true`, any
+`candidate_run_id`, `mirror_recovery: true`, any `recovery_tag`, and
+`mirror_cos: true`. The legacy `skip_mirror` force-off alias is harmless but
+unnecessary. Partial canary publication still needs the separate recovery
+runbook; do not retry by republishing an existing immutable npm version.
+
+`canary-release-result` requires the complete candidate chain. For a dry run,
+all publication stages must be skipped. For a production run, npm/GitHub
+publication, the checksum marker, three-platform public install smoke, and the
+existing guarded first-canary `latest` step must all succeed. It then verifies
+the immutable tag target, non-draft prerelease, Desktop/checksum surface, and
+the exact version plus `canary` dist-tag for all 14 packages. Stable publication,
+docs, cleanup, and the next-version handoff are excluded. Ordinary canaries
+still leave `latest` unchanged once a stable version exists.
+
+An authorized operator may initiate and monitor this dispatch from a Mac with
+`gh workflow run release.yml --ref main -f release_channel=canary
+-f source_ref=<full-sha> -f dry_run=false -f mirror_cos=false` (as one command).
+GitHub Actions remains the build and publication execution host. This interface
+does not provide a local Mac publisher, and is available only after the workflow
+change is reviewed, qualified, and merged to `main`.
+
 Canary and stable publication use the same non-cancelling concurrency group. A
 stable still takes priority over same-base or older canary publication after
 the locked source passes exact-source Test and preflight. Record any completed
@@ -270,6 +311,8 @@ Use [`.github/workflows/release.yml`](../.github/workflows/release.yml) from the
 
 Inputs:
 
+- `release_channel`
+  - `stable` (default); choose `canary` only for the bounded path above
 - `source_ref`
   - full 40-character commit SHA; moving branches and tags are rejected
 - `dry_run`

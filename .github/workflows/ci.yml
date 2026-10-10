@@ -392,6 +392,10 @@ jobs:
           echo "RUDDER_NATIVE_ARCHIVE_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
           echo "RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
 
+      - name: Release candidate manifest CLI tests
+        if: matrix.test == 'full'
+        run: node --test scripts/release-candidate-manifest.test.mjs
+
       - name: Unit tests
         if: matrix.test == 'full'
         run: pnpm test:run --maxWorkers=2

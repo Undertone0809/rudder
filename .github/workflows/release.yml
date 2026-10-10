@@ -6,8 +6,16 @@ on:
     types: [completed]
   workflow_dispatch:
     inputs:
+      release_channel:
+        description: "Release channel (manual canary uses a fresh candidate without COS or recovery)"
+        required: true
+        type: choice
+        default: stable
+        options:
+          - stable
+          - canary
       source_ref:
-        description: "Full commit SHA to promote as stable"
+        description: "Full commit SHA from main history to release"
         required: true
       dry_run:
         description: "Build and verify the release candidate without publishing"
@@ -58,7 +66,9 @@ jobs:
   preflight:
     name: Lock source and preflight
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.mirror_recovery != 'true') ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.mirror_recovery != 'true' ||
+        (github.event.inputs.release_channel != '' && github.event.inputs.release_channel != 'stable'))) ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -81,18 +91,55 @@ jobs:
       qualification_run_id: ${{ steps.qualification_output.outputs.run_id }}
       mirror_cos: ${{ steps.release.outputs.mirror_cos }}
     steps:
+      - name: Validate manual release channel
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_CHANNEL: ${{ inputs.release_channel }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          RESUME_MISSING: ${{ inputs.resume_missing }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          MIRROR_RECOVERY: ${{ inputs.mirror_recovery }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+          MIRROR_COS: ${{ inputs.mirror_cos }}
+        run: |
+          case "${RELEASE_CHANNEL:-stable}" in
+            stable) ;;
+            canary)
+              if [ "${RESUME_MISSING:-false}" != "false" ] ||
+                 [ -n "${CANDIDATE_RUN_ID:-}" ] ||
+                 [ "${MIRROR_RECOVERY:-false}" != "false" ] ||
+                 [ -n "${RECOVERY_TAG:-}" ]; then
+                echo "Manual canary does not support stable recovery or candidate reuse inputs." >&2
+                exit 1
+              fi
+              if [ "${MIRROR_COS:-false}" != "false" ]; then
+                echo "Manual canary requires mirror_cos=false." >&2
+                exit 1
+              fi
+              case "${DRY_RUN:-true}" in
+                true|false) ;;
+                *) echo "dry_run must be true or false." >&2; exit 1 ;;
+              esac
+              ;;
+            *) echo "release_channel must be stable or canary." >&2; exit 1 ;;
+          esac
+
+      - name: Require release workflow dispatch from main
+        if: github.event_name == 'workflow_dispatch'
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.workflow_run.head_sha }}
 
-      - name: Require immutable stable source SHA
+      - name: Require immutable release source SHA
         if: github.event_name == 'workflow_dispatch'
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "Stable source_ref must be a full 40-character commit SHA." >&2
+            echo "Release source_ref must be a full 40-character commit SHA." >&2
             exit 1
           }
 
@@ -251,13 +298,14 @@ jobs:
         id: release
         env:
           EVENT_NAME: ${{ github.event_name }}
+          RELEASE_CHANNEL: ${{ inputs.release_channel }}
           DRY_RUN: ${{ inputs.dry_run }}
           MIRROR_COS: ${{ inputs.mirror_cos }}
           SKIP_MIRROR: ${{ inputs.skip_mirror }}
           RESUME_MISSING: ${{ inputs.resume_missing }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_run" ]; then
+          if [ "$EVENT_NAME" = "workflow_run" ] || [ "${RELEASE_CHANNEL:-stable}" = "canary" ]; then
             git checkout -B main "${{ steps.source.outputs.sha }}"
             channel="canary"
             version="$(./scripts/release.sh canary --preflight)"
@@ -265,6 +313,9 @@ jobs:
             publish="true"
             resume="false"
             candidate_external="false"
+            if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "${DRY_RUN:-true}" = "true" ]; then
+              publish="false"
+            fi
           else
             channel="stable"
             resume="${RESUME_MISSING:-false}"
@@ -295,10 +346,6 @@ jobs:
             echo "candidate_external=$candidate_external"
             echo "mirror_cos=$mirror_cos"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Require stable workflow dispatch from main
-        if: github.event_name == 'workflow_dispatch'
-        run: test "$GITHUB_REF" = "refs/heads/main"
 
       - name: Verify localized stable notes on resume
         if: steps.release.outputs.resume == 'true'
@@ -948,6 +995,7 @@ jobs:
       (needs.candidate-complete.result == 'success' || needs.preflight.outputs.candidate_external == 'true') &&
       needs.candidate-verify.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.release_channel == '' || github.event.inputs.release_channel == 'stable') &&
       github.event.inputs.mirror_recovery != 'true' &&
       github.event.inputs.dry_run == 'false'
     permissions:
@@ -1063,7 +1111,10 @@ jobs:
 
   mirror-recovery:
     name: Recover stable Desktop release mirror in Tencent COS
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mirror_recovery == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.release_channel == '' || github.event.inputs.release_channel == 'stable') &&
+      github.event.inputs.mirror_recovery == 'true'
     permissions:
       actions: read
       contents: write
@@ -1072,6 +1123,10 @@ jobs:
     timeout-minutes: 240
     environment: desktop-release-mirror
     steps:
+      - name: Require stable recovery channel
+        env:
+          RELEASE_CHANNEL: ${{ inputs.release_channel }}
+        run: test "${RELEASE_CHANNEL:-stable}" = "stable"
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}
@@ -1892,6 +1947,7 @@ jobs:
     if: >-
       always() &&
       github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.release_channel == '' || github.event.inputs.release_channel == 'stable') &&
       github.event.inputs.mirror_recovery != 'true' &&
       github.event.inputs.dry_run == 'false'
     runs-on: ubuntu-latest
@@ -1925,4 +1981,95 @@ jobs:
           else
             test "$MIRROR_RESULT" = "skipped"
             test "$CHECKSUM_RESULT" = "success"
+          fi
+
+  canary-release-result:
+    name: Require complete manual canary candidate or publication
+    needs:
+      - preflight
+      - npm-candidate
+      - desktop-candidate
+      - candidate-complete
+      - candidate-verify
+      - publish-canary
+      - mirror-canary
+      - checksum-canary
+      - canary-install
+      - canary-promote-latest
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.release_channel == 'canary'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every manual canary stage
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          NPM_CANDIDATE_RESULT: ${{ needs.npm-candidate.result }}
+          DESKTOP_CANDIDATE_RESULT: ${{ needs.desktop-candidate.result }}
+          COMPLETE_RESULT: ${{ needs.candidate-complete.result }}
+          VERIFY_RESULT: ${{ needs.candidate-verify.result }}
+          PUBLISH_RESULT: ${{ needs.publish-canary.result }}
+          MIRROR_RESULT: ${{ needs.mirror-canary.result }}
+          CHECKSUM_RESULT: ${{ needs.checksum-canary.result }}
+          INSTALL_RESULT: ${{ needs.canary-install.result }}
+          PROMOTE_RESULT: ${{ needs.canary-promote-latest.result }}
+        run: |
+          for result in \
+            "$PREFLIGHT_RESULT" \
+            "$NPM_CANDIDATE_RESULT" \
+            "$DESKTOP_CANDIDATE_RESULT" \
+            "$COMPLETE_RESULT" \
+            "$VERIFY_RESULT"; do
+            test "$result" = "success"
+          done
+          test "$MIRROR_RESULT" = "skipped"
+          if [ "${DRY_RUN:-true}" = "true" ]; then
+            expected="skipped"
+          else
+            expected="success"
+          fi
+          for result in "$PUBLISH_RESULT" "$CHECKSUM_RESULT" "$INSTALL_RESULT" "$PROMOTE_RESULT"; do
+            test "$result" = "$expected"
+          done
+      - uses: actions/checkout@v6
+        if: inputs.dry_run == false
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/setup-node@v6
+        if: inputs.dry_run == false
+        with:
+          node-version: 24
+      - name: Verify manual canary public surfaces
+        if: inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+        run: |
+          node scripts/wait-for-desktop-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --version "$RELEASE_VERSION"
+          test "$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')" = "$SOURCE_SHA"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease,isDraft,tagName \
+            | jq -e --arg tag "$RELEASE_TAG" '.isPrerelease == true and .isDraft == false and .tagName == $tag'
+          package_map="$(node scripts/release-package-map.mjs list)"
+          test "$(printf '%s\n' "$package_map" | wc -l | xargs)" = "14"
+          while IFS=$'\t' read -r _ pkg_name _; do
+            test "$(npm view "$pkg_name@$RELEASE_VERSION" version)" = "$RELEASE_VERSION"
+            test "$(npm view "$pkg_name" dist-tags.canary)" = "$RELEASE_VERSION"
+          done <<< "$package_map"
+      - name: Record manual canary result
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          if [ "${DRY_RUN:-true}" = "true" ]; then
+            echo "Manual canary candidate verified (dry run; nothing published): $RELEASE_VERSION at $SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Manual canary published and verified: $RELEASE_VERSION at $SOURCE_SHA; 14 npm packages, seven Desktop assets, checksum marker, and three-platform install smoke." >> "$GITHUB_STEP_SUMMARY"
           fi
