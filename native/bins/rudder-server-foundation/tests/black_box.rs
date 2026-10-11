@@ -3208,6 +3208,14 @@ impl PostgresHarness {
             .local_addr()
             .unwrap()
             .port();
+        // Some cloud runners allow loopback TCP but prohibit Unix-domain sockets.
+        // These fixtures connect through the TCP URL below, so an empty socket
+        // directory keeps the test behavior while allowing them to run there.
+        let socket_directory = if env::var_os("RUDDER_POSTGRES_NO_UNIX_SOCKET").is_some() {
+            "''".to_owned()
+        } else {
+            temp_dir.path().display().to_string()
+        };
 
         run_checked(
             Command::new(&initdb).arg("-D").arg(&data_dir).args([
@@ -3226,10 +3234,7 @@ impl PostgresHarness {
                 .arg("-l")
                 .arg(&log_path)
                 .arg("-o")
-                .arg(format!(
-                    "-h 127.0.0.1 -p {port} -F -k {}",
-                    temp_dir.path().display()
-                ))
+                .arg(format!("-h 127.0.0.1 -p {port} -F -k {socket_directory}"))
                 .args(["-w", "start"]),
             "pg_ctl start",
         );

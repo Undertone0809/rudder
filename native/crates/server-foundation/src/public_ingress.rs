@@ -1055,20 +1055,21 @@ mod tests {
             "private auth adapter paths must not reach the generic Node proxy"
         );
 
-        let observed = observations.lock().unwrap();
-        assert_eq!(
-            observed[0]["publicPath"],
-            "/llms/agent-configuration.txt?source=rust"
-        );
-        assert_eq!(observed[1]["publicPath"], encoded_runtime_path);
-        assert_eq!(observed[2]["publicPath"], encoded_slash_path);
-        assert_eq!(observed[4]["publicMethod"], "HEAD");
-        assert!(
-            observed
-                .iter()
-                .all(|entry| entry["publicPath"].as_str().unwrap().starts_with("/llms/"))
-        );
-        drop(observed);
+        {
+            let observed = observations.lock().unwrap();
+            assert_eq!(
+                observed[0]["publicPath"],
+                "/llms/agent-configuration.txt?source=rust"
+            );
+            assert_eq!(observed[1]["publicPath"], encoded_runtime_path);
+            assert_eq!(observed[2]["publicPath"], encoded_slash_path);
+            assert_eq!(observed[4]["publicMethod"], "HEAD");
+            assert!(
+                observed
+                    .iter()
+                    .all(|entry| entry["publicPath"].as_str().unwrap().starts_with("/llms/"))
+            );
+        }
         mock_handle.stop(true).await;
         mock_task.await.unwrap().unwrap();
         let unavailable = client
