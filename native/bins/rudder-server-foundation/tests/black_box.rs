@@ -2032,6 +2032,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         serde_json::json!([
             "messenger_state",
             "calendar",
+            "secrets",
             "agent_core",
             "organization_branding",
             "project_goal_set_replacement",
@@ -3203,6 +3204,12 @@ impl PostgresHarness {
         let temp_dir = tempfile::tempdir().expect("create PostgreSQL temp directory");
         let data_dir = temp_dir.path().join("data");
         let log_path = temp_dir.path().join("postgres.log");
+        // Some cloud runners support loopback TCP but not Unix sockets.
+        let socket_directory = if env::var_os("RUDDER_POSTGRES_NO_UNIX_SOCKET").is_some() {
+            "''".to_owned()
+        } else {
+            temp_dir.path().display().to_string()
+        };
         let port = TcpListener::bind("127.0.0.1:0")
             .expect("reserve PostgreSQL port")
             .local_addr()
@@ -3226,10 +3233,7 @@ impl PostgresHarness {
                 .arg("-l")
                 .arg(&log_path)
                 .arg("-o")
-                .arg(format!(
-                    "-h 127.0.0.1 -p {port} -F -k {}",
-                    temp_dir.path().display()
-                ))
+                .arg(format!("-h 127.0.0.1 -p {port} -F -k {socket_directory}"))
                 .args(["-w", "start"]),
             "pg_ctl start",
         );
