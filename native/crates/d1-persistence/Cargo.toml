@@ -11,6 +11,7 @@ stacker = "0.1"
 icu_collator = "2.3.1"
 icu_locale_core = "2.3.0"
 base64 = "0.22"
+ring = "0.17.14"
 regex-lite = "0.1"
 url = "2.5"
 time = { version = "0.3", features = ["parsing", "formatting", "local-offset"] }

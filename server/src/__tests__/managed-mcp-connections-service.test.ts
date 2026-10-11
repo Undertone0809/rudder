@@ -1131,7 +1131,9 @@ describe("managedMcpConnectionService", () => {
       };
       next();
     });
-    app.use("/api", secretRoutes(db));
+    app.use("/api", secretRoutes(db, {
+      secret: async () => ({ status: 200, contentType: "application/json", body: Buffer.from("[]") }),
+    } as any));
     app.use(errorHandler);
     const server = app.listen(0, "127.0.0.1");
     activeServers.add(server);

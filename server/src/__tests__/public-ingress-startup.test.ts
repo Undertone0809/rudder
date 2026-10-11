@@ -2,8 +2,8 @@ import { createServer } from "node:net";
 import os from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RudderAppHandle } from "../app.js";
-import { assertPublicIngressExposure, preparePublicIngressStartup } from "../bootstrap/public-ingress-startup.js";
 import { selectAvailablePort } from "../bootstrap/port-selection.js";
+import { assertPublicIngressExposure, preparePublicIngressStartup } from "../bootstrap/public-ingress-startup.js";
 import type { Config } from "../config.js";
 
 vi.mock("../bootstrap/port-selection.js", () => ({ selectAvailablePort: vi.fn() }));

@@ -2032,6 +2032,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         serde_json::json!([
             "messenger_state",
             "calendar",
+            "secrets",
             "agent_core",
             "organization_branding",
             "project_goal_set_replacement",
@@ -3203,19 +3204,17 @@ impl PostgresHarness {
         let temp_dir = tempfile::tempdir().expect("create PostgreSQL temp directory");
         let data_dir = temp_dir.path().join("data");
         let log_path = temp_dir.path().join("postgres.log");
-        let port = TcpListener::bind("127.0.0.1:0")
-            .expect("reserve PostgreSQL port")
-            .local_addr()
-            .unwrap()
-            .port();
-        // Some cloud runners allow loopback TCP but prohibit Unix-domain sockets.
-        // These fixtures connect through the TCP URL below, so an empty socket
-        // directory keeps the test behavior while allowing them to run there.
+        // Some cloud runners support loopback TCP but not Unix sockets.
         let socket_directory = if env::var_os("RUDDER_POSTGRES_NO_UNIX_SOCKET").is_some() {
             "''".to_owned()
         } else {
             temp_dir.path().display().to_string()
         };
+        let port = TcpListener::bind("127.0.0.1:0")
+            .expect("reserve PostgreSQL port")
+            .local_addr()
+            .unwrap()
+            .port();
 
         run_checked(
             Command::new(&initdb).arg("-D").arg(&data_dir).args([

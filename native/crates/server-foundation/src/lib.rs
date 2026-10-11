@@ -57,6 +57,8 @@ pub use run_reads::RUN_READ_ACTION;
 mod agent_core;
 mod calendar;
 pub use calendar::CALENDAR_ACTION;
+mod secrets;
+pub use secrets::SECRETS_ACTION;
 mod cost_reads;
 mod goal_reads;
 mod llm_reflection;
@@ -103,6 +105,7 @@ pub const ORGANIZATION_RESOURCE_ACTION: &str = "organization.resource.mutate";
 const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
     "messenger_state",
     "calendar",
+    "secrets",
     "agent_core",
     "organization_branding",
     "project_goal_set_replacement",
@@ -2784,6 +2787,10 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/calendar",
                     web::post().to(calendar::calendar),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/secrets",
+                    web::post().to(secrets::secrets),
                 )
                 .route(
                     "/internal/orgs/{org_id}/messenger-state",

@@ -48,8 +48,8 @@ import {
   createAuthRuntime,
   type LocalAccountAuthOptions,
 } from "./bootstrap/auth-runtime.js";
-import { assertPublicIngressExposure, preparePublicIngressStartup } from "./bootstrap/public-ingress-startup.js";
 import { selectAvailablePort } from "./bootstrap/port-selection.js";
+import { assertPublicIngressExposure, preparePublicIngressStartup } from "./bootstrap/public-ingress-startup.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 import { createEmbeddedPostgresStartupLogBuffer } from "./embedded-postgres-startup-logs.js";

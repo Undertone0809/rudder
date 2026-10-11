@@ -66,6 +66,7 @@ export interface RustFoundationBridge {
   waitForPublicIngressReady?(): Promise<void>;
   start(): Promise<void>;
   calendar?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
+  secret?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   messengerState?(actor: RustFoundationActor, orgId: string, input: MessengerStateInput): Promise<RustFoundationResponse>;
   runRead?(actor: RustFoundationActor, orgId: string, input: RunReadInput): Promise<RustFoundationResponse>;
   liveRunRead?(
@@ -468,6 +469,8 @@ function createFoundationChildEnvironment(input: {
   databaseUrl: string;
   actorEnvelopeKey: string;
   publicIngress?: RustPublicIngressOptions;
+  secretsMasterKey?: string;
+  secretsMasterKeyFile: string;
 }): Record<string, string> {
   return {
     // ZIP DOS timestamps follow the Node host's local Date semantics. Keep
@@ -477,6 +480,8 @@ function createFoundationChildEnvironment(input: {
     RUDDER_NATIVE_DATABASE_URL: input.databaseUrl,
     RUDDER_NATIVE_DATABASE_REQUIRED: "true",
     RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: input.actorEnvelopeKey,
+    ...(input.secretsMasterKey ? { RUDDER_SECRETS_MASTER_KEY: input.secretsMasterKey } : {}),
+    RUDDER_SECRETS_MASTER_KEY_FILE: input.secretsMasterKeyFile,
     ...(input.publicIngress ? {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
@@ -594,6 +599,10 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
           databaseUrl: options.databaseUrl,
           actorEnvelopeKey,
           publicIngress: options.publicIngress,
+          secretsMasterKey: process.env.RUDDER_SECRETS_MASTER_KEY,
+          secretsMasterKeyFile: process.env.RUDDER_SECRETS_MASTER_KEY_FILE?.trim()
+            ? resolve(process.env.RUDDER_SECRETS_MASTER_KEY_FILE.trim())
+            : resolve(process.cwd(), "data/secrets/master.key"),
         }),
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -907,6 +916,42 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         } satisfies RustFoundationResponse;
       } catch (error) {
         throw new RustFoundationBridgeError("request_failed", "Rust Calendar request failed", { cause: error });
+      }
+    },
+    async secret(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/secrets`;
+      const body = Buffer.from(JSON.stringify(input), "utf8");
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({
+        actor,
+        organizationId: orgId,
+        method: "POST",
+        path: requestPath,
+        action: "secrets.mutate",
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+      });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+          },
+          body: body as unknown as BodyInit,
+          signal: AbortSignal.timeout(requestTimeoutMs),
+        });
+        return {
+          status: response.status,
+          contentType: response.headers.get("content-type") ?? "application/json",
+          body: Buffer.from(await response.arrayBuffer()),
+        } satisfies RustFoundationResponse;
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust Secrets request failed", { cause: error });
       }
     },
     async costRead(actor, orgId, input) {

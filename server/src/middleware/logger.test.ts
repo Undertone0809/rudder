@@ -73,6 +73,50 @@ describe("HTTP request-body logging", () => {
     expect(requestBodyForLogs({}, body)).toBe(body);
   });
 
+  it("redacts Secrets mutation bodies before auth, validation, and JSON parser errors", async () => {
+    const app = express();
+    const loggedBodies: unknown[] = [];
+    let parserErrorBody: unknown;
+    app.use(express.json());
+    app.use((req, res, next) => {
+      res.once("finish", () => loggedBodies.push(requestBodyForLogs(req, req.body)));
+      next();
+    });
+    app.use("/api", (_req, res) => res.status(500).json({ error: "synthetic failure" }));
+    app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      parserErrorBody = requestBodyForLogs(req, req.body);
+      res.status(400).end();
+    });
+    const server = app.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    try {
+      for (const [method, url] of [
+        ["post", "/api/orgs/org-1/secrets"],
+        ["post", "/api/secrets/id-1/rotate"],
+        ["patch", "/api/secrets/id-1"],
+        ["delete", "/api/secrets/id-1"],
+      ] as const) {
+        const response = await request(server)[method](url).send({ value: "synthetic-should-not-log" });
+        expect(response.status).toBe(500);
+        expect(loggedBodies.at(-1)).toBe("[REDACTED]");
+      }
+
+      const malformed = await request(server)
+        .post("/api/orgs/org-1/secrets")
+        .set("content-type", "application/json")
+        .send('{"value":"synthetic-parser-secret"');
+      expect(malformed.status).toBe(400);
+      expect(parserErrorBody).toBe("[REDACTED]");
+      expect(JSON.stringify(loggedBodies)).not.toContain("synthetic-should-not-log");
+      expect(JSON.stringify(parserErrorBody)).not.toContain("synthetic-parser-secret");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
   it("redacts Browser bodies by path before auth or route middleware runs", () => {
     const body = { items: [{ entries: [{ text: "clipboard-secret" }] }] };
 
