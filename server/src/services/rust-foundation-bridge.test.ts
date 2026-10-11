@@ -3,7 +3,7 @@ import type { Request } from "express";
 import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -438,11 +438,15 @@ describe("rust foundation bridge lifecycle", () => {
       AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
       DATABASE_URL: process.env.DATABASE_URL,
       RUDDER_PRIVATE_TEST_SECRET: process.env.RUDDER_PRIVATE_TEST_SECRET,
+      RUDDER_SECRETS_MASTER_KEY: process.env.RUDDER_SECRETS_MASTER_KEY,
+      RUDDER_SECRETS_MASTER_KEY_FILE: process.env.RUDDER_SECRETS_MASTER_KEY_FILE,
     };
     process.env.TZ = "Asia/Shanghai";
     process.env.AWS_SECRET_ACCESS_KEY = "should-not-reach-rust";
     process.env.DATABASE_URL = "postgres://unrelated-parent-secret";
     process.env.RUDDER_PRIVATE_TEST_SECRET = "should-not-reach-rust-either";
+    delete process.env.RUDDER_SECRETS_MASTER_KEY;
+    delete process.env.RUDDER_SECRETS_MASTER_KEY_FILE;
 
     try {
       const fixture = await createFixture("ready");
@@ -456,6 +460,7 @@ describe("rust foundation bridge lifecycle", () => {
         RUDDER_NATIVE_DATABASE_REQUIRED: "true",
         RUDDER_NATIVE_DATABASE_URL: "postgres://bridge-test",
         RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
+        RUDDER_SECRETS_MASTER_KEY_FILE: resolve(process.cwd(), "data/secrets/master.key"),
       };
       expect(childEnv).toMatchObject(requiredEnv);
       expect(Object.keys(childEnv).filter((name) => (

@@ -6,13 +6,36 @@ import {
   rotateSecretSchema,
   updateSecretSchema,
 } from "@rudderhq/shared";
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
+import { markHttpRequestBodySensitive } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
-import { logActivity, secretService } from "../services/index.js";
+import { secretService } from "../services/index.js";
+import {
+  RustFoundationBridgeError,
+  type RustFoundationBridge,
+  type RustFoundationResponse,
+} from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 
-export function secretRoutes(db: Db) {
+function sendNativeResponse(res: Response, result: RustFoundationResponse) {
+  res.status(result.status).setHeader("content-type", result.contentType).send(result.body);
+}
+
+function unavailable(res: Response) {
+  res.status(503).json({
+    error: "Rust Secrets is unavailable",
+    code: "rust_foundation_secrets_unavailable",
+  });
+}
+
+export function secretRoutes(db: Db, native?: RustFoundationBridge) {
   const router = Router();
+  const markSensitiveMutationBody = (req: Request, _res: Response, next: NextFunction) => {
+    markHttpRequestBodySensitive(req);
+    next();
+  };
+  // The Node service remains available to runtime secret resolution and the
+  // managed-MCP implementation. Public CRUD is owned by the Rust foundation.
   const svc = secretService(db);
   const configuredDefaultProvider = process.env.RUDDER_SECRETS_PROVIDER;
   const defaultProvider = (
@@ -21,52 +44,44 @@ export function secretRoutes(db: Db) {
       : "local_encrypted"
   ) as SecretProvider;
 
-  router.get("/orgs/:orgId/secret-providers", (req, res) => {
+  async function execute(req: Request, res: Response, orgId: string, input: Record<string, unknown>) {
+    if (!native?.secret) {
+      unavailable(res);
+      return;
+    }
+    try {
+      sendNativeResponse(res, await native.secret(req.actor, orgId, input));
+    } catch (error) {
+      if (!(error instanceof RustFoundationBridgeError)) throw error;
+      unavailable(res);
+    }
+  }
+
+  router.get("/orgs/:orgId/secret-providers", async (req, res) => {
     assertBoard(req);
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    res.json(svc.listProviders());
+    await execute(req, res, orgId, { operation: "providers" });
   });
 
   router.get("/orgs/:orgId/secrets", async (req, res) => {
     assertBoard(req);
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const secrets = await svc.list(orgId);
-    res.json(secrets);
+    await execute(req, res, orgId, { operation: "list" });
   });
 
-  router.post("/orgs/:orgId/secrets", validate(createSecretSchema), async (req, res) => {
+  router.post("/orgs/:orgId/secrets", markSensitiveMutationBody, validate(createSecretSchema), async (req, res) => {
     assertBoard(req);
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-
-    const created = await svc.create(
-      orgId,
-      {
-        name: req.body.name,
-        provider: req.body.provider ?? defaultProvider,
-        value: req.body.value,
-        description: req.body.description,
-        externalRef: req.body.externalRef,
-      },
-      { userId: req.actor.userId ?? "board", agentId: null },
-    );
-
-    await logActivity(db, {
-      orgId,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "secret.created",
-      entityType: "secret",
-      entityId: created.id,
-      details: { name: created.name, provider: created.provider },
+    await execute(req, res, orgId, {
+      operation: "create",
+      input: { ...req.body, provider: req.body.provider ?? defaultProvider },
     });
-
-    res.status(201).json(created);
   });
 
-  router.post("/secrets/:id/rotate", validate(rotateSecretSchema), async (req, res) => {
+  router.post("/secrets/:id/rotate", markSensitiveMutationBody, validate(rotateSecretSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
     const existing = await svc.getById(id);
@@ -75,30 +90,10 @@ export function secretRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, existing.orgId);
-
-    const rotated = await svc.rotate(
-      id,
-      {
-        value: req.body.value,
-        externalRef: req.body.externalRef,
-      },
-      { userId: req.actor.userId ?? "board", agentId: null },
-    );
-
-    await logActivity(db, {
-      orgId: rotated.orgId,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "secret.rotated",
-      entityType: "secret",
-      entityId: rotated.id,
-      details: { version: rotated.latestVersion },
-    });
-
-    res.json(rotated);
+    await execute(req, res, existing.orgId, { operation: "rotate", id, input: req.body });
   });
 
-  router.patch("/secrets/:id", validate(updateSecretSchema), async (req, res) => {
+  router.patch("/secrets/:id", markSensitiveMutationBody, validate(updateSecretSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
     const existing = await svc.getById(id);
@@ -107,32 +102,10 @@ export function secretRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, existing.orgId);
-
-    const updated = await svc.update(id, {
-      name: req.body.name,
-      description: req.body.description,
-      externalRef: req.body.externalRef,
-    });
-
-    if (!updated) {
-      res.status(404).json({ error: "Secret not found" });
-      return;
-    }
-
-    await logActivity(db, {
-      orgId: updated.orgId,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "secret.updated",
-      entityType: "secret",
-      entityId: updated.id,
-      details: { name: updated.name },
-    });
-
-    res.json(updated);
+    await execute(req, res, existing.orgId, { operation: "update", id, input: req.body });
   });
 
-  router.delete("/secrets/:id", async (req, res) => {
+  router.delete("/secrets/:id", markSensitiveMutationBody, async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
     const existing = await svc.getById(id);
@@ -141,24 +114,7 @@ export function secretRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, existing.orgId);
-
-    const removed = await svc.remove(id);
-    if (!removed) {
-      res.status(404).json({ error: "Secret not found" });
-      return;
-    }
-
-    await logActivity(db, {
-      orgId: removed.orgId,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "secret.deleted",
-      entityType: "secret",
-      entityId: removed.id,
-      details: { name: removed.name },
-    });
-
-    res.json({ ok: true });
+    await execute(req, res, existing.orgId, { operation: "delete", id });
   });
 
   return router;
