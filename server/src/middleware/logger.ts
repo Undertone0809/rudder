@@ -58,6 +58,19 @@ function isLocalAccountCredentialRequest(req: object): boolean {
     || pathname === "/api/auth/local-offline";
 }
 
+function isSecretsMutationRequest(req: object): boolean {
+  const pathname = requestPathname(req);
+  const method = (req as { method?: unknown }).method;
+  if (typeof method !== "string") return false;
+  const normalizedMethod = method.toUpperCase();
+  if (normalizedMethod === "POST") {
+    return /^\/api\/orgs\/[^/]+\/secrets$/u.test(pathname)
+      || /^\/api\/secrets\/[^/]+\/rotate$/u.test(pathname);
+  }
+  return (normalizedMethod === "PATCH" || normalizedMethod === "DELETE")
+    && /^\/api\/secrets\/[^/]+$/u.test(pathname);
+}
+
 function containsInlineAnnotations(body: unknown): boolean {
   if (!body || typeof body !== "object" || Array.isArray(body)) return false;
   if (Object.hasOwn(body, "inlineAnnotations")) return true;
@@ -158,6 +171,7 @@ export function requestBodyForLogs(req: object, body: unknown): unknown {
   return (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody === true
     || isBrowserRequest(req)
     || isLocalAccountCredentialRequest(req)
+    || isSecretsMutationRequest(req)
     || containsInlineAnnotations(body)
     ? REDACTED_REQUEST_BODY
     : body;

@@ -1745,6 +1745,7 @@ dependencies = [
  "icu_locale_core",
  "libc",
  "regex-lite",
+ "ring",
  "rudder-auth-core",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",

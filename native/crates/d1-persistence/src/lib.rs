@@ -22,6 +22,7 @@ pub mod project_library;
 mod project_patches;
 pub mod project_reads;
 pub mod run_visibility;
+pub mod secrets;
 mod transaction;
 
 use rudder_organization_mutation_core::{
