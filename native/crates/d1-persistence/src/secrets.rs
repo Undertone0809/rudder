@@ -143,7 +143,7 @@ fn decode_master_key(value: &str) -> Option<[u8; 32]> {
     }
     if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         let mut key = [0u8; 32];
-        for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             let pair = std::str::from_utf8(pair).ok()?;
             key[index] = u8::from_str_radix(pair, 16).ok()?;
         }
@@ -171,17 +171,17 @@ fn read_key_file(path: &PathBuf) -> Result<[u8; 32], SecretsError> {
 }
 
 fn key_file_path() -> Result<PathBuf, SecretsError> {
-    if let Ok(configured) = env::var("RUDDER_SECRETS_MASTER_KEY_FILE") {
-        if !configured.trim().is_empty() {
-            let path = PathBuf::from(configured.trim());
-            return if path.is_absolute() {
-                Ok(path)
-            } else {
-                env::current_dir()
-                    .map(|current| current.join(path))
-                    .map_err(|_| http(500, "Secret provider unavailable"))
-            };
-        }
+    if let Ok(configured) = env::var("RUDDER_SECRETS_MASTER_KEY_FILE")
+        && !configured.trim().is_empty()
+    {
+        let path = PathBuf::from(configured.trim());
+        return if path.is_absolute() {
+            Ok(path)
+        } else {
+            env::current_dir()
+                .map(|current| current.join(path))
+                .map_err(|_| http(500, "Secret provider unavailable"))
+        };
     }
     env::current_dir()
         .map(|current| current.join("data/secrets/master.key"))
