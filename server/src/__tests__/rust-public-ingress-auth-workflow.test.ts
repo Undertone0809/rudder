@@ -4,6 +4,7 @@ import {
   agents,
   authUsers,
   boardApiKeys,
+  costEvents,
   instanceUserRoles,
   organizationMemberships,
 } from "@rudderhq/db";
@@ -25,6 +26,7 @@ import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/index.js";
 import {
   PUBLIC_INGRESS_AUTH_ENDPOINT,
+  PUBLIC_INGRESS_LLM_REFLECTION_AUTH_ENDPOINT,
   publicIngressAuthRoutes,
 } from "../routes/public-ingress-auth.js";
 import { hashBearerToken } from "../services/board-auth.js";
@@ -33,7 +35,7 @@ const organizationId = "10000000-0000-0000-0000-000000000001";
 const otherOrganizationId = "20000000-0000-0000-0000-000000000002";
 const boardUserId = "board-user-1";
 const sessionUserId = "session-user-1";
-const agentId = "agent-1";
+const agentId = "f5e8a1ca-8ed3-4ef4-9e3e-829191260f14";
 const boardToken = "pcp_board_test_public_ingress_token";
 const revokedBoardToken = "pcp_board_revoked_public_ingress_token";
 const expiredBoardToken = "pcp_board_expired_public_ingress_token";
@@ -82,6 +84,7 @@ type StartupReceipt = {
 
 const credentialFixture: { current: CredentialFixture } = { current: "none" };
 const membershipFixture: { current: MembershipFixture } = { current: "active" };
+const agentPermissionFixture = { canCreateAgents: true };
 const authorizationObservations: AuthorizationObservation[] = [];
 let authServer: Server | undefined;
 let rustChild: ChildProcess | undefined;
@@ -182,7 +185,23 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
       { id: "agent-key-revoked", keyHash: revokedAgentKeyHash, agentId, orgId: organizationId, revokedAt: new Date() },
     ];
   }
-  if (table === agents) return [{ id: agentId, orgId: organizationId, status: "active" }];
+  if (table === agents) {
+    return [{
+      id: agentId,
+      orgId: organizationId,
+      status: "active",
+      name: "Authorized fixture agent",
+      role: "researcher",
+      permissions: {
+        canCreateAgents: agentPermissionFixture.canCreateAgents,
+        canManageSkills: false,
+      },
+      workspaceKey: "agent-fixture-workspace",
+      spentMonthlyCents: 0,
+      agentRuntimeConfig: null,
+      metadata: null,
+    }];
+  }
   if (table === authUsers) {
     return [
       { id: boardUserId, name: "Board fixture", email: null },
@@ -203,7 +222,7 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
     }
     return rows;
   }
-  if (table === instanceUserRoles) return [];
+  if (table === costEvents || table === instanceUserRoles) return [];
   return [];
 }
 
@@ -238,7 +257,12 @@ function createAuthLookupDb(): Db {
           return query;
         },
         where(condition: Parameters<typeof dialect.sqlToQuery>[0]) {
-          predicates = predicatesFromDrizzleCondition(condition);
+          // LLM auth calls agentService.getById(), which hydrates spend. The
+          // auth fixture has no cost rows, so avoid parsing its richer query.
+          if (table !== costEvents) predicates = predicatesFromDrizzleCondition(condition);
+          return query;
+        },
+        groupBy() {
           return query;
         },
         then(
@@ -246,7 +270,10 @@ function createAuthLookupDb(): Db {
           onrejected?: (error: unknown) => unknown,
         ) {
           const rows = rowsForTable(table);
-          return Promise.resolve(filterRowsByDrizzleCondition(table, rows, predicates)).then(onfulfilled, onrejected);
+          const filtered = rows.length === 0
+            ? rows
+            : filterRowsByDrizzleCondition(table, rows, predicates);
+          return Promise.resolve(filtered).then(onfulfilled, onrejected);
         },
       };
       return query;
@@ -264,13 +291,14 @@ function createAuthLookupDb(): Db {
 
 function createPrivateAuthApp() {
   const app = express();
+  const db = createAuthLookupDb();
   app.use(express.json({
     limit: "32kb",
     verify: (req, _res, body) => {
       (req as Request).rawBody = Buffer.from(body);
     },
   }));
-  app.use(actorMiddleware(createAuthLookupDb(), {
+  app.use(actorMiddleware(db, {
     deploymentMode: "authenticated",
     authRequirement: "required",
     resolveSession: async (req) => {
@@ -284,7 +312,8 @@ function createPrivateAuthApp() {
     },
   }));
   app.use((req, res, next) => {
-    if (req.originalUrl === PUBLIC_INGRESS_AUTH_ENDPOINT) {
+    if (req.originalUrl === PUBLIC_INGRESS_AUTH_ENDPOINT
+      || req.originalUrl === PUBLIC_INGRESS_LLM_REFLECTION_AUTH_ENDPOINT) {
       const body = req.body && typeof req.body === "object"
         ? req.body as Record<string, unknown>
         : {};
@@ -318,6 +347,7 @@ function createPrivateAuthApp() {
   app.use("/api", publicIngressAuthRoutes({
     internalIngressAuthKey: ingressAuthKey,
     actorEnvelopeKey,
+    db,
   }));
   app.get("/api/health", (_req, res) => res.status(200).json({ status: "ok" }));
   app.use(errorHandler);
@@ -371,7 +401,11 @@ async function stopRustChild() {
 
 function getPublicIngress(path: string, headers: Record<string, string> = {}, method = "GET") {
   if (publicPort === undefined) throw new Error("Public Actix listener is not started");
-  return new Promise<{ status: number; body: string }>((resolveResponse, rejectResponse) => {
+  return new Promise<{
+    status: number;
+    body: string;
+    headers: import("node:http").IncomingMessage["headers"];
+  }>((resolveResponse, rejectResponse) => {
     const req = httpRequest({
       hostname: "127.0.0.1",
       port: publicPort,
@@ -382,7 +416,7 @@ function getPublicIngress(path: string, headers: Record<string, string> = {}, me
       let body = "";
       res.setEncoding("utf8");
       res.on("data", (chunk: string) => { body += chunk; });
-      res.on("end", () => resolveResponse({ status: res.statusCode ?? 0, body }));
+      res.on("end", () => resolveResponse({ status: res.statusCode ?? 0, body, headers: res.headers }));
     });
     req.setTimeout(5_000, () => req.destroy(new Error("Public Actix request timed out")));
     req.once("error", rejectResponse);
@@ -458,6 +492,7 @@ describe("source-binary public Actix to private Node auth workflow", () => {
   beforeEach(() => {
     credentialFixture.current = "none";
     membershipFixture.current = "active";
+    agentPermissionFixture.canCreateAgents = true;
     authorizationObservations.length = 0;
   });
 
@@ -509,6 +544,79 @@ describe("source-binary public Actix to private Node auth workflow", () => {
       expect(observation.headers.cookie).toBe(scenario.headers.cookie);
     }
   }, 20_000);
+
+  it("serves root LLM documents through Rust and the private Node actor/registry adapter", async () => {
+    const port = publicPort;
+    if (port === undefined) throw new Error("Public Actix listener is not started");
+    const host = `public.example:${port}`;
+    const headers = {
+      host,
+      origin: "https://public.example",
+      authorization: `Bearer ${boardToken}`,
+      "x-rudder-actor-envelope": forgedActorEnvelope,
+      "x-rudder-request-id": forgedRequestId,
+      ...forgedForwardingHeaders,
+    };
+    credentialFixture.current = "board-key";
+
+    const indexPath = "/llms/agent-configuration.txt?source=rust&source=board";
+    const index = await getPublicIngress(indexPath, headers);
+    const indexObservation = lastObservation();
+    expect(index.status, index.body).toBe(200);
+    expect(index.headers["content-type"]).toContain("text/plain");
+    expect(index.body).toContain("# Rudder Agent Configuration Index");
+    expect(index.body).toContain("Installed adapters:");
+    expect(indexObservation.body).toMatchObject({ publicMethod: "GET", publicPath: indexPath });
+    expect(indexObservation.actor).toMatchObject({ type: "board", source: "board_key" });
+    expect(indexObservation.responseStatus).toBe(200);
+    expectOriginalRequestContext(indexObservation, host);
+    expectSocketForwardingContext(indexObservation);
+
+    const iconsPath = "/llms/agent-icons.txt?raw=a%2Bb";
+    const icons = await getPublicIngress(iconsPath, headers);
+    const iconsObservation = lastObservation();
+    expect(icons.status).toBe(200);
+    expect(icons.body).toContain("# Rudder Legacy Agent Icon Names");
+    expect(icons.body).toContain("- search");
+    expect(iconsObservation.body).toMatchObject({ publicMethod: "GET", publicPath: iconsPath });
+
+    const adapterPath = "/llms/agent-configuration/missing-runtime.txt";
+    const adapter = await getPublicIngress(adapterPath, headers);
+    const adapterObservation = lastObservation();
+    expect(adapter.status).toBe(404);
+    expect(adapter.body).toBe("Unknown adapter type: missing-runtime");
+    expect(adapterObservation.body).toMatchObject({ publicMethod: "GET", publicPath: adapterPath });
+    expect(adapterObservation.responseStatus).toBe(200);
+    expect(adapterObservation.headers.actorEnvelope).toBeUndefined();
+  }, 30_000);
+
+  it("requires stored canCreateAgents permission for root LLM documents through Rust ingress", async () => {
+    const port = publicPort;
+    if (port === undefined) throw new Error("Public Actix listener is not started");
+    const host = `public.example:${port}`;
+    credentialFixture.current = "agent";
+    const headers = {
+      host,
+      origin: "https://public.example",
+      authorization: `Bearer ${agentToken}`,
+      "x-rudder-agent-id": agentId,
+      ...forgedForwardingHeaders,
+    };
+
+    agentPermissionFixture.canCreateAgents = false;
+    const denied = await getPublicIngress("/llms/agent-icons.txt", headers);
+    expect(lastObservation().actor).toMatchObject({ type: "agent", agentId });
+    expect(lastObservation().responseStatus).toBe(403);
+    expect(denied.status, denied.body).toBe(403);
+    expect(denied.body).toContain("ingress_authorization_rejected");
+
+    agentPermissionFixture.canCreateAgents = true;
+    const allowed = await getPublicIngress("/llms/agent-icons.txt", headers);
+    expect(allowed.status).toBe(200);
+    expect(allowed.body).toContain("# Rudder Legacy Agent Icon Names");
+    expect(lastObservation().actor).toMatchObject({ type: "agent", agentId });
+    expect(lastObservation().responseStatus).toBe(200);
+  }, 30_000);
 
   it.each([
     ["board-key", { authorization: `Bearer ${boardToken}` }, "board", "board_key"],

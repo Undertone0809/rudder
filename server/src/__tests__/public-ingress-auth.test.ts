@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import {
   PUBLIC_INGRESS_AUTH_ENDPOINT,
+  PUBLIC_INGRESS_LLM_REFLECTION_AUTH_ENDPOINT,
   publicIngressAuthRoutes,
 } from "../routes/public-ingress-auth.js";
 import { createRustActorEnvelope } from "../services/rust-foundation-bridge.js";
@@ -48,6 +49,7 @@ const activeServers = new Set<Server>();
 async function createApp(options: {
   actor?: Request["actor"] | null;
   remoteAddress?: string;
+  db?: any;
 } = {}) {
   const app = express();
   app.use(express.json({
@@ -69,6 +71,7 @@ async function createApp(options: {
   app.use("/api", publicIngressAuthRoutes({
     internalIngressAuthKey: ingressAuthKey,
     actorEnvelopeKey,
+    db: options.db ?? ({} as any),
   }));
   app.use(errorHandler);
 
@@ -98,6 +101,23 @@ function getAuthorization(
   return pending.send(body);
 }
 
+function getLlmReflectionAuthorization(server: Server, body: unknown) {
+  return request(server)
+    .get(PUBLIC_INGRESS_LLM_REFLECTION_AUTH_ENDPOINT)
+    .set("x-rudder-ingress-auth", ingressAuthKey)
+    .send(body);
+}
+
+function llmReflectionAuthorizationBody(overrides: Record<string, unknown> = {}) {
+  return {
+    publicMethod: "GET",
+    publicPath: "/llms/agent-icons.txt",
+    requestId,
+    nonce,
+    ...overrides,
+  };
+}
+
 afterEach(async () => {
   await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
@@ -106,6 +126,105 @@ afterEach(async () => {
 });
 
 describe("private public-ingress auth adapter", () => {
+  it("signs an instance-scoped root reflection request and returns only the requested registry slice", async () => {
+    const server = await createApp({ actor: localBoardActor });
+    const publicPath = "/llms/agent-icons.txt?unused=kept%2Bexactly";
+    const response = await getLlmReflectionAuthorization(
+      server,
+      llmReflectionAuthorizationBody({ publicPath }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body.envelope).toMatchObject({
+      organizationId: "instance",
+      method: "GET",
+      path: publicPath,
+      action: "llm.reflection.read",
+      requestId,
+      nonce,
+    });
+    expect(response.body.envelope.signature).toMatch(/^[a-f0-9]{64}$/u);
+    expect(response.body.reflection.adapters).toEqual([]);
+    expect(response.body.reflection.iconNames).toContain("search");
+  });
+
+  it("binds a private grant to HEAD without exposing the private adapter as a HEAD route", async () => {
+    const server = await createApp({ actor: localBoardActor });
+    const response = await getLlmReflectionAuthorization(
+      server,
+      llmReflectionAuthorizationBody({ publicMethod: "HEAD" }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.body.envelope.method).toBe("HEAD");
+
+    const privateHead = await request(server)
+      .head(PUBLIC_INGRESS_LLM_REFLECTION_AUTH_ENDPOINT)
+      .set("x-rudder-ingress-auth", ingressAuthKey);
+    expect(privateHead.status).toBe(405);
+    expect(privateHead.headers.allow).toBe("GET");
+  });
+
+  it.each([
+    ["missing actor", {}],
+    ["none actor", { actor: { type: "none", source: "none" } as Request["actor"] }],
+  ])("rejects LLM reflection grants for a %s", async (_label, options) => {
+    const server = await createApp(options);
+    const response = await getLlmReflectionAuthorization(
+      server,
+      llmReflectionAuthorizationBody(),
+    );
+    expect(response.status).toBe(401);
+    expect(response.body.envelope).toBeUndefined();
+  });
+
+  it("denies agents without the stored canCreateAgents permission", async () => {
+    const db = {
+      select() {
+        return { from() { return { where: async () => [] }; } };
+      },
+    };
+    const server = await createApp({
+      actor: {
+        type: "agent",
+        source: "agent_key",
+        orgId: organizationId,
+        agentId: "agent-without-permission",
+        sessionId: "agent-key:agent-without-permission",
+        authEpoch: 1,
+      },
+      db: db as any,
+    });
+    const response = await getLlmReflectionAuthorization(
+      server,
+      llmReflectionAuthorizationBody(),
+    );
+    expect(response.status).toBe(403);
+    expect(response.body.envelope).toBeUndefined();
+  });
+
+  it("rejects out-of-scope root paths before signing", async () => {
+    const server = await createApp({ actor: localBoardActor });
+    const response = await getLlmReflectionAuthorization(
+      server,
+      llmReflectionAuthorizationBody({ publicPath: "/llms/not-a-reflection-route" }),
+    );
+    expect(response.status).toBe(400);
+    expect(response.body.envelope).toBeUndefined();
+  });
+
+  it("keeps encoded path separators inside one adapter segment and binds the raw target", async () => {
+    const server = await createApp({ actor: localBoardActor });
+    const publicPath = "/llms/agent-configuration/foo%2Fbar.txt?raw=a%2Bb";
+    const response = await getLlmReflectionAuthorization(
+      server,
+      llmReflectionAuthorizationBody({ publicPath }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.body.envelope.path).toBe(publicPath);
+    expect(response.body.reflection.adapters).toEqual([]);
+  });
+
   it.each([
     ["local board", localBoardActor],
     ["organization-scoped user", scopedUserActor],
@@ -282,10 +401,12 @@ describe("private public-ingress auth adapter", () => {
     expect(() => publicIngressAuthRoutes({
       internalIngressAuthKey: "short",
       actorEnvelopeKey,
+      db: {} as any,
     })).toThrow(/between 32 and 4096 bytes/u);
     expect(() => publicIngressAuthRoutes({
       internalIngressAuthKey: ingressAuthKey,
       actorEnvelopeKey: ingressAuthKey,
+      db: {} as any,
     })).toThrow(/must be different/u);
   });
 });

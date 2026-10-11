@@ -22,6 +22,8 @@ use url::{Host, Url};
 
 pub const PRIVATE_AUTH_ADAPTER_PATH: &str =
     "/api/_internal/rudder-ingress/authorize-member-directory";
+pub const PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH: &str =
+    "/api/_internal/rudder-ingress/authorize-llm-reflection";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const RESPONSE_HEADERS_TIMEOUT: Duration = Duration::from_secs(120);
@@ -192,12 +194,16 @@ pub async fn proxy_handler(
     proxy.forward(request, payload).await
 }
 
-/// Matches the private auth adapter even when its static path is percent-encoded or has a slash suffix.
+/// Matches private auth adapters even when their static paths are percent-encoded or have a slash suffix.
 pub fn is_private_auth_adapter_path(path: &str) -> bool {
     let decoded = percent_decode_str(path).decode_utf8_lossy();
-    decoded
-        .trim_end_matches('/')
-        .eq_ignore_ascii_case(PRIVATE_AUTH_ADAPTER_PATH)
+    let normalized = decoded.trim_end_matches('/');
+    [
+        PRIVATE_AUTH_ADAPTER_PATH,
+        PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH,
+    ]
+    .iter()
+    .any(|expected| normalized.eq_ignore_ascii_case(expected))
 }
 
 fn is_unsupported_upgrade(method: &Method, headers: &HeaderMap) -> bool {
@@ -270,8 +276,9 @@ mod tests {
     use futures_util::{StreamExt, stream};
 
     use super::{
-        PRIVATE_AUTH_ADAPTER_PATH, PublicIngressProxy, connection_nominated_headers,
-        filtered_headers, is_private_auth_adapter_path, is_unsupported_upgrade,
+        PRIVATE_AUTH_ADAPTER_PATH, PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH, PublicIngressProxy,
+        connection_nominated_headers, filtered_headers, is_private_auth_adapter_path,
+        is_unsupported_upgrade,
     };
 
     type RunningServer = (
@@ -423,6 +430,12 @@ mod tests {
         assert!(is_private_auth_adapter_path(PRIVATE_AUTH_ADAPTER_PATH));
         assert!(is_private_auth_adapter_path(
             "/api/%5Finternal/rudder-ingress/authorize-member-directory/"
+        ));
+        assert!(is_private_auth_adapter_path(
+            "/api/%5Finternal/rudder-ingress/authorize-llm-reflection/"
+        ));
+        assert!(is_private_auth_adapter_path(
+            PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH
         ));
         assert!(!is_private_auth_adapter_path("/api/orgs/members"));
     }
@@ -912,15 +925,17 @@ mod tests {
         let proxy = PublicIngressProxy::new(&format!("http://{upstream_address}")).unwrap();
         let (proxy_address, proxy_handle, proxy_task) = start_proxy(proxy, 1024 * 1024);
 
-        let response = client()
-            .get(format!(
-                "http://{proxy_address}/api/%5Finternal/rudder-ingress/authorize-member-directory?org=one"
-            ))
-            .send()
-            .await
-            .expect("deny response arrives");
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        for private_path in [
+            "/api/%5Finternal/rudder-ingress/authorize-member-directory?org=one",
+            "/api/%5Finternal/rudder-ingress/authorize-llm-reflection/",
+        ] {
+            let response = client()
+                .get(format!("http://{proxy_address}{private_path}"))
+                .send()
+                .await
+                .expect("deny response arrives");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{private_path}");
+        }
         assert_eq!(hits.load(Ordering::SeqCst), 0);
 
         stop_server((proxy_address, proxy_handle, proxy_task)).await;

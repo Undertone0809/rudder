@@ -59,6 +59,7 @@ export async function createHttpApp(
     ? publicIngressAuthRoutes({
       internalIngressAuthKey: opts.rustPublicIngressAuthKey,
       actorEnvelopeKey: opts.rustFoundationActorEnvelopeKey ?? "",
+      db,
     })
     : null;
   const app = express();

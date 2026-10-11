@@ -59,6 +59,7 @@ mod calendar;
 pub use calendar::CALENDAR_ACTION;
 mod cost_reads;
 mod goal_reads;
+mod llm_reflection;
 mod project_reads;
 mod public_ingress;
 mod public_ingress_config;
