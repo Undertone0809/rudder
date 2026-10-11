@@ -33,7 +33,6 @@ import {
   type DeploymentExposure,
   type DeploymentMode,
 } from "@rudderhq/shared";
-import detectPort from "detect-port";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -49,6 +48,7 @@ import {
   createAuthRuntime,
   type LocalAccountAuthOptions,
 } from "./bootstrap/auth-runtime.js";
+import { selectAvailablePort } from "./bootstrap/port-selection.js";
 import { assertPublicIngressExposure, preparePublicIngressStartup } from "./bootstrap/public-ingress-startup.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
@@ -799,7 +799,7 @@ async function startServerRuntime(
           `Embedded PostgreSQL appears to already be reachable without a pid file; reusing existing server on configured port ${configuredPort}`,
         );
       } catch {
-        const detectedPort = await detectPort(configuredPort);
+        const detectedPort = await selectAvailablePort(configuredPort, "127.0.0.1");
         if (detectedPort !== configuredPort) {
           logger.warn(`Embedded PostgreSQL port is in use; using next free port (requestedPort=${configuredPort}, selectedPort=${detectedPort})`);
         }
@@ -1072,7 +1072,7 @@ async function startServerRuntime(
     ensureLocalTrustedBoardPrincipal: () => ensureLocalTrustedBoardPrincipal(db as any),
   });
   
-  const listenPort = await detectPort(config.port);
+  const listenPort = await selectAvailablePort(config.port, config.host);
   const ingress = await preparePublicIngressStartup(config, listenPort);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);

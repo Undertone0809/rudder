@@ -33,6 +33,7 @@ type EmbeddedPostgresCtor = new (opts: {
   port: number;
   persistent: boolean;
   initdbFlags?: string[];
+  postgresFlags?: string[];
   onLog?: (message: unknown) => void;
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
@@ -46,6 +47,14 @@ async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
 }
 const migrationTestTimeout = (timeoutMs: number): number =>
   process.platform === "win32" ? timeoutMs * 4 : timeoutMs;
+
+function reportEmbeddedPostgresError(message: unknown): void {
+  const diagnostic = String(message)
+    .replace(/(postgres(?:ql)?:\/\/)[^@\s]+@/gi, "$1<redacted>@")
+    .replace(/(password|passwd|pwfile)(\s*[:=]\s*)\S+/gi, "$1$2<redacted>")
+    .slice(0, 2_000);
+  console.error(`[embedded-postgres-test] ${diagnostic}`);
+}
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -76,6 +85,9 @@ async function createTempDatabaseWithPassword(password: string): Promise<string>
   tempPaths.push(dataDir);
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
+  const postgresFlags = process.env.RUDDER_POSTGRES_NO_UNIX_SOCKET === "1"
+    ? ["-c", "unix_socket_directories="]
+    : [];
   const instance = new EmbeddedPostgres({
     databaseDir: dataDir,
     user: "rudder",
@@ -83,8 +95,9 @@ async function createTempDatabaseWithPassword(password: string): Promise<string>
     port,
     persistent: true,
     initdbFlags: ["--encoding=UTF8", "--locale=C"],
+    postgresFlags,
     onLog: () => {},
-    onError: () => {},
+    onError: reportEmbeddedPostgresError,
   });
   await instance.initialise();
   await instance.start();

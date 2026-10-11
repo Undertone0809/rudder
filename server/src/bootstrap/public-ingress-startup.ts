@@ -1,8 +1,8 @@
-import detectPort from "detect-port";
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import type { RudderAppHandle } from "../app.js";
 import type { Config } from "../config.js";
+import { selectAvailablePort } from "./port-selection.js";
 import type { RudderAppOptions } from "./types.js";
 
 export function assertPublicIngressExposure(config: Config, localAccountAuth: boolean): void {
@@ -17,7 +17,9 @@ export function assertPublicIngressExposure(config: Config, localAccountAuth: bo
 export async function preparePublicIngressStartup(config: Config, publicPort: number) {
   const enabled = config.rustPublicIngressMode === "required";
   const nodeListenHost = enabled ? "127.0.0.1" : config.host;
-  const nodeListenPort = enabled ? await detectPort(publicPort === 65_535 ? 3_101 : publicPort + 1) : publicPort;
+  const nodeListenPort = enabled
+    ? await selectAvailablePort(publicPort === 65_535 ? 3_101 : publicPort + 1, nodeListenHost)
+    : publicPort;
   if (enabled && nodeListenPort === publicPort) throw new Error("Public ingress and private Node listener must use distinct ports");
   const apiHost = config.host === "0.0.0.0" || config.host === "::" ? "localhost" : config.host;
   const publicApiUrl = `http://${apiHost.includes(":") ? `[${apiHost}]` : apiHost}:${publicPort}`;

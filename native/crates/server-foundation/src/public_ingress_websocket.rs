@@ -3,6 +3,7 @@
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 
 use crate::public_ingress_forwarding::{FORWARDING_HEADERS, ForwardingPolicy};
+use crate::public_ingress_proxy::is_private_auth_adapter_path;
 use actix_web::{
     HttpRequest, HttpResponse,
     http::{
@@ -14,15 +15,12 @@ use actix_web::{
 use actix_ws::{CloseCode, CloseReason, Message, MessageStream, Session};
 use awc::{ClientBuilder, Connector, error::WsClientError, ws::Frame};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use percent_encoding::percent_decode_str;
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_UPSTREAM_CONNECTIONS: usize = 32;
 const MAX_WEBSOCKET_FRAME_BYTES: usize = 100 * 1024 * 1024;
-const PRIVATE_AUTH_ADAPTER_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
-
 const HOP_BY_HOP_HEADERS: &[&str] = &[
     "connection",
     "keep-alive",
@@ -349,13 +347,6 @@ fn proxy_error(status: StatusCode, message: &'static str) -> HttpResponse {
     HttpResponse::build(status)
         .insert_header((header::CONTENT_TYPE, "text/plain; charset=utf-8"))
         .body(message)
-}
-
-fn is_private_auth_adapter_path(path: &str) -> bool {
-    percent_decode_str(path)
-        .decode_utf8_lossy()
-        .trim_end_matches('/')
-        .eq_ignore_ascii_case(PRIVATE_AUTH_ADAPTER_PATH)
 }
 
 fn is_client_trust_header(name: &str) -> bool {
@@ -978,15 +969,25 @@ mod tests {
         let proxy = start_proxy(upstream.0);
         let client = Client::new();
 
-        let response = client
-            .post(format!(
-                "http://{}/api/_internal/rudder-ingress/authorize-member-directory",
-                proxy.0
-            ))
-            .send()
-            .await
-            .expect("private adapter request reaches proxy handler");
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        for path in [
+            "/api/_internal/rudder-ingress/authorize-member-directory",
+            "/api/%5Finternal/rudder-ingress/authorize-llm-reflection/",
+        ] {
+            let result = client
+                .ws(format!("ws://{}{path}", proxy.0))
+                .set_header(header::HOST, "private.example:3100")
+                .connect()
+                .await;
+            match result {
+                Err(awc::error::WsClientError::InvalidResponseStatus(status)) => {
+                    assert_eq!(status, StatusCode::NOT_FOUND);
+                }
+                Err(error) => {
+                    panic!("private auth adapter websocket returned unexpected error: {error}")
+                }
+                Ok(_) => panic!("private auth adapter websocket must be denied without upgrading"),
+            }
+        }
 
         let response = client
             .post(format!("http://{}/events", proxy.0))
