@@ -14,6 +14,8 @@ const mockRunWorkspaceService = vi.hoisted(() => ({
 }));
 const activeServers = new Set<Server>();
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const mockWorkspaceIdentity = vi.hoisted(() => vi.fn());
+const mockDateContext = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   runWorkspaceService: () => mockRunWorkspaceService,
@@ -36,7 +38,11 @@ async function createApp(rustFoundation?: RustFoundationBridge) {
     };
     next();
   });
-  app.use("/api", runWorkspaceRoutes({} as any, rustFoundation));
+  const db = {
+    execute: mockDateContext,
+    select: () => ({ from: () => ({ where: mockWorkspaceIdentity }) }),
+  };
+  app.use("/api", runWorkspaceRoutes(db as any, rustFoundation));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -47,6 +53,8 @@ async function createApp(rustFoundation?: RustFoundationBridge) {
 describe("run workspace routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockWorkspaceIdentity.mockReset().mockResolvedValue([]);
+    mockDateContext.mockReset().mockResolvedValue([{ timezone: "UTC" }]);
   });
 
   afterEach(async () => {
@@ -57,40 +65,74 @@ describe("run workspace routes", () => {
   });
 
   it("serves the canonical run workspace list route", async () => {
-    mockRunWorkspaceService.list.mockResolvedValue([{ id: "workspace-1", orgId: "organization-1" }]);
+    const workspaces = [{ id: "workspace-1", orgId: "organization-1" }];
+    const runWorkspaceRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(workspaces)) });
 
-    const res = await request(await createApp()).get("/api/orgs/organization-1/run-workspaces");
+    const res = await request(await createApp({ runWorkspaceRead } as unknown as RustFoundationBridge)).get("/api/orgs/organization-1/run-workspaces");
 
     expect(res.status).toBe(200);
-    expect(mockRunWorkspaceService.list).toHaveBeenCalledWith("organization-1", {
+    expect(runWorkspaceRead).toHaveBeenCalledWith(expect.objectContaining({ type: "board", userId: "user-1" }), "organization-1", {
+      operation: "list",
       projectId: undefined,
       projectWorkspaceId: undefined,
       issueId: undefined,
-      status: undefined,
+      statuses: undefined,
       reuseEligible: false,
+      legacyDateTimezone: "UTC",
     });
     expect(res.body).toEqual([{ id: "workspace-1", orgId: "organization-1" }]);
+    expect(mockRunWorkspaceService.list).not.toHaveBeenCalled();
   });
 
   it("keeps the legacy execution workspace list route as an alias", async () => {
-    mockRunWorkspaceService.list.mockResolvedValue([]);
+    const runWorkspaceRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("[]") });
 
-    const res = await request(await createApp()).get("/api/orgs/organization-1/execution-workspaces");
+    const res = await request(await createApp({ runWorkspaceRead } as unknown as RustFoundationBridge)).get("/api/orgs/organization-1/execution-workspaces");
 
     expect(res.status).toBe(200);
-    expect(mockRunWorkspaceService.list).toHaveBeenCalledOnce();
+    expect(runWorkspaceRead).toHaveBeenCalledOnce();
+    expect(runWorkspaceRead).toHaveBeenCalledWith(expect.objectContaining({ type: "board" }), "organization-1", expect.objectContaining({ operation: "list", legacyDateTimezone: "UTC" }));
+    expect(res.body).toEqual([]);
+    expect(mockRunWorkspaceService.list).not.toHaveBeenCalled();
   });
 
   it("uses run workspace wording on canonical detail errors", async () => {
-    mockRunWorkspaceService.getById.mockResolvedValue(null);
+    mockWorkspaceIdentity.mockResolvedValue([]);
 
     const res = await request(await createApp()).get("/api/run-workspaces/missing-workspace");
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Run workspace not found" });
+    expect(mockRunWorkspaceService.getById).not.toHaveBeenCalled();
   });
 
   for (const alias of ["run-workspaces", "execution-workspaces"]) {
+    it(`${alias} sends canonical detail identity to Rust and preserves missing-target wording`, async () => {
+      const workspace = { id: "workspace-1", orgId: "organization-1", status: "idle" };
+      const runWorkspaceRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify(workspace)) });
+      const app = await createApp({ runWorkspaceRead } as unknown as RustFoundationBridge);
+      mockWorkspaceIdentity.mockResolvedValueOnce([{ id: workspace.id, orgId: workspace.orgId }]);
+      const found = await request(app).get(`/api/${alias}/workspace-1`);
+      expect(found.status).toBe(200);
+      expect(found.body).toEqual(workspace);
+      expect(runWorkspaceRead).toHaveBeenCalledWith(expect.objectContaining({ type: "board" }), workspace.orgId, { operation: "detail", workspaceId: workspace.id, legacyDateTimezone: "UTC" });
+      const missing = await request(app).get(`/api/${alias}/missing-workspace`);
+      expect(missing.status).toBe(404);
+      expect(missing.body).toEqual({ error: "Run workspace not found" });
+      expect(runWorkspaceRead).toHaveBeenCalledOnce();
+      expect(mockRunWorkspaceService.getById).not.toHaveBeenCalled();
+    });
+
+    it(`${alias} does not fall back to Node when Rust reads are unavailable`, async () => {
+      const missingBridge = await request(await createApp()).get(`/api/orgs/organization-1/${alias}`);
+      expect(missingBridge.status).toBe(503);
+      const runWorkspaceRead = vi.fn().mockRejectedValue(new Error("Native unavailable"));
+      const unavailable = await request(await createApp({ runWorkspaceRead } as unknown as RustFoundationBridge)).get(`/api/orgs/organization-1/${alias}`);
+      expect(unavailable.status).toBe(503);
+      expect(runWorkspaceRead).toHaveBeenCalledOnce();
+      expect(mockRunWorkspaceService.list).not.toHaveBeenCalled();
+    });
+
     it(`${alias} dispatches ordinary updates to Rust before any Node target access`, async () => {
       const runWorkspaceOrdinaryUpdate = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from('{"id":"workspace-1","status":"idle"}') });
       const res = await request(await createApp({ runWorkspaceOrdinaryUpdate } as unknown as RustFoundationBridge))
