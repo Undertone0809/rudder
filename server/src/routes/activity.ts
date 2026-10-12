@@ -6,9 +6,11 @@ import { z } from "zod";
 import { badRequest, notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { sanitizeRecord } from "../redaction.js";
+import { activityListReadInput, sendActivityRead } from "../services/activity-read-bridge.js";
 import { activityService } from "../services/activity.js";
 import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import { issueService } from "../services/index.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getAuthorizedOrgScope } from "./authz.js";
 
 const USER_ACTIVITY_INCLUDES = new Set(["chat", "comments", "issues", "approvals", "activity"]);
@@ -23,7 +25,7 @@ const createActivitySchema = z.object({
   details: z.record(z.unknown()).optional().nullable(),
 });
 
-export function activityRoutes(db: Db) {
+export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = activityService(db);
   const issueSvc = issueService(db);
@@ -97,7 +99,6 @@ export function activityRoutes(db: Db) {
     assertCompanyAccess(req, orgId);
 
     const filters = {
-      orgId,
       agentId: stringQueryParam(req.query.agentId),
       userId: stringQueryParam(req.query.userId),
       actorType: actorTypeQueryParam(req.query.actorType),
@@ -107,17 +108,7 @@ export function activityRoutes(db: Db) {
     };
     const limit = positiveIntegerQueryParam(req.query.limit);
     const cursor = stringQueryParam(req.query.cursor);
-    if (limit !== undefined || cursor !== undefined) {
-      const result = await svc.listPage({
-        ...filters,
-        limit,
-        cursor,
-      });
-      res.json(result);
-      return;
-    }
-    const result = await svc.list(filters);
-    res.json(result);
+    await sendActivityRead(db, res, rustFoundationBridge, req.actor, orgId, activityListReadInput(filters, limit, cursor));
   });
 
   router.get("/orgs/:orgId/users/:userId/activity-ledger", async (req, res) => {
@@ -158,7 +149,7 @@ export function activityRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const result = await svc.forIssue(issue.id);
+    const result = await svc.forIssue(issue.id, issue.orgId);
     res.json(result);
   });
 

@@ -9,6 +9,7 @@ import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import { requestActivityRead, type ActivityReadInput } from "./activity-read-bridge.js";
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
 import { messengerAuditContext, type MessengerStateInput } from "./messenger-state-bridge.js";
 import { requestRequestRead, type RequestReadInput } from "./request-read-bridge.js";
@@ -60,6 +61,7 @@ export type CostReadInput = {
 
 export interface RustFoundationBridge {
   requestRead?(actor: RustFoundationActor, orgId: string, input: RequestReadInput): Promise<RustFoundationResponse>;
+  activityRead?(actor: RustFoundationActor, orgId: string, input: ActivityReadInput): Promise<RustFoundationResponse>;
   runWorkspaceOrdinaryUpdate?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   agentCore?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   readonly mode: RustFoundationMode;
@@ -832,6 +834,11 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
       return requestRequestRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async activityRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestActivityRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
     },
     async runWorkspaceOrdinaryUpdate(actor, input) {
       await ensureStarted();

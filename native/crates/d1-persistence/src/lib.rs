@@ -7,6 +7,7 @@
 //! reads are pure, organization-scoped projections independent of ownership.
 
 mod activity;
+pub mod activity_reads;
 pub mod agent_core;
 mod branding;
 pub mod calendar;
