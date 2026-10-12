@@ -86,18 +86,33 @@ jobs:
             src/__tests__/cost-read-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
-      - name: Verify Rust Request detail and audit-attempt reads against legacy data
+      - name: Verify Rust Request reads against legacy data
         run: |
           set -o pipefail
           pnpm exec vitest run --root server --config vitest.config.ts \
             src/__tests__/request-read-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
-      - name: Verify Rust organization Activity reads and Node issue isolation
+      - name: Verify Rust Activity reads against legacy data
         run: |
           set -o pipefail
           pnpm exec vitest run --root server --config vitest.config.ts \
             src/__tests__/activity-read-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Verify Rust Approval, association and label reads against legacy data
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/approval-read-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Verify Rust Overview and run workspace reads against legacy data
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/overview-read-real-entry.test.ts \
+            src/__tests__/run-workspace-read-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
       - name: Verify Chat branding recovery through authenticated API and Rust

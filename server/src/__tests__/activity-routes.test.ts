@@ -86,6 +86,16 @@ describe("activity routes", () => {
     activeServers.clear();
   });
 
+  it("resolves issue references and passes the authorized target to native reads", async () => {
+    mockIssueService.getByIdentifier.mockResolvedValue({ id: "issue-uuid-1", orgId: "organization-1" });
+    const response = await request(await createApp()).get("/api/issues/ACT-1/activity");
+    expect(response.status).toBe(200);
+    expect(activityRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "issue", issueId: "issue-uuid-1", legacyDateTimezone: "UTC",
+    });
+    expect(mockActivityService.forIssue).not.toHaveBeenCalled();
+  });
+
   it("passes activity list principal filters to the service", async () => {
     mockActivityService.list.mockResolvedValue([]);
 

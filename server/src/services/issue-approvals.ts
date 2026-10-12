@@ -10,16 +10,16 @@ interface LinkActor {
 }
 
 export function issueApprovalService(db: Db) {
-  async function getIssue(issueId: string) {
-    return db
+  async function getIssue(issueId: string, readDb: Pick<Db, "select"> = db) {
+    return readDb
       .select()
       .from(issues)
       .where(eq(issues.id, issueId))
       .then((rows) => rows[0] ?? null);
   }
 
-  async function getApproval(approvalId: string) {
-    return db
+  async function getApproval(approvalId: string, readDb: Pick<Db, "select"> = db) {
+    return readDb
       .select()
       .from(approvals)
       .where(eq(approvals.id, approvalId))
@@ -40,17 +40,17 @@ export function issueApprovalService(db: Db) {
     return { issue, approval };
   }
 
-  async function labelsByIssueId(issueIds: string[]) {
+  async function labelsByIssueId(issueIds: string[], orgId: string, readDb: Pick<Db, "select">) {
     const result = new Map<string, Array<typeof labels.$inferSelect>>();
     if (issueIds.length === 0) return result;
-    const labelRows = await db
+    const labelRows = await readDb
       .select({
         issueId: issueLabels.issueId,
         label: labels,
       })
       .from(issueLabels)
       .innerJoin(labels, eq(issueLabels.labelId, labels.id))
-      .where(inArray(issueLabels.issueId, issueIds))
+      .where(and(inArray(issueLabels.issueId, issueIds), eq(issueLabels.orgId, orgId), eq(labels.orgId, orgId)))
       .orderBy(asc(labels.name), asc(labels.id));
     for (const row of labelRows) {
       const existing = result.get(row.issueId) ?? [];
@@ -61,11 +61,11 @@ export function issueApprovalService(db: Db) {
   }
 
   return {
-    listApprovalsForIssue: async (issueId: string) => {
-      const issue = await getIssue(issueId);
-      if (!issue) throw notFound("Issue not found");
+    listApprovalsForIssue: async (issueId: string, expectedOrgId?: string) => db.transaction(async (tx) => {
+      const issue = await getIssue(issueId, tx);
+      if (!issue || (expectedOrgId !== undefined && issue.orgId !== expectedOrgId)) throw notFound("Issue not found");
 
-      const result = await db
+      const result = await tx
         .select({
           id: approvals.id,
           orgId: approvals.orgId,
@@ -87,7 +87,7 @@ export function issueApprovalService(db: Db) {
         })
         .from(issueApprovals)
         .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
-        .where(eq(issueApprovals.issueId, issueId))
+        .where(and(eq(issueApprovals.issueId, issueId), eq(issueApprovals.orgId, issue.orgId), eq(approvals.orgId, issue.orgId)))
         .orderBy(desc(issueApprovals.createdAt));
       return result.map((approval) => ({
         id: approval.id,
@@ -110,13 +110,13 @@ export function issueApprovalService(db: Db) {
           createdAt: approval.linkCreatedAt,
         },
       }));
-    },
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }),
 
-    listIssuesForApproval: async (approvalId: string) => {
-      const approval = await getApproval(approvalId);
-      if (!approval) throw notFound("Approval not found");
+    listIssuesForApproval: async (approvalId: string, expectedOrgId?: string) => db.transaction(async (tx) => {
+      const approval = await getApproval(approvalId, tx);
+      if (!approval || (expectedOrgId !== undefined && approval.orgId !== expectedOrgId)) throw notFound("Approval not found");
 
-      const result = await db
+      const result = await tx
         .select({
           id: issues.id,
           orgId: issues.orgId,
@@ -143,9 +143,9 @@ export function issueApprovalService(db: Db) {
         })
         .from(issueApprovals)
         .innerJoin(issues, eq(issueApprovals.issueId, issues.id))
-        .where(eq(issueApprovals.approvalId, approvalId))
+        .where(and(eq(issueApprovals.approvalId, approvalId), eq(issueApprovals.orgId, approval.orgId), eq(issues.orgId, approval.orgId)))
         .orderBy(desc(issueApprovals.createdAt));
-      const labelsForIssues = await labelsByIssueId(result.map((issue) => issue.id));
+      const labelsForIssues = await labelsByIssueId(result.map((issue) => issue.id), approval.orgId, tx);
       return result.map((issue) => {
         const issueLabels = labelsForIssues.get(issue.id) ?? [];
         return {
@@ -154,7 +154,7 @@ export function issueApprovalService(db: Db) {
           labelIds: issueLabels.map((label) => label.id),
         };
       });
-    },
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }),
 
     link: async (issueId: string, approvalId: string, actor?: LinkActor) => {
       const { issue } = await assertIssueAndApprovalSameCompany(issueId, approvalId);

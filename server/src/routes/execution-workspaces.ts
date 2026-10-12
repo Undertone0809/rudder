@@ -1,11 +1,12 @@
 import type { Db } from "@rudderhq/db";
-import { issues, projects, projectWorkspaces } from "@rudderhq/db";
+import { executionWorkspaces, issues, projects, projectWorkspaces } from "@rudderhq/db";
 import { updateRunWorkspaceSchema } from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
 import { parseProjectExecutionWorkspacePolicy } from "../services/execution-workspace-policy.js";
 import { logActivity, runWorkspaceService, workspaceOperationService } from "../services/index.js";
+import { sendRunWorkspaceRead } from "../services/run-workspace-read-bridge.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import {
   cleanupExecutionWorkspaceArtifacts,
@@ -23,25 +24,27 @@ export function runWorkspaceRoutes(db: Db, rustFoundation?: RustFoundationBridge
   router.get(["/orgs/:orgId/run-workspaces", "/orgs/:orgId/execution-workspaces"], async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const workspaces = await svc.list(orgId, {
-      projectId: req.query.projectId as string | undefined,
-      projectWorkspaceId: req.query.projectWorkspaceId as string | undefined,
-      issueId: req.query.issueId as string | undefined,
-      status: req.query.status as string | undefined,
-      reuseEligible: req.query.reuseEligible === "true",
-    });
-    res.json(workspaces);
+    // Preserve this route's existing split/trim coercion, including repeated
+    // status values throwing after authorization. UUID coercion stays native.
+    const status = req.query.status as string | undefined;
+    const statuses = status ? status.split(",").map((value) => value.trim()).filter(Boolean) : undefined;
+    await sendRunWorkspaceRead(db, res, rustFoundation, req.actor, orgId, { operation: "list",
+      projectId: req.query.projectId, projectWorkspaceId: req.query.projectWorkspaceId,
+      issueId: req.query.issueId, statuses, reuseEligible: req.query.reuseEligible === "true" });
   });
 
   router.get(["/run-workspaces/:id", "/execution-workspaces/:id"], async (req, res) => {
     const id = req.params.id as string;
-    const workspace = await svc.getById(id);
+    // Only the canonical target and organization cross the access boundary.
+    const workspace = await db.select({ id: executionWorkspaces.id, orgId: executionWorkspaces.orgId })
+      .from(executionWorkspaces).where(eq(executionWorkspaces.id, id)).then((rows) => rows[0] ?? null);
     if (!workspace) {
       res.status(404).json({ error: "Run workspace not found" });
       return;
     }
     assertCompanyAccess(req, workspace.orgId);
-    res.json(workspace);
+    await sendRunWorkspaceRead(db, res, rustFoundation, req.actor, workspace.orgId,
+      { operation: "detail", workspaceId: workspace.id });
   });
 
   router.patch(["/run-workspaces/:id", "/execution-workspaces/:id"], validate(updateRunWorkspaceSchema), async (req, res) => {

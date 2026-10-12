@@ -57,6 +57,18 @@ INSERT INTO activity_log(id,org_id,actor_type,actor_id,action,entity_type,entity
         json!({"title":"","identifier":"A-1","issueIdentifier":"A-1","issueTitle":"Canonical"})
     );
     assert!(last["nextCursor"].is_null());
+    let issue_input = input(json!({"operation":"issue","issueId":issue}));
+    let issue_rows: Value =
+        serde_json::from_str(&read_activity(&db.pool, ORG, &issue_input).await.unwrap()).unwrap();
+    assert_eq!(issue_rows.as_array().unwrap().len(), 1);
+    assert_eq!(
+        issue_rows[0]["details"],
+        json!({"title":"","identifier":123})
+    );
+    assert_eq!(
+        read_activity(&db.pool, OTHER, &issue_input).await.unwrap(),
+        "[]"
+    );
     assert_eq!(before, db.counts().await);
     let deep = format!(
         "{{\"nested\":{}9007199254740993{}}}",

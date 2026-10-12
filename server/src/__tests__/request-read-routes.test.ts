@@ -15,6 +15,7 @@ const OTHER = "10000000-0000-4000-8000-000000000002";
 const ID = "20000000-0000-4000-8000-000000000001";
 const BOARD = { type: "board", source: "local_implicit", userId: "operator" } as const;
 const cases = [
+  { path: `/orgs/${ORG}/requests?status=open&kind=approval`, input: { operation: "list", status: "open", kind: "approval" } },
   { path: `/requests/${ID}`, input: { operation: "detail", requestId: ID } },
   { path: `/requests/${ID}/block-audit-attempts`, input: { operation: "block-audit-attempts", requestId: ID } },
 ];
@@ -28,17 +29,6 @@ function app(actor: Request["actor"] = BOARD, bridge?: RustFoundationBridge) {
 beforeEach(() => { vi.clearAllMocks(); svc.readIdentity.mockResolvedValue({ id: ID, orgId: ORG }); svc.list.mockResolvedValue([]); });
 afterEach(() => { vi.restoreAllMocks(); });
 describe("Request GET authority boundary", () => {
-  it("retains explicit Node list authority and redaction even when native dispatch is absent or throws", async () => {
-    const requestRead = vi.fn().mockRejectedValue(new Error("unavailable"));
-    svc.list.mockResolvedValue([{ id: ID, kind: "approval", payload: { password: "hidden", safe: "visible" } }]);
-    for (const bridge of [undefined, { requestRead } as unknown as RustFoundationBridge]) {
-      const response = await request(app(BOARD, bridge)).get(`/api/orgs/${ORG}/requests?status=open&kind=approval`);
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual([{ id: ID, kind: "approval", payload: { password: "***REDACTED***", safe: "visible" } }]);
-    }
-    expect(svc.list).toHaveBeenCalledWith(ORG, { status: "open", kind: "approval" });
-    expect(requestRead).not.toHaveBeenCalled();
-  });
   it.each(cases)("forwards complete native bytes for $path with mutation pilots disabled", async ({ path, input }) => {
     const body = Buffer.from('{"native":"' + "x".repeat(300_000) + '"}');
     const requestRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body });
@@ -81,8 +71,8 @@ describe("Request GET authority boundary", () => {
     }
     expect(requestRead).not.toHaveBeenCalled();
     expect((await request(target).get(`/api/orgs/${ORG}/requests?status=resolved&kind=approval&ignored=value`)).status).toBe(200);
-    expect(svc.list).toHaveBeenCalledWith(ORG, { status: "resolved", kind: "approval" });
-    expect(requestRead).not.toHaveBeenCalled();
+    expect(requestRead).toHaveBeenCalledWith(BOARD, ORG, { operation: "list", status: "resolved", kind: "approval", legacyDateTimezone: "UTC" });
+    expect(svc.list).not.toHaveBeenCalled();
     const unauthorized = await request(app({ type: "none" }, { requestRead } as unknown as RustFoundationBridge)).get(`/api/orgs/${ORG}/requests?status=bogus`);
     expect(unauthorized.status).toBe(401);
   });

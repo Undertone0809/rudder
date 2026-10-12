@@ -7,9 +7,10 @@ import {
   type RustFoundationActor, type RustFoundationBridge, type RustFoundationResponse,
 } from "./rust-foundation-bridge.js";
 
-export type RequestReadInput = {
-  operation: "detail" | "block-audit-attempts";
-  requestId: string;
+export type RequestReadInput = (
+  | { operation: "list"; status?: "open" | "resolved" | "cancelled" | "superseded"; kind?: "assistance" | "approval" }
+  | { operation: "detail" | "block-audit-attempts"; requestId: string }
+) & {
   /** Signed Node connection context, never a caller-controlled query filter. */
   legacyDateTimezone?: string;
 };

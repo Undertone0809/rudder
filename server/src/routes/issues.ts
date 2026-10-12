@@ -23,6 +23,7 @@ import multer from "multer";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
+import { approvalReadIdentity, sendApprovalRead } from "../services/approval-read-bridge.js";
 import { publicGoalView } from "../services/goals.js";
 import {
   accessService,
@@ -43,6 +44,7 @@ import {
 } from "../services/index.js";
 import { resolveIssueReference } from "../services/issue-references.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { registerAgentIssueCreationRoutes } from "./agent-issue-creation.js";
 import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
@@ -78,7 +80,7 @@ function issueSortDirQuery(value: unknown): IssueSortDir | undefined {
   return value === "asc" || value === "desc" ? value : undefined;
 }
 
-export function issueRoutes(db: Db, storage: StorageService) {
+export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = issueService(db, storage);
   const messengerSvc = messengerService(db);
@@ -588,8 +590,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   router.get("/orgs/:orgId/labels", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const result = await svc.listLabels(orgId);
-    res.json(result);
+    await sendApprovalRead(res, rustFoundationBridge, req.actor, orgId, { operation: "labels" }, db);
   });
 
   router.post("/orgs/:orgId/labels", validate(createIssueLabelSchema), async (req, res) => {
@@ -1005,14 +1006,13 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
   router.get("/issues/:id/approvals", async (req, res) => {
     const id = req.params.id as string;
-    const issue = await svc.getById(id);
+    const issue = await approvalReadIdentity(db, "issue", id);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const approvals = await issueApprovalsSvc.listApprovalsForIssue(id);
-    res.json(approvals);
+    await sendApprovalRead(res, rustFoundationBridge, req.actor, issue.orgId, { operation: "issue-approvals", targetId: issue.id }, db);
   });
 
   router.post("/issues/:id/approvals", validate(linkIssueApprovalSchema), async (req, res) => {

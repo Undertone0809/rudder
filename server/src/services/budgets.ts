@@ -681,7 +681,13 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
     },
 
     overview: async (orgId: string): Promise<BudgetOverview> => {
-      const rows = await listPolicyRows(orgId);
+      // Overview resolves exact timestamp ties by UUID; listPolicies keeps its
+      // existing ordering. PostgreSQL retains full timestamp precision here.
+      const rows = await db
+        .select()
+        .from(budgetPolicies)
+        .where(eq(budgetPolicies.orgId, orgId))
+        .orderBy(desc(budgetPolicies.updatedAt), desc(budgetPolicies.id));
       const activeRows = rows.filter(
         (row) => row.isActive && (row.scopeType === "organization" || row.scopeType === "agent"),
       );
@@ -694,7 +700,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
           eq(budgetIncidents.status, "open"),
           inArray(budgetIncidents.scopeType, ["organization", "agent"]),
         ))
-        .orderBy(desc(budgetIncidents.createdAt));
+        .orderBy(desc(budgetIncidents.createdAt), desc(budgetIncidents.id));
       const activeIncidents = await hydrateIncidentRows(activeIncidentRows);
       return {
         orgId,

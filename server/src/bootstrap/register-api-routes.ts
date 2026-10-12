@@ -97,7 +97,7 @@ export function registerApiRoutes(
   }));
   api.use(onboardingRoutes(db, rustFoundationBridge));
   api.use(productAnalyticsRoutes(db));
-  api.use(issueRoutes(db, opts.storageService));
+  api.use(issueRoutes(db, opts.storageService, rustFoundationBridge));
   api.use(messengerRoutes(db, rustFoundationBridge));
   api.use(chatRoutes(
     db,
@@ -129,7 +129,7 @@ export function registerApiRoutes(
   api.use(costRoutes(db, rustFoundationBridge));
   api.use(activityRoutes(db, rustFoundationBridge));
   api.use(runIntelligenceRoutes(db));
-  api.use(dashboardRoutes(db));
+  api.use(dashboardRoutes(db, rustFoundationBridge));
   api.use(sidebarBadgeRoutes(db));
   api.use(websiteMetadataRoutes());
   api.use(instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode, instanceId: opts.instanceId }));

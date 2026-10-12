@@ -8,7 +8,7 @@ import { createRustActorEnvelope, type RustFoundationActor, type RustFoundationB
 
 type ActivityCursor = { createdAt: string; id: string };
 export type ActivityReadInput = Omit<ActivityFilters, "orgId"> & {
-  operation: "list" | "list-page"; limit?: number; cursor?: ActivityCursor | null; legacyDateTimezone?: string;
+  operation: "list" | "list-page" | "issue"; issueId?: string; limit?: number; cursor?: ActivityCursor | null; legacyDateTimezone?: string;
 };
 
 /** Retain the public Node Buffer/Date parser, including accepted base64 variants.
