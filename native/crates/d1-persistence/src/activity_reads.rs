@@ -457,22 +457,6 @@ fn ordered_issue_json(mut merged: Vec<(IssueOrderKey, String)>) -> String {
     )
 }
 
-#[cfg(test)]
-mod issue_order_tests {
-    use super::{Reverse, ordered_issue_json};
-
-    #[test]
-    fn preserves_identical_synthetic_input_rows() {
-        // Current PK/unique joins cannot yield this duplicate within one valid
-        // snapshot. This synthetic merge check only locks the no-dedup rule.
-        let row = ((true, Reverse(0), 0, 0), r#"{"id":"same"}"#.to_owned());
-        assert_eq!(
-            ordered_issue_json(vec![row.clone(), row]),
-            r#"[{"id":"same"},{"id":"same"}]"#
-        );
-    }
-}
-
 pub async fn read_activity(
     pool: &PgPool,
     org_id: &str,
@@ -561,4 +545,20 @@ pub async fn read_activity(
     };
     tx.commit().await?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod issue_order_tests {
+    use super::{Reverse, ordered_issue_json};
+
+    #[test]
+    fn preserves_identical_synthetic_input_rows() {
+        // Current PK/unique joins cannot yield this duplicate within one valid
+        // snapshot. This synthetic merge check only locks the no-dedup rule.
+        let row = ((true, Reverse(0), 0, 0), r#"{"id":"same"}"#.to_owned());
+        assert_eq!(
+            ordered_issue_json(vec![row.clone(), row]),
+            r#"[{"id":"same"},{"id":"same"}]"#
+        );
+    }
 }
