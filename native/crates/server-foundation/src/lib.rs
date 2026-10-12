@@ -60,6 +60,7 @@ mod run_workspace_updates;
 pub use calendar::CALENDAR_ACTION;
 mod secrets;
 pub use secrets::SECRETS_ACTION;
+mod activity_reads;
 mod cost_reads;
 mod goal_reads;
 mod llm_reflection;
@@ -75,6 +76,7 @@ mod workspace_backup_reads;
 pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
 pub use workspace_backup_reads::WORKSPACE_BACKUP_READ_ACTION;
 
+pub use activity_reads::ACTIVITY_READ_ACTION;
 pub use cost_reads::COST_READ_ACTION;
 pub use goal_reads::GOAL_READ_ACTION;
 pub use project_reads::PROJECT_READ_ACTION;
@@ -143,6 +145,7 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "organization_member_directory",
     "project_read",
     "cost_read",
+    "activity_read",
     "live_run_read",
     "goal_read",
     "run_read",
@@ -2819,6 +2822,10 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/cost-reads",
                     web::post().to(cost_reads::cost_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/activity-reads",
+                    web::post().to(activity_reads::activity_reads),
                 )
                 .route(
                     "/internal/orgs/{org_id}/goal-reads",

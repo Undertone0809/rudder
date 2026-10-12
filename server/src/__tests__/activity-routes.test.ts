@@ -5,6 +5,10 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { activityRoutes } from "../routes/activity.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+
+const activityRead = vi.fn();
+const readBridge = { activityRead } as unknown as RustFoundationBridge;
 
 const mockActivityService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -48,7 +52,7 @@ function createRunLookupDb(run: { orgId: string } | null) {
 
 const activeServers = new Set<Server>();
 
-async function createApp(db: Record<string, unknown> = {}) {
+async function createApp(db: Record<string, unknown> = { execute: async () => [{ timezone: "UTC" }] }, bridge: RustFoundationBridge | undefined = readBridge) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -61,7 +65,7 @@ async function createApp(db: Record<string, unknown> = {}) {
     };
     next();
   });
-  app.use("/api", activityRoutes(db as any));
+  app.use("/api", activityRoutes(db as any, bridge));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -72,6 +76,7 @@ async function createApp(db: Record<string, unknown> = {}) {
 describe("activity routes", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    activityRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("[]") });
   });
 
   afterEach(async () => {
@@ -94,8 +99,9 @@ describe("activity routes", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(mockActivityService.list).toHaveBeenCalledWith({
-      orgId: "organization-1",
+    expect(activityRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "list",
+      legacyDateTimezone: "UTC",
       agentId: undefined,
       userId: "user-1",
       actorType: "user",
@@ -106,22 +112,21 @@ describe("activity routes", () => {
   });
 
   it("passes paginated activity list parameters to the service", async () => {
-    mockActivityService.listPage.mockResolvedValue({
-      items: [{ id: "activity-1" }],
-      nextCursor: "next-page",
-    });
+    activityRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from(JSON.stringify({ items: [{ id: "activity-1" }], nextCursor: "next-page" })) });
+    const cursor = { createdAt: "2026-04-01T10:00:00.000123Z", id: "10000000-0000-4000-8000-000000000001" };
 
     const res = await request(await createApp())
       .get("/api/orgs/organization-1/activity")
       .query({
         actorType: "system",
         limit: "25",
-        cursor: "cursor-1",
+        cursor: Buffer.from(JSON.stringify(cursor)).toString("base64url"),
       });
 
     expect(res.status).toBe(200);
-    expect(mockActivityService.listPage).toHaveBeenCalledWith({
-      orgId: "organization-1",
+    expect(activityRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "list-page",
+      legacyDateTimezone: "UTC",
       agentId: undefined,
       userId: undefined,
       actorType: "system",
@@ -129,13 +134,53 @@ describe("activity routes", () => {
       entityType: undefined,
       entityId: undefined,
       limit: 25,
-      cursor: "cursor-1",
+      cursor,
     });
     expect(mockActivityService.list).not.toHaveBeenCalled();
     expect(res.body).toEqual({
       items: [{ id: "activity-1" }],
       nextCursor: "next-page",
     });
+  });
+
+  it.each(["0x10", "1e1", " 10 "])("keeps Number limit parsing for %s", async (limit) => {
+    const response = await request(await createApp()).get("/api/orgs/organization-1/activity").query({ limit });
+    expect(response.status).toBe(200);
+    expect(activityRead).toHaveBeenCalledWith(expect.anything(), "organization-1", expect.objectContaining({ operation: "list-page", limit: Number(limit) }));
+  });
+
+  it.each(["", "0", "-1", "1.5", "Infinity", ["1", "2"]])("rejects malformed limits %j before native dispatch", async (limit) => {
+    const response = await request(await createApp()).get("/api/orgs/organization-1/activity").query({ limit });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("invalid 'limit' value");
+    expect(activityRead).not.toHaveBeenCalled();
+  });
+
+  it("preserves blank/repeated cursor list mode and untrimmed string filters", async () => {
+    for (const cursor of [" ", ["one", "two"]]) {
+      const response = await request(await createApp()).get("/api/orgs/organization-1/activity").query({ cursor, actorId: " user ", actorType: "USER" });
+      expect(response.status).toBe(200);
+      expect(activityRead).toHaveBeenLastCalledWith(expect.anything(), "organization-1", expect.objectContaining({ operation: "list", actorId: " user ", actorType: undefined }));
+    }
+  });
+
+  it("preserves cursor errors and range errors before native dispatch", async () => {
+    for (const [query, error] of [[{ cursor: "invalid" }, "Activity cursor is invalid or expired"], [{ limit: "101" }, "'limit' must be between 1 and 100"]] as const) {
+      const response = await request(await createApp()).get("/api/orgs/organization-1/activity").query(query);
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe(error);
+    }
+    expect(activityRead).not.toHaveBeenCalled();
+  });
+
+  it("fails closed and forwards native errors without a Node business fallback", async () => {
+    activityRead.mockRejectedValueOnce(new Error("offline"));
+    const unavailable = await request(await createApp()).get("/api/orgs/organization-1/activity");
+    expect(unavailable.status).toBe(503);
+    activityRead.mockResolvedValueOnce({ status: 500, contentType: "application/json", body: Buffer.from('{"error":"Internal server error"}') });
+    expect((await request(await createApp()).get("/api/orgs/organization-1/activity")).status).toBe(500);
+    expect(mockActivityService.list).not.toHaveBeenCalled();
+    expect(mockActivityService.listPage).not.toHaveBeenCalled();
   });
 
   it("passes user activity ledger filters to the service", async () => {

@@ -2052,6 +2052,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "organization_member_directory",
             "project_read",
             "cost_read",
+            "activity_read",
             "live_run_read",
             "goal_read",
             "run_read"

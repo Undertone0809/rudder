@@ -872,55 +872,74 @@ export function activityService(db: Db) {
       };
     },
 
-    forIssue: async (issueId: string) => {
+    forIssue: async (issueId: string, authorizedOrgId?: string) => {
+      const issue = await db
+        .select({ orgId: issues.orgId })
+        .from(issues)
+        .where(and(eq(issues.id, issueId), authorizedOrgId ? eq(issues.orgId, authorizedOrgId) : undefined))
+        .then((rows) => rows[0] ?? null);
+      if (!issue) return [];
+      // Route authorization is not a data fence: legacy entity references can
+      // cross organizations. Each source rechecks the target after async waits,
+      // while the link fence stays in LEFT JOIN so conversions need no link.
+      const issueScope = and(eq(issues.id, issueId), eq(issues.orgId, issue.orgId));
       const [issueEvents, relatedChatEvents] = await Promise.all([
         db
-          .select()
+          .select({ event: activityLog })
           .from(activityLog)
+          .innerJoin(issues, issueScope)
           .where(
             and(
+              eq(activityLog.orgId, issue.orgId),
               eq(activityLog.entityType, "issue"),
               eq(activityLog.entityId, issueId),
               ne(activityLog.action, "issue.read_marked"),
             ),
           )
-          .orderBy(desc(activityLog.createdAt)),
+          .orderBy(desc(activityLog.createdAt))
+          .then((rows) => rows.map(({ event }) => event)),
         db
           .select({
             activityLog,
             conversationTitle: chatConversations.title,
           })
           .from(activityLog)
+          .innerJoin(issues, issueScope)
           .innerJoin(
             chatConversations,
             and(
               eq(activityLog.entityType, "chat"),
               eq(activityLog.entityId, conversationIdAsText),
+              eq(chatConversations.orgId, issue.orgId),
             ),
           )
           .leftJoin(
             chatContextLinks,
             and(
               eq(chatContextLinks.conversationId, chatConversations.id),
+              eq(chatContextLinks.orgId, issue.orgId),
               eq(chatContextLinks.entityType, "issue"),
               eq(chatContextLinks.entityId, issueId),
             ),
           )
           .where(
-            or(
-              and(
-                eq(activityLog.action, "chat.issue_converted"),
-                sql`${activityLog.details} ->> 'issueId' = ${issueId}`,
-              ),
-              and(
-                eq(activityLog.action, "chat.context_linked"),
-                sql`${activityLog.details} ->> 'entityType' = 'issue'`,
-                sql`${activityLog.details} ->> 'entityId' = ${issueId}`,
-              ),
-              and(
-                eq(activityLog.action, "chat.created"),
-                isNotNull(chatContextLinks.id),
-                sql`coalesce((${activityLog.details} ->> 'contextLinkCount')::int, 0) > 0`,
+            and(
+              eq(activityLog.orgId, issue.orgId),
+              or(
+                and(
+                  eq(activityLog.action, "chat.issue_converted"),
+                  sql`${activityLog.details} ->> 'issueId' = ${issueId}`,
+                ),
+                and(
+                  eq(activityLog.action, "chat.context_linked"),
+                  sql`${activityLog.details} ->> 'entityType' = 'issue'`,
+                  sql`${activityLog.details} ->> 'entityId' = ${issueId}`,
+                ),
+                and(
+                  eq(activityLog.action, "chat.created"),
+                  isNotNull(chatContextLinks.id),
+                  sql`coalesce((${activityLog.details} ->> 'contextLinkCount')::int, 0) > 0`,
+                ),
               ),
             ),
           )
