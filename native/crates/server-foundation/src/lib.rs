@@ -69,6 +69,7 @@ mod public_ingress_config;
 mod public_ingress_forwarding;
 pub mod public_ingress_proxy;
 pub mod public_ingress_websocket;
+mod request_reads;
 pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
 mod workspace_backup_reads;
@@ -78,6 +79,7 @@ pub use workspace_backup_reads::WORKSPACE_BACKUP_READ_ACTION;
 pub use cost_reads::COST_READ_ACTION;
 pub use goal_reads::GOAL_READ_ACTION;
 pub use project_reads::PROJECT_READ_ACTION;
+pub use request_reads::REQUEST_READ_ACTION;
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,
@@ -143,6 +145,7 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "organization_member_directory",
     "project_read",
     "cost_read",
+    "request_read",
     "live_run_read",
     "goal_read",
     "run_read",
@@ -2819,6 +2822,10 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/cost-reads",
                     web::post().to(cost_reads::cost_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/request-reads",
+                    web::post().to(request_reads::request_reads),
                 )
                 .route(
                     "/internal/orgs/{org_id}/goal-reads",

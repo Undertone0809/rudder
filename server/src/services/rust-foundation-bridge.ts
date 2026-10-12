@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
 import { messengerAuditContext, type MessengerStateInput } from "./messenger-state-bridge.js";
+import { requestRequestRead, type RequestReadInput } from "./request-read-bridge.js";
 import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 
@@ -58,6 +59,7 @@ export type CostReadInput = {
 };
 
 export interface RustFoundationBridge {
+  requestRead?(actor: RustFoundationActor, orgId: string, input: RequestReadInput): Promise<RustFoundationResponse>;
   runWorkspaceOrdinaryUpdate?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   agentCore?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   readonly mode: RustFoundationMode;
@@ -826,6 +828,11 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       throw new RustFoundationBridgeError("not_ready", "Rust public ingress did not become ready");
     },
     start: ensureStarted,
+    async requestRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestRequestRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
     async runWorkspaceOrdinaryUpdate(actor, input) {
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
