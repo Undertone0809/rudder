@@ -6,6 +6,7 @@ import { Router } from "express";
 import { validate } from "../middleware/validate.js";
 import { parseProjectExecutionWorkspacePolicy } from "../services/execution-workspace-policy.js";
 import { logActivity, runWorkspaceService, workspaceOperationService } from "../services/index.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import {
   cleanupExecutionWorkspaceArtifacts,
   stopRuntimeServicesForExecutionWorkspace,
@@ -14,7 +15,7 @@ import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled"]);
 
-export function runWorkspaceRoutes(db: Db) {
+export function runWorkspaceRoutes(db: Db, rustFoundation?: RustFoundationBridge) {
   const router = Router();
   const svc = runWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
@@ -45,6 +46,22 @@ export function runWorkspaceRoutes(db: Db) {
 
   router.patch(["/run-workspaces/:id", "/execution-workspaces/:id"], validate(updateRunWorkspaceSchema), async (req, res) => {
     const id = req.params.id as string;
+    // Explicit partial migration: every archived request stays on the original
+    // Node path below, including repeated archive requests. Ordinary updates
+    // have one Rust authority and never fall back to Node on native failure.
+    if (req.body.status !== "archived") {
+      if (!rustFoundation?.runWorkspaceOrdinaryUpdate) {
+        res.status(503).json({ error: "Rust run workspace update authority is unavailable" });
+        return;
+      }
+      try {
+        const response = await rustFoundation.runWorkspaceOrdinaryUpdate(req.actor, { id, input: req.body });
+        res.status(response.status).type(response.contentType).send(response.body);
+      } catch {
+        res.status(503).json({ error: "Rust run workspace update authority is unavailable" });
+      }
+      return;
+    }
     const existing = await svc.getById(id);
     if (!existing) {
       res.status(404).json({ error: "Run workspace not found" });

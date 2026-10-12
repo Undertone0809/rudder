@@ -76,7 +76,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/goal-reads") || req.url?.includes("/workspace/backup-reads") || req.url?.includes("/cost-reads") || req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
+    if (req.url === "/internal/run-workspace-ordinary-update" || req.url?.includes("/goal-reads") || req.url?.includes("/workspace/backup-reads") || req.url?.includes("/cost-reads") || req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -254,6 +254,39 @@ afterEach(async () => {
 });
 
 describe("rust foundation bridge lifecycle", () => {
+
+  it("signs only a metadata stringify RangeError as a deferred encoding failure", async () => {
+    const fixture = await createFixture("ready"); const bridge = createBridge(fixture);
+    const actor = { type: "board" as const, userId: "local-board", source: "local_implicit" as const, sessionId: "local-implicit" };
+    const metadata = JSON.parse('{"deep":' + '['.repeat(10_000) + '0' + ']'.repeat(10_000) + '}');
+    expect(() => JSON.stringify(metadata)).toThrow(RangeError);
+    await bridge.runWorkspaceOrdinaryUpdate!(actor, { id: "workspace", input: { metadata } });
+    const captured = await fixture.readRequest(); const body = JSON.parse(captured.body);
+    expect(body.input.metadata).toBeNull(); expect(body.metadataSerializationFailed).toBe(true);
+    expect(Object.hasOwn(body, "metadataJsonBase64")).toBe(false);
+    expect(() => JSON.stringify(metadata)).toThrow(RangeError);
+    expectEnvelopeSignedWith(captured, { actor, organizationId: "run-workspace-ordinary-update", method: "POST",
+      path: "/internal/run-workspace-ordinary-update", action: "run_workspace.ordinary_update", body: Buffer.from(captured.body), allowAnonymous: true }, "bridge-test-secret");
+    const broken = { toJSON() { throw new TypeError("synthetic non-RangeError"); } };
+    await expect(bridge.runWorkspaceOrdinaryUpdate!(actor, { id: "workspace", input: { metadata: broken } })).rejects.toThrow(TypeError);
+  });
+
+
+  it.each([null, {}, { value: "\ud800", literal: "\\ud800", pair: "😀", number: 1e20 }])(
+    "signs the exact ordinary metadata sidecar and legacy TEXT encoding: %j", async (metadata) => {
+      const fixture = await createFixture("ready"); const bridge = createBridge(fixture);
+      const actor = { type: "board" as const, userId: "local-board", source: "local_implicit" as const, sessionId: "local-implicit" };
+      const input = { id: "workspace", input: { cleanupReason: "\ud800\udfff\ud800", metadata } };
+      await bridge.runWorkspaceOrdinaryUpdate!(actor, input);
+      const captured = await fixture.readRequest(); const body = JSON.parse(captured.body);
+      expect(body.input.metadata).toBeNull();
+      expect(body.input.cleanupReason).toBe(Buffer.from(input.input.cleanupReason, "utf8").toString("utf8"));
+      expect(Buffer.from(body.metadataJsonBase64, "base64").toString("utf8")).toBe(JSON.stringify(metadata));
+      expect(input.input.metadata).toEqual(metadata);
+      expectEnvelopeSignedWith(captured, { actor, organizationId: "run-workspace-ordinary-update", method: "POST",
+        path: "/internal/run-workspace-ordinary-update", action: "run_workspace.ordinary_update", body: Buffer.from(captured.body), allowAnonymous: true }, "bridge-test-secret");
+    });
+
   it("binds workspace backup listing to the Board actor, organization and private Rust route", async () => {
     const fixture = await createFixture("ready");
     const bridge = createBridge(fixture);
