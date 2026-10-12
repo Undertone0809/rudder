@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
 import { messengerAuditContext, type MessengerStateInput } from "./messenger-state-bridge.js";
 import type { RunReadInput } from "./run-read-bridge.js";
+import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -829,35 +830,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
       const requestPath = "/internal/run-workspace-ordinary-update";
-      // Match postgres.js TEXT encoding, while preserving JSONB's own Unicode
-      // rejection after target lookup and authorization in the Rust transaction.
-      const patch = input.input && typeof input.input === "object" && !Array.isArray(input.input)
-        ? { ...input.input as Record<string, unknown> } : input.input;
-      let metadataJsonBase64: string | undefined;
-      let metadataSerializationFailed: true | undefined;
-      if (patch && typeof patch === "object" && !Array.isArray(patch)) {
-        const fields = patch as Record<string, unknown>;
-        if (typeof fields.cleanupReason === "string") {
-          fields.cleanupReason = Buffer.from(fields.cleanupReason, "utf8").toString("utf8");
-        }
-        if (Object.hasOwn(fields, "metadata")) {
-          let metadataJson = "";
-          try { metadataJson = JSON.stringify(fields.metadata); }
-          catch (error) {
-            if (!(error instanceof RangeError)) throw error;
-            metadataSerializationFailed = true;
-          }
-          // Only JSON.stringify's RangeError represents the legacy JSONB
-          // encoding failure. Allocation, signing and transport errors retain
-          // their own failure path.
-          if (!metadataSerializationFailed) metadataJsonBase64 = Buffer.from(metadataJson, "utf8").toString("base64");
-          fields.metadata = null;
-        }
-      }
-      const body = Buffer.from(JSON.stringify({ ...input, input: patch, metadataJsonBase64, metadataSerializationFailed, actorRunId: actor.runId ?? null,
-        credentialExpiresAt: actor.credentialExpiresAt ?? null,
-        authenticatedOrgId: actor.orgId ?? actor.companyId ?? null,
-        localImplicit: actor.type === "board" && actor.source === "local_implicit" }), "utf8");
+      const body = encodeRunWorkspaceOrdinaryUpdate(actor, input);
       const requestId = randomUUID();
       const envelope = createRustActorEnvelope({ actor, organizationId: "run-workspace-ordinary-update", method: "POST", path: requestPath,
         action: "run_workspace.ordinary_update", body, secret: actorEnvelopeKey, requestId, allowAnonymous: true });
