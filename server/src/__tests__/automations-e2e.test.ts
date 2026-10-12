@@ -34,6 +34,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { errorHandler } from "../middleware/index.js";
 import { accessService } from "../services/access.js";
 import { issueService } from "../services/issues.js";
+import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 function mockServicesIndex() {
   vi.doMock("../services/index.js", async () => {
@@ -211,12 +212,21 @@ describe("automation routes end-to-end", { timeout: 20_000 }, () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  let rustBridge: RustFoundationBridge | undefined;
 
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
     instance = started.instance;
     dataDir = started.dataDir;
+    rustBridge = createRustFoundationBridge({
+      databaseUrl: started.connectionString,
+      mode: "off",
+      organizationBrandingMode: "off",
+      projectGoalSetMode: "off",
+      actorEnvelopeKey: "synthetic-automations-e2e-actor-key",
+    });
+    await rustBridge.start();
   }, 20_000);
 
   afterEach(async () => {
@@ -245,9 +255,17 @@ describe("automation routes end-to-end", { timeout: 20_000 }, () => {
   });
 
   afterAll(async () => {
-    await instance?.stop();
-    if (dataDir) {
-      fs.rmSync(dataDir, { recursive: true, force: true });
+    try {
+      await rustBridge?.close();
+    } finally {
+      try {
+        await db?.$client.end({ timeout: 5 });
+      } finally {
+        await instance?.stop();
+        if (dataDir) {
+          fs.rmSync(dataDir, { recursive: true, force: true });
+        }
+      }
     }
   });
 
@@ -262,7 +280,7 @@ describe("automation routes end-to-end", { timeout: 20_000 }, () => {
       (req as any).actor = actor;
       next();
     });
-    app.use("/api", automationRoutes(db));
+    app.use("/api", automationRoutes(db, rustBridge));
     app.use("/api", chatRoutes(db, {} as any));
     app.use(errorHandler);
     const server = app.listen(0, "127.0.0.1");

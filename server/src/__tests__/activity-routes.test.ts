@@ -8,7 +8,10 @@ import { activityRoutes } from "../routes/activity.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const activityRead = vi.fn();
-const readBridge = { activityRead } as unknown as RustFoundationBridge;
+const activityLinkRead = vi.fn();
+const readBridge = { activityRead, activityLinkRead } as unknown as RustFoundationBridge;
+const runReference = vi.hoisted(() => vi.fn());
+vi.mock("../services/heartbeat-run-reference.js", () => ({ resolveHeartbeatRunIdReference: runReference }));
 
 const mockActivityService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -52,7 +55,8 @@ function createRunLookupDb(run: { orgId: string } | null) {
 
 const activeServers = new Set<Server>();
 
-async function createApp(db: Record<string, unknown> = { execute: async () => [{ timezone: "UTC" }] }, bridge: RustFoundationBridge | undefined = readBridge) {
+async function createApp(db: Record<string, unknown> = {}, bridge: RustFoundationBridge | undefined = readBridge) {
+  db = { execute: async () => [{ timezone: "UTC" }], ...db };
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -77,6 +81,8 @@ describe("activity routes", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     activityRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("[]") });
+    activityLinkRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("[]") });
+    runReference.mockImplementation(async (_db, reference) => reference);
   });
 
   afterEach(async () => {
@@ -193,11 +199,8 @@ describe("activity routes", () => {
     expect(mockActivityService.listPage).not.toHaveBeenCalled();
   });
 
-  it("passes user activity ledger filters to the service", async () => {
-    mockActivityService.listUserActivityLedger.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-    });
+  it("passes parsed user activity filters to native authority", async () => {
+    activityLinkRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from('{"items":[],"nextCursor":null}') });
 
     const res = await request(await createApp())
       .get("/api/orgs/organization-1/users/me/activity-ledger")
@@ -213,11 +216,12 @@ describe("activity routes", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(mockActivityService.listUserActivityLedger).toHaveBeenCalledWith({
-      orgId: "organization-1",
+    expect(activityLinkRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "user-ledger",
+      legacyDateTimezone: "UTC",
       userId: "user-1",
-      since: new Date("2026-06-18T00:00:00.000Z"),
-      until: new Date("2026-06-19T00:00:00.000Z"),
+      since: "2026-06-18T00:00:00.000Z",
+      until: "2026-06-19T00:00:00.000Z",
       include: ["chat", "comments", "approvals"],
       agentId: "agent-1",
       projectId: "project-1",
@@ -233,38 +237,18 @@ describe("activity routes", () => {
       id: "issue-uuid-1",
       orgId: "organization-1",
     });
-    mockActivityService.runsForIssue.mockResolvedValue([{
-      runId: "run-1",
-      contextSnapshot: {
-        issueId: "issue-uuid-1",
-        resumeFromRunId: "source-run-id",
-        resumeSessionDisplayId: "private-display-id",
-        resumeSessionParams: {
-          sessionId: "nested-private-session",
-          cwd: "/nested/private/cwd",
-          workspaceId: "private-workspace",
-          repoUrl: "https://private.example/repo.git",
-          repoRef: "private-ref",
-        },
-      },
-    }]);
+    activityLinkRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from('[{"runId":"run-1","contextSnapshot":{"issueId":"issue-uuid-1"}}]') });
 
     const res = await request(await createApp()).get("/api/issues/PAP-475/runs");
 
     expect(res.status).toBe(200);
     expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PAP-475");
     expect(mockIssueService.getById).not.toHaveBeenCalled();
-    expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("organization-1", "issue-uuid-1");
-    expect(res.body).toEqual([{
-      runId: "run-1",
-      contextSnapshot: {
-        issueId: "issue-uuid-1",
-        resumeFromRunId: "source-run-id",
-      },
-    }]);
-    expect(JSON.stringify(res.body)).not.toMatch(
-      /private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
-    );
+    expect(activityLinkRead).toHaveBeenCalledWith(expect.anything(), "organization-1", {
+      operation: "issue-runs", issueId: "issue-uuid-1", legacyDateTimezone: "UTC",
+    });
+    expect(mockActivityService.runsForIssue).not.toHaveBeenCalled();
+    expect(res.body).toEqual([{ runId: "run-1", contextSnapshot: { issueId: "issue-uuid-1" } }]);
   });
 
   it("aliases agent run issue lookup to the agent run issue route", async () => {
@@ -278,8 +262,10 @@ describe("activity routes", () => {
       .get("/api/agent-runs/run-1/issues");
 
     expect(res.status).toBe(200);
-    expect(mockActivityService.issuesForRun).toHaveBeenCalledWith("run-1");
-    expect(res.body).toEqual([{ issueId: "issue-1" }]);
+    expect(activityLinkRead).toHaveBeenCalledWith(expect.anything(), "organization-1", { operation: "run-issues", runId: "run-1", runAlias: "agent", legacyDateTimezone: "UTC" });
+    expect(runReference).toHaveBeenCalledWith(expect.anything(), "run-1", expect.objectContaining({ sideChatOwnerId: "user-1", notFoundMessage: "Agent run not found" }));
+    expect(mockActivityService.issuesForRun).not.toHaveBeenCalled();
+    expect(res.body).toEqual([]);
   });
 
   it("does not expose run issues across organization boundaries", async () => {

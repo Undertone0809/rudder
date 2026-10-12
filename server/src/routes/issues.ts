@@ -42,6 +42,7 @@ import {
   type IssueSortDir,
   type IssueSortField,
 } from "../services/index.js";
+import { issueMetadataReadIdentity, sendIssueMetadataRead } from "../services/issue-metadata-read-bridge.js";
 import { resolveIssueReference } from "../services/issue-references.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
@@ -583,8 +584,9 @@ export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridg
       res.status(403).json({ error: "Board user context required" });
       return;
     }
-    const rows = await svc.listFollows(orgId, userId);
-    res.json(rows);
+    await sendIssueMetadataRead(res, rustFoundationBridge, req.actor, orgId, {
+      operation: "follows", boardUserContext: Boolean(userId),
+    }, db);
   });
 
   router.get("/orgs/:orgId/labels", async (req, res) => {
@@ -777,14 +779,15 @@ export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridg
 
   router.get("/issues/:id/work-products", async (req, res) => {
     const id = req.params.id as string;
-    const issue = await svc.getById(id);
+    const issue = await issueMetadataReadIdentity(db, id);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const workProducts = await workProductsSvc.listForIssue(issue.id);
-    res.json(workProducts);
+    await sendIssueMetadataRead(res, rustFoundationBridge, req.actor, issue.orgId, {
+      operation: "work-products", issueId: issue.id,
+    }, db);
   });
 
   function sendRetiredIssueDocumentsResponse(res: Response) {
@@ -1117,6 +1120,7 @@ export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridg
     router,
     db,
     storage,
+    rustFoundationBridge,
     svc,
     runSingleFileUpload,
     withContentPath,

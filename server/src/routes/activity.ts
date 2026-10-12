@@ -1,11 +1,11 @@
 import { heartbeatRuns, type Db } from "@rudderhq/db";
-import { toPublicHeartbeatRunContextSnapshot } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { badRequest, notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { sanitizeRecord } from "../redaction.js";
+import { sendActivityLinkRead } from "../services/activity-link-read-bridge.js";
 import { activityListReadInput, sendActivityRead } from "../services/activity-read-bridge.js";
 import { activityService } from "../services/activity.js";
 import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
@@ -81,6 +81,12 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     return includes as Array<"chat" | "comments" | "issues" | "approvals" | "activity">;
   }
 
+  function dateQueryWireValue(value: Date | undefined) {
+    // Overflowing relative dates historically reach the database only after
+    // ledger limit/cursor validation. Preserve that order across transport.
+    return value === undefined ? undefined : Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+  }
+
   function resolveUserActivityUserId(req: Request, rawUserId: string) {
     if (rawUserId !== "me") return rawUserId;
     if (req.actor.type === "board") return req.actor.userId ?? "local-board";
@@ -115,7 +121,7 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = resolveUserActivityUserId(req, req.params.userId as string);
-    const result = await svc.listUserActivityLedger({
+    const filters = {
       orgId,
       userId,
       since: dateQueryParam(req.query.since, "since"),
@@ -126,8 +132,13 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
       issueId: stringQueryParam(req.query.issueId),
       limit: positiveIntegerQueryParam(req.query.limit),
       cursor: stringQueryParam(req.query.cursor),
-    });
-    res.json(result);
+    };
+    await sendActivityLinkRead(res, rustFoundationBridge, req.actor, orgId, {
+      operation: "user-ledger", userId,
+      since: dateQueryWireValue(filters.since), until: dateQueryWireValue(filters.until),
+      include: filters.include, agentId: filters.agentId, projectId: filters.projectId,
+      issueId: filters.issueId, limit: filters.limit, cursor: filters.cursor,
+    }, db);
   });
 
   router.post("/orgs/:orgId/activity", validate(createActivitySchema), async (req, res) => {
@@ -160,17 +171,14 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const result = await svc.runsForIssue(issue.orgId, issue.id);
-    res.json(result.map((run) => ({
-      ...run,
-      contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),
-    })));
+    await sendActivityLinkRead(res, rustFoundationBridge, req.actor, issue.orgId, { operation: "issue-runs", issueId: issue.id }, db);
   });
 
   async function handleIssuesForRun(req: Request, res: Response, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
       orgIds: getAuthorizedOrgScope(req),
       notFoundMessage,
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
     });
     const run = await db
       .select({ orgId: heartbeatRuns.orgId })
@@ -180,8 +188,9 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     if (!run) throw notFound(notFoundMessage);
     assertCompanyAccess(req, run.orgId);
 
-    const result = await svc.issuesForRun(runId);
-    res.json(result);
+    await sendActivityLinkRead(res, rustFoundationBridge, req.actor, run.orgId, {
+      operation: "run-issues", runId, runAlias: notFoundMessage === "Heartbeat run not found" ? "heartbeat" : "agent",
+    }, db);
   }
 
   router.get("/heartbeat-runs/:runId/issues", (req, res) =>

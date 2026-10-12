@@ -669,7 +669,7 @@ export function issueService(db: Db, storage?: StorageService) {
         })
         .from(issueFollows)
         .innerJoin(issues, eq(issueFollows.issueId, issues.id))
-        .where(and(eq(issueFollows.orgId, orgId), eq(issueFollows.userId, userId), isNull(issues.hiddenAt)))
+        .where(and(eq(issueFollows.orgId, orgId), eq(issues.orgId, orgId), eq(issueFollows.userId, userId), isNull(issues.hiddenAt)))
         .orderBy(desc(issueFollows.createdAt));
       return rows;
     },

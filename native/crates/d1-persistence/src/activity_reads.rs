@@ -107,7 +107,7 @@ const INTERNAL: &[&str] = &[
 /// byte-string visitor preserves those as WTF-8; ordinary String would reject
 /// values which JavaScript JSON.parse and object spread accept.
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
-struct JsString(Vec<u16>);
+pub(crate) struct JsString(pub(crate) Vec<u16>);
 
 impl From<&str> for JsString {
     fn from(value: &str) -> Self {
@@ -116,10 +116,10 @@ impl From<&str> for JsString {
 }
 
 impl JsString {
-    fn equals(&self, value: &str) -> bool {
+    pub(crate) fn equals(&self, value: &str) -> bool {
         self.0.iter().copied().eq(value.encode_utf16())
     }
-    fn json(&self) -> String {
+    pub(crate) fn json(&self) -> String {
         match String::from_utf16(&self.0) {
             Ok(value) => serde_json::to_string(&value).unwrap(),
             Err(_) => format!(
@@ -179,7 +179,7 @@ impl<'de> Deserialize<'de> for JsString {
 
 // SQLx's PostgreSQL dependency already enables raw_value. Decode only the top
 // level: arbitrary legacy details can exceed serde Value's structural limit.
-fn object(raw: &str) -> Result<BTreeMap<JsString, String>, StoreError> {
+pub(crate) fn object(raw: &str) -> Result<BTreeMap<JsString, String>, StoreError> {
     let fail = |_| StoreError::InvalidReceipt;
     match raw.as_bytes().first() {
         Some(b'{') => serde_json::from_str::<BTreeMap<JsString, Box<RawValue>>>(raw)
@@ -217,7 +217,7 @@ fn object(raw: &str) -> Result<BTreeMap<JsString, String>, StoreError> {
     }
 }
 
-fn encode_object(value: BTreeMap<JsString, String>) -> String {
+pub(crate) fn encode_object(value: BTreeMap<JsString, String>) -> String {
     format!(
         "{{{}}}",
         value

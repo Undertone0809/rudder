@@ -14,7 +14,9 @@ import { validate } from "../middleware/validate.js";
 import {
   logActivity
 } from "../services/index.js";
+import { issueMetadataReadIdentity, sendIssueMetadataRead } from "../services/issue-metadata-read-bridge.js";
 import { buildCommentMentionWakeup } from "../services/issues.comments-attachments.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
@@ -28,6 +30,7 @@ type IssueCommentAttachmentRouteContext = {
   router: Router;
   db: Db;
   storage: StorageService;
+  rustFoundationBridge?: RustFoundationBridge;
   [key: string]: any;
 };
 
@@ -36,6 +39,7 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     router,
     db,
     storage,
+    rustFoundationBridge,
     svc,
     runSingleFileUpload,
     withContentPath,
@@ -512,14 +516,15 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
 
   router.get("/issues/:id/attachments", async (req, res) => {
     const issueId = req.params.id as string;
-    const issue = await svc.getById(issueId);
+    const issue = await issueMetadataReadIdentity(db, issueId);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const attachments = await svc.listAttachments(issueId);
-    res.json(attachments.map(withContentPath));
+    await sendIssueMetadataRead(res, rustFoundationBridge, req.actor, issue.orgId, {
+      operation: "attachments", issueId: issue.id,
+    }, db);
   });
 
   router.post("/orgs/:orgId/issues/:issueId/attachments", async (req, res) => {
