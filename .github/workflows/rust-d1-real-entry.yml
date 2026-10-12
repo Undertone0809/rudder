@@ -115,6 +115,21 @@ jobs:
             src/__tests__/run-workspace-read-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+      - name: Verify Rust issue metadata and organization catalog reads
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/issue-metadata-read-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Verify Rust Automation and Activity link reads
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/automation-read-real-entry.test.ts \
+            src/__tests__/activity-link-read-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Verify Chat branding recovery through authenticated API and Rust
         run: |
           set -o pipefail

@@ -681,8 +681,14 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       });
     },
 
-    listAttachments: async (issueId: string) =>
-      db
+    listAttachments: async (issueId: string, expectedOrgId?: string) => db.transaction(async (tx) => {
+      const [issue] = await tx.select({ orgId: issues.orgId }).from(issues).where(eq(issues.id, issueId));
+      if (!issue) {
+        if (expectedOrgId !== undefined) throw notFound("Issue not found");
+        return [];
+      }
+      if (expectedOrgId !== undefined && issue.orgId !== expectedOrgId) throw notFound("Issue not found");
+      return tx
         .select({
           id: issueAttachments.id,
           orgId: issueAttachments.orgId,
@@ -703,8 +709,10 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
         })
         .from(issueAttachments)
         .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
-        .where(and(eq(issueAttachments.issueId, issueId), eq(issueAttachments.usage, "issue")))
-        .orderBy(desc(issueAttachments.createdAt)),
+        .where(and(eq(issueAttachments.issueId, issueId), eq(issueAttachments.orgId, issue.orgId),
+          eq(assets.orgId, issue.orgId), eq(issueAttachments.usage, "issue")))
+        .orderBy(desc(issueAttachments.createdAt));
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }),
 
     getAttachmentById: async (id: string) =>
       db

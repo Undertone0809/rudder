@@ -106,7 +106,7 @@ export function registerApiRoutes(
     opts.registerNetworkWaitingRunHandler,
     rustFoundationBridge,
   ));
-  api.use(automationRoutes(db));
+  api.use(automationRoutes(db, rustFoundationBridge));
   api.use(calendarRoutes(db, rustFoundationBridge));
   api.use(runWorkspaceRoutes(db, rustFoundationBridge));
   api.use(integrationRoutes(db));

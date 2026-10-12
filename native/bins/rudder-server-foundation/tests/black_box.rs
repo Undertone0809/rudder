@@ -2057,6 +2057,10 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "approval_read",
             "overview_read",
             "run_workspace_read",
+            "issue_metadata_read",
+            "organization_catalog_read",
+            "automation_read",
+            "activity_link_read",
             "live_run_read",
             "goal_read",
             "run_read"

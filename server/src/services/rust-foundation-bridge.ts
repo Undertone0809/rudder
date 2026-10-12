@@ -9,16 +9,21 @@ import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import { requestActivityLinkRead, type ActivityLinkReadInput } from "./activity-link-read-bridge.js";
 import { requestActivityRead, type ActivityReadInput } from "./activity-read-bridge.js";
 import { requestApprovalRead, type ApprovalReadInput } from "./approval-read-bridge.js";
-import { requestCostRead } from "./cost-read-bridge.js";
+import { requestAutomationRead, type AutomationReadInput } from "./automation-read-bridge.js";
+import { requestCostRead, type CostReadInput } from "./cost-read-bridge.js";
+import { requestIssueMetadataRead, type IssueMetadataReadInput } from "./issue-metadata-read-bridge.js";
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
 import { messengerAuditContext, type MessengerStateInput } from "./messenger-state-bridge.js";
+import { requestOrganizationCatalogRead, type OrganizationCatalogReadInput } from "./organization-catalog-read-bridge.js";
 import { requestOverviewRead, type OverviewReadInput } from "./overview-read-bridge.js";
 import { requestRequestRead, type RequestReadInput } from "./request-read-bridge.js";
 import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
+export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -48,22 +53,11 @@ export type RustFoundationResponse = {
   body: Buffer;
 };
 
-export type CostReadOperation = "summary" | "by-agent" | "trend" | "by-agent-model"
-  | "by-provider" | "by-biller" | "by-project" | "window-spend"
-  | "finance-summary" | "finance-by-biller" | "finance-by-kind" | "finance-events";
-export type CostReadInput = {
-  operation: CostReadOperation;
-  fromMs?: number;
-  toMs?: number;
-  granularity?: "hour" | "day";
-  agentId?: string;
-  projectId?: string;
-  limit?: number;
-  /** Signed host connection context for legacy Date parsing; no domain rows. */
-  legacyDateTimezone?: string;
-};
-
 export interface RustFoundationBridge {
+  automationRead?(actor: RustFoundationActor, orgId: string, input: AutomationReadInput): Promise<RustFoundationResponse>;
+  activityLinkRead?(actor: RustFoundationActor, orgId: string, input: ActivityLinkReadInput): Promise<RustFoundationResponse>;
+  issueMetadataRead?(actor: RustFoundationActor, orgId: string, input: IssueMetadataReadInput): Promise<RustFoundationResponse>;
+  organizationCatalogRead?(actor: RustFoundationActor, orgId: string, input: OrganizationCatalogReadInput): Promise<RustFoundationResponse>;
   approvalRead?(actor: RustFoundationActor, orgId: string, input: ApprovalReadInput): Promise<RustFoundationResponse>;
   requestRead?(actor: RustFoundationActor, orgId: string, input: RequestReadInput): Promise<RustFoundationResponse>;
   overviewRead?(actor: RustFoundationActor, orgId: string, input: OverviewReadInput): Promise<RustFoundationResponse>;
@@ -837,6 +831,26 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       throw new RustFoundationBridgeError("not_ready", "Rust public ingress did not become ready");
     },
     start: ensureStarted,
+    async automationRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestAutomationRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async activityLinkRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestActivityLinkRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async issueMetadataRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestIssueMetadataRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async organizationCatalogRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestOrganizationCatalogRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
     async approvalRead(actor, orgId, input) {
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");

@@ -3,10 +3,24 @@ import { randomUUID } from "node:crypto";
 import {
   createRustActorEnvelope,
   RustFoundationBridgeError,
-  type CostReadInput,
   type RustFoundationActor,
   type RustFoundationResponse,
 } from "./rust-foundation-bridge.js";
+
+export type CostReadOperation = "summary" | "by-agent" | "trend" | "by-agent-model"
+  | "by-provider" | "by-biller" | "by-project" | "window-spend"
+  | "finance-summary" | "finance-by-biller" | "finance-by-kind" | "finance-events";
+export type CostReadInput = {
+  operation: CostReadOperation;
+  fromMs?: number;
+  toMs?: number;
+  granularity?: "hour" | "day";
+  agentId?: string;
+  projectId?: string;
+  limit?: number;
+  /** Signed host connection context for legacy Date parsing; no domain rows. */
+  legacyDateTimezone?: string;
+};
 
 /** Cost transport stays separate from bridge lifecycle and startup ownership. */
 export async function requestCostRead(

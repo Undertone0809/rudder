@@ -7,16 +7,20 @@
 //! reads are pure, organization-scoped projections independent of ownership.
 
 mod activity;
+pub mod activity_link_reads;
 pub mod activity_reads;
 pub mod agent_core;
 pub mod approval_reads;
+pub mod automation_reads;
 mod branding;
 pub mod calendar;
 pub mod cost_reads;
 pub mod goal_reads;
 mod goal_sets;
+pub mod issue_metadata_reads;
 pub mod legacy_read_json;
 mod links;
+pub mod organization_catalog_reads;
 mod organization_resources;
 pub mod overview_reads;
 mod project_creations;

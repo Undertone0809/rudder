@@ -1,7 +1,8 @@
 import type { Db } from "@rudderhq/db";
-import { issueWorkProducts } from "@rudderhq/db";
+import { issues, issueWorkProducts } from "@rudderhq/db";
 import type { IssueWorkProduct } from "@rudderhq/shared";
 import { and, desc, eq } from "drizzle-orm";
+import { notFound } from "../errors.js";
 
 type IssueWorkProductRow = typeof issueWorkProducts.$inferSelect;
 
@@ -33,14 +34,20 @@ function toIssueWorkProduct(row: IssueWorkProductRow): IssueWorkProduct {
 
 export function workProductService(db: Db) {
   return {
-    listForIssue: async (issueId: string) => {
-      const rows = await db
+    listForIssue: async (issueId: string, expectedOrgId?: string) => db.transaction(async (tx) => {
+      const [issue] = await tx.select({ orgId: issues.orgId }).from(issues).where(eq(issues.id, issueId));
+      if (!issue) {
+        if (expectedOrgId !== undefined) throw notFound("Issue not found");
+        return [];
+      }
+      if (expectedOrgId !== undefined && issue.orgId !== expectedOrgId) throw notFound("Issue not found");
+      const rows = await tx
         .select()
         .from(issueWorkProducts)
-        .where(eq(issueWorkProducts.issueId, issueId))
+        .where(and(eq(issueWorkProducts.issueId, issueId), eq(issueWorkProducts.orgId, issue.orgId)))
         .orderBy(desc(issueWorkProducts.isPrimary), desc(issueWorkProducts.updatedAt));
       return rows.map(toIssueWorkProduct);
-    },
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }),
 
     getById: async (id: string) => {
       const row = await db

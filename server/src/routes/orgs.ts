@@ -44,6 +44,7 @@ import {
   workspaceBackupService,
 } from "../services/index.js";
 import { libraryEntryService } from "../services/library-entries.js";
+import { sendOrganizationCatalogRead } from "../services/organization-catalog-read-bridge.js";
 import { forwardRustOrganizationResourceMutation } from "../services/organization-resource-rust-authority.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import { RustFoundationBridgeError, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
@@ -432,15 +433,14 @@ export function organizationRoutes(
     if (req.actor.type !== "agent") {
       assertBoard(req);
     }
-    const catalog = await resources.listOrganizationResources(orgId);
-    res.json(catalog);
+    await sendOrganizationCatalogRead(res, rustFoundationBridge, req.actor, orgId, { operation: "resources" }, db);
   });
 
   router.get("/:orgId/intelligence-profiles", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
-    res.json(await intelligenceProfiles.list(orgId));
+    await sendOrganizationCatalogRead(res, rustFoundationBridge, req.actor, orgId, { operation: "intelligence-profiles" }, db);
   });
 
   router.put(

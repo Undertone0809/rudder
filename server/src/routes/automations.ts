@@ -18,10 +18,12 @@ import {
 import { Router, type Request } from "express";
 import { forbidden, unauthorized } from "../errors.js";
 import { validate } from "../middleware/validate.js";
+import { sendAutomationRead } from "../services/automation-read-bridge.js";
 import { accessService, automationService, logActivity } from "../services/index.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function automationRoutes(db: Db) {
+export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = automationService(db);
   const access = accessService(db);
@@ -60,8 +62,7 @@ export function automationRoutes(db: Db) {
   router.get("/orgs/:orgId/automations", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const result = await svc.list(orgId);
-    res.json(result);
+    await sendAutomationRead(res, rustBridge, req.actor, orgId, { operation: "list" }, db);
   });
 
   router.post("/orgs/:orgId/automations", validate(createAutomationSchema), async (req, res) => {
@@ -88,13 +89,13 @@ export function automationRoutes(db: Db) {
   });
 
   router.get("/automations/:id", async (req, res) => {
-    const detail = await svc.getDetail(req.params.id as string);
-    if (!detail) {
+    const detail = await svc.get(req.params.id as string);
+    if (!detail || detail.status === "archived") {
       res.status(404).json({ error: "Automation not found" });
       return;
     }
     assertCompanyAccess(req, detail.orgId);
-    res.json(detail);
+    await sendAutomationRead(res, rustBridge, req.actor, detail.orgId, { operation: "detail", automationId: detail.id }, db);
   });
 
   router.patch("/automations/:id", validate(updateAutomationSchema), async (req, res) => {
@@ -160,8 +161,9 @@ export function automationRoutes(db: Db) {
     }
     assertCompanyAccess(req, automation.orgId);
     const limit = Number(req.query.limit ?? 50);
-    const result = await svc.listRuns(automation.id, Number.isFinite(limit) ? limit : 50);
-    res.json(result);
+    await sendAutomationRead(res, rustBridge, req.actor, automation.orgId, {
+      operation: "runs", automationId: automation.id, limit: Number.isFinite(limit) ? limit : 50,
+    }, db);
   });
 
   router.post("/automations/:id/triggers", validate(createAutomationTriggerSchema), async (req, res) => {

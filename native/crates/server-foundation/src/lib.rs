@@ -60,11 +60,15 @@ mod run_workspace_updates;
 pub use calendar::CALENDAR_ACTION;
 mod secrets;
 pub use secrets::SECRETS_ACTION;
+mod activity_link_reads;
 mod activity_reads;
 mod approval_reads;
+mod automation_reads;
 mod cost_reads;
 mod goal_reads;
+mod issue_metadata_reads;
 mod llm_reflection;
+mod organization_catalog_reads;
 mod overview_reads;
 mod project_reads;
 mod public_ingress;
@@ -80,10 +84,14 @@ mod workspace_backup_reads;
 pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
 pub use workspace_backup_reads::WORKSPACE_BACKUP_READ_ACTION;
 
+pub use activity_link_reads::ACTIVITY_LINK_READ_ACTION;
 pub use activity_reads::ACTIVITY_READ_ACTION;
 pub use approval_reads::APPROVAL_READ_ACTION;
+pub use automation_reads::AUTOMATION_READ_ACTION;
 pub use cost_reads::COST_READ_ACTION;
 pub use goal_reads::GOAL_READ_ACTION;
+pub use issue_metadata_reads::ISSUE_METADATA_READ_ACTION;
+pub use organization_catalog_reads::ORGANIZATION_CATALOG_READ_ACTION;
 pub use overview_reads::OVERVIEW_READ_ACTION;
 pub use project_reads::PROJECT_READ_ACTION;
 pub use request_reads::REQUEST_READ_ACTION;
@@ -158,6 +166,10 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "approval_read",
     "overview_read",
     "run_workspace_read",
+    "issue_metadata_read",
+    "organization_catalog_read",
+    "automation_read",
+    "activity_link_read",
     "live_run_read",
     "goal_read",
     "run_read",
@@ -2854,6 +2866,22 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/run-workspace-reads",
                     web::post().to(run_workspace_reads::run_workspace_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/issue-metadata-reads",
+                    web::post().to(issue_metadata_reads::issue_metadata_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/organization-catalog-reads",
+                    web::post().to(organization_catalog_reads::organization_catalog_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/automation-reads",
+                    web::post().to(automation_reads::automation_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/activity-link-reads",
+                    web::post().to(activity_link_reads::activity_link_reads),
                 )
                 .route(
                     "/internal/orgs/{org_id}/goal-reads",
