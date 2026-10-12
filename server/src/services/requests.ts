@@ -52,6 +52,16 @@ function approvalRequestStatus(status: string) {
 
 export function requestService(db: Db) {
   return {
+    // Authentication needs only the winning row's organization. Preserve the
+    // two-table lookup order without hydrating a Node-owned GET response.
+    readIdentity: async (id: string) => {
+      const assistance = await db.select({ id: requests.id, orgId: requests.orgId })
+        .from(requests).where(eq(requests.id, id)).then((rows) => rows[0] ?? null);
+      if (assistance) return assistance;
+      return db.select({ id: approvals.id, orgId: approvals.orgId })
+        .from(approvals).where(eq(approvals.id, id)).then((rows) => rows[0] ?? null);
+    },
+
     list: async (orgId: string, filters: { status?: string; kind?: string } = {}) => {
       const result: Array<Record<string, unknown>> = [];
       if (!filters.kind || filters.kind === "assistance") {
