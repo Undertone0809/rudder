@@ -19,6 +19,7 @@ type RequestActor = {
   authEpoch?: number | undefined;
   runId?: string | undefined;
   adapterType?: string | undefined;
+  credentialExpiresAt?: number | undefined;
 };
 
 declare global {

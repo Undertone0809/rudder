@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
 import { messengerAuditContext, type MessengerStateInput } from "./messenger-state-bridge.js";
 import type { RunReadInput } from "./run-read-bridge.js";
+import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -57,6 +58,7 @@ export type CostReadInput = {
 };
 
 export interface RustFoundationBridge {
+  runWorkspaceOrdinaryUpdate?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   agentCore?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   readonly mode: RustFoundationMode;
   readonly organizationBrandingMode: RustFoundationMode;
@@ -824,6 +826,21 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       throw new RustFoundationBridgeError("not_ready", "Rust public ingress did not become ready");
     },
     start: ensureStarted,
+    async runWorkspaceOrdinaryUpdate(actor, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = "/internal/run-workspace-ordinary-update";
+      const body = encodeRunWorkspaceOrdinaryUpdate(actor, input);
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({ actor, organizationId: "run-workspace-ordinary-update", method: "POST", path: requestPath,
+        action: "run_workspace.ordinary_update", body, secret: actorEnvelopeKey, requestId, allowAnonymous: true });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, { method: "POST", headers: {
+          "content-type": "application/json", "x-rudder-actor-envelope": JSON.stringify(envelope), "x-rudder-request-id": requestId },
+          body: body as unknown as BodyInit });
+        return { status: response.status, contentType: response.headers.get("content-type") ?? "application/json", body: Buffer.from(await response.arrayBuffer()) };
+      } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust run workspace update request failed", { cause: error }); }
+    },
     async agentCore(actor, input) {
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");

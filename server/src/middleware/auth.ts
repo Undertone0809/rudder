@@ -167,6 +167,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         orgId: claims.org_id,
         keyId: undefined,
         sessionId: `agent-jwt:${claims.sub}`,
+        credentialExpiresAt: claims.exp,
         authEpoch: 1,
         runId: claims.run_id,
         adapterType: claims.adapter_type,

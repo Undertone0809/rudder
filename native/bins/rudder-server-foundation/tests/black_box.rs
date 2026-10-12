@@ -2034,6 +2034,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "calendar",
             "secrets",
             "agent_core",
+            "run_workspace_ordinary_update",
             "organization_branding",
             "project_goal_set_replacement",
             "project_delete",
@@ -2081,6 +2082,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("goal_read"));
     assert!(capabilities.contains("messenger_state"));
     assert!(capabilities.contains("\"run_read\""));
+    assert!(capabilities.contains("\"run_workspace_ordinary_update\""));
     let capabilities_body: Value =
         serde_json::from_slice(&decoded_http_body(capabilities.as_bytes()))
             .expect("capabilities JSON");

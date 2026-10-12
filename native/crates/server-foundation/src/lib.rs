@@ -56,6 +56,7 @@ pub use run_reads::RUN_READ_ACTION;
 
 mod agent_core;
 mod calendar;
+mod run_workspace_updates;
 pub use calendar::CALENDAR_ACTION;
 mod secrets;
 pub use secrets::SECRETS_ACTION;
@@ -107,6 +108,7 @@ const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
     "calendar",
     "secrets",
     "agent_core",
+    "run_workspace_ordinary_update",
     "organization_branding",
     "project_goal_set_replacement",
     "project_delete",
@@ -1310,9 +1312,12 @@ impl AppState {
         if !matches!(actor.kind.as_str(), "user" | "agent")
             && !(actor.kind == "anonymous"
                 && actor.id == "anonymous"
-                && org_id == "agent-core"
-                && action == "agent.core.execute"
-                && request.path() == "/internal/agent-core"
+                && ((org_id == "agent-core"
+                    && action == "agent.core.execute"
+                    && request.path() == "/internal/agent-core")
+                    || (org_id == "run-workspace-ordinary-update"
+                        && action == "run_workspace.ordinary_update"
+                        && request.path() == "/internal/run-workspace-ordinary-update"))
                 && request.method() == actix_web::http::Method::POST)
         {
             return Err(ActorEnvelopeVerificationError::Invalid);
@@ -2577,10 +2582,12 @@ async fn request_guard(
     };
 
     // Buffer once at the admission boundary so routes that ignore their body cannot bypass the cap.
-    let limit = if req.path() == "/internal/agent-core" {
-        20 * 1024 * 1024
-    } else {
-        state.config.max_request_bytes
+    let limit = match req.path() {
+        // Public 10MiB JSON may expand through JS numeric formatting and the
+        // metadata sidecar. This bound is specific to the ordinary command.
+        "/internal/run-workspace-ordinary-update" => 80 * 1024 * 1024,
+        "/internal/agent-core" => 20 * 1024 * 1024,
+        _ => state.config.max_request_bytes,
     };
     let body = match payload.to_bytes_limited(limit).await {
         Ok(Ok(body)) => body,
@@ -2779,6 +2786,11 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .service(
+                    web::resource("/internal/run-workspace-ordinary-update")
+                        .app_data(web::PayloadConfig::new(80 * 1024 * 1024))
+                        .route(web::post().to(run_workspace_updates::update)),
+                )
                 .service(
                     web::resource("/internal/agent-core")
                         .app_data(web::PayloadConfig::new(20 * 1024 * 1024))
