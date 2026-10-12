@@ -391,7 +391,7 @@ pub async fn read_costs(
 
 // Number(value.toFixed(2)) rounds the exact IEEE-754 value, with midpoint ties
 // away from zero. Multiplying a float by 100 first introduces a second rounding.
-fn fixed_two(value: f64) -> f64 {
+pub(crate) fn fixed_two(value: f64) -> f64 {
     if !value.is_finite() || value.abs() >= 1e21 {
         return value;
     }

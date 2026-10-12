@@ -1,6 +1,6 @@
 //! Requests GET authority: legacy table selection, combined projection and
 //! payload redaction. Mutation handlers keep their existing owners.
-mod redaction;
+pub(crate) mod redaction;
 use crate::StoreError;
 use serde::Deserialize;
 use sqlx::{PgPool, Row};
@@ -8,6 +8,7 @@ use sqlx::{PgPool, Row};
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequestReadOperation {
+    List,
     Detail,
     BlockAuditAttempts,
 }
@@ -15,7 +16,9 @@ pub enum RequestReadOperation {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RequestReadInput {
     pub operation: RequestReadOperation,
-    pub request_id: String,
+    pub request_id: Option<String>,
+    pub status: Option<String>,
+    pub kind: Option<String>,
     pub legacy_date_timezone: Option<String>,
 }
 impl RequestReadInput {
@@ -23,6 +26,22 @@ impl RequestReadInput {
         if self.legacy_date_timezone.as_ref().is_some_and(|zone| {
             zone.is_empty() || zone.len() > 256 || zone.chars().any(char::is_control)
         }) {
+            return Err(StoreError::InvalidInput);
+        }
+        if self.operation == RequestReadOperation::List {
+            if self.request_id.is_some()
+                || self
+                    .status
+                    .as_deref()
+                    .is_some_and(|v| !matches!(v, "open" | "resolved" | "cancelled" | "superseded"))
+                || self
+                    .kind
+                    .as_deref()
+                    .is_some_and(|v| !matches!(v, "assistance" | "approval"))
+            {
+                return Err(StoreError::InvalidInput);
+            }
+        } else if self.request_id.is_none() || self.status.is_some() || self.kind.is_some() {
             return Err(StoreError::InvalidInput);
         }
         Ok(())
@@ -57,7 +76,7 @@ fn timestamp_value(column: &str) -> String {
  ELSE {column} AT TIME ZONE 'UTC' END)"#
     )
 }
-fn timestamp(column: &str) -> String {
+pub(crate) fn timestamp(column: &str) -> String {
     let stamp = timestamp_value(column);
     // Node Date parsing discards sub-millisecond digits before TimeClip checks
     // the upper boundary, so max Date plus 1 microsecond is still representable.
@@ -159,6 +178,45 @@ fn array(rows: Vec<String>) -> String {
     format!("[{}]", rows.join(","))
 }
 
+// Explicit total order: preserve the legacy parsed Date instant, floor to a
+// whole UTC second, then UUID and table. Invalid dates follow all finite rows.
+// This intentionally removes the old host-local Date string roundtrip.
+fn list_time(column: &str) -> String {
+    let stamp = timestamp_value(column);
+    format!(
+        "(SELECT CASE WHEN stamp IS NULL OR extract(epoch FROM date_trunc('milliseconds',stamp))>8640000000000 THEN NULL ELSE floor(extract(epoch FROM date_trunc('milliseconds',stamp))) END FROM (SELECT {stamp} AS stamp) list_date)"
+    )
+}
+
+async fn list_requests(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: &str,
+    input: &RequestReadInput,
+) -> Result<String, RequestReadError> {
+    let query = format!(
+        "SELECT value,kind FROM (SELECT {} value,t.kind,{} sort_time,t.id,0 source FROM requests t WHERE t.org_id=$1::uuid AND ($2::text IS NULL OR t.status=$2) AND ($3::text IS NULL OR $3='assistance') UNION ALL SELECT {} value,'approval' kind,{} sort_time,t.id,1 source FROM approvals t WHERE t.org_id=$1::uuid AND ($2::text IS NULL OR ({})=$2) AND ($3::text IS NULL OR $3='approval')) combined ORDER BY sort_time DESC NULLS LAST,id DESC,source ASC",
+        projection("requests"),
+        list_time("t.updated_at"),
+        projection("approvals"),
+        list_time("t.updated_at"),
+        approval_status()
+    );
+    let rows = sqlx::query(&query)
+        .bind(org)
+        .bind(input.status.as_deref())
+        .bind(input.kind.as_deref())
+        .fetch_all(&mut **tx)
+        .await?;
+    let mut output = Vec::with_capacity(rows.len());
+    for row in rows {
+        output.push(redaction::row(
+            &row.try_get::<String, _>("value")?,
+            row.try_get::<String, _>("kind")? == "approval",
+        )?);
+    }
+    Ok(array(output))
+}
+
 pub async fn read_requests(
     pool: &PgPool,
     org: &str,
@@ -178,8 +236,16 @@ pub async fn read_requests(
             .execute(&mut *tx)
             .await?;
     }
+    if input.operation == RequestReadOperation::List {
+        let output = list_requests(&mut tx, org, input).await?;
+        tx.commit().await?;
+        return Ok(output);
+    }
     let output = {
-        let id = input.request_id.as_str();
+        let id = input
+            .request_id
+            .as_deref()
+            .ok_or(StoreError::InvalidInput)?;
         // Resolve before filtering by org: an unauthorized requests row must
         // mask an approval with the same ID, including a post-Node lookup race.
         let winner = sqlx::query("SELECT org_id::text,kind,source FROM (SELECT org_id,kind,0 source FROM requests WHERE id=$1::uuid UNION ALL SELECT org_id,'approval',1 FROM approvals WHERE id=$1::uuid) candidate ORDER BY source LIMIT 1")

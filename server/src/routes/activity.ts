@@ -149,8 +149,7 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const result = await svc.forIssue(issue.id, issue.orgId);
-    res.json(result);
+    await sendActivityRead(db, res, rustFoundationBridge, req.actor, issue.orgId, { operation: "issue", issueId: issue.id });
   });
 
   router.get("/issues/:id/runs", async (req, res) => {

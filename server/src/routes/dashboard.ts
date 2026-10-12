@@ -1,13 +1,13 @@
 import type { Db } from "@rudderhq/db";
 import type { AgentSkillAnalytics } from "@rudderhq/shared";
 import { Router, type Request } from "express";
-import { dashboardService } from "../services/dashboard.js";
+import { sendOverviewRead } from "../services/overview-read-bridge.js";
 import { heartbeatService } from "../services/runtime-kernel/heartbeat.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { assertCompanyAccess } from "./authz.js";
 
-export function dashboardRoutes(db: Db) {
+export function dashboardRoutes(db: Db, rustFoundation?: RustFoundationBridge) {
   const router = Router();
-  const svc = dashboardService(db);
   const heartbeat = heartbeatService(db);
 
   function readSkillAnalyticsQuery(req: Request) {
@@ -31,8 +31,7 @@ export function dashboardRoutes(db: Db) {
   router.get("/orgs/:orgId/dashboard", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const summary = await svc.summary(orgId);
-    res.json(summary);
+    await sendOverviewRead(db, res, rustFoundation, req.actor, orgId, { operation: "dashboard-summary" });
   });
 
   router.get("/orgs/:orgId/dashboard/skills/analytics", async (req, res) => {

@@ -12,6 +12,54 @@ fn input(value: Value) -> RequestReadInput {
 }
 
 #[tokio::test]
+async fn request_list_uses_whole_second_total_order_and_preserves_both_tables() {
+    let db = Database::start().await;
+    let id = "84000000-0000-4000-8000-000000000002";
+    let high = "84000000-0000-4000-8000-000000000001";
+    sqlx::raw_sql(&format!(
+        r#"
+INSERT INTO requests(id,org_id,kind,subtype,title,prompt,updated_at) VALUES
+('{id}','{ORG}','legacy','legacy','Request','Help','1969-12-31T23:59:59.999999Z');
+INSERT INTO approvals(id,org_id,type,status,payload,updated_at) VALUES
+('{id}','{ORG}','hire_agent','approved','{{}}','1969-12-31T23:59:59.100Z'),
+('{high}','{ORG}','hire_agent','pending','{{}}','1970-01-01T00:00:00Z'),
+('84000000-0000-4000-8000-000000000003','{ORG}','hire_agent','pending','{{}}','infinity');
+"#
+    ))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let result: Value = serde_json::from_str(
+        &read_requests(
+            &db.pool,
+            ORG,
+            &input(json!({"operation":"list","legacyDateTimezone":"UTC"})),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    let rows = result.as_array().unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0]["id"], high);
+    assert_eq!(rows[1]["kind"], "legacy");
+    assert_eq!(rows[2]["kind"], "approval");
+    assert_eq!(rows[3]["updatedAt"], Value::Null);
+    let filtered: Value = serde_json::from_str(
+        &read_requests(
+            &db.pool,
+            ORG,
+            &input(json!({"operation":"list","kind":"assistance"})),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(filtered.as_array().unwrap().len(), 1);
+    assert_eq!(filtered[0]["kind"], "legacy");
+}
+
+#[tokio::test]
 async fn requests_preserve_winner_projection_and_attempt_scope_without_writes() {
     let db = Database::start().await;
     let id = "81000000-0000-4000-8000-000000000001";

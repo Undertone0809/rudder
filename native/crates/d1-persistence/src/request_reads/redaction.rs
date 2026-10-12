@@ -71,7 +71,7 @@ fn encode(raw: &str, sanitize_payload: bool) -> Result<String, serde_json::Error
 }
 /// The row projection is shallow; opaque column values remain raw until their
 /// own Drizzle/redaction boundary. No result is parsed again by Node.
-pub(super) fn row(raw: &str, approval: bool) -> Result<String, serde_json::Error> {
+pub(crate) fn row(raw: &str, approval: bool) -> Result<String, serde_json::Error> {
     serde_json::from_str::<serde::de::IgnoredAny>(raw)?;
     let nodes = parse_validated(raw)?;
     let Kind::Object(fields) = &nodes[0].kind else {

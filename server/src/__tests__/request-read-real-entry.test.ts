@@ -29,7 +29,7 @@ vi.mock("../services/index.js", async (original) => {
   const services = await original<typeof import("../services/index.js")>();
   const forbidden = () => { throw new Error("Node Request GET business reader must not execute"); };
   return { ...services, requestService: (...args: Parameters<typeof requestService>) => ({
-    ...services.requestService(...args), getById: forbidden, attemptsForRequest: forbidden,
+    ...services.requestService(...args), getById: forbidden, list: forbidden, attemptsForRequest: forbidden,
   }) };
 });
 
@@ -217,7 +217,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
       expect(response.body).toEqual({ error: "Agent key cannot access another organization" });
     }
   });
-  it("uses descending ID after same-second Date string conversion", async () => {
+  it("uses descending ID after the accepted whole UTC second key", async () => {
     const response = await get(`/orgs/${orderingOrg}/requests`, orderingToken);
     expect(response.status).toBe(200);
     expect(response.body.map((row: { id: string }) => row.id)).toEqual([high, low]);
@@ -249,12 +249,15 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     ["invalid first", ["infinity", "2024-01-01 00:00:00Z", "2026-01-01 00:00:00Z"]],
     ["invalid middle", ["2024-01-01 00:00:00Z", "infinity", "2026-01-01 00:00:00Z"]],
     ["assistance invalid head", ["infinity", "2024-01-01 00:00:00Z", "2026-01-01 00:00:00Z"]],
-  ] as const)("pairs legacy list date ordering: %s", async (_name, timestamps) => {
+    ["Tokyo historical transition", ["1887-12-31 14:59:59Z", "1887-12-31 15:00:00Z"]],
+    ["negative subsecond floor", ["1969-12-31 23:59:59.999999Z", "1970-01-01 00:00:00Z"]],
+    ["all invalid", ["infinity", "-infinity", "275760-09-13 00:00:00.001Z"]],
+  ] as const)("preserves legacy projection with explicit total list order: %s", async (_name, timestamps) => {
     const selectedOrg = randomUUID(), selectedAgent = randomUUID(), credential = `date-${randomUUID()}`;
     await db.insert(organizations).values({ id: selectedOrg, name: "Dates", urlKey: `dates-${selectedOrg}`, issuePrefix: `DT${selectedOrg.slice(0, 8).toUpperCase()}` });
     await db.insert(agents).values({ id: selectedAgent, orgId: selectedOrg, name: "Date reader", role: "general", status: "idle" });
     await db.insert(agentApiKeys).values({ orgId: selectedOrg, agentId: selectedAgent, name: "Dates", keyHash: createHash("sha256").update(credential).digest("hex") });
-    const ids = timestamps.map(() => randomUUID());
+    const ids = _name === "negative subsecond floor" ? ["85000000-0000-4000-8000-000000000002", "85000000-0000-4000-8000-000000000001"] : timestamps.map(() => randomUUID());
     for (const [index, timestamp] of timestamps.entries()) {
       if (_name === "assistance invalid head" && index === 0) {
         await db.execute(sql`INSERT INTO requests (id,org_id,kind,subtype,title,prompt,updated_at) VALUES (${ids[index]}::uuid,${selectedOrg}::uuid,'assistance','issue_blocker','Date','Input',${timestamp}::timestamptz)`);
@@ -268,7 +271,20 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     console.info("Legacy Request date order", _name, expected.body.map((row: { id: string }) => timestamps[ids.indexOf(row.id)]));
     const actual = await get(`/orgs/${selectedOrg}/requests`, credential);
     expect(actual.status).toBe(expected.status);
-    expect(actual.body).toEqual(expected.body);
+    const values = new Map(expected.body.map((row: { id: string }) => [row.id, row]));
+    const ordered = [...rawRows].sort((a, b) => {
+      const aMs = a.updatedAt.getTime(), bMs = b.updatedAt.getTime();
+      const aValid = Number.isFinite(aMs), bValid = Number.isFinite(bMs);
+      if (aValid !== bValid) return aValid ? -1 : 1;
+      if (aValid && Math.floor(aMs / 1000) !== Math.floor(bMs / 1000)) return Math.floor(bMs / 1000) - Math.floor(aMs / 1000);
+      return b.id.localeCompare(a.id);
+    });
+    expect(actual.body).toEqual(mode === "node" ? expected.body : ordered.map((row) => values.get(row.id)));
+    if (_name === "Tokyo historical transition" && process.env.RUDDER_REQUEST_ORACLE_TIMEZONE === "UTC") {
+      expect(actual.body.map((row: {id: string}) => row.id)).toEqual(mode === "node" && process.env.TZ === "Asia/Tokyo" ? ids : [...ids].reverse());
+      expect(actual.body.map((row: {id: string; updatedAt: string}) => [row.id, row.updatedAt]).sort()).toEqual(expected.body.map((row: {id: string; updatedAt: string}) => [row.id, row.updatedAt]).sort());
+    }
+
   });
   it("preserves malformed UUID failures and requests-table approval projection", async () => {
     for (const suffix of ["", "/block-audit-attempts"]) {
@@ -297,7 +313,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     expect(actual.body).toEqual(expected.body);
     return actual;
   }
-  it("retains Node list status and kind selection without changing domain state", async () => {
+  it("preserves list status and kind selection without changing domain state", async () => {
     const before = await snapshot();
     for (const status of [undefined, "open", "resolved", "cancelled", "superseded"]) {
       for (const kind of [undefined, "assistance", "approval"]) {
@@ -340,7 +356,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
       await db.insert(approvals).values({ id, orgId: payloadOrg, type: "hire_agent", payload: { privateMarker: "must not escape" } });
       const original = bridge!.requestRead!.bind(bridge);
       const intercepted = vi.spyOn(bridge!, "requestRead").mockImplementationOnce(async (actor, orgId, input) => {
-        expect(input).toEqual({ operation, requestId: id, legacyDateTimezone: "Pacific/Honolulu" });
+        expect(input).toEqual({ operation, requestId: id, legacyDateTimezone: process.env.RUDDER_REQUEST_ORACLE_TIMEZONE === "UTC" ? "UTC" : "Pacific/Honolulu" });
         expect(orgId).toBe(payloadOrg);
         await db.insert(requests).values({ id, orgId: other, kind: "assistance", subtype: "issue_blocker", title: "Foreign winner", prompt: "Hidden" });
         return original(actor, orgId, input);
@@ -354,7 +370,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
       expect((await get(`/requests/${id}`, payloadToken)).status).toBe(403);
     }
   });
-  it("returns complete native detail and retained Node list beyond generic receipt limits", async () => {
+  it("returns complete native detail and list beyond generic receipt limits", async () => {
     const id = randomUUID();
     await db.insert(requests).values({ id, orgId: payloadOrg, kind: "assistance", subtype: "issue_blocker", title: "Large history", prompt: "x".repeat(300_000) });
     const before = await snapshot();
@@ -363,18 +379,33 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     expect((await pair(`/orgs/${payloadOrg}/requests?kind=assistance`)).text.length).toBeGreaterThan(300_000);
     expect(await snapshot()).toEqual(before);
   });
+  it.runIf(mode !== "node")("retains both same-ID rows and uses table rank only after whole-second ties", async () => {
+    await db.insert(requests).values({id:high,orgId:orderingOrg,kind:"assistance",subtype:"issue_blocker",title:"Same ID Request",prompt:"Input",updatedAt:new Date("2026-10-12T01:00:00.950Z")});
+    const equal=await get(`/orgs/${orderingOrg}/requests`,orderingToken);
+    expect(equal.body.map((row:{id:string;kind:string})=>[row.id,row.kind])).toEqual([[high,"assistance"],[high,"approval"],[low,"assistance"]]);
+    await db.update(requests).set({updatedAt:new Date("2026-10-12T00:59:59.999Z")}).where(eq(requests.id,high));
+    const earlier=await get(`/orgs/${orderingOrg}/requests`,orderingToken);
+    expect(earlier.body.map((row:{id:string;kind:string})=>[row.id,row.kind])).toEqual([[high,"approval"],[low,"assistance"],[high,"assistance"]]);
+  });
   it.runIf(mode !== "node")("fails closed when native dispatch is absent or its transport is unavailable", async () => {
     const unusedPort = await freePort();
     const unavailable = { requestRead: (actor, orgId, input) => requestRequestRead(`http://127.0.0.1:${unusedPort}`, "synthetic-unavailable-reader-key", 1000, actor, orgId, input) } as RustFoundationBridge;
     const before = await snapshot();
+    const upstreamPort = (server!.address() as net.AddressInfo).port;
     for (const selected of [undefined, unavailable]) {
+      server!.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server!.close((error) => error ? reject(error) : resolve()));
       const failedApp = express();
+      failedApp.get("/api/health", (_req, res) => res.json({ status: "ok" }));
       failedApp.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
       failedApp.use("/api", requestRoutes(db, selected));
       failedApp.use(errorHandler);
-      expect((await request(failedApp).get(`/api/orgs/${payloadOrg}/requests`).set("authorization", `Bearer ${payloadToken}`)).status).toBe(200);
+      server = failedApp.listen(upstreamPort, "127.0.0.1");
+      await once(server, "listening");
+      const outageTarget = mode === "required" ? target : server;
+      expect((await request(outageTarget).get(`/api/orgs/${payloadOrg}/requests`).set("authorization", `Bearer ${payloadToken}`)).status).toBe(503);
       for (const url of [`/requests/${auditedRequest}`, `/requests/${auditedRequest}/block-audit-attempts`]) {
-        const response = await request(failedApp).get(`/api${url}`).set("authorization", `Bearer ${payloadToken}`);
+        const response = await request(outageTarget).get(`/api${url}`).set("authorization", `Bearer ${payloadToken}`);
         expect(response.status).toBe(503);
         expect(response.body.error).toBe("Rust Request reads are unavailable");
       }

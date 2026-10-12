@@ -1,4 +1,4 @@
-//! Authenticated transport for Request detail and Block Audit attempts. Kept apart
+//! Authenticated transport for Request lists, detail and Block Audit attempts. Kept apart
 //! from mutation endpoints so legacy ownership flags cannot gate public reads.
 use crate::{ActorEnvelopeVerificationError, AppState, DatabaseState};
 use actix_web::{HttpRequest, HttpResponse, http::StatusCode, web};

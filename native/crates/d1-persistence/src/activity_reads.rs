@@ -1,16 +1,17 @@
-//! Organization Activity read authority with legacy list/page compatibility.
+//! Activity reads preserve org cursors and define a total Issue/Chat order.
 use crate::{StoreError, legacy_read_json::normalize_legacy_read_json};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use sqlx::{PgPool, Row, postgres::PgRow};
-use std::collections::BTreeMap;
+use std::{cmp::Reverse, collections::BTreeMap};
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ActivityReadOperation {
     List,
     ListPage,
+    Issue,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -24,6 +25,7 @@ pub struct ActivityCursor {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ActivityReadInput {
     pub operation: ActivityReadOperation,
+    pub issue_id: Option<String>,
     pub agent_id: Option<String>,
     pub user_id: Option<String>,
     pub actor_type: Option<String>,
@@ -48,8 +50,23 @@ impl ActivityReadInput {
                 .is_some_and(|v| v.is_empty() || v.len() > 256 || v.chars().any(char::is_control))
             || (self.operation != ActivityReadOperation::ListPage
                 && (self.limit.is_some() || self.cursor.is_some()))
+            || (self.operation == ActivityReadOperation::Issue) != self.issue_id.is_some()
+            || (self.operation == ActivityReadOperation::Issue
+                && [
+                    &self.agent_id,
+                    &self.user_id,
+                    &self.actor_type,
+                    &self.actor_id,
+                    &self.entity_type,
+                    &self.entity_id,
+                ]
+                .iter()
+                .any(|value| value.is_some()))
         {
             return Err(StoreError::InvalidInput);
+        }
+        if let Some(id) = &self.issue_id {
+            crate::transaction::uuid(id)?;
         }
         if let Some(cursor) = &self.cursor {
             crate::transaction::uuid(&cursor.id)?;
@@ -211,7 +228,7 @@ fn encode_object(value: BTreeMap<JsString, String>) -> String {
     )
 }
 
-fn details(raw: Option<&str>) -> Result<String, StoreError> {
+pub(crate) fn details(raw: Option<&str>) -> Result<String, StoreError> {
     let raw = raw.unwrap_or("null");
     // postgres-js parses JSONB once; Drizzle reparses a resulting string if it
     // is valid JSON. Preserve that one extra parse, never recursively reparse.
@@ -268,13 +285,19 @@ fn hydrate(raw: &str, identifier: Option<&str>, title: Option<&str>) -> Result<S
 // The legacy driver parsed PG's connection-local timestamp text with JS Date.
 // Match Cost reads' established small-year/BC/offset behavior and millisecond
 // truncation, while retaining untouched PG timestamps for org cursor ordering.
-fn legacy_stamp(column: &str) -> String {
+pub(crate) fn legacy_stamp(column: &str) -> String {
     format!(
         r#"CASE WHEN NOT isfinite({column}) OR extract(epoch FROM date_trunc('milliseconds',{column}))>8640000000000 THEN NULL
  WHEN extract(year FROM {column})<1 OR extract(year FROM {column}) BETWEEN 13 AND 31 OR mod(extract(timezone FROM {column}),60)<>0 THEN NULL
  WHEN extract(year FROM {column}) BETWEEN 1 AND 12 THEN make_timestamp(2000+extract(day FROM {column})::int,extract(year FROM {column})::int,extract(month FROM {column})::int,extract(hour FROM {column})::int,extract(minute FROM {column})::int,extract(second FROM {column})::double precision)-extract(timezone FROM {column})::double precision*INTERVAL '1 second'
  WHEN extract(year FROM {column}) BETWEEN 32 AND 99 THEN make_timestamp((CASE WHEN extract(year FROM {column})<50 THEN 2000 ELSE 1900 END)+extract(year FROM {column})::int,extract(month FROM {column})::int,extract(day FROM {column})::int,extract(hour FROM {column})::int,extract(minute FROM {column})::int,extract(second FROM {column})::double precision)-extract(timezone FROM {column})::double precision*INTERVAL '1 second'
  ELSE {column} AT TIME ZONE 'UTC' END"#
+    )
+}
+
+pub(crate) fn legacy_date_text(stamp: &str) -> String {
+    format!(
+        r#"CASE WHEN {stamp} IS NULL THEN NULL ELSE (CASE WHEN extract(year FROM {stamp})>=10000 THEN '+'||to_char(extract(year FROM {stamp}),'FM000000') ELSE to_char({stamp},'YYYY') END)||to_char({stamp},'-MM-DD"T"HH24:MI:SS.MS"Z"') END"#
     )
 }
 
@@ -336,6 +359,120 @@ fn project(row: &PgRow) -> Result<Option<String>, StoreError> {
     Ok(Some(format!("{payload},\"details\":{value}}}")))
 }
 
+fn issue_sql(chat: bool) -> String {
+    let (join, filter, title) = if chat {
+        ("JOIN chat_conversations c ON a.entity_type='chat' AND a.entity_id=c.id::text AND c.org_id=i.org_id
+ LEFT JOIN chat_context_links l ON l.conversation_id=c.id AND l.org_id=i.org_id AND l.entity_type='issue' AND l.entity_id=i.id::text",
+         "(a.action='chat.issue_converted' AND a.details->>'issueId'=i.id::text) OR (a.action='chat.context_linked' AND a.details->>'entityType'='issue' AND a.details->>'entityId'=i.id::text) OR (a.action='chat.created' AND l.id IS NOT NULL AND coalesce((a.details->>'contextLinkCount')::int,0)>0)", "c.title")
+    } else {
+        (
+            "",
+            "a.entity_type='issue' AND a.entity_id=i.id::text AND a.action<>'issue.read_marked'",
+            "NULL::text",
+        )
+    };
+    format!(
+        r#"SELECT {},{title} AS conversation_title,
+ floor(extract(epoch FROM stamp)*1000)::bigint AS millis
+ FROM issues i JOIN activity_log a ON a.org_id=i.org_id {join}
+ CROSS JOIN LATERAL (SELECT {} AS stamp) parsed
+ WHERE i.id=$2::uuid AND i.org_id=$1::uuid AND ({filter})
+ ORDER BY a.created_at DESC,a.id DESC"#,
+        projection(),
+        legacy_stamp("a.created_at")
+    )
+}
+
+async fn read_issue(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: &str,
+    issue_id: &str,
+) -> Result<String, StoreError> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM issues WHERE id=$2::uuid AND org_id=$1::uuid)",
+    )
+    .bind(org_id)
+    .bind(issue_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if !exists {
+        return Ok("[]".to_owned());
+    }
+    let mut merged = Vec::new();
+    for (source, chat) in [false, true].into_iter().enumerate() {
+        let rows = sqlx::query(&issue_sql(chat))
+            .bind(org_id)
+            .bind(issue_id)
+            .fetch_all(&mut **tx)
+            .await?;
+        for (raw_order, row) in rows.into_iter().enumerate() {
+            let raw: Option<String> = row.try_get("details")?;
+            let mut value = details(raw.as_deref())?;
+            if chat {
+                let title: Option<String> = row.try_get("conversation_title")?;
+                let mut properties = object(&value)?;
+                properties.insert(
+                    "conversationTitle".into(),
+                    serde_json::to_string(&title).unwrap(),
+                );
+                value = encode_object(properties);
+            } else {
+                let action: String = row.try_get("action")?;
+                if action == "issue.document_updated" || !visible(&action, &value)? {
+                    continue;
+                }
+            }
+            let mut payload: String = row.try_get("payload")?;
+            payload.pop();
+            let millis: Option<i64> = row.try_get("millis")?;
+            merged.push((
+                (
+                    millis.is_none(),
+                    Reverse(millis.unwrap_or(0)),
+                    source,
+                    raw_order,
+                ),
+                format!("{payload},\"details\":{value}}}"),
+            ));
+        }
+    }
+    Ok(ordered_issue_json(merged))
+}
+
+type IssueOrderKey = (bool, Reverse<i64>, usize, usize);
+
+fn ordered_issue_json(mut merged: Vec<(IssueOrderKey, String)>) -> String {
+    // Finite Dates precede invalid Dates. Within each source, raw_order retains
+    // the entire original PG timestamp DESC plus UUID DESC, including ancient
+    // years that the legacy Date parser maps onto modern millisecond ties.
+    // Invalid rows use that same source/raw order. No row is deduplicated.
+    merged.sort_by_key(|(key, _)| *key);
+    format!(
+        "[{}]",
+        merged
+            .into_iter()
+            .map(|(_, payload)| payload)
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+#[cfg(test)]
+mod issue_order_tests {
+    use super::{Reverse, ordered_issue_json};
+
+    #[test]
+    fn preserves_identical_synthetic_input_rows() {
+        // Current PK/unique joins cannot yield this duplicate within one valid
+        // snapshot. This synthetic merge check only locks the no-dedup rule.
+        let row = ((true, Reverse(0), 0, 0), r#"{"id":"same"}"#.to_owned());
+        assert_eq!(
+            ordered_issue_json(vec![row.clone(), row]),
+            r#"[{"id":"same"},{"id":"same"}]"#
+        );
+    }
+}
+
 pub async fn read_activity(
     pool: &PgPool,
     org_id: &str,
@@ -351,6 +488,16 @@ pub async fn read_activity(
             .bind(zone)
             .execute(&mut *tx)
             .await?;
+    }
+    if input.operation == ActivityReadOperation::Issue {
+        let result = read_issue(
+            &mut tx,
+            org_id,
+            input.issue_id.as_deref().ok_or(StoreError::InvalidInput)?,
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(result);
     }
     let result = {
         let page = input.operation == ActivityReadOperation::ListPage;

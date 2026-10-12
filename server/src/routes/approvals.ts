@@ -12,6 +12,7 @@ import { forbidden, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { redactApprovalPayload } from "../redaction.js";
+import { approvalReadIdentity, approvalStatusQuery, sendApprovalRead } from "../services/approval-read-bridge.js";
 import {
   accessService,
   approvalService,
@@ -171,20 +172,18 @@ export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
   router.get("/orgs/:orgId/approvals", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const status = req.query.status as string | undefined;
-    const result = await svc.list(orgId, status);
-    res.json(result.map((approval) => redactApprovalPayload(approval)));
+    await sendApprovalRead(res, rustFoundationBridge, req.actor, orgId, { operation: "list", status: approvalStatusQuery(req.query.status) }, db);
   });
 
   router.get("/approvals/:id", async (req, res) => {
     const id = req.params.id as string;
-    const approval = await svc.getById(id);
+    const approval = await approvalReadIdentity(db, "approval", id);
     if (!approval) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
     assertCompanyAccess(req, approval.orgId);
-    res.json(redactApprovalPayload(approval));
+    await sendApprovalRead(res, rustFoundationBridge, req.actor, approval.orgId, { operation: "detail", targetId: approval.id }, db);
   });
 
   router.post("/orgs/:orgId/approvals", validate(createApprovalSchema), async (req, res) => {
@@ -258,14 +257,13 @@ export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
 
   router.get("/approvals/:id/issues", async (req, res) => {
     const id = req.params.id as string;
-    const approval = await svc.getById(id);
+    const approval = await approvalReadIdentity(db, "approval", id);
     if (!approval) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
     assertCompanyAccess(req, approval.orgId);
-    const issues = await issueApprovalsSvc.listIssuesForApproval(id);
-    res.json(issues);
+    await sendApprovalRead(res, rustFoundationBridge, req.actor, approval.orgId, { operation: "issues", targetId: approval.id }, db);
   });
 
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {

@@ -20,16 +20,14 @@ import { activityRoutes } from "../routes/activity.js";
 import { activityService } from "../services/activity.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
-const routeConstruction = vi.hoisted(() => ({ native: false, beforeIssueRead: null as null | (() => Promise<void>) }));
+const routeConstruction = vi.hoisted(() => ({ native: false }));
 vi.mock("../services/activity.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../services/activity.js")>();
   return { ...original, activityService: (...args: Parameters<typeof original.activityService>) => {
     const service = original.activityService(...args);
     if (!routeConstruction.native) return service;
     const forbidden = () => { throw new Error("Node Activity read authority must not execute"); };
-    const beforeIssueRead = routeConstruction.beforeIssueRead;
-    return { ...service, list: forbidden, listPage: forbidden,
-      forIssue: async (...args: Parameters<typeof service.forIssue>) => { await beforeIssueRead?.(); return service.forIssue(...args); } };
+    return { ...service, list: forbidden, listPage: forbidden, forIssue: forbidden };
   } };
 });
 
@@ -260,9 +258,14 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(fixture.db, { deploymentMode: "authenticated", authRequirement: "required" }));
     routeConstruction.native = true;
-    routeConstruction.beforeIssueRead = beforeIssueRead;
-    try { app.use("/api", activityRoutes(fixture.db, selectedBridge)); }
-    finally { routeConstruction.native = false; routeConstruction.beforeIssueRead = null; }
+    const dispatcher = selectedBridge && beforeIssueRead ? { ...selectedBridge,
+      activityRead: async (...args: Parameters<NonNullable<RustFoundationBridge["activityRead"]>>) => {
+        if (args[2].operation === "issue") await beforeIssueRead();
+        return selectedBridge.activityRead!(...args);
+      },
+    } : selectedBridge;
+    try { app.use("/api", activityRoutes(fixture.db, dispatcher)); }
+    finally { routeConstruction.native = false; }
     app.use(errorHandler);
     const listening = app.listen(listenPort, "127.0.0.1"); await once(listening, "listening"); return listening;
   }
@@ -271,6 +274,26 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
   }
   function get(url: string, token = agentToken, selected = target) {
     return request(selected).get(`/api/${url}`).set("authorization", `Bearer ${token}`);
+  }
+  async function orderingFixture(rows: Array<{ source: "issue" | "chat"; stamp: string; label: string; id?: string; payload?: string }>, verify: (issue: string) => Promise<void>) {
+    const orderingIssue = randomUUID(), orderingChat = randomUUID();
+    const { db } = fixture;
+    await db.insert(issues).values({ id: orderingIssue, orgId, title: "Ordering contract" });
+    await db.insert(chatConversations).values({ id: orderingChat, orgId, title: "Ordering chat" });
+    try {
+      for (const row of rows) {
+        await db.insert(activityLog).values({ id: row.id ?? randomUUID(), orgId, actorType: "system", actorId: "ordering",
+          action: row.source === "chat" ? "chat.issue_converted" : "issue.created", entityType: row.source,
+          entityId: row.source === "chat" ? orderingChat : orderingIssue,
+          createdAt: sql`${row.stamp}::timestamptz`, details: { issueId: orderingIssue, label: row.label, ...(row.payload ? { payload: row.payload } : {}) } });
+      }
+      await verify(orderingIssue);
+    } finally {
+      await db.delete(activityLog).where(and(eq(activityLog.orgId, orgId), or(eq(activityLog.entityId, orderingIssue), eq(activityLog.entityId, orderingChat))));
+      await db.delete(chatConversations).where(eq(chatConversations.id, orderingChat));
+      await db.delete(issues).where(eq(issues.id, orderingIssue));
+    }
+    expect(await snapshot()).toEqual(baseline);
   }
   beforeAll(async () => {
     fixture = await database();
@@ -396,12 +419,75 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     expect(await snapshot()).toEqual(before);
   });
 
-  it("retains the Node historical Issue and Chat merge order", async () => {
-    const expected = await legacyIssueActivity(fixture.db, dateIssue);
-    expect(expected).toHaveLength(21);
-    const response = await get(`issues/${dateIssue}/activity`);
-    expect(response.status, response.text).toBe(200);
-    expect(response.body).toEqual(wire(expected));
+  it("gives the former 21-row comparator panic a deterministic total order", async () => {
+    const legacy = await legacyIssueActivity(fixture.db, dateIssue);
+    expect(legacy).toHaveLength(21);
+    const expectedPositions = process.env.RUDDER_ACTIVITY_TEST_TIMEZONE === "Pacific/Honolulu"
+      ? ["0:0", "1:0", "0:1", "1:1", ...Array.from({ length: 12 }, (_, i) => `0:${i + 2}`), ...Array.from({ length: 5 }, (_, i) => `1:${i + 2}`)]
+      : ["0:5", "0:6", "1:3", "1:4", "0:7", "0:8", "0:9", "1:5", "0:0", "1:0", "0:1", "1:1", "0:11", "0:12", "0:13", "0:2", "0:3", "0:4", "1:2", "0:10", "1:6"];
+    const byPosition = new Map(legacy.map((row) => [(row.details as { position: string }).position, row]));
+    const expected = expectedPositions.map((position) => byPosition.get(position));
+    for (let repeat = 0; repeat < 3; repeat++) {
+      const response = await get(`issues/${dateIssue}/activity`);
+      expect(response.status, response.text).toBe(200);
+      expect(response.body).toEqual(wire(expected));
+    }
+  });
+
+  it("retains full raw historical timestamps and source precedence for parsed millisecond ties", async () => {
+    await orderingFixture([
+      { source: "issue", stamp: "2032-01-01T00:00:00.000100Z", label: "modern" },
+      { source: "issue", stamp: "0032-01-01T00:00:00.000900Z", label: "ancient" },
+      { source: "chat", stamp: "2032-01-01T00:00:00.000999Z", label: "chat" },
+    ], async (issue) => {
+      const old = await legacyIssueActivity(fixture.db, issue);
+      const response = await get(`issues/${issue}/activity`);
+      expect(response.status, response.text).toBe(200);
+      const expected = process.env.RUDDER_ACTIVITY_TEST_TIMEZONE === "Pacific/Honolulu"
+        ? ["modern", "chat", "ancient"] : ["modern", "ancient", "chat"];
+      expect(response.body.map((row: { details: { label: string } }) => row.details.label)).toEqual(expected);
+      const byLabel = new Map(old.map((row) => [(row.details as { label: string }).label, row]));
+      expect(response.body).toEqual(wire(expected.map((label) => byLabel.get(label))));
+    });
+  });
+
+  it("orders all-invalid dates by source, full raw timestamp and UUID without dropping rows", async () => {
+    const stamps = ["infinity", "294276-01-01T00:00:00Z", "0031-01-01T00:00:00Z", "0001-01-01 00:00:00+00 BC", "-infinity"];
+    const rows = (["issue", "chat"] as const).flatMap((source) => stamps.map((stamp, index) => ({ source, stamp, label: `${source}:${index}` })));
+    await orderingFixture(rows, async (issue) => {
+      for (let repeat = 0; repeat < 3; repeat++) {
+        const response = await get(`issues/${issue}/activity`);
+        expect(response.status, response.text).toBe(200);
+        expect(response.body.map((row: { details: { label: string } }) => row.details.label)).toEqual(rows.map((row) => row.label));
+        expect(response.body.every((row: { createdAt: null }) => row.createdAt === null)).toBe(true);
+      }
+    });
+  });
+
+  it("uses descending UUID only after exact raw timestamps and source rank tie", async () => {
+    const stamp = "2032-01-01T00:00:00.000100Z";
+    await orderingFixture([
+      { source: "issue", stamp, label: "issue-low", id: "85000000-0000-4000-8000-000000000001" },
+      { source: "chat", stamp, label: "chat-high", id: "85000000-0000-4000-8000-000000000004" },
+      { source: "issue", stamp, label: "issue-high", id: "85000000-0000-4000-8000-000000000003" },
+      { source: "chat", stamp, label: "chat-low", id: "85000000-0000-4000-8000-000000000002" },
+    ], async (issue) => {
+      const response = await get(`issues/${issue}/activity`);
+      expect(response.status, response.text).toBe(200);
+      expect(response.body.map((row: { details: { label: string } }) => row.details.label)).toEqual(["issue-high", "issue-low", "chat-high", "chat-low"]);
+    });
+  });
+
+  it("keeps large unbounded multi-source Issue responses complete", async () => {
+    const rows = Array.from({ length: 130 }, (_, index) => ({ source: index % 2 ? "chat" as const : "issue" as const,
+      stamp: "2032-01-01T00:00:00.000100Z", label: String(index), id: randomUUID(), ...(index === 0 ? { payload: "x".repeat(1_050_000) } : {}) }));
+    const expected = (["issue", "chat"] as const).flatMap((source) => rows.filter((row) => row.source === source).sort((a, b) => b.id.localeCompare(a.id)).map((row) => row.id));
+    await orderingFixture(rows, async (issue) => {
+      const response = await get(`issues/${issue}/activity`);
+      expect(response.status, response.text.slice(0, 200)).toBe(200);
+      expect(response.text.length).toBeGreaterThan(1024 * 1024);
+      expect(response.body.map((row: { id: string }) => row.id)).toEqual(expected);
+    });
   });
 
   it("preserves list, page boundaries, cursors and all filter intersections", async () => {
@@ -424,7 +510,7 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     }
   });
 
-  it("isolates Node Issue activity while preserving same-org Chat order and reference aliases", async () => {
+  it("isolates native Issue activity while preserving same-org Chat order and reference aliases", async () => {
     const old = await legacyIssueActivity(fixture.db, issueId);
     expect(old.filter((row) => contaminated.includes(row.id))).toHaveLength(5);
     const expected = wire(old.filter((row) => !contaminated.includes(row.id)));
@@ -458,7 +544,7 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     const unavailable = await startApp();
     try {
       expect((await get(`orgs/${orgId}/activity`,agentToken,unavailable)).status).toBe(503);
-      expect((await get(`issues/${issueId}/activity`,agentToken,unavailable)).status).toBe(200);
+      expect((await get(`issues/${issueId}/activity`,agentToken,unavailable)).status).toBe(503);
     } finally { await close(unavailable); }
     expect(await snapshot()).toEqual(baseline);
   });
@@ -478,9 +564,13 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     expect(next.body.nextCursor).toBeNull();
   });
 
-  it("rejects the deferred native Issue operation without disabling org reads", async () => {
-    const unsupported = await bridge.activityRead!({ type: "agent", agentId, orgId }, orgId, { operation: "issue", issueId } as never);
-    expect(unsupported.status).toBe(422);
+  it("rechecks the signed organization for private Issue reads", async () => {
+    const wrongScope = await bridge.activityRead!({ type: "agent", agentId, orgId }, orgId, { operation: "issue", issueId: foreignIssue });
+    expect(wrongScope.status).toBe(200);
+    expect(JSON.parse(wrongScope.body.toString())).toEqual([]);
+    const missing = await bridge.activityRead!({ type: "agent", agentId, orgId }, orgId, { operation: "issue", issueId: randomUUID() });
+    expect(missing.status).toBe(200);
+    expect(JSON.parse(missing.body.toString())).toEqual([]);
     expect((await get(`orgs/${orgId}/activity`)).status).toBe(200);
   });
 
@@ -501,7 +591,7 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     expect(await snapshot()).toEqual(baseline);
   });
 
-  it("rechecks the current issue after route resolution and before reading activity", async () => {
+  it.each(["delete", "move"] as const)("rechecks the current issue after route resolution and a %s before native dispatch", async (mutation) => {
     const { db } = fixture;
     const racedIssue = randomUUID();
     await db.insert(issues).values({ id: racedIssue, orgId, title: "Deleted after reference resolution" });
@@ -509,7 +599,8 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     let intercepted = false;
     const raced = await startApp(bridge, 0, async () => {
       intercepted = true;
-      await db.delete(issues).where(eq(issues.id, racedIssue));
+      if (mutation === "delete") await db.delete(issues).where(eq(issues.id, racedIssue));
+      else await db.update(issues).set({ orgId: foreign }).where(eq(issues.id, racedIssue));
     });
     try {
       const response = await get(`issues/${racedIssue}/activity`, agentToken, raced);

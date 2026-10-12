@@ -10,11 +10,15 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import { requestActivityRead, type ActivityReadInput } from "./activity-read-bridge.js";
+import { requestApprovalRead, type ApprovalReadInput } from "./approval-read-bridge.js";
+import { requestCostRead } from "./cost-read-bridge.js";
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
 import { messengerAuditContext, type MessengerStateInput } from "./messenger-state-bridge.js";
+import { requestOverviewRead, type OverviewReadInput } from "./overview-read-bridge.js";
 import { requestRequestRead, type RequestReadInput } from "./request-read-bridge.js";
 import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
+import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -60,7 +64,10 @@ export type CostReadInput = {
 };
 
 export interface RustFoundationBridge {
+  approvalRead?(actor: RustFoundationActor, orgId: string, input: ApprovalReadInput): Promise<RustFoundationResponse>;
   requestRead?(actor: RustFoundationActor, orgId: string, input: RequestReadInput): Promise<RustFoundationResponse>;
+  overviewRead?(actor: RustFoundationActor, orgId: string, input: OverviewReadInput): Promise<RustFoundationResponse>;
+  runWorkspaceRead?(actor: RustFoundationActor, orgId: string, input: RunWorkspaceReadInput): Promise<RustFoundationResponse>;
   activityRead?(actor: RustFoundationActor, orgId: string, input: ActivityReadInput): Promise<RustFoundationResponse>;
   runWorkspaceOrdinaryUpdate?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   agentCore?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
@@ -830,10 +837,25 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       throw new RustFoundationBridgeError("not_ready", "Rust public ingress did not become ready");
     },
     start: ensureStarted,
+    async approvalRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestApprovalRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
     async requestRead(actor, orgId, input) {
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
       return requestRequestRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async overviewRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestOverviewRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async runWorkspaceRead(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestRunWorkspaceRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
     },
     async activityRead(actor, orgId, input) {
       await ensureStarted();
@@ -988,38 +1010,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     async costRead(actor, orgId, input) {
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
-      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/cost-reads`;
-      const body = Buffer.from(JSON.stringify(input), "utf8");
-      const requestId = randomUUID();
-      const envelope = createRustActorEnvelope({
-        actor,
-        organizationId: orgId,
-        method: "POST",
-        path: requestPath,
-        action: "cost.read",
-        body,
-        secret: actorEnvelopeKey,
-        requestId,
-      });
-      try {
-        const response = await fetch(`${baseUrl}${requestPath}`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-rudder-actor-envelope": JSON.stringify(envelope),
-            "x-rudder-request-id": requestId,
-          },
-          body: body as unknown as BodyInit,
-          signal: AbortSignal.timeout(requestTimeoutMs),
-        });
-        return {
-          status: response.status,
-          contentType: response.headers.get("content-type") ?? "application/json",
-          body: Buffer.from(await response.arrayBuffer()),
-        } satisfies RustFoundationResponse;
-      } catch (error) {
-        throw new RustFoundationBridgeError("request_failed", "Rust Cost read request failed", { cause: error });
-      }
+      return requestCostRead(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
     },
     async projectRead(actor, orgId, input) {
       await ensureStarted();

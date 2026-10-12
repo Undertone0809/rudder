@@ -19,6 +19,7 @@ import {
   logActivity,
   organizationService,
 } from "../services/index.js";
+import { sendOverviewRead } from "../services/overview-read-bridge.js";
 import { fetchAllQuotaWindows } from "../services/quota-windows.js";
 import type { CostReadInput, RustFoundationBridge, RustFoundationResponse } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -260,8 +261,7 @@ export function costRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
   router.get("/orgs/:orgId/budgets/overview", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    const overview = await budgets.overview(orgId);
-    res.json(overview);
+    await sendOverviewRead(db, res, rustFoundationBridge, req.actor, orgId, { operation: "budget-overview" });
   });
 
   router.post(

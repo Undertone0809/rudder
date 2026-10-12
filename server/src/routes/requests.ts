@@ -2,7 +2,6 @@ import type { Db } from "@rudderhq/db";
 import { cancelAssistanceRequestSchema, listRequestsQuerySchema, resolveAssistanceRequestSchema } from "@rudderhq/shared";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
-import { redactApprovalPayload } from "../redaction.js";
 import { heartbeatService, requestService } from "../services/index.js";
 import { sendRequestRead } from "../services/request-read-bridge.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
@@ -17,10 +16,7 @@ export function requestRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const query = listRequestsQuerySchema.parse(req.query);
-    const result = await svc.list(orgId, query);
-    res.json(result.map((request) => request.kind === "approval"
-      ? redactApprovalPayload(request as typeof request & { payload: Record<string, unknown> })
-      : request));
+    await sendRequestRead(res, rustFoundationBridge, req.actor, orgId, { operation: "list", ...query }, db);
   });
 
   router.get("/requests/:id", async (req, res) => {

@@ -61,9 +61,11 @@ pub use calendar::CALENDAR_ACTION;
 mod secrets;
 pub use secrets::SECRETS_ACTION;
 mod activity_reads;
+mod approval_reads;
 mod cost_reads;
 mod goal_reads;
 mod llm_reflection;
+mod overview_reads;
 mod project_reads;
 mod public_ingress;
 mod public_ingress_config;
@@ -71,6 +73,7 @@ mod public_ingress_forwarding;
 pub mod public_ingress_proxy;
 pub mod public_ingress_websocket;
 mod request_reads;
+mod run_workspace_reads;
 pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
 mod workspace_backup_reads;
@@ -78,10 +81,13 @@ pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
 pub use workspace_backup_reads::WORKSPACE_BACKUP_READ_ACTION;
 
 pub use activity_reads::ACTIVITY_READ_ACTION;
+pub use approval_reads::APPROVAL_READ_ACTION;
 pub use cost_reads::COST_READ_ACTION;
 pub use goal_reads::GOAL_READ_ACTION;
+pub use overview_reads::OVERVIEW_READ_ACTION;
 pub use project_reads::PROJECT_READ_ACTION;
 pub use request_reads::REQUEST_READ_ACTION;
+pub use run_workspace_reads::RUN_WORKSPACE_READ_ACTION;
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,
@@ -149,6 +155,9 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "cost_read",
     "request_read",
     "activity_read",
+    "approval_read",
+    "overview_read",
+    "run_workspace_read",
     "live_run_read",
     "goal_read",
     "run_read",
@@ -2833,6 +2842,18 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/activity-reads",
                     web::post().to(activity_reads::activity_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/approval-reads",
+                    web::post().to(approval_reads::approval_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/overview-reads",
+                    web::post().to(overview_reads::overview_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/run-workspace-reads",
+                    web::post().to(run_workspace_reads::run_workspace_reads),
                 )
                 .route(
                     "/internal/orgs/{org_id}/goal-reads",
