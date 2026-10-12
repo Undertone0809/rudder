@@ -4,9 +4,11 @@ import { Router } from "express";
 import { validate } from "../middleware/validate.js";
 import { redactApprovalPayload } from "../redaction.js";
 import { heartbeatService, requestService } from "../services/index.js";
+import { sendRequestRead } from "../services/request-read-bridge.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function requestRoutes(db: Db) {
+export function requestRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = requestService(db);
   const heartbeat = heartbeatService(db);
@@ -22,29 +24,23 @@ export function requestRoutes(db: Db) {
   });
 
   router.get("/requests/:id", async (req, res) => {
-    const request = await svc.getById(req.params.id as string);
+    const request = await svc.readIdentity(req.params.id as string);
     if (!request) {
       res.status(404).json({ error: "Request not found" });
       return;
     }
     assertCompanyAccess(req, request.orgId as string);
-    res.json(request.kind === "approval"
-      ? redactApprovalPayload(request as typeof request & { payload: Record<string, unknown> })
-      : request);
+    await sendRequestRead(res, rustFoundationBridge, req.actor, request.orgId, { operation: "detail", requestId: request.id }, db);
   });
 
   router.get("/requests/:id/block-audit-attempts", async (req, res) => {
-    const request = await svc.getById(req.params.id as string);
+    const request = await svc.readIdentity(req.params.id as string);
     if (!request) {
       res.status(404).json({ error: "Request not found" });
       return;
     }
     assertCompanyAccess(req, request.orgId as string);
-    if (request.kind !== "assistance") {
-      res.status(422).json({ error: "Only Assistance Requests have Block Audit attempts" });
-      return;
-    }
-    res.json(await svc.attemptsForRequest(request.orgId as string, request.id as string));
+    await sendRequestRead(res, rustFoundationBridge, req.actor, request.orgId, { operation: "block-audit-attempts", requestId: request.id }, db);
   });
 
   router.post(

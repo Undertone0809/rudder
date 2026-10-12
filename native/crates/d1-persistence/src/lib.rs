@@ -22,6 +22,7 @@ mod project_deletions;
 pub mod project_library;
 mod project_patches;
 pub mod project_reads;
+pub mod request_reads;
 pub mod run_visibility;
 pub mod run_workspace_updates;
 pub mod secrets;

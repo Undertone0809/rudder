@@ -1,4 +1,4 @@
-import { activityLog, agentApiKeys, agents, applyPendingMigrations, authUsers, boardApiKeys, chatContextLinks, chatConversations, createDb, issues, organizationMemberships, organizations } from "@rudderhq/db";
+import { activityLog, agentApiKeys, agents, applyPendingMigrations, authUsers, boardApiKeys, chatContextLinks, chatConversations, createDb, issues, organizationMemberships, organizations, resolveOfficialPostgresBinDir, resolveOfficialPostgresBinaries } from "@rudderhq/db";
 import { isLowSignalIssueContentOnlyUpdate } from "@rudderhq/shared";
 import { and, desc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
 import express from "express";
@@ -49,18 +49,35 @@ async function port() {
 
 async function database() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-activity-read-"));
-  const data = path.join(root, "data");
-  const binary = (name: string) => process.env.RUDDER_POSTGRES_BIN_DIR ? path.join(process.env.RUDDER_POSTGRES_BIN_DIR, name) : name;
-  const dbPort = await port();
-  await execFile(binary("initdb"), ["-D", data, "--encoding=UTF8", "--locale=C", "--auth=trust", "--username=postgres", "--no-sync"]);
-  await execFile(binary("pg_ctl"), ["-D", data, "-l", path.join(root, "postgres.log"), "-o",
-    `-h 127.0.0.1 -p ${dbPort} -k '' -c shared_buffers=16MB -c max_connections=24 -c dynamic_shared_memory_type=mmap -c timezone=${process.env.RUDDER_ACTIVITY_TEST_TIMEZONE ?? "UTC"}`, "-w", "start"]);
-  const url = `postgres://postgres@127.0.0.1:${dbPort}/postgres`;
+  const data = path.join(root, "data"), dbPort = await port();
+  const binDir = resolveOfficialPostgresBinDir();
+  const timezone = process.env.RUDDER_ACTIVITY_TEST_TIMEZONE ?? "UTC";
+  let stop: () => Promise<void>;
+  if (binDir) {
+    const binary = resolveOfficialPostgresBinaries(binDir);
+    await execFile(binary.initdb, ["-D", data, "--encoding=UTF8", "--locale=C", "--auth=trust", "--username=postgres", "--no-sync"]);
+    await execFile(binary.pgCtl, ["-D", data, "-l", path.join(root, "postgres.log"), "-o",
+      `-h 127.0.0.1 -p ${dbPort} -k '' -c shared_buffers=16MB -c max_connections=24 -c dynamic_shared_memory_type=mmap -c timezone=${timezone}`, "-w", "start"]);
+    stop = async () => { await execFile(binary.pgCtl, ["-D", data, "-m", "immediate", "-w", "stop"]); };
+  } else {
+    // CI installs the repository's embedded provider; PostgreSQL need not be on
+    // PATH. Keep the same TCP-only fixture and timezone in either provider.
+    const EmbeddedPostgres = (await import("embedded-postgres")).default;
+    const postgres = new EmbeddedPostgres({ databaseDir: data, user: "postgres", password: "synthetic", port: dbPort,
+      persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"],
+      postgresFlags: ["-h", "127.0.0.1", "-c", "unix_socket_directories=", "-c", "shared_buffers=16MB",
+        "-c", "max_connections=24", "-c", "dynamic_shared_memory_type=mmap", "-c", `timezone=${timezone}`],
+      onLog: () => {}, onError: () => {},
+    });
+    await postgres.initialise(); await postgres.start();
+    stop = async () => { await postgres.stop(); };
+  }
+  const url = `postgres://postgres:synthetic@127.0.0.1:${dbPort}/postgres`;
   await applyPendingMigrations(url);
   const db = createDb(url);
   return { db, url, close: async () => {
     await db.$client.end({ timeout: 5 });
-    await execFile(binary("pg_ctl"), ["-D", data, "-m", "immediate", "-w", "stop"]);
+    await stop();
     fs.rmSync(root, { recursive: true, force: true });
   } };
 }

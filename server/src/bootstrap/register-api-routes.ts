@@ -124,7 +124,7 @@ export function registerApiRoutes(
   }));
   api.use(goalRoutes(db, rustFoundationBridge));
   api.use(approvalRoutes(db, rustFoundationBridge));
-  api.use(requestRoutes(db));
+  api.use(requestRoutes(db, rustFoundationBridge));
   api.use(secretRoutes(db, rustFoundationBridge));
   api.use(costRoutes(db, rustFoundationBridge));
   api.use(activityRoutes(db, rustFoundationBridge));
