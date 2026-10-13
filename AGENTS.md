@@ -365,3 +365,15 @@ A change is done when all are true:
 - Do not create an empty commit for read-only work or retry a rejected push
   unchanged. Resolve recoverable Git issues within scope, and report the exact
   committed/pushed state when external access or another concrete gate blocks it.
+
+## 11. Maintenance And Incident Learning
+
+Before code cleanup or merge review, read `doc/engineering/MAINTENANCE-LESSONS.md`.
+Record new incidents there with the failing behavior, causal fix, regression
+check and remaining verification limits. Keep this entrypoint short.
+
+Do not turn failed, skipped, zero-test or stale-source checks into a pass. Do not
+hide debt by loosening thresholds, baselines or exclusions. Treat shell inputs
+as data, keep credentials out of diagnostics, and distinguish a demonstrated
+unsafe path from an unproven claim of malicious authorship. Required independent
+review and exact-candidate acceptance in section 9.1 remain unchanged.
