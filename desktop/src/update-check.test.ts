@@ -82,6 +82,114 @@ describe("desktop update checks", () => {
     expect(result.releaseUrl).toBe("stable");
   });
 
+  it("finds the stable release when recent canary releases fill the first API page", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      tag_name: `canary/v0.7.24-canary.${200 - index}`,
+      prerelease: true,
+      html_url: `canary-${200 - index}`,
+    }));
+    const requestedUrls: string[] = [];
+    const result = await checkForRudderDesktopUpdates({
+      currentVersion: "0.7.24-canary.23",
+      appName: "Rudder",
+      repo: "example/rudder",
+      releasesUrl: "https://example.test/releases",
+      requiredAssetNamesForVersion: () => [],
+      fetchImpl: async (url) => {
+        requestedUrls.push(String(url));
+        return new Response(JSON.stringify(String(url).includes("page=2")
+          ? [{ tag_name: "v0.7.23", prerelease: false, html_url: "stable" }]
+          : firstPage));
+      },
+    });
+
+    expect(result.status).toBe("up-to-date");
+    expect(result.channel).toBe("stable");
+    expect(result.latestVersion).toBe("0.7.23");
+    expect(result.releaseUrl).toBe("stable");
+    expect(requestedUrls).toEqual([
+      "https://api.github.com/repos/example/rudder/releases?per_page=100&page=1",
+      "https://api.github.com/repos/example/rudder/releases?per_page=100&page=2",
+    ]);
+  });
+
+  it("finds an eligible canary release for the Stable + Canary channel", async () => {
+    const version = "0.7.24-canary.32";
+    const result = await checkForRudderDesktopUpdates({
+      currentVersion: "0.7.24-canary.23",
+      appName: "Rudder",
+      repo: "example/rudder",
+      releasesUrl: "https://example.test/releases",
+      channel: "canary",
+      fetchImpl: async () => new Response(JSON.stringify([
+        {
+          tag_name: `canary/v${version}`,
+          prerelease: true,
+          html_url: "canary-new",
+          assets: requiredDesktopUpdateAssetNames(version, process.platform).map((name) => ({ name })),
+        },
+        {
+          tag_name: "v0.7.23",
+          prerelease: false,
+          html_url: "stable",
+          assets: requiredDesktopUpdateAssetNames("0.7.23", process.platform).map((name) => ({ name })),
+        },
+      ])),
+    });
+
+    expect(result).toMatchObject({
+      status: "update-available",
+      channel: "canary",
+      currentVersion: "0.7.24-canary.23",
+      latestVersion: version,
+      releaseUrl: "canary-new",
+    });
+  });
+
+  it("keeps a newer verified release from an earlier page if a later page fails", async () => {
+    const version = "0.7.24-canary.32";
+    const firstPage = Array.from({ length: 100 }, (_, index) => index === 0
+      ? {
+        tag_name: `canary/v${version}`,
+        prerelease: true,
+        html_url: "canary-new",
+        assets: requiredDesktopUpdateAssetNames(version, process.platform).map((name) => ({ name })),
+      }
+      : {
+        tag_name: `canary/v0.7.24-canary.${index}`,
+        prerelease: true,
+        html_url: `canary-${index}`,
+      });
+    const requestedUrls: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = await checkForRudderDesktopUpdates({
+        currentVersion: "0.7.24-canary.23",
+        appName: "Rudder",
+        repo: "example/rudder",
+        releasesUrl: "https://example.test/releases",
+        channel: "canary",
+        fetchImpl: async (url) => {
+          requestedUrls.push(String(url));
+          return String(url).includes("page=2")
+            ? new Response("temporarily unavailable", { status: 503 })
+            : new Response(JSON.stringify(firstPage));
+        },
+      });
+
+      expect(result).toMatchObject({
+        status: "update-available",
+        latestVersion: version,
+        releaseUrl: "canary-new",
+      });
+      expect(requestedUrls).toHaveLength(2);
+      expect(requestedUrls[0]).toContain("per_page=100&page=1");
+      expect(requestedUrls[1]).toContain("per_page=100&page=2");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("reports update availability against the latest stable or canary release when canary is selected", async () => {
     const result = await checkForRudderDesktopUpdates({
       currentVersion: "0.2.0-canary.41",

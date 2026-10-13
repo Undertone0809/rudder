@@ -52,6 +52,8 @@ type CheckForRudderDesktopUpdatesOptions = {
   fetchImpl?: typeof fetch;
 };
 
+const GITHUB_RELEASES_PAGE_SIZE = 100;
+
 function parseVersion(value: string): ParsedVersion | null {
   const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
   if (!match) return null;
@@ -229,16 +231,39 @@ async function fetchLatestReleaseWithFallback(options: {
   };
 
   try {
-    const response = await fetchImpl(`${apiOrigin}/repos/${repo}/releases?per_page=30`, { headers });
-    if (!response.ok) {
-      throw new Error(`GitHub release lookup failed (${response.status})`);
+    const releases: GitHubRelease[] = [];
+    let paginationError: unknown;
+    for (let page = 1; ; page += 1) {
+      try {
+        const response = await fetchImpl(
+          `${apiOrigin}/repos/${repo}/releases?per_page=${GITHUB_RELEASES_PAGE_SIZE}&page=${page}`,
+          { headers },
+        );
+        if (!response.ok) {
+          throw new Error(`GitHub release lookup failed (${response.status})`);
+        }
+
+        const payload = await response.json() as unknown;
+        if (!Array.isArray(payload)) {
+          throw new Error("GitHub release lookup returned an invalid page");
+        }
+        releases.push(...payload as GitHubRelease[]);
+        if (payload.length < GITHUB_RELEASES_PAGE_SIZE) break;
+      } catch (error) {
+        if (releases.length === 0) throw error;
+        paginationError = error;
+        console.warn("[rudder-desktop] GitHub release pagination stopped early", error);
+        break;
+      }
     }
 
-    const payload = await response.json() as GitHubRelease[];
-    const latest = chooseLatestRelease(Array.isArray(payload) ? payload : [], channel, {
+    const latest = chooseLatestRelease(releases, channel, {
       requiredAssetNamesForVersion,
     });
-    if (latest) return latest;
+    if (latest && (!paginationError || compareRudderVersions(latest.version, currentVersion) > 0)) {
+      return latest;
+    }
+    if (paginationError) throw paginationError;
   } catch (error) {
     console.warn("[rudder-desktop] GitHub releases API update check failed", error);
   }

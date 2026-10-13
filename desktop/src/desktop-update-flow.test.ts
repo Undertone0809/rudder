@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -17,9 +18,11 @@ import {
   RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV,
   RUDDER_POSTGRES_BIN_DIR_ENV,
 } from "./postgres-runtime.js";
+import { writeDesktopUpdateChannel } from "./update-channel-preference.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 const showMessageBoxMock = vi.hoisted(() => vi.fn());
+const sessionFetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
@@ -39,6 +42,11 @@ vi.mock("electron", () => ({
   },
   shell: {
     openExternal: vi.fn(),
+  },
+  session: {
+    defaultSession: {
+      fetch: sessionFetchMock,
+    },
   },
 }));
 
@@ -148,11 +156,12 @@ describe("desktop update flow", () => {
   beforeEach(() => {
     spawnMock.mockReset();
     showMessageBoxMock.mockReset();
+    sessionFetchMock.mockReset();
     fs.rmSync("/tmp/rudder-desktop-test/post-update-reload.json", { force: true });
   });
 
   it("does not show the startup update notice before the local runtime is ready", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = sessionFetchMock;
     try {
       const { flow } = createFlow({ getServerHandle: () => null });
 
@@ -160,7 +169,34 @@ describe("desktop update flow", () => {
 
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
+    }
+  });
+
+  it("checks releases through Electron's session network with the saved channel", async () => {
+    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-desktop-update-check-"));
+    writeDesktopUpdateChannel(userDataPath, "canary");
+    sessionFetchMock.mockResolvedValue(new Response(JSON.stringify([{
+      tag_name: "canary/v0.3.4-canary.1",
+      prerelease: true,
+      html_url: "canary-release",
+      assets: completeReleaseAssets("0.3.4-canary.1"),
+    }])));
+
+    try {
+      const { flow } = createFlow({ getUserDataPath: () => userDataPath });
+      const result = await flow.checkForUpdates();
+
+      expect(result).toMatchObject({
+        status: "update-available",
+        channel: "canary",
+        latestVersion: "0.3.4-canary.1",
+        releaseUrl: "canary-release",
+      });
+      expect(sessionFetchMock).toHaveBeenCalledTimes(1);
+      expect(sessionFetchMock.mock.calls[0]?.[0]).toContain("api.github.com/repos/");
+    } finally {
+      fs.rmSync(userDataPath, { recursive: true, force: true });
     }
   });
 
@@ -184,7 +220,7 @@ describe("desktop update flow", () => {
   });
 
   it("keeps manual and direct update entry points recoverable while signed out", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = sessionFetchMock;
     try {
       const { flow } = createFlow({ getServerHandle: () => null });
 
@@ -201,12 +237,12 @@ describe("desktop update flow", () => {
         expect.objectContaining({ message: "Sign in before checking for updates." }),
       );
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
     }
   });
 
   it("blocks update entry points until the account session is ready", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = sessionFetchMock;
     try {
       const { flow } = createFlow({
         getServerHandle: () => ({ runtime: { version: "0.3.3" } }),
@@ -226,7 +262,7 @@ describe("desktop update flow", () => {
         expect.objectContaining({ message: "Wait for the Local Workspace to become ready." }),
       );
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
     }
   });
 
@@ -305,7 +341,7 @@ describe("desktop update flow", () => {
       resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test"),
       stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), candidate),
     );
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = sessionFetchMock;
     try {
       const { flow } = createFlow();
 
@@ -316,12 +352,12 @@ describe("desktop update flow", () => {
       expect(readDesktopAutoUpdateState(resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test")).candidate)
         .toMatchObject({ updateId: candidate.updateId, status: "staged" });
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
     }
   });
 
   it("fails closed before an automatic check when the helper is not attested", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = sessionFetchMock;
     try {
       const { flow } = createFlow({
         hasSignedUpdatePolicyCapability: () => true,
@@ -331,7 +367,7 @@ describe("desktop update flow", () => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(spawnMock).not.toHaveBeenCalled();
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
     }
   });
 
@@ -343,7 +379,7 @@ describe("desktop update flow", () => {
       nextCheckAt: new Date(now - 1).toISOString(),
     });
     const refreshSignedUpdatePolicy = vi.fn(async () => false);
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = sessionFetchMock;
     try {
       const { flow } = createFlow({
         hasExternalUpdateHelperCapability: () => true,
@@ -358,7 +394,7 @@ describe("desktop update flow", () => {
       const nextCheckAt = Date.parse(readDesktopAutoUpdateState(statePath).nextCheckAt ?? "");
       expect(nextCheckAt).toBeGreaterThan(now + (DESKTOP_AUTO_UPDATE_INTERVAL_MS / 2));
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
       fs.rmSync(statePath, { force: true });
     }
   });
@@ -370,7 +406,7 @@ describe("desktop update flow", () => {
       ...createInitialDesktopAutoUpdateState(),
       nextCheckAt: new Date(now - 1).toISOString(),
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = sessionFetchMock;
     try {
       const { flow } = createFlow({
         hasExternalUpdateHelperCapability: () => true,
@@ -383,7 +419,7 @@ describe("desktop update flow", () => {
       const nextCheckAt = Date.parse(readDesktopAutoUpdateState(statePath).nextCheckAt ?? "");
       expect(nextCheckAt).toBeGreaterThan(now + (DESKTOP_AUTO_UPDATE_INTERVAL_MS / 2));
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
       fs.rmSync(statePath, { force: true });
     }
   });
@@ -395,7 +431,7 @@ describe("desktop update flow", () => {
       ...createInitialDesktopAutoUpdateState(),
       nextCheckAt: new Date(now - 1).toISOString(),
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = sessionFetchMock;
     try {
       const { flow } = createFlow({
         hasExternalUpdateHelperCapability: () => true,
@@ -411,7 +447,7 @@ describe("desktop update flow", () => {
       const nextCheckAt = Date.parse(readDesktopAutoUpdateState(statePath).nextCheckAt ?? "");
       expect(nextCheckAt).toBeGreaterThan(now + (DESKTOP_AUTO_UPDATE_INTERVAL_MS / 2));
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
       fs.rmSync(statePath, { force: true });
     }
   });
@@ -427,7 +463,7 @@ describe("desktop update flow", () => {
       writeDesktopAutoUpdateState(statePath, { ...current, acceptedPolicySequence: 42 });
       return true;
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+    const fetchMock = sessionFetchMock.mockResolvedValue(new Response(JSON.stringify([
       {
         tag_name: "v0.3.3",
         html_url: "https://example.test/releases/v0.3.3",
@@ -446,7 +482,7 @@ describe("desktop update flow", () => {
       expect(refreshSignedUpdatePolicy).toHaveBeenCalledTimes(1);
       expect(readDesktopAutoUpdateState(statePath).acceptedPolicySequence).toBe(42);
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
       fs.rmSync(statePath, { force: true });
     }
   });
@@ -464,7 +500,7 @@ describe("desktop update flow", () => {
     });
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+    const fetchMock = sessionFetchMock.mockResolvedValue(new Response(JSON.stringify([
       {
         tag_name: "v99.0.0",
         html_url: "https://example.test/releases/v99.0.0",
@@ -538,7 +574,7 @@ describe("desktop update flow", () => {
         preparation: null,
       });
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
       fs.rmSync(statePath, { force: true });
       fs.rmSync(artifactPath, { force: true });
     }
@@ -552,7 +588,7 @@ describe("desktop update flow", () => {
     });
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+    const fetchMock = sessionFetchMock.mockResolvedValue(new Response(JSON.stringify([
       {
         tag_name: "v99.0.0",
         html_url: "https://example.test/releases/v99.0.0",
@@ -576,7 +612,7 @@ describe("desktop update flow", () => {
       expect(spawnMock.mock.calls[0]?.[1]).toContain("--no-runtime");
       expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--desktop-runtime-best-effort");
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
       fs.rmSync(statePath, { force: true });
     }
   });
@@ -587,7 +623,7 @@ describe("desktop update flow", () => {
       ...createInitialDesktopAutoUpdateState(),
       nextCheckAt: new Date(Date.now() - 1).toISOString(),
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+    const fetchMock = sessionFetchMock.mockResolvedValue(new Response(JSON.stringify([
       {
         tag_name: "v99.0.0",
         html_url: "https://example.test/releases/v99.0.0",
@@ -606,7 +642,7 @@ describe("desktop update flow", () => {
       expect(spawnMock).not.toHaveBeenCalled();
       expect(readDesktopAutoUpdateState(statePath).candidate).toBeNull();
     } finally {
-      fetchMock.mockRestore();
+      fetchMock.mockReset();
       fs.rmSync(statePath, { force: true });
     }
   });
