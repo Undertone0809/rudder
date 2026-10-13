@@ -322,6 +322,52 @@ jobs:
             exit 1
           fi
 
+      - name: Prune superseded production deployments
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          deployment_url="${DEPLOYMENT_URL#https://}"
+          test -n "$deployment_url"
+
+          inventory_file="$RUNNER_TEMP/rudder-docs-production-deployments.json"
+          vercel ls rudder-docs \
+            --prod \
+            --format=json \
+            --scope "$VERCEL_SCOPE" \
+            --token "$VERCEL_TOKEN" > "$inventory_file"
+
+          old_deployments_file="$RUNNER_TEMP/rudder-docs-old-production-deployments.txt"
+          INVENTORY_FILE="$inventory_file" CURRENT_DEPLOYMENT="$deployment_url" node <<'NODE' > "$old_deployments_file"
+          const fs = require("fs");
+
+          const inventory = JSON.parse(fs.readFileSync(process.env.INVENTORY_FILE, "utf8"));
+          const current = process.env.CURRENT_DEPLOYMENT;
+          const deployments = Array.isArray(inventory.deployments) ? inventory.deployments : [];
+          const currentFound = deployments.some((deployment) => deployment.url === current);
+
+          if (!currentFound) {
+            throw new Error(`Current deployment ${current} was not found in the production inventory`);
+          }
+
+          for (const deployment of deployments) {
+            if (deployment.url && deployment.url !== current) {
+              console.log(deployment.url);
+            }
+          }
+          NODE
+
+          while IFS= read -r old_deployment; do
+            [ -z "$old_deployment" ] && continue
+            echo "Removing superseded docs production deployment: $old_deployment"
+            vercel remove "$old_deployment" \
+              --safe \
+              --yes \
+              --scope "$VERCEL_SCOPE" \
+              --token "$VERCEL_TOKEN"
+          done < "$old_deployments_file"
+
       - name: Create docs release tag
         run: |
           tag="${{ steps.tag.outputs.tag }}"
