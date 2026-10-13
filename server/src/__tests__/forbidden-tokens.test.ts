@@ -53,9 +53,9 @@ describe("forbidden token check", () => {
   it("reports matches without leaking which token was searched", () => {
     const exec = vi
       .fn()
-      .mockReturnValueOnce("server/file.ts:1:found\n")
+      .mockReturnValueOnce("server/file.ts\0")
       .mockImplementation(() => {
-        throw new Error("not found");
+        throw Object.assign(new Error("not found"), { status: 1 });
       });
     const log = vi.fn();
     const error = vi.fn();
@@ -71,7 +71,7 @@ describe("forbidden token check", () => {
     expect(exitCode).toBe(1);
     expect(exec).toHaveBeenCalledTimes(2);
     expect(error).toHaveBeenCalledWith("ERROR: Forbidden tokens found in tracked files:\n");
-    expect(error).toHaveBeenCalledWith("  server/file.ts:1:found");
+    expect(error).toHaveBeenCalledWith('  "server/file.ts"');
     expect(error).toHaveBeenCalledWith("\nBuild blocked. Remove the forbidden token(s) before publishing.");
   });
 });
