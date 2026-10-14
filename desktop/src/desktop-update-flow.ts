@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, dialog, session, shell } from "electron";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, rmSync } from "node:fs";
@@ -878,7 +878,6 @@ export function createDesktopUpdateFlow(context: {
   }
 
   async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
-    const channel = readDesktopUpdateChannel(app.getPath("userData"));
     const smokeReleaseApiBaseUrl = process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1"
       ? process.env.RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL?.trim()
       : undefined;
@@ -887,7 +886,8 @@ export function createDesktopUpdateFlow(context: {
       appName: app.getName(),
       repo: DESKTOP_GITHUB_REPO,
       releasesUrl: DESKTOP_RELEASES_URL,
-      channel,
+      channel: readDesktopUpdateChannel(context.getUserDataPath?.() ?? app.getPath("userData")),
+      fetchImpl: (input, init) => session.defaultSession.fetch(input, init),
       ...(smokeReleaseApiBaseUrl ? { apiBaseUrl: smokeReleaseApiBaseUrl } : {}),
     });
   }
