@@ -21,6 +21,7 @@ import { dirname, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { accountSessionRequired } from "../middleware/account-session-required.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/index.js";
@@ -40,7 +41,7 @@ const boardToken = "pcp_board_test_public_ingress_token";
 const revokedBoardToken = "pcp_board_revoked_public_ingress_token";
 const expiredBoardToken = "pcp_board_expired_public_ingress_token";
 const revokedAgentToken = "pcp_agent_revoked_public_ingress_token";
-const agentToken = "pcp_agent_test_public_ingress_token";
+const agentToken = "legacy_agent_test_public_ingress_token";
 const sessionCookie = "rudder-session=test-session-token";
 const sessionId = "better-auth-session-1";
 const ingressAuthKey = "11".repeat(32);
@@ -94,6 +95,8 @@ let publicPort: number | undefined;
 
 const agentKeyHash = createHash("sha256").update(agentToken).digest("hex");
 const revokedAgentKeyHash = createHash("sha256").update(revokedAgentToken).digest("hex");
+const localAgentJwt = createLocalAgentJwt(agentId, organizationId, "fixture", "run-local-jwt");
+if (!localAgentJwt) throw new Error("Local agent JWT fixture could not be created");
 const dialect = new PgDialect();
 
 // Compile the candidate source in this checkout. CI reuses its native:build
@@ -209,16 +212,13 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
     ];
   }
   if (table === organizationMemberships) {
-    const rows: Record<string, unknown>[] = [
-      { orgId: organizationId, principalType: "user", principalId: sessionUserId, status: "active" },
-    ];
+    const rows: Record<string, unknown>[] = [];
     if (membershipFixture.current !== "missing") {
-      rows.push({
-        orgId: organizationId,
-        principalType: "user",
-        principalId: boardUserId,
-        status: membershipFixture.current === "active" ? "active" : "inactive",
-      });
+      const status = membershipFixture.current === "active" ? "active" : "inactive";
+      rows.push(
+        { orgId: organizationId, principalType: "user", principalId: sessionUserId, status },
+        { orgId: organizationId, principalType: "user", principalId: boardUserId, status },
+      );
     }
     return rows;
   }
@@ -452,7 +452,7 @@ const forgedForwardingHeaders = {
   "x-real-ip": "203.0.113.9",
 };
 
-describe("source-binary public Actix to private Node auth workflow", () => {
+describe("source-binary public Actix authentication workflow", () => {
   beforeAll(async () => {
     const binaryPath = await buildSourceBinary();
     authServer = createPrivateAuthApp().listen(0, "127.0.0.1");
@@ -506,43 +506,41 @@ describe("source-binary public Actix to private Node auth workflow", () => {
     }
   });
 
-  it("resolves predicate-checked Board keys and injected sessions through the public Actix request", async () => {
+  it("keeps native pcp_ auth out of Node and preserves injected-session compatibility", async () => {
     const port = publicPort;
     if (port === undefined) throw new Error("Public Actix listener is not started");
     const host = `public.example:${port}`;
     const publicPath = `/api/orgs/${organizationId}/members/directory?type=agent&limit=25&query=R%26D+team&unused=1`;
 
-    for (const scenario of [
-      {
-        fixture: "board-key" as const,
-        headers: { authorization: `Bearer ${boardToken}` },
-        actor: { type: "board", source: "board_key", userId: boardUserId },
-      },
-      {
-        fixture: "session" as const,
-        headers: { cookie: sessionCookie },
-        actor: { type: "board", source: "session", userId: sessionUserId, sessionId },
-      },
-    ]) {
-      credentialFixture.current = scenario.fixture;
-      const response = await getPublicIngress(publicPath, {
-        host,
-        origin: "https://public.example",
-        ...forgedForwardingHeaders,
-        ...scenario.headers,
-      });
-      const observation = lastObservation();
+    const nativeResponse = await getPublicIngress(publicPath, {
+      host,
+      origin: "https://public.example",
+      ...forgedForwardingHeaders,
+      authorization: `Bearer ${boardToken}`,
+    });
+    expect(nativeResponse.status).toBe(503);
+    expect(nativeResponse.body).toContain("database_disabled");
+    expect(authorizationObservations).toHaveLength(0);
 
-      expect(response.status).toBe(503);
-      expect(response.body).toContain("database_disabled");
-      expect(observation.actor).toMatchObject(scenario.actor);
-      expect(observation.responseStatus).toBe(200);
-      expect(observation.body).toMatchObject({ organizationId, publicPath });
-      expectOriginalRequestContext(observation, host);
-      expectSocketForwardingContext(observation);
-      expect(observation.headers.authorization).toBe(scenario.headers.authorization);
-      expect(observation.headers.cookie).toBe(scenario.headers.cookie);
-    }
+    credentialFixture.current = "session";
+    const sessionResponse = await getPublicIngress(publicPath, {
+      host,
+      origin: "https://public.example",
+      ...forgedForwardingHeaders,
+      cookie: sessionCookie,
+    });
+    const observation = lastObservation();
+    expect(sessionResponse.status).toBe(503);
+    expect(sessionResponse.body).toContain("database_disabled");
+    expect(observation.actor).toMatchObject({
+      type: "board", source: "session", userId: sessionUserId, sessionId,
+    });
+    expect(observation.responseStatus).toBe(200);
+    expect(observation.body).toMatchObject({ organizationId, publicPath });
+    expectOriginalRequestContext(observation, host);
+    expectSocketForwardingContext(observation);
+    expect(observation.headers.authorization).toBeUndefined();
+    expect(observation.headers.cookie).toBe(sessionCookie);
   }, 20_000);
 
   it("serves root LLM documents through Rust and the private Node actor/registry adapter", async () => {
@@ -619,9 +617,8 @@ describe("source-binary public Actix to private Node auth workflow", () => {
   }, 30_000);
 
   it.each([
-    ["board-key", { authorization: `Bearer ${boardToken}` }, "board", "board_key"],
     ["session", { cookie: sessionCookie }, "board", "session"],
-    ["agent", { authorization: `Bearer ${agentToken}` }, "agent", "agent_key"],
+    ["non-pcp agent key", { authorization: `Bearer ${agentToken}` }, "agent", "agent_key"],
   ] as const)("preserves public GET semantics for %s with a different CLI agent context", async (fixture, credentials, type, source) => {
     credentialFixture.current = fixture;
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
@@ -636,15 +633,17 @@ describe("source-binary public Actix to private Node auth workflow", () => {
   }, 10_000);
 
   it.each([
-    [boardToken, 401],
-    [agentToken, 403],
-  ] as const)("retains mutation-only agent-context fences for token %s", async (token, status) => {
+    ["session", { cookie: sessionCookie }, 401],
+    ["non-pcp agent key", { authorization: `Bearer ${agentToken}` }, 403],
+  ] as const)("retains mutation-only agent-context fence for %s", async (_fixture, credentials, status) => {
+    if (credentials.cookie) credentialFixture.current = "session";
+    else credentialFixture.current = "agent";
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
-      authorization: `Bearer ${token}`,
+      ...credentials,
       "x-rudder-agent-id": "different-cli-agent",
     }, "POST");
     expect(response.status).toBe(status);
-    expect(response.body).toContain(token === boardToken ? "agent_auth_required" : "agent_context_mismatch");
+    expect(response.body).toContain(status === 401 ? "agent_auth_required" : "agent_context_mismatch");
     expect(authorizationObservations).toHaveLength(0);
   });
 
@@ -682,29 +681,56 @@ describe("source-binary public Actix to private Node auth workflow", () => {
     expect(observation.headers.runId).toBe("run-agent-1");
   }, 10_000);
 
+  it("preserves local agent JWT compatibility through the private Node adapter", async () => {
+    const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
+      authorization: `Bearer ${localAgentJwt}`,
+      "x-rudder-agent-id": agentId,
+      "x-rudder-run-id": "run-local-jwt",
+    });
+    expect(response.status).toBe(503);
+    expect(response.body).toContain("database_disabled");
+    expect(lastObservation().actor).toMatchObject({
+      type: "agent",
+      source: "agent_jwt",
+      orgId: organizationId,
+      agentId,
+      runId: "run-local-jwt",
+    });
+  }, 10_000);
+
   it.each([
-    ["wrong Board token", "pcp_board_wrong_token"],
-    ["wrong agent token", "pcp_agent_wrong_token"],
+    ["valid-shaped Board key", boardToken],
+    ["unknown Board key", "pcp_board_wrong_token"],
     ["revoked Board key", revokedBoardToken],
     ["expired Board key", expiredBoardToken],
+    ["unknown agent key", "pcp_agent_wrong_token"],
     ["revoked agent key", revokedAgentToken],
-  ])("rejects %s despite other valid seeded credentials", async (_label, token) => {
+  ])("does not fall through to Node for native %s when the Rust database is disabled", async (_label, token) => {
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
       authorization: `Bearer ${token}`,
     });
-    const observation = lastObservation();
-    expect(response.status).toBe(401);
-    expect(observation.actor.type).toBe("none");
-    expect(observation.responseStatus).toBe(401);
+    expect(response.status).toBe(503);
+    expect(response.body).toContain("database_disabled");
+    expect(authorizationObservations).toHaveLength(0);
   });
 
-  it.each(["missing", "inactive"] as const)("rejects a Board key with %s membership", async (membership) => {
-    membershipFixture.current = membership;
+  it("preserves private Node rejection for an unknown non-pcp bearer", async () => {
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
-      authorization: `Bearer ${boardToken}`,
+      authorization: "Bearer legacy_unknown_public_ingress_token",
+    });
+    expect(response.status).toBe(401);
+    expect(lastObservation().actor.type).toBe("none");
+    expect(lastObservation().responseStatus).toBe(401);
+  });
+
+  it.each(["missing", "inactive"] as const)("rejects a scoped session with %s membership", async (membership) => {
+    membershipFixture.current = membership;
+    credentialFixture.current = "session";
+    const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
+      cookie: sessionCookie,
     });
     const observation = lastObservation();
-    expect(observation.actor).toMatchObject({ type: "board", source: "board_key", orgIds: [] });
+    expect(observation.actor).toMatchObject({ type: "board", source: "session", orgIds: [] });
     expect(response.status).toBe(403);
     expect(observation.responseStatus).toBe(403);
   });

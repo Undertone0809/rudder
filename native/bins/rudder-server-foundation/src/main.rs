@@ -25,7 +25,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         startup["publicIngress"] = serde_json::json!({
             "boundAddr": public.bound_addr(), "publicListener": true,
             "directAuthorities": ["organization_member_directory"],
-            "authenticationAuthority": "private-node-adapter",
+            "nativeAuthentication": {
+                "authority": "native-pcp-bearer-resolver",
+                "recognizedBearerPrefix": "pcp_",
+                "supportedCredentialStores": ["board_api_keys", "agent_api_keys"],
+                "directRoutes": ["organization_member_directory"],
+                "recognizedInvalidCredentialsFailClosed": true,
+            },
+            "compatibilityAuthentication": {
+                "authority": "private-node-adapter",
+                "credentialForms": [
+                    "Better Auth cookie sessions",
+                    "local Agent JWTs",
+                    "local-trusted and local-implicit identities",
+                    "non-pcp_ bearer credentials",
+                ],
+            },
             "unmigratedHttpAuthority": "explicit-private-node-proxy",
         });
     }

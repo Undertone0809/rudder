@@ -134,9 +134,11 @@ state transitions, persistence, and permission decisions in Rust. Do not add
 Node/TypeScript business implementations or hidden Node fallbacks. TypeScript
 remains the frontend/client language. Temporary transport adapters must have an
 explicit boundary inventory and tests; they do not permit new Node business
-logic. The migration target is 100% of public API business authority in Rust,
-not an 80% milestone or a Rust listener proxying Node handlers. Existing legacy
-behavior is migration debt, not permission to extend it with new features.
+logic. The migration target is all first-party backend authority in Rust: public APIs,
+authentication, database migrations, workers, CLI/MCP, startup and recovery.
+Default installed workflows must pass without Node backend artifacts. A Rust
+listener proxying Node handlers is incomplete. Existing legacy behavior is
+migration debt, not permission to extend it with new features.
 
 1. Keep changes organization-scoped.
 

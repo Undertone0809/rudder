@@ -25,7 +25,7 @@ use rudder_project_goal_link_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
+use sqlx::{PgConnection, Pool, Postgres, postgres::PgPoolOptions};
 use std::{
     future::Future,
     net::{IpAddr, SocketAddr},
@@ -68,6 +68,7 @@ mod cost_reads;
 mod goal_reads;
 mod issue_metadata_reads;
 mod llm_reflection;
+mod native_bearer_auth;
 mod organization_catalog_reads;
 mod overview_reads;
 mod project_reads;
@@ -1415,10 +1416,19 @@ impl AppState {
         org_id: &str,
         query: MemberDirectoryQuery,
     ) -> HttpResponse {
+        self.organization_member_directory_with_native_auth(org_id, query, None)
+            .await
+    }
+
+    async fn organization_member_directory_with_native_auth(
+        &self,
+        org_id: &str,
+        query: MemberDirectoryQuery,
+        native_identity: Option<(&ActorIdentity, &str, &str)>,
+    ) -> HttpResponse {
         let Some(org_id) = parse_member_directory_org_id(org_id) else {
             return self.json_error(StatusCode::NOT_FOUND, "organization_not_found");
         };
-
         let options = match parse_member_directory_query(query) {
             Ok(options) => options,
             Err(MemberDirectoryQueryError::Type) => {
@@ -1434,10 +1444,84 @@ impl AppState {
                 return self.json_error(StatusCode::BAD_REQUEST, "member_directory_invalid_cursor");
             }
         };
-
         let DatabaseState::Configured(pool) = &self.database else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
+        let mut transaction = match pool.begin().await {
+            Ok(transaction) => transaction,
+            Err(_) => {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "member_directory_query_failed",
+                );
+            }
+        };
+        if let Some((actor, session_id, token_hash)) = native_identity {
+            if sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *transaction)
+                .await
+                .is_err()
+            {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "member_directory_query_failed",
+                );
+            }
+            let access = match native_bearer_auth::revalidate_native_bearer_in_snapshot(
+                &mut transaction,
+                token_hash,
+                org_id,
+                actor,
+                session_id,
+            )
+            .await
+            {
+                Ok(access) => access,
+                Err(_) => {
+                    return self.json_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "member_directory_query_failed",
+                    );
+                }
+            };
+            match access {
+                native_bearer_auth::NativeBearerAccess::Authorized => {}
+                native_bearer_auth::NativeBearerAccess::Unauthorized => {
+                    return self.json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+                }
+                native_bearer_auth::NativeBearerAccess::Forbidden => {
+                    return self.json_error(StatusCode::FORBIDDEN, "forbidden");
+                }
+            }
+        }
+
+        let page = match self
+            .member_directory_page(&mut transaction, org_id, &options)
+            .await
+        {
+            Ok(page) => page,
+            Err(_) => {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "member_directory_query_failed",
+                );
+            }
+        };
+        if transaction.commit().await.is_err() {
+            return self.json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "member_directory_query_failed",
+            );
+        }
+        bounded_json(StatusCode::OK, &page, self.config.max_response_bytes)
+    }
+
+    async fn member_directory_page(
+        &self,
+        connection: &mut PgConnection,
+        org_id: &str,
+        options: &MemberDirectoryOptions,
+    ) -> Result<MemberDirectoryPage, sqlx::Error> {
         let count_sql = format!(
             "{MEMBER_DIRECTORY_COUNT_SQL_PREFIX} {MEMBER_DIRECTORY_FROM_SQL} {}",
             member_directory_filters_sql(false)
@@ -1447,17 +1531,9 @@ impl AppState {
             .bind(org_id)
             .bind(&options.member_type)
             .bind(options.query.as_deref())
-            .fetch_one(pool)
-            .await;
-        let total = match count {
-            Ok((total,)) => total,
-            Err(_) => {
-                return self.json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "member_directory_query_failed",
-                );
-            }
-        };
+            .fetch_one(&mut *connection)
+            .await?;
+        let (total,) = count;
 
         let name = member_directory_name_sql();
         let member_type = member_directory_type_sql();
@@ -1488,17 +1564,8 @@ impl AppState {
             .bind(cursor_type)
             .bind(cursor_principal_id)
             .bind(options.limit + 1)
-            .fetch_all(pool)
-            .await;
-        let rows = match rows {
-            Ok(rows) => rows,
-            Err(_) => {
-                return self.json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "member_directory_query_failed",
-                );
-            }
-        };
+            .fetch_all(&mut *connection)
+            .await?;
         let has_more = rows.len() > options.limit as usize;
         let page_rows = if has_more {
             &rows[..options.limit as usize]
@@ -1524,16 +1591,12 @@ impl AppState {
                 principal_id: last.3.clone(),
             })
         });
-        bounded_json(
-            StatusCode::OK,
-            &MemberDirectoryPage {
-                total,
-                items,
-                next_cursor,
-                has_more,
-            },
-            self.config.max_response_bytes,
-        )
+        Ok(MemberDirectoryPage {
+            total,
+            items,
+            next_cursor,
+            has_more,
+        })
     }
 
     async fn organization_branding(

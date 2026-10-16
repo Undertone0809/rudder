@@ -324,3 +324,41 @@ Inline secret migration command:
 ```sh
 pnpm secrets:migrate-inline-env --apply
 ```
+
+## Native migration operator (explicit opt-in)
+
+The Rust `migration-service` crate provides `migration-apply` as an explicit
+operator entrypoint. Normal server startup still uses the existing migration
+owner until the separate startup cutover is accepted. Building this binary does
+not change a running instance or migrate its database.
+
+The command reads one bounded JSON request on stdin and obtains its connection
+only from `RUDDER_MIGRATION_APPLY_DATABASE_URL`. The request uses schema
+`rudder.migration-apply/v1`, `protocolVersion: 1`, `allowApply: true`, absolute
+`migrationsDir`, `recoveryDirectory`, and `pgDumpBinary` paths, and the exact
+`expectedFingerprint` from the inspected migration manifest. The explicit
+fingerprint pins the SQL and journal source; changing it during backup fails
+closed. Credentials are never command-line arguments or diagnostic output.
+
+The service takes the existing `rudder:database-migrations` advisory lock,
+rechecks the current journal, and requires a full recovery dump before upgrading
+a non-empty database. The binary runs the selected PostgreSQL `pg_dump` with
+all schemas and the migration journal included. Recovery files are private on
+Unix, checksummed, flushed, and published without overwriting existing files.
+Failed or interrupted dumps retain `.partial` files and are not accepted as
+recovery points. A completed SQL dump is retained for operator recovery.
+The current native recovery-file limit is 4 GiB and the dump timeout is ten
+minutes; exceeding either stops the operation before migrations are applied.
+
+Only use a PostgreSQL client version compatible with the target server. Validate
+recovery by restoring the completed SQL into a separate empty disposable database
+before accepting a new deployment's upgrade path. Never test restoration over
+an existing user instance. Historical SQL and Drizzle journal identities remain
+unchanged; unsupported or inconsistent legacy states are rejected for explicit
+recovery rather than guessed into a new schema.
+
+The real operator regression is `migration-service/tests/apply_cli.rs`. It
+creates its own databases in an explicitly supplied disposable PostgreSQL
+cluster, runs the executable, restores a real dump, checks data and journal
+preservation, repeats an already-current invocation, and proves a failed backup
+prevents mutation. This evidence is separate from packaged startup acceptance.

@@ -1,9 +1,15 @@
-//! Read-only migration preflight over one PostgreSQL snapshot.
+//! PostgreSQL migration preflight and an explicit opt-in migration writer.
 //!
-//! This crate reports database state for a validated migration manifest. It
-//! never acquires the migration writer lock, executes migration SQL, repairs a
-//! journal, or changes startup authority. Node remains the only migration
-//! writer until a later, separately reviewed integration replaces it.
+//! The writer preserves the existing Drizzle journal and safety sequence. It
+//! is not wired into production startup; Node remains the startup migration
+//! owner until a separately reviewed integration switches that boundary.
+
+mod apply;
+
+pub use apply::{
+    MigrationApplyError, MigrationApplyReport, MigrationApplyService,
+    MigrationRecoveryPointReceipt, NODE_MIGRATION_ADVISORY_LOCK_NAME,
+};
 
 use rudder_migration_core::MigrationManifest;
 use rudder_migration_history_core::{
