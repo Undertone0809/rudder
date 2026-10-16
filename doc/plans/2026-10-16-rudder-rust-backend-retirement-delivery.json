@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-rust-backend-retirement-20261016",
+  "status": "in_progress",
+  "owner": {
+    "root_id": "01a143e6-be90-79a0-9327-dac7179f6871",
+    "agent_id": "root"
+  },
+  "intent": {
+    "raw_request": "PLEASE IMPLEMENT THIS PLAN:\n# Rudder 全 Rust 后端迁移与 Node 退役\n\n## 目标与完成标准\n\n完成所有 Rudder 后端接口、业务逻辑和运行职责的 Rust 迁移。最终产品直接启动 Rust 后端，不再通过 Node 提供鉴权、业务处理、数据库迁移、调度或恢复能力。新增后端功能从本轮开始统一使用 Rust。\n\n保留 React 前端、Electron 桌面壳、构建工具及用户选择的外部 CLI/MCP；这些组件不能隐藏第一方 Node 后端职责。\n\n**完成必须同时满足：**\n\n- 所有后端能力清单项都有 Rust 实现、真实入口验收及旧实现退役证据。\n- 默认安装、启动、升级和核心工作流不依赖 Node 后端产物。\n- 当前候选通过独立审核、真实环境验收、跨平台打包检查及必要 CI。\n- 所有变更通过受保护 PR 交付；生产部署与源码完成分别记录。\n\n## 实施顺序\n\n| 阶段 | 实施内容 | 退出条件 |\n|---|---|---|\n| 1. 清单与约束 | 基于最新 main 重建 HTTP、WebSocket、鉴权、后台任务、迁移、CLI/MCP、启动和恢复清单；关联近期已合入成果及未合入工作 | 没有未分类能力；CI 能阻止新增 Node 后端职责 |\n| 2. 原生鉴权 | Rust 接管会话、Cookie、API Key、设备授权、OAuth 回调、组织权限及撤销检查 | 现有账号、凭据和会话兼容；无需 Node 提供身份判断 |\n| 3. 数据库与生命周期 | 将 Rust 只读迁移预检扩展为完整迁移执行器；接管 PostgreSQL 启停、备份、恢复与启动协调 | Rust 独占迁移执行；旧库升级、并发启动和失败恢复通过 |\n| 4. 全部业务接口 | 按领域迁移完整读写流程，并直接挂载到 Rust 公共入口；复用已完成的 Rust 实现 | 每个领域的查询、写入、审计、副作用和恢复均闭环，旧 Node 路径退役 |\n| 5. 执行与后台任务 | 迁移 Agent 执行编排、Chat、Automation、heartbeat、队列、调度器、集成、analytics 和 managed MCP 后端 | 单一任务所有者；取消、重试、崩溃恢复和重启不重复执行 |\n| 6. CLI/MCP 与默认切换 | 第一方 CLI/MCP 使用 Rust 实现；桌面与独立服务默认启动 Rust；移除代理和 Node 后端依赖 | 移走 Node 后端产物后，完整安装与核心工作流仍通过 |\n\n阶段 2、3 与独立业务领域可并行。业务领域按“组织/资源/Agent → Project/Goal → Issue/审批/预算/Review → 执行/Chat/Automation → 集成与恢复”推进；已有 Rust 能力直接复用，补齐剩余职责。\n\n公共入口最终切换必须等待原生鉴权完成。后台任务切换必须等待对应事务和持久化状态机完成，禁止两套实现同时拥有写入或调度权。\n\n## 架构与兼容策略\n\n- 采用现有 Actix、Tokio、SQLx 基础，组织为模块化 Rust 后端；按领域拆分模块，避免继续扩大集中式服务文件。\n- 保持现有公开 API 路径、请求响应、错误码、流式协议、CLI 命令及 MCP 工具契约。TypeScript 客户端类型和描述符通过契约生成或一致性检查保持同步。\n- 保留 PostgreSQL 数据、历史 SQL、迁移顺序和 journal 兼容性，不重置实例、不建立第二套独立迁移历史。\n- 每个写入切片同时迁移校验、权限、事务、activity/audit、outbox、幂等及相关副作用；不能只把 SQL 搬到 Rust。\n- 过渡期允许明确登记的 Node 桥接，但已迁移能力失败时不得回退到 Node。最终删除桥接、代理、旧业务实现及其运行依赖。\n- 保留现有会话与加密数据兼容；安全缺陷不作为必须复制的旧行为，修复需单独记录并验证。\n- 更新开发规范和 CI：新增后端业务只能进入 Rust；既有 Node 迁移债务只能减少，兼容代码必须关联具体退役项。\n\n## 验证与交付\n\n每批执行固定流程：**实现与作者检查 → 独立阶段审核 → 冻结候选 → 独立真实验收 → 最终审核 → PR 与 CI**。验收绑定源码、构建产物、运行实例和测试数据身份；相关内容改变后重新验证。\n\n重点覆盖：\n\n- 跨组织访问、私有 Chat、会话撤销、设备撤销、权限变更与并发竞态。\n- 大数据量、分页、时区、深层 JSON、历史数据及完整响应兼容。\n- 事务回滚、重复请求、丢失响应后重试、旧写入者隔离和审计一致性。\n- WebSocket/SSE 断连重连、背压、取消、子进程退出及崩溃恢复。\n- 旧版本数据库升级、迁移锁竞争、备份失败、迁移中断和可恢复回滚。\n- 浏览器核心流程、CLI/MCP 同等操作、真实运行及打包后的安装启动。\n\n跨包变更运行仓库完整基线；涉及启动、迁移和打包时运行 `pnpm desktop:verify`。最终增加独立的 **无 Node 后端验收**：移除后端 JS 产物，检查进程树和监听者，完成核心业务闭环，并证明没有调用旧服务。\n\n## 调度与默认约定\n\n- 当前聊天负责总体调度；子代理统一使用 `gpt-6-luna`、`xhigh`，分别负责边界清晰的实现、审核和验收。\n- 使用已创建的独立工作区，保留原工作区、用户数据及其他任务修改。\n- 先核实旧 PR 和分支是否可复用，再分派重叠领域，避免重复实现。\n- 延续原总计划，实施时更新权威清单和交付记录；历史验收保留，但不能替代当前候选证据。\n- 以已退役的后端职责和完整工作流衡量完成度，不以 Rust 代码量、接口数量或估算百分比宣布完成。\n- 当前计划模式只完成方案；代码修改、提交和运行环境切换在进入执行模式后进行。\n\n",
+    "corrections": [],
+    "non_goals": [
+      "Rewrite React or Electron renderer",
+      "Rewrite user-selected external provider tools",
+      "Reset user data",
+      "Claim production deployment from source tests"
+    ],
+    "authorization": "implementation and working-branch publication through protected PRs; production release/deployment not included"
+  },
+  "candidate": {
+    "branch": "codex/rust-backend-completion-20261016",
+    "source_ref": "HEAD",
+    "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+    "dirty_fingerprint": "unknown_in_progress",
+    "changed_paths": [],
+    "build": {
+      "id": "replace-with-build-id",
+      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab"
+    },
+    "runtime": {
+      "id": "replace-with-runtime-id",
+      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab"
+    },
+    "organization_data": {
+      "organization_id": "replace-with-org",
+      "data_id": "replace-with-data"
+    },
+    "workload_fixture": "replace-with-workload-or-not_applicable",
+    "budget_lease": {
+      "id": "replace-with-budget-lease",
+      "fingerprint": "replace-with-budget-fingerprint",
+      "expires_at": "replace-with-iso-time"
+    },
+    "acceptance_packet": {
+      "version": "root-v1",
+      "fingerprint": "fd865986e56b69210e47432237512e1a75e0cc132e394e4ff72651fa892151fe",
+      "criteria": [
+        "All first-party backend authority Rust-owned",
+        "Existing identity and migration history preserved",
+        "No hidden Node backend fallback",
+        "Installed workflows pass without Node backend artifacts",
+        "Exact-candidate independent review and acceptance plus required CI"
+      ],
+      "state_inventory": []
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "pending",
+      "candidate_fingerprint": "unknown_in_progress",
+      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+      "build_id": "replace-with-build-id",
+      "runtime_id": "replace-with-runtime-id",
+      "data_id": "replace-with-data",
+      "packet_version": "root-v1"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "unknown_in_progress",
+      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+      "build_id": "replace-with-build-id",
+      "runtime_id": "replace-with-runtime-id",
+      "data_id": "replace-with-data",
+      "packet_version": "root-v1"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "unknown_in_progress",
+      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+      "build_id": "replace-with-build-id",
+      "runtime_id": "replace-with-runtime-id",
+      "data_id": "replace-with-data",
+      "packet_version": "root-v1"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [],
+    "invalidated_receipts": []
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "isolated_risk",
+    "target_ref": "refs/heads/main",
+    "base_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+    "branch_refs": [],
+    "isolation_trigger": "concurrent_write_risk",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rust-backend-completion-20261016/rudder-oss",
+    "patch_tree_sha": "replace-with-patch-tree-sha",
+    "expected_old_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": false,
+    "unrelated_dirty_paths": [],
+    "index_fingerprint_before": "replace-with-index-fingerprint",
+    "index_fingerprint_after": "replace-with-index-fingerprint",
+    "worktree_fingerprint_before": "replace-with-worktree-fingerprint",
+    "worktree_fingerprint_after": "replace-with-worktree-fingerprint",
+    "unrelated_paths_preserved": false,
+    "index_preserved": false,
+    "evidence": [
+      "Initial working tree clean; isolated checkout created from origin/main. Original checkout untouched."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}

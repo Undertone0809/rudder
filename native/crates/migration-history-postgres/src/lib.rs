@@ -120,6 +120,16 @@ pub async fn read_snapshot_in_transaction(
     transaction: &mut Transaction<'_, Postgres>,
 ) -> Result<MigrationHistorySnapshot, MigrationHistoryPostgresError> {
     let connection: &mut PgConnection = transaction;
+    read_snapshot_on_connection(connection).await
+}
+
+/// Reads a migration-history snapshot on a caller-owned PostgreSQL connection.
+///
+/// The caller owns the transaction and any session advisory lock. This is used
+/// by migration writers that must keep both on the same physical connection.
+pub async fn read_snapshot_on_connection(
+    connection: &mut PgConnection,
+) -> Result<MigrationHistorySnapshot, MigrationHistoryPostgresError> {
     let schema = discover_schema(connection).await?;
     let Some(schema) = schema else {
         return Ok(MigrationHistorySnapshot {

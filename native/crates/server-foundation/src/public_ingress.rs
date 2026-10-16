@@ -192,6 +192,49 @@ async fn member_directory(
                 .json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full");
         }
     };
+    if let Some(token) =
+        bearer_token(&request).filter(|token| native_bearer_auth::is_native_bearer(token))
+    {
+        return match state
+            .foundation
+            .resolve_native_bearer(token, org_id.as_str())
+            .await
+        {
+            native_bearer_auth::NativeBearerResolution::Authorized {
+                actor,
+                session_id,
+                token_hash,
+            } => {
+                state
+                    .foundation
+                    .organization_member_directory_with_native_auth(
+                        org_id.as_str(),
+                        query.into_inner(),
+                        Some((&actor, &session_id, &token_hash)),
+                    )
+                    .await
+            }
+            native_bearer_auth::NativeBearerResolution::Compatibility => {
+                state.foundation.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "native_auth_classification_error",
+                )
+            }
+            native_bearer_auth::NativeBearerResolution::Unauthorized => state
+                .foundation
+                .json_error(StatusCode::UNAUTHORIZED, "unauthorized"),
+            native_bearer_auth::NativeBearerResolution::Forbidden => state
+                .foundation
+                .json_error(StatusCode::FORBIDDEN, "forbidden"),
+            native_bearer_auth::NativeBearerResolution::DatabaseDisabled => state
+                .foundation
+                .json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled"),
+            native_bearer_auth::NativeBearerResolution::Unavailable => state.foundation.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "ingress_authorization_unavailable",
+            ),
+        };
+    }
     let request_id = Uuid::new_v4().to_string();
     let nonce = Uuid::new_v4().to_string();
     let public_path = request.uri().to_string();
@@ -305,6 +348,20 @@ async fn member_directory(
         .foundation
         .organization_member_directory_authorized(org_id.as_str(), query.into_inner())
         .await
+}
+
+fn bearer_token(request: &HttpRequest) -> Option<&str> {
+    let value = request
+        .headers()
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return None;
+    }
+    let token = token.trim();
+    (!token.is_empty()).then_some(token)
 }
 
 #[derive(Deserialize)]
@@ -498,9 +555,177 @@ async fn llm_reflection(
 mod tests {
     use super::*;
     use actix_web::test;
+    use sqlx::{
+        PgPool,
+        postgres::{PgConnectOptions, PgPoolOptions},
+    };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::{env, str::FromStr};
+    use uuid::Uuid;
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
     const INTERNAL: &str = "fedcba9876543210fedcba9876543210";
+
+    async fn disposable_native_auth_pool() -> PgPool {
+        let url = env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL")
+            .expect("set RUDDER_NATIVE_AUTH_TEST_DATABASE_URL to a migrated disposable DB");
+        let parsed = url::Url::parse(&url).expect("test database URL must be valid");
+        assert!(
+            parsed
+                .path()
+                .trim_start_matches('/')
+                .to_ascii_lowercase()
+                .contains("test"),
+            "refusing public-ingress fixtures unless database name contains 'test'"
+        );
+        PgPoolOptions::new()
+            .max_connections(4)
+            .connect_with(
+                PgConnectOptions::from_str(&url)
+                    .expect("test database URL must be valid")
+                    .application_name("rudder_native_public_route_test"),
+            )
+            .await
+            .expect("connect to the migrated disposable test database")
+    }
+
+    #[actix_web::test]
+    #[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL pointing at a migrated disposable DB"]
+    async fn native_pcp_member_directory_works_without_node_auth_and_fails_closed_after_revocation()
+    {
+        let pool = disposable_native_auth_pool().await;
+        let suffix = Uuid::new_v4().simple().to_string();
+        let org_id: String = sqlx::query_scalar(
+            "INSERT INTO organizations (url_key, name, issue_prefix) VALUES ($1, $2, $3) RETURNING id::text",
+        )
+        .bind(format!("native-route-{suffix}"))
+        .bind(format!("Native route {suffix}"))
+        .bind(format!("N{}", &suffix[..7].to_ascii_uppercase()))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let user_id = format!("native-route-user-{suffix}");
+        sqlx::query(
+            r#"INSERT INTO "user" (id, name, email, created_at, updated_at)
+               VALUES ($1, 'Native Route User', $2, now(), now())"#,
+        )
+        .bind(&user_id)
+        .bind(format!("{user_id}@invalid.test"))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_memberships (org_id, principal_type, principal_id, status) VALUES ($1::uuid, 'user', $2, 'active')",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let token = format!("pcp_native_route_{suffix}");
+        let key_id: String = sqlx::query_scalar(
+            "INSERT INTO board_api_keys (user_id, name, key_hash) VALUES ($1, 'native route test', $2) RETURNING id::text",
+        )
+        .bind(&user_id)
+        .bind(native_bearer_auth::hash_token(&token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Port 1 is intentionally unavailable. A successful native request
+        // proves it did not depend on the private Node authorization adapter.
+        let config = ServerConfig {
+            database_url: Some(env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap()),
+            actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+            workers: 1,
+            ..ServerConfig::default()
+        };
+        let foundation = Arc::new(AppState::new(config).unwrap());
+        let runtime = PublicIngressRuntime::bind(
+            PublicIngressConfig::new(
+                "127.0.0.1:0".parse().unwrap(),
+                "http://127.0.0.1:1",
+                INTERNAL,
+            )
+            .unwrap(),
+            foundation,
+        )
+        .unwrap();
+        let address = runtime.bound_addr();
+        let control = runtime.control();
+        let task = actix_web::rt::spawn(runtime.run());
+        let client = awc::Client::default();
+        let url = format!("http://{address}/api/orgs/{org_id}/members/directory");
+
+        let mut valid = client
+            .get(&url)
+            .insert_header((header::AUTHORIZATION, format!("Bearer {token}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(valid.status(), StatusCode::OK);
+        let page: serde_json::Value = valid.json().await.unwrap();
+        assert_eq!(page["total"], 1);
+        assert_eq!(page["items"][0]["name"], "Native Route User");
+        let touched: bool = sqlx::query_scalar(
+            "SELECT last_used_at IS NOT NULL FROM board_api_keys WHERE id = $1::uuid",
+        )
+        .bind(&key_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(touched);
+
+        sqlx::query("UPDATE board_api_keys SET revoked_at = now() WHERE id = $1::uuid")
+            .bind(&key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let revoked = client
+            .get(&url)
+            .insert_header((header::AUTHORIZATION, format!("Bearer {token}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+
+        let unknown = client
+            .get(&url)
+            .insert_header((
+                header::AUTHORIZATION,
+                format!("Bearer pcp_unknown_{suffix}"),
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::UNAUTHORIZED);
+
+        control.stop(true).await;
+        task.await.unwrap().unwrap();
+        sqlx::query("DELETE FROM board_api_keys WHERE id = $1::uuid")
+            .bind(&key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "DELETE FROM organization_memberships WHERE org_id = $1::uuid AND principal_id = $2",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(r#"DELETE FROM "user" WHERE id = $1"#)
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM organizations WHERE id = $1::uuid")
+            .bind(&org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
 
     #[actix_web::test]
     async fn active_authenticated_public_websocket_closes_when_ingress_stops() {

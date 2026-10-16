@@ -39,8 +39,9 @@ Node runtime business authority. Coordinate data-model changes with
 
 ## Target And Honest Coverage
 
-The target is 100% of Rudder's public API business authority implemented in
-Rust. An 80% threshold, selected domains, or a public Rust listener forwarding
+The target is 100% of Rudder's first-party backend runtime authority implemented
+in Rust: public APIs and streams, authentication, database migrations, workers,
+CLI/MCP, startup, and recovery. An 80% threshold, selected domains, or a public Rust listener forwarding
 to Node is not completion. Frontend TypeScript is outside this backend target.
 
 Keep ingress/transport coverage separate from business-authority coverage:
@@ -159,3 +160,21 @@ process by its non-business responsibility. A scoped feature can be complete
 while global migration remains incomplete; say both explicitly. Release readiness
 and production verification remain separate claims needing their own evidence
 and authorization.
+
+## Final Node Backend Retirement
+
+Temporary TypeScript transports are migration scaffolding, not retained backend
+runtimes. The terminal product must start and complete its workflows without
+the Node backend package, private auth adapter, HTTP/WebSocket proxy, migration
+runner, scheduler, or JavaScript first-party CLI/MCP service. Electron remains
+a shell and renderer host; it must delegate backend decisions to Rust. Frontend,
+build/test tooling, bounded download/verification launchers, and user-selected
+external provider CLIs/MCPs remain allowed.
+
+Retirement acceptance removes the legacy backend artifacts from a disposable
+installation, then exercises authentication, persisted business workflows,
+streaming, CLI/MCP, upgrade, restart, and recovery. Record listeners and process
+ancestry, distinguish allowed external tools from Rudder-owned services, and
+prove native failure cannot start a hidden legacy backend. Preserve user data,
+existing migration history, credentials, and public contracts. Database recovery
+must use a verified recovery point; never reset an existing profile to pass.

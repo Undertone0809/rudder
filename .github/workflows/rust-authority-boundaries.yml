@@ -1,0 +1,71 @@
+name: Rust authority boundaries
+
+on:
+  pull_request:
+    paths:
+      - "native/**"
+      - "packages/db/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/rust-authority-boundaries.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  native-boundaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-ci-only
+          POSTGRES_DB: native_auth_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUDDER_NATIVE_AUTH_TEST_DATABASE_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:5432/native_auth_test
+      RUDDER_MIGRATION_SERVICE_TEST_ADMIN_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:5432/postgres
+      RUDDER_MIGRATION_APPLY_TEST_ADMIN_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:5432/postgres
+      RUDDER_TEST_PG_DUMP: /usr/lib/postgresql/16/bin/pg_dump
+      RUDDER_TEST_PSQL: /usr/lib/postgresql/16/bin/psql
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install fixture prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          pnpm install --frozen-lockfile
+      - name: Prepare legacy auth fixture
+        working-directory: packages/db
+        env:
+          DATABASE_URL: ${{ env.RUDDER_NATIVE_AUTH_TEST_DATABASE_URL }}
+        run: pnpm exec tsx src/migrate.ts
+      - name: Verify native credentials and real public entry
+        run: |
+          for test in \
+            postgres_bearer_resolution_preserves_scope_status_expiry_and_touch_contracts \
+            committed_revocation_or_expiry_wins_a_concurrent_last_used_touch \
+            native_pcp_member_directory_works_without_node_auth_and_fails_closed_after_revocation; do
+            cargo test --locked --manifest-path native/Cargo.toml \
+              -p rudder-server-foundation-core --lib "$test" -- --ignored --nocapture
+          done
+      - name: Verify migration locking, historical upgrade, and real backup restore
+        run: |
+          cargo test --locked --manifest-path native/Cargo.toml \
+            -p rudder-migration-service --test postgres_apply -- --ignored --nocapture
+          cargo test --locked --manifest-path native/Cargo.toml \
+            -p rudder-migration-service --test apply_cli -- --ignored --nocapture

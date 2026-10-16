@@ -106,6 +106,28 @@ jobs:
             git diff-tree --no-commit-id --name-only -r "$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
           fi
 
+      - name: Verify Rust backend authority inventory and ratchet
+        env:
+          BASE_SHA: ${{ steps.comparison.outputs.sha }}
+        run: |
+          set -euo pipefail
+          node --test scripts/rust-backend-authority-inventory.test.mjs
+          node scripts/rust-backend-authority-inventory.mjs check
+          if [[ -z "$BASE_SHA" ]]; then
+            echo "A comparison source is required for the backend authority ratchet" >&2
+            exit 1
+          fi
+          # Once installed, use the base revision's checker so a PR cannot
+          # weaken its own enforcement. The installation PR is reviewed as
+          # the explicit bootstrap and uses its new checker only once.
+          checker="$RUNNER_TEMP/rust-backend-authority-inventory.mjs"
+          if git cat-file -e "${BASE_SHA}:scripts/rust-backend-authority-inventory.mjs" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/rust-backend-authority-inventory.mjs" > "$checker"
+          else
+            cp scripts/rust-backend-authority-inventory.mjs "$checker"
+          fi
+          node "$checker" compare --root "$GITHUB_WORKSPACE" --compare-ref "$BASE_SHA"
+
       - name: Select deterministic qualification profile
         id: impact
         env:
