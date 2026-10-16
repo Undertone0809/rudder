@@ -232,7 +232,13 @@ async fn ingress_readiness(state: web::Data<IngressState>, request: HttpRequest)
     if let Some(session_auth) = state.config.session_auth.as_ref() {
         // Readiness is an internal anonymous request, subject to the same
         // private-hop proof guard as public requests. Never bypass that guard.
-        let proof = match issue_assertion(session_auth, "GET", "/api/health", None) {
+        let anonymous = NativeIngressIdentity::None;
+        let proof = match issue_assertion(
+            &session_auth.assertion_key,
+            "GET",
+            "/api/health",
+            &anonymous,
+        ) {
             Ok(proof) => proof,
             Err(_) => {
                 return state.foundation.json_error(
