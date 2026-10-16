@@ -47,7 +47,7 @@
         "identity/src"
       ],
       "source_files": 378,
-      "structural_surfaces": 88
+      "structural_surfaces": 90
     },
     {
       "id": "database_queries_and_writers",
@@ -6932,7 +6932,7 @@
     },
     {
       "path": "server/src/services/workspace-file-native.ts",
-      "sha256": "45bd7cdf6182214985401f865b3a544301b9f965f9c995079cf65ba4c06ad60c",
+      "sha256": "0347ba13fd0fc844e5d355d52bc182975db81948c752e9139597bfb40a6c6a1d",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -8749,7 +8749,7 @@
     "runtime_resource_ownership": 14,
     "sql_dml_candidate": 38,
     "websocket_event": 3,
-    "worker_schedule_candidate": 63
+    "worker_schedule_candidate": 65
   },
   "structural_surfaces": [
     {
@@ -58099,6 +58099,26 @@
       "receiver": null,
       "method": "setTimeout",
       "expression": "resolve"
+    },
+    {
+      "type": "worker_schedule_candidate",
+      "family": "server_lifecycle_and_workers",
+      "source": "server/src/services/workspace-file-native.ts",
+      "line": 190,
+      "signature": "server/src/services/workspace-file-native.ts|worker-schedule-candidate|setTimeout|() => { if (!isLiveOwnedChild(child, pid)) return; try { child.kill(\"SIGKILL\")… [sha256:8de19b3993db7952ae1bca64fe1eb80711257d6fab96cf96ec9bcb2ef0559458]",
+      "receiver": null,
+      "method": "setTimeout",
+      "expression": "() => { if (!isLiveOwnedChild(child, pid)) return; try { child.kill(\"SIGKILL\"); } catch { // A failed signal is not proof of exit; retain the close deadline. } }"
+    },
+    {
+      "type": "worker_schedule_candidate",
+      "family": "server_lifecycle_and_workers",
+      "source": "server/src/services/workspace-file-native.ts",
+      "line": 204,
+      "signature": "server/src/services/workspace-file-native.ts|worker-schedule-candidate|setTimeout|() => { reject(new WorkspaceFileNativeError(\"workspace_file_cleanup_failed\", false, false)); }",
+      "receiver": null,
+      "method": "setTimeout",
+      "expression": "() => { reject(new WorkspaceFileNativeError(\"workspace_file_cleanup_failed\", false, false)); }"
     },
     {
       "type": "worker_schedule_candidate",
