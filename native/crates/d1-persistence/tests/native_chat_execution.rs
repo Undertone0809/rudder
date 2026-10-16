@@ -196,7 +196,7 @@ async fn prepare(database: &Database, host: &ExecutionHost) -> (VerifiedActor, S
         "body": "begin a durable native execution",
     }))
     .expect("valid admission request");
-    let receipt = execute(&database.pool, &actor, ORG, &admission)
+    let receipt = execute(&database.pool, &actor, ORG, &admission, host.context())
         .await
         .expect("admit native chat");
     (
@@ -228,6 +228,147 @@ async fn seed_execution(
     .expect("claim first native execution owner");
     let fence = claimed.fence;
     (actor, run_id, attempt_id, fence)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn admission_resumes_exact_open_binding_thread_and_claim_preserves_it() {
+    let database = Database::start().await;
+    let host = ExecutionHost::new();
+    let (actor, first_run_id, _first_attempt_id) = prepare(&database, &host).await;
+    let context_snapshot: Value = sqlx::query_scalar(
+        "SELECT context_snapshot FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&first_run_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read first admitted binding association");
+    let binding_id = context_snapshot["runtimeBindingId"]
+        .as_str()
+        .expect("RuntimeBinding id");
+    let segment_id = context_snapshot["nativeSegmentId"]
+        .as_str()
+        .expect("NativeSegment id");
+
+    // Model a finished earlier Run whose exact native Thread is still the
+    // current open Segment. These fixture updates are fenced and affect only
+    // the disposable PostgreSQL instance.
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin prior-run fixture");
+    sqlx::query("SELECT set_config('rudder.native_chat_write', 'native_chat:admission', true)")
+        .execute(&mut *tx)
+        .await
+        .expect("mark fixture transaction");
+    sqlx::query(
+        "UPDATE heartbeat_runs SET status='failed', finished_at=clock_timestamp(),
+             updated_at=clock_timestamp()
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&first_run_id)
+    .execute(&mut *tx)
+    .await
+    .expect("finish earlier Run fixture");
+    sqlx::query(
+        "UPDATE chat_generations SET status='failed', completed_at=clock_timestamp(),
+             updated_at=clock_timestamp()
+         WHERE org_id=$1::uuid AND conversation_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(CHAT)
+    .execute(&mut *tx)
+    .await
+    .expect("finish earlier Generation fixture");
+    sqlx::query(
+        "UPDATE native_segments SET state='open', native_session_id=$1,
+             updated_at=clock_timestamp()
+         WHERE org_id=$2::uuid AND binding_id=$3::uuid AND id=$4::uuid",
+    )
+    .bind(OPAQUE_THREAD)
+    .bind(ORG)
+    .bind(binding_id)
+    .bind(segment_id)
+    .execute(&mut *tx)
+    .await
+    .expect("persist exact existing Thread locator");
+    tx.commit().await.expect("commit prior-run fixture");
+
+    let second_request: AdmissionRequest = serde_json::from_value(json!({
+        "operation": "submit_native_chat_turn",
+        "conversationId": CHAT,
+        "clientMutationId": "native-execution-resume-2",
+        "body": "continue the exact Native Thread",
+    }))
+    .expect("valid continuation request");
+    let receipt = execute(&database.pool, &actor, ORG, &second_request, host.context())
+        .await
+        .expect("admit exact existing Thread resume");
+    let (run_id, attempt_id): (String, String) = sqlx::query_as(
+        "SELECT r.id::text, a.id::text FROM heartbeat_runs r
+         JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id
+         WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(receipt["runId"].as_str().expect("admitted Run id"))
+    .fetch_one(&database.pool)
+    .await
+    .expect("read resumed execution identities");
+    assert_eq!(run_id, receipt["runId"]);
+    let (run_snapshot, intent, reuse_scope, session_before): (
+        Value,
+        Value,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT context_snapshot, session_intent_json, session_reuse_scope, session_id_before
+         FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&run_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read resumed Run session intent");
+    assert_eq!(run_snapshot["runtimeBindingId"], binding_id);
+    assert_eq!(run_snapshot["nativeSegmentId"], segment_id);
+    assert_eq!(intent["kind"], "resume");
+    assert_eq!(intent["reuseScope"], "explicit");
+    assert_eq!(intent["sessionId"], OPAQUE_THREAD);
+    assert_eq!(reuse_scope, "explicit");
+    assert_eq!(session_before.as_deref(), Some(OPAQUE_THREAD));
+    let (phase, checkpoint_thread, provider_thread, resume_source): (
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = sqlx::query_as(
+        "SELECT protocol_phase, checkpoint_json->>'threadId', provider_thread_id, resume_source
+         FROM heartbeat_run_attempts WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(&run_id)
+    .bind(&attempt_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read resumed Attempt checkpoint");
+    assert_eq!(phase, "thread_known");
+    assert_eq!(checkpoint_thread.as_deref(), Some(OPAQUE_THREAD));
+    assert_eq!(provider_thread.as_deref(), Some(OPAQUE_THREAD));
+    assert_eq!(resume_source, "fresh");
+
+    let claimed = claim(
+        &database.pool,
+        &actor,
+        ORG,
+        &run_id,
+        &attempt_id,
+        host.context(),
+    )
+    .await
+    .expect("claim must revalidate and preserve exact Thread continuity");
+    assert_eq!(claimed.fence.identity().run_id, run_id);
 }
 
 fn assert_conflict<T>(result: Result<T, Error>) {
@@ -268,3 +409,6 @@ mod deletions;
 mod fencing;
 #[path = "native_chat_execution/ownership.rs"]
 mod ownership;
+
+#[path = "native_chat_execution/continuity.rs"]
+mod continuity;

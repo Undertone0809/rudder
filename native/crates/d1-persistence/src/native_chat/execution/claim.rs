@@ -1,11 +1,14 @@
 use super::{ExecutionFence, GENERATION_CONTROL_LEASE_SECONDS, NATIVE_WRITE_MARKER, Result, http};
 use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activity_options};
 use crate::native_chat::config::{LocalHostContext, ResolvedCodexConfig, resolve_codex_config};
+use crate::native_chat::locks::{
+    lock_primary_issue_path_before_conversation, verify_selected_agent_hint,
+};
 use crate::runtime_bindings;
 use rudder_auth_core::VerifiedActor;
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::json;
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::{PgPool, Row};
 
 /// A first-claim receipt carrying the trusted, transactionally resolved local
 /// runtime configuration alongside its in-process owner fence. This type has
@@ -14,151 +17,6 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 pub struct ClaimedExecution {
     pub fence: ExecutionFence,
     pub config: ResolvedCodexConfig,
-}
-
-/// Locks the optional primary-Issue path in the same order used by its
-/// cascading foreign keys: Project, ProjectWorkspace, then Issue. The initial
-/// reads are hints only; each locked row is checked against its hint before
-/// the caller locks the Conversation. This avoids Issue→Conversation and
-/// Workspace→Issue cycles with concurrent deletion.
-async fn lock_primary_issue_path_before_conversation(
-    tx: &mut Transaction<'_, Postgres>,
-    organization_id: &str,
-    conversation_id: &str,
-) -> Result<Option<String>> {
-    let conversation = sqlx::query(
-        "SELECT primary_issue_id::text AS primary_issue_id
-         FROM chat_conversations
-         WHERE org_id=$1::uuid AND id=$2::uuid",
-    )
-    .bind(organization_id)
-    .bind(conversation_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or_else(|| http(404, "Chat conversation not found"))?;
-    let issue_id: Option<String> = conversation.try_get("primary_issue_id")?;
-    let Some(issue_id) = issue_id else {
-        return Ok(None);
-    };
-
-    let issue_hint = sqlx::query(
-        "SELECT project_id::text AS project_id,
-                project_workspace_id::text AS project_workspace_id
-         FROM issues
-         WHERE org_id=$1::uuid AND id=$2::uuid",
-    )
-    .bind(organization_id)
-    .bind(&issue_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or_else(|| http(409, "Chat primary Issue changed"))?;
-    let issue_project_id: Option<String> = issue_hint.try_get("project_id")?;
-    let issue_workspace_id: Option<String> = issue_hint.try_get("project_workspace_id")?;
-
-    let workspace_project_id = if let Some(workspace_id) = issue_workspace_id.as_deref() {
-        let workspace = sqlx::query(
-            "SELECT project_id::text AS project_id
-             FROM project_workspaces
-             WHERE org_id=$1::uuid AND id=$2::uuid",
-        )
-        .bind(organization_id)
-        .bind(workspace_id)
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or_else(|| http(409, "Chat primary Issue workspace changed"))?;
-        Some(workspace.try_get::<String, _>("project_id")?)
-    } else {
-        None
-    };
-
-    let project_id = match (issue_project_id.as_deref(), workspace_project_id.as_deref()) {
-        (Some(issue_project), Some(workspace_project)) if issue_project != workspace_project => {
-            return Err(http(409, "Chat primary Issue workspace changed"));
-        }
-        (Some(issue_project), _) => Some(issue_project),
-        (None, Some(workspace_project)) => Some(workspace_project),
-        (None, None) => None,
-    };
-
-    if let Some(project_id) = project_id {
-        let project = sqlx::query_scalar::<_, String>(
-            "/* native_chat_claim_project_prelock */
-             SELECT id::text FROM projects
-             WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
-        )
-        .bind(organization_id)
-        .bind(project_id)
-        .fetch_optional(&mut **tx)
-        .await?;
-        if project.is_none() {
-            return Err(http(409, "Chat primary Issue project changed"));
-        }
-    }
-
-    if let (Some(workspace_id), Some(expected_project_id)) = (
-        issue_workspace_id.as_deref(),
-        workspace_project_id.as_deref(),
-    ) {
-        let locked_workspace = sqlx::query_scalar::<_, String>(
-            "/* native_chat_claim_workspace_prelock */
-             SELECT project_id::text FROM project_workspaces
-             WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
-        )
-        .bind(organization_id)
-        .bind(workspace_id)
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or_else(|| http(409, "Chat primary Issue workspace changed"))?;
-        if locked_workspace != expected_project_id {
-            return Err(http(409, "Chat primary Issue workspace changed"));
-        }
-    }
-
-    let locked_issue = sqlx::query(
-        "/* native_chat_claim_issue_prelock */
-         SELECT project_id::text AS project_id,
-                project_workspace_id::text AS project_workspace_id
-         FROM issues
-         WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
-    )
-    .bind(organization_id)
-    .bind(&issue_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or_else(|| http(409, "Chat primary Issue changed"))?;
-    let locked_project_id: Option<String> = locked_issue.try_get("project_id")?;
-    let locked_workspace_id: Option<String> = locked_issue.try_get("project_workspace_id")?;
-    if locked_project_id != issue_project_id || locked_workspace_id != issue_workspace_id {
-        return Err(http(409, "Chat primary Issue context changed"));
-    }
-
-    Ok(Some(issue_id))
-}
-
-/// Reject a stale Run→Agent association before reading Issue or Project hints.
-/// The Conversation is revalidated again after its lock; this cheap precheck
-/// keeps an Agent that is no longer selected from taking unrelated path locks.
-async fn verify_selected_agent_hint(
-    tx: &mut Transaction<'_, Postgres>,
-    organization_id: &str,
-    conversation_id: &str,
-    expected_agent_id: &str,
-) -> Result<()> {
-    let conversation = sqlx::query(
-        "/* native_chat_claim_selected_agent_precheck */
-         SELECT COALESCE(preferred_agent_id, routed_agent_id)::text AS selected_agent_id
-         FROM chat_conversations WHERE org_id=$1::uuid AND id=$2::uuid",
-    )
-    .bind(organization_id)
-    .bind(conversation_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or_else(|| http(404, "Chat conversation not found"))?;
-    let selected_agent_id: Option<String> = conversation.try_get("selected_agent_id")?;
-    if selected_agent_id.as_deref() != Some(expected_agent_id) {
-        return Err(http(409, "Native Chat selected Agent changed"));
-    }
-    Ok(())
 }
 
 /// Claim the single admitted Native Chat execution for its first local owner.
@@ -181,6 +39,7 @@ pub async fn claim(
     }
 
     let mut tx = pool.begin().await?;
+    super::super::auth::authorize_org(&mut tx, actor, &organization_id).await?;
     let hint = sqlx::query(
         "SELECT agent_id::text AS agent_id,
                 chat_conversation_id::text AS conversation_id,
@@ -199,6 +58,9 @@ pub async fn claim(
         conversation_id.ok_or_else(|| http(409, "Run is not attached to Native Chat"))?;
     let generation_id =
         generation_id.ok_or_else(|| http(409, "Run is not attached to Native Chat"))?;
+
+    runtime_bindings::lock_native_chat_target_tx(&mut tx, &organization_id, &conversation_id)
+        .await?;
 
     // Authorize without taking a row lock first. The issue/project hint reads
     // below happen only after organization and target authorization; lock
@@ -323,6 +185,8 @@ pub async fn claim(
                 scene, target_type, target_id, process_pid,
                 process_started_at IS NOT NULL AS process_started,
                 process_exited_at IS NOT NULL AS process_exited, session_id_after
+                , context_snapshot, session_reuse_scope, session_id_before,
+                session_intent_json
          FROM heartbeat_runs
          WHERE org_id=$1::uuid AND id=$2::uuid
          FOR UPDATE NOWAIT",
@@ -354,6 +218,10 @@ pub async fn claim(
     let process_started: bool = run.try_get("process_started")?;
     let process_exited: bool = run.try_get("process_exited")?;
     let session_id_after: Option<String> = run.try_get("session_id_after")?;
+    let context_snapshot: serde_json::Value = run.try_get("context_snapshot")?;
+    let session_reuse_scope: String = run.try_get("session_reuse_scope")?;
+    let session_id_before: Option<String> = run.try_get("session_id_before")?;
+    let session_intent: serde_json::Value = run.try_get("session_intent_json")?;
     if run_agent_id != agent_id
         || run_conversation_id.as_deref() != Some(conversation_id.as_str())
         || run_generation_id.as_deref() != Some(generation_id.as_str())
@@ -424,9 +292,7 @@ pub async fn claim(
         || run_attempt_epoch.is_none_or(|epoch| epoch <= 0)
         || attempt_generation_epoch != Some(generation_epoch)
         || connection_epoch.is_none_or(|epoch| epoch <= 0)
-        || phase.as_deref() != Some("no_thread_request")
-        || attempt_thread.is_some()
-        || attempt_turn.is_some()
+        || phase.is_none()
     {
         return Err(http(
             409,
@@ -442,12 +308,80 @@ pub async fn claim(
     checkpoint
         .validate()
         .map_err(|_| http(409, "Native Chat checkpoint is invalid"))?;
-    if checkpoint.phase() != NativeChatProtocolPhase::NoThreadRequest
-        || checkpoint.revision() != 0
-        || checkpoint.thread_id().is_some()
-        || checkpoint.turn_id().is_some()
-    {
-        return Err(http(409, "Native Chat attempt has already advanced"));
+
+    let binding_id = context_snapshot
+        .get("runtimeBindingId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| http(409, "Native Chat Run has no binding association"))?;
+    let segment_id = context_snapshot
+        .get("nativeSegmentId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| http(409, "Native Chat Run has no segment association"))?;
+    let binding_identity = super::super::binding_identity(&config);
+    let binding = runtime_bindings::read_native_chat_binding_tx(
+        &mut tx,
+        actor,
+        &organization_id,
+        &conversation_id,
+        &binding_identity,
+        binding_id,
+        segment_id,
+    )
+    .await?;
+    let checkpoint_matches_binding =
+        match (binding.state.as_str(), binding.native_session_id.as_deref()) {
+            ("pending", None) => {
+                checkpoint.phase() == NativeChatProtocolPhase::NoThreadRequest
+                    && checkpoint.thread_id().is_none()
+                    && checkpoint.turn_id().is_none()
+                    && phase.as_deref() == Some(checkpoint.phase().as_str())
+                    && session_reuse_scope == "none"
+                    && session_id_before.is_none()
+                    && session_intent
+                        .get("kind")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("fresh")
+                    && session_intent
+                        .get("reuseScope")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("none")
+                    && session_intent.get("sessionId") == Some(&serde_json::Value::Null)
+                    && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                    && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                    && attempt_thread.is_none()
+                    && attempt_turn.is_none()
+            }
+            ("open", Some(thread_id)) => {
+                checkpoint.phase() == NativeChatProtocolPhase::ThreadKnown
+                    && checkpoint.thread_id() == Some(thread_id)
+                    && checkpoint.turn_id().is_none()
+                    && phase.as_deref() == Some(checkpoint.phase().as_str())
+                    && session_reuse_scope == "explicit"
+                    && session_id_before.as_deref() == Some(thread_id)
+                    && session_intent
+                        .get("kind")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("resume")
+                    && session_intent
+                        .get("reuseScope")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("explicit")
+                    && session_intent
+                        .get("sessionId")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(thread_id)
+                    && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                    && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                    && attempt_thread.as_deref() == Some(thread_id)
+                    && attempt_turn.is_none()
+            }
+            _ => false,
+        };
+    if checkpoint.revision() != 0 || !checkpoint_matches_binding {
+        return Err(http(
+            409,
+            "Native Chat attempt no longer matches its binding and session intent",
+        ));
     }
 
     let agent = sqlx::query(
