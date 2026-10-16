@@ -697,6 +697,11 @@ describe("source-built Rust public native session workflow", () => {
       "x-rudder-run-id": agentRunId,
     });
     expect(matchingRunIdDirectory.status).toBe(200);
+    const whitespaceRunIdDirectory = await getSessionFromPublic(`/api/orgs/${orgId}/members/directory`, {
+      authorization: `Bearer ${jwt}`,
+      "x-rudder-run-id": "   ",
+    });
+    expect(whitespaceRunIdDirectory.status).toBe(200);
     const mismatchedRunIdDirectory = await getSessionFromPublic(`/api/orgs/${orgId}/members/directory`, {
       authorization: `Bearer ${jwt}`,
       "x-rudder-run-id": `${agentRunId}-different`,

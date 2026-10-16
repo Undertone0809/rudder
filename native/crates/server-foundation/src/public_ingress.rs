@@ -475,7 +475,8 @@ fn agent_run_id_header(request: &HttpRequest) -> Option<String> {
     if values.next().is_some() {
         return Some(String::new());
     }
-    Some(value.to_str().map(str::trim).unwrap_or_default().to_owned())
+    let normalized = value.to_str().map(str::trim).unwrap_or_default();
+    (!normalized.is_empty()).then(|| normalized.to_owned())
 }
 
 fn agent_run_context_mismatch_response(

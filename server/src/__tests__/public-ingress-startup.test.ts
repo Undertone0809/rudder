@@ -25,6 +25,20 @@ describe("explicit public ingress startup", () => {
     expect(reject).not.toHaveBeenCalled();
   });
 
+  it("does not enable local implicit identity when Desktop explicitly disables native ingress", async () => {
+    const ingress = await preparePublicIngressStartup(
+      config({ rustPublicIngressMode: "off" }),
+      3100,
+      undefined,
+      "desktop",
+    );
+    expect(ingress).toMatchObject({
+      nodeListenHost: "127.0.0.1",
+      nodeListenPort: 3100,
+      appOptions: {},
+    });
+  });
+
   it("rejects implicit Board exposure and nonnumeric topology before resource acquisition", () => {
     expect(() => assertPublicIngressExposure(config({ host: "0.0.0.0" }), false)).toThrow("implicit local Board");
     expect(() => assertPublicIngressExposure(config({ host: "localhost" }), false)).toThrow("numeric listener");
