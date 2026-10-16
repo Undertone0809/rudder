@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Config } from "../config.js";
 import { betterAuthSessionCookieSettings } from "../auth/better-auth.js";
+import type { Config } from "../config.js";
 
 function config(overrides: Partial<Config> = {}) {
   return {
