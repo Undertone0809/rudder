@@ -7,7 +7,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
     process::Stdio,
@@ -323,7 +323,7 @@ fn finish_backup(
     fs::hard_link(partial, final_path).map_err(|_| "backup_publish_failed")?;
     fs::remove_file(partial).map_err(|_| "backup_publish_failed")?;
     #[cfg(unix)]
-    File::open(final_path.parent().ok_or("backup_directory_failed")?)
+    std::fs::File::open(final_path.parent().ok_or("backup_directory_failed")?)
         .and_then(|directory| directory.sync_all())
         .map_err(|_| "backup_sync_failed")?;
     Ok(MigrationRecoveryPointReceipt {
