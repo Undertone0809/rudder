@@ -17,6 +17,12 @@ updated_at: 2026-10-16
 
 ## Current candidate and limits
 
+The current stack checkpoint is `9d15578b44e6890445814ac057a741f926cde9ca`, based on policy-only PR #310 (`51db724038a732faa71963b91db8f1c464510c68`). All server/native/packages product bytes are identical to `e9331764356dd6d6e610dbf0ac8afe465f4a0c4e`; the rebase only incorporates the independently accepted checker policy. Current inventory and authority comparison pass with exactly one declared, visible proof middleware admission and no other new authority. This stack cannot publish against a base that lacks the trusted checker policy.
+
+Independent reviewer `/root/inventory_guard` returned bounded `ACCEPT` for the `2be6683ad` permission-query consolidation and independently passed 34 tests across auth middleware, proof admission and the source-built public ingress workflow. The nine Node/shared-schema file hashes and responsibility classifications recorded in the inventory were inspected at `e93317643`. The earlier session implementation and final route/replay repairs received independent stage acceptance at `54e4b00f`. None of these stage verdicts substitutes for the pending independent frozen-candidate black-box acceptance, final reviewer verdict, full checks or packaged verification.
+
+### Prior local checkpoint
+
 Local candidate `2be6683ad` is based on main `2f4632f1d58755ad50f73a107e3003f34c832489`. Rebased checkpoint `c4bc0fc65aac4579449e529b17f7de322b607534` has a byte-identical tree to independently stage-accepted `54e4b00fbdec356f74541d01b814dc27209a9e5a`. The subsequent one-file refactor shares the existing current-role and membership queries between legacy and native session identities; it adds no Node database authority and never calls the legacy resolver after an authoritative native result. Independent review of this refactor remains pending.
 
 The assertion admission remains a separate middleware before body parsing. Publication depends on the independently reviewed trusted-base inventory policy for this narrowly bounded transport admission; an editable inventory record alone cannot authorize it. The generated inventory is currently a working draft, not publication evidence.

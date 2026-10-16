@@ -26,8 +26,8 @@
         "server/src/auth",
         "server/src/bootstrap"
       ],
-      "source_files": 22,
-      "structural_surfaces": 63
+      "source_files": 23,
+      "structural_surfaces": 64
     },
     {
       "id": "websocket_and_streaming",
@@ -46,7 +46,7 @@
         "server/src",
         "identity/src"
       ],
-      "source_files": 381,
+      "source_files": 380,
       "structural_surfaces": 90
     },
     {
@@ -81,7 +81,7 @@
         "server/src/auth",
         "server/src/routes"
       ],
-      "source_files": 105,
+      "source_files": 106,
       "structural_surfaces": 0
     },
     {
@@ -2457,21 +2457,21 @@
     },
     {
       "path": "packages/agent-runtimes/cursor-local/src/server/execute.ts",
-      "sha256": "e0550ee09b48afaeb127c191417ce6822d2343692f028a4ef8be1687d6d1c966",
+      "sha256": "7851e9647c3e9101265147985b1592ac301a4b520cd94189f9314eb3cfe366a8",
       "families": [
         "rudder_owned_runtime_adapters"
       ]
     },
     {
       "path": "packages/agent-runtimes/cursor-local/src/server/index.ts",
-      "sha256": "d07ae577fafb06c3c5911c46a7bde93bc091fcbb0cf2a16d5384f6970e485bf9",
+      "sha256": "13c4139b8ac92a00f397e16a9564abd8f795acd5de6e0e64df18647c6f0e16b5",
       "families": [
         "rudder_owned_runtime_adapters"
       ]
     },
     {
       "path": "packages/agent-runtimes/cursor-local/src/server/parse.ts",
-      "sha256": "5676f2c910749deea277f0250995c65f47b62ce573060d59525156b895a5403e",
+      "sha256": "d03111b32794ae373c1559fead786924c3e4b58d618db93533364d50e65a1d54",
       "families": [
         "rudder_owned_runtime_adapters"
       ]
@@ -3090,7 +3090,7 @@
     },
     {
       "path": "packages/db/src/schema/auth.ts",
-      "sha256": "e8182c3dc128473942f68e8fea3b5d8d908ac46d662001ac897fb528fd5d842f",
+      "sha256": "77b40c2c1922d74133207a40b0c252cb6fdf0560d6beee55526f3473e1be68d8",
       "families": [
         "database_queries_and_writers",
         "schema_and_migration_apply"
@@ -4282,7 +4282,16 @@
     },
     {
       "path": "server/src/auth/better-auth.ts",
-      "sha256": "e2f7de287f1d1e9a005a8e2651c4eaa15e24fa1c941d7dcfc6654d93fa0642dc",
+      "sha256": "6ef797eda77deb6ccdcca80a6aca29d05a181ea65ec17f9e1a68610161fa199d",
+      "families": [
+        "http_middleware_and_auth",
+        "identity_and_sessions",
+        "server_lifecycle_and_workers"
+      ]
+    },
+    {
+      "path": "server/src/auth/native-session-assertion.ts",
+      "sha256": "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5",
       "families": [
         "http_middleware_and_auth",
         "identity_and_sessions",
@@ -4315,7 +4324,7 @@
     },
     {
       "path": "server/src/bootstrap/create-http-app.ts",
-      "sha256": "2f10c420a8b0bb1d63ccae7f3e360c635b30ecf0935ed4d7cebcc35cea99a71e",
+      "sha256": "2ecc2944698fe0df3cd0dd7e97b6bd5dd013dbf3a747cedca0cd277eaf7cc278",
       "families": [
         "database_queries_and_writers",
         "http_middleware_and_auth",
@@ -4334,7 +4343,7 @@
     },
     {
       "path": "server/src/bootstrap/public-ingress-startup.ts",
-      "sha256": "7d73329229fa2e2ec036bcc4adf0ecf2baa5f62d6c7837364884aa452e1eae07",
+      "sha256": "2ca28726d8cc2d63822eafcfec65613dafbd04c51124f8e129fca6412f58defc",
       "families": [
         "http_middleware_and_auth",
         "public_http_and_routes",
@@ -4417,7 +4426,7 @@
     },
     {
       "path": "server/src/index.ts",
-      "sha256": "611c0e6a952e292807d7671d24ca9ee680c8ec9548a35af131281594cf7c4e01",
+      "sha256": "e68fab612c4e24ced3dfde26a7aaa9b23fea748acace045bbe4aff03b4412488",
       "families": [
         "database_queries_and_writers",
         "server_lifecycle_and_workers"
@@ -4447,7 +4456,7 @@
     },
     {
       "path": "server/src/middleware/auth.ts",
-      "sha256": "75c22736f2110c5187bab7ae16bfd9937e825997873d9716c7125e549f7f3f43",
+      "sha256": "2b1655b28f3c3366591e55ab0e710631034a9404cc61f51be58540e6039765b5",
       "families": [
         "database_queries_and_writers",
         "http_middleware_and_auth",
@@ -6739,13 +6748,6 @@
       ]
     },
     {
-      "path": "server/src/services/runtime-binding-bridge.ts",
-      "sha256": "1a7eaead4de4ac5256717865dcb27197993eb1aa1ad23202736ba676e23f54f5",
-      "families": [
-        "server_lifecycle_and_workers"
-      ]
-    },
-    {
       "path": "server/src/services/runtime-kernel/assignment-run-guardrail.ts",
       "sha256": "15f8ed9ecc2735c730f6fec7d78d7f994d3686ec20d99eecf10519647e03adbe",
       "families": [
@@ -6863,22 +6865,15 @@
       ]
     },
     {
-      "path": "server/src/services/rust-actor-envelope.ts",
-      "sha256": "5d6f29e79d983d1d3396e91526a3b39d43a47c91d5aee47b323ab304eba66599",
-      "families": [
-        "server_lifecycle_and_workers"
-      ]
-    },
-    {
-      "path": "server/src/services/rust-foundation-bridge-error.ts",
-      "sha256": "1166588aa738016e39d47486d4758615c78e18b5c3f730c2e278e65a4ec86c68",
-      "families": [
-        "server_lifecycle_and_workers"
-      ]
-    },
-    {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "0ef6d83edc0180dc861e58c8854d5d9443e4ccd03e5c6ee99097bb3c19f70b70",
+      "sha256": "8caa45a481405d000c2eba89ac35c4a940cffa6c810b6fee0fffd4c883fe6af4",
+      "families": [
+        "server_lifecycle_and_workers"
+      ]
+    },
+    {
+      "path": "server/src/services/rust-public-ingress-config.ts",
+      "sha256": "7b49ebaa9a2701689de7075666591e6836eca9f51dc2a7f5826f15c23fecab70",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -8016,8 +8011,13 @@
       "kind": "sql"
     },
     {
+      "path": "packages/db/src/migrations/0179_reflective_wallow.sql",
+      "sha256": "99b36a3f7d1dfc2192bee88aa37b99db1fe6eff11097abdce41ffe57520e9a3f",
+      "kind": "sql"
+    },
+    {
       "path": "packages/db/src/migrations/meta/_journal.json",
-      "sha256": "7f26cef049f8cc2c8963036320b2efe26e09b37cc2088c4969cbe8cc488b92ce",
+      "sha256": "b68c5e24115daab1762befc64beca7e5c291b0bd83714ce357a9cc6ff31f5717",
       "kind": "journal"
     },
     {
@@ -8691,6 +8691,11 @@
       "kind": "snapshot"
     },
     {
+      "path": "packages/db/src/migrations/meta/0179_snapshot.json",
+      "sha256": "904934fc1d8cab96253f2360edb384dda8e434cd5e0f74b08a686f1d835cdab6",
+      "kind": "snapshot"
+    },
+    {
       "path": "packages/identity-db/src/migrations/0000_identity_base.sql",
       "sha256": "3509619befc69138bf154637f2390d7c94f02d088e736d96e7ce9d3654438750",
       "kind": "sql"
@@ -8732,14 +8737,14 @@
     }
   ],
   "migration_summary": {
-    "sql_files": 188,
+    "sql_files": 189,
     "journal_files": 2,
-    "snapshot_files": 134,
+    "snapshot_files": 135,
     "journals": [
       {
         "path": "packages/db/src/migrations/meta/_journal.json",
-        "entries": 179,
-        "latest_tag": "0178_organization_resource_mutation_state",
+        "entries": 180,
+        "latest_tag": "0179_reflective_wallow",
         "unjournaled_sql_files": [
           "packages/db/src/migrations/0055_illegal_sheva_callister.sql",
           "packages/db/src/migrations/0128_modern_jetstream.sql"
@@ -8766,7 +8771,7 @@
     "http_route": 534,
     "http_server_construction": 6,
     "listener_start": 5,
-    "middleware_mount": 63,
+    "middleware_mount": 64,
     "runtime_resource_ownership": 14,
     "sql_dml_candidate": 38,
     "websocket_event": 3,
@@ -14564,7 +14569,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 273,
+      "line": 283,
       "signature": "server/src/bootstrap/create-http-app.ts|db-call|db|transaction|async (tx) => { if (rustFoundationBridge.organizationBrandingMode === \"required\" && organizationB… [sha256:e9d605f1cc73ce914bab97f4f5b91a596949268b2e01488f30ef022684d409a4]",
       "receiver": "db",
       "method": "transaction",
@@ -14575,7 +14580,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 178,
+      "line": 188,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|ALL|/api/auth/*authPath",
       "receiver": "app",
       "method": "ALL",
@@ -14585,7 +14590,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 219,
+      "line": 229,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/.*/",
       "receiver": "app",
       "method": "GET",
@@ -14595,7 +14600,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 251,
+      "line": 261,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/.*/",
       "receiver": "app",
       "method": "GET",
@@ -14605,7 +14610,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 160,
+      "line": 170,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/api/auth/get-session",
       "receiver": "app",
       "method": "GET",
@@ -14615,7 +14620,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 159,
+      "line": 169,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14624,7 +14629,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 192,
+      "line": 202,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14633,7 +14638,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 205,
+      "line": 215,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14642,7 +14647,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 129,
+      "line": 130,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/workspace-preview",
       "receiver": "app",
       "mount_path": "/workspace-preview"
@@ -14651,7 +14656,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 158,
+      "line": 168,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:accountSessionRequired(authRequirement)>",
       "receiver": "app",
       "expression": "accountSessionRequired(authRequirement)"
@@ -14660,7 +14665,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 149,
+      "line": 159,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement: opts.authRequirement, resolveSession: opts.resolveSession, })>",
       "receiver": "app",
       "expression": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement: opts.authRequirement, resolveSession: opts.resolveSession, })"
@@ -14669,7 +14674,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 125,
+      "line": 126,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:async (req, res, next) => { if (await workspacePreview.handlePreviewHostRequest(req, res)) return; next(); }>",
       "receiver": "app",
       "expression": "async (req, res, next) => { if (await workspacePreview.handlePreviewHostRequest(req, res)) return; next(); }"
@@ -14678,7 +14683,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 267,
+      "line": 277,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:errorHandler>",
       "receiver": "app",
       "expression": "errorHandler"
@@ -14687,7 +14692,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 133,
+      "line": 143,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:express.json({ // Organization import/export payloads can inline full portable packages. limit: … [sha256:dbf52b14b8832a75108643dba62fa1c21b97f91122eb6e20cbbc9004f69c636d]",
       "receiver": "app",
       "expression": "express.json({ // Organization import/export payloads can inline full portable packages. limit: \"10mb\", verify: (req, _res, buf) => { (req as unknown as { rawBody: Buffer }).rawBody = buf; }, })"
@@ -14696,7 +14701,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 218,
+      "line": 228,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:express.static(uiDist)>",
       "receiver": "app",
       "expression": "express.static(uiDist)"
@@ -14705,7 +14710,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 141,
+      "line": 151,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:httpLogger>",
       "receiver": "app",
       "expression": "httpLogger"
@@ -14714,7 +14719,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 180,
+      "line": 190,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:llmRoutes(db)>",
       "receiver": "app",
       "expression": "llmRoutes(db)"
@@ -14723,7 +14728,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 140,
+      "line": 150,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:markBrowserHttpRequestBodySensitive>",
       "receiver": "app",
       "expression": "markBrowserHttpRequestBodySensitive"
@@ -14732,7 +14737,17 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 142,
+      "line": 138,
+      "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })>",
+      "receiver": "app",
+      "expression": "nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })",
+      "transport_admission": "rust-native-session-proof-v1"
+    },
+    {
+      "type": "middleware_mount",
+      "family": "http_middleware_and_auth",
+      "source": "server/src/bootstrap/create-http-app.ts",
+      "line": 152,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })>",
       "receiver": "app",
       "expression": "privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })"
@@ -14741,7 +14756,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 250,
+      "line": 260,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:vite.middlewares>",
       "receiver": "app",
       "expression": "vite.middlewares"
@@ -15485,7 +15500,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/middleware/auth.ts",
-      "line": 121,
+      "line": 137,
       "signature": "server/src/middleware/auth.ts|db-call|db|select|",
       "receiver": "db",
       "method": "select",
@@ -15496,7 +15511,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/middleware/auth.ts",
-      "line": 135,
+      "line": 151,
       "signature": "server/src/middleware/auth.ts|db-call|db|select|",
       "receiver": "db",
       "method": "select",
@@ -15507,7 +15522,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/middleware/auth.ts",
-      "line": 187,
+      "line": 203,
       "signature": "server/src/middleware/auth.ts|db-call|db|select|",
       "receiver": "db",
       "method": "select",
@@ -15518,7 +15533,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/middleware/auth.ts",
-      "line": 54,
+      "line": 71,
       "signature": "server/src/middleware/auth.ts|db-call|db|select|{ id: instanceUserRoles.id }",
       "receiver": "db",
       "method": "select",
@@ -15529,7 +15544,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/middleware/auth.ts",
-      "line": 59,
+      "line": 76,
       "signature": "server/src/middleware/auth.ts|db-call|db|select|{ orgId: organizationMemberships.orgId }",
       "receiver": "db",
       "method": "select",
@@ -15540,7 +15555,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/middleware/auth.ts",
-      "line": 182,
+      "line": 198,
       "signature": "server/src/middleware/auth.ts|db-call|db|update|agentApiKeys",
       "receiver": "db",
       "method": "update",
@@ -15551,7 +15566,7 @@
       "type": "database_write_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/middleware/auth.ts",
-      "line": 182,
+      "line": 198,
       "signature": "server/src/middleware/auth.ts|db-write-candidate|db|update|agentApiKeys",
       "receiver": "db",
       "method": "update",
@@ -56820,7 +56835,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 400,
+      "line": 533,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => finish(false)",
       "receiver": null,
       "method": "setTimeout",
@@ -56830,7 +56845,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1146,
+      "line": 1274,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -58503,28 +58518,28 @@
     {
       "type": "dynamic_http_route_path",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 219,
+      "line": 229,
       "method": "GET",
       "expression": "/.*/"
     },
     {
       "type": "dynamic_http_route_path",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 251,
+      "line": 261,
       "method": "GET",
       "expression": "/.*/"
     },
     {
       "type": "dynamic_middleware_mount",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 142,
+      "line": 152,
       "receiver": "app",
       "expression": "privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })"
     },
     {
       "type": "dynamic_middleware_mount",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 149,
+      "line": 159,
       "receiver": "app",
       "expression": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement: opts.authRequirement, resolveSession: opts.resolveSession, })"
     },
@@ -58539,9 +58554,148 @@
   "completion_gate": {
     "blocked": true,
     "blocking_unknown_count": 10,
-    "remaining_backend_node_source_files": 792,
+    "remaining_backend_node_source_files": 791,
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": []
+  "reviewed_node_changes": [
+    {
+      "path": "server/src/auth/better-auth.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "e2f7de287f1d1e9a005a8e2651c4eaa15e24fa1c941d7dcfc6654d93fa0642dc",
+      "head_sha256": "6ef797eda77deb6ccdcca80a6aca29d05a181ea65ec17f9e1a68610161fa199d",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Better Auth issuance and lifecycle remain Node-owned; expose matching cookie settings to the Rust resolver.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/auth/native-session-assertion.ts",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "base_sha256": null,
+      "head_sha256": "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Private-hop proof admission only: validate Rust-issued identity, exact request target, freshness and one-use nonce; no database or domain authority.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/bootstrap/create-http-app.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "2f10c420a8b0bb1d63ccae7f3e360c635b30ecf0935ed4d7cebcc35cea99a71e",
+      "head_sha256": "2ecc2944698fe0df3cd0dd7e97b6bd5dd013dbf3a747cedca0cd277eaf7cc278",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Mount reviewed proof admission before body parser; existing private auth lifecycle routes remain Node-owned.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/bootstrap/public-ingress-startup.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "7d73329229fa2e2ec036bcc4adf0ecf2baa5f62d6c7837364884aa452e1eae07",
+      "head_sha256": "2ca28726d8cc2d63822eafcfec65613dafbd04c51124f8e129fca6412f58defc",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Configure managed public/private listeners and transport cookie/proof secrets.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/index.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "611c0e6a952e292807d7671d24ca9ee680c8ec9548a35af131281594cf7c4e01",
+      "head_sha256": "e68fab612c4e24ced3dfde26a7aaa9b23fea748acace045bbe4aff03b4412488",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Wire native HTTP session resolution; Node lifecycle and WebSocket identity remain explicit debt.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/middleware/auth.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "75c22736f2110c5187bab7ae16bfd9937e825997873d9716c7125e549f7f3f43",
+      "head_sha256": "2b1655b28f3c3366591e55ab0e710631034a9404cc61f51be58540e6039765b5",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Consume native identity without session resolver fallback; share existing request-time current-role and active-membership reads.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-foundation-bridge.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "c93961bf33fd908e1e500bcf046ca4ac877c4f1cf6bf4e5bd28a3339196aac35",
+      "head_sha256": "8caa45a481405d000c2eba89ac35c4a940cffa6c810b6fee0fffd4c883fe6af4",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Launch native child and pass session transport configuration.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-public-ingress-config.ts",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "base_sha256": null,
+      "head_sha256": "7b49ebaa9a2701689de7075666591e6836eca9f51dc2a7f5826f15c23fecab70",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Serialize managed native session transport configuration without business authority.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/schema/auth.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "e8182c3dc128473942f68e8fea3b5d8d908ac46d662001ac897fb528fd5d842f",
+      "head_sha256": "77b40c2c1922d74133207a40b0c252cb6fdf0560d6beee55526f3473e1be68d8",
+      "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
+      "compatibility_boundary": "Shared compatible session schema; add non-unique token index without replacing historical migration journal.",
+      "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; stage ACCEPT for 54e4 session implementation and 2be6683ad query consolidation; nine current source hashes reviewed at e93317643.",
+      "review_status": "reviewed"
+    }
+  ],
+  "reviewed_transport_admissions": [
+    {
+      "id": "rust-native-session-proof-v1",
+      "mount_source_path": "server/src/bootstrap/create-http-app.ts",
+      "mount_receiver": "app",
+      "mount_expression": "nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })",
+      "mount_guard": "opts.rustPublicIngress?.sessionAuth",
+      "order_after": "workspace_preview_reserved_404",
+      "order_before": "express_json_body_parser",
+      "factory_path": "server/src/auth/native-session-assertion.ts",
+      "factory_export": "nativeSessionAssertionMiddleware",
+      "factory_sha256": "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5",
+      "rust_proof_owner": "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion",
+      "mount_source_sha256": "2ecc2944698fe0df3cd0dd7e97b6bd5dd013dbf3a747cedca0cd277eaf7cc278",
+      "compatibility_boundary": "Consume Rust-issued request-bound proof before body parsing; no Node identity resolver fallback, database writes or new business permission authority.",
+      "retirement_criterion": "Delete this admission middleware when Rust replaces the private Node business handler.",
+      "reviewer": "/root/inventory_guard",
+      "review_reference": "doc/plans/2026-10-16-native-session-authority-acceptance.md; exact pinned source and pre-body mount reviewed; trusted-base policy PR #310 independently accepted by /root/lifecycle_final_review.",
+      "review_status": "reviewed"
+    }
+  ]
 }
