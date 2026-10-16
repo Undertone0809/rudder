@@ -9,7 +9,9 @@ Canary normally follows a successful exact `main` Test run:
 2. confirm every public package published the same immutable prerelease and
    moved npm `canary`;
 3. confirm `canary/vX.Y.Z-canary.N` exists locally/remotely;
-4. confirm Desktop release was explicitly dispatched when required;
+4. confirm all four `desktop-candidate` targets completed and their artifacts
+   passed `candidate-complete` and `candidate-verify` before `publish-canary`;
+   the normal Release path does not dispatch a separate Desktop workflow;
 5. verify the GitHub Release title is `vX.Y.Z-canary.N`, it is prerelease, and
    all portable assets plus checksums exist;
 6. smoke `@rudderhq/cli@canary` with isolated HOME/cache.

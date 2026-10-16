@@ -9,13 +9,12 @@ The release model is now commit-driven:
 3. Stable release notes live in `releases/vX.Y.Z.md`.
 4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop portable assets.
 
-Database compatibility is an explicit pre-publish gate. For the exact locked
-source, the release workflow must pass the migration manifest immutability check,
-the historical schema matrix (including production-shaped data and restart
-verification), the recovery-point/restore drill, and packaged upgrade smoke on
-Linux, macOS, and Windows before the first npm publish, tag push, or GitHub
-Release mutation. A later Desktop build cannot retroactively make a published
-database migration safe.
+Database compatibility is checked before publication. For the locked source,
+preflight verifies migration-manifest immutability, and all four
+`desktop-candidate` targets run the historical schema compatibility runtime
+against production-shaped data and verify persistence across a PostgreSQL
+restart. The `candidate-complete` and `candidate-verify` jobs must pass before
+any publish job mutates npm, Git, or GitHub Release state.
 
 ## Versioning Model
 
@@ -133,9 +132,9 @@ Use this model for an explicit stable release:
    Windows/macOS/Linux install smoke.
 
 The historical migration runtime emits its current fixture and phase every ten
-seconds. It has a five-minute ceiling for all three historical fixtures on one
-platform; the complete per-platform prepublish gate has a 25-minute ceiling.
-Treat either timeout as a defect in the named stage, not as a reason to extend
+seconds. Each `desktop-candidate` platform job has a 25-minute workflow timeout,
+including this runtime and that target's applicable packaging checks.
+Treat a timeout as a defect in the named stage, not as a reason to extend
 the budget. After two failures at the same stage on unchanged inputs, stop
 dispatching, record both run IDs and the last phase, fix the cause, and rerun one
 new immutable candidate from exact-source Test.
@@ -379,13 +378,13 @@ explicitly enabled verified COS mirror, production docs, the three-platform
 public install smoke, and obsolete-canary cleanup. A failure in any downstream surface leaves the release
 partial and resumable without republishing an immutable npm version.
 
-Each Desktop asset is also gated before collection by a packaged `upgrade` smoke.
-That gate starts the built Electron app against an isolated instance, exercises
-the upgrade migration path, leaves a stale PostgreSQL pid file to model an
-interrupted shutdown, and verifies the next launch reaches the board. Packaging
-also fails if the shell, server, bundled CLI, or first-party bundled packages
-are not version-compatible. This catches the recurring local-database startup
-failure before the asset can be attached to a release.
+Before asset collection, each Desktop candidate runs the checks selected for
+its platform: macOS archive round-trip tests; packaged App Builder and staged
+PostgreSQL runtime smoke on non-Windows targets; Windows Smart App Control
+browser fallback smoke; and the packaged account gate on macOS arm64. Packaging
+also verifies compatible shell, server, bundled CLI, and first-party package
+versions. All four candidates must complete and their frozen artifact identities
+and checksums must pass verification before publication.
 
 After a stable release, the workflow also runs:
 
