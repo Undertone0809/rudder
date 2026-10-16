@@ -39,8 +39,33 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
     const authHeader = req.header("authorization");
     if (!authHeader?.toLowerCase().startsWith("bearer ")) {
       const nativeAssertion = getVerifiedNativeSessionAssertion(req);
-      if (nativeAssertion?.kind === "session") {
-        const userId = nativeAssertion.user_id;
+      let sessionIdentity = nativeAssertion?.kind === "session"
+        ? { userId: nativeAssertion.user_id, sessionId: nativeAssertion.session_id }
+        : null;
+      if (nativeAssertion?.kind === "none") {
+        if (runIdHeader) req.actor.runId = runIdHeader;
+        if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
+        next();
+        return;
+      }
+      if (!nativeAssertion && authRequirement === "required" && opts.resolveSession) {
+        let session: BetterAuthSessionResult | null = null;
+        try {
+          session = await opts.resolveSession(req);
+        } catch (err) {
+          logger.warn(
+            { err, method: req.method, url: requestUrlForLogs(req) },
+            "Failed to resolve auth session from request headers",
+          );
+        }
+        if (session?.user?.id && session.session?.id) {
+          sessionIdentity = { userId: session.user.id, sessionId: session.session.id };
+        }
+      }
+      // Both transports share the existing current-permission lookup. A native
+      // result never invokes the legacy session resolver.
+      if (sessionIdentity) {
+        const { userId, sessionId } = sessionIdentity;
         const [roleRow, memberships] = await Promise.all([
           db
             .select({ id: instanceUserRoles.id })
@@ -63,7 +88,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
           userId,
           orgIds: memberships.map((row) => row.orgId),
           isInstanceAdmin: Boolean(roleRow),
-          sessionId: nativeAssertion.session_id,
+          sessionId,
           authEpoch: 1,
           runId: runIdHeader ?? undefined,
           source: "session",
@@ -71,56 +96,6 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
         next();
         return;
-      }
-      if (nativeAssertion?.kind === "none") {
-        if (runIdHeader) req.actor.runId = runIdHeader;
-        if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
-        next();
-        return;
-      }
-      if (authRequirement === "required" && opts.resolveSession) {
-        let session: BetterAuthSessionResult | null = null;
-        try {
-          session = await opts.resolveSession(req);
-        } catch (err) {
-          logger.warn(
-            { err, method: req.method, url: requestUrlForLogs(req) },
-            "Failed to resolve auth session from request headers",
-          );
-        }
-        if (session?.user?.id && session.session?.id) {
-          const userId = session.user.id;
-          const [roleRow, memberships] = await Promise.all([
-            db
-              .select({ id: instanceUserRoles.id })
-              .from(instanceUserRoles)
-              .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-              .then((rows) => rows[0] ?? null),
-            db
-              .select({ orgId: organizationMemberships.orgId })
-              .from(organizationMemberships)
-              .where(
-                and(
-                  eq(organizationMemberships.principalType, "user"),
-                  eq(organizationMemberships.principalId, userId),
-                  eq(organizationMemberships.status, "active"),
-                ),
-              ),
-          ]);
-          req.actor = {
-            type: "board",
-            userId,
-            orgIds: memberships.map((row) => row.orgId),
-            isInstanceAdmin: Boolean(roleRow),
-            sessionId: session.session.id,
-            authEpoch: 1,
-            runId: runIdHeader ?? undefined,
-            source: "session",
-          };
-          if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
-          next();
-          return;
-        }
       }
       if (runIdHeader) req.actor.runId = runIdHeader;
       if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
