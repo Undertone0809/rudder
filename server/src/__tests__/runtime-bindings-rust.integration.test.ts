@@ -219,7 +219,7 @@ describe("Native binding public reads through Rust", () => {
     expect((await request(publicUrl).post(url).auth(token, { type: "bearer" })).status).toBe(404);
     for (const suffix of ["runtime-binding/", "RUNTIME-BINDING", "%72untime-binding", "runtime-binding/extra"]) {
       const response = await request(publicUrl).get(`${prefix}/chats/${chatId}/${suffix}`).auth(token, { type: "bearer" });
-      expect([200, 404]).toContain(response.status);
+      expect(response.status).toBe(404);
     }
     for (const variant of [
       `/api//orgs/${orgId}/runtime-bindings/${binding.binding.id}`,

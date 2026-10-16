@@ -49,6 +49,21 @@ async fn read(
     input: Request,
 ) -> HttpResponse {
     let foundation = &state.foundation;
+    let canonical_path = match &input {
+        Request::PublicCurrent { target } => format!(
+            "/api/orgs/{org_id}/chats/{}/runtime-binding",
+            target.target_id,
+        ),
+        Request::PublicRead { binding_id } => {
+            format!("/api/orgs/{org_id}/runtime-bindings/{binding_id}")
+        }
+        _ => return error(StatusCode::NOT_FOUND, "route_not_found"),
+    };
+    // Actix decodes path captures and may match percent-encoded literals. These
+    // new endpoints expose only the literal canonical route, never an alias.
+    if request.uri().path() != canonical_path {
+        return error(StatusCode::NOT_FOUND, "route_not_found");
+    }
     if !body.is_empty() || !request.query_string().is_empty() {
         return error(
             StatusCode::BAD_REQUEST,
