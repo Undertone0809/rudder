@@ -17,7 +17,8 @@ type NonceConsumeResult = "accepted" | "replayed" | "capacity";
  * one of 64 second slots (the signed proof lifetime is at most 30 seconds,
  * with at most five seconds of allowed issue-time skew), so ordinary requests
  * never scan the full registry. Entries are removed once as their expiry
- * buckets pass; a clock jump visits each slot at most once.
+ * buckets pass. A backward wall-clock jump scans each slot once, then resets
+ * the sweep watermark so later forward time visits post-rollback entries.
  */
 export class NativeSessionAssertionNonceRegistry {
   private readonly usedNonces = new Map<string, number>();
@@ -48,7 +49,21 @@ export class NativeSessionAssertionNonceRegistry {
       this.lastSweepSecond = now;
       return;
     }
-    if (now <= this.lastSweepSecond) return;
+    if (now < this.lastSweepSecond) {
+      for (let index = 0; index < this.expiryBuckets.length; index += 1) {
+        const bucket = this.expiryBuckets[index]!;
+        if (!bucket.length) continue;
+        const retained: NonceExpiry[] = [];
+        for (const entry of bucket) {
+          if (entry.expiresAt <= now) this.usedNonces.delete(entry.nonce);
+          else retained.push(entry);
+        }
+        this.expiryBuckets[index] = retained;
+      }
+      this.lastSweepSecond = now;
+      return;
+    }
+    if (now === this.lastSweepSecond) return;
 
     // Expiries are bounded to a 35-second horizon. On a large clock jump,
     // traversing the most recent full wheel is enough to visit every bucket.
@@ -135,7 +150,15 @@ export function nativeSessionAssertionMiddleware(options: {
 }): RequestHandler {
   const nonceRegistry = new NativeSessionAssertionNonceRegistry(options.maxNonces ?? MAX_NONCES);
   return (req, res, next) => {
-    if (isNodeOwnedLifecyclePath(req.method, req.originalUrl || req.url)) {
+    const target = req.originalUrl || req.url;
+    if (isNativeGetSessionPath(target) && req.method !== "GET" && req.method !== "HEAD") {
+      res.status(405).set("Allow", "GET, HEAD").json({
+        error: "Method not allowed",
+        code: "native_get_session_method_not_allowed",
+      });
+      return;
+    }
+    if (isNodeOwnedLifecyclePath(target)) {
       next();
       return;
     }
@@ -153,7 +176,6 @@ export function nativeSessionAssertionMiddleware(options: {
     }
     const payload = verifyAssertion(assertion, options.key);
     const now = options.nowSeconds?.() ?? Math.floor(Date.now() / 1000);
-    const target = req.originalUrl || req.url;
     if (!payload
       || payload.method !== req.method
       || payload.target !== target
@@ -243,11 +265,14 @@ function verifyAssertion(value: string, keyHex: string): NativeSessionAssertionP
   return parsed as NativeSessionAssertionPayload;
 }
 
-function isNodeOwnedLifecyclePath(method: string, rawTarget: string): boolean {
+function isNodeOwnedLifecyclePath(rawTarget: string): boolean {
   const path = rawTarget.split("?", 1)[0] ?? "";
   const normalized = path.replace(/\/+$/, "").toLowerCase();
-  if (normalized === "/api/auth/get-session") {
-    return method !== "GET" && method !== "HEAD";
-  }
+  if (normalized === "/api/auth/get-session") return false;
   return normalized === "/api/auth" || normalized.startsWith("/api/auth/");
+}
+
+function isNativeGetSessionPath(rawTarget: string): boolean {
+  const path = rawTarget.split("?", 1)[0] ?? "";
+  return path.replace(/\/+$/, "").toLowerCase() === "/api/auth/get-session";
 }

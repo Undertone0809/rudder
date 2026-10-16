@@ -182,10 +182,14 @@ async function waitForSessionRowLock(): Promise<void> {
   throw new Error("Native session lookup did not wait on the synchronized session-row lock");
 }
 
-function getSessionFromPublic(pathname: string, headers: Record<string, string> = {}) {
+function getSessionFromPublic(
+  pathname: string,
+  headers: Record<string, string> = {},
+  method = "GET",
+) {
   return new Promise<{ status: number; body: string; headers: import("node:http").IncomingHttpHeaders }>((resolve, reject) => {
     const req = httpRequest(`http://127.0.0.1:${publicPort}${pathname}`, {
-      method: "GET",
+      method,
       headers: { connection: "close", ...headers },
     }, (res) => {
       let body = "";
@@ -526,6 +530,27 @@ describe("source-built Rust public native session workflow", () => {
       authorization: "Bearer pcp_invalid_native_session_e2e",
     });
     expect(bearer.status).toBe(401);
+    expect(sessionResolverCalls).toBe(0);
+  }, 20_000);
+
+  it("fails closed on unsupported get-session methods at public and private listeners", async () => {
+    const nodeCallsBefore = nodeRouteCalls;
+    const publicPost = await getSessionFromPublic("/api/auth/get-session", {
+      cookie: sessionCookie(),
+      "x-rudder-native-session-proof": "forged-client-proof",
+    }, "POST");
+    expect(publicPost.status).toBe(405);
+    expect(publicPost.headers.allow).toBe("GET, HEAD");
+    expect(nodeRouteCalls).toBe(nodeCallsBefore);
+    expect(sessionResolverCalls).toBe(0);
+
+    const privatePost = await getSessionFromPrivate(
+      "/api/auth/get-session",
+      { cookie: sessionCookie() },
+      "POST",
+    );
+    expect(privatePost.status).toBe(405);
+    expect(JSON.parse(privatePost.body).code).toBe("native_get_session_method_not_allowed");
     expect(sessionResolverCalls).toBe(0);
   }, 20_000);
 

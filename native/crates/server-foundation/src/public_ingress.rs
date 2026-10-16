@@ -9,6 +9,7 @@ use crate::public_ingress_proxy::{PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH, Publ
 use crate::public_ingress_websocket::PublicIngressWebSocketProxy;
 use actix_web::guard;
 use actix_web::http::Method;
+use actix_web::http::header::HeaderMap;
 use uuid::Uuid;
 
 mod runtime_bindings;
@@ -206,11 +207,19 @@ async fn proxy_request(
     request: HttpRequest,
     payload: web::Payload,
 ) -> HttpResponse {
-    if is_get_session_route(&request)
-        && !has_bearer_header(&request)
-        && state.config.session_auth.is_some()
-    {
-        return get_session(state, request).await;
+    if is_get_session_path(&request) {
+        if !matches!(*request.method(), Method::GET | Method::HEAD) {
+            let mut response = state
+                .foundation
+                .json_error(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed");
+            response
+                .headers_mut()
+                .insert(header::ALLOW, header::HeaderValue::from_static("GET, HEAD"));
+            return response;
+        }
+        if !has_bearer_header(&request) && state.config.session_auth.is_some() {
+            return get_session(state, request).await;
+        }
     }
     // Express's compatibility router is case-insensitive and accepts an
     // optional trailing slash. Never let a near-match under this namespace
@@ -230,7 +239,7 @@ async fn proxy_request(
             .json_error(StatusCode::NOT_FOUND, "route_not_found");
     }
 
-    if has_websocket_upgrade(&request) {
+    if has_websocket_upgrade(request.headers()) {
         if is_supported_websocket_upgrade_route(&request) {
             return websocket_proxy.forward(request, payload).await;
         }
@@ -292,7 +301,7 @@ async fn reject_unsupported_websocket_upgrade(
     request: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<actix_web::dev::ServiceResponse<impl MessageBody>, Error> {
-    if has_websocket_upgrade(request.request())
+    if has_websocket_upgrade(request.request().headers())
         && !is_supported_websocket_upgrade_route(request.request())
     {
         return Ok(request
@@ -306,21 +315,20 @@ async fn reject_unsupported_websocket_upgrade(
     Ok(next.call(request).await?.map_into_left_body())
 }
 
-fn has_websocket_upgrade(request: &HttpRequest) -> bool {
-    request
-        .headers()
-        .get(header::UPGRADE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("websocket"))
+fn has_websocket_upgrade(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::UPGRADE)
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|protocol| protocol.trim().eq_ignore_ascii_case("websocket"))
 }
 
-fn is_get_session_route(request: &HttpRequest) -> bool {
-    matches!(*request.method(), Method::GET | Method::HEAD)
-        && request
-            .uri()
-            .path()
-            .trim_end_matches('/')
-            .eq_ignore_ascii_case("/api/auth/get-session")
+fn is_get_session_path(request: &HttpRequest) -> bool {
+    request
+        .uri()
+        .path()
+        .trim_end_matches('/')
+        .eq_ignore_ascii_case("/api/auth/get-session")
 }
 
 fn is_node_owned_lifecycle_route(request: &HttpRequest) -> bool {
@@ -990,18 +998,24 @@ mod tests {
             "/api/orgs/org-1/members/directory",
             "/api/ordinary-business-route",
         ] {
-            let mut response = client
-                .get(format!("http://{address}{path}"))
-                .insert_header((header::UPGRADE, "websocket"))
-                .insert_header((header::CONNECTION, "Upgrade"))
-                .insert_header((header::SEC_WEBSOCKET_VERSION, "13"))
-                .insert_header((header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ=="))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
-            let body: serde_json::Value = response.json().await.unwrap();
-            assert_eq!(body["reason"], "route_not_found", "{path}");
+            for upgrade_values in [
+                vec!["websocket"],
+                vec!["h2c, WebSocket"],
+                vec!["h2c", "websocket"],
+            ] {
+                let mut request = client
+                    .get(format!("http://{address}{path}"))
+                    .insert_header((header::CONNECTION, "Upgrade"))
+                    .insert_header((header::SEC_WEBSOCKET_VERSION, "13"))
+                    .insert_header((header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ=="));
+                for upgrade_value in upgrade_values {
+                    request = request.append_header((header::UPGRADE, upgrade_value));
+                }
+                let mut response = request.send().await.unwrap();
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+                let body: serde_json::Value = response.json().await.unwrap();
+                assert_eq!(body["reason"], "route_not_found", "{path}");
+            }
         }
         assert_eq!(private_requests.load(Ordering::SeqCst), 0);
         control.stop(true).await;
