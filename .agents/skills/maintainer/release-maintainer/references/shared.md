@@ -89,7 +89,7 @@ the full family set. `merge_group`, exact-source manual runs, and pushes to
 `main` are full qualification profiles. Release promotion requires the
 successful aggregate receipt for the exact source SHA.
 
-The Release workflow creates one immutable candidate manifest for the 15 npm
+The Release workflow creates one immutable candidate manifest for the 14 npm
 and seven Desktop artifacts. It binds source commit and tree, qualification
 run, candidate run, release workflow source, runtime identity, sizes, SHA-256
 digests, checksums, and a seven-day expiry. `candidate-verify` and each publish
@@ -104,10 +104,10 @@ or docs mutation.
   SHA gets one exact-source CI and one production stable execution.
 - Do not run manual stable and automatic canary gates concurrently for the same
   SHA. Use the full SHA so workflow concurrency can replace the duplicate path.
-- The three-fixture historical migration runtime must finish within five
-  minutes per platform and emit its current phase every ten seconds. The full
-  prepublish platform job has a 25-minute hard ceiling, including packaged
-  Desktop verification.
+- The three-fixture historical migration runtime emits its current phase every
+  ten seconds. Each `desktop-candidate` platform job has a 25-minute workflow
+  timeout, including the migration runtime and that target's applicable
+  packaging checks.
 - A timeout is a failure with a named last phase, not permission to increase the
   timeout. Fix the blocked lifecycle or process ownership before rerunning.
 - After two failures at the same stage with unchanged inputs, stop dispatching.
