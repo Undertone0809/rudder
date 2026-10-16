@@ -70,22 +70,22 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
         load_migration_manifest(&journal, &migrations, MigrationLimits::default()).unwrap();
 
     assert_eq!(first.fingerprint, second.fingerprint);
-    assert_eq!(first.journal.entries.len(), 180);
-    assert_eq!(first.entries.len(), 182);
-    assert_eq!(first.journal.entries[179].idx, 179);
+    assert_eq!(first.journal.entries.len(), 181);
+    assert_eq!(first.entries.len(), 183);
+    assert_eq!(first.journal.entries[180].idx, 180);
     assert_eq!(
-        first.journal.entries[179].tag,
-        "0179_native_chat_rust_admission"
+        first.journal.entries[180].tag,
+        "0180_native_chat_finalization_guards"
     );
     assert_eq!(first.journal.entries[57].tag, "0058_messenger_threads");
     assert_eq!(first.journal.entries[58].tag, "0058_calm_red_ghost");
-    assert!(first.entries[180].is_legacy_unjournaled());
+    assert!(first.entries[181].is_legacy_unjournaled());
     assert_eq!(
-        first.entries[180].file_name,
+        first.entries[181].file_name,
         "0055_illegal_sheva_callister.sql"
     );
-    assert!(first.entries[181].is_legacy_unjournaled());
-    assert_eq!(first.entries[181].file_name, "0128_modern_jetstream.sql");
+    assert!(first.entries[182].is_legacy_unjournaled());
+    assert_eq!(first.entries[182].file_name, "0128_modern_jetstream.sql");
     assert_eq!(first.entries[0].journal_entry.as_ref().unwrap().idx, 0);
     assert_eq!(
         first.entries[0].journal_entry.as_ref().unwrap().tag,
@@ -94,7 +94,7 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
     assert_eq!(first.fingerprint.len(), 64);
     assert_eq!(
         first.fingerprint,
-        "1e7c76da0109e4b8cd258bc576a5db404f61a2810bb4d4195bf9c7f167edd746"
+        "d3ff1e3b7d2ce698039f3b24ac4238d0d5cd26dc89200be5f260c1e8550887b8"
     );
 }
 
