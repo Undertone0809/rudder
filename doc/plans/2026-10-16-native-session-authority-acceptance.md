@@ -124,3 +124,9 @@ Current-candidate checks:
 - `pnpm --filter @rudderhq/server typecheck`, `pnpm lint:changed`, Rust Clippy with `-D warnings`, Rust fmt check, and `git diff --check`: passed.
 
 The candidate is locally checkpointed and source checks pass. Fresh independent guard review is still required for this new hash; the earlier reject remains historical evidence for the superseded `6c9b` candidate, not a verdict on `54e4`. Repository-wide tests and packaged Desktop verification were not rerun. No merge, push, release, or overall authentication-completion claim is made.
+
+## Repository baseline reconciliation
+
+The full repository run completed with six failing commands (original log `/tmp/rudder-session-final-repository-tests.log`); it is not recorded as green. The migration catalog's three stale assertions were corrected and its 23 database tests passed. Migration 0179 changes the active 0.7.24 candidate manifest to `279503139d5d35d1f9b968aa1ddd1efaa74079a2ccb07912137b9f39809cecea` (180 journal entries, 182 SQL files); the current-version compatibility declaration and expectation are updated, leaving all published fixture declarations and historical SQL unchanged. All 19 compatibility-matrix tests passed, including eight historical release fixtures.
+
+The unchanged heartbeat concurrency, required-native workspace browser and manifest suites passed 104/104 in a dedicated canonical temporary directory (`/tmp/rudder-session-canonical-baseline-recheck.log`). The Codex app-server suite passed 27/27 on its focused canonical-path rerun. These focused observations do not erase the original failures or establish their exact causes. A separate Rust process-host stdin BrokenPipe race has a candidate fix with independent acceptance; it is not yet integrated into this session stack. Current readiness correction also passed server typecheck, Rust Clippy and scoped import checks. Packaged validation and independent corrective review/acceptance remain pending.
