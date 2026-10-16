@@ -1274,7 +1274,7 @@ mod tests {
         )
         .bind(format!("native-session-route-{suffix}"))
         .bind(format!("Native session route {suffix}"))
-        .bind(format!("S{}", &suffix[..7].to_ascii_uppercase()))
+        .bind(format!("S{}", suffix[..7].to_ascii_uppercase()))
         .fetch_one(&pool)
         .await
         .unwrap();
