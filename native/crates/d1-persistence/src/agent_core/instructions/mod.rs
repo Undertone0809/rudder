@@ -3,6 +3,7 @@
 //! mode, legacy migration, default content and the returned Library reference.
 mod fs;
 mod lock;
+mod read_only;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -478,9 +479,9 @@ pub(crate) fn resolve_readonly_for_runtime(
         &root,
     )?;
     storage::validate_readonly_path(&root, &location.managed)?;
-    let managed_files = strict_files(&location.managed, true)?;
+    let managed_files = read_only::file_count(&location.managed, true)?;
     let mode = if location.legacy_managed
-        || (!managed_files.is_empty()
+        || (managed_files != 0
             && (location.configured.is_none() || location.mode != Some("external")))
     {
         Some("managed")
@@ -491,36 +492,31 @@ pub(crate) fn resolve_readonly_for_runtime(
     let mut contents = BTreeMap::<String, Vec<u8>>::new();
     let source_path = match mode {
         Some("managed") => {
-            read_bundle(&location.managed, true, &mut contents)?;
+            read_only::read_bundle(&location.managed, true, &mut contents)?;
             if location.legacy_managed {
                 if let Some(source) = &location.configured {
-                    read_bundle(source, true, &mut contents)?;
+                    read_only::read_bundle(source, true, &mut contents)?;
                 }
                 for (name, body) in defaults(text(row, "role") == "ceo") {
                     contents.entry(name).or_insert_with(|| body.into_bytes());
                 }
-                let legacy_body = location
-                    .legacy_path
-                    .as_ref()
-                    .and_then(|path| disk::read(path).ok())
-                    .or_else(|| {
-                        string(&row["agentRuntimeConfig"], "promptTemplate")
-                            .map(|v| v.as_bytes().to_vec())
-                    })
-                    .unwrap_or_default();
+                let legacy_body = if contents.contains_key(&location.entry) {
+                    None
+                } else if let Some(path) = &location.legacy_path {
+                    read_only::read_single(path, &contents)?
+                } else {
+                    None
+                }
+                .or_else(|| {
+                    string(&row["agentRuntimeConfig"], "promptTemplate")
+                        .map(|value| value.as_bytes().to_vec())
+                })
+                .unwrap_or_default();
                 if !js_trim(&String::from_utf8_lossy(&legacy_body)).is_empty() {
-                    contents
-                        .entry(location.entry.clone())
-                        .or_insert(legacy_body);
+                    read_only::insert_bounded(&mut contents, location.entry.clone(), legacy_body)?;
                 } else if !contents.contains_key(&location.entry) {
                     let soul = contents.get("SOUL.md").cloned().unwrap_or_default();
                     contents.insert(location.entry.clone(), soul);
-                }
-                let memory = location.agent_root.join("MEMORY.md");
-                if !contents.contains_key("MEMORY.md")
-                    && stat(&memory).is_some_and(|metadata| metadata.is_file())
-                {
-                    contents.insert("MEMORY.md".into(), disk::read(memory)?);
                 }
             }
             Some(location.managed)
@@ -543,9 +539,8 @@ pub(crate) fn resolve_readonly_for_runtime(
                     }
                 });
             if let Some(source) = source {
-                let canonical = source.canonicalize()?;
-                read_bundle(&canonical, false, &mut contents)?;
-                Some(canonical)
+                read_only::read_bundle(source, false, &mut contents)?;
+                Some(source.to_path_buf())
             } else {
                 None
             }
@@ -598,97 +593,6 @@ pub(crate) fn resolve_readonly_for_runtime(
     })
 }
 
-fn strict_files(root: &Path, allow_missing: bool) -> io::Result<Vec<String>> {
-    let metadata = match disk::symlink_metadata(root) {
-        Ok(metadata) => metadata,
-        Err(error) if allow_missing && error.kind() == io::ErrorKind::NotFound => {
-            return Ok(Vec::new());
-        }
-        Err(error) => return Err(error),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(invalid("Instruction bundle root is not a directory"));
-    }
-    let mut result = Vec::new();
-    fn walk(root: &Path, current: &Path, result: &mut Vec<String>, depth: usize) -> io::Result<()> {
-        if depth > 64 {
-            return Err(invalid("Instruction bundle nesting is too deep"));
-        }
-        for entry in disk::read_dir(current)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
-                if ![
-                    ".git",
-                    ".nox",
-                    ".pytest_cache",
-                    ".ruff_cache",
-                    ".tox",
-                    ".venv",
-                    "__pycache__",
-                    "node_modules",
-                    "venv",
-                ]
-                .contains(&name.as_str())
-                {
-                    walk(root, &entry.path(), result, depth + 1)?;
-                }
-            } else if kind.is_symlink() {
-                return Err(invalid("Instruction bundle contains a symbolic link"));
-            } else if kind.is_file()
-                && ![".DS_Store", "Thumbs.db", "Desktop.ini"].contains(&name.as_str())
-                && !name.starts_with(".rudder-write-probe-")
-                && !name.starts_with("._")
-                && !name.ends_with(".pyc")
-                && !name.ends_with(".pyo")
-            {
-                result.push(
-                    entry
-                        .path()
-                        .strip_prefix(root)
-                        .map_err(io::Error::other)?
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                );
-                if result.len() > 4_096 {
-                    return Err(invalid("Instruction bundle contains too many files"));
-                }
-            }
-        }
-        Ok(())
-    }
-    walk(root, root, &mut result, 0)?;
-    result.sort();
-    Ok(result)
-}
-
-fn read_bundle(
-    root: &Path,
-    allow_missing: bool,
-    output: &mut BTreeMap<String, Vec<u8>>,
-) -> io::Result<()> {
-    for file in strict_files(root, allow_missing)? {
-        if output.contains_key(&file) {
-            continue;
-        }
-        let bytes = disk::read(root.join(&file))?;
-        if bytes.len() > 1_048_576
-            || output
-                .values()
-                .map(Vec::len)
-                .sum::<usize>()
-                .saturating_add(bytes.len())
-                > 4_194_304
-        {
-            return Err(invalid(
-                "Instruction bundle exceeds the Native Chat revision limit",
-            ));
-        }
-        output.insert(file, bytes);
-    }
-    Ok(())
-}
 pub(super) async fn library_path(tx: &mut Tx<'_>, ctx: &Context<'_>, row: &Value) -> Result<Value> {
     let host = ctx
         .request

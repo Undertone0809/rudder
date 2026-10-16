@@ -55,8 +55,9 @@ pub(crate) async fn resolve_codex_config(
         super::super::validation::canonical_uuid(organization_id, "organization id")?;
     let conversation_id =
         super::super::validation::canonical_uuid(conversation_id, "conversation id")?;
-    let row = sqlx::query(
-        "SELECT c.status AS conversation_status, c.conversation_kind,
+    let row = match sqlx::query(
+        "/* native_chat_config_agent_lock */
+         SELECT c.status AS conversation_status, c.conversation_kind,
                 c.preferred_agent_id::text AS preferred_agent_id,
                 c.routed_agent_id::text AS routed_agent_id,
                 c.primary_issue_id::text AS primary_issue_id,
@@ -68,13 +69,23 @@ pub(crate) async fn resolve_codex_config(
          JOIN agents a ON a.org_id=c.org_id
                       AND a.id=COALESCE(c.preferred_agent_id,c.routed_agent_id)
          WHERE c.org_id=$1::uuid AND c.id=$2::uuid
-         FOR UPDATE OF c FOR SHARE OF a",
+         FOR UPDATE OF c FOR SHARE OF a NOWAIT",
     )
     .bind(&organization_id)
     .bind(&conversation_id)
     .fetch_optional(&mut **tx)
-    .await?
-    .ok_or_else(|| invalid("Chat or selected Agent is unavailable"))?;
+    .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => return Err(invalid("Chat or selected Agent is unavailable")),
+        Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("55P03") => {
+            return Err(super::super::http(
+                409,
+                "Native Chat Agent is being changed or removed",
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
 
     let conversation_status: String = row.try_get("conversation_status")?;
     let conversation_kind: String = row.try_get("conversation_kind")?;
