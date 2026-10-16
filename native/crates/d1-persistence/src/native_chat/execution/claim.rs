@@ -580,6 +580,8 @@ pub async fn claim(
             run_id,
             attempt_id,
             agent_id,
+            binding_id: binding.binding_id,
+            segment_id: binding.segment_id,
             generation_attempt_epoch: generation_epoch,
             run_attempt_epoch,
             connection_epoch,
