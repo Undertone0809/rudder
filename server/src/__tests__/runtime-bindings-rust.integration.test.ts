@@ -106,6 +106,9 @@ describe("Native binding public reads through Rust", () => {
       });
       const startup = JSON.parse(line);
       expect(startup.publicIngress?.boundAddr).toMatch(/^127\.0\.0\.1:\d+$/);
+      if (withSessionAuth) {
+        expect(startup.publicIngress?.nativeAuthentication?.sessionCookieAuthority?.kind).toBe("better_auth");
+      }
       publicUrl = `http://${startup.publicIngress.boundAddr}`;
     } finally { lines.close(); }
   }
