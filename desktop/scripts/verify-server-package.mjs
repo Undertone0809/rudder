@@ -12,6 +12,7 @@ import {
   isForbiddenProductionPackage,
   packageHasTypeMetadata,
 } from "./optimize-server-package.mjs";
+import { verifyDesktopIdentityPackage } from "./verify-app-identity-package.mjs";
 import { verifyBrowserBundle } from "./verify-browser-bundle.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -628,6 +629,15 @@ async function main() {
   }
 
   await verifyServerPackage(serverPackageDir);
+  const appDir = path.join(path.dirname(serverPackageDir), "app");
+  if (await exists(path.join(appDir, "package.json"))) {
+    try {
+      await verifyDesktopIdentityPackage(appDir);
+      ok("Desktop identity-core loads from the packaged app without checkout fallback");
+    } catch (e) {
+      error(`Desktop identity-core package failed: ${e.message}`);
+    }
+  }
 
   if (errors.length > 0) {
     console.error(`\n[verify-server-package] FAILED: ${errors.length} error(s)\n`);
