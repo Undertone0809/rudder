@@ -39,14 +39,6 @@ impl ExecutionHost {
         let operator_home = root.path().join("operator-home");
         let executable = root.path().join("bin/codex");
         let cwd = root.path().join("agent-cwd");
-        let org_key = ORG
-            .chars()
-            .filter(|character| *character != '-')
-            .take(12)
-            .collect::<String>();
-        let instructions = workspace_home
-            .join(org_key)
-            .join("workspaces/agents/codex-agent/instructions");
         let profile_home = profiles.join(ORG).join(CEO).join("default");
         for directory in [
             &instance,
@@ -55,7 +47,6 @@ impl ExecutionHost {
             &operator_home,
             executable.parent().expect("binary directory"),
             &cwd,
-            &instructions,
             &profile_home,
         ] {
             fs::create_dir_all(directory).expect("create isolated host directory");
@@ -68,8 +59,22 @@ impl ExecutionHost {
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
                 .expect("mark fake executable");
         }
-        fs::write(instructions.join("SOUL.md"), "isolated test instructions\n")
-            .expect("seed read-only instruction fixture");
+        // Preserve execution-ledger coverage on Windows with no filesystem
+        // instruction bundle; supported hosts additionally exercise its content.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let org_key = ORG
+                .chars()
+                .filter(|character| *character != '-')
+                .take(12)
+                .collect::<String>();
+            let instructions = workspace_home
+                .join(org_key)
+                .join("workspaces/agents/codex-agent/instructions");
+            fs::create_dir_all(&instructions).expect("create instruction directory");
+            fs::write(instructions.join("SOUL.md"), "isolated test instructions\n")
+                .expect("seed read-only instruction fixture");
+        }
         let executable = executable
             .canonicalize()
             .expect("canonical fake executable");
