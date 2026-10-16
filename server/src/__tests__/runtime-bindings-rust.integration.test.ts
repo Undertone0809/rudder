@@ -73,7 +73,7 @@ describe("Native binding public reads through Rust", () => {
   let binding: { binding: { id: string }; segment: { id: string } };
   let publicBinding: unknown;
   let sideBindingId: string;
-  async function startPublic() {
+  async function startPublic(withSessionAuth = false) {
     const address = server!.address();
     if (!address || typeof address === "string") throw new Error("Missing Node upstream");
     rust = spawn(binary, [], {
@@ -85,6 +85,13 @@ describe("Native binding public reads through Rust", () => {
         RUDDER_NATIVE_PUBLIC_LISTEN: "127.0.0.1:0",
         RUDDER_NATIVE_NODE_UPSTREAM: `http://127.0.0.1:${address.port}`,
         RUDDER_NATIVE_INGRESS_AUTH_KEY: "11".repeat(32),
+        ...(withSessionAuth ? {
+          RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
+          RUDDER_NATIVE_SESSION_AUTH_KIND: "better_auth",
+          RUDDER_NATIVE_SESSION_AUTH_SECRET: "binding-session-fixture-secret",
+          RUDDER_NATIVE_SESSION_COOKIE_SECURE: "false",
+          RUDDER_NATIVE_SESSION_ASSERTION_KEY: "33".repeat(32),
+        } : {}),
       }, stdio: ["ignore", "pipe", "pipe"],
     });
     let diagnostics = "";
@@ -229,6 +236,24 @@ describe("Native binding public reads through Rust", () => {
       expect((await request(publicUrl).get(variant).auth(token, { type: "bearer" })).status).toBe(404);
     }
     expect(upstreamCalls).toBe(0);
+  });
+  it("keeps native Bearer authority when session authentication is also enabled", async () => {
+    await stopPublic();
+    await startPublic(true);
+    try {
+      for (const url of [
+        `${prefix}/chats/${chatId}/runtime-binding`,
+        `${prefix}/runtime-bindings/${binding.binding.id}`,
+      ]) {
+        expect((await request(publicUrl).get(url).auth(token, { type: "bearer" })).status).toBe(200);
+        expect((await request(publicUrl).get(url)
+          .set("Cookie", "better-auth.session_token=untrusted")).status).toBe(401);
+      }
+      expect(upstreamCalls).toBe(0);
+    } finally {
+      await stopPublic();
+      await startPublic();
+    }
   });
   it("returns 503 when the database is unavailable without forwarding to live Node", async () => {
     const before = await snapshot();
