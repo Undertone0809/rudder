@@ -1,10 +1,12 @@
 import type { Db } from "@rudderhq/db";
 import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudderhq/db";
+import { createOfflineGrantProof, generateOfflineDeviceKeyPair, issueOfflineGrant, offlineRequestBodyHash } from "@rudderhq/identity-core";
+import { localOfflineGrantSchema, localServerExchangeSchema } from "@rudderhq/shared";
 import express from "express";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { constants as fsConstants, copyFileSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -17,6 +19,7 @@ import type { RudderAppHandle } from "../app.js";
 import { nativeSessionAssertionMiddleware } from "../auth/native-session-assertion.js";
 import { preparePublicIngressStartup } from "../bootstrap/public-ingress-startup.js";
 import type { Config } from "../config.js";
+import type { RustLocalAccountLifecycleOptions } from "../services/rust-public-ingress-config.js";
 import { accountSessionRequired } from "../middleware/account-session-required.js";
 import { actorMiddleware } from "../middleware/auth.js";
 
@@ -42,6 +45,7 @@ type StartupReceipt = {
     boundAddr?: string;
     publicListener?: boolean;
     directAuthorities?: string[];
+    localAccountLifecycle?: { authority: string; protocolVersion: number; routes: string[] };
     nativeAuthentication?: {
       authority?: string;
       directRoutes?: string[];
@@ -54,6 +58,7 @@ type StartupReceipt = {
 };
 
 let fixtureRoot = "";
+let artifactRoot = "";
 let embedded: EmbeddedPostgresInstance | null = null;
 let connectionString = "";
 let fixtureSql: ReturnType<typeof postgres> | null = null;
@@ -75,6 +80,7 @@ let publicPort = 0;
 let nativeBinaryPath = "";
 let sessionResolverCalls = 0;
 let nodeRouteCalls = 0;
+let nodeLifecycleCalls = 0;
 let healthStatus = 200;
 let corruptHealthProof = false;
 
@@ -251,7 +257,7 @@ async function buildSourceBinary(): Promise<string> {
     "--bin", "rudder-server-foundation", "--message-format=json"];
   const child = spawn(process.platform === "win32" ? "cargo.exe" : "cargo", args, {
     cwd: repositoryRoot,
-    env: { ...process.env, CARGO_TARGET_DIR: "/private/tmp/rudder-agent-auth-target" },
+    env: { ...process.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let executable: string | undefined;
@@ -268,11 +274,15 @@ async function buildSourceBinary(): Promise<string> {
   const [code] = await once(child, "exit");
   output.close();
   if (code !== 0 || !executable) throw new Error(`Candidate Rust build failed (${code}): ${diagnostics}`);
+  // Run a private copy so a concurrent build cannot replace this candidate.
+  artifactRoot = mkdtempSync(path.join(realpathSync(os.tmpdir()), "rudder-session-artifact-"));
+  const frozen = path.join(artifactRoot, process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation");
+  copyFileSync(executable, frozen, fsConstants.COPYFILE_FICLONE);
   console.info("Native session workflow binary", {
-    path: executable,
-    sha256: createHash("sha256").update(readFileSync(executable)).digest("hex"),
+    path: frozen,
+    sha256: createHash("sha256").update(readFileSync(frozen)).digest("hex"),
   });
-  return executable;
+  return frozen;
 }
 
 function readStartup(child: ChildProcess, output: Interface): Promise<string> {
@@ -313,6 +323,7 @@ async function startNative(
   kind: "better_auth" | "local_account" | null,
   secret: string | undefined,
   localImplicitEnabled = false,
+  lifecycle?: RustLocalAccountLifecycleOptions,
 ): Promise<StartupReceipt> {
   nativeStderr = "";
   nativeChild = spawn(nativeBinaryPath, [], {
@@ -332,12 +343,14 @@ async function startNative(
       RUDDER_NATIVE_AGENT_JWT_ISSUER: "rudder",
       RUDDER_NATIVE_AGENT_JWT_AUDIENCE: "rudder-api",
       RUDDER_NATIVE_LOCAL_IMPLICIT: String(localImplicitEnabled),
+      ...(lifecycle ? { RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG: JSON.stringify(lifecycle) } : {}),
       ...(kind && secret ? {
         RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
         RUDDER_NATIVE_SESSION_AUTH_KIND: kind,
         RUDDER_NATIVE_SESSION_AUTH_SECRET: secret,
         RUDDER_NATIVE_SESSION_COOKIE_SECURE: "false",
         RUDDER_NATIVE_SESSION_ASSERTION_KEY: ASSERTION_KEY,
+        ...(kind === "local_account" ? { RUDDER_NATIVE_WEBSOCKET_COOKIE_FALLBACK: "session" } : {}),
       } : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -356,6 +369,7 @@ async function startNative(
 describe("source-built Rust public native session workflow", () => {
   beforeAll(async () => {
     fixtureRoot = "";
+    nativeBinaryPath = await buildSourceBinary();
     const fixture = await startDisposableDatabase();
     connectionString = fixture.url;
     fixtureRoot = fixture.dir;
@@ -414,6 +428,10 @@ describe("source-built Rust public native session workflow", () => {
     });
     const app = express();
     app.use((req, _res, next) => {
+      if (/^\/api\/auth\/local-/i.test(req.path)) nodeLifecycleCalls += 1;
+      next();
+    });
+    app.use((req, _res, next) => {
       if (req.path === "/api/health" && corruptHealthProof) {
         req.headers["x-rudder-native-session-proof"] = "corrupted-proof";
       }
@@ -451,7 +469,6 @@ describe("source-built Rust public native session workflow", () => {
     });
     privateNodePort = (nodeServer.address() as AddressInfo).port;
 
-    nativeBinaryPath = await buildSourceBinary();
     const startup = await startNative("better_auth", SESSION_SECRET);
     expect(startup.publicListener).toBe(false);
     expect(startup.publicIngress?.publicListener).toBe(true);
@@ -544,6 +561,10 @@ describe("source-built Rust public native session workflow", () => {
       if (fixtureRoot) {
         rmSync(fixtureRoot, { recursive: true, force: true });
         fixtureRoot = "";
+      }
+      if (artifactRoot) {
+        rmSync(artifactRoot, { recursive: true, force: true });
+        artifactRoot = "";
       }
     }
   });
@@ -987,6 +1008,160 @@ describe("source-built Rust public native session workflow", () => {
     expect(malformedAuthorization.status).toBe(401);
     expect(nodeRouteCalls).toBe(before + 1);
     expect(sessionResolverCalls).toBe(0);
+  }, 30_000);
+  it("owns local exchange, offline proof, replay, claim and signout through the public listener without Node fallback", async () => {
+    // Claim touches installation-wide legacy state; require this suite's disposable cluster.
+    if (!embedded) throw new Error("Local lifecycle acceptance requires its own disposable PostgreSQL instance");
+    // All state for this case is created here; no earlier test mutation is a prerequisite.
+    const installationId = `native-lifecycle-${randomUUID()}`;
+    const subject = `account-${randomUUID()}`;
+    const jti = randomUUID();
+    const identityKeys = generateKeyPairSync("ed25519");
+    const deviceKeys = generateOfflineDeviceKeyPair();
+    const trustedTime = Date.now();
+    let identityOrigin = "";
+    let verifierCalls = 0;
+    const verifier = createServer(async (req, res) => {
+      let body = "";
+      for await (const chunk of req) body += chunk.toString();
+      const input = JSON.parse(body);
+      if (req.method !== "POST" || req.url !== "/api/server/exchange/verify"
+        || input.expected_audience !== "native-lifecycle-test"
+        || input.expected_installation_id !== installationId) {
+        res.writeHead(400).end();
+        return;
+      }
+      verifierCalls += 1;
+      const selectedSubject = input.code === "native-other-account-code" ? `${subject}-other` : subject;
+      const selectedJti = input.code === "native-other-account-code" ? `${jti}-other` : jti;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        issuer: identityOrigin, subject: selectedSubject, audience: "native-lifecycle-test", installationId,
+        jti: selectedJti, expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        email: `${selectedSubject}@invalid.test`, name: "Native lifecycle fixture",
+      }));
+    });
+    verifier.listen(0, "127.0.0.1");
+    await once(verifier, "listening");
+    identityOrigin = `http://127.0.0.1:${(verifier.address() as AddressInfo).port}`;
+    await stopNative();
+    const beforeNode = nodeRouteCalls;
+    const beforeLifecycle = nodeLifecycleCalls;
+    try {
+      const startup = await startNative("local_account", LOCAL_SESSION_SECRET, false, {
+        installationId, expectedIssuer: identityOrigin, identityOrigin, audience: "native-lifecycle-test",
+        offline: {
+          identityKeyId: "native-lifecycle-key",
+          identityPublicKeySpki: identityKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url"),
+          expectedAccountId: subject, expectedDeviceId: "native-test-device",
+          lastTrustedTimeMs: trustedTime, localSignOutEpoch: 0,
+        },
+      });
+      expect(startup.publicIngress?.localAccountLifecycle).toEqual({
+        authority: "rust", protocolVersion: 1,
+        routes: ["/api/auth/local-exchange", "/api/auth/local-offline", "/api/auth/local-claim", "/api/auth/local-signout-all"],
+      });
+      const origin = `http://127.0.0.1:${publicPort}`;
+      const post = (route: string, body: unknown, cookie?: string) => fetch(`${origin}/api/auth/${route}`, {
+        method: "POST", headers: { "content-type": "application/json", origin, ...(cookie ? { cookie } : {}) },
+        body: JSON.stringify(body),
+      });
+      // Compare native HTTP errors with the existing public contract, not a
+      // second hand-maintained copy of its validation messages.
+      const invalidPayloads = [
+        { route: "local-exchange", schema: localServerExchangeSchema, body: {} },
+        { route: "local-exchange", schema: localServerExchangeSchema, body: { exchangeCode: 7 } },
+        { route: "local-exchange", schema: localServerExchangeSchema, body: { exchangeCode: "short" } },
+        { route: "local-exchange", schema: localServerExchangeSchema,
+          body: { exchangeCode: "a".repeat(16_385) } },
+        { route: "local-exchange", schema: localServerExchangeSchema,
+          body: { exchangeCode: "native-fixture-exchange-code", unexpected: true } },
+        { route: "local-offline", schema: localOfflineGrantSchema, body: {} },
+        { route: "local-offline", schema: localOfflineGrantSchema,
+          body: { grant: "g".repeat(32), devicePublicKeySpki: "k".repeat(32),
+            proof: { payload: { version: 2 }, signature: "s".repeat(16) } } },
+      ];
+      for (const { route, schema, body } of invalidPayloads) {
+        const expected = schema.safeParse(body);
+        if (expected.success) throw new Error(`Invalid contract fixture for ${route}`);
+        const response = await post(route, body);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: "Validation error", details: expected.error.issues });
+      }
+      for (const route of startup.publicIngress!.localAccountLifecycle!.routes) {
+        const response = await fetch(`${origin}${route}`);
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: "API route not found" });
+      }
+      expect(verifierCalls).toBe(0);
+      expect(nodeLifecycleCalls).toBe(beforeLifecycle);
+      const redemptionRace = await Promise.all([
+        post("local-exchange", { exchangeCode: "native-fixture-exchange-code" }),
+        post("local-exchange", { exchangeCode: "native-fixture-exchange-code" }),
+      ]);
+      expect(redemptionRace.map((response) => response.status).sort()).toEqual([200, 409]);
+      const exchanged = redemptionRace.find((response) => response.status === 200)!;
+      const issued = await exchanged.json() as { userId: string; session: { id: string; expiresAt: string } };
+      const cookie = exchanged.headers.get("set-cookie")?.split(";")[0];
+      expect(cookie).toMatch(/^better-auth.session_token=/);
+      expect(issued.userId).toBeTruthy();
+      const [stored] = await fixtureSql!`SELECT user_id FROM session WHERE id = ${issued.session.id}`;
+      expect(stored.user_id).toBe(issued.userId);
+      expect((await getSessionFromPublic("/api/auth/get-session", { cookie: cookie! })).status).toBe(200);
+      expect((await post("local-exchange", { exchangeCode: "native-fixture-exchange-code" })).status).toBe(409);
+      expect(verifierCalls).toBe(3);
+      const claimRace = await Promise.all([
+        post("local-claim", {}, cookie), post("local-claim", {}, cookie),
+      ]);
+      expect(claimRace.map((response) => response.status)).toEqual([200, 200]);
+      const claims = await Promise.all(claimRace.map((response) => response.json()));
+      expect(claims.map((claim) => claim.status).sort()).toEqual(["already_claimed", "claimed"]);
+      expect(claims.every((claim) => claim.localUserId === issued.userId)).toBe(true);
+      const competingExchange = await post("local-exchange", { exchangeCode: "native-other-account-code" });
+      expect(competingExchange.status).toBe(200);
+      const competingCookie = competingExchange.headers.get("set-cookie")?.split(";")[0];
+      expect(competingCookie).toBeTruthy();
+      const competingClaim = await post("local-claim", {}, competingCookie);
+      expect(competingClaim.status).toBe(403);
+      const [retainedOwner] = await fixtureSql!`
+        SELECT local_user_id FROM installation_account_bindings WHERE installation_id = ${installationId}
+      `;
+      expect(retainedOwner.local_user_id).toBe(issued.userId);
+      const grant = issueOfflineGrant({
+        signingPrivateKey: identityKeys.privateKey, keyId: "native-lifecycle-key",
+        issuer: identityOrigin, accountId: subject, deviceId: "native-test-device", installationId,
+        publicKeyThumbprint: deviceKeys.thumbprint, nowMs: trustedTime, trustedTimeMs: trustedTime,
+        localSignOutEpoch: 0, authSchemaEpoch: 2, accountAuthEpoch: 0, deviceAuthEpoch: 0, jti: randomUUID(),
+      });
+      const proof = createOfflineGrantProof({
+        grant, devicePrivateKey: deviceKeys.privateKey, method: "POST", path: "/api/auth/local-offline",
+        bodyHash: offlineRequestBodyHash(""), nonce: randomBytes(24).toString("base64url"), issuedAtMs: Date.now(),
+      });
+      const offlineInput = {
+        grant, proof,
+        devicePublicKeySpki: deviceKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url"),
+      };
+      const copiedDevice = generateOfflineDeviceKeyPair();
+      expect((await post("local-offline", { ...offlineInput,
+        devicePublicKeySpki: copiedDevice.publicKey.export({ format: "der", type: "spki" }).toString("base64url"),
+      })).status).toBe(401);
+      const offline = await post("local-offline", offlineInput);
+      expect(offline.status).toBe(200);
+      expect((await offline.json()).userId).toBe(issued.userId);
+      expect((await post("local-offline", offlineInput)).status).toBe(409);
+      const signout = await post("local-signout-all", {}, cookie);
+      expect(signout.status).toBe(200);
+      expect(await signout.json()).toEqual({ revokedSessionCount: 2 });
+      const [remaining] = await fixtureSql!`SELECT count(*)::int AS count FROM session WHERE user_id = ${issued.userId}`;
+      expect(remaining.count).toBe(0);
+      expect((await post("local-claim", {}, cookie)).status).toBe(401);
+      expect(nodeRouteCalls).toBe(beforeNode);
+      expect(nodeLifecycleCalls).toBe(beforeLifecycle);
+    } finally {
+      await stopNative();
+      verifier.closeAllConnections();
+      await new Promise<void>((resolve, reject) => verifier.close((error) => error ? reject(error) : resolve()));
+    }
   }, 30_000);
 });
 

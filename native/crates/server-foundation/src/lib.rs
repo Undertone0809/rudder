@@ -74,6 +74,10 @@ mod llm_reflection;
 mod member_directory_auth;
 mod native_bearer_auth;
 mod native_session_auth;
+pub mod local_account_auth;
+mod local_account_ingress;
+mod native_session_revocation;
+pub use native_session_revocation::NativeSessionRevocationRegistry;
 use member_directory_auth::{MemberDirectoryNativeAccess, MemberDirectoryNativeAuth};
 use native_agent_jwt::NativeAgentJwtIdentity;
 use native_session_auth::NativeSessionIdentity;
@@ -978,6 +982,7 @@ enum DatabaseState {
 struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
+    session_revocation: NativeSessionRevocationRegistry,
     d1_mutations: Option<MutationStore>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
@@ -1157,6 +1162,7 @@ impl AppState {
             actor_envelope_replay: Arc::new(Mutex::new(NonceReplayGuard::new())),
             config: Arc::new(config),
             database,
+            session_revocation: NativeSessionRevocationRegistry::default(),
             d1_mutations,
             started_at: Instant::now(),
         })

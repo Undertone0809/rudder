@@ -302,6 +302,17 @@ fn verify_signed_cookie(value: &str, secret: &str) -> Option<String> {
     Some(token.to_owned())
 }
 
+/// Sign the Better Auth session token using the same padded standard-Base64
+/// HMAC representation accepted by `verify_signed_cookie` above. Local
+/// account lifecycle issuance uses this helper so the public cookie reader
+/// and writer cannot drift apart.
+pub(super) fn sign_session_token(token: &str, secret: &str) -> Result<String, ()> {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).map_err(|_| ())?;
+    mac.update(token.as_bytes());
+    let signature = STANDARD.encode(mac.finalize().into_bytes());
+    Ok(format!("{token}.{signature}"))
+}
+
 async fn resolve(
     pool: &Pool<Postgres>,
     config: &NativeSessionAuthConfig,
@@ -501,6 +512,16 @@ mod tests {
         assert_eq!(
             verify_signed_cookie("token.not-a-signature", ba_secret),
             None
+        );
+    }
+
+    #[test]
+    fn issued_local_session_cookie_uses_the_reader_hmac_representation() {
+        let secret = "test-local-account-secret";
+        let issued = sign_session_token("new-session-token", secret).unwrap();
+        assert_eq!(
+            verify_signed_cookie(&issued, secret).as_deref(),
+            Some("new-session-token")
         );
     }
 

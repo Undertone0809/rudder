@@ -18,7 +18,7 @@ vi.mock("node:url", async (importOriginal) => {
   return { ...actual, fileURLToPath: vi.fn(actual.fileURLToPath) };
 });
 
-type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term" | "public-ready" | "delayed"
+type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term" | "public-ready" | "public-local-account" | "delayed"
   | "stream-missing-terminal" | "stream-bad-checksum" | "stream-transport-error"
   | "stream-invalid-json" | "stream-invalid-frame" | "stream-invalid-utf8"
   | "stream-wrong-content-type" | "stream-count-mismatch";
@@ -143,10 +143,16 @@ if (mode === "invalid") {
       productWriteAuthority: false,
     };
     const emit = () => process.stdout.write(JSON.stringify(receipt) + "\\n");
-    if (mode === "public-ready") {
+    if (mode === "public-ready" || mode === "public-local-account") {
       publicServer = http.createServer((req, res) => res.end("ready"));
       publicServer.listen(0, "127.0.0.1", () => {
         receipt.publicIngress = { boundAddr: "127.0.0.1:" + publicServer.address().port, publicListener: true };
+        if (mode === "public-local-account") {
+          receipt.publicIngress.localAccountLifecycle = {
+            authority: "rust", protocolVersion: 1,
+            routes: ["/api/auth/local-exchange", "/api/auth/local-offline", "/api/auth/local-claim", "/api/auth/local-signout-all"],
+          };
+        }
         emit();
       });
     } else emit();
@@ -426,6 +432,32 @@ describe("rust foundation bridge lifecycle", () => {
     await bridge.close();
     expect(bridge.publicIngressBaseUrl).toBeNull();
     await expect(bridge.waitForPublicIngressReady!()).rejects.toMatchObject({ code: "not_ready" });
+  });
+
+  it("requires the native lifecycle receipt before accepting the selected account writer", async () => {
+    for (const mode of ["public-ready", "public-local-account"] as const) {
+      const fixture = await createFixture(mode);
+      const bridge = createBridge(fixture, { publicIngress: {
+        listenAddr: "127.0.0.1:0", nodeUpstream: "http://127.0.0.1:3101",
+        authorizationKey: "0123456789abcdef0123456789abcdef",
+        sessionAuth: {
+          kind: "local_account", secret: "test-session-secret", secureCookie: false,
+          assertionKey: "0123456789abcdef0123456789abcdef", websocketCookieFallback: "session",
+        },
+        localAccountLifecycle: {
+          installationId: "test-installation", audience: "test-audience",
+          expectedIssuer: "https://identity.example", identityOrigin: "https://identity.example",
+        },
+      } });
+      if (mode === "public-ready") {
+        await expect(bridge.start()).rejects.toMatchObject({ code: "startup_failed" });
+        expect(bridge.publicIngressBaseUrl).toBeNull();
+      } else {
+        await expect(bridge.start()).resolves.toBeUndefined();
+        expect(bridge.publicIngressBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
+      }
+      await bridge.close();
+    }
   });
 
   it("rejects a missing, unexpected or wrong public listener instead of accepting private readiness", async () => {

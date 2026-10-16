@@ -4,6 +4,9 @@
 use std::net::SocketAddr;
 use thiserror::Error;
 
+use crate::local_account_auth::{
+    LocalAccountAuthError, LocalAccountAuthService, NativeLocalAccountAuthConfig,
+};
 use crate::native_agent_jwt::NativeAgentJwtConfig;
 
 #[derive(Clone)]
@@ -13,13 +16,23 @@ pub struct PublicIngressConfig {
     pub(crate) authorization_key: String,
     pub(crate) forwarding_policy: crate::public_ingress_forwarding::ForwardingPolicy,
     pub(crate) session_auth: Option<NativeSessionAuthConfig>,
+    pub(crate) local_account_auth: Option<NativeLocalAccountAuthConfig>,
     pub(crate) identity_auth: Option<NativeIdentityAuthConfig>,
+    pub(crate) websocket_cookie_fallback: NativeWebSocketCookieFallback,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeSessionAuthKind {
     BetterAuth,
     LocalAccount,
+}
+
+/// Describes which identity the existing private Node WebSocket authorizer
+/// selects when no bearer or non-empty query token is present.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeWebSocketCookieFallback {
+    SessionCookie,
+    LocalTrustedImplicit,
 }
 
 #[derive(Clone)]
@@ -130,8 +143,18 @@ impl PublicIngressConfig {
         let identity_auth_mode = crate::optional_env("RUDDER_NATIVE_IDENTITY_AUTH_MODE")?;
         let identity_assertion_key = crate::optional_env("RUDDER_NATIVE_IDENTITY_ASSERTION_KEY")?;
         let local_implicit = crate::optional_env("RUDDER_NATIVE_LOCAL_IMPLICIT")?;
+        let local_account_auth_raw =
+            crate::optional_env("RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG")?;
+        let websocket_cookie_fallback =
+            crate::optional_env("RUDDER_NATIVE_WEBSOCKET_COOKIE_FALLBACK")?;
         match (listen, upstream, key) {
             (None, None, None) => {
+                if local_account_auth_raw.is_some() {
+                    return Err(crate::ConfigError::invalid(
+                        "RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG",
+                        "requires public ingress to be configured",
+                    ));
+                }
                 if session_mode.is_some()
                     || session_kind.is_some()
                     || session_secret.is_some()
@@ -140,6 +163,7 @@ impl PublicIngressConfig {
                     || identity_auth_mode.is_some()
                     || identity_assertion_key.is_some()
                     || local_implicit.is_some()
+                    || websocket_cookie_fallback.is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_SECRET").is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_ISSUER").is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_AUDIENCE").is_some()
@@ -224,6 +248,33 @@ impl PublicIngressConfig {
                         ));
                     }
                 };
+                let local_account_auth = local_account_auth_raw
+                    .as_deref()
+                    .map(NativeLocalAccountAuthConfig::parse)
+                    .transpose()
+                    .map_err(|message| {
+                        crate::ConfigError::invalid(
+                            "RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG",
+                            message,
+                        )
+                    })?;
+                if let Some(local_account_auth) = local_account_auth.as_ref() {
+                    local_account_auth
+                        .validate_session(session_auth.as_ref())
+                        .map_err(|message| {
+                            crate::ConfigError::invalid(
+                                "RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG",
+                                message,
+                            )
+                        })?;
+                }
+                let websocket_cookie_fallback = parse_websocket_cookie_fallback(
+                    session_auth.as_ref(),
+                    websocket_cookie_fallback.as_deref(),
+                )
+                .map_err(|message| {
+                    crate::ConfigError::invalid("RUDDER_NATIVE_WEBSOCKET_COOKIE_FALLBACK", message)
+                })?;
                 let identity_auth = match (
                     identity_auth_mode.as_deref(),
                     identity_assertion_key.as_deref(),
@@ -313,7 +364,9 @@ impl PublicIngressConfig {
                     .map(|mut config| {
                         config.forwarding_policy = policy;
                         config.session_auth = session_auth;
+                        config.local_account_auth = local_account_auth;
                         config.identity_auth = identity_auth;
+                        config.websocket_cookie_fallback = websocket_cookie_fallback;
                         config
                     })
                     .map(Some)
@@ -368,12 +421,55 @@ impl PublicIngressConfig {
             authorization_key: authorization_key.to_owned(),
             forwarding_policy: Default::default(),
             session_auth: None,
+            local_account_auth: None,
             identity_auth: None,
+            websocket_cookie_fallback: NativeWebSocketCookieFallback::SessionCookie,
         })
     }
 
     pub fn node_upstream(&self) -> &str {
         &self.node_upstream
+    }
+
+    pub(crate) fn build_local_account_auth_service(
+        &self,
+        pool: sqlx::Pool<sqlx::Postgres>,
+    ) -> Result<Option<LocalAccountAuthService>, LocalAccountAuthError> {
+        let Some(local_account_auth) = self.local_account_auth.as_ref() else {
+            return Ok(None);
+        };
+        let Some(session_auth) = self.session_auth.as_ref() else {
+            return Err(LocalAccountAuthError::InvalidConfiguration);
+        };
+        local_account_auth
+            .build_service(pool, session_auth)
+            .map(Some)
+    }
+}
+
+fn parse_websocket_cookie_fallback(
+    session_auth: Option<&NativeSessionAuthConfig>,
+    configured: Option<&str>,
+) -> Result<NativeWebSocketCookieFallback, &'static str> {
+    match (session_auth.map(|settings| settings.kind), configured) {
+        (Some(NativeSessionAuthKind::LocalAccount), Some("session")) => {
+            Ok(NativeWebSocketCookieFallback::SessionCookie)
+        }
+        (Some(NativeSessionAuthKind::LocalAccount), Some("local_implicit")) => {
+            Ok(NativeWebSocketCookieFallback::LocalTrustedImplicit)
+        }
+        (Some(NativeSessionAuthKind::LocalAccount), None) => Err(
+            "must explicitly be session or local_implicit when local-account session auth is enabled",
+        ),
+        (Some(NativeSessionAuthKind::LocalAccount), Some(_)) => {
+            Err("expected session or local_implicit")
+        }
+        (Some(NativeSessionAuthKind::BetterAuth) | None, None) => {
+            Ok(NativeWebSocketCookieFallback::SessionCookie)
+        }
+        (Some(NativeSessionAuthKind::BetterAuth) | None, Some(_)) => {
+            Err("only applies to local-account session auth")
+        }
     }
 }
 
@@ -388,6 +484,36 @@ fn validate_key(key: &str) -> Result<(), ()> {
 mod tests {
     use super::*;
     const KEY: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn websocket_cookie_fallback_requires_an_explicit_local_account_selection() {
+        let local_account = NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::LocalAccount,
+            "valid local secret",
+            false,
+            KEY,
+        )
+        .unwrap();
+        let better_auth = NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::BetterAuth,
+            "valid better auth secret",
+            false,
+            KEY,
+        )
+        .unwrap();
+
+        assert_eq!(
+            parse_websocket_cookie_fallback(Some(&local_account), Some("session")),
+            Ok(NativeWebSocketCookieFallback::SessionCookie)
+        );
+        assert_eq!(
+            parse_websocket_cookie_fallback(Some(&local_account), Some("local_implicit")),
+            Ok(NativeWebSocketCookieFallback::LocalTrustedImplicit)
+        );
+        assert!(parse_websocket_cookie_fallback(Some(&local_account), None).is_err());
+        assert!(parse_websocket_cookie_fallback(Some(&local_account), Some("optional")).is_err());
+        assert!(parse_websocket_cookie_fallback(Some(&better_auth), Some("session")).is_err());
+    }
 
     #[test]
     fn native_session_auth_rejects_missing_or_weak_secrets() {

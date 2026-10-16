@@ -2200,6 +2200,8 @@ dependencies = [
  "futures-util",
  "hmac",
  "percent-encoding",
+ "reqwest",
+ "ring",
  "rudder-archive-core",
  "rudder-auth-core",
  "rudder-d1-persistence",

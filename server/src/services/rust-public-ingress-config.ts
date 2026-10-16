@@ -1,8 +1,20 @@
+import type { LocalAccountAuthOptions } from "../bootstrap/auth-runtime.js";
+
+export type RustLocalAccountLifecycleOptions = {
+  installationId: string;
+  expectedIssuer: string;
+  audience: string;
+  identityOrigin: string;
+  offline?: LocalAccountAuthOptions["offline"];
+};
+
 export type RustNativeSessionAuthOptions = {
   kind: "better_auth" | "local_account";
   secret: string;
   secureCookie: boolean;
   assertionKey: string;
+  /** Effective private WebSocket credential fallback; required for local-account sessions. */
+  websocketCookieFallback?: "session" | "local_implicit";
 };
 
 export type RustNativeIdentityAuthOptions = {
@@ -23,6 +35,7 @@ export type RustPublicIngressOptions = {
   trustedProxies?: string;
   /** Existing session-cookie authority and distinct private-hop assertion key. */
   sessionAuth?: RustNativeSessionAuthOptions;
+  localAccountLifecycle?: RustLocalAccountLifecycleOptions;
   /** Native public identity authority for sessions, API keys, Agent JWTs and local implicit. */
   identityAuth?: RustNativeIdentityAuthOptions;
 };
@@ -31,12 +44,18 @@ export function nativeSessionAuthEnvironment(
   sessionAuth?: RustNativeSessionAuthOptions,
 ): Record<string, string> {
   if (!sessionAuth) return {};
+  if (sessionAuth.kind === "local_account" && !sessionAuth.websocketCookieFallback) {
+    throw new Error("Local-account Rust ingress requires an explicit WebSocket cookie fallback");
+  }
   return {
     RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
     RUDDER_NATIVE_SESSION_AUTH_KIND: sessionAuth.kind,
     RUDDER_NATIVE_SESSION_AUTH_SECRET: sessionAuth.secret,
     RUDDER_NATIVE_SESSION_COOKIE_SECURE: String(sessionAuth.secureCookie),
     RUDDER_NATIVE_SESSION_ASSERTION_KEY: sessionAuth.assertionKey,
+    ...(sessionAuth.websocketCookieFallback
+      ? { RUDDER_NATIVE_WEBSOCKET_COOKIE_FALLBACK: sessionAuth.websocketCookieFallback }
+      : {}),
   };
 }
 
@@ -51,5 +70,17 @@ export function nativeIdentityAuthEnvironment(
     RUDDER_NATIVE_AGENT_JWT_ISSUER: identityAuth.agentJwtIssuer,
     RUDDER_NATIVE_AGENT_JWT_AUDIENCE: identityAuth.agentJwtAudience,
     RUDDER_NATIVE_LOCAL_IMPLICIT: String(identityAuth.localImplicitEnabled),
+  };
+}
+
+export function nativeLocalAccountLifecycleEnvironment(
+  options: RustPublicIngressOptions,
+): Record<string, string> {
+  if (!options.localAccountLifecycle) return {};
+  if (options.sessionAuth?.kind !== "local_account") {
+    throw new Error("Native local-account lifecycle requires local-account session authentication");
+  }
+  return {
+    RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG: JSON.stringify(options.localAccountLifecycle),
   };
 }

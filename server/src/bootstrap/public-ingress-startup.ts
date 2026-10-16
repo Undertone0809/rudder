@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { localAgentJwtAuthSettings } from "../agent-auth-jwt.js";
 import type { RudderAppHandle } from "../app.js";
 import { betterAuthSessionCookieSettings } from "../auth/better-auth.js";
+import type { RustLocalAccountLifecycleOptions } from "../services/rust-public-ingress-config.js";
 import type { Config } from "../config.js";
 import type { LocalRuntimeOwnerKind } from "../local-runtime.js";
 import { selectAvailablePort } from "./port-selection.js";
@@ -29,6 +30,7 @@ export async function preparePublicIngressStartup(
   publicPort: number,
   localAccountAuth?: { sessionSecret: string; secureCookie?: boolean },
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
+  localAccountLifecycle?: RustLocalAccountLifecycleOptions,
 ) {
   assertPublicIngressExposure(config, Boolean(localAccountAuth), runtimeOwnerKind);
   const enabled = config.rustPublicIngressMode === "required";
@@ -47,6 +49,9 @@ export async function preparePublicIngressStartup(
     const sessionAuth = localAccountAuth
       ? {
           kind: "local_account" as const,
+          // index.ts passes required auth to the private WebSocket resolver whenever
+          // localAccountAuth is configured, including local_trusted deployments.
+          websocketCookieFallback: "session" as const,
           secret: localAccountAuth.sessionSecret,
           secureCookie: localAccountAuth.secureCookie ?? false,
           assertionKey: identityAssertionKey,
@@ -85,6 +90,7 @@ export async function preparePublicIngressStartup(
           && runtimeOwnerKind !== "desktop",
       },
       ...(sessionAuth ? { sessionAuth } : {}),
+      ...(localAccountLifecycle ? { localAccountLifecycle } : {}),
     };
   }
   return {
