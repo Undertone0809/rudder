@@ -157,3 +157,10 @@ Author `pnpm desktop:verify` completed with exit 0 on clean source `19d6715cd7a1
 Receipt: `/tmp/rudder-session-integrated-packaged-receipt.json`; log: `/tmp/rudder-session-integrated-desktop-verify.log`, SHA-256 `45877f77fd71887e1adb7dfe2b2ba0b1acc4c06c565ec507becfc31296446e33`. Packaged foundation SHA-256 is `e00edd7b25411f17cd5b977ed7a487b61db4dbd9a6ef6c1ec1fbfd45894f6116`; packaged process-host SHA-256 is `363ae71094b222f066eccf468b6487292a9436721ca635b912221c243c1f6f86`. Integrated real-runtime checks also passed all 13 cases (8 session workflow and 5 OpenCode) using the default current process host, recorded in `/tmp/rudder-session-integrated-runtime-tests.log`.
 
 This remains author packaging evidence alongside the earlier independent session/startup acceptance. Final reviewer integration rebind and protected PR/CI are outstanding; no release, signing or whole-backend completion claim is made.
+
+
+## Final integrated handoff verdict
+
+Independent reviewer `/root/migration_final_review` returned final **accept** for clean `915edc3301ed8fc220e5227e997a8b29f3682193`, tree `d395e3092544e6b3746fcc7de64b7a0051f8f332`, based on main `3ba55411638643b49b905373342f3d71adb4ac79`. The reviewer verified source equivalence to the previously accepted session and independently accepted startup corrections, the 30-case scoped session receipt, actual startup waiter receipt, 13 integrated runtime cases, current authority comparison, and successful integrated author Desktop verification. Current product source is identical to packaged candidate `19d6715cd7a14a10734868f6792e7d59144e73cb`; only this acceptance document differs. This supersedes the earlier pending reviewer-rebind statements, not their historical evidence.
+
+The bounded session PR may now be submitted. Protected PR CI remains required before merge. Auth lifecycle, WebSocket identity, the dependent JWT slice, other domains and full Node retirement remain unfinished. No production deployment is authorized or claimed here.
