@@ -34,6 +34,7 @@ import { projectRoutes } from "../routes/projects.js";
 import { requestRoutes } from "../routes/requests.js";
 import { rudderPluginRoutes } from "../routes/rudder-plugins.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
+import { runtimeBindingRoutes } from "../routes/runtime-bindings.js";
 import { secretRoutes } from "../routes/secrets.js";
 import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 import { websiteMetadataRoutes } from "../routes/website-metadata.js";
@@ -99,6 +100,7 @@ export function registerApiRoutes(
   api.use(productAnalyticsRoutes(db));
   api.use(issueRoutes(db, opts.storageService, rustFoundationBridge));
   api.use(messengerRoutes(db, rustFoundationBridge));
+  api.use(runtimeBindingRoutes(rustFoundationBridge));
   api.use(chatRoutes(
     db,
     opts.storageService,

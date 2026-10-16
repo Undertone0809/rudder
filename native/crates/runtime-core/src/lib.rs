@@ -9,6 +9,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 
+pub mod native_chat;
+
 pub const RUNTIME_CORE_PROTOCOL_VERSION: u16 = 1;
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
 pub const MAX_IDENTITY_PART_BYTES: usize = 255;

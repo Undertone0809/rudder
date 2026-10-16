@@ -46,6 +46,8 @@ use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
 mod messenger_state;
+mod runtime_bindings;
+mod runtime_spans;
 pub use messenger_state::MESSENGER_STATE_ACTION;
 
 mod live_run_reads;
@@ -123,6 +125,8 @@ pub const PROJECT_CREATE_ACTION: &str = "project.create";
 pub const ORGANIZATION_RESOURCE_ACTION: &str = "organization.resource.mutate";
 
 const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
+    "runtime_bindings",
+    "runtime_spans",
     "messenger_state",
     "calendar",
     "secrets",
@@ -2897,6 +2901,14 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/messenger-state",
                     web::post().to(messenger_state::messenger_state),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/runtime-bindings",
+                    web::post().to(runtime_bindings::command),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/runtime-spans",
+                    web::post().to(runtime_spans::command),
                 )
                 .route(
                     "/internal/orgs/{org_id}/run-reads",

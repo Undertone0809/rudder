@@ -41,12 +41,10 @@ function collectAssistantText(message: unknown): string[] {
 }
 
 function readSessionId(event: Record<string, unknown>): string | null {
-  return (
-    asString(event.session_id, "").trim() ||
-    asString(event.sessionId, "").trim() ||
-    asString(event.sessionID, "").trim() ||
-    null
-  );
+  for (const value of [event.session_id, event.sessionId, event.sessionID]) {
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return null;
 }
 
 export function parseCursorJsonl(stdout: string) {

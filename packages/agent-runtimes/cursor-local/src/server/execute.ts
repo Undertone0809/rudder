@@ -62,6 +62,10 @@ function firstNonEmptyLine(text: string): string {
   );
 }
 
+function readOpaqueSessionId(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
 const CURSOR_QUOTA_EXHAUSTED_RE =
   /(?:usage\s+limit|get\s+cursor\s+pro|quota|rate[-\s]?limit|too many requests|\b429\b|billing)/i;
 
@@ -433,13 +437,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const autoTrustEnabled = !hasCursorTrustBypassArg(extraArgs);
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
-  const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
+  const runtimeSessionId =
+    readOpaqueSessionId(runtimeSessionParams.sessionId) ?? readOpaqueSessionId(runtime.sessionId);
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const canResumeSession =
-    runtimeSessionId.length > 0 &&
+    runtimeSessionId !== null &&
     (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
   const sessionId = canResumeSession ? runtimeSessionId : null;
-  if (runtimeSessionId && !canResumeSession) {
+  if (runtimeSessionId !== null && !canResumeSession) {
     await onLog(
       "stdout",
       `[rudder] Cursor session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
@@ -652,7 +657,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       };
     }
 
-    const resolvedSessionId = attempt.parsed.sessionId ?? runtimeSessionId ?? runtime.sessionId ?? null;
+    const resolvedSessionId = attempt.parsed.sessionId ?? runtimeSessionId;
     const resolvedSessionParams = resolvedSessionId
       ? ({
           sessionId: resolvedSessionId,

@@ -1,5 +1,8 @@
 #![cfg(unix)]
 
+#[path = "black_box/runtime_bindings.rs"]
+mod runtime_bindings;
+
 use rudder_archive_core::create_archive;
 use rudder_server_foundation_core::{
     ACTOR_ENVELOPE_AUDIENCE, ACTOR_ENVELOPE_HEADER, ACTOR_ENVELOPE_REQUEST_ID_HEADER,
@@ -2030,6 +2033,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(
         startup["privateMutationAuthorities"],
         serde_json::json!([
+            "runtime_bindings",
+            "runtime_spans",
             "messenger_state",
             "calendar",
             "secrets",

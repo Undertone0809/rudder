@@ -32,6 +32,8 @@ pub mod request_reads;
 pub mod run_visibility;
 pub mod run_workspace_reads;
 pub mod run_workspace_updates;
+pub mod runtime_bindings;
+pub mod runtime_spans;
 pub mod secrets;
 mod transaction;
 
