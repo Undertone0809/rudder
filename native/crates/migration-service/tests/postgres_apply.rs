@@ -209,17 +209,25 @@ async fn cancelled_backup_closes_the_locked_session_and_fresh_apply_succeeds() {
     );
 
     let mut probe = database.pool.acquire().await.unwrap();
-    let acquired = sqlx::query_scalar::<_, bool>(
-        "SELECT pg_try_advisory_lock(hashtext(current_database()), hashtext($1))",
-    )
-    .bind(NODE_MIGRATION_ADVISORY_LOCK_NAME)
-    .fetch_one(&mut *probe)
+    // Dropping the SQLx connection initiates socket close; PostgreSQL observes
+    // EOF asynchronously. Require observable cleanup, not same-tick scheduling.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let acquired = sqlx::query_scalar::<_, bool>(
+                "SELECT pg_try_advisory_lock(hashtext(current_database()), hashtext($1))",
+            )
+            .bind(NODE_MIGRATION_ADVISORY_LOCK_NAME)
+            .fetch_one(&mut *probe)
+            .await
+            .unwrap();
+            if acquired {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
     .await
-    .unwrap();
-    assert!(
-        acquired,
-        "cancelled apply leaked the Node-compatible session lock"
-    );
+    .expect("cancelled apply leaked the Node-compatible session lock");
     sqlx::query("SELECT pg_advisory_unlock(hashtext(current_database()), hashtext($1))")
         .bind(NODE_MIGRATION_ADVISORY_LOCK_NAME)
         .execute(&mut *probe)
