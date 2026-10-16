@@ -182,7 +182,8 @@
           "sha256": "fca8fe2b572255e6a3e24fdeb030fb53e7a5edd75ebde8fc87d5a771d43fd08c",
           "reviewer": "auth_stage_review ACCEPT: eight DerefMut coercions and equivalent short-circuit let-chain; old binary receipt retained under old hash",
           "supplemental_author_postgres": "PASS /private/tmp/acceptance-migration-clippy-9vq3gxqh/postgres_apply-rerun.log and apply_cli-rerun.log; 4 concurrent apply tests and 1 real CLI backup/restore; isolated cluster stopped",
-          "fixture_correction": "AtomicUsize suffix prevents repeated wall-clock timestamps colliding across parallel database fixtures; initial failure retained"
+          "fixture_correction": "AtomicUsize suffix prevents repeated wall-clock timestamps colliding across parallel database fixtures; initial failure retained",
+          "postgres_fixture_sha256": "e7a95731b4ea24eda72dc29b9cdda53f83155c250cab51fb2918cc19afb941e4"
         }
       },
       {
@@ -246,13 +247,14 @@
     ],
     "deployment": "not performed",
     "integration_candidate": {
-      "source_sha": "feaa66be2549c6f18580c4c5669ce6471762d490",
-      "base_sha": "1021d5c5ba7d0b758fae42fd6569810c1a456a77",
+      "source_sha": "7582c26af9ed9262eca63aef53b403e92e5b5b7f",
+      "base_sha": "8f5a1607b4b7ebf144d4ce384a6f037d05320023",
       "accepted_native_source_equivalent": "Auth/transport byte-identical; migration eight coercions and conditional simplification independently reviewed behavior-equivalent",
       "checkpoint_desktop_verification": "PASS /tmp/rudder-retirement-desktop-final-candidate.log",
       "rebased_desktop_verification": "PASS exit 0 /tmp/rudder-retirement-desktop-ready-gate.log; development, packaging, packaged account/update and App Builder",
       "ci": "not published yet",
-      "migration_clippy_cleanup": "Reviewer ACCEPT semantic equivalence; full-workspace Clippy/rustfmt PASS, 30 default tests PASS, supplemental isolated PostgreSQL 4 apply tests and 1 real CLI backup/restore PASS"
+      "migration_clippy_cleanup": "Reviewer ACCEPT semantic equivalence; full-workspace Clippy/rustfmt PASS, 30 default tests PASS, supplemental isolated PostgreSQL 4 apply tests and 1 real CLI backup/restore PASS",
+      "content_rebase": "Native tree byte-identical to reviewed 86271a131 checkpoint; no replay required per independent reviewer; inventory regenerated for #292 main sources; final PR CI pending"
     }
   }
 }

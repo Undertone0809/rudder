@@ -233,3 +233,10 @@ four parallel database tests and the real CLI backup/restore test pass. Initial
 failure and rerun logs are retained under
 `/private/tmp/acceptance-migration-clippy-9vq3gxqh/`; the cluster was stopped.
 This supplements, rather than replaces, independent acceptance.
+
+Final integration checkpoint `7582c26af9ed9262eca63aef53b403e92e5b5b7f`
+rebases the bounded batch onto main `8f5a1607b4b7ebf144d4ce384a6f037d05320023`.
+The entire native tree is byte-identical to reviewed checkpoint `86271a131`;
+#292 changes six Node/CI/E2E files and has its own accepted CI. The authority
+inventory is regenerated against this main. Independent review permits carrying
+the unchanged scoped acceptance forward; publication still requires fresh PR CI.
