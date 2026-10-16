@@ -25,6 +25,7 @@ const DATABASE_RECEIVER = /^(?:db|tx|database|dbOrTx|txDb|identityDb|transaction
 const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
   "rust-native-session-proof-v1": Object.freeze({
     id: "rust-native-session-proof-v1",
+    admission_label: "native session proof",
     source_path: "server/src/bootstrap/create-http-app.ts",
     receiver: "app",
     factory_path: "server/src/auth/native-session-assertion.ts",
@@ -33,6 +34,22 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     factory_sha256: "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5",
     mount_expression: "nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })",
     mount_guard: "opts.rustPublicIngress?.sessionAuth",
+    order_after: "workspace_preview_reserved_404",
+    order_before: "express_json_body_parser",
+    rust_proof_owner: "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion",
+  }),
+  "rust-native-identity-proof-v1": Object.freeze({
+    id: "rust-native-identity-proof-v1",
+    admission_label: "native identity proof",
+    source_path: "server/src/bootstrap/create-http-app.ts",
+    source_sha256: "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+    receiver: "app",
+    factory_path: "server/src/auth/native-session-assertion.ts",
+    factory_import: "../auth/native-session-assertion.js",
+    factory_export: "nativeSessionAssertionMiddleware",
+    factory_sha256: "26c438378ca462495348fbf70333608d7622fe7f818844048cbb8947d9a8654d",
+    mount_expression: "nativeSessionAssertionMiddleware({ key: nativeIdentityAssertionKey, })",
+    mount_guard: "nativeIdentityAssertionKey",
     order_after: "workspace_preview_reserved_404",
     order_before: "express_json_body_parser",
     rust_proof_owner: "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion",
@@ -884,7 +901,7 @@ function validateTransportAdmissionSource(policy, source, sourcePath) {
   if (sourcePath !== policy.source_path) problems.push("mount source path does not match trusted policy");
   const { tokens, calls } = findAppUseCalls(source);
   const proofCalls = calls.filter((call) => call.expression === policy.mount_expression);
-  if (proofCalls.length !== 1) problems.push("expected exactly one exact native session proof app.use mount");
+  if (proofCalls.length !== 1) problems.push(`expected exactly one exact ${policy.admission_label} app.use mount`);
   if (!hasExactNamedImport(tokens, policy.factory_export, policy.factory_import)) {
     problems.push("factory must be imported once by its exact named export from the trusted module");
   }
@@ -921,7 +938,7 @@ function validateTransportAdmissionSource(policy, source, sourcePath) {
       const bodyEnd = findMatchingToken(tokens, conditionEnd + 1, "{", "}");
       if (bodyEnd > proofTokenIndex) guardMatches += 1;
     }
-    if (guardMatches !== 1) problems.push("proof admission must be mounted once inside the exact configured session-auth guard");
+    if (guardMatches !== 1) problems.push(`${policy.admission_label} must be mounted once inside the exact configured ingress-auth guard`);
   }
 
   const actorCalls = calls.filter((call) => call.expression.startsWith("actorMiddleware("));
@@ -957,6 +974,7 @@ function validateTransportAdmissionRecord(record, policy, headInventory, headCon
   if (!mountSource || !manifestMountSource) problems.push("trusted mount source is absent from the candidate inventory");
   else {
     if (manifestMountSource.sha256 !== mountSource.sha256) problems.push("mount source content hash disagrees with the candidate inventory");
+    if (policy.source_sha256 && mountSource.sha256 !== policy.source_sha256) problems.push("mount source hash does not match the trusted allowlist");
     if (record.mount_source_sha256 !== mountSource.sha256) problems.push("mount_source_sha256 does not match candidate source");
     problems.push(...validateTransportAdmissionSource(policy, mountSource.content, policy.source_path));
   }

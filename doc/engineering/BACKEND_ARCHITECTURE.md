@@ -84,23 +84,30 @@ write, or fallback behind names such as bridge, gateway, adapter, or compatibili
 
 The source-backed authority ratchet is lexical evidence, not a semantic proof:
 it hashes runtime files and recognizes structural candidates, but cannot prove
-the behavior of arbitrary call graphs. Its only permitted middleware admission
-capability is the exact Rust-signed native-session proof mount. The trusted-base
-checker pins the verifier module hash, mount factory and caller path; the
-candidate inventory must bind the caller file hash, exact factory options and
-receiver, its position after the reserved workspace-preview handling and
-before body parsing, plus the Rust proof owner, retirement criterion and
-reviewer reference. The mount remains visible in the structural inventory and
-comparison output. The pinned adapter verifies the Rust assertion's method,
-target, signature, and freshness; consumes a bounded in-memory nonce; binds its
-session identity to the request; strips the proof header; rejects unsupported
-methods for the native get-session path; and preserves its explicit Bearer and
-Node-owned lifecycle pass-throughs. The capability grants no permission to add
-or change route registrations, database access, writers, timers, listeners, or
-other runtime surfaces. The checker cannot establish
-that the adapter has no indirect semantic effect, so reviewers must inspect the
-pinned source and surrounding call graph. This record does not claim that Node
-session or business authorization is migrated.
+the behavior of arbitrary call graphs. The trusted-base checker pins two
+separate middleware admission capabilities: the exact Rust-signed native-session
+proof mount and the exact Rust-signed native-identity proof mount. Each
+capability pins its verifier module hash; the identity capability also pins the
+full caller-file hash. The candidate inventory must bind the exact caller file
+hash, factory options, import, receiver, guard, position after reserved
+workspace-preview handling and before body parsing, Rust proof owner,
+retirement criterion, and reviewer reference. Each mount remains visible in the
+structural inventory and comparison output.
+
+The session adapter verifies the Rust assertion's method, target, signature,
+and freshness; consumes a bounded in-memory nonce; binds its session identity
+to the request; strips the proof header; rejects unsupported methods for the
+native get-session path; and preserves its explicit Bearer and Node-owned
+lifecycle pass-throughs. The identity adapter verifies the pinned Rust
+identity-envelope proof at the fixed private ingress and binds its signed
+identity envelope to the request. This transport capability does not authorize
+the Node actor consumer, permission lookups, route decisions, or any other
+identity business logic; those remain separately visible migration debt.
+Neither capability permits adding or changing route registrations, database
+access, writers, timers, listeners, or other runtime surfaces. The checker
+cannot establish that either adapter has no indirect semantic effect, so
+reviewers must inspect the pinned source and surrounding call graph. These
+records do not claim that Node session or business authorization is migrated.
 
 Rust failure must be visible through the documented public error contract.
 Missing binaries, unavailable native processes, timeouts, malformed responses,

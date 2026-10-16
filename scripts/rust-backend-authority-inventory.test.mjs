@@ -54,7 +54,12 @@ function boundaryRecord(sourcePath, baseHash, headHash, overrides = {}) {
 }
 
 const SESSION_ADMISSION_ID = "rust-native-session-proof-v1";
+const IDENTITY_ADMISSION_ID = "rust-native-identity-proof-v1";
 const sessionAdmissionFixtureFactory = `export function nativeSessionAssertionMiddleware(options) {
+  return (request, _response, next) => next();
+}
+`;
+const identityAdmissionFixtureFactory = `export function nativeSessionAssertionMiddleware(options) {
   return (request, _response, next) => next();
 }
 `;
@@ -130,6 +135,92 @@ function compareSessionAdmissionFixture(t, options = {}) {
     boundaryRecord(factoryPath, null, sha256(factorySource)),
   ];
   const admissionRecord = sessionAdmissionReviewRecord(trustedPolicy, headSource, options.recordOverrides);
+  const head = buildInventory(headRoot, nodeRecords, options.omitAdmissionRecord ? [] : [admissionRecord]);
+  const result = compareInventoriesWithTransportPolicyForTests(
+    base,
+    head,
+    contentsFor(baseRoot, base),
+    contentsFor(headRoot, head),
+    trustedPolicy,
+  );
+  return { result, base, head, trustedPolicy, admissionRecord };
+}
+
+function identityAdmissionAppSource({ mount = true, mountAfterParser = false, extra = "" } = {}) {
+  const middlewareMount = `const nativeIdentityAssertionKey =
+  opts.rustPublicIngress?.identityAuth?.assertionKey
+    ?? opts.rustPublicIngress?.sessionAuth?.assertionKey;
+if (nativeIdentityAssertionKey) {
+  app.use(nativeSessionAssertionMiddleware({
+    key: nativeIdentityAssertionKey,
+  }));
+}
+`;
+  const bodyParser = "app.use(express.json({}));\n";
+  const orderedBody = mountAfterParser
+    ? `${bodyParser}${mount ? middlewareMount : ""}`
+    : `${mount ? middlewareMount : ""}${bodyParser}`;
+  return `import { nativeSessionAssertionMiddleware } from "../auth/native-session-assertion.js";
+const app = express();
+app.use(async (req, res, next) => {
+  if (await workspacePreview.handlePreviewHostRequest(req, res)) return;
+  next();
+});
+app.use("/workspace-preview", (_req, res) => res.status(404).send("Not found"));
+${orderedBody}app.use(actorMiddleware(db, options));
+${extra}
+`;
+}
+
+function identityAdmissionReviewRecord(policy, appSource, overrides = {}) {
+  return {
+    id: policy.id,
+    mount_source_path: policy.source_path,
+    mount_source_sha256: sha256(appSource),
+    mount_receiver: policy.receiver,
+    mount_expression: policy.mount_expression,
+    mount_guard: policy.mount_guard,
+    order_after: policy.order_after,
+    order_before: policy.order_before,
+    factory_path: policy.factory_path,
+    factory_export: policy.factory_export,
+    factory_sha256: policy.factory_sha256,
+    rust_proof_owner: policy.rust_proof_owner,
+    compatibility_boundary: "The exact middleware mount verifies the Rust-signed identity envelope at the fixed private ingress and binds that identity to the request; Node actor permission lookup remains separate migration debt.",
+    retirement_criterion: "Remove this verifier when Node no longer receives native public-ingress requests.",
+    reviewer: "auth-reviewer@example.test",
+    review_reference: "Reviewed identity transport admission policy test fixture",
+    review_status: "reviewed",
+    ...overrides,
+  };
+}
+
+function compareIdentityAdmissionFixture(t, options = {}) {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const sourcePath = "server/src/bootstrap/create-http-app.ts";
+  const factoryPath = "server/src/auth/native-session-assertion.ts";
+  const baseSource = identityAdmissionAppSource({ mount: false });
+  const headSource = options.headSource ?? identityAdmissionAppSource(options.appOptions);
+  const factorySource = options.factorySource ?? identityAdmissionFixtureFactory;
+  const trustedPolicy = {
+    ...TRUSTED_TRANSPORT_ADMISSIONS[IDENTITY_ADMISSION_ID],
+    source_sha256: sha256(identityAdmissionAppSource()),
+    factory_sha256: sha256(identityAdmissionFixtureFactory),
+  };
+
+  put(baseRoot, sourcePath, baseSource);
+  put(headRoot, sourcePath, headSource);
+  put(headRoot, factoryPath, factorySource);
+  const base = buildInventory(baseRoot);
+  const nodeRecords = [
+    boundaryRecord(sourcePath, sha256(baseSource), sha256(headSource), {
+      node_role: "transport_adapter",
+      change_kind: "modified_node_compatibility",
+    }),
+    boundaryRecord(factoryPath, null, sha256(factorySource)),
+  ];
+  const admissionRecord = identityAdmissionReviewRecord(trustedPolicy, headSource, options.recordOverrides);
   const head = buildInventory(headRoot, nodeRecords, options.omitAdmissionRecord ? [] : [admissionRecord]);
   const result = compareInventoriesWithTransportPolicyForTests(
     base,
@@ -277,6 +368,120 @@ test("new transport adapter requires a reviewed boundary and cannot add Node aut
   const headWithRoute = buildInventory(headRoot, [boundaryRecord(sourcePath, null, routeHash)]);
   const blocked = compareInventories(base, headWithRoute, contentsFor(baseRoot, base), contentsFor(headRoot, headWithRoute));
   assert(blocked.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+});
+
+test("trusted-base policy pins the exact Rust identity-proof source and mount without activating it on its own", (t) => {
+  const identityPolicy = TRUSTED_TRANSPORT_ADMISSIONS[IDENTITY_ADMISSION_ID];
+  assert.equal(identityPolicy.source_path, "server/src/bootstrap/create-http-app.ts");
+  assert.equal(identityPolicy.source_sha256, "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9");
+  assert.equal(identityPolicy.factory_path, "server/src/auth/native-session-assertion.ts");
+  assert.equal(identityPolicy.factory_sha256, "26c438378ca462495348fbf70333608d7622fe7f818844048cbb8947d9a8654d");
+  assert.equal(identityPolicy.factory_export, "nativeSessionAssertionMiddleware");
+  assert.equal(identityPolicy.mount_expression, "nativeSessionAssertionMiddleware({ key: nativeIdentityAssertionKey, })");
+  assert.equal(identityPolicy.mount_guard, "nativeIdentityAssertionKey");
+  assert.equal(identityPolicy.order_after, "workspace_preview_reserved_404");
+  assert.equal(identityPolicy.order_before, "express_json_body_parser");
+  assert.equal(identityPolicy.rust_proof_owner, "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion");
+
+  const sessionPolicy = TRUSTED_TRANSPORT_ADMISSIONS[SESSION_ADMISSION_ID];
+  assert.equal(sessionPolicy.factory_sha256, "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5");
+  assert.equal(sessionPolicy.mount_expression, "nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })");
+  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [IDENTITY_ADMISSION_ID, SESSION_ADMISSION_ID].sort());
+
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const sourcePath = identityPolicy.source_path;
+  const noMountSource = identityAdmissionAppSource({ mount: false });
+  put(baseRoot, sourcePath, noMountSource);
+  put(headRoot, sourcePath, noMountSource);
+  const base = buildInventory(baseRoot);
+  const head = buildInventory(headRoot);
+  const result = compareInventoriesWithTransportPolicyForTests(
+    base,
+    head,
+    contentsFor(baseRoot, base),
+    contentsFor(headRoot, head),
+    identityPolicy,
+  );
+  assert.deepEqual(result.allowed_transport_admissions, []);
+  assert.equal(head.structural_surfaces.some((surface) => surface.transport_admission === IDENTITY_ADMISSION_ID), false);
+  assert.deepEqual(result.failures, []);
+
+  const recordWithoutMount = compareIdentityAdmissionFixture(t, {
+    appOptions: { mount: false },
+  });
+  assert(recordWithoutMount.result.failures.some((failure) => failure.includes("stale reviewed_transport_admissions record")));
+});
+
+test("exact Rust identity-proof mount is admitted while its source and factory hashes stay pinned", (t) => {
+  const { result, head } = compareIdentityAdmissionFixture(t);
+  assert.deepEqual(result.failures, []);
+  assert.deepEqual(result.allowed_transport_admissions.map((entry) => entry.id), [IDENTITY_ADMISSION_ID]);
+  assert(result.added_surfaces.some((surface) => surface.signature.includes("nativeSessionAssertionMiddleware")));
+  assert(head.structural_surfaces.some((surface) => surface.transport_admission === IDENTITY_ADMISSION_ID));
+
+  const changedFactory = compareIdentityAdmissionFixture(t, {
+    factorySource: `${identityAdmissionFixtureFactory}// changed or unknown proof code\n`,
+  });
+  assert(changedFactory.result.failures.some((failure) => failure.includes("factory source hash does not match the trusted allowlist")));
+
+  const changedMountSource = compareIdentityAdmissionFixture(t, {
+    headSource: `${identityAdmissionAppSource()}// unrelated source change\n`,
+  });
+  assert(changedMountSource.result.failures.some((failure) => failure.includes("mount source hash does not match the trusted allowlist")));
+});
+
+test("identity transport admission rejects import, callee, key, guard, and pre-body-order variations", (t) => {
+  const original = identityAdmissionAppSource();
+  const alteredImport = compareIdentityAdmissionFixture(t, {
+    headSource: original.replace("../auth/native-session-assertion.js", "../auth/unreviewed-identity.js"),
+  });
+  assert(alteredImport.result.failures.some((failure) => failure.includes("trusted allowlist")));
+  assert(alteredImport.result.failures.some((failure) => failure.includes("factory must be imported once by its exact named export")));
+
+  const alteredCallee = compareIdentityAdmissionFixture(t, {
+    headSource: original.replace("nativeSessionAssertionMiddleware({", "unreviewedMiddleware({"),
+  });
+  assert(alteredCallee.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(alteredCallee.result.failures.some((failure) => failure.includes("stale reviewed_transport_admissions record")));
+
+  const alteredKey = compareIdentityAdmissionFixture(t, {
+    headSource: original.replace("key: nativeIdentityAssertionKey", "key: legacyConfig.sessionKey"),
+  });
+  assert(alteredKey.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(alteredKey.result.failures.some((failure) => failure.includes("stale reviewed_transport_admissions record")));
+
+  const alteredGuard = compareIdentityAdmissionFixture(t, {
+    headSource: original.replace("if (nativeIdentityAssertionKey)", "if (legacyConfig.enabled)"),
+  });
+  assert(alteredGuard.result.failures.some((failure) => failure.includes("native identity proof must be mounted once inside the exact configured ingress-auth guard")));
+
+  const wrongOrder = compareIdentityAdmissionFixture(t, {
+    appOptions: { mountAfterParser: true },
+  });
+  assert(wrongOrder.result.failures.some((failure) => failure.includes("must immediately follow the reserved workspace preview mount")));
+  assert(wrongOrder.result.failures.some((failure) => failure.includes("must immediately precede the first body parser")));
+});
+
+test("an identity proof admission cannot authorize an unrelated Node writer or route", (t) => {
+  const writer = compareIdentityAdmissionFixture(t, {
+    appOptions: { extra: "db.insert(users).values({ id: 'new' });\n" },
+  });
+  assert(writer.head.structural_surfaces.some((surface) => surface.type === "database_write_candidate"));
+  assert(writer.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(writer.result.failures.some((failure) => failure.includes("mount source hash does not match the trusted allowlist")));
+
+  const route = compareIdentityAdmissionFixture(t, {
+    appOptions: { extra: 'app.post("/api/new-identity-authority", handler);\n' },
+  });
+  assert(route.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(route.result.failures.some((failure) => failure.includes("mount source hash does not match the trusted allowlist")));
+
+  const unrelatedMount = compareIdentityAdmissionFixture(t, {
+    appOptions: { extra: 'app.use("/unrelated", unrelatedMiddleware);\n' },
+  });
+  assert(unrelatedMount.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(unrelatedMount.result.added_surfaces.some((surface) => surface.signature.includes("/unrelated")));
 });
 
 test("trusted-base policy pins one exact session-proof admission factory and keeps its mount visible", (t) => {
