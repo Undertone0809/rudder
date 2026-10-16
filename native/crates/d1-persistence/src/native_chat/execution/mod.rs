@@ -6,6 +6,7 @@
 mod checkpoint;
 mod claim;
 mod context;
+mod effect;
 mod lease;
 mod submission;
 mod types;
@@ -14,9 +15,10 @@ pub use checkpoint::{
     CheckpointReceipt, CheckpointTransition, EffectKind, EffectPermit, advance_checkpoint,
     current_checkpoint,
 };
-pub use claim::{ClaimedExecution, claim};
+pub use claim::{ClaimedExecution, claim, claim_with_preflight};
+pub use effect::{AuthorizedEffect, EffectDispatch, authorize_effect};
 pub use lease::{LeaseReceipt, renew_lease};
-pub use submission::{SubmissionInput, load_submission};
+pub use submission::{SubmissionInput, load_submission, validate_submission_source};
 pub use types::{CheckpointSnapshot, ExecutionFence, ExecutionIdentity};
 
 use crate::runtime_bindings::Error;

@@ -11,6 +11,7 @@ members = [
   "crates/codex-app-server",
   "crates/d1-persistence",
   "crates/native-protocol",
+  "crates/native-chat-executor",
   "crates/organization-mutation-core",
   "crates/project-goal-link-core",
   "crates/plugin-archive-core",

@@ -3,7 +3,7 @@ title: Complete Plan for Rudder Native Chat Experience and Agent Run Execution A
 date: 2026-09-21
 kind: implementation
 status: in_progress
-updated_at: 2026-10-16
+updated_at: 2026-10-17
 area: agent_runtimes
 entities:
   - agent_run
@@ -765,7 +765,7 @@ Codex readback must remain bounded as a Thread grows. The inspected local App Se
 
 Protect other migrations in progress in the worktree: do not overwrite, reset, or pull unrelated refactors wholesale into this PR. Complete changes to schema/shared/server/ui/native together and preserve existing compatibility reads. Completion of this project does not depend on the repository-wide Rust migration being finished.
 
-### 10.1 Exact input and Thread association boundary
+### 10.4 Exact input and Thread association boundary
 
 The private Rust execution API now loads only the admitted user message while its checkpoint is `input_pre_submission`. It verifies the original admission fingerprint as well as the message fingerprint, bounds the body before materializing it, and checks the current Run/Attempt and both leases. Edited input, foreign messages, and indeterminate submission states cannot supply a fresh payload. Reading the payload does not grant permission to dispatch it: the supervisor must consume the subsequent matching move-only submit permit exactly once.
 
@@ -773,13 +773,25 @@ Claim pins the exact Binding and Segment IDs inside its non-serializable executi
 
 This boundary remains private and does not dispatch a provider turn or finish a Run. Its acceptance must cover exact input, post-admission edits, same-target binding replacement, stale owners and rollback of Thread persistence. Provider supervision, process-death recovery, final response projection, billing, public send/control, Reader and Side Chat remain open gates; no percentage or full-feature completion follows from these persistence checks.
 
-### 10.2 External Rust process ownership
+### 10.5 External Rust process ownership
 
 Actual dispatch must use an external Rust process host, not only an in-process host thread: a hard kill of the Rudder caller cannot run its destructors. The explicit host `--stdio-mux` mode preserves the existing command protocol and frames lifecycle, stdout and stderr on one bounded output channel. The legacy descriptor-based host interface remains available. Raw frames carry at most 8 KiB, envelopes at most 32 KiB, and the host writer queue holds at most 32 frames. A stalled or disconnected consumer causes host cleanup without an unbounded writer join.
 
 The Codex transport validates envelope version, stream shape and lifecycle request/owner identity. It closes the sole command writer on caller loss and preserves receipted stdin/RPC ordering. Parent-SIGKILL acceptance must use a real separate caller and Rust host, then observe that its synthetic provider has been reaped. A lost or killed host itself remains an unresolved execution: EOF, helper exit, timeout or destructor completion never substitutes for an exact cleanup receipt, and none releases database admission holds. Restart/adoption requires durable process birth identity and reconciliation before activation.
 
 Before a private one-turn executor dispatches input, bind its move-only permit to the full fence, exact Thread, original input fingerprint and current lease; reject stale permits immediately before writing. Persist typed provider terminal evidence separately from Run completion. Unsupported plan-mode configuration must reject before admission until an installed-protocol mapping is proven. Public claim must also normalize inaccessible Run identifiers so same-organization Agent requests cannot distinguish absent and unauthorized targets by error status.
+
+### 10.6 Private Rust one-turn executor and configuration provenance
+
+The next executor slice joins the persistence and external-host boundaries in Rust. It owns claim, initialize, exact Thread start/resume, loading the admitted input, indeterminate submission, response correlation, provider terminal observation and Stop. Only freshly committed effect permits can produce a short-lived move-only authorization. Authorization rechecks both owner leases, the exact checkpoint revision, Binding/Segment and original input fingerprint; its monotonic deadline includes database time and never exceeds two seconds. A synchronous consuming dispatch callback cannot be recreated by reading a checkpoint. This narrows the authority-to-enqueue interval; it does not make a database transaction atomic with an OS write.
+
+An owned async entry delegates blocking transport work to a blocking worker, requests cancellation when its future is dropped, polls with bounded waits and renews both leases. Cancellation and operation deadlines are checked again immediately before effect dispatch. A provider approval request stops execution and retains the hold until governed interaction support exists; it is never auto-approved. A matching `turn/completed` observation does not finish the Run, release either hold, charge usage or establish a durable final response. EOF and failed cleanup remain indeterminate. Finalization, recovery and public activation remain required later work.
+
+Configuration provenance is a dispatch gate. Rust provisions only an empty dedicated persistent profile, with an exact native marker and minimal regular config file; existing operator/Node profiles and credentials are neither copied nor overwritten. Authentication must be provisioned through a separate authorized flow. Child environment, HOME/USERPROFILE, CODEX_HOME and initial working directory are explicit. The installed Codex contract supports `--strict-config`, feature disabling and `config/read {cwd, includeLayers:true}`. Before Thread operations, reject unexpected or project config layers and effective policy drift. Explicit non-ephemeral Thread creation, exact model/effort/workspace and approval/sandbox policies are required. This restricted private slice is not native feature parity; unsupported skills, plugins, MCP, browser/computer/search and plan mode must remain explicit errors until their native scope and controls are mapped.
+
+Exact input completeness is required before dispatch. Until native attachment/structured-input transport exists, reject attachment-bearing or structured source messages both before loading and at final authorization; never send only their text and report success. Integration acceptance must use the actual exported executor with disposable PostgreSQL, the external Rust host and a controlled RPC provider, including early terminal observations, approvals, expired ownership and ambiguous process loss. Real provider turns, public user journeys and all six runtime integrations remain separate completion gates.
+
+For a later admitted Run, claim atomically mirrors the validated revision-zero Attempt Thread into Generation and Run before any fenced read or resume RPC. This records the already selected native session; it does not assert provider acceptance. Resume must address that exact Thread with `excludeTurns=true`, preserve the existing Segment, and send only the current admitted message. A mismatched resume response cannot dispatch a Turn. The private executor still leaves Run and Generation lifecycle finalization to the next Rust owner; protocol terminal observation alone leaves the admission holds intact.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 

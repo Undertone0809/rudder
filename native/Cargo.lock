@@ -2088,6 +2088,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-native-chat-executor"
+version = "0.7.24"
+dependencies = [
+ "rudder-auth-core",
+ "rudder-codex-app-server",
+ "rudder-d1-persistence",
+ "rudder-runtime-core",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "rudder-native-protocol"
 version = "0.7.24"
 dependencies = [

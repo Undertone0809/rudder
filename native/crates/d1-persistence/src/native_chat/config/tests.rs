@@ -42,17 +42,17 @@ fn parser_preserves_persisted_model_and_chat_overrides_with_safe_defaults() {
         "modelReasoningEffort": "high",
         "search": false,
         "dangerouslyBypassApprovalsAndSandbox": false,
-        "planMode": true,
+        "planMode": false,
     });
     let settings = parsed(
         config,
         Some("vendor/custom-text-model".into()),
         Some("ultra".into()),
-        true,
+        false,
     );
     assert_eq!(settings.model.as_deref(), Some("vendor/custom-text-model"));
     assert_eq!(settings.effort.as_deref(), Some("ultra"));
-    assert!(settings.plan_mode);
+    assert!(!settings.plan_mode);
     assert!(!settings.search_enabled);
 
     let defaults = parsed(json!({"search": false}), None, None, false);
@@ -70,6 +70,17 @@ fn parser_preserves_persisted_model_and_chat_overrides_with_safe_defaults() {
         exact_model.model.as_deref(),
         Some(" vendor/custom-text-model ")
     );
+}
+
+#[test]
+fn parser_rejects_plan_mode_until_native_protocol_mapping_is_verified() {
+    for config in [json!({}), json!({"planMode": true})] {
+        assert_http_error(
+            runtime::parse_agent_config(config, None, None, true, Path::new("/operator")),
+            409,
+            None,
+        );
+    }
 }
 
 #[test]
@@ -252,7 +263,7 @@ async fn resolver_uses_locked_chat_agent_exact_issue_workspace_and_read_only_man
            (id, org_id, title, conversation_kind, created_by_user_id, status,
             preferred_agent_id, primary_issue_id, model_override, effort_override, plan_mode)
          VALUES ($1::uuid, $2::uuid, 'Config test', 'chat', 'config-test', 'active',
-            $3::uuid, $4::uuid, 'vendor/custom-text-model', 'ultra', true)",
+            $3::uuid, $4::uuid, 'vendor/custom-text-model', 'ultra', false)",
     )
     .bind(CHAT)
     .bind(ORG)
@@ -286,7 +297,7 @@ async fn resolver_uses_locked_chat_agent_exact_issue_workspace_and_read_only_man
     assert_eq!(resolved.executable, executable);
     assert_eq!(resolved.model.as_deref(), Some("vendor/custom-text-model"));
     assert_eq!(resolved.reasoning_effort.as_deref(), Some("ultra"));
-    assert!(resolved.plan_mode);
+    assert!(!resolved.plan_mode);
     assert!(!resolved.search_enabled);
     assert_eq!(
         resolved.profile.home,
