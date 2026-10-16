@@ -192,6 +192,20 @@ async fn ingress_readiness(state: web::Data<IngressState>, request: HttpRequest)
     if let Some(host) = request.headers().get(header::HOST) {
         probe = probe.insert_header((header::HOST, host.clone()));
     }
+    if let Some(session_auth) = state.config.session_auth.as_ref() {
+        // Readiness is an internal anonymous request, subject to the same
+        // private-hop proof guard as public requests. Never bypass that guard.
+        let proof = match issue_assertion(session_auth, "GET", "/api/health", None) {
+            Ok(proof) => proof,
+            Err(_) => {
+                return state.foundation.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "native_session_assertion_unavailable",
+                );
+            }
+        };
+        probe = probe.insert_header(("x-rudder-native-session-proof", proof));
+    }
     match probe.send().await {
         Ok(response) if response.status().is_success() => database,
         _ => state

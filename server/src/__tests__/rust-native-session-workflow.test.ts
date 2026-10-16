@@ -13,7 +13,10 @@ import { createInterface, type Interface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { RudderAppHandle } from "../app.js";
 import { nativeSessionAssertionMiddleware } from "../auth/native-session-assertion.js";
+import { preparePublicIngressStartup } from "../bootstrap/public-ingress-startup.js";
+import type { Config } from "../config.js";
 import { accountSessionRequired } from "../middleware/account-session-required.js";
 import { actorMiddleware } from "../middleware/auth.js";
 
@@ -63,6 +66,8 @@ let publicPort = 0;
 let nativeBinaryPath = "";
 let sessionResolverCalls = 0;
 let nodeRouteCalls = 0;
+let healthStatus = 200;
+let corruptHealthProof = false;
 
 function availablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -336,6 +341,12 @@ describe("source-built Rust public native session workflow", () => {
       return null;
     });
     const app = express();
+    app.use((req, _res, next) => {
+      if (req.path === "/api/health" && corruptHealthProof) {
+        req.headers["x-rudder-native-session-proof"] = "corrupted-proof";
+      }
+      next();
+    });
     app.use(nativeSessionAssertionMiddleware({ key: ASSERTION_KEY }));
     app.use(express.json({ limit: "10mb" }));
     app.use(actorMiddleware(db, {
@@ -344,6 +355,7 @@ describe("source-built Rust public native session workflow", () => {
       resolveSession: resolver,
     }));
     app.use(accountSessionRequired("required"));
+    app.get("/api/health", (_req, res) => res.status(healthStatus).json({ status: "ok" }));
     app.get("/api/auth/get-session", (req, res) => {
       if (req.actor.type !== "board" || !req.actor.userId) return res.sendStatus(401);
       res.json({
@@ -383,6 +395,44 @@ describe("source-built Rust public native session workflow", () => {
       privateNodePort,
     });
   }, 600_000);
+
+  it("completes the startup readiness handshake through the real private proof guard", async () => {
+    const resolverCallsBefore = sessionResolverCalls;
+    const startup = await preparePublicIngressStartup({
+      host: "127.0.0.1", deploymentMode: "local_trusted", rustPublicIngressMode: "required",
+    } as Config, publicPort, { sessionSecret: SESSION_SECRET });
+    const ready = vi.fn();
+    const reject = vi.fn();
+    const app = {
+      publicIngressBaseUrl: `http://127.0.0.1:${publicPort}`,
+      async waitForPublicIngressReady() {
+        const response = await getSessionFromPublic("/readyz");
+        if (response.status !== 200) throw new Error(`readiness: ${response.status} ${response.body}`);
+      },
+    } as RudderAppHandle;
+    try {
+      const unsigned = await fetch(`http://127.0.0.1:${privateNodePort}/api/health`);
+      expect(unsigned.status).toBe(401);
+      await startup.onListening(app, reject, ready)();
+      // Each probe needs a new nonce; a repeated proof must not make readiness sticky.
+      await startup.onListening(app, reject, ready)();
+      expect(ready).toHaveBeenCalledTimes(2);
+      expect(reject).not.toHaveBeenCalled();
+      corruptHealthProof = true;
+      await startup.onListening(app, reject, ready)();
+      expect(reject).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("private_node_not_ready") }));
+      expect(ready).toHaveBeenCalledTimes(2);
+      corruptHealthProof = false;
+      healthStatus = 503;
+      const unavailable = await getSessionFromPublic("/readyz");
+      expect(unavailable.status).toBe(503);
+      expect(JSON.parse(unavailable.body).reason).toBe("private_node_not_ready");
+      expect(sessionResolverCalls).toBe(resolverCallsBefore);
+    } finally {
+      healthStatus = 200;
+      corruptHealthProof = false;
+    }
+  });
 
   afterAll(async () => {
     await stopNative();
