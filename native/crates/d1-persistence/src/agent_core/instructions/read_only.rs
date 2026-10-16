@@ -136,6 +136,43 @@ fn scan(root: &Path, allow_missing: bool, _output: ScanOutput<'_>) -> io::Result
     }
 }
 
+#[cfg(all(test, not(all(unix, any(target_os = "linux", target_os = "macos")))))]
+mod unsupported_platform_tests {
+    use super::*;
+
+    #[test]
+    fn absent_instructions_are_allowed_but_existing_bundles_fail_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("absent");
+        assert_eq!(file_count(&missing, true).unwrap(), 0);
+        assert!(
+            read_single(&missing, &BundleContents::new())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            file_count(root.path(), true).unwrap_err().kind(),
+            io::ErrorKind::Unsupported
+        );
+        let file = root.path().join("SOUL.md");
+        std::fs::write(&file, "private instructions").unwrap();
+        assert_eq!(
+            read_single(&file, &BundleContents::new())
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Unsupported
+        );
+        let mut contents = BundleContents::new();
+        assert_eq!(
+            read_bundle(root.path(), false, &mut contents)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Unsupported
+        );
+        assert!(contents.is_empty());
+    }
+}
+
 #[cfg(all(unix, any(target_os = "linux", target_os = "macos")))]
 mod unix {
     use super::{

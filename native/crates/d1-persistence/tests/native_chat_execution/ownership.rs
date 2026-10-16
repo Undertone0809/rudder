@@ -21,10 +21,13 @@ async fn first_claim_is_org_scoped_distinct_and_never_adopts_an_existing_owner()
     assert_eq!(claimed.config.model.as_deref(), Some("gpt-5.6-luna"));
     assert_eq!(claimed.config.cwd, host.cwd);
     assert_eq!(claimed.config.executable, host.executable);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     assert_eq!(
         claimed.config.instruction_content.as_deref(),
         Some("isolated test instructions")
     );
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    assert!(claimed.config.instruction_content.is_none());
     assert!(
         claimed
             .config
