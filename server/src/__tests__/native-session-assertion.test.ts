@@ -286,6 +286,18 @@ describe("native public-ingress session assertion", () => {
     expect(registry.consume("anonymous-after-expiry", 1_060, 1_030)).toBe("replayed");
   });
 
+  it("reclaims entries accepted after a backward wall-clock jump", () => {
+    const registry = new NativeSessionAssertionNonceRegistry(2);
+
+    expect(registry.consume("old", 1_030, 1_000)).toBe("accepted");
+    expect(registry.consume("new-after-rollback", 930, 900)).toBe("accepted");
+
+    // At 931 the post-rollback nonce is expired. Capacity must recover even
+    // though its expiry bucket lies behind the pre-rollback sweep watermark.
+    expect(registry.consume("after-expiry", 961, 931)).toBe("accepted");
+    expect(registry.consume("after-expiry", 961, 931)).toBe("replayed");
+  });
+
   it("fails a direct private-listener business request closed when the assertion is missing", async () => {
     const { app, resolver } = protectedApp();
     const listener = await listen(app);
