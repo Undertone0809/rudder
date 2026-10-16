@@ -148,3 +148,12 @@ Author `pnpm desktop:verify` completed with exit 0 on source `9f5a31daafff45c428
 Independent reviewer `/root/migration_final_review` accepted bounded session source `e725dc2fec708da8f5afbbd6f401d509cfc40725`, tree `8f03ff486b8379bd8a7f605c91db48e1bb510ca5`, after reconciling the scoped session and real-startup receipts plus author packaged verification. This is not a full backend-retirement verdict. The reviewer required integrating the separate process-host correction and completing applicable checks/CI.
 
 The branch is now rebased onto main `9c5787d6b830342fda3aca906dcba229b98dd30e` (protected merge of CLI PR #264), and includes accepted process-host source from PR #312 as `717659062`. Session implementation and Node auth/proof sources are byte-identical to the reviewed candidate. The other differences are upstream main's CLI and backup-selection changes, plus the process-host correction. Authority comparison passes with the same one exact session-proof admission. Focused integrated checks and refreshed packaged verification are running separately; the earlier package receipt does not certify the new process-host bytes. Current-source CI and reviewer rebind remain required before merge.
+
+
+## Integrated packaged result after process-host correction
+
+Author `pnpm desktop:verify` completed with exit 0 on clean source `19d6715cd7a14a10734868f6792e7d59144e73cb`, tree `2ce36692cbf41747ae228a886fb023e031ad67fe`. It passed development smoke, distribution build, packaged account-gate/public-update/full-only-update scenarios preserving instance data, and packaged App Builder assets. This replaces the earlier running status for this exact integrated candidate.
+
+Receipt: `/tmp/rudder-session-integrated-packaged-receipt.json`; log: `/tmp/rudder-session-integrated-desktop-verify.log`, SHA-256 `45877f77fd71887e1adb7dfe2b2ba0b1acc4c06c565ec507becfc31296446e33`. Packaged foundation SHA-256 is `e00edd7b25411f17cd5b977ed7a487b61db4dbd9a6ef6c1ec1fbfd45894f6116`; packaged process-host SHA-256 is `363ae71094b222f066eccf468b6487292a9436721ca635b912221c243c1f6f86`. Integrated real-runtime checks also passed all 13 cases (8 session workflow and 5 OpenCode) using the default current process host, recorded in `/tmp/rudder-session-integrated-runtime-tests.log`.
+
+This remains author packaging evidence alongside the earlier independent session/startup acceptance. Final reviewer integration rebind and protected PR/CI are outstanding; no release, signing or whole-backend completion claim is made.
