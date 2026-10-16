@@ -17,6 +17,7 @@ mod admission;
 mod auth;
 mod budget;
 pub mod config;
+pub mod control;
 pub mod execution;
 mod locks;
 mod validation;

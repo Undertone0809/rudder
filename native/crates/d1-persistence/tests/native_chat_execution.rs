@@ -423,3 +423,6 @@ mod effects;
 
 #[path = "native_chat_execution/effects_content.rs"]
 mod effects_content;
+
+#[path = "native_chat_execution/control.rs"]
+mod control;

@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+#[path = "workflow/control.rs"]
+mod control;
 #[path = "workflow/dispatch_guards.rs"]
 mod dispatch_guards;
 #[path = "workflow/failures.rs"]
