@@ -8,8 +8,8 @@ pub use profile::provision_profile;
 use crate::wire::ProviderTerminal;
 use rudder_auth_core::VerifiedActor;
 use rudder_codex_app_server::{
-    CleanupReceipt, Message, OwnedTransport, ProcessLaunch, RequestId, SessionObservation,
-    TransportError, TransportEvent, TurnReceipt,
+    CleanupReceipt, EffectResponseReceipt, Message, OwnedTransport, ProcessLaunch, RequestId,
+    SessionObservation, TransportError, TransportEvent, TurnReceipt,
 };
 use rudder_d1_persistence::{
     native_chat::{
@@ -135,6 +135,7 @@ pub struct ExecutionObservation {
     pub cleanup_receipt: Option<CleanupReceipt>,
     /// Compatibility observation only. Finalization must use the opaque receipt.
     pub cleanup_proven: bool,
+    pub stop: Option<execution::StopIntent>,
 }
 
 fn db<T>(
@@ -292,6 +293,11 @@ pub fn run_observed_on_blocking_thread(
         paths,
         renewed: Instant::now(),
         notifications: VecDeque::new(),
+        stop: None,
+        stop_checked: Instant::now() - Duration::from_secs(1),
+        turn_response: None,
+        interrupt_attempted: false,
+        interrupt_request: None,
     };
     let result = driver.execute();
     // Stop even after permission, database, protocol, or provider failure. An
@@ -327,6 +333,7 @@ pub fn run_observed_on_blocking_thread(
         turn_receipt,
         cleanup_receipt,
         cleanup_proven,
+        stop: driver.stop,
     })
 }
 
@@ -399,6 +406,11 @@ struct Driver<'a> {
     deadline: Instant,
     renewed: Instant,
     notifications: VecDeque<(String, Value)>,
+    stop: Option<execution::StopIntent>,
+    stop_checked: Instant,
+    turn_response: Option<EffectResponseReceipt>,
+    interrupt_attempted: bool,
+    interrupt_request: Option<RequestId>,
 }
 
 impl Driver<'_> {
@@ -414,11 +426,59 @@ impl Driver<'_> {
     }
 
     fn check_cancelled(&self) -> Result<()> {
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancelled.load(Ordering::Acquire) || self.stop.is_some() {
             return Err(Error::Cancelled);
         }
         if Instant::now() >= self.deadline {
             return Err(Error::Deadline);
+        }
+        Ok(())
+    }
+
+    fn poll_stop(&mut self) -> Result<()> {
+        self.stop = db(
+            self.handle,
+            self.deadline,
+            execution::observe_stop(self.pool, self.actor, &self.fence),
+        )?;
+        self.stop_checked = Instant::now();
+        Ok(())
+    }
+
+    fn interrupt_if_ready(&mut self) -> Result<()> {
+        if self.interrupt_attempted
+            || self.snapshot.phase != NativeChatProtocolPhase::TurnKnown
+            || self.notifications.iter().any(|(_, params)| {
+                self.snapshot
+                    .thread_id
+                    .as_ref()
+                    .zip(self.snapshot.turn_id.as_ref())
+                    .is_some_and(|(thread, turn)| {
+                        wire::terminal(params.clone(), thread, turn).is_ok()
+                    })
+            })
+        {
+            return Ok(());
+        }
+        let Some(stop) = &self.stop else {
+            return Ok(());
+        };
+        let response = self
+            .turn_response
+            .as_ref()
+            .ok_or(Error::InvalidProviderObservation)?;
+        let permit = db(
+            self.handle,
+            self.deadline,
+            execution::reserve_interrupt(self.pool, self.actor, &self.fence, stop, response),
+        )?;
+        self.interrupt_attempted = true;
+        if let Some(permit) = permit {
+            self.interrupt_request = Some(
+                permit
+                    .dispatch(&mut self.transport)
+                    .map_err(Error::Persistence)??,
+            );
         }
         Ok(())
     }
@@ -431,16 +491,60 @@ impl Driver<'_> {
             if Instant::now() >= self.deadline {
                 return Err(Error::Deadline);
             }
+            if self.stop_checked.elapsed() >= Duration::from_millis(200) {
+                self.poll_stop()?;
+            }
+            self.interrupt_if_ready()?;
             if self.renewed.elapsed() >= Duration::from_secs(5) {
-                db(
-                    self.handle,
-                    self.deadline,
-                    execution::renew_lease(self.pool, self.actor, &self.fence),
-                )?;
+                if let Some(stop) = &self.stop {
+                    db(
+                        self.handle,
+                        self.deadline,
+                        execution::renew_stopping_lease(self.pool, self.actor, &self.fence, stop),
+                    )?;
+                } else {
+                    let result = db(
+                        self.handle,
+                        self.deadline,
+                        execution::renew_lease(self.pool, self.actor, &self.fence),
+                    );
+                    if matches!(
+                        &result,
+                        Err(Error::Persistence(runtime_bindings::Error::Http(409, _)))
+                    ) {
+                        self.poll_stop()?;
+                        if let Some(stop) = &self.stop {
+                            db(
+                                self.handle,
+                                self.deadline,
+                                execution::renew_stopping_lease(
+                                    self.pool,
+                                    self.actor,
+                                    &self.fence,
+                                    stop,
+                                ),
+                            )?;
+                        } else {
+                            result?;
+                        }
+                    } else {
+                        result?;
+                    }
+                }
                 self.renewed = Instant::now();
             }
             if let Some(event) = self.transport.poll(Duration::from_millis(100))? {
                 match &event {
+                    TransportEvent::FrameWritten {
+                        request_id: Some(id),
+                    } if self.interrupt_request.as_ref() == Some(id) => continue,
+                    TransportEvent::Rpc(SessionObservation::Completed { id, method, .. })
+                        if self.interrupt_request.as_ref() == Some(id)
+                            && method == "turn/interrupt" =>
+                    {
+                        // Acknowledgement (including rejection) is not terminal proof.
+                        continue;
+                    }
                     TransportEvent::Rpc(SessionObservation::Incoming(Message::Request {
                         ..
                     })) => return Err(Error::ApprovalRequired),
@@ -535,6 +639,65 @@ impl Driver<'_> {
         Ok(receipt)
     }
 
+    fn record_response(
+        &mut self,
+        transition: CheckpointTransition,
+        response: &EffectResponseReceipt,
+    ) -> Result<()> {
+        if self.stop.is_none() {
+            match self.transition(transition) {
+                Ok(_) => return Ok(()),
+                Err(error @ Error::Persistence(runtime_bindings::Error::Http(409, _))) => {
+                    self.poll_stop()?;
+                    if self.stop.is_none() {
+                        return Err(error);
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let stop = self
+            .stop
+            .as_ref()
+            .ok_or(Error::InvalidProviderObservation)?;
+        let receipt = db(
+            self.handle,
+            self.deadline,
+            execution::advance_stopping_checkpoint(
+                self.pool,
+                self.actor,
+                &self.fence,
+                stop,
+                self.snapshot.phase,
+                self.snapshot.revision,
+                response,
+            ),
+        )?;
+        self.snapshot = receipt.snapshot().clone();
+        Ok(())
+    }
+
+    fn observe_terminal(&mut self, thread_id: String, turn_id: String) -> Result<()> {
+        // The finalizer validates the opaque TurnReceipt after cleanup. Stop
+        // needs no raw terminal checkpoint mutation or invented Interrupted status.
+        if self.stop.is_some() {
+            return Ok(());
+        }
+        match self.transition(CheckpointTransition::ObserveProviderTerminal { thread_id, turn_id })
+        {
+            Ok(_) => Ok(()),
+            Err(error @ Error::Persistence(runtime_bindings::Error::Http(409, _))) => {
+                self.poll_stop()?;
+                if self.stop.is_some() {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     fn execute(&mut self) -> Result<ProviderTerminal> {
         loop {
             if let TransportEvent::Lifecycle(value) = self.next()?
@@ -582,9 +745,9 @@ impl Driver<'_> {
                 self.check_cancelled()?;
                 let id = authorized
                     .dispatch(|effect| match effect {
-                        EffectDispatch::StartThread => {
-                            self.transport.request("thread/start", params)
-                        }
+                        EffectDispatch::StartThread => self
+                            .transport
+                            .request_with_effect_receipt("thread/start", params),
                         _ => Err(TransportError::InvalidLaunch),
                     })
                     .map_err(Error::Persistence)??;
@@ -593,7 +756,12 @@ impl Driver<'_> {
                     return Err(Error::InvalidProviderObservation);
                 }
                 let thread_id = wire::locator(&response["thread"]["id"])?;
-                self.transition(CheckpointTransition::RecordThread { thread_id })?;
+                let proof = self
+                    .transport
+                    .take_effect_response_receipt()
+                    .ok_or(Error::InvalidProviderObservation)?;
+                self.record_response(CheckpointTransition::RecordThread { thread_id }, &proof)?;
+                self.check_cancelled()?;
             }
             NativeChatProtocolPhase::ThreadKnown => {
                 let thread = self
@@ -642,7 +810,7 @@ impl Driver<'_> {
                     body,
                 } => {
                     self.transport.arm_turn_receipt()?;
-                    self.transport.request(
+                    self.transport.request_with_effect_receipt(
                         "turn/start",
                         wire::turn_params(thread_id, source_message_id, body, &self.config),
                     )
@@ -657,19 +825,31 @@ impl Driver<'_> {
             .thread_id
             .clone()
             .ok_or(Error::InvalidProviderObservation)?;
-        self.transition(CheckpointTransition::RecordTurn {
-            thread_id: thread_id.clone(),
-            turn_id: turn_id.clone(),
-        })?;
+        let proof = self
+            .transport
+            .take_effect_response_receipt()
+            .ok_or(Error::InvalidProviderObservation)?;
+        self.record_response(
+            CheckpointTransition::RecordTurn {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+            },
+            &proof,
+        )?;
+        self.turn_response = Some(proof);
         self.transport
             .begin_turn_receipt(thread_id.clone(), turn_id.clone())?;
         loop {
             if let Some((_, value)) = self.notifications.pop_front() {
+                // Replayed terminals from another Turn cannot suppress this
+                // Turn's interrupt or become its terminal observation.
+                if wire::locator(&value["threadId"])? != thread_id
+                    || wire::locator(&value["turn"]["id"])? != turn_id
+                {
+                    continue;
+                }
                 let terminal = wire::terminal(value, &thread_id, &turn_id)?;
-                self.transition(CheckpointTransition::ObserveProviderTerminal {
-                    thread_id,
-                    turn_id,
-                })?;
+                self.observe_terminal(thread_id, turn_id)?;
                 return Ok(terminal);
             }
             let event = self.next()?;

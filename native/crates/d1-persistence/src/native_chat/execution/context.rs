@@ -24,6 +24,24 @@ pub(super) async fn lock_current_execution(
     actor: &VerifiedActor,
     fence: &ExecutionFence,
 ) -> Result<LockedExecution> {
+    lock_execution(tx, actor, fence, None).await
+}
+
+pub(super) async fn lock_stopping_execution(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &VerifiedActor,
+    fence: &ExecutionFence,
+    stop: &super::stopping::StopIntent,
+) -> Result<LockedExecution> {
+    lock_execution(tx, actor, fence, Some(stop)).await
+}
+
+async fn lock_execution(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &VerifiedActor,
+    fence: &ExecutionFence,
+    stop: Option<&super::stopping::StopIntent>,
+) -> Result<LockedExecution> {
     let id = fence.identity();
     if actor.organization_id() != id.organization_id {
         return Err(http(403, "Organization access denied"));
@@ -123,12 +141,20 @@ pub(super) async fn lock_current_execution(
     if generation_conversation != id.conversation_id
         || generation_authority != "native_rust"
         || !generation_hold
-        || !matches!(
-            generation_status.as_str(),
-            "starting" | "active" | "running" | "tool_busy"
-        )
+        || if stop.is_some() {
+            !matches!(generation_status.as_str(), "stop_requested" | "stopping")
+        } else {
+            !matches!(
+                generation_status.as_str(),
+                "starting" | "active" | "running" | "tool_busy"
+            )
+        }
         || generation_epoch != id.generation_attempt_epoch
-        || !matches!(control_state.as_str(), "unregistered" | "ready")
+        || if stop.is_some() {
+            control_state != "stopping"
+        } else {
+            !matches!(control_state.as_str(), "unregistered" | "ready")
+        }
         || control_runtime_type.as_deref() != Some("codex_local")
         || control_owner.as_deref() != Some(fence.generation_owner_token.as_str())
         || runtime_terminal
@@ -295,6 +321,12 @@ pub(super) async fn lock_current_execution(
         return Err(http(409, "Native Chat checkpoint identity is inconsistent"));
     }
 
+    // The narrow Stop path locks and validates its exact action after Attempt
+    // and before Binding. No effect authorization can use this mode.
+    if let Some(stop) = stop {
+        super::stopping::validate_action(tx, fence, stop).await?;
+    }
+
     let binding_id = snapshot_uuid(&context_snapshot, "runtimeBindingId", "binding")?;
     let segment_id = snapshot_uuid(&context_snapshot, "nativeSegmentId", "segment")?;
     if binding_id != fence.binding_id || segment_id != fence.segment_id {
@@ -413,6 +445,7 @@ pub(super) async fn lock_current_execution(
         return Err(http(409, "Native Chat source message association changed"));
     }
 
+    super::super::auth::authorize_org(tx, actor, id.organization_id).await?;
     Ok(LockedExecution {
         checkpoint,
         agent_id: run_agent_id,

@@ -147,6 +147,7 @@ pub struct OwnedTransport {
     request_id: String,
     owner_token: String,
     receipts: TurnReceiptTracker,
+    effect_response: Option<crate::effect_response::PendingEffectResponse>,
     cleanup_receipt: Option<crate::CleanupReceipt>,
     spawned: bool,
     stopped: bool,
@@ -245,6 +246,7 @@ impl OwnedTransport {
             request_id,
             owner_token,
             receipts,
+            effect_response: None,
             cleanup_receipt: None,
             spawned: false,
             stopped: false,
@@ -263,6 +265,30 @@ impl OwnedTransport {
         self.ensure_writable()?;
         let prepared = self.session.prepare(method, params)?;
         let id = prepared.id().clone();
+        self.start_frame(prepared.into_bytes(), Some(id.clone()))?;
+        Ok(id)
+    }
+
+    /// Opt in to bounded successful-response proof for a single effect RPC.
+    pub fn request_with_effect_receipt(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<RequestId, TransportError> {
+        self.ensure_writable()?;
+        if self.effect_response.is_some() {
+            return Err(TransportError::Busy);
+        }
+        if !matches!(method, "thread/start" | "turn/start") {
+            return Err(TransportError::InvalidTurnReceipt);
+        }
+        let prepared = self.session.prepare(method, params.clone())?;
+        let id = prepared.id().clone();
+        self.effect_response = Some(crate::effect_response::PendingEffectResponse::new(
+            id.clone(),
+            method,
+            &params,
+        )?);
         self.start_frame(prepared.into_bytes(), Some(id.clone()))?;
         Ok(id)
     }
@@ -377,6 +403,9 @@ impl OwnedTransport {
                         params.clone().ok_or(TransportError::InvalidTurnReceipt)?,
                     )?;
                 }
+                if let Some(response) = &mut self.effect_response {
+                    response.observe(&observation)?;
+                }
                 return Ok(TransportEvent::Rpc(observation));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -422,6 +451,9 @@ impl OwnedTransport {
                             frame.offset = frame.chunk_end;
                             if frame.offset == frame.bytes.len() {
                                 let request_id = self.in_flight.take().unwrap().request_id;
+                                if let Some(response) = &mut self.effect_response {
+                                    response.written(request_id.as_ref());
+                                }
                                 return Ok(TransportEvent::FrameWritten { request_id });
                             }
                             if self.stopped {
@@ -492,6 +524,26 @@ impl OwnedTransport {
     /// are ignored and cannot be attached to the next turn receipt.
     pub fn arm_turn_receipt(&mut self) -> Result<(), TransportError> {
         self.receipts.arm()
+    }
+
+    /// Consume proof only after both the exact successful RPC and complete
+    /// frame write were observed on this connection.
+    pub fn take_effect_response_receipt(&mut self) -> Option<crate::EffectResponseReceipt> {
+        if !self.effect_response.as_ref().is_some_and(|r| r.ready()) {
+            return None;
+        }
+        Some(
+            self.effect_response
+                .take()?
+                .finish(self.receipts.response_identity()),
+        )
+    }
+
+    pub fn connection_receipt_id(&self) -> String {
+        self.receipts
+            .response_identity()
+            .connection_receipt_id()
+            .to_owned()
     }
 
     /// A turn receipt requires the exact `turn/completed` notification and the

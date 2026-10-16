@@ -21,7 +21,7 @@ pub enum CheckpointTransition {
 }
 
 impl CheckpointTransition {
-    fn apply(
+    pub(super) fn apply(
         &self,
         checkpoint: &NativeChatProtocolCheckpoint,
         expected_revision: u64,
@@ -115,8 +115,36 @@ pub async fn advance_checkpoint(
     expected_revision: u64,
     transition: CheckpointTransition,
 ) -> Result<CheckpointReceipt> {
+    advance(
+        pool,
+        actor,
+        fence,
+        expected_phase,
+        expected_revision,
+        transition,
+        None,
+    )
+    .await
+}
+
+pub(super) async fn advance(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    fence: &ExecutionFence,
+    expected_phase: NativeChatProtocolPhase,
+    expected_revision: u64,
+    transition: CheckpointTransition,
+    stop: Option<(
+        &super::stopping::StopIntent,
+        &rudder_codex_app_server::EffectResponseReceipt,
+    )>,
+) -> Result<CheckpointReceipt> {
     let mut tx = pool.begin().await?;
-    let locked = lock_current_execution(&mut tx, actor, fence).await?;
+    let locked = if let Some((stop, _)) = stop {
+        super::context::lock_stopping_execution(&mut tx, actor, fence, stop).await?
+    } else {
+        lock_current_execution(&mut tx, actor, fence).await?
+    };
     let current = &locked.checkpoint;
     if current.phase() != expected_phase || current.revision() != expected_revision {
         return Err(super::http(
@@ -328,6 +356,21 @@ pub async fn advance_checkpoint(
         ));
     }
 
+    if let Some((stop, observation)) = stop {
+        super::stopping::record_checkpoint(
+            &mut tx,
+            actor,
+            fence,
+            stop,
+            current,
+            &next,
+            observation,
+        )
+        .await?;
+        // The new checkpoint and chain now agree; recheck leases and current
+        // access after all observation/audit writes before the commit.
+        super::context::lock_stopping_execution(&mut tx, actor, fence, stop).await?;
+    }
     tx.commit().await?;
     let effect_permit = transition.effect_kind().map(|kind| {
         let (source_message_id, input_fingerprint) = match kind {

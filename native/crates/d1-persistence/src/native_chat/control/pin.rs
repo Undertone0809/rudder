@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 #[derive(Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct ExecutionPin {
+pub(in crate::native_chat) struct ExecutionPin {
     version: u8,
     pub run_id: String,
     pub attempt_id: String,
@@ -31,7 +31,7 @@ impl ExecutionPin {
     }
 }
 
-pub(super) fn digest(domain: &str, value: &Value) -> String {
+pub(in crate::native_chat) fn digest(domain: &str, value: &Value) -> String {
     format!(
         "{:x}",
         Sha256::digest(json!([domain, value]).to_string().as_bytes())
@@ -41,7 +41,7 @@ pub(super) fn digest(domain: &str, value: &Value) -> String {
 /// Caller already holds Generation, Run and Attempt locks. Bound materialized
 /// JSON, and hash owners/provider identities rather than copying them to the
 /// control action. PostgreSQL JSON encoding itself is not an allocation cap.
-pub(super) async fn capture(
+pub(in crate::native_chat) async fn capture(
     tx: &mut auth::Tx<'_>,
     org: &str,
     run: &str,

@@ -9,6 +9,7 @@ mod context;
 mod effect;
 mod finalization;
 mod lease;
+mod stopping;
 mod submission;
 mod types;
 
@@ -18,8 +19,12 @@ pub use checkpoint::{
 };
 pub use claim::{ClaimedExecution, claim, claim_with_preflight};
 pub use effect::{AuthorizedEffect, EffectDispatch, authorize_effect};
-pub use finalization::finalize;
+pub use finalization::{finalize, finalize_stopped};
 pub use lease::{LeaseReceipt, renew_lease};
+pub use stopping::{
+    InterruptPermit, StopIntent, advance_stopping_checkpoint, observe_stop, renew_stopping_lease,
+    reserve_interrupt,
+};
 pub use submission::{SubmissionInput, load_submission, validate_submission_source};
 pub use types::{CheckpointSnapshot, ExecutionFence, ExecutionIdentity};
 

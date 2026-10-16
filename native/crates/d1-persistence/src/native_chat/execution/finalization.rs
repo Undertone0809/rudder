@@ -22,6 +22,30 @@ pub async fn finalize(
     turn: &TurnReceipt,
     cleanup: &CleanupReceipt,
 ) -> Result<Value> {
+    finalize_inner(pool, actor, fence, turn, cleanup, None).await
+}
+
+/// Resolve operator Stop only from the exact terminal and same-connection
+/// cleanup receipts. Provider status stays evidence; the operator outcome is cancelled.
+pub async fn finalize_stopped(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    fence: &ExecutionFence,
+    turn: &TurnReceipt,
+    cleanup: &CleanupReceipt,
+    stop: &super::stopping::StopIntent,
+) -> Result<Value> {
+    finalize_inner(pool, actor, fence, turn, cleanup, Some(stop)).await
+}
+
+async fn finalize_inner(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    fence: &ExecutionFence,
+    turn: &TurnReceipt,
+    cleanup: &CleanupReceipt,
+    stop: Option<&super::stopping::StopIntent>,
+) -> Result<Value> {
     let id = fence.identity();
     if actor.organization_id() != id.organization_id {
         return Err(http(403, "Organization access denied"));
@@ -35,13 +59,18 @@ pub async fn finalize(
             "Native Chat receipts belong to another execution",
         ));
     }
-    let unprojectable = turn.status() == TurnStatus::Completed
+    let unprojectable = stop.is_none()
+        && turn.status() == TurnStatus::Completed
         && turn.final_text().is_none_or(|text| text.trim().is_empty());
-    let (run_status, generation_status) = match turn.status() {
-        TurnStatus::Completed if unprojectable => ("failed", "failed"),
-        TurnStatus::Completed => ("succeeded", "completed"),
-        TurnStatus::Failed => ("failed", "failed"),
-        TurnStatus::Interrupted => ("cancelled", "stopped"),
+    let (run_status, generation_status) = if stop.is_some() {
+        ("cancelled", "stopped")
+    } else {
+        match turn.status() {
+            TurnStatus::Completed if unprojectable => ("failed", "failed"),
+            TurnStatus::Completed => ("succeeded", "completed"),
+            TurnStatus::Failed => ("failed", "failed"),
+            TurnStatus::Interrupted => ("cancelled", "stopped"),
+        }
     };
     let usage = turn.usage().map(|usage| json!({
         "source":"thread/tokenUsage/updated.tokenUsage.last", "scope":"latest_reported_increment",
@@ -53,7 +82,7 @@ pub async fn finalize(
     let cost = json!({"status":"unknown", "reason":"provider_cost_not_reported"});
     // Bind retries to every authority dimension and every projected fact. Owner
     // capabilities are hashed into one fingerprint, never returned or logged.
-    let facts = json!({
+    let mut facts = json!({
         "version":1, "organizationId":id.organization_id, "conversationId":id.conversation_id,
         "generationId":id.generation_id, "runId":id.run_id, "attemptId":id.attempt_id,
         "agentId":id.agent_id, "bindingId":fence.binding_id, "segmentId":fence.segment_id,
@@ -64,6 +93,10 @@ pub async fn finalize(
         "usage":usage, "selectedModel":fence.selected_model,
         "cost":cost, "cleanupReceipt":cleanup.evidence_fingerprint(),
     });
+    if let Some(stop) = stop {
+        facts["stopActionId"] = json!(stop.action_id);
+        facts["actualProviderStatus"] = json!(format!("{:?}", turn.status()));
+    }
     let fingerprint = format!("{:x}", Sha256::digest(facts.to_string().as_bytes()));
     let mut tx = pool.begin().await?;
     super::super::budget::lock_policy_state(&mut tx, id.organization_id).await?;
@@ -127,8 +160,13 @@ pub async fn finalize(
         tx.commit().await?;
         return Ok(result);
     }
-    let locked = lock_current_execution(&mut tx, actor, fence).await?;
-    if locked.checkpoint.phase() != NativeChatProtocolPhase::ProviderTerminalObserved
+    let locked = if let Some(stop) = stop {
+        super::context::lock_stopping_execution(&mut tx, actor, fence, stop).await?
+    } else {
+        lock_current_execution(&mut tx, actor, fence).await?
+    };
+    if !(locked.checkpoint.phase() == NativeChatProtocolPhase::ProviderTerminalObserved
+        || (stop.is_some() && locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown))
         || locked.checkpoint.thread_id() != Some(turn.thread_id())
         || locked.checkpoint.turn_id() != Some(turn.turn_id())
     {
@@ -179,9 +217,10 @@ pub async fn finalize(
         .execute(&mut *tx)
         .await?;
 
-    let message_id: Option<String> =
-        if let Some(text) = turn.final_text().filter(|text| !text.trim().is_empty()) {
-            Some(
+    let message_id: Option<String> = if let Some(stop) = stop {
+        super::stopping::frozen_message(&mut tx, fence, stop).await?
+    } else if let Some(text) = turn.final_text().filter(|text| !text.trim().is_empty()) {
+        Some(
             sqlx::query_scalar(
                 "INSERT INTO chat_messages (org_id,conversation_id,role,kind,status,body,run_id,
              replying_agent_id,chat_turn_id,turn_variant)
@@ -203,9 +242,9 @@ pub async fn finalize(
             .fetch_one(&mut *tx)
             .await?,
         )
-        } else {
-            None
-        };
+    } else {
+        None
+    };
     let span_id: String = sqlx::query_scalar(
         "UPDATE run_runtime_spans SET state='sealed',completeness='terminal_only',
          native_execution_ref=$8,input_correlation_ref=$9,selector_json=$10,
@@ -230,12 +269,16 @@ pub async fn finalize(
     .ok_or_else(|| http(409, "Native Chat primary span is not open for this owner"))?;
     // All slow writes above remain reversible. Recheck both leases immediately
     // before committing terminal state; every mutation rolls back on expiry.
-    lock_current_execution(&mut tx, actor, fence).await?;
+    if let Some(stop) = stop {
+        super::context::lock_stopping_execution(&mut tx, actor, fence, stop).await?;
+    } else {
+        lock_current_execution(&mut tx, actor, fence).await?;
+    }
     let result = json!({"runId":id.run_id,"generationId":id.generation_id,"attemptId":id.attempt_id,
         "assistantMessageId":message_id,"spanId":span_id,"status":run_status,
         "generationStatus":generation_status,
         "cost":cost,"usage":usage,"nativeAdmissionHold":held,
-        "projectionDisposition":if unprojectable { "unsupported_final_answer" } else { "projected" },
+        "projectionDisposition":if stop.is_some() { "frozen_at_stop" } else if unprojectable { "unsupported_final_answer" } else { "projected" },
         "budgetDisposition":if budget_held { "reconciliation_required" } else { "unbudgeted_unknown_cost" }});
     sqlx::query(
         "UPDATE heartbeat_run_attempts SET status=$4,finished_at=clock_timestamp(),
@@ -256,16 +299,22 @@ pub async fn finalize(
          runtime_terminal_at=clock_timestamp(),completed_at=clock_timestamp(),
          native_admission_hold=$5,updated_at=clock_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid",
     ).bind(id.organization_id).bind(id.generation_id).bind(generation_status)
-        .bind(if unprojectable {
+        .bind(if stop.is_some() {
+            "operator_stop".to_owned()
+        } else if unprojectable {
             "native_provider_completed_without_projectable_answer".to_owned()
         } else {
             format!("native_provider_{run_status}")
         }).bind(held).execute(&mut *tx).await?;
+    if let Some(stop) = stop {
+        super::stopping::resolve_action(&mut tx, actor, fence, stop, turn, cleanup, &result)
+            .await?;
+    }
     for event in ["runtime_terminal", "terminal_projected"] {
         sqlx::query(
             "INSERT INTO chat_generation_events (org_id,generation_id,generation_seq,attempt_epoch,
-             event_kind,payload,assistant_message_id,run_id)
-             SELECT $1::uuid,$2::uuid,COALESCE(max(generation_seq),0)+1,$3,$4,$5,$6::uuid,$7::uuid
+             event_kind,payload,assistant_message_id,run_id,control_action_id)
+             SELECT $1::uuid,$2::uuid,COALESCE(max(generation_seq),0)+1,$3,$4,$5,$6::uuid,$7::uuid,$8::uuid
              FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid",
         )
         .bind(id.organization_id)
@@ -275,6 +324,7 @@ pub async fn finalize(
         .bind(&result)
         .bind(message_id.as_deref())
         .bind(id.run_id)
+        .bind(stop.map(|s|s.action_id.as_str()))
         .execute(&mut *tx)
         .await?;
     }
@@ -328,6 +378,7 @@ pub async fn finalize(
         .bind(id.organization_id).bind(id.generation_id).execute(&mut *tx).await?;
     sqlx::query("UPDATE heartbeat_runs SET execution_lease_expires_at=NULL WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(id.organization_id).bind(id.run_id).execute(&mut *tx).await?;
+    super::super::auth::authorize_org(&mut tx, actor, id.organization_id).await?;
     tx.commit().await?;
     Ok(result)
 }

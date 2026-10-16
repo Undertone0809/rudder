@@ -8,7 +8,7 @@ use rudder_auth_core::VerifiedActor;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 
-mod pin;
+pub(super) mod pin;
 mod preclaim;
 mod projection;
 mod reads;

@@ -374,16 +374,46 @@ fn run(
     // A timed-out commit has unknown outcome. Never retry or infer a released
     // or retained hold from it; durable readback/reconciliation stays separate.
     let status = handle.block_on(async {
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            execution::finalize(
+        match tokio::time::timeout(Duration::from_secs(5), async {
+            if let Some(stop) = &observation.stop {
+                return execution::finalize_stopped(
+                    &pool,
+                    &job.actor,
+                    &observation.fence,
+                    &observation.turn_receipt,
+                    &cleanup,
+                    stop,
+                )
+                .await;
+            }
+            let result = execution::finalize(
                 &pool,
                 &job.actor,
                 &observation.fence,
                 &observation.turn_receipt,
                 &cleanup,
-            ),
-        )
+            )
+            .await;
+            // Only a definite pre-commit conflict can select a now-visible
+            // Stop. Database/timeout errors retain unknown commit outcome.
+            if matches!(
+                &result,
+                Err(rudder_d1_persistence::runtime_bindings::Error::Http(409, _))
+            ) && let Some(stop) =
+                execution::observe_stop(&pool, &job.actor, &observation.fence).await?
+            {
+                return execution::finalize_stopped(
+                    &pool,
+                    &job.actor,
+                    &observation.fence,
+                    &observation.turn_receipt,
+                    &cleanup,
+                    &stop,
+                )
+                .await;
+            }
+            result
+        })
         .await
         {
             Ok(Ok(_)) => Status::FinalizationCommitted,

@@ -53,14 +53,15 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
         let final_actor = actor.clone();
         let final_task = tokio::spawn(async move {
             terminal_rx.await.unwrap();
-            finalize(
+            let result = finalize(
                 &final_pool,
                 &final_actor,
                 &observed.fence,
                 &observed.turn_receipt,
                 observed.cleanup_receipt.as_ref().unwrap(),
             )
-            .await
+            .await;
+            (result, observed)
         });
         let stop_pool = database.pool.clone();
         let stop_actor = actor.clone();
@@ -80,7 +81,7 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
         }
         wait_for_advisory_waiters(&database.pool, 2).await;
         blocker.commit().await.unwrap();
-        let final_result = final_task.await.unwrap();
+        let (final_result, observed) = final_task.await.unwrap();
         let stop_result = stop_task.await.unwrap().unwrap();
         let (status,hold,messages,events):(String,bool,i64,i64)=sqlx::query_as(
             "SELECT g.status,g.native_admission_hold,(SELECT count(*) FROM chat_messages WHERE run_id=$2::uuid AND role='assistant'),
@@ -108,6 +109,27 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
                 (status, hold, messages, events),
                 ("stop_requested".into(), true, 0, 3)
             );
+            let stop = rudder_d1_persistence::native_chat::execution::observe_stop(
+                &database.pool,
+                &actor,
+                &observed.fence,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let cancelled = rudder_d1_persistence::native_chat::execution::finalize_stopped(
+                &database.pool,
+                &actor,
+                &observed.fence,
+                &observed.turn_receipt,
+                observed.cleanup_receipt.as_ref().unwrap(),
+                &stop,
+            )
+            .await
+            .unwrap();
+            assert_eq!(cancelled["status"], "cancelled");
+            assert_eq!(cancelled["assistantMessageId"], serde_json::Value::Null);
+            assert_eq!(cancelled["nativeAdmissionHold"], false);
         }
         let retry = request_stop(&database.pool, &actor, &request)
             .await

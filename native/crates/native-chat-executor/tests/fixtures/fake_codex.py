@@ -165,7 +165,7 @@ for raw in sys.stdin:
             })
         emit({"id": request_id, "result": result})
     elif method == "thread/start":
-        if mode in ("g6-lease-revoke", "g6-cancel-drop"):
+        if mode in ("g6-lease-revoke", "g6-cancel-drop", "live-stop-late-thread"):
             wait_for_thread_start_release()
         emit({"id": request_id, "result": {"thread": {"id": thread_id, "ephemeral": False}}})
     elif method == "thread/resume":
@@ -173,6 +173,20 @@ for raw in sys.stdin:
         emit({"id": request_id, "result": {"thread": {"id": resumed_thread_id, "ephemeral": False}}})
     elif method == "turn/start":
         record({"turnStart": frame})
+        if mode == "live-stop-late-turn":
+            home.joinpath("turn-start-pending").write_text("pending", encoding="utf-8")
+            deadline = time.monotonic() + 30
+            while not home.joinpath("release-turn-start").exists():
+                if time.monotonic() >= deadline:
+                    os._exit(24)
+                time.sleep(0.02)
+        if mode == "live-stop-stale-terminal":
+            stale = terminal()
+            stale["params"]["turn"]["id"] = "previous-turn"
+            emit(stale)
+        if mode.startswith("live-stop"):
+            emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
+            continue
         if mode == "approval":
             approval = {"id": "approval-request-1", "method": "item/commandExecution/requestApproval", "params": {}}
             record({"sent": approval})
@@ -192,3 +206,13 @@ for raw in sys.stdin:
                 emit(final_item())
             emit(usage_update())
             emit(terminal())
+
+    elif method == "turn/interrupt":
+        assert frame["params"]["threadId"] == thread_id
+        assert frame["params"]["turnId"] == turn_id
+        emit({"id": request_id, "result": {}})
+        if mode == "live-stop-ack-only":
+            continue
+        value = terminal()
+        value["params"]["turn"]["status"] = "completed" if mode == "live-stop-completed" else "interrupted"
+        emit(value)

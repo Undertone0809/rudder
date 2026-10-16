@@ -20,3 +20,6 @@ mod happy_path;
 mod resume;
 #[path = "workflow/resume_fixture.rs"]
 mod resume_fixture;
+
+#[path = "workflow/live_stop.rs"]
+mod live_stop;

@@ -393,3 +393,70 @@ async fn malformed_event_does_not_advance_replay_or_commit_stop_intent() {
     assert_conflict(request_stop(&database.pool, &actor, &request).await);
     assert_eq!(counts(&database.pool, &request.generation_id).await, (0, 2));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_owner_path_rejects_tampered_action_and_cannot_revive_expired_leases() {
+    use rudder_d1_persistence::native_chat::execution::{observe_stop, renew_stopping_lease};
+    let database = Database::start().await;
+    let (actor, run, _attempt, fence) = seed_execution(&database).await;
+    assert!(
+        observe_stop(&database.pool, &actor, &fence)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let request = stop_request(&database.pool, &run).await;
+    request_stop(&database.pool, &actor, &request)
+        .await
+        .unwrap();
+    let stop = observe_stop(&database.pool, &actor, &fence)
+        .await
+        .unwrap()
+        .unwrap();
+    renew_stopping_lease(&database.pool, &actor, &fence, &stop)
+        .await
+        .unwrap();
+    assert_conflict(renew_lease(&database.pool, &actor, &fence).await);
+    let original: Value =
+        sqlx::query_scalar("SELECT to_jsonb(a) FROM chat_control_actions a WHERE id=$1::uuid")
+            .bind(&request.control_action_id)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    for mutation in [
+        "control_owner_token='foreign-owner'",
+        "applied_control_version=2",
+        "accepted_through_seq=2",
+        "frozen_body_hash=repeat('0',64)",
+        "provider_evidence=jsonb_set(provider_evidence,'{authority}','\"foreign\"')",
+        "provider_evidence=jsonb_set(provider_evidence,'{executionPin,identityHash}','\"changed\"')",
+        "provider_evidence=jsonb_set(provider_evidence,'{stoppingCheckpointHash}',provider_evidence->'executionPin'->'checkpointHash')",
+    ] {
+        sqlx::query(&format!(
+            "UPDATE chat_control_actions SET {mutation} WHERE id=$1::uuid"
+        ))
+        .bind(&request.control_action_id)
+        .execute(&database.pool)
+        .await
+        .unwrap();
+        assert_conflict(observe_stop(&database.pool, &actor, &fence).await);
+        assert_conflict(renew_stopping_lease(&database.pool, &actor, &fence, &stop).await);
+        sqlx::query("UPDATE chat_control_actions SET control_owner_token=$2,applied_control_version=$3,accepted_through_seq=$4,frozen_body_hash=$5,provider_evidence=$6 WHERE id=$1::uuid")
+            .bind(&request.control_action_id).bind(original["control_owner_token"].as_str()).bind(original["applied_control_version"].as_i64().unwrap() as i32).bind(original["accepted_through_seq"].as_i64().unwrap() as i32).bind(original["frozen_body_hash"].as_str()).bind(&original["provider_evidence"]).execute(&database.pool).await.unwrap();
+    }
+    let mut tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test_stop_lease',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE chat_generations SET control_lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1::uuid").bind(&request.generation_id).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_conflict(renew_stopping_lease(&database.pool, &actor, &fence, &stop).await);
+    let held: bool =
+        sqlx::query_scalar("SELECT native_admission_hold FROM heartbeat_runs WHERE id=$1::uuid")
+            .bind(run)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert!(held);
+}

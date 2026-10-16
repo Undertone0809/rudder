@@ -6,6 +6,7 @@
 //! write the database, approve server requests or retry user input. In particular,
 //! receiving a provider response is not Run execution-terminal authority.
 
+mod effect_response;
 mod framing;
 mod message;
 mod receipts;
@@ -13,6 +14,7 @@ mod session;
 mod transport;
 mod value;
 
+pub use effect_response::EffectResponseReceipt;
 pub use framing::{FrameDecoder, MAX_CHUNK_BYTES, MAX_FRAME_BYTES};
 pub use message::{Message, RequestId, RpcError, encode_notification, encode_request};
 pub use receipts::{CleanupReceipt, TurnReceipt, TurnStatus, TurnUsage};

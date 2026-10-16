@@ -124,7 +124,7 @@ impl ReceiptIdentity {
         }
     }
 
-    fn clone_for_receipt(&self) -> Self {
+    pub(crate) fn clone_for_receipt(&self) -> Self {
         Self {
             run_id: self.run_id.clone(),
             attempt_id: self.attempt_id.clone(),
@@ -133,13 +133,17 @@ impl ReceiptIdentity {
         }
     }
 
+    pub(crate) fn connection_receipt_id(&self) -> &str {
+        &self.connection_receipt_id
+    }
+
     fn matches_identity(&self, other: &Self) -> bool {
         self.run_id == other.run_id
             && self.attempt_id == other.attempt_id
             && self.owner_token == other.owner_token
     }
 
-    fn matches(&self, run_id: &str, attempt_id: &str, owner_token: &str) -> bool {
+    pub(crate) fn matches(&self, run_id: &str, attempt_id: &str, owner_token: &str) -> bool {
         self.run_id == run_id && self.attempt_id == attempt_id && self.owner_token == owner_token
     }
 
@@ -265,6 +269,10 @@ impl TurnReceiptTracker {
         self.active
             .as_ref()
             .is_some_and(|active| active.terminal.is_some())
+    }
+
+    pub(crate) fn response_identity(&self) -> ReceiptIdentity {
+        self.identity.clone_for_receipt()
     }
 
     pub(crate) fn cleanup_receipt(&self) -> CleanupReceipt {

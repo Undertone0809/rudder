@@ -25,8 +25,21 @@ pub async fn renew_lease(
     actor: &VerifiedActor,
     fence: &ExecutionFence,
 ) -> Result<LeaseReceipt> {
+    renew(pool, actor, fence, None).await
+}
+
+pub(super) async fn renew(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    fence: &ExecutionFence,
+    stop: Option<&super::stopping::StopIntent>,
+) -> Result<LeaseReceipt> {
     let mut tx = pool.begin().await?;
-    lock_current_execution(&mut tx, actor, fence).await?;
+    if let Some(stop) = stop {
+        super::context::lock_stopping_execution(&mut tx, actor, fence, stop).await?;
+    } else {
+        lock_current_execution(&mut tx, actor, fence).await?;
+    }
     sqlx::query("SELECT set_config('rudder.native_chat_write', $1, true)")
         .bind(NATIVE_WRITE_MARKER)
         .execute(&mut *tx)
@@ -105,6 +118,7 @@ pub async fn renew_lease(
         generation_expires_at_unix_ms: row.try_get("generation_expiry")?,
         run_expires_at_unix_ms: row.try_get("run_expiry")?,
     };
+    super::super::auth::authorize_org(&mut tx, actor, &fence.organization_id).await?;
     tx.commit().await?;
     Ok(receipt)
 }
