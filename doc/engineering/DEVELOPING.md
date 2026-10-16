@@ -17,9 +17,10 @@ for the enforced branch rules and automatic version-handoff PRs.
 All new backend features, including native chat, must be implemented in Rust.
 Keep TypeScript for the frontend and client surfaces; existing Node backend
 code is migration debt. Read [Backend Architecture](BACKEND_ARCHITECTURE.md)
-for the canonical ownership boundary, temporary adapter inventory, complete first-party backend
-authority target, including authentication, migrations, workers, CLI/MCP, startup and recovery, and required failure/no-fallback evidence before choosing
-where a feature belongs. A Rust listener forwarding to Node does not meet that
+for the canonical ownership boundary, temporary adapter inventory, and complete
+first-party backend authority target: authentication, migrations, workers,
+CLI/MCP, startup and recovery. Check the required failure/no-fallback evidence
+before choosing where a feature belongs. A Rust listener forwarding to Node does not meet that
 target.
 
 ## Deployment Modes
