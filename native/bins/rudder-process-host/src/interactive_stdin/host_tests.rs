@@ -297,7 +297,12 @@ fn finish_interactive(fixture: &mut Fixture, expected_exit: Option<i32>, stopped
     ));
 }
 
-fn finish(fixture: &Fixture, expected_exit: Option<i32>, stopped: bool) {
+fn finish_one_shot(
+    fixture: &Fixture,
+    expected_exit: Option<i32>,
+    stopped: bool,
+    expected_outcome: (bool, Option<&str>),
+) {
     let event = fixture
         .child
         .events
@@ -319,7 +324,7 @@ fn finish(fixture: &Fixture, expected_exit: Option<i32>, stopped: bool) {
     }
     assert_eq!(was_stopped, stopped);
     assert!(cleanup_proven);
-    assert_eq!(stdin_error, Some("stdin_write_failed"));
+    assert_eq!(stdin_error, None);
     assert!(drain_output(Some(&fixture.child)));
     let counters = Counters {
         bytes_read: AtomicU64::new(0),
@@ -334,7 +339,7 @@ fn finish(fixture: &Fixture, expected_exit: Option<i32>, stopped: bool) {
         true,
         stdin_error,
     );
-    assert!(!succeeded);
+    assert_eq!((succeeded, error), expected_outcome);
     let mut terminal = terminal_message(
         if succeeded { "succeeded" } else { "failed" },
         error,
@@ -758,7 +763,7 @@ fn raw_output_writer_panic_stops_and_reaps_real_child() {
 #[test]
 fn early_success_with_closed_stdin_preserves_real_exit_and_output() {
     let fixture = launch("exec 0<&-; printf 'completed-without-input'; exit 0");
-    finish(&fixture, Some(0), false);
+    finish_one_shot(&fixture, Some(0), false, (true, None));
     assert_eq!(
         &*fixture.stdout.0.lock().unwrap(),
         b"completed-without-input"
@@ -768,7 +773,7 @@ fn early_success_with_closed_stdin_preserves_real_exit_and_output() {
 #[test]
 fn closed_stdin_does_not_kill_a_still_running_child() {
     let fixture = launch("exec 0<&-; sleep 1; printf 'completed-after-closing-input'; exit 0");
-    finish(&fixture, Some(0), false);
+    finish_one_shot(&fixture, Some(0), false, (true, None));
     assert_eq!(
         &*fixture.stdout.0.lock().unwrap(),
         b"completed-after-closing-input"
@@ -779,7 +784,7 @@ fn closed_stdin_does_not_kill_a_still_running_child() {
 fn closed_stdin_preserves_diagnostics_real_exit_and_receipt() {
     let fixture =
         launch("exec 0<&-; printf 'startup-out'; printf 'startup-diagnostic' >&2; exit 23");
-    finish(&fixture, Some(23), false);
+    finish_one_shot(&fixture, Some(23), false, (false, Some("child_exit")));
     assert_eq!(&*fixture.stdout.0.lock().unwrap(), b"startup-out");
     assert_eq!(&*fixture.stderr.0.lock().unwrap(), b"startup-diagnostic");
     let index = fs::read_to_string(fixture.root.join("operation/output-index.jsonl")).unwrap();
@@ -798,7 +803,7 @@ fn blocked_stdin_remains_cancellable_and_drains_receipt() {
             grace: Some(Duration::from_millis(50)),
         })
         .unwrap();
-    finish(&fixture, None, true);
+    finish_one_shot(&fixture, None, true, (true, None));
 }
 
 #[test]
