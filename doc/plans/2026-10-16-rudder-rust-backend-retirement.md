@@ -180,8 +180,33 @@ reviewer. Evidence is retained in
 `/private/tmp/rudder-transport-reverify.D8KkWB/`; this supersedes the earlier
 transport acceptance only for the explicitly frozen hashes in that ledger.
 
-The latest complete Desktop verification is still running; its prior failed
-Terminal scenario and earlier successful package run remain historical evidence.
+The checkpoint Desktop verification completed with exit 0, including development
+smoke, packaging, packaged account/update workflows and packaged App Builder
+(`/tmp/rudder-retirement-desktop-final-candidate.log`). The earlier Terminal
+timeout is retained as historical evidence; the complete rerun used unchanged
+source and timeouts.
 PR264's seven CLI commits are being replayed onto this checkpoint with separate
 CLI tests and real-endpoint acceptance. Full migration and production deployment
 remain incomplete.
+
+The batch was rebased onto main `1021d5c5` as `feaa66be`. Native sources, auth
+workflow tests and transport sources are byte-identical to the accepted
+checkpoint. Policy conflicts preserved the full-runtime Rust target and main's
+backend evidence guidance. The authority inventory was regenerated for main's
+three changed runtime source hashes; `check` and trusted-base comparison pass.
+Main includes #307 startup changes, so a fresh full `desktop:verify` is running
+for the rebased candidate (`/tmp/rudder-retirement-desktop-rebased.log`); the
+previous packaged pass is not silently substituted for this changed integration.
+
+## Desktop readiness regression diagnosis
+
+The first rebased full run failed in the same Terminal restart-output assertion
+(`/tmp/rudder-retirement-desktop-rebased.log`; disposable root `BGMAMh`).
+Inspection found a test race: hiding `Terminal unavailable` means restart has
+begun, but `Starting terminal` remains while asynchronous `desktop.create()`
+registers the replacement PTY. The test could send input before a session exists;
+the component catches that unavailable-session input rejection. The smoke now
+waits for the state heading to disappear, which happens only in the running
+state, before typing. No timeout or product code changed. The focused real
+Terminal scenario passed (`/tmp/rudder-terminal-restart-ready.log`); complete
+verification is running in `/tmp/rudder-retirement-desktop-ready-gate.log`.

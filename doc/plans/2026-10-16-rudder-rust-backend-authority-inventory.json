@@ -1355,7 +1355,7 @@
     },
     {
       "path": "desktop/src/desktop-window-effects.ts",
-      "sha256": "2c58d42d773a30e60463982eea5772cab1cf1251d6f44b5ed1c7d8afd4054790",
+      "sha256": "0829ec18b3f5a5d45fc187462a5ad41e4347e285e54aa84c8850648b417b2356",
       "families": [
         "electron_process_graph"
       ]
@@ -1593,7 +1593,7 @@
     },
     {
       "path": "desktop/src/main.ts",
-      "sha256": "421a917a14c86eedd9359e91ac9974d1280b3e018c651cafcde040cff7ef9344",
+      "sha256": "de4b7d342ca925c2c6d06c83f58e5ab1095c15d5289417402b65a8da5e2b1930",
       "families": [
         "electron_process_graph"
       ]
@@ -2882,7 +2882,7 @@
     },
     {
       "path": "packages/db/src/local-postgres-provider.ts",
-      "sha256": "16aa5cb8282eea83e6f82dbaf38053efefa5d9a14431635b942768b30f189f19",
+      "sha256": "88dfab3d927e73f2872bc429d69f1b7614ee08be0fe8067137d2f96e534f211f",
       "families": [
         "database_queries_and_writers",
         "schema_and_migration_apply"

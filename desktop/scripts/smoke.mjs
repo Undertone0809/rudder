@@ -6666,7 +6666,10 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     console.log(`[desktop-smoke] Agent Terminal failure screenshot: ${terminalFailureSmokeScreenshotPath}`);
     await restoreWorkspace();
     await failedTerminal.getByRole("button", { name: "Restart terminal" }).click();
-    await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "hidden", timeout: 15_000 });
+    // Failure disappearing only proves that restart began: the Starting terminal
+    // overlay remains until create() has registered the replacement PTY session.
+    // Sending input during that interval loses it through the unavailable session.
+    await failedTerminal.locator("h3").waitFor({ state: "hidden", timeout: 15_000 });
     const restartedInput = failedTerminal.locator(".xterm-helper-textarea");
     await restartedInput.pressSequentially("printf 'TERMINAL_RESTARTED=yes\\n'", { delay: 2 });
     await restartedInput.press("Enter");

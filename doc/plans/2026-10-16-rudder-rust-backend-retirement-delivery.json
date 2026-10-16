@@ -15,7 +15,7 @@
       "Reset user data",
       "Claim production deployment from source tests"
     ],
-    "authorization": "Implementation, working-branch publication, protected-PR merging of needed qualified work, and closure of superseded PRs explicitly authorized; production release/deployment not included."
+    "authorization": "Implementation, working-branch publication, protected-PR merging of existing needed qualified PRs, and closure of superseded PRs explicitly authorized; production release/deployment not included."
   },
   "candidate": {
     "branch": "codex/rust-backend-completion-20261016",
@@ -236,6 +236,14 @@
         "state": "retained_for_selective_rust_successors"
       }
     ],
-    "deployment": "not performed"
+    "deployment": "not performed",
+    "integration_candidate": {
+      "source_sha": "feaa66be2549c6f18580c4c5669ce6471762d490",
+      "base_sha": "1021d5c5ba7d0b758fae42fd6569810c1a456a77",
+      "accepted_native_source_equivalent": true,
+      "checkpoint_desktop_verification": "PASS /tmp/rudder-retirement-desktop-final-candidate.log",
+      "rebased_desktop_verification": "Initial rerun failed Terminal restart readiness race; focused corrected smoke PASS; complete rerun running /tmp/rudder-retirement-desktop-ready-gate.log",
+      "ci": "not published yet"
+    }
   }
 }
