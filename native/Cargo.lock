@@ -2232,6 +2232,7 @@ dependencies = [
  "rudder-archive-core",
  "rudder-auth-core",
  "rudder-d1-persistence",
+ "rudder-native-chat-executor",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",
  "serde",

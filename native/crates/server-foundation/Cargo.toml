@@ -16,6 +16,7 @@ percent-encoding = "2.3"
 rudder-archive-core = { path = "../archive-core" }
 rudder-auth-core = { path = "../auth-core" }
 rudder-d1-persistence = { path = "../d1-persistence" }
+rudder-native-chat-executor = { path = "../native-chat-executor" }
 rudder-organization-mutation-core = { path = "../organization-mutation-core" }
 rudder-project-goal-link-core = { path = "../project-goal-link-core" }
 serde = { version = "1.0", features = ["derive"] }

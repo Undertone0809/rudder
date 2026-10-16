@@ -72,6 +72,7 @@ mod goal_reads;
 mod issue_metadata_reads;
 mod llm_reflection;
 mod native_bearer_auth;
+pub mod native_chat_worker;
 mod organization_catalog_reads;
 mod overview_reads;
 mod project_reads;
@@ -973,6 +974,7 @@ struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
     d1_mutations: Option<MutationStore>,
+    native_chat_worker: Option<native_chat_worker::Supervisor>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
     actor_envelope_replay: Arc<Mutex<NonceReplayGuard>>,
@@ -1142,6 +1144,12 @@ impl AppState {
             DatabaseState::Configured(pool) => Some(MutationStore::new(pool.clone())),
             DatabaseState::Disabled => None,
         };
+        let native_chat_worker = match &database {
+            DatabaseState::Configured(pool) => {
+                Some(native_chat_worker::Supervisor::new(pool.clone()))
+            }
+            DatabaseState::Disabled => None,
+        };
         Ok(Self {
             admission: Arc::new(RequestAdmission::new(
                 config.workers,
@@ -1152,6 +1160,7 @@ impl AppState {
             config: Arc::new(config),
             database,
             d1_mutations,
+            native_chat_worker,
             started_at: Instant::now(),
         })
     }
@@ -3064,10 +3073,18 @@ impl ServerRuntime {
     }
 
     pub async fn run(mut self) -> std::io::Result<()> {
-        self.server
+        let result = self
+            .server
             .take()
             .ok_or_else(|| std::io::Error::other("server runtime already consumed"))?
-            .await
+            .await;
+        if let Some(worker) = &self.control.state.native_chat_worker {
+            worker
+                .shutdown(self.control.state.config.shutdown_grace)
+                .await
+                .map_err(std::io::Error::other)?;
+        }
+        result
     }
 
     pub async fn shutdown(&self) {
@@ -3086,7 +3103,20 @@ impl ServerRuntime {
 }
 
 impl ServerControl {
+    /// Private typed Rust dispatch only; no HTTP sender is activated here.
+    pub fn native_chat_worker(&self) -> Option<native_chat_worker::Supervisor> {
+        self.state.native_chat_worker.clone()
+    }
+
+    /// Close shared dispatch before either private or public listener drains.
+    pub fn begin_shutdown(&self) {
+        if let Some(worker) = &self.state.native_chat_worker {
+            worker.begin_shutdown();
+        }
+    }
+
     pub async fn shutdown(&self) {
+        self.begin_shutdown();
         warn!(
             event = "server_shutdown_requested",
             component = "server-foundation"

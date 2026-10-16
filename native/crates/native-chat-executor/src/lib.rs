@@ -155,6 +155,41 @@ fn db<T>(
     })
 }
 
+/// Process containment only; none of these facts establishes the durable Run
+/// outcome, whether a claim committed, or permission to replay an attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessDisposition {
+    NotLaunched,
+    CleanupProven,
+    Unresolved,
+}
+
+/// Opaque failure evidence, constructed only by the executor that owns launch
+/// and observes cleanup. It cannot be used to finalize a provider turn.
+#[derive(Debug)]
+pub struct ExecutionFailure {
+    error: Error,
+    process: ProcessDisposition,
+}
+
+impl ExecutionFailure {
+    pub fn process_disposition(&self) -> ProcessDisposition {
+        self.process
+    }
+    pub fn into_error(self) -> Error {
+        self.error
+    }
+}
+
+impl ExecutionFailure {
+    fn not_launched(error: Error) -> Self {
+        Self {
+            error,
+            process: ProcessDisposition::NotLaunched,
+        }
+    }
+}
+
 /// Run only on a dedicated blocking worker (e.g. spawn_blocking), with the
 /// caller's Tokio runtime kept alive. Transport polling and Drop are blocking.
 /// Cancellation is explicit: abandoning a task handle alone is not a stop.
@@ -166,58 +201,84 @@ pub fn run_on_blocking_thread(
     paths: &HostPaths,
     request: ExecutionRequest<'_>,
 ) -> Result<ExecutionObservation> {
+    run_observed_on_blocking_thread(handle, pool, actor, host, paths, request)
+        .map_err(ExecutionFailure::into_error)
+}
+
+/// Dedicated blocking worker variant retaining process-containment evidence on
+/// failure. A NotLaunched observation does not prove a database commit failed.
+pub fn run_observed_on_blocking_thread(
+    handle: &Handle,
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    host: &LocalHostContext,
+    paths: &HostPaths,
+    request: ExecutionRequest<'_>,
+) -> std::result::Result<ExecutionObservation, ExecutionFailure> {
     if request.timeout.is_zero()
         || request.timeout > Duration::from_secs(3600)
         || request.cancelled.load(Ordering::Acquire)
     {
-        return Err(Error::Cancelled);
+        return Err(ExecutionFailure::not_launched(Error::Cancelled));
     }
     let deadline = Instant::now() + request.timeout;
-    validate_paths(paths)?;
-    let claimed = db(
-        handle,
-        deadline,
-        execution::claim_with_preflight(
-            pool,
-            actor,
-            request.organization_id,
-            request.run_id,
-            request.attempt_id,
-            host,
-            |config| {
-                if request.cancelled.load(Ordering::Acquire) {
-                    return Err(runtime_bindings::Error::Http(
-                        409,
-                        "Native Chat execution was cancelled".into(),
-                    ));
-                }
-                profile::validate(config, paths).map_err(|_| {
-                    runtime_bindings::Error::Http(
-                        409,
-                        "Native Chat profile configuration is unsupported".into(),
-                    )
-                })
-            },
-        ),
-    )?;
-    if request.cancelled.load(Ordering::Acquire) {
-        return Err(Error::Cancelled);
-    }
-    if Instant::now() >= deadline {
-        return Err(Error::Deadline);
-    }
-    db(
-        handle,
-        deadline,
-        execution::validate_submission_source(pool, actor, &claimed.fence),
-    )?;
-    let launch = process_launch(&claimed.config, &claimed.fence, paths)?;
-    let transport = OwnedTransport::launch_external(launch, &paths.process_host)?;
-    let snapshot = db(
-        handle,
-        deadline,
-        execution::current_checkpoint(pool, actor, &claimed.fence),
-    )?;
+    let (claimed, launch, snapshot) = (|| -> Result<_> {
+        validate_paths(paths)?;
+        let claimed = db(
+            handle,
+            deadline,
+            execution::claim_with_preflight(
+                pool,
+                actor,
+                request.organization_id,
+                request.run_id,
+                request.attempt_id,
+                host,
+                |config| {
+                    if request.cancelled.load(Ordering::Acquire) {
+                        return Err(runtime_bindings::Error::Http(
+                            409,
+                            "Native Chat execution was cancelled".into(),
+                        ));
+                    }
+                    profile::validate(config, paths).map_err(|_| {
+                        runtime_bindings::Error::Http(
+                            409,
+                            "Native Chat profile configuration is unsupported".into(),
+                        )
+                    })
+                },
+            ),
+        )?;
+        if request.cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled);
+        }
+        if Instant::now() >= deadline {
+            return Err(Error::Deadline);
+        }
+        db(
+            handle,
+            deadline,
+            execution::validate_submission_source(pool, actor, &claimed.fence),
+        )?;
+        let launch = process_launch(&claimed.config, &claimed.fence, paths)?;
+        let snapshot = db(
+            handle,
+            deadline,
+            execution::current_checkpoint(pool, actor, &claimed.fence),
+        )?;
+        Ok((claimed, launch, snapshot))
+    })()
+    .map_err(ExecutionFailure::not_launched)?;
+    // Finish all fallible prelaunch reads before creating the process owner.
+    // A launch error may have created an external owner; do not infer cleanup.
+    let transport =
+        OwnedTransport::launch_external(launch, &paths.process_host).map_err(|error| {
+            ExecutionFailure {
+                error: error.into(),
+                process: ProcessDisposition::Unresolved,
+            }
+        })?;
     let mut driver = Driver {
         handle,
         pool,
@@ -236,16 +297,29 @@ pub fn run_on_blocking_thread(
     // Stop even after permission, database, protocol, or provider failure. An
     // absent/unproven receipt stays unproven and never becomes success by Drop.
     let cleanup_receipt = driver.stop_and_observe_cleanup();
-    let provider_terminal = result?;
+    let identity = driver.fence.identity();
+    let process = if cleanup_receipt.as_ref().is_some_and(|cleanup| {
+        cleanup.matches_execution(
+            identity.run_id,
+            identity.attempt_id,
+            driver.fence.run_execution_owner_token(),
+        )
+    }) {
+        ProcessDisposition::CleanupProven
+    } else {
+        ProcessDisposition::Unresolved
+    };
+    let failure = |error| ExecutionFailure { error, process };
+    let provider_terminal = result.map_err(failure)?;
     let turn_receipt = driver
         .transport
         .take_turn_receipt()
-        .ok_or(Error::InvalidProviderObservation)?;
+        .ok_or_else(|| failure(Error::InvalidProviderObservation))?;
     if provider_terminal.thread_id != turn_receipt.thread_id()
         || provider_terminal.turn_id != turn_receipt.turn_id()
         || provider_terminal.status != turn_receipt.status()
     {
-        return Err(Error::InvalidProviderObservation);
+        return Err(failure(Error::InvalidProviderObservation));
     }
     let cleanup_proven = cleanup_receipt.is_some();
     Ok(ExecutionObservation {
