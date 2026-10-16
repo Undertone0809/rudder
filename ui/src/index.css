@@ -1074,6 +1074,13 @@
   html.desktop-shell-windows body {
     clip-path: inset(0 round var(--desktop-window-radius));
   }
+  html.desktop-shell-windows {
+    --desktop-caption-height: 2.375rem;
+    --desktop-windows-tint: rgb(244 240 234 / 0.78);
+  }
+  html.dark.desktop-shell-windows {
+    --desktop-windows-tint: rgb(20 22 26 / 0.78);
+  }
   html.desktop-shell-windows #root {
     position: fixed;
     inset: 0;
@@ -1153,21 +1160,27 @@
     -webkit-app-region: no-drag;
   }
 
+  .desktop-caption-bar {
+    position: fixed;
+    inset: 0 0 auto;
+    height: var(--desktop-caption-height);
+    z-index: 2147483647;
+    /* Share the full-window backdrop; another tint here creates a dark seam. */
+    background: transparent;
+  }
+
   .desktop-caption-controls {
     position: fixed;
     top: 0;
     right: 0;
     z-index: 2147483647;
     display: flex;
-    height: 2.375rem;
+    height: var(--desktop-caption-height);
     overflow: hidden;
     border-top-right-radius: var(--desktop-window-radius);
-    border-bottom-left-radius: 0.5rem;
-    background: color-mix(in oklab, var(--surface-shell) 56%, transparent);
+    background: transparent;
     color: color-mix(in oklab, var(--foreground) 76%, transparent);
     pointer-events: auto;
-    -webkit-backdrop-filter: blur(18px) saturate(120%);
-    backdrop-filter: blur(18px) saturate(120%);
   }
 
   .desktop-caption-control {
@@ -1199,8 +1212,11 @@
   }
 
   .dark .desktop-caption-controls {
-    background: rgb(24 24 23 / 0.72);
     color: rgb(232 229 222 / 0.72);
+  }
+
+  html.desktop-shell-window-maximized .desktop-caption-controls {
+    border-top-right-radius: 0;
   }
 
   .dark .desktop-caption-control:hover {
@@ -1332,25 +1348,10 @@
     backdrop-filter: none;
   }
 
-  /* Windows transparent BrowserWindows do not provide macOS-style vibrancy.
-     Keep the shell translucent, but prevent readable windows behind Rudder
-     from bleeding through the navigation and workspace gutters. */
-  html.desktop-shell-windows.desktop-shell-glass .app-shell-backdrop {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(250 248 245 / 0.9) 0%,
-        rgb(244 240 234 / 0.84) 100%
-      );
-  }
+  html.desktop-shell-glass.desktop-shell-windows .app-shell-backdrop {
+    padding-top: var(--desktop-caption-height) !important;
+    background: var(--desktop-windows-tint);
 
-  html.dark.desktop-shell-windows.desktop-shell-glass .app-shell-backdrop {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(17 18 21 / 0.9) 0%,
-        rgb(12 14 17 / 0.86) 100%
-      );
   }
 
   .workspace-shell {
@@ -1435,22 +1436,13 @@
     backdrop-filter: none;
   }
 
-  html.desktop-shell-windows.desktop-shell-glass .primary-rail-shell {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(244 242 239 / 0.74) 0%,
-        rgb(238 235 231 / 0.68) 100%
-      );
-  }
-
+  /* Share the outer shell tint instead of painting a second rail surface. */
+  html.desktop-shell-windows.desktop-shell-glass .primary-rail-shell,
   html.dark.desktop-shell-windows.desktop-shell-glass .primary-rail-shell {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(18 20 23 / 0.72) 0%,
-        rgb(14 16 19 / 0.66) 100%
-      );
+    background: transparent;
+    border-right: 0;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   html.desktop-shell-glass .workspace-shell .surface-shell {
@@ -1648,6 +1640,10 @@
     border: 1px solid color-mix(in oklab, var(--border-soft) 92%, transparent);
     background: var(--surface-shell);
     box-shadow: var(--shadow-lg);
+  }
+
+  html.desktop-shell-windows .settings-modal-shell {
+    height: min(960px, calc(100dvh - var(--desktop-caption-height) - 1.5rem));
   }
 
   @media (min-width: 768px) {

@@ -281,7 +281,7 @@ export function DesktopSettingsModalFrame({
           ref={shellRef}
           aria-describedby={undefined}
           tabIndex={-1}
-          className="settings-modal-shell fixed left-1/2 top-1/2 z-50 flex min-h-0 w-[calc(100%-1rem)] max-w-[1440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[10px] sm:w-[calc(100%-2rem)]"
+          className="settings-modal-shell fixed left-1/2 top-[calc(50%+var(--desktop-caption-height,0px)/2)] z-50 flex min-h-0 w-[calc(100%-1rem)] max-w-[1440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[10px] sm:w-[calc(100%-2rem)]"
           onOpenAutoFocus={(event) => {
             if (!isMobile) return;
             event.preventDefault();
@@ -1480,7 +1480,7 @@ export function Layout() {
     >
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[200] focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-[calc(0.75rem+var(--desktop-caption-height,0px))] focus:z-[200] focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {t("common.skipToMainContent")}
       </a>

@@ -667,18 +667,24 @@ describe("index.css motion rules", () => {
     expect(captionControls).toContain("z-index: 2147483647");
   });
 
-  it("keeps Windows glass tinted enough to prevent readable background bleed", () => {
-    const lightShell = cssBlock("html.desktop-shell-windows.desktop-shell-glass .app-shell-backdrop");
-    const darkShell = cssBlock("html.dark.desktop-shell-windows.desktop-shell-glass .app-shell-backdrop");
+  it("shares one Windows tint beneath the caption and workspace", () => {
+    const shell = cssBlock("html.desktop-shell-glass.desktop-shell-windows .app-shell-backdrop");
+    const lightTheme = cssBlock("html.desktop-shell-windows {");
+    const darkTheme = cssBlock("html.dark.desktop-shell-windows {");
+    const caption = cssBlock(".desktop-caption-bar");
     const lightRail = cssBlock("html.desktop-shell-windows.desktop-shell-glass .primary-rail-shell");
     const darkRail = cssBlock("html.dark.desktop-shell-windows.desktop-shell-glass .primary-rail-shell");
 
-    expect(lightShell).toContain("rgb(250 248 245 / 0.9)");
-    expect(lightShell).toContain("rgb(244 240 234 / 0.84)");
-    expect(darkShell).toContain("rgb(17 18 21 / 0.9)");
-    expect(darkShell).toContain("rgb(12 14 17 / 0.86)");
-    expect(lightRail).toContain("rgb(244 242 239 / 0.74)");
-    expect(darkRail).toContain("rgb(18 20 23 / 0.72)");
+    expect(shell).toContain("background: var(--desktop-windows-tint)");
+    expect(shell).toContain("padding-top: var(--desktop-caption-height)");
+    expect(lightTheme).toContain("rgb(244 240 234 / 0.78)");
+    expect(darkTheme).toContain("rgb(20 22 26 / 0.78)");
+    expect(caption).toContain("background: transparent");
+    expect(caption).not.toContain("backdrop-filter:");
+    expect(lightRail).toContain("background: transparent");
+    expect(darkRail).toContain("background: transparent");
+    expect(darkRail).toContain("border-right: 0");
+    expect(darkRail).toContain("backdrop-filter: none");
   });
 
   it("keeps dashboard run previews compact even when transcripts contain markdown headings", () => {

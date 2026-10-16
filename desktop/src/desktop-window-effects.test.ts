@@ -74,17 +74,25 @@ describe("desktop window effects", () => {
     });
   });
 
-  it("keeps the Windows host window fully transparent", () => {
+  it("requests native Windows acrylic without a layered transparent host", () => {
     expect(resolveDesktopWindowEffects({
       platform: "win32",
       mode: "transparent_vibrant",
       appearance: "dark",
       desktopWindowBackground,
       transparentWindowBackground,
+      windowsRelease: "10.0.22621",
     })).toEqual({
-      transparent: true,
       backgroundColor: "#00000000",
+      backgroundMaterial: "acrylic",
     });
+  });
+
+  it.each(["10.0.19045", "10.0.22000", "unknown"])("uses an opaque fallback on Windows %s", (windowsRelease) => {
+    expect(resolveDesktopWindowEffects({
+      platform: "win32", mode: "transparent_vibrant", appearance: "dark",
+      desktopWindowBackground, transparentWindowBackground, windowsRelease,
+    })).toEqual({ backgroundColor: desktopWindowBackground.dark });
   });
 
   it("keeps the opaque escape hatch free of transparent flags", () => {

@@ -10,6 +10,7 @@ import {
   createLocalPostgresInstance,
   resolveOfficialPostgresBinaries,
   resolveOfficialPostgresBinDir,
+  resolveOfficialPostgresLogPath,
   RUDDER_POSTGRES_BIN_DIR_ENV,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
   validateOfficialPostgresBinDir,
@@ -55,6 +56,14 @@ afterEach(() => {
 });
 
 describe("local postgres provider", () => {
+  it("keeps each official cluster's log outside its data directory on every host platform", () => {
+    const first = path.join(os.tmpdir(), "rudder-clusters", "first");
+    const second = path.join(os.tmpdir(), "rudder-clusters", "second");
+    const log = resolveOfficialPostgresLogPath(first + path.sep);
+    expect(path.dirname(log)).toBe(path.dirname(first));
+    expect(log).not.toBe(resolveOfficialPostgresLogPath(second));
+  });
+
   it("pins Rudder's production embedded database provider to PostgreSQL 18.4", () => {
     expect(RUDDER_PRODUCTION_POSTGRES_VERSION).toBe("18.4");
   });
@@ -188,7 +197,7 @@ describe("local postgres provider", () => {
       "-D",
       databaseDir,
       "-l",
-      path.join(databaseDir, "postgres.log"),
+      `${path.resolve(databaseDir)}.postgres.log`,
       "-o",
       "-h 127.0.0.1 -p 55432",
       "-w",

@@ -1696,7 +1696,7 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
 async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, kind === "boot" ? "boot-preload.js" : "preload.js");
   const desktopWindowEffects: Pick<BrowserWindowConstructorOptions,
-    "backgroundColor" | "titleBarStyle" | "transparent" | "vibrancy" | "visualEffectState"> = resolveDesktopWindowEffects({
+    "backgroundColor" | "titleBarStyle" | "transparent" | "vibrancy" | "visualEffectState" | "backgroundMaterial"> = resolveDesktopWindowEffects({
       platform: process.platform,
       mode: resolveDesktopWindowEffectMode(process.env, process.platform),
       appearance: currentAppearance,
@@ -1722,7 +1722,7 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
   if (process.platform !== "darwin") {
     window.setMenuBarVisibility(false);
   }
-  if (kind === "app") {
+  if (kind === "app" && !desktopWindowEffects.backgroundMaterial) {
     installWindowsRoundedWindowShape(window);
   }
 

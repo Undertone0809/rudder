@@ -1,3 +1,4 @@
+import { release } from "node:os";
 import type { DesktopAppearance } from "./theme-preference.js";
 
 export type DesktopWindowEffectMode = "opaque" | "transparent" | "transparent_vibrant";
@@ -8,6 +9,7 @@ export type DesktopWindowEffectOptions = {
   transparent?: boolean;
   vibrancy?: "under-window";
   visualEffectState?: "active";
+  backgroundMaterial?: "acrylic";
 };
 
 export type DesktopWindowChromeOptions = {
@@ -31,6 +33,7 @@ type DesktopWindowEffectInput = {
   appearance: DesktopAppearance;
   desktopWindowBackground: Record<DesktopAppearance, string>;
   transparentWindowBackground: Record<DesktopAppearance, string>;
+  windowsRelease?: string;
 };
 
 export function normalizeDesktopWindowEffectMode(value: string | null | undefined): DesktopWindowEffectMode | null {
@@ -124,6 +127,7 @@ export function resolveDesktopWindowEffects({
   appearance,
   desktopWindowBackground,
   transparentWindowBackground,
+  windowsRelease = release(),
 }: DesktopWindowEffectInput): DesktopWindowEffectOptions {
   const titleBarStyle = platform === "darwin" ? "hiddenInset" : undefined;
   const transparentBackground = transparentWindowBackground[appearance];
@@ -135,6 +139,15 @@ export function resolveDesktopWindowEffects({
     };
   }
   if (mode === "transparent_vibrant") {
+    if (platform === "win32") {
+      // DWM materials require Windows 11 22H2 and a non-layered host window.
+      // A transparent Electron host exposes sharp wallpaper instead of acrylic.
+      const build = Number(windowsRelease.split(".")[2]);
+      if (build >= 22621) {
+        return { backgroundColor: WINDOWS_TRANSPARENT_WINDOW_BACKGROUND, backgroundMaterial: "acrylic" };
+      }
+      return { backgroundColor: desktopWindowBackground[appearance] };
+    }
     if (platform === "darwin") {
       return {
         titleBarStyle: "hiddenInset",
@@ -146,7 +159,7 @@ export function resolveDesktopWindowEffects({
     }
     return {
       transparent: true,
-      backgroundColor: platform === "win32" ? WINDOWS_TRANSPARENT_WINDOW_BACKGROUND : transparentBackground,
+      backgroundColor: transparentBackground,
     };
   }
   return {
