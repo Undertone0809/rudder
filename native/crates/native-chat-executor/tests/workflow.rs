@@ -6,6 +6,8 @@ mod dispatch_guards;
 mod failures;
 #[path = "workflow/fixture.rs"]
 mod fixture;
+#[path = "workflow/g6_lease_and_cancel.rs"]
+mod g6_lease_and_cancel;
 #[path = "workflow/happy_path.rs"]
 mod happy_path;
 #[path = "workflow/resume.rs"]
