@@ -15,6 +15,124 @@ fn assert_guard(error: sqlx::Error) {
     );
 }
 
+async fn finalization_snapshot(pool: &sqlx::PgPool, run: &str) -> Value {
+    sqlx::query_scalar(
+        "SELECT jsonb_build_object('result',r.result_json,
+         'messages',(SELECT count(*) FROM chat_messages WHERE run_id=r.id),
+         'generationEvents',(SELECT count(*) FROM chat_generation_events WHERE run_id=r.id),
+         'runEvents',(SELECT count(*) FROM heartbeat_run_events WHERE run_id=r.id),
+         'activity',(SELECT count(*) FROM activity_log WHERE org_id=r.org_id
+           AND entity_type='heartbeat_run' AND entity_id=r.id::text))
+         FROM heartbeat_runs r WHERE r.id=$1::uuid",
+    )
+    .bind(run)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn retry_after_membership_revocation(row_lock: bool) {
+    assert_ignored_external_dependencies();
+    let (database, host, actor, run, attempt) = database_and_admission("complete").await;
+    let (observed, _host) = execute_on_worker(&database, host, actor, run.clone(), attempt).await;
+    let observed = observed.unwrap();
+    finalize(
+        &database.pool,
+        &verified_actor(),
+        &observed.fence,
+        &observed.turn_receipt,
+        observed.cleanup_receipt.as_ref().unwrap(),
+    )
+    .await
+    .unwrap();
+    let before = finalization_snapshot(&database.pool, &run).await;
+    let mut blocker = database.pool.begin().await.unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *blocker)
+        .await
+        .unwrap();
+    if row_lock {
+        sqlx::query("SELECT id FROM chat_conversations WHERE id=$1::uuid FOR UPDATE")
+            .bind(CHAT)
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+    } else {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!(
+                "runtime-binding:target:chat_conversation:{ORG}:{CHAT}"
+            ))
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+    }
+    let pool = database.pool.clone();
+    let pending = tokio::spawn(async move {
+        finalize(
+            &pool,
+            &verified_actor(),
+            &observed.fence,
+            &observed.turn_receipt,
+            observed.cleanup_receipt.as_ref().unwrap(),
+        )
+        .await
+    });
+    // Require a database-confirmed waiter behind this exact transaction. The
+    // revocation therefore occurs after the retry's initial authorization.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+             WHERE $1=ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(blocker_pid)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        if waiting {
+            break;
+        }
+        assert!(
+            !pending.is_finished(),
+            "retry bypassed the authorization lock"
+        );
+        assert!(std::time::Instant::now() < deadline, "retry never waited");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let revoked = sqlx::query(
+        "DELETE FROM organization_memberships
+         WHERE org_id=$1::uuid AND principal_type='user' AND principal_id=$2",
+    )
+    .bind(ORG)
+    .bind(&verified_actor().actor().id)
+    .execute(&mut *blocker)
+    .await
+    .unwrap();
+    assert_eq!(revoked.rows_affected(), 1);
+    blocker.commit().await.unwrap();
+    let error = pending.await.unwrap().unwrap_err();
+    assert!(
+        matches!(
+            error,
+            rudder_d1_persistence::runtime_bindings::Error::Http(403, _)
+        ),
+        "{error}"
+    );
+    assert_eq!(finalization_snapshot(&database.pool, &run).await, before);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and controlled provider"]
+async fn exact_retry_rechecks_revoked_membership_after_target_lock_wait() {
+    retry_after_membership_revocation(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and controlled provider"]
+async fn exact_retry_rechecks_revoked_membership_after_conversation_row_wait() {
+    retry_after_membership_revocation(true).await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and controlled provider"]
 async fn private_locator_migration_preserves_authority_and_legacy_and_refuses_unbacked_mirrors() {
