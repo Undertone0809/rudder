@@ -176,6 +176,13 @@
         "source_closure_lease": {
           "path": "/tmp/acceptance-native-migration-20261016/lease-comparison.json",
           "sha256": "e780e1ba09402edd02b846ac7bfafda332f577e8e33b935f6c10554c88acd4e1"
+        },
+        "source_reconciliation": {
+          "path": "native/crates/migration-service/src/apply.rs",
+          "sha256": "fca8fe2b572255e6a3e24fdeb030fb53e7a5edd75ebde8fc87d5a771d43fd08c",
+          "reviewer": "auth_stage_review ACCEPT: eight DerefMut coercions and equivalent short-circuit let-chain; old binary receipt retained under old hash",
+          "supplemental_author_postgres": "PASS /private/tmp/acceptance-migration-clippy-9vq3gxqh/postgres_apply-rerun.log and apply_cli-rerun.log; 4 concurrent apply tests and 1 real CLI backup/restore; isolated cluster stopped",
+          "fixture_correction": "AtomicUsize suffix prevents repeated wall-clock timestamps colliding across parallel database fixtures; initial failure retained"
         }
       },
       {
@@ -220,12 +227,13 @@
       },
       {
         "number": 292,
-        "state": "rebased_waiting_ci",
-        "head_sha": "5e1f8221ea91b85d1a6644eb80817b53050fff72"
+        "state": "merged",
+        "head_sha": "5e1f8221ea91b85d1a6644eb80817b53050fff72",
+        "merge_sha": "8f5a1607b4b7ebf144d4ce384a6f037d05320023"
       },
       {
         "number": 264,
-        "state": "selective_rebase_and_acceptance_in_progress"
+        "state": "local_candidate_independent_PASS_final_ACCEPT_pending_PR_update_and_CI"
       },
       {
         "number": 262,
@@ -240,10 +248,11 @@
     "integration_candidate": {
       "source_sha": "feaa66be2549c6f18580c4c5669ce6471762d490",
       "base_sha": "1021d5c5ba7d0b758fae42fd6569810c1a456a77",
-      "accepted_native_source_equivalent": true,
+      "accepted_native_source_equivalent": "Auth/transport byte-identical; migration eight coercions and conditional simplification independently reviewed behavior-equivalent",
       "checkpoint_desktop_verification": "PASS /tmp/rudder-retirement-desktop-final-candidate.log",
-      "rebased_desktop_verification": "Initial rerun failed Terminal restart readiness race; focused corrected smoke PASS; complete rerun running /tmp/rudder-retirement-desktop-ready-gate.log",
-      "ci": "not published yet"
+      "rebased_desktop_verification": "PASS exit 0 /tmp/rudder-retirement-desktop-ready-gate.log; development, packaging, packaged account/update and App Builder",
+      "ci": "not published yet",
+      "migration_clippy_cleanup": "Reviewer ACCEPT semantic equivalence; full-workspace Clippy/rustfmt PASS, 30 default tests PASS, supplemental isolated PostgreSQL 4 apply tests and 1 real CLI backup/restore PASS"
     }
   }
 }

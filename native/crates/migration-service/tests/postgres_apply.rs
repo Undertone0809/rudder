@@ -13,11 +13,13 @@ use std::{
     str::FromStr,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tempfile::TempDir;
+
+static DATABASE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 const ADMIN_URL_ENV: &str = "RUDDER_MIGRATION_SERVICE_TEST_ADMIN_URL";
 const TEST_RECOVERY_DUMP: &[u8] = b"-- Rudder database backup\n--\n-- PostgreSQL database dump\n--\nSET statement_timeout = 0;\nCREATE SCHEMA drizzle;\nCREATE TABLE drizzle.__drizzle_migrations (\n    id integer NOT NULL,\n    hash text NOT NULL,\n    created_at bigint\n);\nCOPY drizzle.__drizzle_migrations (id, hash, created_at) FROM stdin;\n1\tabc\t1000\n\\.\n--\n-- PostgreSQL database dump complete\n--\n";
@@ -64,7 +66,14 @@ impl DisposableDatabase {
             .duration_since(UNIX_EPOCH)
             .expect("clock before Unix epoch")
             .as_nanos();
-        let name = format!("rudder_test_migration_{}_{}", std::process::id(), nonce);
+        // Wall-clock resolution can repeat across concurrent test workers.
+        let sequence = DATABASE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let name = format!(
+            "rudder_test_migration_{}_{}_{}",
+            std::process::id(),
+            nonce,
+            sequence
+        );
         sqlx::query(&format!("CREATE DATABASE \"{name}\""))
             .execute(&admin_pool)
             .await
