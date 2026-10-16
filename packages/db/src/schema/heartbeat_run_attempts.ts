@@ -1,6 +1,7 @@
 import type {
   HeartbeatRunAttemptResumeSource,
   HeartbeatRunAttemptStatus,
+  NativeChatProtocolPhase,
 } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
@@ -29,6 +30,11 @@ export const heartbeatRunAttempts = pgTable(
     /** Owner identity captured by the worker that admitted this attempt. */
     ownerToken: text("owner_token"),
     attemptEpoch: integer("attempt_epoch"),
+    /** Independent generation and provider-connection fences for native Chat. */
+    generationAttemptEpoch: integer("generation_attempt_epoch"),
+    connectionEpoch: integer("connection_epoch"),
+    /** Indexed mirror of checkpoint_json.phase for native Chat protocol ordering. */
+    protocolPhase: text("protocol_phase").$type<NativeChatProtocolPhase | null>(),
     submissionPhase: text("submission_phase").$type<"pre_submission" | "accepted" | "indeterminate">(),
     providerThreadId: text("provider_thread_id"),
     providerTurnId: text("provider_turn_id"),
@@ -60,6 +66,30 @@ export const heartbeatRunAttempts = pgTable(
         or
         (${table.ownerToken} is not null and btrim(${table.ownerToken}) <> '' and ${table.attemptEpoch} is not null and ${table.attemptEpoch} > 0)
       )`,
+    ),
+    nativeChatEpochShapeCheck: check(
+      "heartbeat_run_attempts_native_chat_epoch_shape_check",
+      sql`((
+        (${table.generationAttemptEpoch} is null and ${table.connectionEpoch} is null)
+        or
+        (${table.generationAttemptEpoch} > 0 and ${table.connectionEpoch} > 0
+          and ${table.attemptEpoch} > 0 and ${table.ownerToken} is not null)
+      ) is true)`,
+    ),
+    resumeSourceCheck: check(
+      "heartbeat_run_attempts_resume_source_check",
+      sql`${table.resumeSource} in ('fresh', 'same_session', 'pristine_replay')`,
+    ),
+    nativeChatProtocolPhaseCheck: check(
+      "heartbeat_run_attempts_native_chat_protocol_phase_check",
+      sql`((
+        (${table.protocolPhase} is null and ${table.generationAttemptEpoch} is null and ${table.connectionEpoch} is null)
+        or
+        (${table.protocolPhase} in ('no_thread_request', 'thread_start_indeterminate', 'thread_known', 'input_pre_submission', 'input_indeterminate', 'turn_known', 'provider_terminal_observed', 'execution_terminal_committed')
+          and ${table.generationAttemptEpoch} > 0 and ${table.connectionEpoch} > 0
+          and jsonb_typeof(${table.checkpointJson}) = 'object'
+          and ${table.checkpointJson}->>'phase' = ${table.protocolPhase})
+      ) is true)`,
     ),
   }),
 );

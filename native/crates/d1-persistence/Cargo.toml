@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 rudder-auth-core = { path = "../auth-core" }
+rudder-runtime-core = { path = "../runtime-core" }
 getrandom = "0.2"
 stacker = "0.1"
 icu_collator = "2.3.1"
