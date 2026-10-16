@@ -159,7 +159,7 @@ async fn checkpoint_cas_is_monotonic_exact_and_survives_a_fresh_pool_read() {
         "provider terminal is not Run completion"
     );
     assert!(run_state.1);
-    assert_eq!(run_state.2.as_deref(), Some(OPAQUE_THREAD));
+    assert!(run_state.2.is_none());
 
     let mirrored: (
         Option<String>,

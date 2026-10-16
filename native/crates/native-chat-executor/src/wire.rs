@@ -1,4 +1,5 @@
 use crate::{Error, Result};
+use rudder_codex_app_server::TurnStatus;
 use rudder_d1_persistence::native_chat::config::ResolvedCodexConfig;
 use serde_json::{Value, json};
 
@@ -42,12 +43,7 @@ pub(crate) fn turn_params(
     })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProviderStatus {
-    Completed,
-    Failed,
-    Interrupted,
-}
+pub(crate) type ProviderStatus = TurnStatus;
 
 /// Provider data remains private and is not durable Run-completion evidence.
 /// Projection and billing must be validated by a separate finalizer.
@@ -55,7 +51,6 @@ pub struct ProviderTerminal {
     pub thread_id: String,
     pub turn_id: String,
     pub status: ProviderStatus,
-    pub items: Value,
 }
 
 pub(crate) fn terminal(params: Value, thread: &str, turn: &str) -> Result<ProviderTerminal> {
@@ -68,15 +63,10 @@ pub(crate) fn terminal(params: Value, thread: &str, turn: &str) -> Result<Provid
         Some("interrupted") => ProviderStatus::Interrupted,
         _ => return Err(Error::InvalidProviderObservation),
     };
-    let items = params["turn"]["items"]
-        .as_array()
-        .ok_or(Error::InvalidProviderObservation)?
-        .clone();
     Ok(ProviderTerminal {
         thread_id: thread.into(),
         turn_id: turn.into(),
         status,
-        items: Value::Array(items),
     })
 }
 
@@ -97,12 +87,10 @@ mod tests {
 
     #[test]
     fn malformed_terminal_payload_is_not_completion() {
-        for value in [
-            Value::Null,
-            json!({"threadId":"t","turn":{"id":"u","status":"completed"}}),
-        ] {
-            assert!(terminal(value, "t", "u").is_err());
-        }
+        assert!(terminal(Value::Null, "t", "u").is_err());
+        let summary =
+            json!({"threadId":"t","turn":{"id":"u","status":"completed","itemsView":"notLoaded"}});
+        assert!(terminal(summary, "t", "u").is_ok());
         assert!(locator(&json!("x".repeat(4097))).is_err());
         assert!(locator(&json!(" ")).is_ok());
     }

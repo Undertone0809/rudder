@@ -48,7 +48,51 @@ def terminal():
         "method": "turn/completed",
         "params": {
             "threadId": thread_id,
-            "turn": {"id": turn_id, "status": "completed", "items": []},
+            "turn": {
+                "id": turn_id,
+                "status": "interrupted" if mode == "interrupted" else "completed",
+                "itemsView": "full",
+                "items": [] if mode == "empty-answer" else [
+                    {"id": "answer-1", "type": "agentMessage", "phase": "final_answer", "text": "synthetic answer"}
+                ],
+            },
+        },
+    }
+
+
+def final_item():
+    if mode == "empty-answer":
+        return None
+    return {
+        "method": "item/completed",
+        "params": {
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "item": {
+                "id": "answer-1",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": "synthetic answer",
+            },
+        },
+    }
+
+
+def usage_update():
+    return {
+        "method": "thread/tokenUsage/updated",
+        "params": {
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "tokenUsage": {
+                "last": {
+                    "totalTokens": 12,
+                    "inputTokens": 5,
+                    "cachedInputTokens": 2,
+                    "outputTokens": 7,
+                    "reasoningOutputTokens": 3,
+                }
+            },
         },
     }
 
@@ -137,8 +181,14 @@ for raw in sys.stdin:
         if mode == "exit":
             os._exit(23)
         if mode == "early-terminal":
+            if final_item() is not None:
+                emit(final_item())
+            emit(usage_update())
             emit(terminal())
             emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
         else:
             emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
+            if final_item() is not None:
+                emit(final_item())
+            emit(usage_update())
             emit(terminal())

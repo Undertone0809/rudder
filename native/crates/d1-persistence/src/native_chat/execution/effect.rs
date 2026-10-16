@@ -85,7 +85,14 @@ pub async fn authorize_effect(
     let deadline_anchor = Instant::now();
     let fence: &ExecutionFence = &permit.fence;
     let mut tx = pool.begin().await?;
+    super::super::budget::lock_policy_state(&mut tx, &fence.organization_id).await?;
     let locked = lock_current_execution(&mut tx, actor, fence).await?;
+    super::super::budget::ensure_unknown_cost_allowed(
+        &mut tx,
+        &fence.organization_id,
+        &fence.agent_id,
+    )
+    .await?;
     if locked.checkpoint.phase() != permit.phase
         || locked.checkpoint.revision() != permit.committed_revision()
     {

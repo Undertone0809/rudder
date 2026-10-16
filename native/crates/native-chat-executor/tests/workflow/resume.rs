@@ -9,8 +9,15 @@ async fn exact_open_thread_resumes_without_replaying_history_or_rotating_segment
     let (result, host) =
         execute_on_worker(&database, host, actor, run_id.clone(), attempt_id).await;
     let observation = result.expect("synthetic resumed turn should be observed");
-    assert_eq!(observation.provider_terminal.thread_id, THREAD);
-    assert_eq!(observation.provider_terminal.turn_id, TURN);
+    assert_eq!(observation.turn_receipt.thread_id(), THREAD);
+    assert_eq!(observation.turn_receipt.turn_id(), TURN);
+    assert!(
+        observation
+            .cleanup_receipt
+            .as_ref()
+            .unwrap()
+            .proves_quiescence_for(&observation.turn_receipt)
+    );
     assert!(observation.cleanup_proven);
 
     let events = host.events();

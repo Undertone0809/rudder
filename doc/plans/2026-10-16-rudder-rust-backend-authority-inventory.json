@@ -8021,8 +8021,13 @@
       "kind": "sql"
     },
     {
+      "path": "packages/db/src/migrations/0180_native_chat_finalization_guards.sql",
+      "sha256": "bfcd46714180fcd1282296662b4bb6ed32c4c93d137b60bc5031e8d25447b65f",
+      "kind": "sql"
+    },
+    {
       "path": "packages/db/src/migrations/meta/_journal.json",
-      "sha256": "24dd968ea3e917da2c459af73d27307309ea0e8660298f4331f54b72f9e46b2e",
+      "sha256": "cfbb9acdeaa12480066b7fe3a41cb48aeaf80d56041f94bb3377155f3ea6c975",
       "kind": "journal"
     },
     {
@@ -8701,6 +8706,11 @@
       "kind": "snapshot"
     },
     {
+      "path": "packages/db/src/migrations/meta/0180_snapshot.json",
+      "sha256": "22c7f8c64b9312c67fbb505262fc647857e5c71ec7b9deb23022f0ae38386cc2",
+      "kind": "snapshot"
+    },
+    {
       "path": "packages/identity-db/src/migrations/0000_identity_base.sql",
       "sha256": "3509619befc69138bf154637f2390d7c94f02d088e736d96e7ce9d3654438750",
       "kind": "sql"
@@ -8742,14 +8752,14 @@
     }
   ],
   "migration_summary": {
-    "sql_files": 189,
+    "sql_files": 190,
     "journal_files": 2,
-    "snapshot_files": 135,
+    "snapshot_files": 136,
     "journals": [
       {
         "path": "packages/db/src/migrations/meta/_journal.json",
-        "entries": 180,
-        "latest_tag": "0179_native_chat_rust_admission",
+        "entries": 181,
+        "latest_tag": "0180_native_chat_finalization_guards",
         "unjournaled_sql_files": [
           "packages/db/src/migrations/0055_illegal_sheva_callister.sql",
           "packages/db/src/migrations/0128_modern_jetstream.sql"

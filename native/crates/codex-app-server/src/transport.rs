@@ -1,6 +1,7 @@
 //! One owned App Server connection. Durable permission to dispatch belongs to
 //! the Rust supervisor; a write receipt is not provider acceptance.
 
+use crate::receipts::{ReceiptIdentity, TurnReceiptTracker};
 use crate::{
     FrameDecoder, MAX_CHUNK_BYTES, Message, ProtocolError, RequestId, RpcSession, SessionError,
     SessionObservation, encode_notification,
@@ -31,6 +32,8 @@ pub struct ProcessLaunch {
     pub cwd: String,
     pub env: BTreeMap<String, String>,
     pub request_id: String,
+    pub run_id: String,
+    pub attempt_id: String,
     pub owner_token: String,
     pub runtime_root: String,
 }
@@ -51,6 +54,8 @@ pub enum TransportError {
     WriteIndeterminate,
     #[error("Codex process identity or receipt does not match this connection")]
     IdentityMismatch,
+    #[error("Codex turn output or usage receipt is invalid or uncorrelated")]
+    InvalidTurnReceipt,
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
     #[error(transparent)]
@@ -141,6 +146,8 @@ pub struct OwnedTransport {
     next_write: u64,
     request_id: String,
     owner_token: String,
+    receipts: TurnReceiptTracker,
+    cleanup_receipt: Option<crate::CleanupReceipt>,
     spawned: bool,
     stopped: bool,
     terminal_received: bool,
@@ -176,7 +183,21 @@ impl OwnedTransport {
         external_host: Option<std::path::PathBuf>,
     ) -> Result<Self, TransportError> {
         let request_id = launch.request_id.clone();
+        if launch.run_id.is_empty()
+            || launch.attempt_id.is_empty()
+            || launch.attempt_id != launch.request_id
+            || launch.owner_token.is_empty()
+        {
+            return Err(TransportError::InvalidLaunch);
+        }
+        let run_id = launch.run_id.clone();
+        let attempt_id = launch.attempt_id.clone();
         let owner_token = launch.owner_token.clone();
+        let receipts = TurnReceiptTracker::new(ReceiptIdentity::new(
+            run_id.clone(),
+            attempt_id.clone(),
+            owner_token.clone(),
+        ));
         let start = Command::StartProcess {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(launch.request_id),
@@ -223,6 +244,8 @@ impl OwnedTransport {
             next_write: 0,
             request_id,
             owner_token,
+            receipts,
+            cleanup_receipt: None,
             spawned: false,
             stopped: false,
             terminal_received: false,
@@ -341,7 +364,20 @@ impl OwnedTransport {
                 return Err(TransportError::OutputOverflow);
             }
             if let Some(message) = self.messages.pop_front() {
-                return Ok(TransportEvent::Rpc(self.session.observe(message)?));
+                let observation = self.session.observe(message)?;
+                if let SessionObservation::Incoming(Message::Notification { method, params }) =
+                    &observation
+                    && matches!(
+                        method.as_str(),
+                        "item/completed" | "thread/tokenUsage/updated" | "turn/completed"
+                    )
+                {
+                    self.receipts.observe(
+                        method,
+                        params.clone().ok_or(TransportError::InvalidTurnReceipt)?,
+                    )?;
+                }
+                return Ok(TransportEvent::Rpc(observation));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             let event = self
@@ -401,8 +437,19 @@ impl OwnedTransport {
                             self.stopped = true;
                         }
                         "terminal" => {
+                            if value["requestId"] != self.request_id
+                                || value["ownerToken"] != self.owner_token
+                            {
+                                return Err(TransportError::IdentityMismatch);
+                            }
                             self.stopped = true;
                             self.terminal_received = true;
+                            if value["cleanupProven"] == true && value["receiptWritten"] == true {
+                                self.cleanup_receipt = Some(self.receipts.cleanup_receipt());
+                            }
+                            if self.receipts.is_armed() && self.receipts.has_terminal() {
+                                self.receipts.finish()?;
+                            }
                             self.session.close();
                             self.decoder.finish()?;
                             self.commands.take();
@@ -424,6 +471,47 @@ impl OwnedTransport {
             request_id: Some(self.request_id.clone()),
             grace_ms: Some(500),
         })
+    }
+
+    /// Begin collecting an exact turn after its opaque ID is returned. Bounded
+    /// notifications received before the RPC response are correlated now.
+    pub fn begin_turn_receipt(
+        &mut self,
+        thread_id: String,
+        turn_id: String,
+    ) -> Result<(), TransportError> {
+        self.receipts.begin_turn(thread_id, turn_id)?;
+        if self.terminal_received && self.receipts.has_terminal() {
+            self.receipts.finish()?;
+        }
+        Ok(())
+    }
+
+    /// Start buffering notifications for the next `turn/start` dispatch. Events
+    /// observed before this call (for example prior resumed-turn usage replay)
+    /// are ignored and cannot be attached to the next turn receipt.
+    pub fn arm_turn_receipt(&mut self) -> Result<(), TransportError> {
+        self.receipts.arm()
+    }
+
+    /// A turn receipt requires the exact `turn/completed` notification and the
+    /// host terminal boundary that drained all provider output.
+    pub fn take_turn_receipt(&mut self) -> Option<crate::TurnReceipt> {
+        if self.terminal_received {
+            self.receipts.take()
+        } else {
+            None
+        }
+    }
+
+    /// A cleanup receipt requires exact connection identity and both durable
+    /// host cleanup flags. Host loss, EOF and Drop never create one.
+    pub fn take_cleanup_receipt(&mut self) -> Option<crate::CleanupReceipt> {
+        if self.terminal_received {
+            self.cleanup_receipt.take()
+        } else {
+            None
+        }
     }
 
     fn command(&self, command: Command) -> Result<(), TransportError> {

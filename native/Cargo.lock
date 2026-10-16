@@ -2000,6 +2000,7 @@ dependencies = [
  "regex-lite",
  "ring",
  "rudder-auth-core",
+ "rudder-codex-app-server",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",
  "rudder-runtime-core",

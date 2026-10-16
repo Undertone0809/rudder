@@ -125,7 +125,7 @@ async fn record_thread_atomically_opens_the_exact_admitted_segment() {
     assert!(!opened.3);
     assert_eq!(opened.4.as_deref(), Some(segment_id.as_str()));
     assert_eq!(opened.5.as_deref(), Some(OPAQUE_THREAD));
-    assert_eq!(opened.6.as_deref(), Some(OPAQUE_THREAD));
+    assert!(opened.6.is_none());
     assert_eq!(opened.0["phase"], "thread_known");
     assert_eq!(opened.0["threadId"], OPAQUE_THREAD);
     assert_eq!(opened.7, 2, "both checkpoint transitions were audited");

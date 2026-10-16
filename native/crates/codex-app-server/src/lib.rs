@@ -8,12 +8,14 @@
 
 mod framing;
 mod message;
+mod receipts;
 mod session;
 mod transport;
 mod value;
 
 pub use framing::{FrameDecoder, MAX_CHUNK_BYTES, MAX_FRAME_BYTES};
 pub use message::{Message, RequestId, RpcError, encode_notification, encode_request};
+pub use receipts::{CleanupReceipt, TurnReceipt, TurnStatus, TurnUsage};
 pub use session::{
     MAX_PENDING_REQUESTS, PreparedRequest, RpcSession, SessionError, SessionObservation,
 };

@@ -23,11 +23,41 @@ fn launch(script: &str) -> (OwnedTransport, tempfile::TempDir) {
         cwd: path.clone(),
         env: BTreeMap::new(),
         request_id: "transport-test".into(),
+        run_id: "transport-test-run".into(),
+        attempt_id: "transport-test".into(),
         owner_token: "owned-transport-test".into(),
         runtime_root: path,
     })
     .unwrap();
     (transport, root)
+}
+
+#[test]
+fn launch_rejects_attempt_id_that_does_not_match_the_host_connection_request() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root
+        .path()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let marker = root.path().join("must-not-start");
+    let result = OwnedTransport::launch(ProcessLaunch {
+        executable: "/bin/sh".into(),
+        argv: vec!["-c".into(), format!("touch {}", marker.display())],
+        cwd: path.clone(),
+        env: BTreeMap::new(),
+        request_id: "attempt-1".into(),
+        run_id: "run-1".into(),
+        attempt_id: "attempt-2".into(),
+        owner_token: "owner-secret".into(),
+        runtime_root: path,
+    });
+    assert!(matches!(result, Err(TransportError::InvalidLaunch)));
+    assert!(
+        !marker.exists(),
+        "invalid identity must be rejected before spawn"
+    );
 }
 
 fn spawned(transport: &mut OwnedTransport) -> u32 {
@@ -60,7 +90,7 @@ fn completed(transport: &mut OwnedTransport) -> Value {
     result.unwrap()
 }
 
-fn stopped(transport: &mut OwnedTransport) {
+fn stopped(transport: &mut OwnedTransport, run_id: &str, attempt_id: &str, owner_token: &str) {
     transport.stop().unwrap();
     loop {
         if let TransportEvent::Lifecycle(value) = transport.receive(WAIT).unwrap()
@@ -70,10 +100,134 @@ fn stopped(transport: &mut OwnedTransport) {
             break;
         }
     }
+    let cleanup = transport
+        .take_cleanup_receipt()
+        .expect("typed host cleanup receipt");
+    assert!(cleanup.matches_execution(run_id, attempt_id, owner_token));
     assert!(matches!(
         transport.request("test", json!({})),
         Err(TransportError::Closed)
     ));
+}
+
+#[test]
+fn turn_and_cleanup_receipts_are_correlated_to_one_owned_connection() {
+    let script = r#"IFS= read -r request
+printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"answer-1","type":"agentMessage","phase":"final_answer","text":"hello 🧭"}}}'
+printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"last":{"totalTokens":12,"inputTokens":5,"cachedInputTokens":2,"outputTokens":7,"reasoningOutputTokens":3}}}}'
+printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","itemsView":"full","items":[{"id":"answer-1","type":"agentMessage","phase":"final_answer","text":"hello 🧭"}]}}}'
+printf '%s\n' '{"id":0,"result":{"turn":{"id":"turn-1"}}}'
+while IFS= read -r line; do :; done"#;
+    let (mut transport, _root) = launch(script);
+    spawned(&mut transport);
+    transport.arm_turn_receipt().unwrap();
+    let id = transport.request("turn/start", json!({})).unwrap();
+    let mut written = false;
+    let mut replied = false;
+    while !written || !replied {
+        match transport.receive(WAIT).unwrap() {
+            TransportEvent::FrameWritten { request_id } => {
+                assert_eq!(request_id.as_ref(), Some(&id));
+                written = true;
+            }
+            TransportEvent::Rpc(SessionObservation::Completed {
+                id: actual,
+                outcome,
+                ..
+            }) => {
+                assert_eq!(actual, id);
+                assert_eq!(outcome.unwrap()["turn"]["id"], "turn-1");
+                replied = true;
+            }
+            TransportEvent::Rpc(SessionObservation::Incoming(Message::Notification { .. })) => {}
+            TransportEvent::Lifecycle(value) => assert_ne!(value["type"], "terminal"),
+            _ => panic!("unexpected turn receipt event"),
+        }
+    }
+    transport
+        .begin_turn_receipt("thread-1".into(), "turn-1".into())
+        .unwrap();
+    transport.stop().unwrap();
+    loop {
+        match transport.receive(WAIT).unwrap() {
+            TransportEvent::Lifecycle(value) if value["type"] == "terminal" => break,
+            _ => {}
+        }
+    }
+    let turn = transport.take_turn_receipt().expect("typed turn receipt");
+    let cleanup = transport
+        .take_cleanup_receipt()
+        .expect("typed cleanup receipt");
+    assert_eq!(turn.final_text(), Some("hello 🧭"));
+    assert_eq!(turn.usage().unwrap().total_tokens(), 12);
+    assert!(cleanup.proves_quiescence_for(&turn));
+    assert!(turn.matches_execution(
+        "transport-test-run",
+        "transport-test",
+        "owned-transport-test"
+    ));
+}
+
+#[test]
+fn prior_resumed_turn_usage_is_ignored_before_next_turn_start() {
+    let script = r#"
+printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"prior-turn","tokenUsage":{"last":{"totalTokens":900,"inputTokens":700,"cachedInputTokens":0,"outputTokens":200,"reasoningOutputTokens":0}}}}'
+IFS= read -r request
+printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"current-turn","tokenUsage":{"last":{"totalTokens":15,"inputTokens":9,"cachedInputTokens":2,"outputTokens":6,"reasoningOutputTokens":2}}}}'
+printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"current-turn","status":"completed","itemsView":"notLoaded"}}}'
+printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"current-turn","item":{"id":"late-item","type":"agentMessage","phase":"final_answer","text":"arrived too late"}}}'
+printf '%s\n' '{"id":0,"result":{"turn":{"id":"current-turn"}}}'
+while IFS= read -r line; do :; done
+"#;
+    let (mut transport, _root) = launch(script);
+    spawned(&mut transport);
+    loop {
+        if let TransportEvent::Rpc(SessionObservation::Incoming(Message::Notification {
+            method,
+            ..
+        })) = transport.receive(WAIT).unwrap()
+        {
+            assert_eq!(method, "thread/tokenUsage/updated");
+            break;
+        }
+    }
+
+    transport.arm_turn_receipt().unwrap();
+    let id = transport
+        .request("turn/start", json!({"threadId":"thread-1"}))
+        .unwrap();
+    let mut replied = false;
+    while !replied {
+        match transport.receive(WAIT).unwrap() {
+            TransportEvent::Rpc(SessionObservation::Completed {
+                id: actual,
+                outcome,
+                ..
+            }) => {
+                assert_eq!(actual, id);
+                assert_eq!(outcome.unwrap()["turn"]["id"], "current-turn");
+                replied = true;
+            }
+            TransportEvent::Lifecycle(value) => assert_ne!(value["type"], "terminal"),
+            _ => {}
+        }
+    }
+    transport
+        .begin_turn_receipt("thread-1".into(), "current-turn".into())
+        .unwrap();
+    transport.stop().unwrap();
+    loop {
+        if let TransportEvent::Lifecycle(value) = transport.receive(WAIT).unwrap()
+            && value["type"] == "terminal"
+        {
+            break;
+        }
+    }
+    let receipt = transport.take_turn_receipt().expect("current turn receipt");
+    assert_eq!(receipt.turn_id(), "current-turn");
+    assert_eq!(receipt.usage().unwrap().total_tokens(), 15);
+    assert_eq!(receipt.usage().unwrap().input_tokens(), 9);
+    assert_eq!(receipt.final_text(), None);
 }
 
 #[test]
@@ -99,7 +253,12 @@ fn sends_large_utf8_frame_in_receipted_chunks_and_preserves_next_input() {
         completed(&mut transport)["params"],
         json!({"input":"only new input"})
     );
-    stopped(&mut transport);
+    stopped(
+        &mut transport,
+        "transport-test-run",
+        "transport-test",
+        "owned-transport-test",
+    );
 }
 
 #[test]
@@ -122,7 +281,12 @@ fn empty_polls_preserve_connection_and_fragmented_response() {
     assert!(transport.poll(Duration::from_millis(10)).unwrap().is_none());
     transport.request("initialize", json!({})).unwrap();
     assert_eq!(completed(&mut transport), json!({"ok":true}));
-    stopped(&mut transport);
+    stopped(
+        &mut transport,
+        "transport-test-run",
+        "transport-test",
+        "owned-transport-test",
+    );
 }
 
 #[test]
@@ -159,7 +323,12 @@ fn forwards_server_requests_without_synthesizing_approval() {
         }
     }
     // No automatic response was written; the child still waits for its second line.
-    stopped(&mut transport);
+    stopped(
+        &mut transport,
+        "transport-test-run",
+        "transport-test",
+        "owned-transport-test",
+    );
 }
 
 #[test]
@@ -237,6 +406,8 @@ fn production_transport_initializes_installed_codex_in_an_empty_profile() {
         cwd: path.clone(),
         env,
         request_id: "installed-transport".into(),
+        run_id: "installed-transport-run".into(),
+        attempt_id: "installed-transport".into(),
         owner_token: "installed-transport-owner".into(),
         runtime_root: path,
     })
@@ -281,5 +452,10 @@ fn production_transport_initializes_installed_codex_in_an_empty_profile() {
             _ => panic!("unexpected installed Codex observation"),
         }
     }
-    stopped(&mut transport);
+    stopped(
+        &mut transport,
+        "installed-transport-run",
+        "installed-transport",
+        "installed-transport-owner",
+    );
 }

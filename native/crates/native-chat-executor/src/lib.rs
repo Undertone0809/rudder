@@ -5,10 +5,11 @@ mod profile;
 mod wire;
 pub use profile::provision_profile;
 
+use crate::wire::ProviderTerminal;
 use rudder_auth_core::VerifiedActor;
 use rudder_codex_app_server::{
-    Message, OwnedTransport, ProcessLaunch, RequestId, SessionObservation, TransportError,
-    TransportEvent,
+    CleanupReceipt, Message, OwnedTransport, ProcessLaunch, RequestId, SessionObservation,
+    TransportError, TransportEvent, TurnReceipt,
 };
 use rudder_d1_persistence::{
     native_chat::{
@@ -33,7 +34,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::runtime::Handle;
-pub use wire::{ProviderStatus, ProviderTerminal};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -131,7 +131,9 @@ pub async fn execute(
 /// or finish the Run. The finalizer must validate/persist projection and billing.
 pub struct ExecutionObservation {
     pub fence: ExecutionFence,
-    pub provider_terminal: ProviderTerminal,
+    pub turn_receipt: TurnReceipt,
+    pub cleanup_receipt: Option<CleanupReceipt>,
+    /// Compatibility observation only. Finalization must use the opaque receipt.
     pub cleanup_proven: bool,
 }
 
@@ -233,10 +235,23 @@ pub fn run_on_blocking_thread(
     let result = driver.execute();
     // Stop even after permission, database, protocol, or provider failure. An
     // absent/unproven receipt stays unproven and never becomes success by Drop.
-    let cleanup_proven = driver.stop_and_observe_cleanup();
-    result.map(|provider_terminal| ExecutionObservation {
+    let cleanup_receipt = driver.stop_and_observe_cleanup();
+    let provider_terminal = result?;
+    let turn_receipt = driver
+        .transport
+        .take_turn_receipt()
+        .ok_or(Error::InvalidProviderObservation)?;
+    if provider_terminal.thread_id != turn_receipt.thread_id()
+        || provider_terminal.turn_id != turn_receipt.turn_id()
+        || provider_terminal.status != turn_receipt.status()
+    {
+        return Err(Error::InvalidProviderObservation);
+    }
+    let cleanup_proven = cleanup_receipt.is_some();
+    Ok(ExecutionObservation {
         fence: driver.fence,
-        provider_terminal,
+        turn_receipt,
+        cleanup_receipt,
         cleanup_proven,
     })
 }
@@ -290,6 +305,8 @@ fn process_launch(
         cwd: utf8(&paths.isolated_home)?,
         env,
         request_id: fence.identity().attempt_id.into(),
+        run_id: fence.identity().run_id.into(),
+        attempt_id: fence.identity().attempt_id.into(),
         owner_token: fence.run_execution_owner_token().into(),
         runtime_root: utf8(&paths.runtime_root)?,
     })
@@ -549,10 +566,13 @@ impl Driver<'_> {
                     thread_id,
                     source_message_id,
                     body,
-                } => self.transport.request(
-                    "turn/start",
-                    wire::turn_params(thread_id, source_message_id, body, &self.config),
-                ),
+                } => {
+                    self.transport.arm_turn_receipt()?;
+                    self.transport.request(
+                        "turn/start",
+                        wire::turn_params(thread_id, source_message_id, body, &self.config),
+                    )
+                }
                 _ => Err(TransportError::InvalidLaunch),
             })
             .map_err(Error::Persistence)??;
@@ -567,6 +587,8 @@ impl Driver<'_> {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
         })?;
+        self.transport
+            .begin_turn_receipt(thread_id.clone(), turn_id.clone())?;
         loop {
             if let Some((_, value)) = self.notifications.pop_front() {
                 let terminal = wire::terminal(value, &thread_id, &turn_id)?;
@@ -581,20 +603,20 @@ impl Driver<'_> {
         }
     }
 
-    fn stop_and_observe_cleanup(&mut self) -> bool {
+    fn stop_and_observe_cleanup(&mut self) -> Option<CleanupReceipt> {
         if self.transport.stop().is_err() {
-            return false;
+            return None;
         }
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             match self.transport.poll(Duration::from_millis(100)) {
                 Ok(Some(TransportEvent::Lifecycle(value))) if value["type"] == "terminal" => {
-                    return value["cleanupProven"] == true && value["receiptWritten"] == true;
+                    return self.transport.take_cleanup_receipt();
                 }
-                Err(_) => return false,
+                Err(_) => return None,
                 _ => (),
             }
         }
-        false
+        None
     }
 }

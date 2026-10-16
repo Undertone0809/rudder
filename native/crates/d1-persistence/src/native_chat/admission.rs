@@ -215,12 +215,11 @@ pub(super) async fn submit(
         &identity,
     )
     .await?;
-    let (protocol_start, reuse_scope, session_id_before, session_intent) =
+    let (protocol_start, reuse_scope, session_intent) =
         match (binding.state.as_str(), binding.native_session_id.as_deref()) {
             ("pending", None) => (
                 NativeChatProtocolStart::FreshThread,
                 "none",
-                None,
                 json!({
                     "kind": "fresh",
                     "reuseScope": "none",
@@ -234,7 +233,6 @@ pub(super) async fn submit(
                     thread_id: thread_id.to_owned(),
                 },
                 "explicit",
-                Some(thread_id),
                 json!({
                     "kind": "resume",
                     "reuseScope": "explicit",
@@ -312,7 +310,7 @@ pub(super) async fn submit(
     .bind(selected_agent_id)
     .bind(&owner_token)
     .bind(reuse_scope)
-    .bind(session_id_before)
+    .bind(Option::<&str>::None)
     .bind(conversation_id)
     .bind(&generation_id)
     .bind(context_snapshot.to_string())
