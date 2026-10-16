@@ -1,11 +1,16 @@
 import {
-  agentApiKeys, agents, applyPendingMigrations, approvals, assets, authUsers, automations, boardApiKeys, calendarEvents, costEvents,
+  agentApiKeys, agents,
+  agentWakeupRequests,
+  applyPendingMigrations, approvals, assets, authUsers, automations, boardApiKeys, calendarEvents,
+  chatConversations,
+  costEvents,
   createDb, ensurePostgresDatabase,
   financeEvents,
-  goalActivities, goalChangeProposals, goalFeedbackEntries,
-  goalCheckpoints, goalOwnerAssignments, goalPlans, goalResultProposals, goals,
-  agentWakeupRequests, heartbeatRuns,
-  chatConversations,
+  goalActivities, goalChangeProposals,
+  goalCheckpoints,
+  goalFeedbackEntries,
+  goalOwnerAssignments, goalPlans, goalResultProposals, goals,
+  heartbeatRuns,
   issues,
   organizationMemberships,
   organizations, projectGoals, projects,
@@ -27,6 +32,7 @@ import { errorHandler } from "../middleware/error-handler.js";
 import { goalRoutes } from "../routes/goals.js";
 import { goalService, publicGoalActivity, publicGoalCheckpoint, publicGoalDetail, publicGoalView } from "../services/goals.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 
 // Requires the exact candidate's built binary, never a fake HTTP fixture.
 // cargo build --locked --manifest-path native/Cargo.toml -p rudder-server-foundation --bin rudder-server-foundation
@@ -51,6 +57,7 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
   const agentToken = `agent-${randomUUID()}`; const nonOwnerToken = `non-owner-${randomUUID()}`; const foreignToken = `foreign-${randomUUID()}`; const boardToken = `board-${randomUUID()}`; const otherBoardToken = `board-other-${randomUUID()}`;
   const instant = new Date("2026-10-08T02:03:04.567Z");
   const expected: Record<string, unknown> = {};
+  const nativeIdentity = nativeIdentityIngressFixture();
   let baseline: Record<string, unknown>;
   async function snapshot() {
     const result: Record<string, unknown> = {};
@@ -256,8 +263,8 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     fixtureBinary = path.join(root, process.platform === "win32" ? "foundation-fixture.exe" : "foundation-fixture");
     fs.copyFileSync(binary, fixtureBinary, fs.constants.COPYFILE_FICLONE);
     const nodePort = ingress === "required" ? await port() : 0;
-    bridge = createRustFoundationBridge({ databaseUrl: url, binaryPath: fixtureBinary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10_000, ...(ingress === "required" ? { publicIngress: { listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${nodePort}`, authorizationKey: "goal-read-synthetic-ingress-authorization-key" } } : {}) });
-    const app = express(); app.use(express.json());
+    bridge = createRustFoundationBridge({ databaseUrl: url, binaryPath: fixtureBinary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10_000, ...(ingress === "required" ? { publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${nodePort}`, authorizationKey: "goal-read-synthetic-ingress-authorization-key" } } : {}) });
+    const app = express(); if (ingress === "required") app.use(nativeIdentity.middleware()); app.use(express.json());
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
     app.use("/api", goalRoutes(db, bridge)); app.use(errorHandler);
@@ -373,19 +380,21 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     for (const query of ["limit=0", "limit=101", "limit=NaN", "limit=1.5", "cursor=invalid"]) expect((await get(`/api/goals/${goalId}/history?${query}`)).status).toBe(400);
     expect(await snapshot()).toEqual(baseline);
   });
-  it("fails closed on actual native outage while the authenticated Node service stays alive", async () => {
-    await bridge.close();
-    const unavailable = `${fixtureBinary}.unavailable`;
-    fs.renameSync(fixtureBinary, unavailable);
+  it("fails closed when the native Goal read transport is unavailable", async () => {
+    const nativeGoalRead = bridge.goalRead;
+    bridge.goalRead = async () => { throw new Error("simulated native Goal read transport failure"); };
     try {
-      expect((await request(server).get("/api/health")).status).toBe(200);
+      if (ingress === "required") {
+        expect((await request(server).get("/api/health")).status).toBe(401);
+        expect((await request(target).get("/api/health")).status).toBe(200);
+      }
       for (const url of [`/api/orgs/${orgId}/goals`, `/api/orgs/${orgId}/goals/workspace`, `/api/orgs/${orgId}/goals/assigned`, `/api/goals/${goalId}`, `/api/goals/${goalId}/workspace`, `/api/goals/${goalId}/agent-context`, `/api/goals/${goalId}/activities`, `/api/goals/${goalId}/history`, `/api/goals/${goalId}/timeline`, `/api/goals/${goalId}/dependencies`]) {
-        const response = await request(server).get(url).set("authorization", `Bearer ${agentToken}`);
+        const response = await request(target).get(url).set("authorization", `Bearer ${agentToken}`);
         expect(response.status, JSON.stringify(response.body)).toBe(503);
         expect(response.body.error).toBe("Rust Goal reads are unavailable");
       }
       expect(await snapshot()).toEqual(baseline);
-    } finally { fs.renameSync(unavailable, fixtureBinary); }
+    } finally { bridge.goalRead = nativeGoalRead; }
   });
 
 });

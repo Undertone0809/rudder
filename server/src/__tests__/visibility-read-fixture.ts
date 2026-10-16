@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 const execFile = promisify(execFileCallback);
 export const wire = (value: unknown) => JSON.parse(JSON.stringify(value));
 export async function port() {
@@ -93,9 +94,10 @@ export async function publicServer(fixture: Database, ingress: "off"|"required",
   const binary=candidates.find((candidate)=>{try{fs.accessSync(candidate,process.platform==="win32"?fs.constants.F_OK:fs.constants.X_OK);return fs.statSync(candidate).isFile();}catch{return false;}})??candidates[0]!;
   fs.accessSync(binary,process.platform==="win32"?fs.constants.F_OK:fs.constants.X_OK);
   const listenPort=ingress==="required"?await port():0;
+  const nativeIdentity=ingress==="required"?nativeIdentityIngressFixture():undefined;
   const bridge=createRustFoundationBridge({databaseUrl:fixture.url,actorEnvelopeKey:VISIBILITY_ACTOR_KEY,binaryPath:binary,mode:"off",organizationBrandingMode:"off",projectGoalSetMode:"off",requestTimeoutMs:10000,
-    ...(ingress==="required"?{publicIngress:{listenAddr:"127.0.0.1:0",nodeUpstream:`http://127.0.0.1:${listenPort}`,authorizationKey:"visibility-ingress-synthetic-key-32bytes"}}:{})});
-  const app=express();app.use(express.json());app.get("/api/health",(_req,res)=>res.json({status:"ok"}));
+    ...(ingress==="required"?{publicIngress:{identityAuth:nativeIdentity!.identityAuth,listenAddr:"127.0.0.1:0",nodeUpstream:`http://127.0.0.1:${listenPort}`,authorizationKey:"visibility-ingress-synthetic-key-32bytes"}}:{})});
+  const app=express();if(nativeIdentity)app.use(nativeIdentity.middleware());app.use(express.json());app.get("/api/health",(_req,res)=>res.json({status:"ok"}));
   app.use(actorMiddleware(fixture.db,{deploymentMode:"authenticated",authRequirement:"required"}));
   routes(app,bridge);app.use(errorHandler);
   const server=app.listen(listenPort,"127.0.0.1");await once(server,"listening");await bridge.start();

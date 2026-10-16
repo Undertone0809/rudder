@@ -19,6 +19,7 @@ import { errorHandler } from "../middleware/error-handler.js";
 import { activityRoutes } from "../routes/activity.js";
 import { activityService } from "../services/activity.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 
 const routeConstruction = vi.hoisted(() => ({ native: false }));
 vi.mock("../services/activity.js", async (importOriginal) => {
@@ -244,6 +245,8 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
   let orgId: string, foreign: string, empty: string, volume: string, agentId: string, issueId: string, hiddenId: string, foreignIssue: string, dateIssue: string;
   const agentToken = `activity-agent-${randomUUID()}`, boardToken = `activity-board-${randomUUID()}`, userId = randomUUID();
   const contaminated: string[] = [];
+  const nativeIdentity = nativeIdentityIngressFixture();
+  let activeIssueReadHook: null | (() => Promise<void>) = null;
   let baseline: Record<string, unknown>;
   async function snapshot() {
     const values: Record<string, unknown> = {};
@@ -254,13 +257,16 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     return values;
   }
   async function startApp(selectedBridge?: RustFoundationBridge, listenPort = 0, beforeIssueRead: null | (() => Promise<void>) = null) {
-    const app = express(); app.use(express.json());
+    const app = express(); if (ingress === "required") app.use(nativeIdentity.middleware()); app.use(express.json());
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(fixture.db, { deploymentMode: "authenticated", authRequirement: "required" }));
     routeConstruction.native = true;
-    const dispatcher = selectedBridge && beforeIssueRead ? { ...selectedBridge,
+    const dispatcher = selectedBridge ? { ...selectedBridge,
       activityRead: async (...args: Parameters<NonNullable<RustFoundationBridge["activityRead"]>>) => {
-        if (args[2].operation === "issue") await beforeIssueRead();
+        if (args[2].operation === "issue") {
+          await activeIssueReadHook?.();
+          await beforeIssueRead?.();
+        }
         return selectedBridge.activityRead!(...args);
       },
     } : selectedBridge;
@@ -377,7 +383,7 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     fs.accessSync(binary, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
     const listenPort = ingress === "required" ? await port() : 0;
     bridge = createRustFoundationBridge({ databaseUrl: fixture.url, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10000,
-      ...(ingress === "required" ? { publicIngress: { listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "activity-read-ingress-synthetic-key-32-bytes" } } : {}) });
+      ...(ingress === "required" ? { publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "activity-read-ingress-synthetic-key-32-bytes" } } : {}) });
     server = await startApp(bridge, listenPort); await bridge.start(); target = server;
     if (ingress === "required") { await bridge.waitForPublicIngressReady!(); target = bridge.publicIngressBaseUrl!; }
   }, 120000);
@@ -541,11 +547,20 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     expect((await get(`orgs/${orgId}/activity`).query({ limit: ["1","2"] })).status).toBe(400);
     expect((await get(`orgs/${orgId}/activity`).query({ limit: "101" })).status).toBe(400);
     expect((await get(`orgs/${orgId}/activity`).query({ cursor: "invalid" })).body.error).toBe("Activity cursor is invalid or expired");
-    const unavailable = await startApp();
-    try {
-      expect((await get(`orgs/${orgId}/activity`,agentToken,unavailable)).status).toBe(503);
-      expect((await get(`issues/${issueId}/activity`,agentToken,unavailable)).status).toBe(503);
-    } finally { await close(unavailable); }
+    if (ingress === "required") {
+      const nativeActivityRead = bridge.activityRead;
+      bridge.activityRead = undefined;
+      try {
+        expect((await get(`orgs/${orgId}/activity`)).status).toBe(503);
+        expect((await get(`issues/${issueId}/activity`)).status).toBe(503);
+      } finally { bridge.activityRead = nativeActivityRead; }
+    } else {
+      const unavailable = await startApp();
+      try {
+        expect((await get(`orgs/${orgId}/activity`,agentToken,unavailable)).status).toBe(503);
+        expect((await get(`issues/${issueId}/activity`,agentToken,unavailable)).status).toBe(503);
+      } finally { await close(unavailable); }
+    }
     expect(await snapshot()).toEqual(baseline);
   });
 
@@ -597,18 +612,21 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     await db.insert(issues).values({ id: racedIssue, orgId, title: "Deleted after reference resolution" });
     const racedEvent = await event(db, orgId, { entityType: "issue", entityId: racedIssue, action: "issue.created" });
     let intercepted = false;
-    const raced = await startApp(bridge, 0, async () => {
+    const mutateAfterResolution = async () => {
       intercepted = true;
       if (mutation === "delete") await db.delete(issues).where(eq(issues.id, racedIssue));
       else await db.update(issues).set({ orgId: foreign }).where(eq(issues.id, racedIssue));
-    });
+    };
+    const raced = ingress === "required" ? undefined : await startApp(bridge, 0, mutateAfterResolution);
     try {
-      const response = await get(`issues/${racedIssue}/activity`, agentToken, raced);
+      activeIssueReadHook = ingress === "required" ? mutateAfterResolution : null;
+      const response = await get(`issues/${racedIssue}/activity`, agentToken, raced ?? target);
       expect(intercepted).toBe(true);
       expect(response.status, response.text).toBe(200);
       expect(response.body).toEqual([]);
       expect((await legacyIssueActivity(db, racedIssue)).map((row) => row.id)).toEqual([racedEvent]);
     } finally {
+      activeIssueReadHook = null;
       await close(raced);
       await db.delete(activityLog).where(eq(activityLog.id, racedEvent));
       await db.delete(issues).where(eq(issues.id, racedIssue));

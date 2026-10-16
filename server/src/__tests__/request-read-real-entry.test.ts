@@ -24,6 +24,7 @@ import { requestRoutes } from "../routes/requests.js";
 import { requestRequestRead } from "../services/request-read-bridge.js";
 import { requestService } from "../services/requests.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 
 vi.mock("../services/index.js", async (original) => {
   const services = await original<typeof import("../services/index.js")>();
@@ -84,6 +85,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
   const agent = randomUUID(), orderingAgent = randomUUID(), payloadAgent = randomUUID();
   const token = `request-reader-${randomUUID()}`, orderingToken = `request-order-${randomUUID()}`;
   const collision = randomUUID(), mixed = randomUUID(), mixedApproval = randomUUID();
+  const nativeIdentity = nativeIdentityIngressFixture();
   const auditedRequest = randomUUID(), userId = randomUUID(), boardToken = `request-board-${randomUUID()}`;
   const payloadToken = `request-payload-${randomUUID()}`;
   const dates = [
@@ -167,6 +169,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     }
     function app(oracle: boolean) {
       const app = express();
+      if (!oracle && mode === "required") app.use(nativeIdentity.middleware());
       app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
       app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
       app.use("/api", oracle ? legacyRoutes(db) : requestRoutes(db, bridge));
@@ -189,7 +192,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     }) ?? candidates[0]!;
     fs.accessSync(binary, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
     bridge = createRustFoundationBridge({ databaseUrl: url, binaryPath: binary, mode: "off", projectGoalSetMode: "off", organizationBrandingMode: "off", requestTimeoutMs: 10_000,
-      ...(mode === "required" ? { publicIngress: { listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "request-read-ingress-test-key-32-bytes" } } : {}),
+      ...(mode === "required" ? { publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "request-read-ingress-test-key-32-bytes" } } : {}),
     });
     server = app(false).listen(listenPort, "127.0.0.1");
     await once(server, "listening");

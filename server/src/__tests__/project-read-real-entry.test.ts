@@ -37,6 +37,7 @@ import { errorHandler } from "../middleware/error-handler.js";
 import { projectRoutes } from "../routes/projects.js";
 import { projectService } from "../services/projects.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 
 // This suite deliberately fails when its real native prerequisite is absent.
 // From the repository root:
@@ -143,6 +144,7 @@ describe.each(["off", "required"] as const)("Project reads through real public H
   const originalInstance = process.env.RUDDER_INSTANCE_ID;
   const originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
   const orgId = randomUUID();
+  const nativeIdentity = nativeIdentityIngressFixture();
   const foreignOrgId = randomUUID();
   const emptyOrgId = randomUUID();
   const volumeOrgId = randomUUID();
@@ -206,6 +208,7 @@ describe.each(["off", "required"] as const)("Project reads through real public H
 
   async function startApp(selectedBridge?: RustFoundationBridge, listenPort = 0) {
     const app = express();
+    if (ingressMode === "required") app.use(nativeIdentity.middleware());
     app.use(express.json());
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db!, { deploymentMode: "authenticated", authRequirement: "required" }));
@@ -347,10 +350,24 @@ describe.each(["off", "required"] as const)("Project reads through real public H
       { id: serviceIds[0], orgId, projectId: oldProjectId, projectWorkspaceId: workspaceIds[1], scopeType: "project_workspace", scopeId: workspaceIds[1], serviceName: "preview", status: "running", lifecycle: "persistent", reuseKey: "preview-key", command: "must-not-be-started", cwd: "/tmp/legacy-project", port: 3100, url: "http://127.0.0.1:3100", provider: "local_process", providerRef: "legacy-process", ownerAgentId: agentId, lastUsedAt: later, startedAt: early, stopPolicy: { timeout: 5 }, healthStatus: "healthy", createdAt: early, updatedAt: later },
       { id: serviceIds[1], orgId, projectId: oldProjectId, projectWorkspaceId: workspaceIds[1], scopeType: "project_workspace", serviceName: "stopped", status: "stopped", lifecycle: "ephemeral", provider: "local_process", lastUsedAt: early, startedAt: early, stoppedAt: later, healthStatus: "unknown", createdAt: early, updatedAt: early },
     ]);
-    bridge = createRustFoundationBridge({ databaseUrl: connectionString, binaryPath: nativeBinary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "required", requestTimeoutMs: 10_000 });
+    nodeListenPort = ingressMode === "required" ? await getAvailablePort() : 0;
+    bridge = createRustFoundationBridge({
+      databaseUrl: connectionString, binaryPath: nativeBinary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "required", requestTimeoutMs: 10_000,
+      ...(ingressMode === "required" ? { publicIngress: {
+        identityAuth: nativeIdentity.identityAuth,
+        listenAddr: "127.0.0.1:0",
+        nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
+        authorizationKey: "project-read-bootstrap-ingress-fixture-key",
+      } } : {}),
+    });
+    server = await startApp(bridge, nodeListenPort);
     await bridge.start();
-    server = await startApp(bridge);
-    const created = await request(server).post(`/api/orgs/${orgId}/projects`)
+    publicTarget = server;
+    if (ingressMode === "required") {
+      await bridge.waitForPublicIngressReady!();
+      publicTarget = bridge.publicIngressBaseUrl!;
+    }
+    const created = await request(publicTarget).post(`/api/orgs/${orgId}/projects`)
       .set("authorization", `Bearer ${agentToken}`)
       .set("x-rudder-idempotency-key", "project-read-rust-create")
       .send({ name: "New Rust Project", status: "planned", goalIds, description: null });
@@ -407,6 +424,7 @@ describe.each(["off", "required"] as const)("Project reads through real public H
       databaseUrl: connectionString, binaryPath: nativeBinary, mode: "off",
       organizationBrandingMode: "off", projectGoalSetMode: "required", requestTimeoutMs: 10_000,
       ...(ingressMode === "required" ? { publicIngress: {
+        identityAuth: nativeIdentity.identityAuth,
         listenAddr: "127.0.0.1:0",
         nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
         authorizationKey: "project-read-ingress-fixture-authorization-key",

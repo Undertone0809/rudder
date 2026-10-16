@@ -1,27 +1,25 @@
 import type { Db } from "@rudderhq/db";
 import {
   agentApiKeys,
-  agents,
-  authUsers,
+  applyPendingMigrations,
   boardApiKeys,
-  costEvents,
-  instanceUserRoles,
-  organizationMemberships,
+  createDb,
+  ensurePostgresDatabase,
 } from "@rudderhq/db";
-import { getTableColumns, getTableName } from "drizzle-orm";
-import { PgDialect } from "drizzle-orm/pg-core";
 import express, { type Request } from "express";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
-import { request as httpRequest, type Server } from "node:http";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { dirname, resolve } from "node:path";
+import os from "node:os";
+import path, { dirname, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createLocalAgentJwt } from "../agent-auth-jwt.js";
+import { createLocalAgentJwt, localAgentJwtAuthSettings } from "../agent-auth-jwt.js";
 import { accountSessionRequired } from "../middleware/account-session-required.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/index.js";
@@ -31,30 +29,31 @@ import {
   publicIngressAuthRoutes,
 } from "../routes/public-ingress-auth.js";
 import { hashBearerToken } from "../services/board-auth.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 
 const organizationId = "10000000-0000-0000-0000-000000000001";
 const otherOrganizationId = "20000000-0000-0000-0000-000000000002";
-const boardUserId = "board-user-1";
-const sessionUserId = "session-user-1";
+const boardUserId = "board-user-rust-auth-workflow";
+const sessionUserId = "session-user-rust-auth-workflow";
 const agentId = "f5e8a1ca-8ed3-4ef4-9e3e-829191260f14";
 const boardToken = "pcp_board_test_public_ingress_token";
 const revokedBoardToken = "pcp_board_revoked_public_ingress_token";
 const expiredBoardToken = "pcp_board_expired_public_ingress_token";
 const revokedAgentToken = "pcp_agent_revoked_public_ingress_token";
 const agentToken = "legacy_agent_test_public_ingress_token";
-const sessionCookie = "rudder-session=test-session-token";
+const sessionToken = "native-auth-workflow-session-token";
 const sessionId = "better-auth-session-1";
+const sessionSecret = "native-auth-workflow-session-secret-0123456789abcdef";
 const ingressAuthKey = "11".repeat(32);
 const actorEnvelopeKey = "22".repeat(32);
+const agentJwtSettings = localAgentJwtAuthSettings();
+const identityFixture = nativeIdentityIngressFixture();
 const forgedActorEnvelope = "forged-client-actor-envelope";
 const forgedRequestId = "forged-client-request-id";
 const forgedIngressKey = "forged-client-ingress-key";
 const startupTimeoutMs = 15_000;
 const serverExitTimeoutMs = 5_000;
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-
-type CredentialFixture = "none" | "board-key" | "session" | "agent";
-type MembershipFixture = "active" | "missing" | "inactive";
 
 type AuthorizationObservation = {
   actor: Request["actor"];
@@ -83,21 +82,104 @@ type StartupReceipt = {
   publicIngress?: { boundAddr?: string; publicListener?: boolean };
 };
 
-const credentialFixture: { current: CredentialFixture } = { current: "none" };
-const membershipFixture: { current: MembershipFixture } = { current: "active" };
-const agentPermissionFixture = { canCreateAgents: true };
 const authorizationObservations: AuthorizationObservation[] = [];
 let authServer: Server | undefined;
 let rustChild: ChildProcess | undefined;
 let rustStdout: Interface | undefined;
 let rustStderr = "";
 let publicPort: number | undefined;
+let fixtureRoot = "";
+let embeddedPostgres: { initialise(): Promise<void>; start(): Promise<void>; stop(): Promise<void> } | undefined;
+let databaseUrl = "";
+let fixtureSql: ReturnType<typeof postgres> | undefined;
+let db: Db | undefined;
+let sessionResolverCalls = 0;
+let boardKeyLookupCalls = 0;
+let agentKeyLookupCalls = 0;
+let privateRequestCalls = 0;
 
 const agentKeyHash = createHash("sha256").update(agentToken).digest("hex");
 const revokedAgentKeyHash = createHash("sha256").update(revokedAgentToken).digest("hex");
-const localAgentJwt = createLocalAgentJwt(agentId, organizationId, "fixture", "run-local-jwt");
-if (!localAgentJwt) throw new Error("Local agent JWT fixture could not be created");
-const dialect = new PgDialect();
+let localAgentJwt = "";
+
+type EmbeddedPostgresInstance = {
+  initialise(): Promise<void>;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+};
+
+async function availablePort(): Promise<number> {
+  return new Promise((resolvePort, rejectPort) => {
+    const probe = createServer();
+    probe.unref();
+    probe.once("error", rejectPort);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      if (!address || typeof address === "string") return rejectPort(new Error("No fixture port"));
+      probe.close((error) => error ? rejectPort(error) : resolvePort(address.port));
+    });
+  });
+}
+
+async function startDisposableDatabase() {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "rudder-jwt-auth-workflow-"));
+  const port = await availablePort();
+  const { default: EmbeddedPostgres } = await import("embedded-postgres");
+  const instance = new EmbeddedPostgres({
+    databaseDir: path.join(directory, "postgres-data"),
+    user: "rudder",
+    password: "rudder",
+    port,
+    persistent: true,
+    initdbFlags: ["--encoding=UTF8", "--locale=C"],
+    onLog: () => {},
+    onError: (message: unknown) => {
+      if (process.env.RUDDER_TEST_POSTGRES_DEBUG === "true") console.error(message);
+    },
+  }) as EmbeddedPostgresInstance;
+  await instance.initialise();
+  await instance.start();
+  const adminUrl = `postgres://rudder:rudder@127.0.0.1:${port}/postgres`;
+  const dbName = `rudder_jwt_auth_workflow_test_${process.pid}_${Date.now()}`;
+  await ensurePostgresDatabase(adminUrl, dbName);
+  const url = `postgres://rudder:rudder@127.0.0.1:${port}/${dbName}`;
+  await applyPendingMigrations(url);
+  return { url, directory, instance };
+}
+
+function signedSessionCookie(token: string = sessionToken) {
+  const signature = createHmac("sha256", sessionSecret).update(token).digest("base64");
+  return `better-auth.session_token=${encodeURIComponent(`${token}.${signature}`)}`;
+}
+
+function createObservedAuthDb(source: Db): Db {
+  return new Proxy(source, {
+    get(target, property, receiver) {
+      if (property === "select") {
+        return (...args: unknown[]) => {
+          const select = Reflect.get(target, property, target) as (...values: unknown[]) => object;
+          const query = select.apply(target, args);
+          return new Proxy(query, {
+            get(builder, method) {
+              if (method === "from") {
+                return (table: unknown) => {
+                  if (table === boardApiKeys) boardKeyLookupCalls += 1;
+                  if (table === agentApiKeys) agentKeyLookupCalls += 1;
+                  const from = Reflect.get(builder, method, builder) as (value: unknown) => unknown;
+                  return from.call(builder, table);
+                };
+              }
+              const value = Reflect.get(builder, method, builder);
+              return typeof value === "function" ? value.bind(builder) : value;
+            },
+          });
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
 
 // Compile the candidate source in this checkout. CI reuses its native:build
 // release cache; local checks reuse debug. Arbitrary executable overrides are
@@ -108,7 +190,7 @@ async function buildSourceBinary(): Promise<string> {
   if (process.env.CI) args.push("--release");
   const child = spawn(process.platform === "win32" ? "cargo.exe" : "cargo", args, {
     cwd: repositoryRoot,
-    env: process.env,
+    env: { ...process.env, CARGO_TARGET_DIR: "/private/tmp/rudder-agent-auth-target" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let executable: string | undefined;
@@ -133,182 +215,26 @@ async function buildSourceBinary(): Promise<string> {
   }
 }
 
-type SqlPredicate = { column: string; kind: "eq"; value: unknown } | { column: string; kind: "is-null" };
-
-function predicatesFromDrizzleCondition(condition: Parameters<typeof dialect.sqlToQuery>[0]): SqlPredicate[] {
-  const query = dialect.sqlToQuery(condition);
-  const predicates: SqlPredicate[] = [];
-  const equalityPattern = /"([^"]+)"\."([^"]+)"\s*=\s*\$(\d+)/giu;
-  const nullPattern = /"([^"]+)"\."([^"]+)"\s+is\s+null/giu;
-  let remainder = query.sql.replace(equalityPattern, (_match, table: string, column: string, index: string) => {
-    predicates.push({ column: `${table}.${column}`, kind: "eq", value: query.params[Number(index) - 1] });
-    return "";
-  });
-  remainder = remainder.replace(nullPattern, (_match, table: string, column: string) => {
-    predicates.push({ column: `${table}.${column}`, kind: "is-null" });
-    return "";
-  });
-  remainder = remainder.replace(/\band\b/giu, "").replace(/[()\s]/gu, "");
-  if (remainder !== "" || predicates.length === 0) {
-    throw new Error(`Unsupported Drizzle auth predicate: ${query.sql}`);
-  }
-  return predicates;
-}
-
-function rowsForTable(table: unknown): Record<string, unknown>[] {
-  if (table === boardApiKeys) {
-    const future = new Date(Date.now() + 60_000);
-    return [
-      {
-        id: "board-key-1",
-        userId: boardUserId,
-        keyHash: hashBearerToken(boardToken),
-        revokedAt: null,
-        expiresAt: future,
-      },
-      {
-        id: "board-key-revoked",
-        userId: boardUserId,
-        keyHash: hashBearerToken(revokedBoardToken),
-        revokedAt: new Date(),
-        expiresAt: future,
-      },
-      {
-        id: "board-key-expired",
-        userId: boardUserId,
-        keyHash: hashBearerToken(expiredBoardToken),
-        revokedAt: null,
-        expiresAt: new Date(Date.now() - 60_000),
-      },
-    ];
-  }
-  if (table === agentApiKeys) {
-    return [
-      { id: "agent-key-1", keyHash: agentKeyHash, agentId, orgId: organizationId, revokedAt: null },
-      { id: "agent-key-revoked", keyHash: revokedAgentKeyHash, agentId, orgId: organizationId, revokedAt: new Date() },
-    ];
-  }
-  if (table === agents) {
-    return [{
-      id: agentId,
-      orgId: organizationId,
-      status: "active",
-      name: "Authorized fixture agent",
-      role: "researcher",
-      permissions: {
-        canCreateAgents: agentPermissionFixture.canCreateAgents,
-        canManageSkills: false,
-      },
-      workspaceKey: "agent-fixture-workspace",
-      spentMonthlyCents: 0,
-      agentRuntimeConfig: null,
-      metadata: null,
-    }];
-  }
-  if (table === authUsers) {
-    return [
-      { id: boardUserId, name: "Board fixture", email: null },
-      { id: sessionUserId, name: "Session fixture", email: null },
-    ];
-  }
-  if (table === organizationMemberships) {
-    const rows: Record<string, unknown>[] = [];
-    if (membershipFixture.current !== "missing") {
-      const status = membershipFixture.current === "active" ? "active" : "inactive";
-      rows.push(
-        { orgId: organizationId, principalType: "user", principalId: sessionUserId, status },
-        { orgId: organizationId, principalType: "user", principalId: boardUserId, status },
-      );
-    }
-    return rows;
-  }
-  if (table === costEvents || table === instanceUserRoles) return [];
-  return [];
-}
-
-function filterRowsByDrizzleCondition(
-  table: unknown,
-  rows: Record<string, unknown>[],
-  predicates: SqlPredicate[],
-) {
-  const schemaTable = table as never;
-  const tableName = getTableName(schemaTable);
-  const columns = Object.entries(getTableColumns(schemaTable));
-  return rows.filter((row) => predicates.every((predicate) => {
-    const [predicateTable, columnName] = predicate.column.split(".");
-    if (predicateTable !== tableName) {
-      throw new Error(`Drizzle predicate table ${predicateTable} does not match ${tableName}`);
-    }
-    const property = columns.find(([, column]) => column.name === columnName)?.[0];
-    if (!property) throw new Error(`No ${tableName} schema column named ${columnName}`);
-    const value = row[property];
-    return predicate.kind === "eq" ? value === predicate.value : value === null;
-  }));
-}
-
-function createAuthLookupDb(): Db {
-  const db = {
-    select() {
-      let table: unknown;
-      let predicates: SqlPredicate[] = [];
-      const query = {
-        from(selectedTable: unknown) {
-          table = selectedTable;
-          return query;
-        },
-        where(condition: Parameters<typeof dialect.sqlToQuery>[0]) {
-          // LLM auth calls agentService.getById(), which hydrates spend. The
-          // auth fixture has no cost rows, so avoid parsing its richer query.
-          if (table !== costEvents) predicates = predicatesFromDrizzleCondition(condition);
-          return query;
-        },
-        groupBy() {
-          return query;
-        },
-        then(
-          onfulfilled: (rows: unknown[]) => unknown,
-          onrejected?: (error: unknown) => unknown,
-        ) {
-          const rows = rowsForTable(table);
-          const filtered = rows.length === 0
-            ? rows
-            : filterRowsByDrizzleCondition(table, rows, predicates);
-          return Promise.resolve(filtered).then(onfulfilled, onrejected);
-        },
-      };
-      return query;
-    },
-    update() {
-      return {
-        set() {
-          return { where: () => Promise.resolve([]) };
-        },
-      };
-    },
-  };
-  return db as unknown as Db;
-}
-
-function createPrivateAuthApp() {
+function createPrivateAuthApp(sourceDb: Db) {
   const app = express();
-  const db = createAuthLookupDb();
+  const observedDb = createObservedAuthDb(sourceDb);
+  app.use(identityFixture.middleware());
+  app.use((_req, _res, next) => {
+    privateRequestCalls += 1;
+    next();
+  });
   app.use(express.json({
-    limit: "32kb",
+    limit: "10mb",
     verify: (req, _res, body) => {
       (req as Request).rawBody = Buffer.from(body);
     },
   }));
-  app.use(actorMiddleware(db, {
+  app.use(actorMiddleware(observedDb, {
     deploymentMode: "authenticated",
     authRequirement: "required",
-    resolveSession: async (req) => {
-      if (credentialFixture.current !== "session" || req.get("cookie") !== sessionCookie) {
-        return null;
-      }
-      return {
-        session: { id: sessionId, userId: sessionUserId },
-        user: { id: sessionUserId },
-      };
+    resolveSession: async () => {
+      sessionResolverCalls += 1;
+      return null;
     },
   }));
   app.use((req, res, next) => {
@@ -347,7 +273,7 @@ function createPrivateAuthApp() {
   app.use("/api", publicIngressAuthRoutes({
     internalIngressAuthKey: ingressAuthKey,
     actorEnvelopeKey,
-    db,
+    db: sourceDb,
   }));
   app.get("/api/health", (_req, res) => res.status(200).json({ status: "ok" }));
   app.use(errorHandler);
@@ -452,10 +378,76 @@ const forgedForwardingHeaders = {
   "x-real-ip": "203.0.113.9",
 };
 
+async function seedAuthenticationRows() {
+  const sql = fixtureSql!;
+  const now = new Date();
+  await sql`
+    INSERT INTO organizations (id, url_key, name, issue_prefix)
+    VALUES
+      (${organizationId}::uuid, 'jwt-auth-workflow-main', 'JWT Auth Workflow', 'JAW'),
+      (${otherOrganizationId}::uuid, 'jwt-auth-workflow-other', 'JWT Auth Workflow Other', 'JWO')
+  `;
+  await sql`
+    INSERT INTO "user" (id, name, email, created_at, updated_at)
+    VALUES
+      (${boardUserId}, 'Board Workflow User', 'board-jwt-workflow@invalid.test', ${now}, ${now}),
+      (${sessionUserId}, 'Session Workflow User', 'session-jwt-workflow@invalid.test', ${now}, ${now})
+  `;
+  await sql`
+    INSERT INTO organization_memberships (org_id, principal_type, principal_id, status, membership_role)
+    VALUES
+      (${organizationId}::uuid, 'user', ${boardUserId}, 'active', 'owner'),
+      (${organizationId}::uuid, 'user', ${sessionUserId}, 'active', 'member'),
+      (${organizationId}::uuid, 'agent', ${agentId}, 'active', 'researcher')
+  `;
+  await sql`
+    INSERT INTO agents (id, org_id, name, status, role, agent_runtime_type, permissions)
+    VALUES (
+      ${agentId}::uuid, ${organizationId}::uuid, 'Authorized fixture agent', 'idle',
+      'researcher', 'fixture', '{"canCreateAgents":true,"canManageSkills":false}'::jsonb
+    )
+  `;
+  await sql`
+    INSERT INTO board_api_keys (user_id, name, key_hash, expires_at)
+    VALUES
+      (${boardUserId}, 'Native valid Board fixture', ${hashBearerToken(boardToken)}, now() + interval '2 days'),
+      (${boardUserId}, 'Native revoked Board fixture', ${hashBearerToken(revokedBoardToken)}, now() + interval '2 days'),
+      (${boardUserId}, 'Native expired Board fixture', ${hashBearerToken(expiredBoardToken)}, now() - interval '1 minute')
+  `;
+  await sql`
+    UPDATE board_api_keys SET revoked_at = now()
+    WHERE key_hash = ${hashBearerToken(revokedBoardToken)}
+  `;
+  await sql`
+    INSERT INTO agent_api_keys (agent_id, org_id, name, key_hash)
+    VALUES
+      (${agentId}::uuid, ${organizationId}::uuid, 'Native valid Agent fixture', ${agentKeyHash}),
+      (${agentId}::uuid, ${organizationId}::uuid, 'Native revoked Agent fixture', ${revokedAgentKeyHash})
+  `;
+  await sql`
+    UPDATE agent_api_keys SET revoked_at = now()
+    WHERE key_hash = ${revokedAgentKeyHash}
+  `;
+  await sql`
+    INSERT INTO session (id, token, user_id, expires_at, created_at, updated_at)
+    VALUES (${sessionId}, ${sessionToken}, ${sessionUserId}, now() + interval '2 days', now(), now())
+  `;
+}
+
 describe("source-binary public Actix authentication workflow", () => {
   beforeAll(async () => {
+    const fixture = await startDisposableDatabase();
+    fixtureRoot = fixture.directory;
+    embeddedPostgres = fixture.instance;
+    databaseUrl = fixture.url;
+    fixtureSql = postgres(databaseUrl, { max: 4, onnotice: () => {} });
+    db = createDb(databaseUrl);
+    await seedAuthenticationRows();
+    localAgentJwt = createLocalAgentJwt(agentId, organizationId, "fixture", "run-local-jwt") ?? "";
+    if (!localAgentJwt) throw new Error("Local Agent JWT fixture could not be created");
+
     const binaryPath = await buildSourceBinary();
-    authServer = createPrivateAuthApp().listen(0, "127.0.0.1");
+    authServer = createPrivateAuthApp(db).listen(0, "127.0.0.1");
     await once(authServer, "listening");
     const upstreamAddress = authServer.address() as AddressInfo;
 
@@ -464,11 +456,23 @@ describe("source-binary public Actix authentication workflow", () => {
         PATH: process.env.PATH ?? "",
         RUST_LOG: "error",
         RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
-        RUDDER_NATIVE_DATABASE_REQUIRED: "false",
+        RUDDER_NATIVE_DATABASE_URL: databaseUrl,
+        RUDDER_NATIVE_DATABASE_REQUIRED: "true",
         RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: actorEnvelopeKey,
         RUDDER_NATIVE_PUBLIC_LISTEN: "127.0.0.1:0",
         RUDDER_NATIVE_NODE_UPSTREAM: `http://127.0.0.1:${upstreamAddress.port}`,
         RUDDER_NATIVE_INGRESS_AUTH_KEY: ingressAuthKey,
+        RUDDER_NATIVE_IDENTITY_AUTH_MODE: "required",
+        RUDDER_NATIVE_IDENTITY_ASSERTION_KEY: identityFixture.identityAuth.assertionKey,
+        RUDDER_NATIVE_LOCAL_IMPLICIT: "false",
+        RUDDER_NATIVE_AGENT_JWT_SECRET: agentJwtSettings.secret,
+        RUDDER_NATIVE_AGENT_JWT_ISSUER: agentJwtSettings.issuer,
+        RUDDER_NATIVE_AGENT_JWT_AUDIENCE: agentJwtSettings.audience,
+        RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
+        RUDDER_NATIVE_SESSION_AUTH_KIND: "better_auth",
+        RUDDER_NATIVE_SESSION_AUTH_SECRET: sessionSecret,
+        RUDDER_NATIVE_SESSION_COOKIE_SECURE: "false",
+        RUDDER_NATIVE_SESSION_ASSERTION_KEY: identityFixture.identityAuth.assertionKey,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -487,13 +491,34 @@ describe("source-binary public Actix authentication workflow", () => {
     }
     publicPort = Number(publicAddress.slice(publicAddress.lastIndexOf(":") + 1));
     expect(Number.isInteger(publicPort) && publicPort > 0).toBe(true);
+    console.info("Native auth workflow disposable fixture", {
+      tempRoot: fixtureRoot,
+      database: new URL(databaseUrl).pathname.slice(1),
+      publicPort,
+      privateNodePort: upstreamAddress.port,
+    });
   }, 600_000);
 
-  beforeEach(() => {
-    credentialFixture.current = "none";
-    membershipFixture.current = "active";
-    agentPermissionFixture.canCreateAgents = true;
+  beforeEach(async () => {
+    await fixtureSql!`
+      UPDATE organization_memberships SET status = 'active'
+      WHERE org_id = ${organizationId}::uuid AND principal_type = 'user' AND principal_id = ${sessionUserId}
+    `;
+    await fixtureSql!`
+      INSERT INTO organization_memberships (org_id, principal_type, principal_id, status, membership_role)
+      VALUES (${organizationId}::uuid, 'user', ${sessionUserId}, 'active', 'member')
+      ON CONFLICT (org_id, principal_type, principal_id)
+      DO UPDATE SET status = 'active', membership_role = 'member'
+    `;
+    await fixtureSql!`
+      UPDATE agents SET permissions = '{"canCreateAgents":true,"canManageSkills":false}'::jsonb
+      WHERE id = ${agentId}::uuid
+    `;
     authorizationObservations.length = 0;
+    sessionResolverCalls = 0;
+    boardKeyLookupCalls = 0;
+    agentKeyLookupCalls = 0;
+    privateRequestCalls = 0;
   });
 
   afterAll(async () => {
@@ -504,13 +529,17 @@ describe("source-binary public Actix authentication workflow", () => {
       });
       authServer = undefined;
     }
+    await fixtureSql?.end({ timeout: 5 });
+    await db?.$client.end({ timeout: 5 });
+    if (embeddedPostgres) await embeddedPostgres.stop();
+    if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
-  it("keeps native pcp_ auth out of Node and preserves injected-session compatibility", async () => {
+  it("authenticates persisted Board keys and session cookies on the native public listener", async () => {
     const port = publicPort;
     if (port === undefined) throw new Error("Public Actix listener is not started");
     const host = `public.example:${port}`;
-    const publicPath = `/api/orgs/${organizationId}/members/directory?type=agent&limit=25&query=R%26D+team&unused=1`;
+    const publicPath = `/api/orgs/${organizationId}/members/directory?type=agent&limit=25&query=Authorized+fixture&unused=1`;
 
     const nativeResponse = await getPublicIngress(publicPath, {
       host,
@@ -518,29 +547,48 @@ describe("source-binary public Actix authentication workflow", () => {
       ...forgedForwardingHeaders,
       authorization: `Bearer ${boardToken}`,
     });
-    expect(nativeResponse.status).toBe(503);
-    expect(nativeResponse.body).toContain("database_disabled");
+    expect(nativeResponse.status).toBe(200);
+    expect(JSON.parse(nativeResponse.body)).toMatchObject({
+      total: 1,
+      items: [{ name: "Authorized fixture agent", type: "agent", role: "researcher" }],
+    });
     expect(authorizationObservations).toHaveLength(0);
 
-    credentialFixture.current = "session";
+    const sessionStatus = await getPublicIngress("/api/auth/get-session", {
+      host,
+      origin: "https://public.example",
+      ...forgedForwardingHeaders,
+      cookie: signedSessionCookie(),
+    });
+    expect(sessionStatus.status).toBe(200);
+    expect(JSON.parse(sessionStatus.body)).toEqual({
+      session: { id: `rudder:session:${sessionUserId}`, userId: sessionUserId },
+      user: { id: sessionUserId, email: null, name: null },
+    });
+    const sessionLlm = await getPublicIngress("/llms/agent-icons.txt", {
+      cookie: signedSessionCookie(),
+    });
+    expect(sessionLlm.status).toBe(200);
+    expect(lastObservation().actor).toMatchObject({
+      type: "board", source: "session", userId: sessionUserId, sessionId,
+    });
+    expect(privateRequestCalls).toBe(1);
+    authorizationObservations.length = 0;
+    privateRequestCalls = 0;
+
     const sessionResponse = await getPublicIngress(publicPath, {
       host,
       origin: "https://public.example",
       ...forgedForwardingHeaders,
-      cookie: sessionCookie,
+      cookie: signedSessionCookie(),
     });
-    const observation = lastObservation();
-    expect(sessionResponse.status).toBe(503);
-    expect(sessionResponse.body).toContain("database_disabled");
-    expect(observation.actor).toMatchObject({
-      type: "board", source: "session", userId: sessionUserId, sessionId,
-    });
-    expect(observation.responseStatus).toBe(200);
-    expect(observation.body).toMatchObject({ organizationId, publicPath });
-    expectOriginalRequestContext(observation, host);
-    expectSocketForwardingContext(observation);
-    expect(observation.headers.authorization).toBeUndefined();
-    expect(observation.headers.cookie).toBe(sessionCookie);
+    expect(sessionResponse.status).toBe(200);
+    expect(JSON.parse(sessionResponse.body).total).toBe(1);
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   }, 20_000);
 
   it("serves root LLM documents through Rust and the private Node actor/registry adapter", async () => {
@@ -555,8 +603,6 @@ describe("source-binary public Actix authentication workflow", () => {
       "x-rudder-request-id": forgedRequestId,
       ...forgedForwardingHeaders,
     };
-    credentialFixture.current = "board-key";
-
     const indexPath = "/llms/agent-configuration.txt?source=rust&source=board";
     const index = await getPublicIngress(indexPath, headers);
     const indexObservation = lastObservation();
@@ -586,13 +632,15 @@ describe("source-binary public Actix authentication workflow", () => {
     expect(adapterObservation.body).toMatchObject({ publicMethod: "GET", publicPath: adapterPath });
     expect(adapterObservation.responseStatus).toBe(200);
     expect(adapterObservation.headers.actorEnvelope).toBeUndefined();
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   }, 30_000);
 
   it("requires stored canCreateAgents permission for root LLM documents through Rust ingress", async () => {
     const port = publicPort;
     if (port === undefined) throw new Error("Public Actix listener is not started");
     const host = `public.example:${port}`;
-    credentialFixture.current = "agent";
     const headers = {
       host,
       origin: "https://public.example",
@@ -601,43 +649,52 @@ describe("source-binary public Actix authentication workflow", () => {
       ...forgedForwardingHeaders,
     };
 
-    agentPermissionFixture.canCreateAgents = false;
+    await fixtureSql!`
+      UPDATE agents SET permissions = '{"canCreateAgents":false,"canManageSkills":false}'::jsonb
+      WHERE id = ${agentId}::uuid
+    `;
     const denied = await getPublicIngress("/llms/agent-icons.txt", headers);
     expect(lastObservation().actor).toMatchObject({ type: "agent", agentId });
     expect(lastObservation().responseStatus).toBe(403);
     expect(denied.status, denied.body).toBe(403);
     expect(denied.body).toContain("ingress_authorization_rejected");
 
-    agentPermissionFixture.canCreateAgents = true;
+    await fixtureSql!`
+      UPDATE agents SET permissions = '{"canCreateAgents":true,"canManageSkills":false}'::jsonb
+      WHERE id = ${agentId}::uuid
+    `;
     const allowed = await getPublicIngress("/llms/agent-icons.txt", headers);
     expect(allowed.status).toBe(200);
     expect(allowed.body).toContain("# Rudder Legacy Agent Icon Names");
     expect(lastObservation().actor).toMatchObject({ type: "agent", agentId });
     expect(lastObservation().responseStatus).toBe(200);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   }, 30_000);
 
   it.each([
-    ["session", { cookie: sessionCookie }, "board", "session"],
+    ["session", { cookie: signedSessionCookie() }, "board", "session"],
     ["non-pcp agent key", { authorization: `Bearer ${agentToken}` }, "agent", "agent_key"],
-  ] as const)("preserves public GET semantics for %s with a different CLI agent context", async (fixture, credentials, type, source) => {
-    credentialFixture.current = fixture;
+  ] as const)("keeps public GET identity native for %s despite a different CLI agent context", async (_fixture, credentials, type, source) => {
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
       ...credentials,
       "x-rudder-agent-id": "different-cli-agent",
     });
-    expect(response.status).toBe(503);
-    expect(response.body).toContain("database_disabled");
-    expect(lastObservation().actor).toMatchObject({ type, source });
-    expect(lastObservation().responseStatus).toBe(200);
-    expect(lastObservation().headers.agentId).toBe("different-cli-agent");
+    expect(response.status, response.body).toBe(200);
+    expect(JSON.parse(response.body).total).toBe(3);
+    expect(privateRequestCalls).toBe(0);
+    expect(authorizationObservations).toHaveLength(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
+    expect(source).toMatch(type === "board" ? "session" : "agent_key");
   }, 10_000);
 
   it.each([
-    ["session", { cookie: sessionCookie }, 401],
+    ["session", { cookie: signedSessionCookie() }, 401],
     ["non-pcp agent key", { authorization: `Bearer ${agentToken}` }, 403],
   ] as const)("retains mutation-only agent-context fence for %s", async (_fixture, credentials, status) => {
-    if (credentials.cookie) credentialFixture.current = "session";
-    else credentialFixture.current = "agent";
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
       ...credentials,
       "x-rudder-agent-id": "different-cli-agent",
@@ -645,10 +702,12 @@ describe("source-binary public Actix authentication workflow", () => {
     expect(response.status).toBe(status);
     expect(response.body).toContain(status === 401 ? "agent_auth_required" : "agent_context_mismatch");
     expect(authorizationObservations).toHaveLength(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   });
 
-  it("resolves a predicate-checked same-organization agent and preserves its CLI context", async () => {
-    credentialFixture.current = "agent";
+  it("resolves a persisted same-organization Agent key directly and preserves its CLI context", async () => {
     const port = publicPort;
     if (port === undefined) throw new Error("Public Actix listener is not started");
     const host = `public.example:${port}`;
@@ -661,110 +720,123 @@ describe("source-binary public Actix authentication workflow", () => {
       "x-rudder-run-id": "run-agent-1",
       ...forgedForwardingHeaders,
     });
-    const observation = lastObservation();
-
-    expect(response.status).toBe(503);
-    expect(response.body).toContain("database_disabled");
-    expect(observation.actor).toMatchObject({
-      type: "agent",
-      source: "agent_key",
-      orgId: organizationId,
-      agentId,
-      runId: "run-agent-1",
-    });
-    expect(observation.responseStatus).toBe(200);
-    expect(observation.body).toMatchObject({ organizationId, publicPath });
-    expectOriginalRequestContext(observation, host);
-    expectSocketForwardingContext(observation);
-    expect(observation.headers.authorization).toBe(`Bearer ${agentToken}`);
-    expect(observation.headers.agentId).toBe(agentId);
-    expect(observation.headers.runId).toBe("run-agent-1");
+    expect(response.status, response.body).toBe(200);
+    expect(JSON.parse(response.body).items).toEqual([
+      expect.objectContaining({ name: "Authorized fixture agent", type: "agent", role: "researcher" }),
+    ]);
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   }, 10_000);
 
-  it("preserves local agent JWT compatibility through the private Node adapter", async () => {
+  it("preserves local Agent JWT compatibility through the native public listener", async () => {
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
       authorization: `Bearer ${localAgentJwt}`,
       "x-rudder-agent-id": agentId,
       "x-rudder-run-id": "run-local-jwt",
     });
-    expect(response.status).toBe(503);
-    expect(response.body).toContain("database_disabled");
-    expect(lastObservation().actor).toMatchObject({
-      type: "agent",
-      source: "agent_jwt",
-      orgId: organizationId,
-      agentId,
-      runId: "run-local-jwt",
-    });
+    expect(response.status, response.body).toBe(200);
+    expect(JSON.parse(response.body).items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Authorized fixture agent", type: "agent" }),
+    ]));
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   }, 10_000);
 
   it.each([
-    ["valid-shaped Board key", boardToken],
     ["unknown Board key", "pcp_board_wrong_token"],
     ["revoked Board key", revokedBoardToken],
     ["expired Board key", expiredBoardToken],
     ["unknown agent key", "pcp_agent_wrong_token"],
     ["revoked agent key", revokedAgentToken],
-  ])("does not fall through to Node for native %s when the Rust database is disabled", async (_label, token) => {
+  ])("fails closed without Node fallback for invalid native %s", async (_label, token) => {
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
       authorization: `Bearer ${token}`,
     });
-    expect(response.status).toBe(503);
-    expect(response.body).toContain("database_disabled");
+    expect(response.status).toBe(401);
+    expect(response.body).toContain("unauthorized");
     expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   });
 
-  it("preserves private Node rejection for an unknown non-pcp bearer", async () => {
+  it("rejects an unknown non-pcp bearer without falling back to Node", async () => {
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
       authorization: "Bearer legacy_unknown_public_ingress_token",
     });
     expect(response.status).toBe(401);
-    expect(lastObservation().actor.type).toBe("none");
-    expect(lastObservation().responseStatus).toBe(401);
+    expect(response.body).toContain("unauthorized");
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   });
 
   it.each(["missing", "inactive"] as const)("rejects a scoped session with %s membership", async (membership) => {
-    membershipFixture.current = membership;
-    credentialFixture.current = "session";
+    if (membership === "missing") {
+      await fixtureSql!`
+        DELETE FROM organization_memberships
+        WHERE org_id = ${organizationId}::uuid AND principal_type = 'user' AND principal_id = ${sessionUserId}
+      `;
+    } else {
+      await fixtureSql!`
+        UPDATE organization_memberships SET status = 'inactive'
+        WHERE org_id = ${organizationId}::uuid AND principal_type = 'user' AND principal_id = ${sessionUserId}
+      `;
+    }
     const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
-      cookie: sessionCookie,
+      cookie: signedSessionCookie(),
     });
-    const observation = lastObservation();
-    expect(observation.actor).toMatchObject({ type: "board", source: "session", orgIds: [] });
     expect(response.status).toBe(403);
-    expect(observation.responseStatus).toBe(403);
+    expect(response.body).toContain("forbidden");
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   });
 
-  it("rejects a scoped session and an agent when the public organization differs", async () => {
+  it("rejects session, Board key, and Agent identity when the public organization differs", async () => {
     const port = publicPort;
     if (port === undefined) throw new Error("Public Actix listener is not started");
     const host = `public.example:${port}`;
     const publicPath = `/api/orgs/${otherOrganizationId}/members/directory`;
 
-    credentialFixture.current = "session";
     const sessionResponse = await getPublicIngress(publicPath, {
       host,
       origin: "https://public.example",
-      cookie: sessionCookie,
+      cookie: signedSessionCookie(),
     });
-    const sessionObservation = lastObservation();
     expect(sessionResponse.status).toBe(403);
-    expect(sessionObservation.actor).toMatchObject({ type: "board", source: "session" });
-    expect(sessionObservation.responseStatus).toBe(403);
-    expect(sessionResponse.body).toContain("ingress_authorization_rejected");
+    expect(sessionResponse.body).toContain("forbidden");
 
-    credentialFixture.current = "agent";
     const agentResponse = await getPublicIngress(publicPath, {
       host,
       origin: "https://public.example",
       authorization: `Bearer ${agentToken}`,
       "x-rudder-agent-id": agentId,
     });
-    const agentObservation = lastObservation();
     expect(agentResponse.status).toBe(403);
-    expect(agentObservation.actor).toMatchObject({ type: "agent", orgId: organizationId, agentId });
-    expect(agentObservation.responseStatus).toBe(403);
-    expect(agentResponse.body).toContain("ingress_authorization_rejected");
+    expect(agentResponse.body).toContain("forbidden");
+
+    const boardResponse = await getPublicIngress(publicPath, {
+      authorization: `Bearer ${boardToken}`,
+    });
+    expect(boardResponse.status).toBe(403);
+    expect(boardResponse.body).toContain("forbidden");
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   }, 15_000);
 
   it("does not trust client envelope, request-id, or ingress-key headers", async () => {
@@ -782,14 +854,40 @@ describe("source-binary public Actix authentication workflow", () => {
         ...forgedForwardingHeaders,
       },
     );
-    const observation = lastObservation();
-
     expect(response.status).toBe(401);
-    expect(response.body).toContain("ingress_authorization_rejected");
-    expect(observation.actor.type).toBe("none");
-    expect(observation.responseStatus).toBe(401);
-    expectOriginalRequestContext(observation, host);
-    expectSocketForwardingContext(observation);
-    expect(observation.headers.ingressAuth).not.toBe(forgedIngressKey);
+    expect(response.body).toContain("unauthorized");
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
   }, 10_000);
+
+  it("gives a supplied invalid Bearer credential precedence over a valid session cookie", async () => {
+    const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
+      authorization: "Bearer pcp_invalid_over_valid_session",
+      cookie: signedSessionCookie(),
+    });
+    expect(response.status).toBe(401);
+    expect(response.body).toContain("unauthorized");
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
+  });
+
+  it("rejects a mismatched signed Agent JWT run header before Node", async () => {
+    const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
+      authorization: `Bearer ${localAgentJwt}`,
+      "x-rudder-run-id": "different-signed-run",
+    });
+    expect(response.status).toBe(403);
+    expect(response.body).toContain("agent_run_context_mismatch");
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
+  });
 });
