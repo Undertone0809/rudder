@@ -1,5 +1,5 @@
 import type { Db } from "@rudderhq/db";
-import { instanceUserRoles, organizationMemberships } from "@rudderhq/db";
+import { authUsers, boardApiKeys, instanceUserRoles, organizationMemberships } from "@rudderhq/db";
 import express, { type Request } from "express";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ import { actorMiddleware } from "../middleware/auth.js";
 const KEY = "0123456789abcdef0123456789abcdef";
 const SESSION_ID = "better-auth-session-1";
 const USER_ID = "session-user-1";
+const BOARD_USER_ID = "native-board-user-1";
 
 function createLookupDb() {
   const selectedTables: unknown[] = [];
@@ -36,6 +37,59 @@ function createLookupDb() {
     },
   };
   return { db: db as unknown as Db, selectedTables };
+}
+
+function createBoardKeyLookupDb() {
+  const selectedTables: unknown[] = [];
+  const state = {
+    userExists: true,
+    isInstanceAdmin: true,
+    orgIds: ["org-before-revocation"],
+  };
+  let legacyCredentialLookups = 0;
+  let keyTouches = 0;
+  const db = {
+    select() {
+      let table: unknown;
+      const query = {
+        from(selected: unknown) {
+          table = selected;
+          selectedTables.push(selected);
+          return query;
+        },
+        where() {
+          if (table === authUsers) {
+            return Promise.resolve(state.userExists
+              ? [{ id: BOARD_USER_ID, name: "Board operator", email: "board@example.test" }]
+              : []);
+          }
+          if (table === organizationMemberships) {
+            return Promise.resolve(state.orgIds.map((orgId) => ({ orgId })));
+          }
+          if (table === instanceUserRoles) {
+            return Promise.resolve(state.isInstanceAdmin ? [{ id: "native-admin-role" }] : []);
+          }
+          if (table === boardApiKeys) {
+            legacyCredentialLookups += 1;
+            return Promise.resolve([]);
+          }
+          throw new Error("unexpected native board-key authority query");
+        },
+      };
+      return query;
+    },
+    update() {
+      keyTouches += 1;
+      return { set: () => ({ where: async () => [] }) };
+    },
+  };
+  return {
+    db: db as unknown as Db,
+    selectedTables,
+    state,
+    get legacyCredentialLookups() { return legacyCredentialLookups; },
+    get keyTouches() { return keyTouches; },
+  };
 }
 
 async function listen(app: express.Express): Promise<{ server: Server; origin: string }> {
@@ -184,6 +238,10 @@ describe("native public-ingress session assertion", () => {
         headers: {
           authorization: "Bearer valid-legacy-agent-jwt",
           "x-rudder-native-session-proof": agentProof,
+          // Rust has already compared this public header with the signed JWT.
+          // The private actor mapper must consume that identity without making
+          // a second run-context decision.
+          "x-rudder-run-id": "run-mismatch-checked-at-rust",
         },
       });
       expect(response.status).toBe(200);
@@ -199,6 +257,83 @@ describe("native public-ingress session assertion", () => {
       });
       expect(resolver).not.toHaveBeenCalled();
       expect(selectedTables).toEqual([]);
+    } finally {
+      await close(listener.server);
+    }
+  });
+
+  it("uses the shared current board-access mapping for native keys without legacy key lookup or touch", async () => {
+    const lookup = createBoardKeyLookupDb();
+    const resolver = vi.fn(async () => null);
+    const app = express();
+    app.use(nativeSessionAssertionMiddleware({ key: KEY, nowSeconds: () => 1_000 }));
+    app.use(express.json());
+    app.use(actorMiddleware(lookup.db, {
+      deploymentMode: "local_trusted",
+      resolveSession: resolver,
+    }));
+    app.post("/protected", (req, res) => {
+      res.setHeader("x-test-proof-header", req.header("x-rudder-native-session-proof") ?? "removed");
+      res.json(req.actor);
+    });
+    const listener = await listen(app);
+    const sendBoardProof = () => sendJson(listener.origin, "/protected", {
+      headers: {
+        authorization: "Bearer pcp_board_must-not-be-looked-up-in-Node",
+        "x-rudder-native-session-proof": signNativeSessionAssertion({
+          key: KEY,
+          method: "POST",
+          target: "/protected",
+          identity: {
+            kind: "board_key",
+            key_id: "native-board-key-1",
+            session_id: "board-key:native-board-key-1",
+            user_id: BOARD_USER_ID,
+          },
+          nowSeconds: 1_000,
+        }),
+      },
+    });
+
+    try {
+      const initial = await sendBoardProof();
+      expect(initial.status).toBe(200);
+      expect(initial.proofHeader).toBe("removed");
+      expect(JSON.parse(initial.body)).toMatchObject({
+        type: "board",
+        source: "board_key",
+        userId: BOARD_USER_ID,
+        keyId: "native-board-key-1",
+        sessionId: "board-key:native-board-key-1",
+        orgIds: ["org-before-revocation"],
+        isInstanceAdmin: true,
+      });
+
+      lookup.state.orgIds = ["org-after-permission-change"];
+      lookup.state.isInstanceAdmin = false;
+      const updatedAccess = await sendBoardProof();
+      expect(updatedAccess.status).toBe(200);
+      expect(JSON.parse(updatedAccess.body)).toMatchObject({
+        source: "board_key",
+        orgIds: ["org-after-permission-change"],
+        isInstanceAdmin: false,
+      });
+
+      // A user deletion/revocation fails closed, even when local_trusted would
+      // otherwise start each request with an implicit local Board actor.
+      lookup.state.userExists = false;
+      const revokedUser = await sendBoardProof();
+      expect(revokedUser.status).toBe(200);
+      expect(JSON.parse(revokedUser.body)).toMatchObject({ type: "none", source: "none" });
+
+      expect(lookup.selectedTables).toEqual([
+        authUsers, organizationMemberships, instanceUserRoles,
+        authUsers, organizationMemberships, instanceUserRoles,
+        authUsers, organizationMemberships, instanceUserRoles,
+      ]);
+      expect(lookup.legacyCredentialLookups).toBe(0);
+      expect(lookup.keyTouches).toBe(0);
+      expect(resolver).not.toHaveBeenCalled();
     } finally {
       await close(listener.server);
     }

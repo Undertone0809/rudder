@@ -672,6 +672,59 @@ describe("source-built Rust public native session workflow", () => {
       type: "board",
       source: "board_key",
       userId,
+      orgIds: [orgId],
+      isInstanceAdmin: false,
+    });
+
+    await fixtureSql!`
+      UPDATE organization_memberships SET status = 'inactive'
+      WHERE org_id = ${orgId}::uuid AND principal_type = 'user' AND principal_id = ${userId}
+    `;
+    const membershipRevoked = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${boardKeyToken}`,
+    }, "POST");
+    expect(JSON.parse(membershipRevoked.body).actor).toMatchObject({
+      source: "board_key",
+      orgIds: [],
+      isInstanceAdmin: false,
+    });
+
+    await fixtureSql!`
+      INSERT INTO instance_user_roles (user_id, role)
+      VALUES (${userId}, 'instance_admin')
+    `;
+    const adminGranted = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${boardKeyToken}`,
+    }, "POST");
+    expect(JSON.parse(adminGranted.body).actor).toMatchObject({
+      source: "board_key",
+      orgIds: [],
+      isInstanceAdmin: true,
+    });
+
+    await fixtureSql!`
+      UPDATE organization_memberships SET status = 'active'
+      WHERE org_id = ${orgId}::uuid AND principal_type = 'user' AND principal_id = ${userId}
+    `;
+    const accessRefreshed = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${boardKeyToken}`,
+    }, "POST");
+    expect(JSON.parse(accessRefreshed.body).actor).toMatchObject({
+      source: "board_key",
+      orgIds: [orgId],
+      isInstanceAdmin: true,
+    });
+
+    await fixtureSql!`
+      DELETE FROM instance_user_roles WHERE user_id = ${userId} AND role = 'instance_admin'
+    `;
+    const adminRevoked = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${boardKeyToken}`,
+    }, "POST");
+    expect(JSON.parse(adminRevoked.body).actor).toMatchObject({
+      source: "board_key",
+      orgIds: [orgId],
+      isInstanceAdmin: false,
     });
 
     const agentKeyResponse = await getSessionFromPublic("/api/native-session-echo", {
@@ -753,6 +806,12 @@ describe("source-built Rust public native session workflow", () => {
     }, "GET");
     expect(directGetSession.status).toBe(401);
     expect(JSON.parse(directGetSession.body).code).toBe("native_session_proof_required");
+
+    const forgedProof = await getSessionFromPrivate("/api/auth/get-session", {
+      cookie: sessionCookie(),
+      "x-rudder-native-session-proof": "forged-private-proof",
+    }, "GET");
+    expect(forgedProof.status).toBe(401);
     expect(sessionResolverCalls).toBe(0);
 
     const bearer = await getSessionFromPublic("/api/auth/get-session", {
