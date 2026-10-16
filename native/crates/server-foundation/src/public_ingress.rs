@@ -599,7 +599,7 @@ mod tests {
         )
         .bind(format!("native-route-{suffix}"))
         .bind(format!("Native route {suffix}"))
-        .bind(format!("N{}", &suffix[..7].to_ascii_uppercase()))
+        .bind(format!("N{}", suffix[..7].to_ascii_uppercase()))
         .fetch_one(&pool)
         .await
         .unwrap();
