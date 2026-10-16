@@ -22,6 +22,8 @@ use tempfile::TempDir;
 static DATABASE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 const ADMIN_URL_ENV: &str = "RUDDER_MIGRATION_SERVICE_TEST_ADMIN_URL";
+const SHIPPED_JOURNAL_ENTRIES: usize = 180;
+const SHIPPED_MIGRATION_FILES: usize = 182;
 const TEST_RECOVERY_DUMP: &[u8] = b"-- Rudder database backup\n--\n-- PostgreSQL database dump\n--\nSET statement_timeout = 0;\nCREATE SCHEMA drizzle;\nCREATE TABLE drizzle.__drizzle_migrations (\n    id integer NOT NULL,\n    hash text NOT NULL,\n    created_at bigint\n);\nCOPY drizzle.__drizzle_migrations (id, hash, created_at) FROM stdin;\n1\tabc\t1000\n\\.\n--\n-- PostgreSQL database dump complete\n--\n";
 
 struct DisposableDatabase {
@@ -362,8 +364,8 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
         MigrationLimits::default(),
     )
     .unwrap();
-    assert_eq!(manifest.journal.entries.len(), 179);
-    assert_eq!(manifest.entries.len(), 181);
+    assert_eq!(manifest.journal.entries.len(), SHIPPED_JOURNAL_ENTRIES);
+    assert_eq!(manifest.entries.len(), SHIPPED_MIGRATION_FILES);
     assert_eq!(
         manifest
             .entries
@@ -384,13 +386,13 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
         })
         .await
         .expect("current shipped source should bootstrap an empty disposable database");
-    assert_eq!(bootstrap.applied_migrations.len(), 181);
+    assert_eq!(bootstrap.applied_migrations.len(), SHIPPED_MIGRATION_FILES);
     let initial_history_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM drizzle.__drizzle_migrations")
             .fetch_one(&database.pool)
             .await
             .unwrap();
-    assert_eq!(initial_history_count, 181);
+    assert_eq!(initial_history_count, SHIPPED_MIGRATION_FILES as i64);
 
     let legacy_index = manifest
         .entries
@@ -432,10 +434,10 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
         serde_json::from_slice(&fs::read(journal_path).unwrap()).unwrap();
     let mut journal = journal;
     journal["entries"].as_array_mut().unwrap().push(json!({
-        "idx": 179,
+        "idx": SHIPPED_JOURNAL_ENTRIES,
         "version": "7",
         "when": 1_800_000_000_000_u64,
-        "tag": "0179_rust_apply_upgrade_probe",
+        "tag": "0180_rust_apply_upgrade_probe",
         "breakpoints": true
     }));
     fs::write(
@@ -444,7 +446,7 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
     )
     .unwrap();
     fs::write(
-        copied_migrations.join("0179_rust_apply_upgrade_probe.sql"),
+        copied_migrations.join("0180_rust_apply_upgrade_probe.sql"),
         "CREATE TABLE public.rust_apply_upgrade_probe (id integer PRIMARY KEY);",
     )
     .unwrap();
@@ -464,7 +466,7 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
         .expect("actual shipped history prefix should accept the appended migration");
     assert_eq!(
         upgrade.applied_migrations,
-        ["0179_rust_apply_upgrade_probe.sql"]
+        ["0180_rust_apply_upgrade_probe.sql"]
     );
     assert!(upgrade.recovery_point.is_some());
     let upgraded_history_count: i64 =
@@ -472,7 +474,7 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
             .fetch_one(&database.pool)
             .await
             .unwrap();
-    assert_eq!(upgraded_history_count, 182);
+    assert_eq!(upgraded_history_count, (SHIPPED_MIGRATION_FILES + 1) as i64);
     let retry = service
         .apply_pending_migrations(&upgraded_manifest, &upgraded_source, || async {
             Err("current database must not request another recovery point".to_owned())
