@@ -1,6 +1,7 @@
 import type { ChatWorkManifestCategory } from "../chat-work-manifest.js";
 import type { ChatConversationMutability } from "../constants.js";
 import type { Approval } from "./approval.js";
+import type { NativeChatExecutionAuthority } from "./heartbeat.js";
 
 export interface ChatLinkedEntity {
   type: "issue" | "project" | "agent" | "goal";
@@ -381,6 +382,10 @@ export interface ChatGeneration {
   orgId: string;
   conversationId: string;
   status: ChatGenerationStatus;
+  executionAuthority?: NativeChatExecutionAuthority;
+  sourceMessageId?: string | null;
+  sourceTurnVariant?: number | null;
+  nativeAdmissionHold?: boolean;
   terminalReason: string | null;
   attemptEpoch: number;
   controlVersion: number;
@@ -402,6 +407,27 @@ export interface ChatGeneration {
   completedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Private Rust admission DTO for a new ordinary Chat text turn. */
+export interface NativeChatTurnAdmissionRequest {
+  conversationId: string;
+  clientMutationId: string;
+  body: string;
+}
+
+/** Safe durable receipt; owner tokens and provider credentials are excluded. */
+export interface NativeChatTurnAdmissionReceipt {
+  conversationId: string;
+  userMessageId: string;
+  generationId: string;
+  generationStatus: ChatGenerationStatus;
+  runId: string;
+  runStatus: string;
+  attemptId: string;
+  executionAuthority: "native_rust";
+  nativeAdmissionHold: boolean;
+  idempotentReplay: boolean;
 }
 
 export interface ChatControlAction {

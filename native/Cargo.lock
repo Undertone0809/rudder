@@ -1736,6 +1736,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-codex-app-server"
+version = "0.7.24"
+dependencies = [
+ "rudder-native-protocol",
+ "rudder-process-host",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-d1-persistence"
 version = "0.7.24"
 dependencies = [
@@ -1749,6 +1761,7 @@ dependencies = [
  "rudder-auth-core",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",
+ "rudder-runtime-core",
  "serde",
  "serde_json",
  "sha2",
