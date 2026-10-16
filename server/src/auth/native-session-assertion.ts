@@ -2,7 +2,7 @@ import type { Request, RequestHandler } from "express";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 const HEADER = "x-rudder-native-session-proof";
-const SCHEMA = "rudder.native-session-assertion.v1";
+const SCHEMA = "rudder.native-identity-assertion.v1";
 const AUDIENCE = "rudder-node-private-ingress";
 const MAX_LIFETIME_SECONDS = 30;
 const MAX_NONCES = 50_000;
@@ -91,7 +91,19 @@ export class NativeSessionAssertionNonceRegistry {
 
 export type NativeSessionAssertionIdentity =
   | { kind: "none" }
-  | { kind: "session"; session_id: string; user_id: string };
+  | { kind: "local_implicit" }
+  | { kind: "session"; session_id: string; user_id: string }
+  | { kind: "board_key"; key_id: string; session_id: string; user_id: string }
+  | { kind: "agent_key"; agent_id: string; key_id: string; org_id: string; session_id: string }
+  | {
+    kind: "agent_jwt";
+    adapter_type: string;
+    agent_id: string;
+    expires_at: number;
+    org_id: string;
+    run_id: string;
+    session_id: string;
+  };
 
 type NativeSessionAssertionPayload = {
   schema: typeof SCHEMA;
@@ -159,12 +171,6 @@ export function nativeSessionAssertionMiddleware(options: {
       return;
     }
     if (isNodeOwnedLifecyclePath(target)) {
-      next();
-      return;
-    }
-
-    const authorization = req.headers.authorization;
-    if (typeof authorization === "string" && authorization.toLowerCase().startsWith("bearer ")) {
       next();
       return;
     }
@@ -250,7 +256,7 @@ function verifyAssertion(value: string, keyHex: string): NativeSessionAssertionP
     || typeof record.request_id !== "string" || typeof record.nonce !== "string"
     || !record.identity || typeof record.identity !== "object" || Array.isArray(record.identity)) return null;
   const identity = record.identity as Record<string, unknown>;
-  if (identity.kind === "none") {
+  if (identity.kind === "none" || identity.kind === "local_implicit") {
     if (Object.keys(identity).length !== 1) return null;
   } else if (identity.kind === "session") {
     if (Object.keys(identity).length !== 3
@@ -258,6 +264,37 @@ function verifyAssertion(value: string, keyHex: string): NativeSessionAssertionP
       || identity.session_id.length > 512
       || typeof identity.user_id !== "string" || !identity.user_id
       || identity.user_id.length > 512) return null;
+  } else if (identity.kind === "board_key") {
+    if (Object.keys(identity).length !== 4
+      || typeof identity.key_id !== "string" || !identity.key_id
+      || identity.key_id.length > 512
+      || typeof identity.session_id !== "string" || !identity.session_id
+      || identity.session_id.length > 512
+      || typeof identity.user_id !== "string" || !identity.user_id
+      || identity.user_id.length > 512) return null;
+  } else if (identity.kind === "agent_key") {
+    if (Object.keys(identity).length !== 5
+      || typeof identity.agent_id !== "string" || !identity.agent_id
+      || identity.agent_id.length > 512
+      || typeof identity.key_id !== "string" || !identity.key_id
+      || identity.key_id.length > 512
+      || typeof identity.org_id !== "string" || !identity.org_id
+      || identity.org_id.length > 512
+      || typeof identity.session_id !== "string" || !identity.session_id
+      || identity.session_id.length > 512) return null;
+  } else if (identity.kind === "agent_jwt") {
+    if (Object.keys(identity).length !== 7
+      || typeof identity.adapter_type !== "string" || !identity.adapter_type
+      || identity.adapter_type.length > 512
+      || typeof identity.agent_id !== "string" || !identity.agent_id
+      || identity.agent_id.length > 512
+      || typeof identity.expires_at !== "number" || !Number.isFinite(identity.expires_at)
+      || typeof identity.org_id !== "string" || !identity.org_id
+      || identity.org_id.length > 512
+      || typeof identity.run_id !== "string" || !identity.run_id
+      || identity.run_id.length > 512
+      || typeof identity.session_id !== "string" || !identity.session_id
+      || identity.session_id.length > 512) return null;
   } else {
     return null;
   }

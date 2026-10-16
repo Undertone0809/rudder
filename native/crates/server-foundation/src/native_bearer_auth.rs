@@ -1,20 +1,21 @@
-//! Native resolution for persisted Rudder bearer API keys.
-//!
-//! This is deliberately limited to `pcp_` API keys. Cookie sessions, local
-//! Agent JWTs, and local-trusted/local-implicit identities remain on the
-//! explicit private-Node compatibility path in public ingress.
+//! Native resolution for persisted Rudder bearer API keys and existing
+//! local Agent JWTs. Organization-specific reads retain their transactional
+//! recheck; common HTTP authentication proves identity to Node while Node
+//! continues to evaluate route and organization permissions.
 
+use super::native_agent_jwt::{self, NativeAgentJwtConfig, NativeAgentJwtIdentity};
+use super::native_session_auth::NativeIngressIdentity;
 use super::{ActorIdentity, AppState, DatabaseState};
 use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, Pool, Postgres};
 
-#[derive(Debug)]
 pub(super) enum NativeBearerResolution {
     Compatibility,
     Authorized {
         actor: ActorIdentity,
         session_id: String,
         token_hash: String,
+        proof_identity: Box<NativeIngressIdentity>,
     },
     Unauthorized,
     Forbidden,
@@ -61,6 +62,21 @@ impl AppState {
             Err(_) => NativeBearerResolution::Unavailable,
         }
     }
+
+    pub(super) async fn resolve_public_bearer(
+        &self,
+        token: &str,
+        requested_org_id: Option<&str>,
+        jwt_config: &NativeAgentJwtConfig,
+    ) -> NativeBearerResolution {
+        let DatabaseState::Configured(pool) = &self.database else {
+            return NativeBearerResolution::DatabaseDisabled;
+        };
+        match resolve_with_agent_jwt(pool, token, requested_org_id, jwt_config).await {
+            Ok(resolution) => resolution,
+            Err(_) => NativeBearerResolution::Unavailable,
+        }
+    }
 }
 
 async fn resolve(
@@ -68,26 +84,78 @@ async fn resolve(
     token: &str,
     requested_org_id: &str,
 ) -> Result<NativeBearerResolution, sqlx::Error> {
+    Ok(resolve_api_keys(pool, token, Some(requested_org_id))
+        .await?
+        .unwrap_or(NativeBearerResolution::Unauthorized))
+}
+
+async fn resolve_with_agent_jwt(
+    pool: &Pool<Postgres>,
+    token: &str,
+    requested_org_id: Option<&str>,
+    jwt_config: &NativeAgentJwtConfig,
+) -> Result<NativeBearerResolution, sqlx::Error> {
+    if let Some(resolution) = resolve_api_keys(pool, token, requested_org_id).await? {
+        return Ok(resolution);
+    }
+
+    let now = crate::unix_time_seconds() as f64;
+    let Some(identity) = native_agent_jwt::verify(token, jwt_config, now) else {
+        return Ok(NativeBearerResolution::Unauthorized);
+    };
+    if uuid::Uuid::parse_str(&identity.agent_id).is_err() {
+        return Ok(NativeBearerResolution::Unauthorized);
+    }
+
+    let mut transaction = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *transaction)
+        .await?;
+    let access =
+        revalidate_native_agent_jwt_in_snapshot(&mut transaction, &identity, requested_org_id)
+            .await?;
+    transaction.commit().await?;
+    match access {
+        NativeBearerAccess::Authorized => {
+            let actor = match ActorIdentity::new("agent", &identity.agent_id) {
+                Ok(actor) => actor,
+                Err(_) => return Ok(NativeBearerResolution::Unauthorized),
+            };
+            Ok(NativeBearerResolution::Authorized {
+                actor,
+                session_id: format!("agent-jwt:{}", identity.agent_id),
+                token_hash: hash_token(token),
+                proof_identity: Box::new(NativeIngressIdentity::AgentJwt(identity)),
+            })
+        }
+        NativeBearerAccess::Unauthorized => Ok(NativeBearerResolution::Unauthorized),
+        NativeBearerAccess::Forbidden => Ok(NativeBearerResolution::Forbidden),
+    }
+}
+
+async fn resolve_api_keys(
+    pool: &Pool<Postgres>,
+    token: &str,
+    requested_org_id: Option<&str>,
+) -> Result<Option<NativeBearerResolution>, sqlx::Error> {
     let token_hash = hash_token(token);
 
     // Node checks board keys first, then agent keys. Preserve that precedence
     // (including falling through when a board row has no corresponding user).
     if let Some(board) = resolve_board_key(pool, &token_hash, requested_org_id).await? {
-        return Ok(board);
+        return Ok(Some(board));
     }
     if let Some(agent) = resolve_agent_key(pool, &token_hash, requested_org_id).await? {
-        return Ok(agent);
+        return Ok(Some(agent));
     }
 
-    // A recognized native credential never falls through to the Node grant
-    // adapter, even when it is unknown, revoked, expired, or otherwise denied.
-    Ok(NativeBearerResolution::Unauthorized)
+    Ok(None)
 }
 
 async fn resolve_board_key(
     pool: &Pool<Postgres>,
     token_hash: &str,
-    requested_org_id: &str,
+    requested_org_id: Option<&str>,
 ) -> Result<Option<NativeBearerResolution>, sqlx::Error> {
     let key = sqlx::query_as::<_, (String, String)>(
         r#"
@@ -141,9 +209,15 @@ async fn resolve_board_key(
         Ok(actor) => actor,
         Err(_) => return Ok(Some(NativeBearerResolution::Unauthorized)),
     };
-    let mut connection = pool.acquire().await?;
+    // Start the authorization snapshot only after the guarded key touch has
+    // completed. A revoke that committed while that UPDATE waited must be
+    // visible in the later snapshot.
+    let mut transaction = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *transaction)
+        .await?;
     match revalidate_native_bearer_in_snapshot(
-        &mut connection,
+        &mut transaction,
         token_hash,
         requested_org_id,
         &actor,
@@ -153,21 +227,31 @@ async fn resolve_board_key(
     {
         NativeBearerAccess::Authorized => {}
         NativeBearerAccess::Unauthorized => {
+            transaction.commit().await?;
             return Ok(Some(NativeBearerResolution::Unauthorized));
         }
-        NativeBearerAccess::Forbidden => return Ok(Some(NativeBearerResolution::Forbidden)),
+        NativeBearerAccess::Forbidden => {
+            transaction.commit().await?;
+            return Ok(Some(NativeBearerResolution::Forbidden));
+        }
     }
+    transaction.commit().await?;
     Ok(Some(NativeBearerResolution::Authorized {
         actor,
         session_id: format!("board-key:{key_id}"),
         token_hash: token_hash.to_owned(),
+        proof_identity: Box::new(NativeIngressIdentity::BoardKey {
+            user_id,
+            key_id,
+            token_hash: token_hash.to_owned(),
+        }),
     }))
 }
 
 async fn resolve_agent_key(
     pool: &Pool<Postgres>,
     token_hash: &str,
-    requested_org_id: &str,
+    requested_org_id: Option<&str>,
 ) -> Result<Option<NativeBearerResolution>, sqlx::Error> {
     let key = sqlx::query_as::<_, (String, String, String)>(
         r#"
@@ -202,33 +286,48 @@ async fn resolve_agent_key(
         return Ok(Some(NativeBearerResolution::Unauthorized));
     }
 
-    let agent = sqlx::query_as::<_, (String, String)>(
-        "SELECT org_id::text, status FROM agents WHERE id = $1::uuid LIMIT 1",
-    )
-    .bind(&agent_id)
-    .fetch_optional(pool)
-    .await?;
-    let Some((agent_org_id, status)) = agent else {
-        return Ok(Some(NativeBearerResolution::Unauthorized));
-    };
-
-    if status == "terminated" || status == "pending_approval" {
-        return Ok(Some(NativeBearerResolution::Unauthorized));
-    }
-    // Fail closed on inconsistent legacy data rather than letting the key's
-    // org claim diverge from its owning agent.
-    if key_org_id != agent_org_id || key_org_id != requested_org_id {
-        return Ok(Some(NativeBearerResolution::Forbidden));
-    }
-
     let actor = match ActorIdentity::new("agent", &agent_id) {
         Ok(actor) => actor,
         Err(_) => return Ok(Some(NativeBearerResolution::Unauthorized)),
     };
+    // As with Board keys, establish the repeatable-read snapshot after the
+    // guarded touch completes so a concurrent revoke cannot be hidden by a
+    // snapshot opened before its lock wait.
+    let mut transaction = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *transaction)
+        .await?;
+    let session_id = format!("agent-key:{key_id}");
+    match revalidate_native_bearer_in_snapshot(
+        &mut transaction,
+        token_hash,
+        requested_org_id,
+        &actor,
+        &session_id,
+    )
+    .await?
+    {
+        NativeBearerAccess::Authorized => {}
+        NativeBearerAccess::Unauthorized => {
+            transaction.commit().await?;
+            return Ok(Some(NativeBearerResolution::Unauthorized));
+        }
+        NativeBearerAccess::Forbidden => {
+            transaction.commit().await?;
+            return Ok(Some(NativeBearerResolution::Forbidden));
+        }
+    }
+    transaction.commit().await?;
     Ok(Some(NativeBearerResolution::Authorized {
         actor,
-        session_id: format!("agent-key:{key_id}"),
+        session_id,
         token_hash: token_hash.to_owned(),
+        proof_identity: Box::new(NativeIngressIdentity::AgentKey {
+            agent_id,
+            org_id: key_org_id,
+            key_id,
+            token_hash: token_hash.to_owned(),
+        }),
     }))
 }
 
@@ -238,7 +337,7 @@ async fn resolve_agent_key(
 pub(super) async fn revalidate_native_bearer_in_snapshot(
     connection: &mut PgConnection,
     token_hash: &str,
-    requested_org_id: &str,
+    requested_org_id: Option<&str>,
     actor: &ActorIdentity,
     session_id: &str,
 ) -> Result<NativeBearerAccess, sqlx::Error> {
@@ -271,31 +370,34 @@ pub(super) async fn revalidate_native_bearer_in_snapshot(
         if !user_exists {
             return Ok(NativeBearerAccess::Unauthorized);
         }
-        let (is_instance_admin, has_membership): (bool, bool) = sqlx::query_as(
-            r#"
-            SELECT
-              EXISTS (
-                SELECT 1 FROM instance_user_roles
-                WHERE user_id = $1 AND role = 'instance_admin'
-              ),
-              EXISTS (
-                SELECT 1 FROM organization_memberships
-                WHERE principal_type = 'user'
-                  AND principal_id = $1
-                  AND status = 'active'
-                  AND org_id::text = $2
-              )
-            "#,
-        )
-        .bind(&user_id)
-        .bind(requested_org_id)
-        .fetch_one(&mut *connection)
-        .await?;
-        return Ok(if is_instance_admin || has_membership {
-            NativeBearerAccess::Authorized
-        } else {
-            NativeBearerAccess::Forbidden
-        });
+        if let Some(requested_org_id) = requested_org_id {
+            let (is_instance_admin, has_membership): (bool, bool) = sqlx::query_as(
+                r#"
+                SELECT
+                  EXISTS (
+                    SELECT 1 FROM instance_user_roles
+                    WHERE user_id = $1 AND role = 'instance_admin'
+                  ),
+                  EXISTS (
+                    SELECT 1 FROM organization_memberships
+                    WHERE principal_type = 'user'
+                      AND principal_id = $1
+                      AND status = 'active'
+                      AND org_id::text = $2
+                  )
+                "#,
+            )
+            .bind(&user_id)
+            .bind(requested_org_id)
+            .fetch_one(&mut *connection)
+            .await?;
+            return Ok(if is_instance_admin || has_membership {
+                NativeBearerAccess::Authorized
+            } else {
+                NativeBearerAccess::Forbidden
+            });
+        }
+        return Ok(NativeBearerAccess::Authorized);
     }
 
     if let Some(key_id) = session_id.strip_prefix("agent-key:") {
@@ -325,7 +427,7 @@ pub(super) async fn revalidate_native_bearer_in_snapshot(
         {
             return Ok(NativeBearerAccess::Unauthorized);
         }
-        if key_org_id != requested_org_id
+        if requested_org_id.is_some_and(|org_id| key_org_id != org_id)
             || agent_org_id.as_deref() != Some(key_org_id.as_str())
             || owner_id != actor.id
         {
@@ -339,6 +441,29 @@ pub(super) async fn revalidate_native_bearer_in_snapshot(
     }
 
     Ok(NativeBearerAccess::Unauthorized)
+}
+
+pub(super) async fn revalidate_native_agent_jwt_in_snapshot(
+    connection: &mut PgConnection,
+    identity: &NativeAgentJwtIdentity,
+    requested_org_id: Option<&str>,
+) -> Result<NativeBearerAccess, sqlx::Error> {
+    let agent = sqlx::query_as::<_, (String, String)>(
+        "SELECT org_id::text, status FROM agents WHERE id = $1::uuid LIMIT 1",
+    )
+    .bind(&identity.agent_id)
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some((agent_org_id, status)) = agent else {
+        return Ok(NativeBearerAccess::Unauthorized);
+    };
+    if agent_org_id != identity.org_id || status == "terminated" || status == "pending_approval" {
+        return Ok(NativeBearerAccess::Unauthorized);
+    }
+    if requested_org_id.is_some_and(|org_id| org_id != identity.org_id) {
+        return Ok(NativeBearerAccess::Forbidden);
+    }
+    Ok(NativeBearerAccess::Authorized)
 }
 
 #[cfg(test)]

@@ -161,6 +161,77 @@ describe("native public-ingress session assertion", () => {
     }
   });
 
+  it("uses the native Agent JWT identity for Bearer requests without resolving Node auth", async () => {
+    const { app, resolver, selectedTables } = protectedApp();
+    const listener = await listen(app);
+    const agentProof = signNativeSessionAssertion({
+      key: KEY,
+      method: "POST",
+      target: "/protected?view=current",
+      identity: {
+        kind: "agent_jwt",
+        adapter_type: "codex_local",
+        agent_id: "agent-native-1",
+        expires_at: 2_000,
+        org_id: "org-native-1",
+        run_id: "run-native-1",
+        session_id: "agent-jwt:agent-native-1",
+      },
+      nowSeconds: 1_000,
+    });
+    try {
+      const response = await sendJson(listener.origin, "/protected?view=current", {
+        headers: {
+          authorization: "Bearer valid-legacy-agent-jwt",
+          "x-rudder-native-session-proof": agentProof,
+        },
+      });
+      expect(response.status).toBe(200);
+      const payload = JSON.parse(response.body) as { actor: Request["actor"] };
+      expect(payload.actor).toMatchObject({
+        type: "agent",
+        source: "agent_jwt",
+        agentId: "agent-native-1",
+        orgId: "org-native-1",
+        runId: "run-native-1",
+        adapterType: "codex_local",
+        sessionId: "agent-jwt:agent-native-1",
+      });
+      expect(resolver).not.toHaveBeenCalled();
+      expect(selectedTables).toEqual([]);
+    } finally {
+      await close(listener.server);
+    }
+  });
+
+  it("maps the explicit local implicit proof to the existing loopback Board actor", async () => {
+    const { app, resolver } = protectedApp();
+    const listener = await listen(app);
+    try {
+      const localProof = signNativeSessionAssertion({
+        key: KEY,
+        method: "POST",
+        target: "/protected?view=current",
+        identity: { kind: "local_implicit" },
+        nowSeconds: 1_000,
+      });
+      const response = await sendJson(listener.origin, "/protected?view=current", {
+        headers: { "x-rudder-native-session-proof": localProof },
+      });
+      expect(response.status).toBe(200);
+      expect(JSON.parse(response.body).actor).toMatchObject({
+        type: "board",
+        userId: "local-board",
+        source: "local_implicit",
+        sessionId: "local-implicit",
+        isInstanceAdmin: true,
+      });
+      expect(resolver).not.toHaveBeenCalled();
+    } finally {
+      await close(listener.server);
+    }
+  });
+
   it("rejects forged, wrong-target, wrong-method, and replayed assertions before actor resolution", async () => {
     const { app, resolver } = protectedApp();
     const listener = await listen(app);
@@ -311,7 +382,7 @@ describe("native public-ingress session assertion", () => {
     }
   });
 
-  it("preserves the existing Bearer and auth-lifecycle bridge paths", async () => {
+  it("requires a native proof for Bearer identity and preserves the auth-lifecycle bridge path", async () => {
     const app = express();
     app.use(nativeSessionAssertionMiddleware({ key: KEY, nowSeconds: () => 1_000 }));
     app.get("/api/auth/sign-out", (_req, res) => res.sendStatus(204));
@@ -323,7 +394,8 @@ describe("native public-ingress session assertion", () => {
       const bearer = await sendJson(listener.origin, "/protected", {
         headers: { authorization: "Bearer legacy-token" },
       });
-      expect(bearer.status).toBe(204);
+      expect(bearer.status).toBe(401);
+      expect(JSON.parse(bearer.body).code).toBe("native_session_proof_required");
     } finally {
       await close(listener.server);
     }

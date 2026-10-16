@@ -25,18 +25,24 @@ function parseNumber(value: string | undefined, fallback: number) {
   return Math.floor(parsed);
 }
 
-function jwtConfig() {
+export function localAgentJwtAuthSettings() {
   const secret =
     process.env.RUDDER_AGENT_JWT_SECRET ??
     process.env.BETTER_AUTH_SECRET ??
     "rudder-dev-secret";
-  if (!secret) return null;
-
   return {
     secret,
-    ttlSeconds: parseNumber(process.env.RUDDER_AGENT_JWT_TTL_SECONDS, 60 * 60 * 48),
     issuer: process.env.RUDDER_AGENT_JWT_ISSUER ?? "rudder",
     audience: process.env.RUDDER_AGENT_JWT_AUDIENCE ?? "rudder-api",
+  };
+}
+
+function jwtConfig() {
+  const settings = localAgentJwtAuthSettings();
+  if (!settings.secret) return null;
+  return {
+    ...settings,
+    ttlSeconds: parseNumber(process.env.RUDDER_AGENT_JWT_TTL_SECONDS, 60 * 60 * 48),
   };
 }
 

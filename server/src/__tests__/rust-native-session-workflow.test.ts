@@ -2,7 +2,7 @@ import type { Db } from "@rudderhq/db";
 import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudderhq/db";
 import express from "express";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
@@ -25,6 +25,7 @@ const LOCAL_SESSION_SECRET = "desktop-local-session-e2e-secret";
 const ASSERTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const INGRESS_KEY = "fedcba9876543210fedcba9876543210";
 const ACTOR_KEY = "1023456789abcdef0123456789abcdef";
+const AGENT_JWT_SECRET = "native-agent-jwt-e2e-secret";
 const organizationUrlKey = "native-session-e2e";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -42,8 +43,12 @@ type StartupReceipt = {
     publicListener?: boolean;
     directAuthorities?: string[];
     nativeAuthentication?: {
+      authority?: string;
       directRoutes?: string[];
+      supportedCredentialStores?: string[];
       sessionCookieAuthority?: { kind?: string; unmigrated?: string[] };
+      localImplicitEnabled?: boolean;
+      localImplicitConstraint?: string;
     };
   };
 };
@@ -54,9 +59,13 @@ let connectionString = "";
 let fixtureSql: ReturnType<typeof postgres> | null = null;
 let db: Db | null = null;
 let orgId = "";
+let otherOrgId = "";
 let userId = "";
+let agentId = "";
 let sessionToken = "";
 let sessionId = "";
+let boardKeyToken = "";
+let agentKeyToken = "";
 let nodeServer: Server | undefined;
 let privateNodePort = 0;
 let nativeChild: ChildProcess | undefined;
@@ -129,6 +138,36 @@ function sessionCookie(token = sessionToken, dontRemember?: string, secret = SES
     cookies.push(`better-auth.dont_remember=${signCookieValue(dontRemember, secret)}`);
   }
   return cookies.join("; ");
+}
+
+function signAgentJwt(input: {
+  agentId: string;
+  orgId: string;
+  runId?: string;
+  adapterType?: string;
+}): string {
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const signingInput = `${encode({ alg: "HS256", typ: "JWT" })}.${encode({
+    sub: input.agentId,
+    org_id: input.orgId,
+    adapter_type: input.adapterType ?? "claude_local",
+    run_id: input.runId ?? "native-agent-jwt-run",
+    iat: now,
+    exp: now + 3_600,
+    iss: "rudder",
+    aud: "rudder-api",
+  })}`;
+  return `${signingInput}.${createHmac("sha256", AGENT_JWT_SECRET).update(signingInput).digest("base64url")}`;
+}
+
+function hashApiToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function forgeAgentJwt(): string {
+  const token = signAgentJwt({ agentId, orgId });
+  return `${token.slice(0, token.lastIndexOf(".") + 1)}${"x".repeat(43)}`;
 }
 
 async function verifySessionTokenIndexUpgradeWithExistingRows(): Promise<void> {
@@ -212,7 +251,7 @@ async function buildSourceBinary(): Promise<string> {
     "--bin", "rudder-server-foundation", "--message-format=json"];
   const child = spawn(process.platform === "win32" ? "cargo.exe" : "cargo", args, {
     cwd: repositoryRoot,
-    env: process.env,
+    env: { ...process.env, CARGO_TARGET_DIR: "/private/tmp/rudder-agent-auth-target" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let executable: string | undefined;
@@ -270,7 +309,11 @@ async function stopNative(): Promise<void> {
   nativeChild = undefined;
 }
 
-async function startNative(kind: "better_auth" | "local_account", secret: string): Promise<StartupReceipt> {
+async function startNative(
+  kind: "better_auth" | "local_account" | null,
+  secret: string | undefined,
+  localImplicitEnabled = false,
+): Promise<StartupReceipt> {
   nativeStderr = "";
   nativeChild = spawn(nativeBinaryPath, [], {
     env: {
@@ -283,11 +326,19 @@ async function startNative(kind: "better_auth" | "local_account", secret: string
       RUDDER_NATIVE_PUBLIC_LISTEN: "127.0.0.1:0",
       RUDDER_NATIVE_NODE_UPSTREAM: `http://127.0.0.1:${privateNodePort}`,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: INGRESS_KEY,
-      RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
-      RUDDER_NATIVE_SESSION_AUTH_KIND: kind,
-      RUDDER_NATIVE_SESSION_AUTH_SECRET: secret,
-      RUDDER_NATIVE_SESSION_COOKIE_SECURE: "false",
-      RUDDER_NATIVE_SESSION_ASSERTION_KEY: ASSERTION_KEY,
+      RUDDER_NATIVE_IDENTITY_AUTH_MODE: "required",
+      RUDDER_NATIVE_IDENTITY_ASSERTION_KEY: ASSERTION_KEY,
+      RUDDER_NATIVE_AGENT_JWT_SECRET: AGENT_JWT_SECRET,
+      RUDDER_NATIVE_AGENT_JWT_ISSUER: "rudder",
+      RUDDER_NATIVE_AGENT_JWT_AUDIENCE: "rudder-api",
+      RUDDER_NATIVE_LOCAL_IMPLICIT: String(localImplicitEnabled),
+      ...(kind && secret ? {
+        RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
+        RUDDER_NATIVE_SESSION_AUTH_KIND: kind,
+        RUDDER_NATIVE_SESSION_AUTH_SECRET: secret,
+        RUDDER_NATIVE_SESSION_COOKIE_SECURE: "false",
+        RUDDER_NATIVE_SESSION_ASSERTION_KEY: ASSERTION_KEY,
+      } : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -321,8 +372,17 @@ describe("source-built Rust public native session workflow", () => {
       RETURNING id::text
     `;
     orgId = organization.id;
+    const [otherOrganization] = await fixtureSql`
+      INSERT INTO organizations (url_key, name, issue_prefix)
+      VALUES (${`native-session-other-${suffix}`}, 'Other Native Session E2E', ${`O${suffix.slice(0, 7).toUpperCase()}`})
+      RETURNING id::text
+    `;
+    otherOrgId = otherOrganization.id;
     sessionToken = `native-session-e2e-${suffix}`;
     sessionId = `native-session-id-${suffix}`;
+    agentId = randomUUID();
+    boardKeyToken = `pcp_native_board_${suffix}`;
+    agentKeyToken = `pcp_native_agent_${suffix}`;
     await fixtureSql`
       INSERT INTO "user" (id, name, email, created_at, updated_at)
       VALUES (${userId}, 'Native Session E2E User', ${`${userId}@invalid.test`}, now(), now())
@@ -330,6 +390,18 @@ describe("source-built Rust public native session workflow", () => {
     await fixtureSql`
       INSERT INTO organization_memberships (org_id, principal_type, principal_id, status)
       VALUES (${orgId}::uuid, 'user', ${userId}, 'active')
+    `;
+    await fixtureSql`
+      INSERT INTO agents (id, org_id, name, status, agent_runtime_type)
+      VALUES (${agentId}::uuid, ${orgId}::uuid, 'Native JWT E2E Agent', 'idle', 'claude_local')
+    `;
+    await fixtureSql`
+      INSERT INTO board_api_keys (user_id, name, key_hash)
+      VALUES (${userId}, 'Native public ingress E2E', ${hashApiToken(boardKeyToken)})
+    `;
+    await fixtureSql`
+      INSERT INTO agent_api_keys (agent_id, org_id, name, key_hash)
+      VALUES (${agentId}::uuid, ${orgId}::uuid, 'Native public ingress E2E', ${hashApiToken(agentKeyToken)})
     `;
     await fixtureSql`
       INSERT INTO session (id, token, user_id, expires_at, created_at, updated_at)
@@ -387,7 +459,15 @@ describe("source-built Rust public native session workflow", () => {
       kind: "better_auth",
       unmigrated: ["auth_lifecycle_routes", "websocket_session_resolution"],
     });
+    expect(startup.publicIngress?.nativeAuthentication).toMatchObject({
+      authority: "native-managed-http-identity-resolver",
+      supportedCredentialStores: ["board_api_keys", "agent_api_keys", "agent_jwt"],
+    });
     expect(startup.publicIngress?.nativeAuthentication?.directRoutes).toContain("/api/auth/get-session");
+    expect(startup.publicIngress?.nativeAuthentication).toMatchObject({
+      localImplicitEnabled: false,
+      localImplicitConstraint: "disabled",
+    });
     console.info("Native session workflow disposable fixture", {
       tempRoot: fixtureRoot || "external-test-database",
       database: new URL(connectionString).pathname.slice(1),
@@ -443,8 +523,12 @@ describe("source-built Rust public native session workflow", () => {
     try {
       if (fixtureSql && userId) {
         await fixtureSql`DELETE FROM organization_memberships WHERE org_id = ${orgId}::uuid`;
+        await fixtureSql`DELETE FROM board_api_keys WHERE user_id = ${userId}`;
+        await fixtureSql`DELETE FROM agent_api_keys WHERE agent_id = ${agentId}::uuid`;
+        await fixtureSql`DELETE FROM agents WHERE id = ${agentId}::uuid`;
         await fixtureSql`DELETE FROM "user" WHERE id = ${userId}`;
         await fixtureSql`DELETE FROM organizations WHERE id = ${orgId}::uuid`;
+        await fixtureSql`DELETE FROM organizations WHERE id = ${otherOrgId}::uuid`;
       }
     } finally {
       if (db) {
@@ -553,6 +637,76 @@ describe("source-built Rust public native session workflow", () => {
     });
     expect(nodeRouteCalls).toBe(1);
     expect(sessionResolverCalls).toBe(0);
+
+    const agentRunId = `native-agent-jwt-run-${Date.now()}`;
+    const jwt = signAgentJwt({ agentId, orgId, runId: agentRunId });
+    const jwtResponse = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${jwt}`,
+      "x-rudder-run-id": agentRunId,
+      "x-rudder-agent-id": agentId,
+    }, "POST");
+    expect(jwtResponse.status).toBe(200);
+    expect(JSON.parse(jwtResponse.body).actor).toMatchObject({
+      type: "agent",
+      source: "agent_jwt",
+      agentId,
+      orgId,
+      runId: agentRunId,
+      adapterType: "claude_local",
+    });
+    expect(sessionResolverCalls).toBe(0);
+
+    const boardKeyResponse = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${boardKeyToken}`,
+    }, "POST");
+    expect(boardKeyResponse.status).toBe(200);
+    expect(JSON.parse(boardKeyResponse.body).actor).toMatchObject({
+      type: "board",
+      source: "board_key",
+      userId,
+    });
+
+    const agentKeyResponse = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${agentKeyToken}`,
+    }, "POST");
+    expect(agentKeyResponse.status).toBe(200);
+    expect(JSON.parse(agentKeyResponse.body).actor).toMatchObject({
+      type: "agent",
+      source: "agent_key",
+      agentId,
+      orgId,
+    });
+    expect(sessionResolverCalls).toBe(0);
+
+    const jwtDirectory = await getSessionFromPublic(`/api/orgs/${orgId}/members/directory`, {
+      authorization: `Bearer ${jwt}`,
+    });
+    expect(jwtDirectory.status).toBe(200);
+    const wrongOrgDirectory = await getSessionFromPublic(`/api/orgs/${otherOrgId}/members/directory`, {
+      authorization: `Bearer ${jwt}`,
+    });
+    expect(wrongOrgDirectory.status).toBe(403);
+
+    const beforeRejectedJwt = nodeRouteCalls;
+    const forged = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${forgeAgentJwt()}`,
+    }, "POST");
+    expect(forged.status).toBe(401);
+    expect(nodeRouteCalls).toBe(beforeRejectedJwt);
+
+    await fixtureSql!`UPDATE agents SET status = 'terminated' WHERE id = ${agentId}::uuid`;
+    const terminated = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${jwt}`,
+    }, "POST");
+    expect(terminated.status).toBe(401);
+    expect(nodeRouteCalls).toBe(beforeRejectedJwt);
+    await fixtureSql!`UPDATE agents SET status = 'pending_approval' WHERE id = ${agentId}::uuid`;
+    const pending = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${jwt}`,
+    }, "POST");
+    expect(pending.status).toBe(401);
+    expect(nodeRouteCalls).toBe(beforeRejectedJwt);
+    await fixtureSql!`UPDATE agents SET status = 'idle' WHERE id = ${agentId}::uuid`;
 
     const invalidCookie = await getSessionFromPublic("/api/native-session-echo", {
       cookie: "better-auth.session_token=forged",
@@ -712,6 +866,43 @@ describe("source-built Rust public native session workflow", () => {
     expect(response.status).toBe(401);
     expect(sessionResolverCalls).toBe(0);
   }, 20_000);
+
+  it("allows local implicit only for absent credentials on the loopback public listener", async () => {
+    await stopNative();
+    const startup = await startNative(null, undefined, true);
+    expect(startup.publicIngress?.nativeAuthentication).toMatchObject({
+      localImplicitEnabled: true,
+      localImplicitConstraint: "numeric_loopback_listener_and_actual_peer",
+    });
+
+    const before = nodeRouteCalls;
+    const local = await getSessionFromPublic("/api/native-session-echo", {}, "POST");
+    expect(local.status).toBe(200);
+    expect(JSON.parse(local.body).actor).toMatchObject({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+    });
+
+    const forged = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${forgeAgentJwt()}`,
+    }, "POST");
+    expect(forged.status).toBe(401);
+    const invalidCookie = await getSessionFromPublic("/api/native-session-echo", {
+      cookie: "better-auth.session_token=forged",
+    }, "POST");
+    expect(invalidCookie.status).toBe(401);
+    const invalidPcp = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: "Bearer pcp_invalid_local_implicit_e2e",
+    }, "POST");
+    expect(invalidPcp.status).toBe(401);
+    const malformedAuthorization = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: "Basic supplied-credential",
+    }, "POST");
+    expect(malformedAuthorization.status).toBe(401);
+    expect(nodeRouteCalls).toBe(before + 1);
+    expect(sessionResolverCalls).toBe(0);
+  }, 30_000);
 });
 
 function getSessionFromPrivate(

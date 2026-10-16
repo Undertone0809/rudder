@@ -44,6 +44,10 @@ describe("explicit public ingress startup", () => {
     expect(ingress.appOptions.rustPublicIngress?.authorizationKey).toBe(ingress.appOptions.rustPublicIngressAuthKey);
     expect(ingress.appOptions.rustPublicIngressAuthKey).not.toBe(ingress.appOptions.rustFoundationActorEnvelopeKey);
     expect(ingress.appOptions.rustPublicIngress?.trustedProxies).toBe("192.0.2.1,::1");
+    expect(ingress.appOptions.rustPublicIngress?.identityAuth).toMatchObject({
+      localImplicitEnabled: true,
+      assertionKey: expect.any(String),
+    });
   });
 
   it("fails closed if private port selection collides with the public port", async () => {
@@ -66,6 +70,7 @@ describe("explicit public ingress startup", () => {
       secret: "exact-better-auth-secret",
       secureCookie: false,
     });
+    expect(ingress.appOptions.rustPublicIngress?.identityAuth?.localImplicitEnabled).toBe(false);
   });
 
   it("requires Desktop's separate session secret and passes the exact local-cookie mode", async () => {
@@ -82,6 +87,7 @@ describe("explicit public ingress startup", () => {
       secret: "desktop-session-secret",
       secureCookie: true,
     });
+    expect(ingress.appOptions.rustPublicIngress?.identityAuth?.localImplicitEnabled).toBe(false);
     expect(ingress.nodeListenHost).toBe("127.0.0.1");
   });
 

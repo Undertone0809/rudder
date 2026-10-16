@@ -51,6 +51,7 @@ mod runtime_spans;
 pub use messenger_state::MESSENGER_STATE_ACTION;
 
 mod live_run_reads;
+mod native_agent_jwt;
 mod run_reads;
 mod run_visibility;
 pub use live_run_reads::LIVE_RUN_READ_ACTION;
@@ -74,6 +75,7 @@ mod member_directory_auth;
 mod native_bearer_auth;
 mod native_session_auth;
 use member_directory_auth::{MemberDirectoryNativeAccess, MemberDirectoryNativeAuth};
+use native_agent_jwt::NativeAgentJwtIdentity;
 use native_session_auth::NativeSessionIdentity;
 use public_ingress_config::NativeSessionAuthKind;
 mod organization_catalog_reads;
@@ -1444,6 +1446,33 @@ impl AppState {
         });
         self.organization_member_directory_with_native_identity(org_id, query, native_auth)
             .await
+    }
+
+    async fn organization_member_directory_with_native_agent_jwt(
+        &self,
+        org_id: &str,
+        query: MemberDirectoryQuery,
+        identity: &NativeAgentJwtIdentity,
+    ) -> HttpResponse {
+        self.organization_member_directory_with_native_identity(
+            org_id,
+            query,
+            Some(MemberDirectoryNativeAuth::AgentJwt { identity }),
+        )
+        .await
+    }
+
+    async fn organization_member_directory_with_native_implicit_board(
+        &self,
+        org_id: &str,
+        query: MemberDirectoryQuery,
+    ) -> HttpResponse {
+        self.organization_member_directory_with_native_identity(
+            org_id,
+            query,
+            Some(MemberDirectoryNativeAuth::LocalImplicit),
+        )
+        .await
     }
 
     async fn organization_member_directory_with_native_session(

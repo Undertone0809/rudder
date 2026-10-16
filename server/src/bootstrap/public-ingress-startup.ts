@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
+import { localAgentJwtAuthSettings } from "../agent-auth-jwt.js";
 import type { RudderAppHandle } from "../app.js";
 import { betterAuthSessionCookieSettings } from "../auth/better-auth.js";
 import type { Config } from "../config.js";
@@ -31,13 +32,14 @@ export async function preparePublicIngressStartup(
   const appOptions: Pick<RudderAppOptions, "rustFoundationActorEnvelopeKey" | "rustPublicIngressAuthKey" | "rustPublicIngress"> = {};
   if (enabled) {
     const authorizationKey = randomBytes(32).toString("hex");
-    const sessionAssertionKey = randomBytes(32).toString("hex");
+    const identityAssertionKey = randomBytes(32).toString("hex");
+    const agentJwt = localAgentJwtAuthSettings();
     const sessionAuth = localAccountAuth
       ? {
           kind: "local_account" as const,
           secret: localAccountAuth.sessionSecret,
           secureCookie: localAccountAuth.secureCookie ?? false,
-          assertionKey: sessionAssertionKey,
+          assertionKey: identityAssertionKey,
         }
       : config.deploymentMode === "authenticated"
         ? (() => {
@@ -49,7 +51,7 @@ export async function preparePublicIngressStartup(
               kind: "better_auth" as const,
               secret: settings.secret,
               secureCookie: settings.secureCookie,
-              assertionKey: sessionAssertionKey,
+              assertionKey: identityAssertionKey,
             };
           })()
         : undefined;
@@ -63,6 +65,13 @@ export async function preparePublicIngressStartup(
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
       trustedProxies: config.rustPublicIngressTrustedProxies,
+      identityAuth: {
+        assertionKey: identityAssertionKey,
+        agentJwtSecret: agentJwt.secret,
+        agentJwtIssuer: agentJwt.issuer,
+        agentJwtAudience: agentJwt.audience,
+        localImplicitEnabled: config.deploymentMode === "local_trusted" && !localAccountAuth,
+      },
       ...(sessionAuth ? { sessionAuth } : {}),
     };
   }

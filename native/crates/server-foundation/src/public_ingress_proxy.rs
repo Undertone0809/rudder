@@ -407,10 +407,10 @@ mod tests {
                             .as_str()
                             .to_owned();
                         let proof = crate::native_session_auth::issue_assertion(
-                            &config,
+                            &config.assertion_key,
                             request.method().as_str(),
                             &target,
-                            None,
+                            &crate::native_session_auth::NativeIngressIdentity::None,
                         )
                         .expect("native test assertion is valid");
                         proxy

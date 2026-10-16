@@ -4,6 +4,8 @@
 use std::net::SocketAddr;
 use thiserror::Error;
 
+use crate::native_agent_jwt::NativeAgentJwtConfig;
+
 #[derive(Clone)]
 pub struct PublicIngressConfig {
     pub listen_addr: SocketAddr,
@@ -11,6 +13,7 @@ pub struct PublicIngressConfig {
     pub(crate) authorization_key: String,
     pub(crate) forwarding_policy: crate::public_ingress_forwarding::ForwardingPolicy,
     pub(crate) session_auth: Option<NativeSessionAuthConfig>,
+    pub(crate) identity_auth: Option<NativeIdentityAuthConfig>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +28,35 @@ pub(crate) struct NativeSessionAuthConfig {
     pub(crate) secret: String,
     pub(crate) secure_cookie: bool,
     pub(crate) assertion_key: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct NativeIdentityAuthConfig {
+    pub(crate) assertion_key: String,
+    pub(crate) agent_jwt: NativeAgentJwtConfig,
+    pub(crate) local_implicit_enabled: bool,
+}
+
+impl NativeIdentityAuthConfig {
+    pub(crate) fn new(
+        assertion_key: &str,
+        agent_jwt_secret: &str,
+        agent_jwt_issuer: &str,
+        agent_jwt_audience: &str,
+        local_implicit_enabled: bool,
+    ) -> Result<Self, PublicIngressConfigError> {
+        validate_key(assertion_key)
+            .map_err(|_| PublicIngressConfigError::InvalidIdentityAssertionKey)?;
+        Ok(Self {
+            assertion_key: assertion_key.to_owned(),
+            agent_jwt: NativeAgentJwtConfig {
+                secret: agent_jwt_secret.to_owned(),
+                issuer: agent_jwt_issuer.to_owned(),
+                audience: agent_jwt_audience.to_owned(),
+            },
+            local_implicit_enabled,
+        })
+    }
 }
 
 impl NativeSessionAuthConfig {
@@ -77,6 +109,12 @@ pub enum PublicIngressConfigError {
     InvalidSessionSecret,
     #[error("native session assertion key must contain at least 32 bytes and no whitespace")]
     InvalidSessionAssertionKey,
+    #[error("native identity assertion key must contain at least 32 bytes and no whitespace")]
+    InvalidIdentityAssertionKey,
+    #[error("native local implicit authentication requires a numeric loopback listener")]
+    LocalImplicitRequiresLoopback,
+    #[error("native session and identity assertion keys must be identical")]
+    AssertionKeyMismatch,
 }
 
 impl PublicIngressConfig {
@@ -89,6 +127,9 @@ impl PublicIngressConfig {
         let session_secret = crate::optional_env("RUDDER_NATIVE_SESSION_AUTH_SECRET")?;
         let session_cookie_secure = crate::optional_env("RUDDER_NATIVE_SESSION_COOKIE_SECURE")?;
         let session_assertion_key = crate::optional_env("RUDDER_NATIVE_SESSION_ASSERTION_KEY")?;
+        let identity_auth_mode = crate::optional_env("RUDDER_NATIVE_IDENTITY_AUTH_MODE")?;
+        let identity_assertion_key = crate::optional_env("RUDDER_NATIVE_IDENTITY_ASSERTION_KEY")?;
+        let local_implicit = crate::optional_env("RUDDER_NATIVE_LOCAL_IMPLICIT")?;
         match (listen, upstream, key) {
             (None, None, None) => {
                 if session_mode.is_some()
@@ -96,6 +137,12 @@ impl PublicIngressConfig {
                     || session_secret.is_some()
                     || session_cookie_secure.is_some()
                     || session_assertion_key.is_some()
+                    || identity_auth_mode.is_some()
+                    || identity_assertion_key.is_some()
+                    || local_implicit.is_some()
+                    || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_SECRET").is_some()
+                    || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_ISSUER").is_some()
+                    || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_AUDIENCE").is_some()
                 {
                     return Err(crate::ConfigError::invalid(
                         "RUDDER_NATIVE_SESSION_AUTH_MODE",
@@ -105,7 +152,7 @@ impl PublicIngressConfig {
                 Ok(None)
             }
             (Some(listen), Some(upstream), Some(key)) => {
-                let listen = listen.parse().map_err(|_| {
+                let listen: SocketAddr = listen.parse().map_err(|_| {
                     crate::ConfigError::invalid(
                         "RUDDER_NATIVE_PUBLIC_LISTEN",
                         "numeric socket address required",
@@ -177,10 +224,96 @@ impl PublicIngressConfig {
                         ));
                     }
                 };
+                let identity_auth = match (
+                    identity_auth_mode.as_deref(),
+                    identity_assertion_key.as_deref(),
+                    local_implicit.as_deref(),
+                ) {
+                    (None, None, None) => {
+                        return Err(crate::ConfigError::invalid(
+                            "RUDDER_NATIVE_IDENTITY_AUTH_MODE",
+                            "required mode, assertion key and local implicit policy must be configured together",
+                        ));
+                    }
+                    (Some("required"), Some(assertion_key), Some(local_implicit)) => {
+                        let local_implicit_enabled = match local_implicit {
+                            "true" => true,
+                            "false" => false,
+                            _ => {
+                                return Err(crate::ConfigError::invalid(
+                                    "RUDDER_NATIVE_LOCAL_IMPLICIT",
+                                    "expected true or false",
+                                ));
+                            }
+                        };
+                        let agent_jwt_secret = std::env::var("RUDDER_NATIVE_AGENT_JWT_SECRET")
+                            .map_err(|_| {
+                                crate::ConfigError::invalid(
+                                    "RUDDER_NATIVE_AGENT_JWT_SECRET",
+                                    "required when native identity auth is enabled",
+                                )
+                            })?;
+                        let agent_jwt_issuer = std::env::var("RUDDER_NATIVE_AGENT_JWT_ISSUER")
+                            .map_err(|_| {
+                                crate::ConfigError::invalid(
+                                    "RUDDER_NATIVE_AGENT_JWT_ISSUER",
+                                    "required when native identity auth is enabled",
+                                )
+                            })?;
+                        let agent_jwt_audience = std::env::var("RUDDER_NATIVE_AGENT_JWT_AUDIENCE")
+                            .map_err(|_| {
+                                crate::ConfigError::invalid(
+                                    "RUDDER_NATIVE_AGENT_JWT_AUDIENCE",
+                                    "required when native identity auth is enabled",
+                                )
+                            })?;
+                        Some(
+                            NativeIdentityAuthConfig::new(
+                                assertion_key,
+                                &agent_jwt_secret,
+                                &agent_jwt_issuer,
+                                &agent_jwt_audience,
+                                local_implicit_enabled,
+                            )
+                            .map_err(|_| {
+                                crate::ConfigError::invalid(
+                                    "RUDDER_NATIVE_IDENTITY_AUTH_MODE",
+                                    "invalid required identity auth configuration",
+                                )
+                            })?,
+                        )
+                    }
+                    _ => {
+                        return Err(crate::ConfigError::invalid(
+                            "RUDDER_NATIVE_IDENTITY_AUTH_MODE",
+                            "required mode, assertion key and local implicit policy must be configured together",
+                        ));
+                    }
+                };
+                if let (Some(identity), Some(session)) =
+                    (identity_auth.as_ref(), session_auth.as_ref())
+                    && identity.assertion_key != session.assertion_key
+                {
+                    return Err(crate::ConfigError::invalid(
+                        "RUDDER_NATIVE_IDENTITY_ASSERTION_KEY",
+                        "must match RUDDER_NATIVE_SESSION_ASSERTION_KEY",
+                    ));
+                }
+                if identity_auth
+                    .as_ref()
+                    .is_some_and(|identity| identity.local_implicit_enabled)
+                    && !listen.ip().is_loopback()
+                {
+                    return Err(crate::ConfigError::invalid(
+                        "RUDDER_NATIVE_LOCAL_IMPLICIT",
+                        "local implicit authentication requires a loopback listener",
+                    ));
+                }
                 Self::new(listen, &upstream, &key)
                     .map(|mut config| {
                         config.forwarding_policy = policy;
                         config.session_auth = session_auth;
+                        config.identity_auth = identity_auth;
                         config
                     })
                     .map(Some)
@@ -235,6 +368,7 @@ impl PublicIngressConfig {
             authorization_key: authorization_key.to_owned(),
             forwarding_policy: Default::default(),
             session_auth: None,
+            identity_auth: None,
         })
     }
 
