@@ -37,6 +37,29 @@ async fn typed_receipts_finalize_once_with_unknown_cost_and_exact_terminal_proje
     );
     assert_eq!(observation.turn_receipt.usage().unwrap().total_tokens(), 12);
 
+    let selected_model: Option<String> =
+        sqlx::query_scalar("SELECT model FROM heartbeat_run_attempts WHERE id=$1::uuid")
+            .bind(&attempt_id)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(selected_model.as_deref(), Some(MODEL));
+    let events = host.events();
+    let dispatched = events
+        .iter()
+        .find(|event| event["received"]["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(dispatched["received"]["params"]["model"], MODEL);
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=jsonb_set(agent_runtime_config,'{model}',
+         '\"vendor/changed-after-execution\"'::jsonb) WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
     let first = finalize(
         &database.pool,
         &actor,
@@ -60,6 +83,8 @@ async fn typed_receipts_finalize_once_with_unknown_cost_and_exact_terminal_proje
     );
     assert_eq!(latest["scope"], "latest_reported_increment");
     assert_eq!(latest["attemptId"], attempt_id);
+    assert_eq!(latest["model"], MODEL);
+    assert_eq!(latest["modelSource"], "execution_config");
     assert!(latest.get("threadId").is_none());
     assert!(latest.get("turnId").is_none());
     assert_eq!(latest["inputTokens"], 5);

@@ -31,6 +31,51 @@ async fn finalization_snapshot(pool: &sqlx::PgPool, run: &str) -> Value {
     .unwrap()
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and controlled provider"]
+async fn changed_attempt_model_cannot_project_a_terminal_receipt() {
+    assert_ignored_external_dependencies();
+    let (database, host, actor, run, attempt) = database_and_admission("complete").await;
+    let (observed, _host) =
+        execute_on_worker(&database, host, actor, run.clone(), attempt.clone()).await;
+    let observed = observed.unwrap();
+    let before = finalization_snapshot(&database.pool, &run).await;
+    let mut tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE heartbeat_run_attempts SET model='vendor/incorrect-model' WHERE id=$1::uuid",
+    )
+    .bind(&attempt)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let error = finalize(
+        &database.pool,
+        &verified_actor(),
+        &observed.fence,
+        &observed.turn_receipt,
+        observed.cleanup_receipt.as_ref().unwrap(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            rudder_d1_persistence::runtime_bindings::Error::Http(409, _)
+        ),
+        "{error}"
+    );
+    assert_eq!(finalization_snapshot(&database.pool, &run).await, before);
+    let held: bool = sqlx::query_scalar("SELECT r.native_admission_hold AND g.native_admission_hold
+        FROM heartbeat_runs r JOIN chat_generations g ON g.id=r.chat_generation_id WHERE r.id=$1::uuid")
+        .bind(&run).fetch_one(&database.pool).await.unwrap();
+    assert!(held);
+}
+
 async fn retry_after_membership_revocation(row_lock: bool) {
     assert_ignored_external_dependencies();
     let (database, host, actor, run, attempt) = database_and_admission("complete").await;
