@@ -75,7 +75,7 @@ Release readiness and production deployment are separate claims.
 
 Base: ae74493a38f9688980d9ff46d49fff1a32896eab. Rust ingress is opt-in and most
 routes still proxy to Node. Rust migration-service only preflights; Node applies
-migrations. Current-main policy is being reconciled with unmerged PR289. PR262
+migrations. This initial snapshot predates the merged PR289 policy. PR262
 and PR264 are historical branches requiring selective reuse and new acceptance,
 not blanket merging. All phases and the parent objective remain incomplete.
 
@@ -115,10 +115,9 @@ not blanket merging. All phases and the parent objective remain incomplete.
   failures (38, 63 and 3 focused tests passed). Goal read tests passed all 21
   cases on a focused rerun; the initial single failure remains a nondeterministic
   baseline observation, not a diagnosed source defect. The legacy public ingress
-  auth suite still assumes Node ownership of recognized keys and needs updated
-  native-authority coverage. Provider failures exposed a real
-  child-exit transport mapping defect; its bounded compatibility fix is under
-  independent review and must receive a hash-bound policy exception.
+  auth suite was updated and its 20 cases passed. Provider failures exposed a real
+  child-exit transport mapping defect; its bounded compatibility fix now has
+  independent PASS, final reviewer ACCEPT, and a hash-bound policy exception.
 
 No batch has been published yet. Final reviewer acceptance, exact-candidate
 verifier evidence, applicable CI, and protected PR delivery remain mandatory.
@@ -162,3 +161,27 @@ the compatibility bridge until its replacement has separate acceptance. PR226
 has 671 changed paths relative to its old base and no new Rust backend service
 implementation; preserve unique runtime contracts and writer-fence behavior as
 inputs for narrow Rust-owned successors rather than merging the whole draft.
+
+# Checkpoint 24e86ee: current bounded evidence
+
+The accepted source was checkpointed locally as
+`24e86ee038971cebed653b05411c995319441652`; no batch publication or full-goal
+completion is implied. The public-ingress auth workflow suite was updated to
+require native fail-closed behavior for recognized keys with a disabled database
+and zero Node adapter calls; all 20 cases and server typecheck passed. Real
+PostgreSQL success/revocation remains covered by the independent bearer packet.
+
+The process transport now requires valid spawned-process and unique app-exit
+evidence for success and failure. Requested Stop retains its signal result only
+with the matching stop confirmation. Independent re-verification passed six
+real-host outcomes, 51 runner cases and 113 provider cases, followed by final
+review ACCEPT. All 14 evidence-manifest hashes were checked by the root and
+reviewer. Evidence is retained in
+`/private/tmp/rudder-transport-reverify.D8KkWB/`; this supersedes the earlier
+transport acceptance only for the explicitly frozen hashes in that ledger.
+
+The latest complete Desktop verification is still running; its prior failed
+Terminal scenario and earlier successful package run remain historical evidence.
+PR264's seven CLI commits are being replayed onto this checkpoint with separate
+CLI tests and real-endpoint acceptance. Full migration and production deployment
+remain incomplete.

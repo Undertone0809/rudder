@@ -261,3 +261,19 @@ test("packaged Electron release symlinks are excluded while imported release sou
   const imported = buildInventory(root);
   assert(imported.source_manifest.some((entry) => entry.path === "desktop/release/authority.js"));
 });
+
+
+test("packaging vendor parking directory is pruned without hiding imported authority", (t) => {
+  const root = temporaryTree(t);
+  put(root, "server/src/main.ts", "export const main = true;\n");
+  put(root, "desktop/node_modules-packaging-hidden/pkg/index.js", "export const generated = true;\n");
+  fs.symlinkSync("pkg", path.join(root, "desktop/node_modules-packaging-hidden/linked"), "dir");
+  const initial = buildInventory(root);
+  assert.equal(initial.source_manifest.some((entry) => entry.path.startsWith("desktop/node_modules-packaging-hidden/")), false);
+  put(root, "server/src/main.ts", 'import "../../desktop/node_modules-packaging-hidden/pkg/index.js";\n');
+  const imported = buildInventory(root);
+  assert(imported.source_manifest.some((entry) => entry.path === "desktop/node_modules-packaging-hidden/pkg/index.js"));
+  put(root, "server/src/node_modules-packaging-hidden/authority.ts", "export const authority = true;\n");
+  const exactPathOnly = buildInventory(root);
+  assert(exactPathOnly.source_manifest.some((entry) => entry.path === "server/src/node_modules-packaging-hidden/authority.ts"));
+});
