@@ -60,6 +60,7 @@ impl PublicIngressRuntime {
                 .app_data(data.clone())
                 .app_data(web::Data::new(proxy))
                 .app_data(web::Data::new(websocket_proxy))
+                .wrap(middleware::from_fn(reject_unsupported_websocket_upgrade))
                 .route("/healthz", web::get().to(ingress_health))
                 .route("/readyz", web::get().to(ingress_readiness))
                 .route(
@@ -229,12 +230,7 @@ async fn proxy_request(
             .json_error(StatusCode::NOT_FOUND, "route_not_found");
     }
 
-    if request
-        .headers()
-        .get(header::UPGRADE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("websocket"))
-    {
+    if has_websocket_upgrade(&request) {
         if is_supported_websocket_upgrade_route(&request) {
             return websocket_proxy.forward(request, payload).await;
         }
@@ -289,6 +285,33 @@ async fn proxy_request(
     proxy
         .forward_with_session_assertion(request, payload, Some(&proof), Some(session_auth))
         .await
+}
+
+async fn reject_unsupported_websocket_upgrade(
+    state: web::Data<IngressState>,
+    request: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<actix_web::dev::ServiceResponse<impl MessageBody>, Error> {
+    if has_websocket_upgrade(request.request())
+        && !is_supported_websocket_upgrade_route(request.request())
+    {
+        return Ok(request
+            .into_response(
+                state
+                    .foundation
+                    .json_error(StatusCode::NOT_FOUND, "route_not_found"),
+            )
+            .map_into_right_body());
+    }
+    Ok(next.call(request).await?.map_into_left_body())
+}
+
+fn has_websocket_upgrade(request: &HttpRequest) -> bool {
+    request
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("websocket"))
 }
 
 fn is_get_session_route(request: &HttpRequest) -> bool {
@@ -915,19 +938,39 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn ordinary_websocket_upgrade_target_is_rejected_before_private_node() {
+    async fn unsupported_websocket_upgrade_is_rejected_before_every_production_route() {
+        let private_requests = Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let mock = HttpServer::new({
+            let private_requests = private_requests.clone();
+            move || {
+                let private_requests = private_requests.clone();
+                App::new().default_service(web::to(move || {
+                    let private_requests = private_requests.clone();
+                    async move {
+                        private_requests.fetch_add(1, Ordering::SeqCst);
+                        HttpResponse::NoContent().finish()
+                    }
+                }))
+            }
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let mock_handle = mock.handle();
+        let mock_task = actix_web::rt::spawn(mock);
+
         let config = ServerConfig {
             actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
             workers: 1,
             ..ServerConfig::default()
         };
         let foundation = Arc::new(AppState::new(config).unwrap());
-        let mut ingress = PublicIngressConfig::new(
-            "127.0.0.1:0".parse().unwrap(),
-            "http://127.0.0.1:1",
-            INTERNAL,
-        )
-        .unwrap();
+        let mut ingress =
+            PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL).unwrap();
         ingress.session_auth = Some(
             NativeSessionAuthConfig::new(
                 NativeSessionAuthKind::BetterAuth,
@@ -937,30 +980,34 @@ mod tests {
             )
             .unwrap(),
         );
-        let proxy = PublicIngressProxy::new("http://127.0.0.1:1").unwrap();
-        let websocket_proxy = PublicIngressWebSocketProxy::new(proxy.upstream_authority()).unwrap();
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(IngressState {
-                    foundation,
-                    config: ingress,
-                }))
-                .app_data(web::Data::new(proxy))
-                .app_data(web::Data::new(websocket_proxy))
-                .default_service(web::to(proxy_request)),
-        )
-        .await;
-        let request = test::TestRequest::get()
-            .uri("/api/orgs/org-1/members/directory")
-            .insert_header((header::UPGRADE, "websocket"))
-            .insert_header((header::CONNECTION, "Upgrade"))
-            .insert_header((header::SEC_WEBSOCKET_VERSION, "13"))
-            .insert_header((header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ=="))
-            .to_request();
-        let response = test::call_service(&app, request).await;
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let body: serde_json::Value = test::read_body_json(response).await;
-        assert_eq!(body["reason"], "route_not_found");
+        let runtime = PublicIngressRuntime::bind(ingress, foundation).unwrap();
+        let address = runtime.bound_addr();
+        let control = runtime.control();
+        let task = actix_web::rt::spawn(runtime.run());
+        let client = awc::Client::default();
+        for path in [
+            "/api/auth/get-session",
+            "/api/orgs/org-1/members/directory",
+            "/api/ordinary-business-route",
+        ] {
+            let mut response = client
+                .get(format!("http://{address}{path}"))
+                .insert_header((header::UPGRADE, "websocket"))
+                .insert_header((header::CONNECTION, "Upgrade"))
+                .insert_header((header::SEC_WEBSOCKET_VERSION, "13"))
+                .insert_header((header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ=="))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+            let body: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(body["reason"], "route_not_found", "{path}");
+        }
+        assert_eq!(private_requests.load(Ordering::SeqCst), 0);
+        control.stop(true).await;
+        task.await.unwrap().unwrap();
+        mock_handle.stop(true).await;
+        mock_task.await.unwrap().unwrap();
     }
 
     #[actix_web::test]

@@ -1,8 +1,8 @@
-import { createDb, applyPendingMigrations, ensurePostgresDatabase } from "@rudderhq/db";
 import type { Db } from "@rudderhq/db";
+import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudderhq/db";
 import express from "express";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHmac, createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
@@ -508,9 +508,18 @@ describe("source-built Rust public native session workflow", () => {
   }, 60_000);
 
   it("rejects direct private-listener cookie fallback and keeps invalid Bearer ahead of a valid cookie", async () => {
-    const direct = await getSessionFromPrivate();
+    const direct = await getSessionFromPrivate("/api/native-session-echo", {
+      cookie: sessionCookie(),
+    });
     expect(direct.status).toBe(401);
     expect(JSON.parse(direct.body).code).toBe("native_session_proof_required");
+
+    const directGetSession = await getSessionFromPrivate("/api/auth/get-session", {
+      cookie: sessionCookie(),
+    }, "GET");
+    expect(directGetSession.status).toBe(401);
+    expect(JSON.parse(directGetSession.body).code).toBe("native_session_proof_required");
+    expect(sessionResolverCalls).toBe(0);
 
     const bearer = await getSessionFromPublic("/api/auth/get-session", {
       cookie: sessionCookie(),
@@ -518,6 +527,28 @@ describe("source-built Rust public native session workflow", () => {
     });
     expect(bearer.status).toBe(401);
     expect(sessionResolverCalls).toBe(0);
+  }, 20_000);
+
+  it("fails closed on ambiguous duplicate session-token rows through the real public listener", async () => {
+    const token = `native-session-duplicate-token-${Date.now()}`;
+    const firstId = `native-session-duplicate-first-${Date.now()}`;
+    const secondId = `native-session-duplicate-second-${Date.now()}`;
+    await fixtureSql!`
+      INSERT INTO session (id, token, user_id, expires_at, created_at, updated_at)
+      VALUES
+        (${firstId}, ${token}, ${userId}, now() + interval '2 days', now(), now()),
+        (${secondId}, ${token}, ${userId}, now() + interval '2 days', now(), now())
+    `;
+
+    try {
+      const response = await getSessionFromPublic("/api/auth/get-session", {
+        cookie: sessionCookie(token),
+      });
+      expect(response.status).toBe(401);
+      expect(sessionResolverCalls).toBe(0);
+    } finally {
+      await fixtureSql!`DELETE FROM session WHERE id IN (${firstId}, ${secondId})`;
+    }
   }, 20_000);
 
   it("rechecks live membership on the direct native member-directory route", async () => {
@@ -608,11 +639,15 @@ describe("source-built Rust public native session workflow", () => {
   }, 20_000);
 });
 
-function getSessionFromPrivate(): Promise<{ status: number; body: string }> {
+function getSessionFromPrivate(
+  pathname: string,
+  headers: Record<string, string>,
+  method = "POST",
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = httpRequest(`http://127.0.0.1:${privateNodePort}/api/native-session-echo`, {
-      method: "POST",
-      headers: { cookie: sessionCookie(), "content-type": "application/json", connection: "close" },
+    const req = httpRequest(`http://127.0.0.1:${privateNodePort}${pathname}`, {
+      method,
+      headers: { ...headers, "content-type": "application/json", connection: "close" },
     }, (res) => {
       let body = "";
       res.setEncoding("utf8");
