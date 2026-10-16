@@ -73,10 +73,7 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
     assert_eq!(first.journal.entries.len(), 180);
     assert_eq!(first.entries.len(), 182);
     assert_eq!(first.journal.entries[179].idx, 179);
-    assert_eq!(
-        first.journal.entries[179].tag,
-        "0179_reflective_wallow"
-    );
+    assert_eq!(first.journal.entries[179].tag, "0179_reflective_wallow");
     assert_eq!(first.journal.entries[57].tag, "0058_messenger_threads");
     assert_eq!(first.journal.entries[58].tag, "0058_calm_red_ghost");
     assert!(first.entries[180].is_legacy_unjournaled());
