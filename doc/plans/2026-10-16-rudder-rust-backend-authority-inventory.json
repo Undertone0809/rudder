@@ -58553,58 +58553,5 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [
-    {
-      "path": "packages/db/src/schema/chat_generations.ts",
-      "change_kind": "modified_node_compatibility",
-      "base_sha256": "686057826d8366b0ebd10b8631ca079e5d3334ddf526fe7b69dca61afd04485d",
-      "head_sha256": "774dfaddd50b2f5574f5a49a5ad84b010ca6da616a90a976b1d77193ce8e68ef",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/d1-persistence/src/native_chat owns the new Native Chat admission transaction and native-owned rows; public admission remains disabled.",
-      "compatibility_boundary": "Shared Drizzle schema and migration declarations only, not Node transport or business logic. Existing Node readers/writers remain legacy debt. The same-role SQL write marker is an accidental-write guard, not a security boundary.",
-      "retirement_criterion": "Before public activation, legacy readers, writers, recovery, Stop and terminal projection must exclude or delegate native-owned rows. Retire schema compatibility only with coordinated schema authority/tooling migration; TypeScript declarations may remain for Drizzle tooling under BACKEND_ARCHITECTURE.",
-      "reviewer": "/root/host_library_review",
-      "review_reference": "Independent schema diff and rebase-equivalence stage ACCEPT on 2026-10-16; exact source hashes bind the reviewed declarations. Stacked PR base is codex/native-chat-completion-20261016.",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "packages/db/src/schema/chat_messages.ts",
-      "change_kind": "modified_node_compatibility",
-      "base_sha256": "64577bff8ae07fa390fc87d02cadd58b9eddf315753de5ebf2fe776c9047f8da",
-      "head_sha256": "3cdf94c835b423a71a1cf8346f310b61120a372b8e341a3fb96131653129c8d7",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/d1-persistence/src/native_chat owns the new Native Chat admission transaction and native-owned rows; public admission remains disabled.",
-      "compatibility_boundary": "Shared Drizzle schema and migration declarations only, not Node transport or business logic. Existing Node readers/writers remain legacy debt. The same-role SQL write marker is an accidental-write guard, not a security boundary.",
-      "retirement_criterion": "Before public activation, legacy readers, writers, recovery, Stop and terminal projection must exclude or delegate native-owned rows. Retire schema compatibility only with coordinated schema authority/tooling migration; TypeScript declarations may remain for Drizzle tooling under BACKEND_ARCHITECTURE.",
-      "reviewer": "/root/host_library_review",
-      "review_reference": "Independent schema diff and rebase-equivalence stage ACCEPT on 2026-10-16; exact source hashes bind the reviewed declarations. Stacked PR base is codex/native-chat-completion-20261016.",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "packages/db/src/schema/heartbeat_run_attempts.ts",
-      "change_kind": "modified_node_compatibility",
-      "base_sha256": "90abb3b4b3f53c984ed773397c5040a6d57a8647a68fe26e5179eaf3e9802607",
-      "head_sha256": "d7c1330e68ff06a1a3e5a2f440f2622a4b19694d005ec77d6f8f56ff228064e0",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/d1-persistence/src/native_chat owns the new Native Chat admission transaction and native-owned rows; public admission remains disabled.",
-      "compatibility_boundary": "Shared Drizzle schema and migration declarations only, not Node transport or business logic. Existing Node readers/writers remain legacy debt. The same-role SQL write marker is an accidental-write guard, not a security boundary.",
-      "retirement_criterion": "Before public activation, legacy readers, writers, recovery, Stop and terminal projection must exclude or delegate native-owned rows. Retire schema compatibility only with coordinated schema authority/tooling migration; TypeScript declarations may remain for Drizzle tooling under BACKEND_ARCHITECTURE.",
-      "reviewer": "/root/host_library_review",
-      "review_reference": "Independent schema diff and rebase-equivalence stage ACCEPT on 2026-10-16; exact source hashes bind the reviewed declarations. Stacked PR base is codex/native-chat-completion-20261016.",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "packages/db/src/schema/heartbeat_runs.ts",
-      "change_kind": "modified_node_compatibility",
-      "base_sha256": "1fc1b2783234dd489f2999640a85d7ebbdb85e350a6691fdd7b42345b9e744e8",
-      "head_sha256": "8c9cb9a1e9d0f9cace1b7b877133b8e49af6044051a5ca5457dbe33d6730b9d7",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/d1-persistence/src/native_chat owns the new Native Chat admission transaction and native-owned rows; public admission remains disabled.",
-      "compatibility_boundary": "Shared Drizzle schema and migration declarations only, not Node transport or business logic. Existing Node readers/writers remain legacy debt. The same-role SQL write marker is an accidental-write guard, not a security boundary.",
-      "retirement_criterion": "Before public activation, legacy readers, writers, recovery, Stop and terminal projection must exclude or delegate native-owned rows. Retire schema compatibility only with coordinated schema authority/tooling migration; TypeScript declarations may remain for Drizzle tooling under BACKEND_ARCHITECTURE.",
-      "reviewer": "/root/host_library_review",
-      "review_reference": "Independent schema diff and rebase-equivalence stage ACCEPT on 2026-10-16; exact source hashes bind the reviewed declarations. Stacked PR base is codex/native-chat-completion-20261016.",
-      "review_status": "reviewed"
-    }
-  ]
+  "reviewed_node_changes": []
 }
