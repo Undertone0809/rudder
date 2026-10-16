@@ -127,6 +127,7 @@ fn parser_rejects_instruction_path_values_that_the_legacy_resolver_would_fallbac
 }
 
 #[tokio::test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn resolver_uses_locked_chat_agent_exact_issue_workspace_and_read_only_managed_profile() {
     use support::{CEO, Database, ORG, PROJECT};
 
@@ -348,6 +349,24 @@ async fn resolver_uses_locked_chat_agent_exact_issue_workspace_and_read_only_man
     tx.rollback()
         .await
         .expect("rollback literal instruction transaction");
+    let unicode_entry = "你好，Codex 🌱\n";
+    fs::write(instruction_root.join("SOUL.md"), unicode_entry)
+        .expect("seed valid UTF-8 selected instruction");
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin valid UTF-8 instruction resolution");
+    let unicode = resolve_codex_config(&mut tx, ORG, CHAT, &host)
+        .await
+        .expect("selected UTF-8 instruction resolves");
+    assert_eq!(
+        unicode.instruction_content.as_deref(),
+        Some("你好，Codex 🌱")
+    );
+    tx.rollback()
+        .await
+        .expect("rollback valid UTF-8 instruction transaction");
     fs::write(
         instruction_root.join("SOUL.md"),
         "updated private instruction marker",
@@ -370,6 +389,62 @@ async fn resolver_uses_locked_chat_agent_exact_issue_workspace_and_read_only_man
         "updated private instruction marker",
     )
     .expect("restore valid instruction entry after UTF-8 test");
+
+    let oversized = instruction_root.join("oversized-sparse.md");
+    let oversized_file = fs::File::create(&oversized).expect("create sparse instruction file");
+    oversized_file
+        .set_len(1_048_577)
+        .expect("extend sparse instruction file beyond limit");
+    drop(oversized_file);
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin oversized sparse bundle resolution");
+    let rejected = resolve_codex_config(&mut tx, ORG, CHAT, &host).await;
+    assert_http_error(rejected, 409, None);
+    tx.rollback()
+        .await
+        .expect("rollback oversized sparse bundle resolution");
+    fs::remove_file(&oversized).expect("remove sparse instruction file");
+
+    let outside = temp.path().join("outside-instruction.md");
+    fs::write(&outside, "outside content must not be read").expect("write outside target");
+    let symlink = instruction_root.join("linked.md");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &symlink).expect("create bundle symlink");
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin symlink bundle resolution");
+    let rejected = resolve_codex_config(&mut tx, ORG, CHAT, &host).await;
+    assert_http_error(rejected, 409, None);
+    tx.rollback()
+        .await
+        .expect("rollback symlink bundle resolution");
+    fs::remove_file(&symlink).expect("remove bundle symlink");
+
+    // The selected entry is one entry; adding the cap number of child
+    // directories exceeds the aggregate entry cap.
+    for index in 0..4_096 {
+        fs::create_dir(instruction_root.join(format!("entry-dir-{index}")))
+            .expect("create counted directory entry");
+    }
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin excessive directory-entry bundle resolution");
+    let rejected = resolve_codex_config(&mut tx, ORG, CHAT, &host).await;
+    assert_http_error(rejected, 409, None);
+    tx.rollback()
+        .await
+        .expect("rollback excessive directory-entry bundle resolution");
+    for index in 0..4_096 {
+        fs::remove_dir(instruction_root.join(format!("entry-dir-{index}")))
+            .expect("remove counted directory entry");
+    }
 
     sqlx::query("UPDATE agents SET agent_runtime_config=$1::jsonb WHERE id=$2::uuid")
         .bind(json!({"env":{"TOKEN":"test-secret-value"},"search":false}).to_string())

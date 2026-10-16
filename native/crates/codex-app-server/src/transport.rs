@@ -276,6 +276,23 @@ impl OwnedTransport {
         result
     }
 
+    /// Wait for at most one observation without treating provider silence as
+    /// failure. A supervisor can renew its durable leases between polls; it
+    /// must enforce its own operation deadline and stop on lost ownership.
+    /// Partial frames and pending writes survive an empty poll. All actual
+    /// protocol, identity, queue and disconnection failures still close the
+    /// connection, and no polling result authorizes resubmission.
+    pub fn poll(&mut self, timeout: Duration) -> Result<Option<TransportEvent>, TransportError> {
+        match self.receive_inner(timeout) {
+            Ok(event) => Ok(Some(event)),
+            Err(TransportError::Timeout) => Ok(None),
+            Err(error) => {
+                self.fail_closed();
+                Err(error)
+            }
+        }
+    }
+
     fn receive_inner(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError> {
         if self.terminal_received {
             return Err(TransportError::Closed);

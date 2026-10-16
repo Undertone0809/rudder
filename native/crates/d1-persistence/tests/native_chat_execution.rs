@@ -257,6 +257,8 @@ async fn wait_for_lock_wait(pool: &PgPool, fragment: &str) {
 
 #[path = "native_chat_execution/checkpoints.rs"]
 mod checkpoints;
+#[path = "native_chat_execution/deletions.rs"]
+mod deletions;
 #[path = "native_chat_execution/fencing.rs"]
 mod fencing;
 #[path = "native_chat_execution/ownership.rs"]

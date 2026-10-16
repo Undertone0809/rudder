@@ -103,6 +103,43 @@ fn sends_large_utf8_frame_in_receipted_chunks_and_preserves_next_input() {
 }
 
 #[test]
+fn empty_polls_preserve_connection_and_fragmented_response() {
+    let script = "IFS= read -r first; printf '{\"id\":0,\"result\":'; IFS= read -r second; printf '{\"ok\":true}}\\n'; while IFS= read -r line; do :; done";
+    let (mut transport, _root) = launch(script);
+    spawned(&mut transport);
+    assert!(transport.poll(Duration::from_millis(10)).unwrap().is_none());
+    transport.notify("initialized", json!({})).unwrap();
+    loop {
+        match transport.receive(WAIT).unwrap() {
+            TransportEvent::FrameWritten { request_id } => {
+                assert!(request_id.is_none());
+                break;
+            }
+            TransportEvent::Lifecycle(value) => assert_ne!(value["type"], "terminal"),
+            _ => panic!("incomplete response must not be emitted"),
+        }
+    }
+    assert!(transport.poll(Duration::from_millis(10)).unwrap().is_none());
+    transport.request("initialize", json!({})).unwrap();
+    assert_eq!(completed(&mut transport), json!({"ok":true}));
+    stopped(&mut transport);
+}
+
+#[test]
+fn fatal_receive_deadline_still_closes_an_idle_connection() {
+    let (mut transport, _root) = launch("while IFS= read -r line; do :; done");
+    spawned(&mut transport);
+    assert!(matches!(
+        transport.receive(Duration::from_millis(10)),
+        Err(TransportError::Timeout)
+    ));
+    assert!(matches!(
+        transport.request("initialize", json!({})),
+        Err(TransportError::Closed)
+    ));
+}
+
+#[test]
 fn forwards_server_requests_without_synthesizing_approval() {
     let script = "IFS= read -r line; printf '{\"id\":\"approval\",\"method\":\"item/commandExecution/requestApproval\",\"params\":{}}\\n'; IFS= read -r second; exit 9";
     let (mut transport, _root) = launch(script);

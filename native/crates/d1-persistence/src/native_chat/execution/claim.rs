@@ -5,7 +5,7 @@ use crate::runtime_bindings;
 use rudder_auth_core::VerifiedActor;
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::json;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, Row, Transaction};
 
 /// A first-claim receipt carrying the trusted, transactionally resolved local
 /// runtime configuration alongside its in-process owner fence. This type has
@@ -14,6 +14,151 @@ use sqlx::{PgPool, Row};
 pub struct ClaimedExecution {
     pub fence: ExecutionFence,
     pub config: ResolvedCodexConfig,
+}
+
+/// Locks the optional primary-Issue path in the same order used by its
+/// cascading foreign keys: Project, ProjectWorkspace, then Issue. The initial
+/// reads are hints only; each locked row is checked against its hint before
+/// the caller locks the Conversation. This avoids Issue→Conversation and
+/// Workspace→Issue cycles with concurrent deletion.
+async fn lock_primary_issue_path_before_conversation(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    conversation_id: &str,
+) -> Result<Option<String>> {
+    let conversation = sqlx::query(
+        "SELECT primary_issue_id::text AS primary_issue_id
+         FROM chat_conversations
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(organization_id)
+    .bind(conversation_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| http(404, "Chat conversation not found"))?;
+    let issue_id: Option<String> = conversation.try_get("primary_issue_id")?;
+    let Some(issue_id) = issue_id else {
+        return Ok(None);
+    };
+
+    let issue_hint = sqlx::query(
+        "SELECT project_id::text AS project_id,
+                project_workspace_id::text AS project_workspace_id
+         FROM issues
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(organization_id)
+    .bind(&issue_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| http(409, "Chat primary Issue changed"))?;
+    let issue_project_id: Option<String> = issue_hint.try_get("project_id")?;
+    let issue_workspace_id: Option<String> = issue_hint.try_get("project_workspace_id")?;
+
+    let workspace_project_id = if let Some(workspace_id) = issue_workspace_id.as_deref() {
+        let workspace = sqlx::query(
+            "SELECT project_id::text AS project_id
+             FROM project_workspaces
+             WHERE org_id=$1::uuid AND id=$2::uuid",
+        )
+        .bind(organization_id)
+        .bind(workspace_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| http(409, "Chat primary Issue workspace changed"))?;
+        Some(workspace.try_get::<String, _>("project_id")?)
+    } else {
+        None
+    };
+
+    let project_id = match (issue_project_id.as_deref(), workspace_project_id.as_deref()) {
+        (Some(issue_project), Some(workspace_project)) if issue_project != workspace_project => {
+            return Err(http(409, "Chat primary Issue workspace changed"));
+        }
+        (Some(issue_project), _) => Some(issue_project),
+        (None, Some(workspace_project)) => Some(workspace_project),
+        (None, None) => None,
+    };
+
+    if let Some(project_id) = project_id {
+        let project = sqlx::query_scalar::<_, String>(
+            "/* native_chat_claim_project_prelock */
+             SELECT id::text FROM projects
+             WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
+        )
+        .bind(organization_id)
+        .bind(project_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        if project.is_none() {
+            return Err(http(409, "Chat primary Issue project changed"));
+        }
+    }
+
+    if let (Some(workspace_id), Some(expected_project_id)) = (
+        issue_workspace_id.as_deref(),
+        workspace_project_id.as_deref(),
+    ) {
+        let locked_workspace = sqlx::query_scalar::<_, String>(
+            "/* native_chat_claim_workspace_prelock */
+             SELECT project_id::text FROM project_workspaces
+             WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
+        )
+        .bind(organization_id)
+        .bind(workspace_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| http(409, "Chat primary Issue workspace changed"))?;
+        if locked_workspace != expected_project_id {
+            return Err(http(409, "Chat primary Issue workspace changed"));
+        }
+    }
+
+    let locked_issue = sqlx::query(
+        "/* native_chat_claim_issue_prelock */
+         SELECT project_id::text AS project_id,
+                project_workspace_id::text AS project_workspace_id
+         FROM issues
+         WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
+    )
+    .bind(organization_id)
+    .bind(&issue_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| http(409, "Chat primary Issue changed"))?;
+    let locked_project_id: Option<String> = locked_issue.try_get("project_id")?;
+    let locked_workspace_id: Option<String> = locked_issue.try_get("project_workspace_id")?;
+    if locked_project_id != issue_project_id || locked_workspace_id != issue_workspace_id {
+        return Err(http(409, "Chat primary Issue context changed"));
+    }
+
+    Ok(Some(issue_id))
+}
+
+/// Reject a stale Run→Agent association before reading Issue or Project hints.
+/// The Conversation is revalidated again after its lock; this cheap precheck
+/// keeps an Agent that is no longer selected from taking unrelated path locks.
+async fn verify_selected_agent_hint(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    conversation_id: &str,
+    expected_agent_id: &str,
+) -> Result<()> {
+    let conversation = sqlx::query(
+        "/* native_chat_claim_selected_agent_precheck */
+         SELECT COALESCE(preferred_agent_id, routed_agent_id)::text AS selected_agent_id
+         FROM chat_conversations WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(organization_id)
+    .bind(conversation_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| http(404, "Chat conversation not found"))?;
+    let selected_agent_id: Option<String> = conversation.try_get("selected_agent_id")?;
+    if selected_agent_id.as_deref() != Some(expected_agent_id) {
+        return Err(http(409, "Native Chat selected Agent changed"));
+    }
+    Ok(())
 }
 
 /// Claim the single admitted Native Chat execution for its first local owner.
@@ -55,6 +200,27 @@ pub async fn claim(
     let generation_id =
         generation_id.ok_or_else(|| http(409, "Run is not attached to Native Chat"))?;
 
+    // Authorize without taking a row lock first. The issue/project hint reads
+    // below happen only after organization and target authorization; lock
+    // acquisition itself follows the FK delete order before locking Chat.
+    runtime_bindings::authorize_chat_target_read_tx(
+        &mut tx,
+        actor,
+        &organization_id,
+        &conversation_id,
+        &agent_id,
+    )
+    .await?;
+
+    verify_selected_agent_hint(&mut tx, &organization_id, &conversation_id, &agent_id).await?;
+
+    let primary_issue_id =
+        lock_primary_issue_path_before_conversation(&mut tx, &organization_id, &conversation_id)
+            .await?;
+
+    // A concurrent issue/project deletion takes its FK parent rows before it
+    // clears issue and Conversation references. Acquire those same parents
+    // first, then lock/reauthorize Chat and continue with Agent/Run ownership.
     runtime_bindings::authorize_chat_target_run_mutation_tx(
         &mut tx,
         actor,
@@ -70,7 +236,8 @@ pub async fn claim(
                 routed_agent_id::text AS routed_agent_id,
                 primary_issue_id::text AS primary_issue_id
          FROM chat_conversations
-         WHERE org_id=$1::uuid AND id=$2::uuid",
+         WHERE org_id=$1::uuid AND id=$2::uuid
+         FOR UPDATE",
     )
     .bind(&organization_id)
     .bind(&conversation_id)
@@ -80,25 +247,12 @@ pub async fn claim(
     let conversation_kind: String = conversation.try_get("conversation_kind")?;
     let preferred_agent_id: Option<String> = conversation.try_get("preferred_agent_id")?;
     let routed_agent_id: Option<String> = conversation.try_get("routed_agent_id")?;
-    let primary_issue_id: Option<String> = conversation.try_get("primary_issue_id")?;
+    let locked_primary_issue_id: Option<String> = conversation.try_get("primary_issue_id")?;
     if conversation_kind != "chat"
         || preferred_agent_id.as_deref().or(routed_agent_id.as_deref()) != Some(agent_id.as_str())
+        || locked_primary_issue_id != primary_issue_id
     {
         return Err(http(409, "Native Chat target or selected Agent changed"));
-    }
-
-    // Agent-core mutations lock Issues before Agents. Resolve the optional
-    // primary Issue first so the config resolver's Agent lock cannot invert
-    // that established order; its later Issue read reuses this share lock.
-    if let Some(issue_id) = primary_issue_id {
-        let _: Option<String> = sqlx::query_scalar(
-            "SELECT id::text FROM issues
-             WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
-        )
-        .bind(&organization_id)
-        .bind(issue_id)
-        .fetch_optional(&mut *tx)
-        .await?;
     }
 
     // Resolve identity-bearing runtime state from the locked Conversation and
@@ -109,10 +263,11 @@ pub async fn claim(
         return Err(http(409, "Resolved Native Chat Agent changed"));
     }
 
-    // Keep the global lock order aligned with Native Chat span writes and
-    // conversation teardown: Conversation -> Generation -> Run -> Attempt.
+    // Keep the global lock order after Conversation aligned with Native Chat
+    // span writes and teardown: Conversation -> Agent -> Generation -> Run -> Attempt.
     let generation = sqlx::query(
-        "SELECT conversation_id::text AS conversation_id, execution_authority,
+        "/* native_chat_claim_generation_lock */
+         SELECT conversation_id::text AS conversation_id, execution_authority,
                 native_admission_hold, status, attempt_epoch, control_state,
                 control_runtime_type, control_owner_token,
                 control_lease_expires_at IS NOT NULL AS control_lease_exists,
@@ -158,8 +313,9 @@ pub async fn claim(
         ));
     }
 
-    let run = sqlx::query(
-        "SELECT agent_id::text AS agent_id,
+    let run = match sqlx::query(
+        "/* native_chat_claim_run_lock */
+         SELECT agent_id::text AS agent_id,
                 chat_conversation_id::text AS conversation_id,
                 chat_generation_id::text AS generation_id,
                 invocation_source, execution_authority, native_admission_hold,
@@ -169,13 +325,20 @@ pub async fn claim(
                 process_exited_at IS NOT NULL AS process_exited, session_id_after
          FROM heartbeat_runs
          WHERE org_id=$1::uuid AND id=$2::uuid
-         FOR UPDATE",
+         FOR UPDATE NOWAIT",
     )
     .bind(&organization_id)
     .bind(&run_id)
     .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| http(404, "Run not found"))?;
+    .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => return Err(http(404, "Run not found")),
+        Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("55P03") => {
+            return Err(http(409, "Native Chat Run is being changed or removed"));
+        }
+        Err(error) => return Err(error.into()),
+    };
     let run_agent_id: String = run.try_get("agent_id")?;
     let run_conversation_id: Option<String> = run.try_get("conversation_id")?;
     let run_generation_id: Option<String> = run.try_get("generation_id")?;
