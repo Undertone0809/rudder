@@ -7,6 +7,7 @@ use thiserror::Error;
 #[derive(Clone)]
 pub struct PublicIngressConfig {
     pub listen_addr: SocketAddr,
+    pub(crate) browser_auth: Option<crate::browser_auth::BrowserAuthConfig>,
     pub(crate) node_upstream: String,
     pub(crate) authorization_key: String,
     pub(crate) forwarding_policy: crate::public_ingress_forwarding::ForwardingPolicy,
@@ -45,9 +46,11 @@ impl PublicIngressConfig {
                             message,
                         )
                     })?;
+                let browser_auth = crate::browser_auth::BrowserAuthConfig::from_env()?;
                 Self::new(listen, &upstream, &key)
                     .map(|mut config| {
                         config.forwarding_policy = policy;
+                        config.browser_auth = browser_auth;
                         config
                     })
                     .map(Some)
@@ -98,14 +101,28 @@ impl PublicIngressConfig {
         }
         Ok(Self {
             listen_addr,
+            browser_auth: None,
             node_upstream: format!("http://{socket}"),
             authorization_key: authorization_key.to_owned(),
             forwarding_policy: Default::default(),
         })
     }
 
+    pub fn with_browser_auth(
+        mut self,
+        config: crate::browser_auth::BrowserAuthConfig,
+    ) -> Result<Self, crate::browser_auth::BrowserAuthConfigError> {
+        config.validate_listener(self.listen_addr)?;
+        self.browser_auth = Some(config);
+        Ok(self)
+    }
+
     pub fn node_upstream(&self) -> &str {
         &self.node_upstream
+    }
+
+    pub fn browser_session_authentication_enabled(&self) -> bool {
+        self.browser_auth.is_some()
     }
 }
 

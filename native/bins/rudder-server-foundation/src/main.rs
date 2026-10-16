@@ -15,6 +15,9 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = ServerConfig::from_env()?;
     let ingress_config = PublicIngressConfig::from_env()?;
+    let browser_session_authentication = ingress_config
+        .as_ref()
+        .is_some_and(PublicIngressConfig::browser_session_authentication_enabled);
     let shutdown_signals = install_shutdown_signals()?;
     let runtime = ServerRuntime::bind(config.clone())?;
     let public = ingress_config
@@ -40,6 +43,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     "local-trusted and local-implicit identities",
                     "non-pcp_ bearer credentials",
                 ],
+            },
+            "browserSessionAuthentication": {
+                "enabled": browser_session_authentication,
+                "route": "GET /api/auth/get-session",
+                "authority": if browser_session_authentication { "native-browser-session-resolver" } else { "private-node-adapter" },
+                "nativeFailureFallback": false,
+                "scope": "session-read-only; other compatibility routes retain their existing authentication",
             },
             "unmigratedHttpAuthority": "explicit-private-node-proxy",
         });

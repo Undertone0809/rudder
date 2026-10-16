@@ -66,6 +66,7 @@ mod activity_link_reads;
 mod activity_reads;
 mod approval_reads;
 mod automation_reads;
+pub mod browser_auth;
 mod cost_reads;
 mod goal_reads;
 mod issue_metadata_reads;

@@ -8,6 +8,7 @@ use crate::public_ingress_websocket::PublicIngressWebSocketProxy;
 use actix_web::guard;
 use uuid::Uuid;
 
+mod browser_session;
 mod runtime_bindings;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
@@ -39,6 +40,13 @@ impl PublicIngressRuntime {
             )
             .into());
         }
+        if let Some(browser_auth) = &config.browser_auth {
+            browser_auth
+                .validate_listener(config.listen_addr)
+                .map_err(|error| {
+                    ConfigError::invalid("RUDDER_NATIVE_BROWSER_AUTH_MODE", &error.to_string())
+                })?;
+        }
         let listen_addr = config.listen_addr;
         let data = web::Data::new(IngressState {
             foundation: foundation.clone(),
@@ -56,6 +64,11 @@ impl PublicIngressRuntime {
                 .app_data(data.clone())
                 .app_data(web::Data::new(proxy))
                 .app_data(web::Data::new(websocket_proxy))
+                .configure(|routes| {
+                    if config.browser_auth.is_some() {
+                        routes.route("/api/auth/get-session", web::get().to(browser_session::get));
+                    }
+                })
                 .route("/healthz", web::get().to(ingress_health))
                 .route("/readyz", web::get().to(ingress_readiness))
                 .route(
@@ -150,7 +163,8 @@ async fn proxy_request(
     // optional trailing slash. Never let a near-match under this namespace
     // fall back to Node in required-Rust mode: exact migrated routes are
     // handled above, and every remaining /llms path is deliberately closed.
-    if runtime_bindings::reserved_path(request.uri().path())
+    if (state.config.browser_auth.is_some() && browser_session::reserved_path(request.uri().path()))
+        || runtime_bindings::reserved_path(request.uri().path())
         || request
             .uri()
             .path()

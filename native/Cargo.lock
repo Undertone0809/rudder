@@ -2227,6 +2227,7 @@ dependencies = [
  "base64 0.22.1",
  "crc32fast",
  "futures-util",
+ "hmac",
  "percent-encoding",
  "rudder-archive-core",
  "rudder-auth-core",
