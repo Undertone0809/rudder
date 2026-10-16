@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveComputerUsePackageTarget } from "./computer-use-package-target.mjs";
 import { rewriteInternalPackageManifest } from "./normalize-internal-package-manifest.mjs";
+import { verifyDesktopIdentityPackage } from "./verify-app-identity-package.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -85,6 +86,18 @@ async function main() {
   await fs.mkdir(stagedAppDir, { recursive: true });
   await fs.cp(sourceDistDir, path.join(stagedAppDir, "dist"), { recursive: true });
   await fs.cp(sourceReleasesDir, path.join(stagedAppDir, "releases"), { recursive: true });
+  // Main-process imports need their own dependency tree; the sibling server
+  // package and the contributor checkout are not installed-app lookup paths.
+  const identitySource = await findPackageRoot(
+    requireFromDesktop.resolve("@rudderhq/identity-core/electron"),
+    "@rudderhq/identity-core",
+  );
+  const identityDestination = path.join(stagedAppDir, "node_modules", "@rudderhq", "identity-core");
+  await fs.mkdir(identityDestination, { recursive: true });
+  await fs.cp(path.join(identitySource, "dist"), path.join(identityDestination, "dist"), { recursive: true });
+  await fs.copyFile(path.join(identitySource, "package.json"), path.join(identityDestination, "package.json"));
+  await rewriteInternalPackageManifest(identityDestination);
+  const identityManifest = JSON.parse(await fs.readFile(path.join(identityDestination, "package.json"), "utf8"));
   const computerUseDependencies = await stageComputerUseRuntime(desktopPackage);
 
   const appManifest = {
@@ -95,9 +108,10 @@ async function main() {
     author: "Rudder",
     type: "module",
     main: "dist/main.js",
-    ...(Object.keys(computerUseDependencies).length > 0
-      ? { dependencies: computerUseDependencies }
-      : {}),
+    dependencies: {
+      "@rudderhq/identity-core": identityManifest.version,
+      ...computerUseDependencies,
+    },
   };
 
   await fs.writeFile(
@@ -105,6 +119,7 @@ async function main() {
     `${JSON.stringify(appManifest, null, 2)}\n`,
     "utf8",
   );
+  await verifyDesktopIdentityPackage(stagedAppDir);
 }
 
 void main().catch((error) => {
