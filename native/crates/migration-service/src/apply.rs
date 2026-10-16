@@ -206,7 +206,7 @@ impl MigrationApplyService {
         }
 
         let (initial_snapshot, initial_database, initial_history, initial_report) =
-            inspect_with_manifest(&mut **connection, manifest).await?;
+            inspect_with_manifest(connection, manifest).await?;
         if initial_snapshot.table_schema.is_some() {
             validate_journal_columns(initial_snapshot.columns)?;
         }
@@ -216,7 +216,7 @@ impl MigrationApplyService {
         let mut reset_empty_history = false;
         match initial_report.status {
             MigrationPreflightStatus::Current => {
-                verify_post_migration_invariants(&mut **connection, manifest).await?;
+                verify_post_migration_invariants(connection, manifest).await?;
                 return Ok(MigrationApplyReport {
                     manifest_fingerprint: manifest.fingerprint.clone(),
                     already_current: true,
@@ -261,7 +261,7 @@ impl MigrationApplyService {
             return Err(MigrationApplyError::ManifestChanged);
         }
         let (checked_snapshot, checked_database, checked_history, checked_report) =
-            inspect_with_manifest(&mut **connection, manifest).await?;
+            inspect_with_manifest(connection, manifest).await?;
         if checked_snapshot != initial_snapshot || checked_database != initial_database {
             return Err(MigrationApplyError::HistoryMismatch(
                 "database state changed while the recovery point was being created".to_owned(),
@@ -298,12 +298,12 @@ impl MigrationApplyService {
         pending.sort_by_key(|entry| entry.order);
 
         if reset_empty_history {
-            reset_empty_migration_history(&mut **connection, &initial_snapshot).await?;
+            reset_empty_migration_history(connection, &initial_snapshot).await?;
         } else if initial_snapshot.table_schema.is_none() {
-            create_migration_history_table(&mut **connection).await?;
+            create_migration_history_table(connection).await?;
         }
 
-        let journal_snapshot = read_snapshot_on_connection(&mut **connection).await?;
+        let journal_snapshot = read_snapshot_on_connection(connection).await?;
         let table_schema = journal_snapshot
             .table_schema
             .ok_or(MigrationApplyError::InvalidJournalShape)?;
@@ -315,7 +315,7 @@ impl MigrationApplyService {
         for entry in pending {
             let sql = read_verified_migration_file(source, manifest, entry).await?;
             let (applied, reconciled) =
-                apply_one_migration(&mut **connection, &table_schema, columns, entry, &sql).await?;
+                apply_one_migration(connection, &table_schema, columns, entry, &sql).await?;
             if applied {
                 applied_migrations.push(entry.file_name.clone());
             }
@@ -324,7 +324,7 @@ impl MigrationApplyService {
             }
         }
 
-        verify_post_migration_invariants(&mut **connection, manifest).await?;
+        verify_post_migration_invariants(connection, manifest).await?;
         Ok(MigrationApplyReport {
             manifest_fingerprint: manifest.fingerprint.clone(),
             already_current: false,
@@ -728,13 +728,12 @@ fn inspect_recovery_dump_line(
     if structure.journal_schema.is_none() {
         structure.journal_schema = parse_journal_table_statement(line);
     }
-    if !structure.has_journal_copy {
-        if let Some(schema) = parse_journal_copy_statement(line)
-            && structure.journal_schema == Some(schema)
-        {
-            structure.has_journal_copy = true;
-            return;
-        }
+    if !structure.has_journal_copy
+        && let Some(schema) = parse_journal_copy_statement(line)
+        && structure.journal_schema == Some(schema)
+    {
+        structure.has_journal_copy = true;
+        return;
     }
     if structure.has_journal_copy && !structure.journal_copy_terminated && line == b"\\." {
         structure.journal_copy_terminated = true;

@@ -134,7 +134,8 @@ Linux/macOS/Windows/native/packaged/security CI, then merged by rebase as
 #292 received independent merge review ACCEPT, but GitHub refused rebase
 merging its merge-commit head (rebaseable=false). It is now Ready and rebased
 onto main as 5e1f8221ea91b85d1a6644eb80817b53050fff72, preserving all six
-reviewed files byte-for-byte; new exact-head CI is running before merge. Independent five-binding
+reviewed files byte-for-byte. New exact-head CI and final independent review passed;
+normal rebase merge completed as `8f5a1607b4b7ebf144d4ce384a6f037d05320023`. Independent five-binding
 comparison confirmed #276 is superseded by #302/#303/#304; it was closed with
 its branch preserved and the replacement rationale recorded. #264 targets the old #262 branch rather than main and needs dependency
 reconciliation. #262 overlaps this accepted native bearer slice; do not discard
@@ -209,4 +210,26 @@ the component catches that unavailable-session input rejection. The smoke now
 waits for the state heading to disappear, which happens only in the running
 state, before typing. No timeout or product code changed. The focused real
 Terminal scenario passed (`/tmp/rudder-terminal-restart-ready.log`); complete
-verification is running in `/tmp/rudder-retirement-desktop-ready-gate.log`.
+verification completed with exit 0 in `/tmp/rudder-retirement-desktop-ready-gate.log`,
+including development smoke, packaging, packaged account/update workflows and
+packaged App Builder. The tested smoke synchronization is checkpoint `963d1d391`.
+
+## Final Rust lint reconciliation
+
+Full-workspace Clippy with warnings denied exposed eight redundant explicit
+auto-dereferences and one collapsible conditional in the migration operator.
+The scoped cleanup preserves function arguments and short-circuit order; SQLx
+executor dereferences remain explicit. Rustfmt and full-workspace Clippy pass;
+the migration package passes 30 non-ignored tests. Its six PostgreSQL tests are
+not represented as rerun by that command. The earlier independent real-database
+receipt remains tied to its recorded source and binary; this later source diff
+requires explicit reviewer equivalence reconciliation before publication.
+
+The reviewer accepted the Clippy cleanup as behavior-equivalent. A supplemental
+author run on a new isolated PostgreSQL cluster exposed duplicate fixture
+database names when concurrent calls observed the same wall-clock timestamp.
+An atomic sequence now makes those names unique within the test process. The
+four parallel database tests and the real CLI backup/restore test pass. Initial
+failure and rerun logs are retained under
+`/private/tmp/acceptance-migration-clippy-9vq3gxqh/`; the cluster was stopped.
+This supplements, rather than replaces, independent acceptance.
