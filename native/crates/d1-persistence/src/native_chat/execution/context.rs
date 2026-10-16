@@ -12,6 +12,8 @@ pub(super) struct LockedExecution {
     pub(super) segment_id: String,
     pub(super) segment_state: String,
     pub(super) native_session_id: Option<String>,
+    pub(super) admitted_message_id: Option<String>,
+    pub(super) admitted_input_fingerprint: Option<String>,
 }
 
 /// Reauthorize and lock in the shared Conversation -> Generation -> Run ->
@@ -162,6 +164,14 @@ pub(super) async fn lock_current_execution(
     let target_type: Option<String> = run.try_get("target_type")?;
     let target_id: Option<String> = run.try_get("target_id")?;
     let context_snapshot: Value = run.try_get("context_snapshot")?;
+    let admitted_message_id = context_snapshot
+        .get("userMessageId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let admitted_input_fingerprint = context_snapshot
+        .get("inputFingerprint")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     if run_agent_id != id.agent_id
         || run_conversation_id.as_deref() != Some(id.conversation_id)
         || run_generation_id.as_deref() != Some(id.generation_id)
@@ -406,6 +416,8 @@ pub(super) async fn lock_current_execution(
         segment_id: stored_segment_id,
         segment_state,
         native_session_id,
+        admitted_message_id,
+        admitted_input_fingerprint,
     })
 }
 

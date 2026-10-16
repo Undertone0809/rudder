@@ -6,7 +6,8 @@ use rudder_auth_core::{
 };
 use rudder_d1_persistence::native_chat::config::LocalHostContext;
 use rudder_d1_persistence::native_chat::execution::{
-    CheckpointTransition, EffectKind, advance_checkpoint, claim, current_checkpoint, renew_lease,
+    CheckpointTransition, EffectDispatch, EffectKind, advance_checkpoint, claim,
+    current_checkpoint, load_submission, renew_lease,
 };
 use rudder_d1_persistence::native_chat::{Error, Request as AdmissionRequest, execute};
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase as Phase;
@@ -416,3 +417,9 @@ mod continuity;
 mod segment;
 #[path = "native_chat_execution/submission.rs"]
 mod submission;
+
+#[path = "native_chat_execution/effects.rs"]
+mod effects;
+
+#[path = "native_chat_execution/effects_content.rs"]
+mod effects_content;

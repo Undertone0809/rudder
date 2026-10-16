@@ -150,6 +150,13 @@ pub(super) fn parse_agent_config(
         return Err(invalid("Agent and Chat plan settings conflict"));
     }
 
+    // The pinned App Server turn/start schema has no planning-mode field.
+    // Reject before admission instead of silently executing a planning request
+    // as a normal turn. Enable only with a verified native protocol mapping.
+    if chat_plan_mode {
+        return Err(unsupported("planning mode has no verified native protocol mapping"));
+    }
+
     let cwd_override = optional_string(object, "cwd")?
         .map(|value| resolve_configured_path(&value, operator_home))
         .transpose()?;

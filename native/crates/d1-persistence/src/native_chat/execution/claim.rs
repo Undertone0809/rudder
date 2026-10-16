@@ -30,6 +30,30 @@ pub async fn claim(
     attempt_id: &str,
     host: &LocalHostContext,
 ) -> Result<ClaimedExecution> {
+    claim_with_preflight(
+        pool,
+        actor,
+        organization_id,
+        run_id,
+        attempt_id,
+        host,
+        |_| Ok(()),
+    )
+    .await
+}
+
+/// Apply a trusted, synchronous local preflight to the transactionally resolved
+/// configuration before claiming an owner or writing an admission hold.
+#[allow(clippy::too_many_arguments)]
+pub async fn claim_with_preflight(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    run_id: &str,
+    attempt_id: &str,
+    host: &LocalHostContext,
+    preflight: impl FnOnce(&ResolvedCodexConfig) -> Result<()>,
+) -> Result<ClaimedExecution> {
     let organization_id =
         super::super::validation::canonical_uuid(organization_id, "organization id")?;
     let run_id = super::super::validation::canonical_uuid(run_id, "Run id")?;
@@ -124,6 +148,8 @@ pub async fn claim(
     if config.identity.agent_id != agent_id {
         return Err(http(409, "Resolved Native Chat Agent changed"));
     }
+
+    preflight(&config)?;
 
     // Keep the global lock order after Conversation aligned with Native Chat
     // span writes and teardown: Conversation -> Agent -> Generation -> Run -> Attempt.
@@ -463,10 +489,15 @@ pub async fn claim(
         .bind(NATIVE_WRITE_MARKER)
         .execute(&mut *tx)
         .await?;
+    // A resumed admission already pins an exact Thread in its Attempt. Mirror
+    // that validated identity into both owner records in the claim transaction,
+    // so subsequent fenced reads agree before the first thread/resume RPC.
+    // This records the selected session, not provider acceptance or completion.
     let generation_updated = sqlx::query(
         "UPDATE chat_generations
          SET control_owner_token=$4,
              control_lease_expires_at=clock_timestamp() + make_interval(secs => $5),
+             provider_thread_id=$7,
              native_admission_hold=true,
              updated_at=clock_timestamp()
          WHERE org_id=$1::uuid AND id=$2::uuid AND conversation_id=$3::uuid
@@ -482,6 +513,7 @@ pub async fn claim(
     .bind(&generation_owner_token)
     .bind(GENERATION_CONTROL_LEASE_SECONDS)
     .bind(generation_epoch)
+    .bind(checkpoint.thread_id())
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -491,7 +523,7 @@ pub async fn claim(
 
     let run_updated = sqlx::query(
         "UPDATE heartbeat_runs
-         SET native_admission_hold=true, updated_at=clock_timestamp()
+         SET native_admission_hold=true, session_id_after=$7, updated_at=clock_timestamp()
          WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid
            AND chat_conversation_id=$4::uuid AND chat_generation_id=$5::uuid
            AND execution_authority='native_rust' AND native_admission_hold=false
@@ -504,6 +536,7 @@ pub async fn claim(
     .bind(&conversation_id)
     .bind(&generation_id)
     .bind(&run_owner)
+    .bind(checkpoint.thread_id())
     .execute(&mut *tx)
     .await?
     .rows_affected();

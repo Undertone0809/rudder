@@ -58,9 +58,12 @@ impl CheckpointTransition {
 /// not recreate this permit, preventing automatic resend after ambiguity.
 pub struct EffectPermit {
     kind: EffectKind,
-    run_id: String,
-    attempt_id: String,
+    pub(super) fence: ExecutionFence,
+    pub(super) phase: NativeChatProtocolPhase,
     committed_revision: u64,
+    pub(super) thread_id: Option<String>,
+    pub(super) source_message_id: Option<String>,
+    pub(super) input_fingerprint: Option<String>,
 }
 
 impl EffectPermit {
@@ -69,11 +72,11 @@ impl EffectPermit {
     }
 
     pub fn run_id(&self) -> &str {
-        &self.run_id
+        &self.fence.run_id
     }
 
     pub fn attempt_id(&self) -> &str {
-        &self.attempt_id
+        &self.fence.attempt_id
     }
 
     pub fn committed_revision(&self) -> u64 {
@@ -327,11 +330,23 @@ pub async fn advance_checkpoint(
     }
 
     tx.commit().await?;
-    let effect_permit = transition.effect_kind().map(|kind| EffectPermit {
-        kind,
-        run_id: fence.run_id.clone(),
-        attempt_id: fence.attempt_id.clone(),
-        committed_revision: snapshot.revision,
+    let effect_permit = transition.effect_kind().map(|kind| {
+        let (source_message_id, input_fingerprint) = match kind {
+            EffectKind::StartThread => (None, None),
+            EffectKind::SubmitInput => (
+                locked.admitted_message_id.clone(),
+                locked.admitted_input_fingerprint.clone(),
+            ),
+        };
+        EffectPermit {
+            kind,
+            fence: fence.clone(),
+            phase: snapshot.phase,
+            committed_revision: snapshot.revision,
+            thread_id: snapshot.thread_id.clone(),
+            source_message_id,
+            input_fingerprint,
+        }
     });
     Ok(CheckpointReceipt {
         snapshot,
