@@ -14,6 +14,7 @@ pub struct ExecutionFence {
     pub(super) agent_id: String,
     pub(super) binding_id: String,
     pub(super) segment_id: String,
+    pub(super) selected_model: Option<String>,
     pub(super) generation_attempt_epoch: i32,
     pub(super) run_attempt_epoch: i32,
     pub(super) connection_epoch: i32,

@@ -61,7 +61,8 @@ pub async fn finalize(
         "connectionEpoch":id.connection_epoch, "generationOwner":fence.generation_control_owner_token(),
         "runOwner":fence.run_execution_owner_token(), "threadId":turn.thread_id(),
         "turnId":turn.turn_id(), "status":run_status, "answer":turn.final_text(),
-        "usage":usage, "cost":cost, "cleanupReceipt":cleanup.evidence_fingerprint(),
+        "usage":usage, "selectedModel":fence.selected_model,
+        "cost":cost, "cleanupReceipt":cleanup.evidence_fingerprint(),
     });
     let fingerprint = format!("{:x}", Sha256::digest(facts.to_string().as_bytes()));
     let mut tx = pool.begin().await?;
@@ -151,6 +152,7 @@ pub async fn finalize(
     let turn_variant: i32 = source.try_get("turn_variant")?;
     let model: Option<String> = source.try_get("model")?;
     let increment = usage.map(|mut value| {
+        value["modelSource"] = json!(model.as_ref().map(|_| "execution_config"));
         value["model"] = json!(model);
         value
     });

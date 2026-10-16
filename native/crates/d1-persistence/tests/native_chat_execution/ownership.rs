@@ -1,6 +1,31 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn first_claim_refuses_preassigned_model_without_partial_claim() {
+    let database = Database::start().await;
+    let host = ExecutionHost::new();
+    let (actor, run, attempt) = prepare(&database, &host).await;
+    let mut tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE heartbeat_run_attempts SET model='vendor/preassigned' WHERE id=$1::uuid")
+        .bind(&attempt)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_conflict(claim(&database.pool, &actor, ORG, &run, &attempt, host.context()).await);
+    let state: (bool, bool, Option<String>, i64) = sqlx::query_as(
+        "SELECT r.native_admission_hold,g.native_admission_hold,g.control_owner_token,
+        (SELECT count(*) FROM run_runtime_spans WHERE run_id=r.id)
+        FROM heartbeat_runs r JOIN chat_generations g ON g.id=r.chat_generation_id WHERE r.id=$1::uuid")
+        .bind(&run).fetch_one(&database.pool).await.unwrap();
+    assert_eq!(state, (false, false, None, 0));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn first_claim_is_org_scoped_distinct_and_never_adopts_an_existing_owner() {
     let database = Database::start().await;
     let host = ExecutionHost::new();

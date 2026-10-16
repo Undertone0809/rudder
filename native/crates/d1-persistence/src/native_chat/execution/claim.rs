@@ -546,6 +546,24 @@ pub async fn claim_with_preflight(
         return Err(http(409, "Run execution lease expired during first claim"));
     }
 
+    // Persist the model selected for this exact execution before launching the
+    // provider. The returned immutable config supplies the same turn/start
+    // parameter; later Agent edits must not rewrite historical provenance.
+    let model_updated = sqlx::query(
+        "UPDATE heartbeat_run_attempts SET model=$4
+         WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid AND model IS NULL",
+    )
+    .bind(&organization_id)
+    .bind(&run_id)
+    .bind(&attempt_id)
+    .bind(config.model.as_deref())
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if model_updated != 1 {
+        return Err(http(409, "Native Chat attempt model was already assigned"));
+    }
+
     // Open the primary span before any provider effect, in the same claim
     // transaction. A later finalizer must seal this exact owned span.
     let span_id: String = sqlx::query_scalar(
@@ -637,6 +655,7 @@ pub async fn claim_with_preflight(
             agent_id,
             binding_id: binding.binding_id,
             segment_id: binding.segment_id,
+            selected_model: config.model.clone(),
             generation_attempt_epoch: generation_epoch,
             run_attempt_epoch,
             connection_epoch,

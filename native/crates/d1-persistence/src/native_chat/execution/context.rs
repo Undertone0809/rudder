@@ -202,7 +202,7 @@ pub(super) async fn lock_current_execution(
         "SELECT agent_id::text AS agent_id, attempt_index, runtime_type, status,
                 owner_token, attempt_epoch, generation_attempt_epoch,
                 connection_epoch, protocol_phase, checkpoint_json,
-                provider_thread_id, provider_turn_id
+                provider_thread_id, provider_turn_id, model
          FROM heartbeat_run_attempts
          WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid
          FOR UPDATE",
@@ -225,6 +225,7 @@ pub(super) async fn lock_current_execution(
     let checkpoint_json: Option<Value> = attempt.try_get("checkpoint_json")?;
     let attempt_thread: Option<String> = attempt.try_get("provider_thread_id")?;
     let attempt_turn: Option<String> = attempt.try_get("provider_turn_id")?;
+    let attempt_model: Option<String> = attempt.try_get("model")?;
     if attempt_agent_id != id.agent_id
         || attempt_runtime != "codex_local"
         || !matches!(attempt_status.as_str(), "started" | "waiting_for_network")
@@ -232,6 +233,7 @@ pub(super) async fn lock_current_execution(
         || attempt_epoch != Some(id.run_attempt_epoch)
         || attempt_generation_epoch != Some(id.generation_attempt_epoch)
         || connection_epoch != Some(id.connection_epoch)
+        || attempt_model != fence.selected_model
     {
         return Err(http(409, "Run attempt owner or epoch is stale"));
     }

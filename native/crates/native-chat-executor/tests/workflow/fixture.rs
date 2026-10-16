@@ -35,6 +35,7 @@ const SECRET: &[u8] = b"native-chat-executor-test-key";
 pub(crate) const BODY: &str = "Keep only this admitted input: 雪🧭\nsecond line";
 pub(crate) const THREAD: &str = " 线程-native-thread== ";
 pub(crate) const TURN: &str = " turn/δ-native-turn== ";
+pub(crate) const MODEL: &str = "vendor/native-chat-executor-model";
 
 pub(crate) struct FixtureHost {
     root: TempDir,
@@ -136,6 +137,7 @@ impl FixtureHost {
             "command": self.executable.to_string_lossy(),
             "cwd": self.root.path().join("agent-cwd").to_string_lossy(),
             "profileId": "default",
+            "model": MODEL,
             "instructionsBundleMode": "managed",
             "search": false,
         })
