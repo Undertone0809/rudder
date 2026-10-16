@@ -18,7 +18,7 @@ vi.mock("node:url", async (importOriginal) => {
   return { ...actual, fileURLToPath: vi.fn(actual.fileURLToPath) };
 });
 
-type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term" | "public-ready" | "delayed"
+type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term" | "public-ready" | "public-browser-ready" | "public-browser-wrong-scope" | "delayed"
   | "stream-missing-terminal" | "stream-bad-checksum" | "stream-transport-error"
   | "stream-invalid-json" | "stream-invalid-frame" | "stream-invalid-utf8"
   | "stream-wrong-content-type" | "stream-count-mismatch";
@@ -143,10 +143,14 @@ if (mode === "invalid") {
       productWriteAuthority: false,
     };
     const emit = () => process.stdout.write(JSON.stringify(receipt) + "\\n");
-    if (mode === "public-ready") {
+    if (mode === "public-ready" || mode.startsWith("public-browser-")) {
       publicServer = http.createServer((req, res) => res.end("ready"));
       publicServer.listen(0, "127.0.0.1", () => {
         receipt.publicIngress = { boundAddr: "127.0.0.1:" + publicServer.address().port, publicListener: true };
+        if (mode.startsWith("public-browser-")) receipt.publicIngress.browserSessionAuthentication = {
+          enabled: true, authority: "native-browser-session-resolver", route: "GET /api/auth/get-session",
+          nativeFailureFallback: false, scope: mode === "public-browser-wrong-scope" ? "all routes" : "session-read-only; other compatibility routes retain their existing authentication",
+        };
         emit();
       });
     } else emit();
@@ -251,6 +255,7 @@ afterEach(async () => {
   activeBridges.clear();
   await Promise.all([...activeFixtures].map((fixture) => fixture.remove()));
   activeFixtures.clear();
+  vi.unstubAllEnvs();
 });
 
 describe("rust foundation bridge lifecycle", () => {
@@ -415,6 +420,34 @@ describe("rust foundation bridge lifecycle", () => {
     await bridge.close();
     expect(bridge.publicIngressBaseUrl).toBeNull();
     await expect(bridge.waitForPublicIngressReady!()).rejects.toMatchObject({ code: "not_ready" });
+  });
+
+  it("transports exact issuer facts and refuses absent or broader native auth receipts", async () => {
+    vi.stubEnv("RUDDER_NATIVE_BROWSER_AUTH_MODE", "local_implicit");
+    vi.stubEnv("RUDDER_NATIVE_BROWSER_AUTH_SECRET", "ambient-must-not-be-inherited");
+    vi.stubEnv("RUDDER_NATIVE_BROWSER_AUTH_ISSUER", "invalid-ambient-descriptor");
+    const browserSessionAuth = Object.freeze({ issuer: "local_account" as const, secret: " exact-synthetic-issuer-secret-32-bytes ", secureCookie: true });
+    const publicIngress = {
+      listenAddr: "127.0.0.1:0", nodeUpstream: "http://127.0.0.1:3101",
+      authorizationKey: "0123456789abcdef0123456789abcdef", browserSessionAuth,
+    };
+    const fixture = await createFixture("public-browser-ready");
+    const bridge = createBridge(fixture, { publicIngress });
+    await bridge.start();
+    const childEnv = await fixture.readEnv();
+    expect(JSON.parse(childEnv.RUDDER_NATIVE_BROWSER_AUTH_ISSUER)).toEqual(browserSessionAuth);
+    expect(childEnv.RUDDER_NATIVE_BROWSER_AUTH_MODE).toBeUndefined();
+    expect(childEnv.RUDDER_NATIVE_BROWSER_AUTH_SECRET).toBeUndefined();
+    await bridge.close();
+    for (const mode of ["public-ready", "public-browser-wrong-scope"] as const) {
+      const rejected = createBridge(await createFixture(mode), { publicIngress });
+      await expect(rejected.start()).rejects.toMatchObject({ code: "startup_failed" });
+      expect(rejected.publicIngressBaseUrl).toBeNull();
+    }
+    const unexpected = createBridge(await createFixture("public-browser-ready"), {
+      publicIngress: { ...publicIngress, browserSessionAuth: undefined },
+    });
+    await expect(unexpected.start()).rejects.toMatchObject({ code: "startup_failed" });
   });
 
   it("rejects a missing, unexpected or wrong public listener instead of accepting private readiness", async () => {

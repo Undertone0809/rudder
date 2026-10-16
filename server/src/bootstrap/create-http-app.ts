@@ -49,6 +49,12 @@ export async function createHttpApp(
   db: Db,
   opts: RudderAppOptions,
 ): Promise<HttpAppHandle> {
+  const authRequirement =
+    opts.authRequirement ?? authRequirementForDeploymentMode(opts.deploymentMode);
+  if (opts.rustPublicIngress && authRequirement === "required"
+    && !opts.rustPublicIngress.browserSessionAuth) {
+    throw new Error("Required public browser authentication needs the constructed issuer configuration");
+  }
   if (opts.rustPublicIngress && (opts.rustPublicIngress.authorizationKey !== opts.rustPublicIngressAuthKey
     || !opts.rustFoundationActorEnvelopeKey)) {
     throw new Error("Rust public ingress requires matching private authorization and explicit actor signing keys");
@@ -153,10 +159,6 @@ export async function createHttpApp(
       resolveSession: opts.resolveSession,
     }),
   );
-  const authRequirement =
-    opts.authRequirement ?? authRequirementForDeploymentMode(opts.deploymentMode);
-  app.use(accountSessionRequired(authRequirement));
-  if (ingressAuthorization) app.use("/api", ingressAuthorization);
   app.get("/api/auth/get-session", (req, res) => {
     if (req.actor.type !== "board" || !req.actor.userId) {
       res.status(401).json({ error: "Unauthorized" });
@@ -177,6 +179,8 @@ export async function createHttpApp(
   if (opts.betterAuthHandler) {
     app.all("/api/auth/*authPath", opts.betterAuthHandler);
   }
+  app.use(accountSessionRequired(authRequirement));
+  if (ingressAuthorization) app.use("/api", ingressAuthorization);
   app.use(llmRoutes(db));
   try {
     await rudderPluginService(db, {

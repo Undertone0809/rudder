@@ -127,6 +127,59 @@ fn environment_cannot_downgrade_account_auth_or_select_incomplete_cookie_policy(
     }
 }
 
+#[test]
+fn issuer_descriptor_rejects_policy_drift_and_competing_overrides_without_secret_errors() {
+    let descriptor = serde_json::json!({
+        "issuer": "better_auth", "secret": SECRET, "secureCookie": true,
+        "sessionCookieName": "__Secure-better-auth.session_token",
+        "dontRememberCookieName": "__Secure-better-auth.dont_remember",
+        "expiresIn": 604800, "updateAge": 86400, "disableSessionRefresh": false,
+    });
+    assert!(issuer::parse(&descriptor.to_string()).is_ok());
+    for (field, value) in [
+        ("expiresIn", serde_json::json!(3600)),
+        ("updateAge", serde_json::json!(0)),
+        ("disableSessionRefresh", serde_json::json!(true)),
+        ("secureCookie", serde_json::json!(false)),
+        ("sessionCookieName", serde_json::json!("custom.session")),
+        (
+            "dontRememberCookieName",
+            serde_json::json!("custom.remember"),
+        ),
+        ("issuer", serde_json::json!("local_implicit")),
+        ("unknownField", serde_json::json!(SECRET)),
+    ] {
+        let mut changed = descriptor.clone();
+        changed[field] = value;
+        let error = issuer::parse(&changed.to_string())
+            .err()
+            .expect("policy drift must fail");
+        assert!(!error.to_string().contains(SECRET));
+    }
+    let raw = descriptor.to_string();
+    assert!(
+        BrowserAuthConfig::from_lookup(|key| Ok(match key {
+            "RUDDER_NATIVE_BROWSER_AUTH_ISSUER" => Some(raw.clone()),
+            "RUDDER_NATIVE_BROWSER_AUTH_MODE" => Some("required".into()),
+            _ => None,
+        }))
+        .is_err()
+    );
+    let local = serde_json::json!({"issuer":"local_account", "secret":format!(" {SECRET} "), "secureCookie":false});
+    match issuer::parse(&local.to_string()).unwrap().mode {
+        Mode::Required {
+            secret,
+            secure_cookie,
+            session_policy,
+        } => {
+            assert_eq!(secret, format!(" {SECRET} ").as_bytes());
+            assert!(!secure_cookie);
+            assert_eq!(session_policy, SessionPolicy::LocalAccount);
+        }
+        _ => panic!("issuer must require a session"),
+    }
+}
+
 async fn start(
     database_url: Option<String>,
     config: BrowserAuthConfig,

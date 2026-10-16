@@ -1,4 +1,5 @@
 import type { Db } from "@rudderhq/db";
+import type { BetterAuthOptions } from "better-auth";
 import type { Request, RequestHandler } from "express";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { initializeBoardClaimChallenge } from "../board-claim.js";
@@ -13,6 +14,7 @@ import {
   createLocalAccountSessionRevocation,
   type LocalAccountSessionRevocation,
 } from "../services/local-account-session-revocation.js";
+import type { RustBrowserSessionAuth } from "../services/rust-foundation-bridge.js";
 
 export interface LocalAccountAuthOptions {
   identityOrigin: string;
@@ -36,6 +38,8 @@ export interface AuthRuntime {
   resolveSessionFromHeaders?: (headers: Headers) => Promise<BetterAuthSessionResult | null>;
   localAccountExchangePolicy?: LocalAccountExchangePolicy;
   localAccountSessionRevocation?: LocalAccountSessionRevocation;
+  /** Exact constructed issuer facts for the Rust startup transport; contains a secret. */
+  browserSessionAuth?: RustBrowserSessionAuth;
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -85,6 +89,11 @@ export async function createAuthRuntime(options: {
       sessionSecret: localAccountAuth.sessionSecret,
       secureCookie: localAccountAuth.secureCookie ?? false,
     });
+    runtime.browserSessionAuth = Object.freeze({
+      issuer: "local_account",
+      secret: localAccountAuth.sessionSecret,
+      secureCookie: localAccountAuth.secureCookie ?? false,
+    });
     runtime.resolveSession = (req) => resolveLocalSession(req.headers);
     runtime.resolveSessionFromHeaders = (headers) => {
       const rawHeaders: Record<string, string> = {};
@@ -132,6 +141,20 @@ export async function createAuthRuntime(options: {
       "Authenticated mode auth origin configuration",
     );
     const auth = createBetterAuthInstance(db, config, effectiveTrustedOrigins);
+    // Read the constructed issuer, including its effective current signing key.
+    // Do not reread environment defaults or resolve any per-request identity here.
+    const context = await auth.$context;
+    const issuerOptions: BetterAuthOptions = context.options;
+    runtime.browserSessionAuth = Object.freeze({
+      issuer: "better_auth",
+      secret: context.secret,
+      secureCookie: context.authCookies.sessionToken.attributes.secure === true,
+      sessionCookieName: context.authCookies.sessionToken.name,
+      dontRememberCookieName: context.authCookies.dontRememberToken.name,
+      expiresIn: context.sessionConfig.expiresIn,
+      updateAge: context.sessionConfig.updateAge,
+      disableSessionRefresh: issuerOptions.session?.disableSessionRefresh ?? false,
+    });
     runtime.betterAuthHandler = createBetterAuthHandler(auth);
     runtime.resolveSession = (req) => resolveBetterAuthSession(auth, req);
     runtime.resolveSessionFromHeaders = (headers) =>

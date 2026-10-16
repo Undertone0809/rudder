@@ -45,6 +45,15 @@ describe("explicit public ingress startup", () => {
     expect(ingress.appOptions.rustPublicIngress?.trustedProxies).toBe("192.0.2.1,::1");
   });
 
+  it("transports the constructed issuer without selecting a different policy", async () => {
+    vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    const descriptor = Object.freeze({ issuer: "local_account" as const, secret: " raw-issuer-secret ", secureCookie: true });
+    const ingress = await preparePublicIngressStartup(config(), 3100, descriptor);
+    expect(ingress.appOptions.rustPublicIngress?.browserSessionAuth).toBe(descriptor);
+    const disabled = await preparePublicIngressStartup(config({ rustPublicIngressMode: "off" }), 3100, descriptor);
+    expect(disabled.appOptions).toEqual({});
+  });
+
   it("fails closed if private port selection collides with the public port", async () => {
     vi.mocked(selectAvailablePort).mockResolvedValue(65535);
     await expect(preparePublicIngressStartup(config(), 65535)).rejects.toThrow("distinct ports");

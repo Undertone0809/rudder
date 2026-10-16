@@ -32,12 +32,30 @@ import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-bindi
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
+/** Issuer startup facts only. Rust validates the policy and authenticates requests. */
+export type RustBrowserSessionAuth = Readonly<{
+  issuer: "local_account";
+  secret: string;
+  secureCookie: boolean;
+} | {
+  issuer: "better_auth";
+  secret: string;
+  secureCookie: boolean;
+  sessionCookieName: string;
+  dontRememberCookieName: string;
+  expiresIn: number;
+  updateAge: number;
+  disableSessionRefresh: boolean;
+}>;
+
 export type RustPublicIngressOptions = {
   listenAddr: string;
   nodeUpstream: string;
   authorizationKey: string;
   /** Explicit numeric proxy IP list; Rust validates and owns forwarding trust. */
   trustedProxies?: string;
+  /** Sensitive, immutable facts from the constructed issuer; never log these. */
+  browserSessionAuth?: RustBrowserSessionAuth;
 };
 
 export type RustFoundationBridgeOptions = {
@@ -171,7 +189,17 @@ type StartupReceipt = {
   boundAddr?: unknown;
   publicListener?: unknown;
   productWriteAuthority?: unknown;
-  publicIngress?: { boundAddr?: unknown; publicListener?: unknown };
+  publicIngress?: {
+    boundAddr?: unknown;
+    publicListener?: unknown;
+    browserSessionAuthentication?: {
+      enabled?: unknown;
+      authority?: unknown;
+      route?: unknown;
+      nativeFailureFallback?: unknown;
+      scope?: unknown;
+    };
+  };
 };
 
 type RustFoundationChild = ChildProcessByStdio<null, Readable, Readable>;
@@ -355,6 +383,9 @@ function createFoundationChildEnvironment(input: {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      ...(input.publicIngress.browserSessionAuth ? {
+        RUDDER_NATIVE_BROWSER_AUTH_ISSUER: JSON.stringify(input.publicIngress.browserSessionAuth),
+      } : {}),
       ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
     } : {}),
   };
@@ -553,6 +584,16 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
           || Number(publicAddr.slice(publicAddr.lastIndexOf(":") + 1)) > 65535
           || publicAddr === boundAddr) {
           throw new RustFoundationBridgeError("startup_failed", "Rust public ingress binding did not match the requested listener");
+        }
+        const browserAuth = receipt.publicIngress?.browserSessionAuthentication;
+        if (options.publicIngress.browserSessionAuth
+          ? browserAuth?.enabled !== true
+            || browserAuth.authority !== "native-browser-session-resolver"
+            || browserAuth.route !== "GET /api/auth/get-session"
+            || browserAuth.nativeFailureFallback !== false
+            || browserAuth.scope !== "session-read-only; other compatibility routes retain their existing authentication"
+          : browserAuth?.enabled === true) {
+          throw new RustFoundationBridgeError("startup_failed", "Rust browser authentication did not match the requested issuer handoff");
         }
         publicIngressBaseUrl = `http://${publicAddr}`;
       } else if (receipt.publicIngress !== undefined) {

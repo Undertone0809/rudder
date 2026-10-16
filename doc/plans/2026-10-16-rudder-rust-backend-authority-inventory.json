@@ -4306,7 +4306,7 @@
     },
     {
       "path": "server/src/bootstrap/auth-runtime.ts",
-      "sha256": "0e0161532c370d0b42d1a45e85d56bab9ca0c401746f9ab1287d8a81a33c65b4",
+      "sha256": "6ff56a111ea4caedf5412ed4cef9fc36e8d083b351f37984507fa2c00b41d9a7",
       "families": [
         "http_middleware_and_auth",
         "public_http_and_routes",
@@ -4315,7 +4315,7 @@
     },
     {
       "path": "server/src/bootstrap/create-http-app.ts",
-      "sha256": "2f10c420a8b0bb1d63ccae7f3e360c635b30ecf0935ed4d7cebcc35cea99a71e",
+      "sha256": "7d020be93f31b2440eb1d514cc3691050012f3276ee9b468eb155285a0de90b0",
       "families": [
         "database_queries_and_writers",
         "http_middleware_and_auth",
@@ -4334,7 +4334,7 @@
     },
     {
       "path": "server/src/bootstrap/public-ingress-startup.ts",
-      "sha256": "7d73329229fa2e2ec036bcc4adf0ecf2baa5f62d6c7837364884aa452e1eae07",
+      "sha256": "b01511947b18f8f3afb571c0353ebfc99c1501677d619fc2830a204d1bf9b7ba",
       "families": [
         "http_middleware_and_auth",
         "public_http_and_routes",
@@ -4417,7 +4417,7 @@
     },
     {
       "path": "server/src/index.ts",
-      "sha256": "611c0e6a952e292807d7671d24ca9ee680c8ec9548a35af131281594cf7c4e01",
+      "sha256": "65051e3c1d9bf24e26515c39a43fbfbeb2faaf2219f04862f6ceb6478c15b392",
       "families": [
         "database_queries_and_writers",
         "server_lifecycle_and_workers"
@@ -4480,7 +4480,7 @@
     },
     {
       "path": "server/src/middleware/logger.ts",
-      "sha256": "932ba6ded49ed9e786be44ff054790a7f286bbfa053bc701c0dece4f6821729b",
+      "sha256": "82da5b06d5e6cc1a32e3557ed8ef214eae5875869faae9824d6294abc97a0100",
       "families": [
         "http_middleware_and_auth",
         "server_lifecycle_and_workers"
@@ -6878,7 +6878,7 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "0ef6d83edc0180dc861e58c8854d5d9443e4ccd03e5c6ee99097bb3c19f70b70",
+      "sha256": "adbca61fc2459ac5443da560cff6d764271cbbe5c25860f29e7b5f94c7ee202c",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -14584,7 +14584,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 273,
+      "line": 277,
       "signature": "server/src/bootstrap/create-http-app.ts|db-call|db|transaction|async (tx) => { if (rustFoundationBridge.organizationBrandingMode === \"required\" && organizationB\u2026 [sha256:e9d605f1cc73ce914bab97f4f5b91a596949268b2e01488f30ef022684d409a4]",
       "receiver": "db",
       "method": "transaction",
@@ -14595,7 +14595,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 178,
+      "line": 180,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|ALL|/api/auth/*authPath",
       "receiver": "app",
       "method": "ALL",
@@ -14605,7 +14605,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 219,
+      "line": 223,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/.*/",
       "receiver": "app",
       "method": "GET",
@@ -14615,7 +14615,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 251,
+      "line": 255,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/.*/",
       "receiver": "app",
       "method": "GET",
@@ -14625,7 +14625,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 160,
+      "line": 162,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/api/auth/get-session",
       "receiver": "app",
       "method": "GET",
@@ -14635,7 +14635,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 159,
+      "line": 183,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14644,7 +14644,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 192,
+      "line": 196,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14653,7 +14653,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 205,
+      "line": 209,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14662,7 +14662,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 129,
+      "line": 135,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/workspace-preview",
       "receiver": "app",
       "mount_path": "/workspace-preview"
@@ -14671,7 +14671,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 158,
+      "line": 182,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:accountSessionRequired(authRequirement)>",
       "receiver": "app",
       "expression": "accountSessionRequired(authRequirement)"
@@ -14680,7 +14680,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 149,
+      "line": 155,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement: opts.authRequirement, resolveSession: opts.resolveSession, })>",
       "receiver": "app",
       "expression": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement: opts.authRequirement, resolveSession: opts.resolveSession, })"
@@ -14689,7 +14689,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 125,
+      "line": 131,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:async (req, res, next) => { if (await workspacePreview.handlePreviewHostRequest(req, res)) return; next(); }>",
       "receiver": "app",
       "expression": "async (req, res, next) => { if (await workspacePreview.handlePreviewHostRequest(req, res)) return; next(); }"
@@ -14698,7 +14698,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 267,
+      "line": 271,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:errorHandler>",
       "receiver": "app",
       "expression": "errorHandler"
@@ -14707,7 +14707,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 133,
+      "line": 139,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:express.json({ // Organization import/export payloads can inline full portable packages. limit: \u2026 [sha256:dbf52b14b8832a75108643dba62fa1c21b97f91122eb6e20cbbc9004f69c636d]",
       "receiver": "app",
       "expression": "express.json({ // Organization import/export payloads can inline full portable packages. limit: \"10mb\", verify: (req, _res, buf) => { (req as unknown as { rawBody: Buffer }).rawBody = buf; }, })"
@@ -14716,7 +14716,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 218,
+      "line": 222,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:express.static(uiDist)>",
       "receiver": "app",
       "expression": "express.static(uiDist)"
@@ -14725,7 +14725,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 141,
+      "line": 147,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:httpLogger>",
       "receiver": "app",
       "expression": "httpLogger"
@@ -14734,7 +14734,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 180,
+      "line": 184,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:llmRoutes(db)>",
       "receiver": "app",
       "expression": "llmRoutes(db)"
@@ -14743,7 +14743,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 140,
+      "line": 146,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:markBrowserHttpRequestBodySensitive>",
       "receiver": "app",
       "expression": "markBrowserHttpRequestBodySensitive"
@@ -14752,7 +14752,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 142,
+      "line": 148,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })>",
       "receiver": "app",
       "expression": "privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })"
@@ -14761,7 +14761,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 250,
+      "line": 254,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:vite.middlewares>",
       "receiver": "app",
       "expression": "vite.middlewares"
@@ -15339,7 +15339,7 @@
       "type": "http_server_construction",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1108,
+      "line": 1109,
       "signature": "server/src/index.ts|http-server|appHandle.app as unknown as Parameters<typeof createServer>[0]",
       "expression": "appHandle.app as unknown as Parameters<typeof createServer>[0]"
     },
@@ -15347,7 +15347,7 @@
       "type": "listener_start",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1440,
+      "line": 1441,
       "signature": "server/src/index.ts|listener|server|ingress.nodeListenPort",
       "receiver": "server",
       "expression": "ingress.nodeListenPort"
@@ -15374,7 +15374,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1173,
+      "line": 1174,
       "signature": "server/src/index.ts|supervisor-own|feishu-runtime",
       "receiver": "supervisor",
       "resource": "feishu-runtime"
@@ -15383,7 +15383,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1179,
+      "line": 1180,
       "signature": "server/src/index.ts|supervisor-own|feishu-runtime-registry",
       "receiver": "supervisor",
       "resource": "feishu-runtime-registry"
@@ -15392,7 +15392,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1495,
+      "line": 1496,
       "signature": "server/src/index.ts|supervisor-own|http-ingress",
       "receiver": "supervisor",
       "resource": "http-ingress"
@@ -15401,7 +15401,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1117,
+      "line": 1118,
       "signature": "server/src/index.ts|supervisor-own|http-server-drain",
       "receiver": "supervisor",
       "resource": "http-server-drain"
@@ -15410,7 +15410,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1133,
+      "line": 1134,
       "signature": "server/src/index.ts|supervisor-own|live-events-websocket",
       "receiver": "supervisor",
       "resource": "live-events-websocket"
@@ -15419,7 +15419,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1167,
+      "line": 1168,
       "signature": "server/src/index.ts|supervisor-own|managed-mcp-oauth-session-gc",
       "receiver": "supervisor",
       "resource": "managed-mcp-oauth-session-gc"
@@ -15428,7 +15428,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1149,
+      "line": 1150,
       "signature": "server/src/index.ts|supervisor-own|name",
       "receiver": "supervisor",
       "resource": "name"
@@ -15437,7 +15437,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1553,
+      "line": 1554,
       "signature": "server/src/index.ts|supervisor-own|process-signal-listeners",
       "receiver": "supervisor",
       "resource": "process-signal-listeners"
@@ -15455,7 +15455,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1207,
+      "line": 1208,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .recoverNetworkWaitingRuns() .then(() => heartbeat.reapTimedOutRuns({ maxRuntim\u2026 [sha256:4ff3e87ec312f4bb922fe31fc5993b706c9a650f75df88884c1fb686c67f57bf]",
       "receiver": null,
       "method": "setInterval",
@@ -15465,7 +15465,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1222,
+      "line": 1223,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .tickTimers(new Date()) .then((result) => { if (result.enqueued > 0) { logger.i\u2026 [sha256:836394bb771c6983d27882ad1a77902f9b5b4b9d448a4d8b3ab46fc1871ff562]",
       "receiver": null,
       "method": "setInterval",
@@ -15475,7 +15475,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1294,
+      "line": 1295,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledBackup(); }",
       "receiver": null,
       "method": "setInterval",
@@ -15485,7 +15485,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1427,
+      "line": 1428,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledWorkspaceBackups(\"running\"); }",
       "receiver": null,
       "method": "setInterval",
@@ -56840,7 +56840,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 400,
+      "line": 431,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => finish(false)",
       "receiver": null,
       "method": "setTimeout",
@@ -56850,7 +56850,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1146,
+      "line": 1187,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -58523,28 +58523,28 @@
     {
       "type": "dynamic_http_route_path",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 219,
+      "line": 223,
       "method": "GET",
       "expression": "/.*/"
     },
     {
       "type": "dynamic_http_route_path",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 251,
+      "line": 255,
       "method": "GET",
       "expression": "/.*/"
     },
     {
       "type": "dynamic_middleware_mount",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 142,
+      "line": 148,
       "receiver": "app",
       "expression": "privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })"
     },
     {
       "type": "dynamic_middleware_mount",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 149,
+      "line": 155,
       "receiver": "app",
       "expression": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement: opts.authRequirement, resolveSession: opts.resolveSession, })"
     },
@@ -58614,6 +58614,84 @@
       "retirement_criterion": "Before public activation, legacy readers, writers, recovery, Stop and terminal projection must exclude or delegate native-owned rows. Retire schema compatibility only with coordinated schema authority/tooling migration; TypeScript declarations may remain for Drizzle tooling under BACKEND_ARCHITECTURE.",
       "reviewer": "/root/host_library_review",
       "review_reference": "Independent schema diff and rebase-equivalence stage ACCEPT on 2026-10-16; exact source hashes bind the reviewed declarations. Stacked PR base is codex/native-chat-completion-20261016.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/bootstrap/auth-runtime.ts",
+      "change_kind": "modified_node_compatibility",
+      "base_sha256": "0e0161532c370d0b42d1a45e85d56bab9ca0c401746f9ab1287d8a81a33c65b4",
+      "head_sha256": "6ff56a111ea4caedf5412ed4cef9fc36e8d083b351f37984507fa2c00b41d9a7",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/browser_auth owns required native-ingress GET /api/auth/get-session identity, storage lookup, renewal, projection and errors.",
+      "compatibility_boundary": "The TypeScript launcher captures the effective issuer descriptor once from the constructed Better Auth or local-account runtime and transports it at Rust child startup; it adds no per-request browser-session decision. With native ingress required, server-foundation owns public GET /api/auth/get-session validation, database lookup, response, renewal, and failure handling; descriptor or startup-receipt mismatch fails closed, and native failure has no Node fallback. The Node compatibility listener retains its duplicate exact GET only on loopback, while Rust reserves that public path and aliases. Existing Better Auth/local-account sign-up, sign-in, sign-out, exchange, other compatibility API authorization, and their database writes remain Node-owned migration debt and are excluded from Rust-authority claims. The route-order repair exposes only the existing /api/auth lifecycle handlers before the ordinary account-session gate, after hostname and actor middleware; ordinary APIs remain gated. Authentication request bodies are redacted before error/rate-limit logging. Retire these Node boundaries only when Rust owns issuer lifecycle and the remaining startup/auth responsibilities.",
+      "retirement_criterion": "Rust owns issuer lifecycle and startup/auth responsibilities; ordinary API authority and compatibility listener retirement are separately evidenced. Do not infer Desktop default-launcher cutover or full backend retirement from this slice.",
+      "reviewer": "/root/scope_review",
+      "review_reference": "Stage ACCEPT 2026-10-17, launcher-auth-stage-review.json SHA256 9e0e46207864966bc96dbf93fb722421984f68bd5b502a15be15a3147bd8acb7; exact source hashes bind the reviewed startup/configuration and legacy compatibility repairs.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/bootstrap/create-http-app.ts",
+      "change_kind": "modified_node_compatibility",
+      "base_sha256": "2f10c420a8b0bb1d63ccae7f3e360c635b30ecf0935ed4d7cebcc35cea99a71e",
+      "head_sha256": "7d020be93f31b2440eb1d514cc3691050012f3276ee9b468eb155285a0de90b0",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/browser_auth owns required native-ingress GET /api/auth/get-session identity, storage lookup, renewal, projection and errors.",
+      "compatibility_boundary": "The TypeScript launcher captures the effective issuer descriptor once from the constructed Better Auth or local-account runtime and transports it at Rust child startup; it adds no per-request browser-session decision. With native ingress required, server-foundation owns public GET /api/auth/get-session validation, database lookup, response, renewal, and failure handling; descriptor or startup-receipt mismatch fails closed, and native failure has no Node fallback. The Node compatibility listener retains its duplicate exact GET only on loopback, while Rust reserves that public path and aliases. Existing Better Auth/local-account sign-up, sign-in, sign-out, exchange, other compatibility API authorization, and their database writes remain Node-owned migration debt and are excluded from Rust-authority claims. The route-order repair exposes only the existing /api/auth lifecycle handlers before the ordinary account-session gate, after hostname and actor middleware; ordinary APIs remain gated. Authentication request bodies are redacted before error/rate-limit logging. Retire these Node boundaries only when Rust owns issuer lifecycle and the remaining startup/auth responsibilities.",
+      "retirement_criterion": "Rust owns issuer lifecycle and startup/auth responsibilities; ordinary API authority and compatibility listener retirement are separately evidenced. Do not infer Desktop default-launcher cutover or full backend retirement from this slice.",
+      "reviewer": "/root/scope_review",
+      "review_reference": "Stage ACCEPT 2026-10-17, launcher-auth-stage-review.json SHA256 9e0e46207864966bc96dbf93fb722421984f68bd5b502a15be15a3147bd8acb7; exact source hashes bind the reviewed startup/configuration and legacy compatibility repairs.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/bootstrap/public-ingress-startup.ts",
+      "change_kind": "modified_node_compatibility",
+      "base_sha256": "7d73329229fa2e2ec036bcc4adf0ecf2baa5f62d6c7837364884aa452e1eae07",
+      "head_sha256": "b01511947b18f8f3afb571c0353ebfc99c1501677d619fc2830a204d1bf9b7ba",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/browser_auth owns required native-ingress GET /api/auth/get-session identity, storage lookup, renewal, projection and errors.",
+      "compatibility_boundary": "The TypeScript launcher captures the effective issuer descriptor once from the constructed Better Auth or local-account runtime and transports it at Rust child startup; it adds no per-request browser-session decision. With native ingress required, server-foundation owns public GET /api/auth/get-session validation, database lookup, response, renewal, and failure handling; descriptor or startup-receipt mismatch fails closed, and native failure has no Node fallback. The Node compatibility listener retains its duplicate exact GET only on loopback, while Rust reserves that public path and aliases. Existing Better Auth/local-account sign-up, sign-in, sign-out, exchange, other compatibility API authorization, and their database writes remain Node-owned migration debt and are excluded from Rust-authority claims. The route-order repair exposes only the existing /api/auth lifecycle handlers before the ordinary account-session gate, after hostname and actor middleware; ordinary APIs remain gated. Authentication request bodies are redacted before error/rate-limit logging. Retire these Node boundaries only when Rust owns issuer lifecycle and the remaining startup/auth responsibilities.",
+      "retirement_criterion": "Rust owns issuer lifecycle and startup/auth responsibilities; ordinary API authority and compatibility listener retirement are separately evidenced. Do not infer Desktop default-launcher cutover or full backend retirement from this slice.",
+      "reviewer": "/root/scope_review",
+      "review_reference": "Stage ACCEPT 2026-10-17, launcher-auth-stage-review.json SHA256 9e0e46207864966bc96dbf93fb722421984f68bd5b502a15be15a3147bd8acb7; exact source hashes bind the reviewed startup/configuration and legacy compatibility repairs.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/index.ts",
+      "change_kind": "modified_node_compatibility",
+      "base_sha256": "611c0e6a952e292807d7671d24ca9ee680c8ec9548a35af131281594cf7c4e01",
+      "head_sha256": "65051e3c1d9bf24e26515c39a43fbfbeb2faaf2219f04862f6ceb6478c15b392",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/browser_auth owns required native-ingress GET /api/auth/get-session identity, storage lookup, renewal, projection and errors.",
+      "compatibility_boundary": "The TypeScript launcher captures the effective issuer descriptor once from the constructed Better Auth or local-account runtime and transports it at Rust child startup; it adds no per-request browser-session decision. With native ingress required, server-foundation owns public GET /api/auth/get-session validation, database lookup, response, renewal, and failure handling; descriptor or startup-receipt mismatch fails closed, and native failure has no Node fallback. The Node compatibility listener retains its duplicate exact GET only on loopback, while Rust reserves that public path and aliases. Existing Better Auth/local-account sign-up, sign-in, sign-out, exchange, other compatibility API authorization, and their database writes remain Node-owned migration debt and are excluded from Rust-authority claims. The route-order repair exposes only the existing /api/auth lifecycle handlers before the ordinary account-session gate, after hostname and actor middleware; ordinary APIs remain gated. Authentication request bodies are redacted before error/rate-limit logging. Retire these Node boundaries only when Rust owns issuer lifecycle and the remaining startup/auth responsibilities.",
+      "retirement_criterion": "Rust owns issuer lifecycle and startup/auth responsibilities; ordinary API authority and compatibility listener retirement are separately evidenced. Do not infer Desktop default-launcher cutover or full backend retirement from this slice.",
+      "reviewer": "/root/scope_review",
+      "review_reference": "Stage ACCEPT 2026-10-17, launcher-auth-stage-review.json SHA256 9e0e46207864966bc96dbf93fb722421984f68bd5b502a15be15a3147bd8acb7; exact source hashes bind the reviewed startup/configuration and legacy compatibility repairs.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-foundation-bridge.ts",
+      "change_kind": "modified_node_compatibility",
+      "base_sha256": "0ef6d83edc0180dc861e58c8854d5d9443e4ccd03e5c6ee99097bb3c19f70b70",
+      "head_sha256": "adbca61fc2459ac5443da560cff6d764271cbbe5c25860f29e7b5f94c7ee202c",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/browser_auth owns required native-ingress GET /api/auth/get-session identity, storage lookup, renewal, projection and errors.",
+      "compatibility_boundary": "The TypeScript launcher captures the effective issuer descriptor once from the constructed Better Auth or local-account runtime and transports it at Rust child startup; it adds no per-request browser-session decision. With native ingress required, server-foundation owns public GET /api/auth/get-session validation, database lookup, response, renewal, and failure handling; descriptor or startup-receipt mismatch fails closed, and native failure has no Node fallback. The Node compatibility listener retains its duplicate exact GET only on loopback, while Rust reserves that public path and aliases. Existing Better Auth/local-account sign-up, sign-in, sign-out, exchange, other compatibility API authorization, and their database writes remain Node-owned migration debt and are excluded from Rust-authority claims. The route-order repair exposes only the existing /api/auth lifecycle handlers before the ordinary account-session gate, after hostname and actor middleware; ordinary APIs remain gated. Authentication request bodies are redacted before error/rate-limit logging. Retire these Node boundaries only when Rust owns issuer lifecycle and the remaining startup/auth responsibilities.",
+      "retirement_criterion": "Rust owns issuer lifecycle and startup/auth responsibilities; ordinary API authority and compatibility listener retirement are separately evidenced. Do not infer Desktop default-launcher cutover or full backend retirement from this slice.",
+      "reviewer": "/root/scope_review",
+      "review_reference": "Stage ACCEPT 2026-10-17, launcher-auth-stage-review.json SHA256 9e0e46207864966bc96dbf93fb722421984f68bd5b502a15be15a3147bd8acb7; exact source hashes bind the reviewed startup/configuration and legacy compatibility repairs.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/middleware/logger.ts",
+      "change_kind": "modified_node_compatibility",
+      "base_sha256": "932ba6ded49ed9e786be44ff054790a7f286bbfa053bc701c0dece4f6821729b",
+      "head_sha256": "82da5b06d5e6cc1a32e3557ed8ef214eae5875869faae9824d6294abc97a0100",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/browser_auth owns required native-ingress GET /api/auth/get-session identity, storage lookup, renewal, projection and errors.",
+      "compatibility_boundary": "The TypeScript launcher captures the effective issuer descriptor once from the constructed Better Auth or local-account runtime and transports it at Rust child startup; it adds no per-request browser-session decision. With native ingress required, server-foundation owns public GET /api/auth/get-session validation, database lookup, response, renewal, and failure handling; descriptor or startup-receipt mismatch fails closed, and native failure has no Node fallback. The Node compatibility listener retains its duplicate exact GET only on loopback, while Rust reserves that public path and aliases. Existing Better Auth/local-account sign-up, sign-in, sign-out, exchange, other compatibility API authorization, and their database writes remain Node-owned migration debt and are excluded from Rust-authority claims. The route-order repair exposes only the existing /api/auth lifecycle handlers before the ordinary account-session gate, after hostname and actor middleware; ordinary APIs remain gated. Authentication request bodies are redacted before error/rate-limit logging. Retire these Node boundaries only when Rust owns issuer lifecycle and the remaining startup/auth responsibilities.",
+      "retirement_criterion": "Rust owns issuer lifecycle and startup/auth responsibilities; ordinary API authority and compatibility listener retirement are separately evidenced. Do not infer Desktop default-launcher cutover or full backend retirement from this slice.",
+      "reviewer": "/root/scope_review",
+      "review_reference": "Stage ACCEPT 2026-10-17, launcher-auth-stage-review.json SHA256 9e0e46207864966bc96dbf93fb722421984f68bd5b502a15be15a3147bd8acb7; exact source hashes bind the reviewed startup/configuration and legacy compatibility repairs.",
       "review_status": "reviewed"
     }
   ]

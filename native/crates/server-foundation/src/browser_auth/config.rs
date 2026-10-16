@@ -88,6 +88,15 @@ impl BrowserAuthConfig {
         let secret = lookup("RUDDER_NATIVE_BROWSER_AUTH_SECRET")?;
         let secure = lookup("RUDDER_NATIVE_BROWSER_AUTH_SECURE_COOKIE")?;
         let policy = lookup("RUDDER_NATIVE_BROWSER_AUTH_SESSION_POLICY")?;
+        if let Some(issuer) = lookup("RUDDER_NATIVE_BROWSER_AUTH_ISSUER")? {
+            if mode.is_some() || secret.is_some() || secure.is_some() || policy.is_some() {
+                return Err(ConfigError::invalid(
+                    "RUDDER_NATIVE_BROWSER_AUTH_ISSUER",
+                    "issuer descriptor cannot be combined with standalone authentication overrides",
+                ));
+            }
+            return super::issuer::parse(&issuer).map(Some);
+        }
         let invalid = || {
             ConfigError::invalid(
                 "RUDDER_NATIVE_BROWSER_AUTH_MODE",

@@ -26,6 +26,10 @@ describe("createAuthRuntime", () => {
 
     expect(ensureLocalTrustedBoardPrincipal).toHaveBeenCalledOnce();
     expect(runtime.authReady).toBe(true);
+    expect(runtime.browserSessionAuth).toEqual({
+      issuer: "local_account", secret: "local-session-secret", secureCookie: false,
+    });
+    expect(Object.isFrozen(runtime.browserSessionAuth)).toBe(true);
     expect(runtime.localAccountExchangePolicy).toMatchObject({
       expectedIssuer: "https://accounts.rudderhq.dev",
       audience: "rudder-desktop",

@@ -8,6 +8,7 @@ use sha2::Sha256;
 use sqlx::PgConnection;
 
 mod config;
+mod issuer;
 use config::Mode;
 pub use config::{BrowserAuthConfig, BrowserAuthConfigError, SessionPolicy};
 

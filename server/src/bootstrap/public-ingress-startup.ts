@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import type { RudderAppHandle } from "../app.js";
 import type { Config } from "../config.js";
+import type { RustBrowserSessionAuth } from "../services/rust-foundation-bridge.js";
 import { selectAvailablePort } from "./port-selection.js";
 import type { RudderAppOptions } from "./types.js";
 
@@ -14,7 +15,11 @@ export function assertPublicIngressExposure(config: Config, localAccountAuth: bo
   }
 }
 
-export async function preparePublicIngressStartup(config: Config, publicPort: number) {
+export async function preparePublicIngressStartup(
+  config: Config,
+  publicPort: number,
+  browserSessionAuth?: RustBrowserSessionAuth,
+) {
   const enabled = config.rustPublicIngressMode === "required";
   const nodeListenHost = enabled ? "127.0.0.1" : config.host;
   const nodeListenPort = enabled
@@ -33,6 +38,7 @@ export async function preparePublicIngressStartup(config: Config, publicPort: nu
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
       trustedProxies: config.rustPublicIngressTrustedProxies,
+      browserSessionAuth,
     };
   }
   return {

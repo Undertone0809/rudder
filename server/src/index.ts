@@ -1064,6 +1064,7 @@ async function startServerRuntime(
     resolveSessionFromHeaders,
     localAccountExchangePolicy,
     localAccountSessionRevocation,
+    browserSessionAuth,
   } = await createAuthRuntime({
     db: db as any,
     config,
@@ -1073,7 +1074,7 @@ async function startServerRuntime(
   });
   
   const listenPort = await selectAvailablePort(config.port, config.host);
-  const ingress = await preparePublicIngressStartup(config, listenPort);
+  const ingress = await preparePublicIngressStartup(config, listenPort, browserSessionAuth);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
