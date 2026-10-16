@@ -8,6 +8,10 @@ use sqlx::{Postgres, Row, Transaction};
 pub(super) struct LockedExecution {
     pub(super) checkpoint: NativeChatProtocolCheckpoint,
     pub(super) agent_id: String,
+    pub(super) binding_id: String,
+    pub(super) segment_id: String,
+    pub(super) segment_state: String,
+    pub(super) native_session_id: Option<String>,
 }
 
 /// Reauthorize and lock in the shared Conversation -> Generation -> Run ->
@@ -22,6 +26,7 @@ pub(super) async fn lock_current_execution(
     if actor.organization_id() != id.organization_id {
         return Err(http(403, "Organization access denied"));
     }
+    super::super::auth::authorize_org(tx, actor, id.organization_id).await?;
 
     let hint = sqlx::query(
         "SELECT agent_id::text AS agent_id,
@@ -44,6 +49,19 @@ pub(super) async fn lock_current_execution(
         return Err(http(409, "Run execution identity changed"));
     }
 
+    // Verify access before taking the advisory lock, then serialize all
+    // checkpoint operations with Native Chat admission/segment rotation.
+    runtime_bindings::authorize_chat_target_read_tx(
+        tx,
+        actor,
+        id.organization_id,
+        id.conversation_id,
+        &hinted_agent_id,
+    )
+    .await?;
+    runtime_bindings::lock_native_chat_target_tx(tx, id.organization_id, id.conversation_id)
+        .await?;
+
     runtime_bindings::authorize_chat_target_run_mutation_tx(
         tx,
         actor,
@@ -54,8 +72,10 @@ pub(super) async fn lock_current_execution(
     )
     .await?;
 
-    let conversation_kind: String = sqlx::query_scalar(
-        "SELECT conversation_kind FROM chat_conversations
+    let conversation = sqlx::query(
+        "SELECT conversation_kind, COALESCE(preferred_agent_id, routed_agent_id)::text
+                    AS selected_agent_id
+         FROM chat_conversations
          WHERE org_id=$1::uuid AND id=$2::uuid",
     )
     .bind(id.organization_id)
@@ -63,8 +83,13 @@ pub(super) async fn lock_current_execution(
     .fetch_optional(&mut **tx)
     .await?
     .ok_or_else(|| http(404, "Chat conversation not found"))?;
+    let conversation_kind: String = conversation.try_get("conversation_kind")?;
+    let selected_agent_id: Option<String> = conversation.try_get("selected_agent_id")?;
     if conversation_kind != "chat" {
         return Err(http(404, "Ordinary Chat conversation not found"));
+    }
+    if selected_agent_id.as_deref() != Some(id.agent_id) {
+        return Err(http(409, "Run Agent is no longer selected for this Chat"));
     }
 
     let generation = sqlx::query(
@@ -115,7 +140,8 @@ pub(super) async fn lock_current_execution(
                 chat_generation_id::text AS generation_id,
                 execution_authority, native_admission_hold, status,
                 execution_owner_token, scene, target_type, target_id,
-                process_pid, process_started_at, process_exited_at, session_id_after
+                process_pid, process_started_at, process_exited_at, session_id_after,
+                context_snapshot
          FROM heartbeat_runs
          WHERE org_id=$1::uuid AND id=$2::uuid
          FOR UPDATE",
@@ -135,6 +161,7 @@ pub(super) async fn lock_current_execution(
     let scene: Option<String> = run.try_get("scene")?;
     let target_type: Option<String> = run.try_get("target_type")?;
     let target_id: Option<String> = run.try_get("target_id")?;
+    let context_snapshot: Value = run.try_get("context_snapshot")?;
     if run_agent_id != id.agent_id
         || run_conversation_id.as_deref() != Some(id.conversation_id)
         || run_generation_id.as_deref() != Some(id.generation_id)
@@ -151,7 +178,7 @@ pub(super) async fn lock_current_execution(
 
     // Revalidate target scope after all higher-level locks. Conversation rows
     // cannot change while locked, and the Run association is now locked too.
-    runtime_bindings::authorize_chat_target_run_mutation_tx(
+    let principal_scope_ref = runtime_bindings::authorize_chat_target_run_mutation_tx(
         tx,
         actor,
         id.organization_id,
@@ -254,6 +281,84 @@ pub(super) async fn lock_current_execution(
         return Err(http(409, "Native Chat checkpoint identity is inconsistent"));
     }
 
+    let binding_id = snapshot_uuid(&context_snapshot, "runtimeBindingId", "binding")?;
+    let segment_id = snapshot_uuid(&context_snapshot, "nativeSegmentId", "segment")?;
+    if binding_id != fence.binding_id || segment_id != fence.segment_id {
+        return Err(http(409, "Native Chat execution binding changed"));
+    }
+    let binding = sqlx::query(
+        "SELECT b.agent_id::text AS agent_id,
+                b.conversation_id::text AS conversation_id,
+                b.target_type, b.target_id, b.runtime_type AS binding_runtime_type,
+                b.principal_scope_ref, b.current_segment_id::text AS current_segment_id,
+                b.status AS binding_status, b.continuity,
+                s.id::text AS segment_id, s.runtime_type AS segment_runtime_type,
+                s.state AS segment_state, s.native_session_id,
+                s.sealed_at IS NOT NULL AS sealed
+         FROM runtime_bindings b
+         JOIN native_segments s ON s.org_id=b.org_id AND s.binding_id=b.id
+         WHERE b.org_id=$1::uuid AND b.id=$2::uuid AND s.id=$3::uuid
+         FOR UPDATE OF b, s",
+    )
+    .bind(id.organization_id)
+    .bind(&binding_id)
+    .bind(&segment_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| http(409, "Native Chat binding or segment is unavailable"))?;
+    let binding_agent_id: String = binding.try_get("agent_id")?;
+    let binding_conversation_id: Option<String> = binding.try_get("conversation_id")?;
+    let binding_target_type: Option<String> = binding.try_get("target_type")?;
+    let binding_target_id: Option<String> = binding.try_get("target_id")?;
+    let binding_runtime_type: String = binding.try_get("binding_runtime_type")?;
+    let binding_scope: String = binding.try_get("principal_scope_ref")?;
+    let current_segment_id: Option<String> = binding.try_get("current_segment_id")?;
+    let binding_status: String = binding.try_get("binding_status")?;
+    let continuity: String = binding.try_get("continuity")?;
+    let stored_segment_id: String = binding.try_get("segment_id")?;
+    let segment_runtime_type: String = binding.try_get("segment_runtime_type")?;
+    let segment_state: String = binding.try_get("segment_state")?;
+    let native_session_id: Option<String> = binding.try_get("native_session_id")?;
+    let segment_sealed: bool = binding.try_get("sealed")?;
+    if binding_agent_id != run_agent_id
+        || binding_conversation_id.as_deref() != Some(id.conversation_id)
+        || binding_target_type.as_deref() != Some("chat_conversation")
+        || binding_target_id.as_deref() != Some(id.conversation_id)
+        || binding_runtime_type != "codex_local"
+        || attempt_runtime != binding_runtime_type
+        || segment_runtime_type != binding_runtime_type
+        || binding_scope != principal_scope_ref
+        || current_segment_id.as_deref() != Some(segment_id.as_str())
+        || binding_status != "active"
+        || continuity != "native"
+        || segment_sealed
+    {
+        return Err(http(409, "Run, binding, and current segment do not match"));
+    }
+    let segment_matches_checkpoint = match (
+        segment_state.as_str(),
+        native_session_id.as_deref(),
+        checkpoint.thread_id(),
+    ) {
+        ("pending", None, None) => {
+            matches!(
+                checkpoint.phase(),
+                NativeChatProtocolPhase::NoThreadRequest
+                    | NativeChatProtocolPhase::ThreadStartIndeterminate
+            ) && checkpoint.turn_id().is_none()
+        }
+        ("open", Some(stored_thread), Some(checkpoint_thread)) => {
+            stored_thread == checkpoint_thread && !stored_thread.trim().is_empty()
+        }
+        _ => false,
+    };
+    if !segment_matches_checkpoint {
+        return Err(http(
+            409,
+            "Native Chat checkpoint does not match its current segment",
+        ));
+    }
+
     let lease_live: bool = sqlx::query_scalar(
         "SELECT COALESCE(g.control_lease_expires_at > clock_timestamp(), false)
                 AND COALESCE(r.execution_lease_expires_at > clock_timestamp(), false)
@@ -297,5 +402,29 @@ pub(super) async fn lock_current_execution(
     Ok(LockedExecution {
         checkpoint,
         agent_id: run_agent_id,
+        binding_id,
+        segment_id: stored_segment_id,
+        segment_state,
+        native_session_id,
     })
+}
+
+fn snapshot_uuid(snapshot: &Value, key: &str, label: &str) -> Result<String> {
+    let value = snapshot
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| http(409, format!("Native Chat Run has no {label} association")))?;
+    let canonical = super::super::validation::canonical_uuid(value, label).map_err(|_| {
+        http(
+            409,
+            format!("Native Chat Run has an invalid {label} association"),
+        )
+    })?;
+    if canonical != value {
+        return Err(http(
+            409,
+            format!("Native Chat Run has a noncanonical {label} association"),
+        ));
+    }
+    Ok(canonical)
 }

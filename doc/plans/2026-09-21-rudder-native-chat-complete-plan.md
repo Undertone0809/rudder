@@ -765,6 +765,14 @@ Codex readback must remain bounded as a Thread grows. The inspected local App Se
 
 Protect other migrations in progress in the worktree: do not overwrite, reset, or pull unrelated refactors wholesale into this PR. Complete changes to schema/shared/server/ui/native together and preserve existing compatibility reads. Completion of this project does not depend on the repository-wide Rust migration being finished.
 
+### 10.1 Exact input and Thread association boundary
+
+The private Rust execution API now loads only the admitted user message while its checkpoint is `input_pre_submission`. It verifies the original admission fingerprint as well as the message fingerprint, bounds the body before materializing it, and checks the current Run/Attempt and both leases. Edited input, foreign messages, and indeterminate submission states cannot supply a fresh payload. Reading the payload does not grant permission to dispatch it: the supervisor must consume the subsequent matching move-only submit permit exactly once.
+
+Claim pins the exact Binding and Segment IDs inside its non-serializable execution fence. Every later fenced access reauthorizes organization access before reading Run hints and requires the Run snapshot to match those pins. Replacing a binding for the same Chat and rewriting its snapshot cannot redirect an existing execution. Recording a newly created provider Thread changes its pending Segment to open in the same transaction as the Attempt checkpoint, Run/Generation provider IDs and activity. A later CAS or audit failure rolls back the locator too. The existing target-advisory-first lock order is retained.
+
+This boundary remains private and does not dispatch a provider turn or finish a Run. Its acceptance must cover exact input, post-admission edits, same-target binding replacement, stale owners and rollback of Thread persistence. Provider supervision, process-death recovery, final response projection, billing, public send/control, Reader and Side Chat remain open gates; no percentage or full-feature completion follows from these persistence checks.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.

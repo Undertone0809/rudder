@@ -128,6 +128,46 @@ pub async fn advance_checkpoint(
         .bind(NATIVE_WRITE_MARKER)
         .execute(&mut *tx)
         .await?;
+
+    // The exact Thread locator and its protocol checkpoint form one durable
+    // transition. Write the Segment first so any later CAS/audit failure proves
+    // transaction rollback also leaves the locator pending.
+    if let CheckpointTransition::RecordThread { thread_id } = &transition {
+        if locked.segment_state != "pending"
+            || locked.native_session_id.is_some()
+            || locked.checkpoint.thread_id().is_some()
+        {
+            return Err(super::http(
+                409,
+                "Native Chat Segment already has a Thread locator",
+            ));
+        }
+        let segment_updated = sqlx::query(
+            "UPDATE native_segments s
+             SET native_session_id=$4, state='open', updated_at=clock_timestamp()
+             FROM runtime_bindings b
+             WHERE s.org_id=$1::uuid AND s.binding_id=$2::uuid AND s.id=$3::uuid
+               AND s.native_session_id IS NULL AND s.state='pending'
+               AND s.sealed_at IS NULL
+               AND b.org_id=s.org_id AND b.id=s.binding_id
+               AND b.current_segment_id=s.id AND b.status='active'
+               AND b.continuity='native'",
+        )
+        .bind(&fence.organization_id)
+        .bind(&locked.binding_id)
+        .bind(&locked.segment_id)
+        .bind(thread_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if segment_updated != 1 {
+            return Err(super::http(
+                409,
+                "Native Chat Segment changed before Thread binding",
+            ));
+        }
+    }
+
     let checkpoint_json = serde_json::to_value(&next)
         .map_err(|_| super::http(500, "Failed to encode Native Chat checkpoint"))?;
     let expected_revision_text = expected_revision.to_string();

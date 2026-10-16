@@ -412,5 +412,7 @@ mod ownership;
 
 #[path = "native_chat_execution/continuity.rs"]
 mod continuity;
+#[path = "native_chat_execution/segment.rs"]
+mod segment;
 #[path = "native_chat_execution/submission.rs"]
 mod submission;

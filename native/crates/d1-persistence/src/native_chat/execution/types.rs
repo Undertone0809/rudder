@@ -12,6 +12,8 @@ pub struct ExecutionFence {
     pub(super) run_id: String,
     pub(super) attempt_id: String,
     pub(super) agent_id: String,
+    pub(super) binding_id: String,
+    pub(super) segment_id: String,
     pub(super) generation_attempt_epoch: i32,
     pub(super) run_attempt_epoch: i32,
     pub(super) connection_epoch: i32,
