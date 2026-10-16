@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use crate::public_ingress_config::NativeSessionAuthConfig;
 use crate::public_ingress_forwarding::{FORWARDING_HEADERS, ForwardingPolicy};
 use actix_web::{
     HttpRequest, HttpResponse,
@@ -46,6 +47,8 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
 // validate them normally after the proxy preserves them.
 fn is_internal_trust_header(name: &str) -> bool {
     matches!(name, "x-rudder-actor-envelope" | "x-rudder-request-id")
+        || name == "x-rudder-native-session-proof"
+        || name.starts_with("x-rudder-native-session-")
         || name.starts_with("x-rudder-ingress-")
 }
 
@@ -123,6 +126,17 @@ impl PublicIngressProxy {
 
     /// Forwards one request to the fixed upstream while streaming both body directions.
     pub async fn forward(&self, request: HttpRequest, payload: web::Payload) -> HttpResponse {
+        self.forward_with_session_assertion(request, payload, None, None)
+            .await
+    }
+
+    pub(crate) async fn forward_with_session_assertion(
+        &self,
+        request: HttpRequest,
+        payload: web::Payload,
+        proof: Option<&str>,
+        strip_auth_cookies: Option<&NativeSessionAuthConfig>,
+    ) -> HttpResponse {
         if is_private_auth_adapter_path(request.uri().path()) {
             return HttpResponse::NotFound().finish();
         }
@@ -145,8 +159,24 @@ impl PublicIngressProxy {
         let original_host = request.headers().get(header::HOST).cloned();
         let target = format!("http://{}{}", self.upstream_authority, raw_target);
         let mut outbound = self.client.request(request.method().clone(), target);
-        for (name, value) in filtered_headers(request.headers(), true) {
+        let mut headers = filtered_headers(request.headers(), true);
+        if let Some(config) = strip_auth_cookies {
+            headers.retain(|(name, _)| name != header::COOKIE);
+            if let Some(cookie) = filtered_session_cookie_header(request.headers(), config) {
+                headers.push((header::COOKIE, cookie));
+            }
+        }
+        for (name, value) in headers {
             outbound = outbound.append_header((name, value));
+        }
+        if let Some(proof) = proof {
+            let Ok(proof) = HeaderValue::from_str(proof) else {
+                return proxy_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "session_proof_encoding_failed",
+                );
+            };
+            outbound = outbound.insert_header(("x-rudder-native-session-proof", proof));
         }
         outbound = outbound.insert_header((
             header::HOST,
@@ -182,6 +212,28 @@ impl PublicIngressProxy {
             response.append_header((name, value));
         }
         response.streaming(body)
+    }
+}
+
+pub(crate) fn filtered_session_cookie_header(
+    headers: &HeaderMap,
+    config: &NativeSessionAuthConfig,
+) -> Option<HeaderValue> {
+    let strip_names = crate::native_session_auth::session_cookie_header_names(config);
+    let remaining = headers
+        .get_all(header::COOKIE)
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .filter_map(|part| {
+            let trimmed = part.trim();
+            let name = trimmed.split_once('=').map(|(name, _)| name.trim())?;
+            (!strip_names.contains(&name)).then_some(trimmed)
+        })
+        .collect::<Vec<_>>();
+    if remaining.is_empty() {
+        None
+    } else {
+        HeaderValue::from_str(&remaining.join("; ")).ok()
     }
 }
 
@@ -277,9 +329,11 @@ mod tests {
 
     use super::{
         PRIVATE_AUTH_ADAPTER_PATH, PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH, PublicIngressProxy,
-        connection_nominated_headers, filtered_headers, is_private_auth_adapter_path,
-        is_unsupported_upgrade,
+        connection_nominated_headers, filtered_headers, filtered_session_cookie_header,
+        is_private_auth_adapter_path, is_unsupported_upgrade,
     };
+    use crate::public_ingress_config::{NativeSessionAuthConfig, NativeSessionAuthKind};
+    use actix_web::http::header::HeaderValue;
 
     type RunningServer = (
         SocketAddr,
@@ -316,6 +370,62 @@ mod tests {
         })
         .bind(("127.0.0.1", 0))
         .expect("loopback proxy server binds");
+        let address = server.addrs()[0];
+        let server = server.run();
+        let handle = server.handle();
+        let task = actix_web::rt::spawn(server);
+        (address, handle, task)
+    }
+
+    fn start_session_proxy(
+        proxy: PublicIngressProxy,
+        config: NativeSessionAuthConfig,
+        payload_limit: usize,
+    ) -> RunningServer {
+        let upstream = format!("http://{}", proxy.upstream_authority());
+        let forwarding_policy = proxy.forwarding_policy.clone();
+        let server = HttpServer::new(move || {
+            let proxy = web::Data::new(
+                PublicIngressProxy::new(&upstream)
+                    .unwrap()
+                    .with_forwarding_policy(forwarding_policy.clone()),
+            );
+            let config = web::Data::new(config.clone());
+            App::new()
+                .app_data(web::PayloadConfig::new(payload_limit))
+                .app_data(proxy)
+                .app_data(config)
+                .default_service(web::to(
+                    |request: HttpRequest,
+                     payload: web::Payload,
+                     proxy: web::Data<PublicIngressProxy>,
+                     config: web::Data<NativeSessionAuthConfig>| async move {
+                        let target = request
+                            .uri()
+                            .path_and_query()
+                            .expect("request target is present")
+                            .as_str()
+                            .to_owned();
+                        let proof = crate::native_session_auth::issue_assertion(
+                            &config,
+                            request.method().as_str(),
+                            &target,
+                            None,
+                        )
+                        .expect("native test assertion is valid");
+                        proxy
+                            .forward_with_session_assertion(
+                                request,
+                                payload,
+                                Some(&proof),
+                                Some(&config),
+                            )
+                            .await
+                    },
+                ))
+        })
+        .bind(("127.0.0.1", 0))
+        .expect("loopback session proxy server binds");
         let address = server.addrs()[0];
         let server = server.run();
         let handle = server.handle();
@@ -389,6 +499,10 @@ mod tests {
             header::HeaderValue::from_static("forged"),
         );
         headers.insert(
+            header::HeaderName::from_static("x-rudder-native-session-proof"),
+            header::HeaderValue::from_static("forged"),
+        );
+        headers.insert(
             header::HeaderName::from_static("x-forwarded-host"),
             header::HeaderValue::from_static("forged.example"),
         );
@@ -418,11 +532,37 @@ mod tests {
         assert!(!forwarded_names.contains(&"x-second-token"));
         assert!(!forwarded_names.contains(&"x-rudder-actor-envelope"));
         assert!(!forwarded_names.contains(&"x-rudder-request-id"));
+        assert!(!forwarded_names.contains(&"x-rudder-native-session-proof"));
         assert!(!forwarded_names.contains(&"x-forwarded-host"));
         assert!(forwarded_names.contains(&"authorization"));
         assert!(forwarded_names.contains(&"cookie"));
         assert!(forwarded_names.contains(&"x-application-header"));
         assert_eq!(connection_nominated_headers(&headers).len(), 3);
+    }
+
+    #[test]
+    fn auth_cookie_filter_removes_only_configured_session_cookies() {
+        let config = NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::BetterAuth,
+            "session-secret",
+            false,
+            "0123456789abcdef0123456789abcdef",
+        )
+        .unwrap();
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static(
+                "theme=dark; better-auth.session_token=secret; rudder-ui=compact; better-auth.dont_remember=true",
+            ),
+        );
+        assert_eq!(
+            filtered_session_cookie_header(&headers, &config)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "theme=dark; rudder-ui=compact"
+        );
     }
 
     #[test]
@@ -512,6 +652,7 @@ mod tests {
         cookie: Option<String>,
         content_type: Option<String>,
         application_header: Option<String>,
+        session_proof: Option<String>,
         rudder_header: Option<String>,
         nominated_header: Option<String>,
         forwarded_host: Option<String>,
@@ -540,6 +681,10 @@ mod tests {
                 .get("x-application-header")
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned),
+            session_proof: header_text(
+                &request,
+                header::HeaderName::from_static("x-rudder-native-session-proof"),
+            ),
             rudder_header: request
                 .headers()
                 .get("x-rudder-request-id")
@@ -592,7 +737,7 @@ mod tests {
 
     #[actix_web::test]
     async fn forwards_raw_target_original_host_credentials_and_response_headers() {
-        let observed = web::Data::new(Arc::new(Mutex::new(None)));
+        let observed = web::Data::new(Arc::new(Mutex::new(None::<ObservedRequest>)));
         let upstream_observed = observed.clone();
         let (upstream_address, upstream_handle, upstream_task) = start_server(move |config| {
             config.app_data(upstream_observed.clone());
@@ -832,6 +977,71 @@ mod tests {
                 .to_str()
                 .unwrap(),
             total.to_string()
+        );
+
+        stop_server((proxy_address, proxy_handle, proxy_task)).await;
+        stop_server((upstream_address, upstream_handle, upstream_task)).await;
+    }
+
+    #[actix_web::test]
+    async fn streams_request_larger_than_global_payload_limit_with_native_session_proof() {
+        let observed = web::Data::new(Arc::new(Mutex::new(None::<ObservedRequest>)));
+        let upstream_observed = observed.clone();
+        let (upstream_address, upstream_handle, upstream_task) = start_server(move |config| {
+            config.app_data(upstream_observed.clone());
+            config.default_service(web::to(observe_request));
+        });
+        let proxy = PublicIngressProxy::new(&format!("http://{upstream_address}")).unwrap();
+        let session_config = NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::BetterAuth,
+            "session streaming test secret",
+            false,
+            "session-assertion-key-0123456789abcdef",
+        )
+        .unwrap();
+        let (proxy_address, proxy_handle, proxy_task) =
+            start_session_proxy(proxy, session_config, 1024 * 1024);
+        let total = 2 * 1024 * 1024 + 17;
+        let chunk_size = 64 * 1024;
+        let body = stream::unfold(0usize, move |sent| async move {
+            if sent >= total {
+                None
+            } else {
+                let size = chunk_size.min(total - sent);
+                Some((
+                    Ok::<_, io::Error>(web::Bytes::from(vec![b'x'; size])),
+                    sent + size,
+                ))
+            }
+        });
+
+        let response = client()
+            .post(format!("http://{proxy_address}/api/chat/upload?raw=a%2Bb"))
+            .insert_header((header::CONTENT_LENGTH, total.to_string()))
+            .insert_header((header::CONTENT_TYPE, "multipart/form-data; boundary=large"))
+            .insert_header((
+                header::COOKIE,
+                "better-auth.session_token=secret; app-theme=dark",
+            ))
+            .insert_header(("x-rudder-native-session-proof", "forged-client-proof"))
+            .send_stream(body)
+            .await
+            .expect("large streamed request with session proof reaches mock upstream");
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let observed = observed
+            .lock()
+            .unwrap()
+            .take()
+            .expect("upstream saw the session-authenticated request");
+        assert_eq!(observed.target, "/api/chat/upload?raw=a%2Bb");
+        assert_eq!(observed.body_bytes, total);
+        assert_eq!(observed.cookie.as_deref(), Some("app-theme=dark"));
+        assert!(
+            observed
+                .session_proof
+                .as_deref()
+                .is_some_and(|proof| proof != "forged-client-proof")
         );
 
         stop_server((proxy_address, proxy_handle, proxy_task)).await;

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import type { RudderAppHandle } from "../app.js";
+import { betterAuthSessionCookieSettings } from "../auth/better-auth.js";
 import type { Config } from "../config.js";
 import { selectAvailablePort } from "./port-selection.js";
 import type { RudderAppOptions } from "./types.js";
@@ -14,7 +15,11 @@ export function assertPublicIngressExposure(config: Config, localAccountAuth: bo
   }
 }
 
-export async function preparePublicIngressStartup(config: Config, publicPort: number) {
+export async function preparePublicIngressStartup(
+  config: Config,
+  publicPort: number,
+  localAccountAuth?: { sessionSecret: string; secureCookie?: boolean },
+) {
   const enabled = config.rustPublicIngressMode === "required";
   const nodeListenHost = enabled ? "127.0.0.1" : config.host;
   const nodeListenPort = enabled
@@ -26,6 +31,31 @@ export async function preparePublicIngressStartup(config: Config, publicPort: nu
   const appOptions: Pick<RudderAppOptions, "rustFoundationActorEnvelopeKey" | "rustPublicIngressAuthKey" | "rustPublicIngress"> = {};
   if (enabled) {
     const authorizationKey = randomBytes(32).toString("hex");
+    const sessionAssertionKey = randomBytes(32).toString("hex");
+    const sessionAuth = localAccountAuth
+      ? {
+          kind: "local_account" as const,
+          secret: localAccountAuth.sessionSecret,
+          secureCookie: localAccountAuth.secureCookie ?? false,
+          assertionKey: sessionAssertionKey,
+        }
+      : config.deploymentMode === "authenticated"
+        ? (() => {
+            const settings = betterAuthSessionCookieSettings(config);
+            if (!settings.secret?.trim()) {
+              throw new Error("Rust public ingress requires the configured Better Auth session secret");
+            }
+            return {
+              kind: "better_auth" as const,
+              secret: settings.secret,
+              secureCookie: settings.secureCookie,
+              assertionKey: sessionAssertionKey,
+            };
+          })()
+        : undefined;
+    if (localAccountAuth && !localAccountAuth.sessionSecret.trim()) {
+      throw new Error("Rust public ingress requires the Desktop account session secret");
+    }
     appOptions.rustFoundationActorEnvelopeKey = config.rustFoundationActorEnvelopeKey ?? randomBytes(32).toString("hex");
     appOptions.rustPublicIngressAuthKey = authorizationKey;
     appOptions.rustPublicIngress = {
@@ -33,6 +63,7 @@ export async function preparePublicIngressStartup(config: Config, publicPort: nu
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
       trustedProxies: config.rustPublicIngressTrustedProxies,
+      ...(sessionAuth ? { sessionAuth } : {}),
     };
   }
   return {

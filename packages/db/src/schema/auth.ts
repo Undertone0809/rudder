@@ -1,4 +1,4 @@
-import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 export const authUsers = pgTable("user", {
   id: text("id").primaryKey(),
@@ -19,7 +19,7 @@ export const authSessions = pgTable("session", {
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
   userId: text("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
-});
+}, (table) => [index("session_token_idx").on(table.token)]);
 
 export const authAccounts = pgTable("account", {
   id: text("id").primaryKey(),

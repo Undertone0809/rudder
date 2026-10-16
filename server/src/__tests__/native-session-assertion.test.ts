@@ -1,0 +1,266 @@
+import type { Db } from "@rudderhq/db";
+import { instanceUserRoles, organizationMemberships } from "@rudderhq/db";
+import express, { type Request } from "express";
+import { createServer, request as httpRequest, type Server } from "node:http";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getVerifiedNativeSessionAssertion,
+  nativeSessionAssertionMiddleware,
+  signNativeSessionAssertion,
+} from "../auth/native-session-assertion.js";
+import { actorMiddleware } from "../middleware/auth.js";
+
+const KEY = "0123456789abcdef0123456789abcdef";
+const SESSION_ID = "better-auth-session-1";
+const USER_ID = "session-user-1";
+
+function createLookupDb() {
+  const selectedTables: unknown[] = [];
+  const db = {
+    select() {
+      let table: unknown;
+      const query = {
+        from(selected: unknown) {
+          table = selected;
+          selectedTables.push(selected);
+          return query;
+        },
+        where() {
+          if (table === instanceUserRoles) return Promise.resolve([{ id: "admin-role" }]);
+          if (table === organizationMemberships) return Promise.resolve([{ orgId: "org-current" }]);
+          throw new Error("unexpected authority query");
+        },
+      };
+      return query;
+    },
+  };
+  return { db: db as unknown as Db, selectedTables };
+}
+
+async function listen(app: express.Express): Promise<{ server: Server; origin: string }> {
+  const server = createServer(app);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected loopback HTTP listener");
+  return { server, origin: `http://127.0.0.1:${address.port}` };
+}
+
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
+function sendJson(
+  origin: string,
+  path: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string } = {},
+): Promise<{ status: number; body: string; proofHeader: string | undefined }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(`${origin}${path}`, {
+      method: options.method ?? "POST",
+      headers: { "content-type": "application/json", connection: "close", ...options.headers },
+    }, (res) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => { body += chunk; });
+      res.on("end", () => resolve({
+        status: res.statusCode ?? 0,
+        body,
+        proofHeader: res.headers["x-test-proof-header"] as string | undefined,
+      }));
+    });
+    req.once("error", reject);
+    req.end(options.body ?? "{}");
+  });
+}
+
+function protectedApp(key = KEY, nowSeconds: () => number = () => 1_000) {
+  const resolver = vi.fn(async () => null);
+  const { db, selectedTables } = createLookupDb();
+  const app = express();
+  app.use(nativeSessionAssertionMiddleware({ key, nowSeconds }));
+  app.use(express.json());
+  app.use(actorMiddleware(db, {
+    deploymentMode: "authenticated",
+    authRequirement: "required",
+    resolveSession: resolver,
+  }));
+  app.post("/protected", (req, res) => {
+    res.setHeader("x-test-proof-header", req.header("x-rudder-native-session-proof") ?? "removed");
+    res.json({
+      actor: req.actor,
+      body: req.body,
+      assertion: getVerifiedNativeSessionAssertion(req),
+    });
+  });
+  return { app, resolver, selectedTables };
+}
+
+function proof(target = "/protected?view=current", overrides: Partial<Parameters<typeof signNativeSessionAssertion>[0]> = {}) {
+  return signNativeSessionAssertion({
+    key: KEY,
+    method: "POST",
+    target,
+    identity: { kind: "session", session_id: SESSION_ID, user_id: USER_ID },
+    nowSeconds: 1_000,
+    ...overrides,
+  });
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+describe("native public-ingress session assertion", () => {
+  it("builds the existing Board session actor and never calls the Node cookie resolver", async () => {
+    const { app, resolver, selectedTables } = protectedApp();
+    const listener = await listen(app);
+    try {
+      const response = await sendJson(listener.origin, "/protected?view=current", {
+        headers: { "x-rudder-native-session-proof": proof() },
+        body: JSON.stringify({ action: "read" }),
+      });
+      expect(response.status).toBe(200);
+      expect(response.proofHeader).toBe("removed");
+      const payload = JSON.parse(response.body) as {
+        actor: Request["actor"];
+        body: { action: string };
+        assertion: { kind: string; session_id: string; user_id: string };
+      };
+      expect(payload.actor).toMatchObject({
+        type: "board",
+        source: "session",
+        userId: USER_ID,
+        sessionId: SESSION_ID,
+        orgIds: ["org-current"],
+        isInstanceAdmin: true,
+      });
+      expect(payload.body).toEqual({ action: "read" });
+      expect(payload.assertion).toEqual({ kind: "session", session_id: SESSION_ID, user_id: USER_ID });
+      expect(resolver).not.toHaveBeenCalled();
+      expect(selectedTables).toEqual([instanceUserRoles, organizationMemberships]);
+    } finally {
+      await close(listener.server);
+    }
+  });
+
+  it("rejects forged, wrong-target, wrong-method, and replayed assertions before actor resolution", async () => {
+    const { app, resolver } = protectedApp();
+    const listener = await listen(app);
+    try {
+      const valid = proof();
+      const wrongTarget = await sendJson(listener.origin, "/protected?view=other", {
+        headers: { "x-rudder-native-session-proof": valid },
+      });
+      expect(wrongTarget.status).toBe(401);
+
+      const wrongMethod = await sendJson(listener.origin, "/protected?view=current", {
+        method: "PUT",
+        headers: { "x-rudder-native-session-proof": valid },
+      });
+      expect(wrongMethod.status).toBe(401);
+
+      const forged = await sendJson(listener.origin, "/protected?view=current", {
+        headers: { "x-rudder-native-session-proof": "forged" },
+      });
+      expect(forged.status).toBe(401);
+
+      const first = await sendJson(listener.origin, "/protected?view=current", {
+        headers: { "x-rudder-native-session-proof": valid },
+      });
+      const replay = await sendJson(listener.origin, "/protected?view=current", {
+        headers: { "x-rudder-native-session-proof": valid },
+      });
+      expect(first.status).toBe(200);
+      expect(replay.status).toBe(401);
+      expect(JSON.parse(replay.body).code).toBe("native_session_proof_replayed");
+      expect(resolver).not.toHaveBeenCalled();
+    } finally {
+      await close(listener.server);
+    }
+  });
+
+  it("validates the proof before a delayed chunked JSON body is parsed", async () => {
+    let now = 1_000;
+    const { app, resolver } = protectedApp(KEY, () => now);
+    const listener = await listen(app);
+    try {
+      const responsePromise = new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = httpRequest(`${listener.origin}/protected?view=current`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "transfer-encoding": "chunked",
+            "x-rudder-native-session-proof": proof(),
+            connection: "close",
+          },
+        }, (res) => {
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk: string) => { body += chunk; });
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        });
+        req.once("error", reject);
+        req.write('{"delayed":');
+        setTimeout(() => {
+          now = 1_030;
+          req.end("true}");
+        }, 30);
+      });
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      expect(JSON.parse(response.body).body).toEqual({ delayed: true });
+      expect(resolver).not.toHaveBeenCalled();
+    } finally {
+      await close(listener.server);
+    }
+  });
+
+  it("fails a direct private-listener business request closed when the assertion is missing", async () => {
+    const { app, resolver } = protectedApp();
+    const listener = await listen(app);
+    try {
+      const response = await sendJson(listener.origin, "/protected?view=current");
+      expect(response.status).toBe(401);
+      expect(JSON.parse(response.body).code).toBe("native_session_proof_required");
+      expect(resolver).not.toHaveBeenCalled();
+    } finally {
+      await close(listener.server);
+    }
+  });
+
+  it("preserves the existing Bearer and auth-lifecycle bridge paths", async () => {
+    const app = express();
+    app.use(nativeSessionAssertionMiddleware({ key: KEY, nowSeconds: () => 1_000 }));
+    app.get("/api/auth/sign-out", (_req, res) => res.sendStatus(204));
+    app.post("/protected", (_req, res) => res.sendStatus(204));
+    const listener = await listen(app);
+    try {
+      const lifecycle = await sendJson(listener.origin, "/api/auth/sign-out", { method: "GET" });
+      expect(lifecycle.status).toBe(204);
+      const bearer = await sendJson(listener.origin, "/protected", {
+        headers: { authorization: "Bearer legacy-token" },
+      });
+      expect(bearer.status).toBe(204);
+    } finally {
+      await close(listener.server);
+    }
+  });
+
+  it("does not let an Upgrade header bypass proof on ordinary business GETs", async () => {
+    const { app, resolver } = protectedApp();
+    app.get("/protected", (_req, res) => res.sendStatus(204));
+    const listener = await listen(app);
+    try {
+      const response = await sendJson(listener.origin, "/protected", {
+        method: "GET",
+        headers: { upgrade: "websocket" },
+      });
+      expect(response.status).toBe(401);
+      expect(JSON.parse(response.body).code).toBe("native_session_proof_required");
+      expect(resolver).not.toHaveBeenCalled();
+    } finally {
+      await close(listener.server);
+    }
+  });
+});

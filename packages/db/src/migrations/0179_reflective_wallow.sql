@@ -1,0 +1,1 @@
+CREATE INDEX "session_token_idx" ON "session" USING btree ("token");

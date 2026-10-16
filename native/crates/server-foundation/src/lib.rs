@@ -70,7 +70,12 @@ mod cost_reads;
 mod goal_reads;
 mod issue_metadata_reads;
 mod llm_reflection;
+mod member_directory_auth;
 mod native_bearer_auth;
+mod native_session_auth;
+use member_directory_auth::{MemberDirectoryNativeAccess, MemberDirectoryNativeAuth};
+use native_session_auth::NativeSessionIdentity;
+use public_ingress_config::NativeSessionAuthKind;
 mod organization_catalog_reads;
 mod overview_reads;
 mod project_reads;
@@ -1430,6 +1435,38 @@ impl AppState {
         query: MemberDirectoryQuery,
         native_identity: Option<(&ActorIdentity, &str, &str)>,
     ) -> HttpResponse {
+        let native_auth = native_identity.map(|(actor, session_id, token_hash)| {
+            MemberDirectoryNativeAuth::Bearer {
+                actor,
+                session_id,
+                token_hash,
+            }
+        });
+        self.organization_member_directory_with_native_identity(org_id, query, native_auth)
+            .await
+    }
+
+    async fn organization_member_directory_with_native_session(
+        &self,
+        org_id: &str,
+        query: MemberDirectoryQuery,
+        identity: &NativeSessionIdentity,
+        kind: NativeSessionAuthKind,
+    ) -> HttpResponse {
+        self.organization_member_directory_with_native_identity(
+            org_id,
+            query,
+            Some(MemberDirectoryNativeAuth::Session { identity, kind }),
+        )
+        .await
+    }
+
+    async fn organization_member_directory_with_native_identity(
+        &self,
+        org_id: &str,
+        query: MemberDirectoryQuery,
+        native_auth: Option<MemberDirectoryNativeAuth<'_>>,
+    ) -> HttpResponse {
         let Some(org_id) = parse_member_directory_org_id(org_id) else {
             return self.json_error(StatusCode::NOT_FOUND, "organization_not_found");
         };
@@ -1460,7 +1497,7 @@ impl AppState {
                 );
             }
         };
-        if let Some((actor, session_id, token_hash)) = native_identity {
+        if let Some(native_auth) = native_auth {
             if sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 .execute(&mut *transaction)
                 .await
@@ -1471,15 +1508,7 @@ impl AppState {
                     "member_directory_query_failed",
                 );
             }
-            let access = match native_bearer_auth::revalidate_native_bearer_in_snapshot(
-                &mut transaction,
-                token_hash,
-                org_id,
-                actor,
-                session_id,
-            )
-            .await
-            {
+            let access = match native_auth.revalidate(&mut transaction, org_id).await {
                 Ok(access) => access,
                 Err(_) => {
                     return self.json_error(
@@ -1489,11 +1518,11 @@ impl AppState {
                 }
             };
             match access {
-                native_bearer_auth::NativeBearerAccess::Authorized => {}
-                native_bearer_auth::NativeBearerAccess::Unauthorized => {
+                MemberDirectoryNativeAccess::Authorized => {}
+                MemberDirectoryNativeAccess::Unauthorized => {
                     return self.json_error(StatusCode::UNAUTHORIZED, "unauthorized");
                 }
-                native_bearer_auth::NativeBearerAccess::Forbidden => {
+                MemberDirectoryNativeAccess::Forbidden => {
                     return self.json_error(StatusCode::FORBIDDEN, "forbidden");
                 }
             }

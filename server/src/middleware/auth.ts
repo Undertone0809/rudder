@@ -10,6 +10,7 @@ import type { Request, RequestHandler, Response } from "express";
 import { createHash } from "node:crypto";
 import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
+import { getVerifiedNativeSessionAssertion } from "../auth/native-session-assertion.js";
 import { boardAuthService } from "../services/board-auth.js";
 import { logger, requestUrlForLogs } from "./logger.js";
 
@@ -37,6 +38,46 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
 
     const authHeader = req.header("authorization");
     if (!authHeader?.toLowerCase().startsWith("bearer ")) {
+      const nativeAssertion = getVerifiedNativeSessionAssertion(req);
+      if (nativeAssertion?.kind === "session") {
+        const userId = nativeAssertion.user_id;
+        const [roleRow, memberships] = await Promise.all([
+          db
+            .select({ id: instanceUserRoles.id })
+            .from(instanceUserRoles)
+            .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
+            .then((rows) => rows[0] ?? null),
+          db
+            .select({ orgId: organizationMemberships.orgId })
+            .from(organizationMemberships)
+            .where(
+              and(
+                eq(organizationMemberships.principalType, "user"),
+                eq(organizationMemberships.principalId, userId),
+                eq(organizationMemberships.status, "active"),
+              ),
+            ),
+        ]);
+        req.actor = {
+          type: "board",
+          userId,
+          orgIds: memberships.map((row) => row.orgId),
+          isInstanceAdmin: Boolean(roleRow),
+          sessionId: nativeAssertion.session_id,
+          authEpoch: 1,
+          runId: runIdHeader ?? undefined,
+          source: "session",
+        };
+        if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
+        next();
+        return;
+      }
+      if (nativeAssertion?.kind === "none") {
+        if (runIdHeader) req.actor.runId = runIdHeader;
+        if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
+        next();
+        return;
+      }
       if (authRequirement === "required" && opts.resolveSession) {
         let session: BetterAuthSessionResult | null = null;
         try {
