@@ -167,7 +167,7 @@ app.use(async (req, res, next) => {
   next();
 });
 app.use("/workspace-preview", (_req, res) => res.status(404).send("Not found"));
-${orderedBody}app.use(actorMiddleware(db, options));
+${orderedBody}app.use(${TRUSTED_TRANSPORT_ADMISSIONS[IDENTITY_ADMISSION_ID].existing_mount_replacement[mount ? "after" : "before"]},);
 ${extra}
 `;
 }
@@ -200,7 +200,7 @@ function compareIdentityAdmissionFixture(t, options = {}) {
   const headRoot = temporaryTree(t);
   const sourcePath = "server/src/bootstrap/create-http-app.ts";
   const factoryPath = "server/src/auth/native-session-assertion.ts";
-  const baseSource = identityAdmissionAppSource({ mount: false });
+  const baseSource = options.baseSource ?? identityAdmissionAppSource({ mount: false });
   const headSource = options.headSource ?? identityAdmissionAppSource(options.appOptions);
   const factorySource = options.factorySource ?? identityAdmissionFixtureFactory;
   const trustedPolicy = {
@@ -676,4 +676,32 @@ test("packaging vendor parking directory is pruned without hiding imported autho
   put(root, "server/src/node_modules-packaging-hidden/authority.ts", "export const authority = true;\n");
   const exactPathOnly = buildInventory(root);
   assert(exactPathOnly.source_manifest.some((entry) => entry.path === "server/src/node_modules-packaging-hidden/authority.ts"));
+});
+
+
+test("identity admission only replaces the existing actor mount and keeps its debt visible", (t) => {
+  const policy = TRUSTED_TRANSPORT_ADMISSIONS[IDENTITY_ADMISSION_ID];
+  const replacement = policy.existing_mount_replacement;
+  const valid = compareIdentityAdmissionFixture(t);
+  assert.deepEqual(valid.result.failures, []);
+  assert(valid.result.added_surfaces.some((surface) => surface.signature.includes(replacement.after)));
+  assert(valid.result.added_unknown.some((entry) => entry.expression === replacement.after));
+  const absentBase = compareIdentityAdmissionFixture(t, {
+    baseSource: identityAdmissionAppSource({ mount: false }).replace(`app.use(${replacement.before},);`, ""),
+  });
+  assert(absentBase.result.failures.some((failure) => failure.includes("existing actor mount must be replaced exactly once")));
+  const duplicateBase = compareIdentityAdmissionFixture(t, {
+    baseSource: identityAdmissionAppSource({ mount: false }) + `app.use(${replacement.before},);`,
+  });
+  assert(duplicateBase.result.failures.some((failure) => failure.includes("existing actor mount must be replaced exactly once")));
+  const extraHead = compareIdentityAdmissionFixture(t, {
+    headSource: identityAdmissionAppSource() + `app.use(${replacement.after});`,
+  });
+  assert(extraHead.result.failures.some((failure) => failure.includes("existing actor mount must be replaced exactly once")));
+  const retainedOld = compareIdentityAdmissionFixture(t, {
+    headSource: identityAdmissionAppSource() + `app.use(${replacement.before},);`,
+  });
+  assert(retainedOld.result.failures.some((failure) => failure.includes("existing actor mount must be replaced exactly once")));
+  const noProof = compareIdentityAdmissionFixture(t, { omitAdmissionRecord: true });
+  assert(noProof.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden") && failure.includes("actorMiddleware")));
 });

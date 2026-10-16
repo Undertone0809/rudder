@@ -43,6 +43,12 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     admission_label: "native identity proof",
     source_path: "server/src/bootstrap/create-http-app.ts",
     source_sha256: "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+    // The pinned caller also narrows an EXISTING actor mount to required auth.
+    // This is an exact replacement, never permission to add another actor owner.
+    existing_mount_replacement: Object.freeze({
+      before: "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement: opts.authRequirement, resolveSession: opts.resolveSession, })",
+      after: "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement, resolveSession: opts.resolveSession, })",
+    }),
     receiver: "app",
     factory_path: "server/src/auth/native-session-assertion.ts",
     factory_import: "../auth/native-session-assertion.js",
@@ -1161,6 +1167,7 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
   const transportRecordsById = new Map(normalizedTransportRecords.map((record) => [record?.id, record]));
   const allowedTransportSurfaceSignatures = new Set();
   const allowedTransportAdmissions = [];
+  const allowedReplacementUnknown = new Set();
   for (const [id, policy] of Object.entries(trustedAdmissions)) {
     const surfacesForId = admissionSurfacesById.get(id) ?? [];
     const record = transportRecordsById.get(id);
@@ -1177,9 +1184,28 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
       || surface.receiver !== policy.receiver || surface.expression !== policy.mount_expression) {
       problems.push("generated middleware surface does not match the trusted mount identity");
     }
+    let replacementSurface;
+    if (policy.existing_mount_replacement) {
+      const replacement = policy.existing_mount_replacement;
+      const mounts = (inventory, expression) => inventory.structural_surfaces.filter((entry) =>
+        entry.type === "middleware_mount" && entry.source === policy.source_path
+        && entry.receiver === policy.receiver && entry.expression === expression);
+      const oldBase = mounts(baseInventory, replacement.before);
+      const newBase = mounts(baseInventory, replacement.after);
+      const oldHead = mounts(headInventory, replacement.before);
+      const newHead = mounts(headInventory, replacement.after);
+      if (!policy.source_sha256 || oldHead.length !== 0 || newHead.length !== 1
+        || !((oldBase.length === 1 && newBase.length === 0) || (oldBase.length === 0 && newBase.length === 1))) {
+        problems.push("existing actor mount must be replaced exactly once from the trusted base; adding or retaining another mount is forbidden");
+      } else replacementSurface = newHead[0];
+    }
     if (problems.length) {
       failures.push(`${id}: ${problems.join("; ")}`);
       continue;
+    }
+    if (replacementSurface) {
+      allowedTransportSurfaceSignatures.add(replacementSurface.signature);
+      allowedReplacementUnknown.add(`dynamic_middleware_mount|${replacementSurface.source}|${replacementSurface.expression}`);
     }
     allowedTransportSurfaceSignatures.add(surface.signature);
     allowedTransportAdmissions.push({ id, source_path: policy.source_path, signature: surface.signature });
@@ -1202,7 +1228,10 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
 
   const oldUnknown = new Set(baseInventory.unknown.map((entry) => `${entry.type}|${entry.source}|${entry.expression ?? ""}`));
   const addedUnknown = headInventory.unknown.filter((entry) => !oldUnknown.has(`${entry.type}|${entry.source}|${entry.expression ?? ""}`));
-  for (const entry of addedUnknown) failures.push(`new unclassified Node surface blocks the ratchet: ${entry.type} at ${entry.source}:${entry.line ?? "?"}`);
+  for (const entry of addedUnknown) {
+    if (allowedReplacementUnknown.has(`${entry.type}|${entry.source}|${entry.expression ?? ""}`)) continue;
+    failures.push(`new unclassified Node surface blocks the ratchet: ${entry.type} at ${entry.source}:${entry.line ?? "?"}`);
+  }
 
   for (const record of records.values()) {
     if (!consumedRecords.has(record.path)) failures.push(`stale or unrelated reviewed_node_changes record: ${record.path}`);
