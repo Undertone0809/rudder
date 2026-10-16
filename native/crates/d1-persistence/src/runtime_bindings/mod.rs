@@ -234,6 +234,31 @@ pub(crate) async fn authorize_chat_target_read_tx(
     .await
 }
 
+/// Recheck historical read entitlement after target serialization. Conversation
+/// ownership/selection cannot change until commit, and organization access is
+/// checked again after any wait for the row lock.
+pub(crate) async fn authorize_chat_target_read_locked_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    conversation_id: &str,
+    selected_agent_id: &str,
+) -> std::result::Result<String, Error> {
+    auth::authorize_org(tx, actor, organization_id).await?;
+    let conversation = auth::conversation(tx, organization_id, conversation_id, true)
+        .await?
+        .ok_or_else(|| http(404, "Chat conversation not found"))?;
+    auth::authorize_org(tx, actor, organization_id).await?;
+    let principal = auth::authorize_conversation(
+        actor,
+        organization_id,
+        &conversation,
+        Some(selected_agent_id),
+    )?;
+    auth::ensure_conversation_readable(&conversation)?;
+    Ok(principal)
+}
+
 /// Reauthorize a write attached to a Run admitted before its Side Chat TTL.
 /// This never updates conversation lifecycle or expiry fields.
 pub(crate) async fn authorize_chat_target_run_mutation_tx(

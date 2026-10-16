@@ -76,6 +76,14 @@ pub async fn finalize(
     .await?;
     runtime_bindings::lock_native_chat_target_tx(&mut tx, id.organization_id, id.conversation_id)
         .await?;
+    runtime_bindings::authorize_chat_target_read_locked_tx(
+        &mut tx,
+        actor,
+        id.organization_id,
+        id.conversation_id,
+        id.agent_id,
+    )
+    .await?;
     // Read-only retry under the same target serialization. A completed execution
     // has no live lease; it cannot pass the first-finalization owner checks.
     let existing: Option<Value> = sqlx::query_scalar(
