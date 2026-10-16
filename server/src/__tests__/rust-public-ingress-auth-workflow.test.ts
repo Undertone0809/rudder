@@ -190,7 +190,7 @@ async function buildSourceBinary(): Promise<string> {
   if (process.env.CI) args.push("--release");
   const child = spawn(process.platform === "win32" ? "cargo.exe" : "cargo", args, {
     cwd: repositoryRoot,
-    env: { ...process.env, CARGO_TARGET_DIR: "/private/tmp/rudder-agent-auth-target" },
+    env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let executable: string | undefined;
