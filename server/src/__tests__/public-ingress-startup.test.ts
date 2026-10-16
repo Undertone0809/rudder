@@ -28,13 +28,14 @@ describe("explicit public ingress startup", () => {
   it("rejects implicit Board exposure and nonnumeric topology before resource acquisition", () => {
     expect(() => assertPublicIngressExposure(config({ host: "0.0.0.0" }), false)).toThrow("implicit local Board");
     expect(() => assertPublicIngressExposure(config({ host: "localhost" }), false)).toThrow("numeric listener");
+    expect(() => assertPublicIngressExposure(config(), false, "desktop")).toThrow("Desktop account authentication");
     expect(() => assertPublicIngressExposure(config({ host: "::1" }), false)).not.toThrow();
     expect(() => assertPublicIngressExposure(config({ host: "0.0.0.0", deploymentMode: "authenticated" }), false)).not.toThrow();
   });
 
   it("separates private ports and authorization keys while preserving an explicit actor signer", async () => {
     vi.mocked(selectAvailablePort).mockResolvedValue(3101);
-    const ingress = await preparePublicIngressStartup(config({ rustFoundationActorEnvelopeKey: "existing-actor-signer", rustPublicIngressTrustedProxies: "192.0.2.1,::1" }), 3100);
+    const ingress = await preparePublicIngressStartup(config({ rustFoundationActorEnvelopeKey: "existing-actor-signer", rustPublicIngressTrustedProxies: "192.0.2.1,::1" }), 3100, undefined, "cli");
     expect(ingress.nodeListenHost).toBe("127.0.0.1");
     expect(ingress.nodeListenPort).toBe(3101);
     expect(selectAvailablePort).toHaveBeenCalledWith(3101, "127.0.0.1");
@@ -75,13 +76,17 @@ describe("explicit public ingress startup", () => {
 
   it("requires Desktop's separate session secret and passes the exact local-cookie mode", async () => {
     vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    await expect(preparePublicIngressStartup(config(), 3100, undefined, "desktop"))
+      .rejects.toThrow("Desktop account authentication");
+    expect(selectAvailablePort).not.toHaveBeenCalled();
+
     await expect(preparePublicIngressStartup(config(), 3100, { sessionSecret: "   " }))
       .rejects.toThrow("Desktop account session secret");
 
     const ingress = await preparePublicIngressStartup(config(), 3100, {
       sessionSecret: "desktop-session-secret",
       secureCookie: true,
-    });
+    }, "desktop");
     expect(ingress.appOptions.rustPublicIngress?.sessionAuth).toMatchObject({
       kind: "local_account",
       secret: "desktop-session-secret",

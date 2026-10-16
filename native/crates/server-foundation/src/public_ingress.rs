@@ -309,6 +309,9 @@ async fn proxy_request(
             Ok(identity) => identity,
             Err((status, code)) => return state.foundation.json_error(status, code),
         };
+        if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
+            return response;
+        }
         let Some(path_and_query) = request.uri().path_and_query() else {
             return state
                 .foundation
@@ -461,6 +464,38 @@ async fn resolve_public_http_identity(
     }
 
     Ok(NativeIngressIdentity::None)
+}
+
+fn agent_run_id_header(request: &HttpRequest) -> Option<String> {
+    let mut values = request.headers().get_all("x-rudder-run-id");
+    let value = values.next()?;
+    // Node's legacy auth compares one normalized header value with the signed
+    // JWT run id. Reject ambiguous duplicate values and trim HTTP optional
+    // whitespace before the same comparison.
+    if values.next().is_some() {
+        return Some(String::new());
+    }
+    Some(value.to_str().map(str::trim).unwrap_or_default().to_owned())
+}
+
+fn agent_run_context_mismatch_response(
+    request: &HttpRequest,
+    identity: &NativeIngressIdentity,
+) -> Option<HttpResponse> {
+    let NativeIngressIdentity::AgentJwt(identity) = identity else {
+        return None;
+    };
+    let requested_run_id = agent_run_id_header(request)?;
+    (requested_run_id != identity.run_id).then(|| {
+        HttpResponse::Forbidden().json(serde_json::json!({
+            "error": "Agent run header does not match the signed runtime context",
+            "code": "agent_run_context_mismatch",
+            "details": {
+                "signedRunId": identity.run_id,
+                "requestedRunId": requested_run_id,
+            },
+        }))
+    })
 }
 
 async fn reject_unsupported_websocket_upgrade(
@@ -625,6 +660,9 @@ async fn member_directory(
             Ok(identity) => identity,
             Err((status, code)) => return state.foundation.json_error(status, code),
         };
+        if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
+            return response;
+        }
         return match identity {
             NativeIngressIdentity::Session(identity) => {
                 state
@@ -1006,6 +1044,9 @@ async fn llm_reflection(
             Ok(identity) => identity,
             Err((status, code)) => return state.foundation.json_error(status, code),
         };
+        if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
+            return response;
+        }
         session_proof = match issue_assertion(
             &identity_auth.assertion_key,
             Method::GET.as_str(),

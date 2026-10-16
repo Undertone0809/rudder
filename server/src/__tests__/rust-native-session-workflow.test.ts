@@ -654,6 +654,14 @@ describe("source-built Rust public native session workflow", () => {
       runId: agentRunId,
       adapterType: "claude_local",
     });
+    const nodeCallsBeforeMismatchedRunId = nodeRouteCalls;
+    const mismatchedProxyRunId = await getSessionFromPublic("/api/native-session-echo", {
+      authorization: `Bearer ${jwt}`,
+      "x-rudder-run-id": `${agentRunId}-different`,
+    }, "POST");
+    expect(mismatchedProxyRunId.status).toBe(403);
+    expect(JSON.parse(mismatchedProxyRunId.body).code).toBe("agent_run_context_mismatch");
+    expect(nodeRouteCalls).toBe(nodeCallsBeforeMismatchedRunId);
     expect(sessionResolverCalls).toBe(0);
 
     const boardKeyResponse = await getSessionFromPublic("/api/native-session-echo", {
@@ -681,7 +689,20 @@ describe("source-built Rust public native session workflow", () => {
     const jwtDirectory = await getSessionFromPublic(`/api/orgs/${orgId}/members/directory`, {
       authorization: `Bearer ${jwt}`,
     });
+    // The direct GET keeps the legacy run-context contract: no optional
+    // run-id header and the matching signed run id are accepted.
     expect(jwtDirectory.status).toBe(200);
+    const matchingRunIdDirectory = await getSessionFromPublic(`/api/orgs/${orgId}/members/directory`, {
+      authorization: `Bearer ${jwt}`,
+      "x-rudder-run-id": agentRunId,
+    });
+    expect(matchingRunIdDirectory.status).toBe(200);
+    const mismatchedRunIdDirectory = await getSessionFromPublic(`/api/orgs/${orgId}/members/directory`, {
+      authorization: `Bearer ${jwt}`,
+      "x-rudder-run-id": `${agentRunId}-different`,
+    });
+    expect(mismatchedRunIdDirectory.status).toBe(403);
+    expect(JSON.parse(mismatchedRunIdDirectory.body).code).toBe("agent_run_context_mismatch");
     const wrongOrgDirectory = await getSessionFromPublic(`/api/orgs/${otherOrgId}/members/directory`, {
       authorization: `Bearer ${jwt}`,
     });

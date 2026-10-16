@@ -402,7 +402,7 @@ async function startServerRuntime(
     process.env.RUDDER_RUNTIME_OWNER_KIND = runtimeOwnerKind;
   }
   const config = mergeRuntimeConfig(loadConfig(), options.runtimeOverrides);
-  assertPublicIngressExposure(config, Boolean(options.localAccountAuth));
+  assertPublicIngressExposure(config, Boolean(options.localAccountAuth), runtimeOwnerKind);
   if (process.env.RUDDER_SECRETS_PROVIDER === undefined) {
     process.env.RUDDER_SECRETS_PROVIDER = config.secretsProvider;
   }
@@ -1073,7 +1073,7 @@ async function startServerRuntime(
   });
   
   const listenPort = await selectAvailablePort(config.port, config.host);
-  const ingress = await preparePublicIngressStartup(config, listenPort, options.localAccountAuth);
+  const ingress = await preparePublicIngressStartup(config, listenPort, options.localAccountAuth, runtimeOwnerKind);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });

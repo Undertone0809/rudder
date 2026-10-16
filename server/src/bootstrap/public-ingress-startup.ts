@@ -4,11 +4,19 @@ import { localAgentJwtAuthSettings } from "../agent-auth-jwt.js";
 import type { RudderAppHandle } from "../app.js";
 import { betterAuthSessionCookieSettings } from "../auth/better-auth.js";
 import type { Config } from "../config.js";
+import type { LocalRuntimeOwnerKind } from "../local-runtime.js";
 import { selectAvailablePort } from "./port-selection.js";
 import type { RudderAppOptions } from "./types.js";
 
-export function assertPublicIngressExposure(config: Config, localAccountAuth: boolean): void {
+export function assertPublicIngressExposure(
+  config: Config,
+  localAccountAuth: boolean,
+  runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
+): void {
   if (config.rustPublicIngressMode !== "required") return;
+  if (config.deploymentMode === "local_trusted" && runtimeOwnerKind === "desktop" && !localAccountAuth) {
+    throw new Error("Desktop local-trusted runtime requires Desktop account authentication");
+  }
   if (!isIP(config.host)) throw new Error("Rust public ingress requires a numeric listener address");
   if (config.deploymentMode === "local_trusted" && !localAccountAuth
     && config.host !== "127.0.0.1" && config.host !== "::1") {
@@ -20,7 +28,9 @@ export async function preparePublicIngressStartup(
   config: Config,
   publicPort: number,
   localAccountAuth?: { sessionSecret: string; secureCookie?: boolean },
+  runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
 ) {
+  assertPublicIngressExposure(config, Boolean(localAccountAuth), runtimeOwnerKind);
   const enabled = config.rustPublicIngressMode === "required";
   const nodeListenHost = enabled ? "127.0.0.1" : config.host;
   const nodeListenPort = enabled
@@ -70,7 +80,9 @@ export async function preparePublicIngressStartup(
         agentJwtSecret: agentJwt.secret,
         agentJwtIssuer: agentJwt.issuer,
         agentJwtAudience: agentJwt.audience,
-        localImplicitEnabled: config.deploymentMode === "local_trusted" && !localAccountAuth,
+        localImplicitEnabled: config.deploymentMode === "local_trusted"
+          && !localAccountAuth
+          && runtimeOwnerKind !== "desktop",
       },
       ...(sessionAuth ? { sessionAuth } : {}),
     };
