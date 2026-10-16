@@ -53,8 +53,14 @@ function backupUnavailableMessage(backup: WorkspaceBackupSummary) {
   return "Backup files are not available.";
 }
 
-function selectFilePath(searchParams: URLSearchParams, setSearchParams: ReturnType<typeof useSearchParams>[1], filePath: string) {
+function selectFilePath(
+  searchParams: URLSearchParams,
+  setSearchParams: ReturnType<typeof useSearchParams>[1],
+  backupId: string,
+  filePath: string,
+) {
   const next = new URLSearchParams(searchParams);
+  next.set("backup", backupId);
   next.set("file", filePath);
   setSearchParams(next, { replace: true });
 }
@@ -253,7 +259,7 @@ export function WorkspaceBackupFilesSidebar() {
                 backupId={selectedBackup.id}
                 entry={entry}
                 selectedFilePath={selectedFilePath}
-                onSelectFile={(filePath) => selectFilePath(searchParams, setSearchParams, filePath)}
+                onSelectFile={(filePath) => selectFilePath(searchParams, setSearchParams, selectedBackup.id, filePath)}
                 expandedDirectories={expandedDirectories}
               />
             ))}

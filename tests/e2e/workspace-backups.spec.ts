@@ -36,6 +36,7 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
     data: { triggerSource: "manual" },
   });
   expect(backupRes.ok()).toBe(true);
+  const backup = await backupRes.json() as { id: string };
   await fs.writeFile(path.join(workspaceRoot, "plans", "roadmap.md"), "# Changed\n", "utf8");
 
   await selectOrganization(page, organization.id);
@@ -68,9 +69,15 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await page.getByRole("button", { name: "plans" }).click();
   await withWorkspaceBackupPreviewDiagnostics(page, testInfo, organization.id, "plans/roadmap.md", async () => {
     await page.getByRole("button", { name: "roadmap.md" }).click();
+    await expect.poll(async () => page.evaluate(() => {
+      const params = new URL(window.location.href).searchParams;
+      return { backup: params.get("backup"), file: params.get("file") };
+    })).toEqual({ backup: backup.id, file: "plans/roadmap.md" });
     const backupPreview = page.getByTestId("workspace-main-card").locator("pre code");
     await expect(backupPreview).toBeVisible();
     await expect(backupPreview).toHaveText("# Roadmap");
+    const screenshotPath = process.env.RUDDER_E2E_WORKSPACE_BACKUP_SCREENSHOT?.trim();
+    if (screenshotPath) await page.screenshot({ path: screenshotPath, fullPage: true });
   });
 
   const download = page.waitForEvent("download");
