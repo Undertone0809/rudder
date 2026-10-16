@@ -72,10 +72,23 @@ if (process.env.RUDDER_TEST_CURSOR_USAGE_LIMIT === "1") {
   console.error("ActionRequiredError: You've hit your usage limit Get Cursor Pro for more Agent usage, unlimited Tab, and more.");
   process.exit(1);
 }
+if (process.env.RUDDER_TEST_CURSOR_NO_SESSION === "1") {
+  console.log(JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "output_text", text: "completed without a session id" }] },
+  }));
+  console.log(JSON.stringify({ type: "result", subtype: "success", result: "ok" }));
+  process.exit(0);
+}
+const resumeIndex = process.argv.indexOf("--resume");
+const sessionId =
+  process.env.RUDDER_TEST_CURSOR_ECHO_RESUME_SESSION === "1" && resumeIndex >= 0
+    ? process.argv[resumeIndex + 1]
+    : "cursor-session-1";
 console.log(JSON.stringify({
   type: "system",
   subtype: "init",
-  session_id: "cursor-session-1",
+  session_id: sessionId,
   model: "auto",
 }));
 console.log(JSON.stringify({
@@ -85,7 +98,7 @@ console.log(JSON.stringify({
 console.log(JSON.stringify({
   type: "result",
   subtype: "success",
-  session_id: "cursor-session-1",
+  session_id: sessionId,
   result: "ok",
 }));
 `;
@@ -638,6 +651,116 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       });
       expect(result.sessionDisplayId).toBe("cursor-session-after-retry");
       expect(result.clearSession).toBe(false);
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes and persists a padded opaque Cursor session ID byte-for-byte", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-padded-session-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    const capturePath = path.join(root, "capture.json");
+    const paddedSessionId = "  cursor-session:opaque  ";
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCursorCommand(commandPath);
+
+    const restoreEnv = setManagedCursorEnv(root);
+
+    try {
+      const result = await execute({
+        runId: "run-cursor-padded-session",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Cursor Coder",
+          agentRuntimeType: "cursor",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: paddedSessionId,
+          sessionParams: { sessionId: paddedSessionId, cwd: workspace },
+          sessionDisplayId: paddedSessionId,
+          taskKey: "issue:1",
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+            RUDDER_TEST_CURSOR_ECHO_RESUME_SESSION: "1",
+          },
+          promptTemplate: "Continue the Cursor session.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      const resumeIndex = capture.argv.indexOf("--resume");
+      expect(capture.argv.slice(resumeIndex, resumeIndex + 2)).toEqual(["--resume", paddedSessionId]);
+      expect(result.exitCode).toBe(0);
+      expect(result.sessionId).toBe(paddedSessionId);
+      expect(result.sessionParams).toMatchObject({ sessionId: paddedSessionId, cwd: workspace });
+      expect(result.sessionDisplayId).toBe(paddedSessionId);
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not resume or persist a whitespace-only session when Cursor omits a replacement ID", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-blank-session-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCursorCommand(commandPath);
+
+    const restoreEnv = setManagedCursorEnv(root);
+
+    try {
+      const result = await execute({
+        runId: "run-cursor-blank-session",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Cursor Coder",
+          agentRuntimeType: "cursor",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: " \t ",
+          sessionParams: { sessionId: " \t ", cwd: workspace },
+          sessionDisplayId: " \t ",
+          taskKey: "issue:1",
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+            RUDDER_TEST_CURSOR_NO_SESSION: "1",
+          },
+          promptTemplate: "Start without a Cursor session.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).not.toContain("--resume");
+      expect(result.exitCode).toBe(0);
+      expect(result.sessionId).toBeNull();
+      expect(result.sessionParams).toBeNull();
+      expect(result.sessionDisplayId).toBeNull();
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });

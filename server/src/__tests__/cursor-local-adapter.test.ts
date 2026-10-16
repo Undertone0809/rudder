@@ -1,5 +1,9 @@
 import { printCursorStreamEvent } from "@rudderhq/agent-runtime-cursor-local/cli";
-import { isCursorUnknownSessionError, parseCursorJsonl } from "@rudderhq/agent-runtime-cursor-local/server";
+import {
+  isCursorUnknownSessionError,
+  parseCursorJsonl,
+  sessionCodec,
+} from "@rudderhq/agent-runtime-cursor-local/server";
 import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
 import { describe, expect, it, vi } from "vitest";
 
@@ -56,6 +60,35 @@ describe("cursor parser", () => {
       outputTokens: 2,
     });
     expect(parsed.costUsd).toBeCloseTo(0.0001, 6);
+  });
+
+  it("preserves padded opaque session IDs and rejects blank or missing IDs", () => {
+    const paddedSessionId = "  cursor-session:opaque  ";
+    const parsed = parseCursorJsonl(
+      [
+        JSON.stringify({ type: "system", subtype: "init", session_id: paddedSessionId }),
+        JSON.stringify({ type: "result", subtype: "success", session_id: " \t ", result: "ok" }),
+      ].join("\n"),
+    );
+
+    expect(parsed.sessionId).toBe(paddedSessionId);
+    expect(parseCursorJsonl(JSON.stringify({ type: "system", session_id: " \t\n " })).sessionId).toBeNull();
+    expect(parseCursorJsonl(JSON.stringify({ type: "result", result: "no session id" })).sessionId).toBeNull();
+  });
+});
+
+describe("cursor session codec", () => {
+  it("round-trips padded opaque IDs without trimming and rejects blank or missing IDs", () => {
+    const paddedSessionId = "  cursor-session:opaque  ";
+    const serialized = sessionCodec.serialize({ sessionId: paddedSessionId, cwd: "/workspace" });
+
+    expect(serialized).toEqual({ sessionId: paddedSessionId, cwd: "/workspace" });
+    expect(sessionCodec.deserialize(serialized)).toEqual({ sessionId: paddedSessionId, cwd: "/workspace" });
+    expect(sessionCodec.getDisplayId({ sessionId: paddedSessionId })).toBe(paddedSessionId);
+    expect(sessionCodec.serialize({ sessionId: " \t\n " })).toBeNull();
+    expect(sessionCodec.deserialize({ session_id: "   " })).toBeNull();
+    expect(sessionCodec.getDisplayId({ sessionID: "\t " })).toBeNull();
+    expect(sessionCodec.deserialize({ cwd: "/workspace" })).toBeNull();
   });
 });
 

@@ -3,6 +3,7 @@ title: Complete Plan for Rudder Native Chat Experience and Agent Run Execution A
 date: 2026-09-21
 kind: implementation
 status: in_progress
+updated_at: 2026-10-16
 area: agent_runtimes
 entities:
   - agent_run
@@ -704,21 +705,41 @@ Reuse an existing equivalent endpoint where available; do not provide duplicate 
 
 | Area | Known entry point or directory | Expected change |
 |---|---|---|
-| Chat calls | `server/src/services/chat-assistant.ts`, helpers | Surface assembly calls Run; native input does not replay history; remove ordinary-result repair on the native path |
-| Run core | `server/src/services/runtime-kernel/`, `packages/shared/src/agent-run.ts` | Unify SessionIntent, leases, recovery, spans, and costs |
+| Chat calls | Legacy behavior: `server/src/services/chat-assistant.ts`, helpers | Rust owns surface validation and Run admission; TS transports typed input without history replay or ordinary-result repair |
+| Run core | Legacy behavior: `server/src/services/runtime-kernel/`; wire types: `packages/shared/src/agent-run.ts` | Rust owns SessionIntent, leases, recovery, spans, and costs; TS is transport only |
 | Data model | `packages/db/src/schema/heartbeat_runs.ts`, chat schema and migrations | Add bindings/spans/references compatibly; do not rename throughout the repository |
 | Runtime public boundary | `packages/agent-runtime-utils/` and existing shared types | Typed native input/events/capabilities and Reader |
 | Six Adapters | `packages/agent-runtimes/{codex-local,claude-local,hermes-gateway,opencode-local,pi-local,cursor-local}` | Native transport/session/control/history for each |
-| Side Chat | `server/src/services/side-chats.ts`, family/annotation helpers | First Send branching, in-place Keep, retention, independent cancellation |
-| Controls and events | Successor modules for chats stream routes, chat-generation-protocol, run-events, etc. | Persist state reliably; do not duplicate raw deltas |
+| Side Chat | Legacy behavior: `server/src/services/side-chats.ts`, family/annotation helpers | Rust owns first Send branching, in-place Keep, retention, and independent cancellation; preserve existing UI contracts |
+| Controls and events | Legacy behavior: chats stream routes, chat-generation-protocol, run-events | Rust owns ordered reduction, persistence, terminal state and replay; TS relays typed events without a second reducer |
 | UI | `ui/src/pages/Chat*`, `SideChatPanelView.tsx`, `RunTranscriptView*` | Same semantic projection, independent state, lazy loading, request/response round trips |
-| Native Rust | Actual call paths through `native/crates/runtime-core`, `runtime-attempt-core`, `run-evidence-core`, etc. | Change contracts and bridges in the layers already migrated |
+| Native Rust | `native/crates/{d1-persistence,server-foundation,runtime-core,runtime-attempt-core,run-evidence-core}` | Own all new backend business behavior and wire the actual public call paths, not just private helper functions |
 
 Paths come from prior audits and are navigation leads; locate them based on files present locally before implementation. A directory's existence does not mean it is wired into production; trace the actual Router → Service → bridge → runtime call chain.
 
 ### 10.3 Coordinate with the Ongoing Rust Migration
 
-Modify state/persistence/evidence logic already owned by Rust in Rust, updating public protocols and TS call bridges. Modify Runtime I/O still managed by TypeScript at its current layer. Do not maintain two parallel Run state machines, or add Rust functions while the actual entry point continues to run old logic.
+The October 16 backend policy supersedes the earlier incremental ownership allowance: all new Native Chat business authority belongs in Rust, including binding/segment/span persistence, conversation and turn lifecycle, authorization, ordered event reduction, replay/deduplication, cancellation, recovery, and terminal outcomes. Follow `doc/engineering/BACKEND_ARCHITECTURE.md`. Historical TypeScript implementations are behavior and test references, not an implementation that may be merged first and ported later.
+
+TypeScript may retain provider process/connection management, protocol framing, typed transport, and frontend presentation. Each temporary adapter must identify its Rust owner, allowed transport responsibilities, authentication context, error contract, cutover criterion, and regression tests. It must not query business state, decide a terminal outcome, or write binding/session/run records. Rust failure must fail visibly without a hidden Node business fallback.
+
+Resume from current main in verifiable slices: first Rust-owned binding/segment/span transactions and authorization; then Run admission, native event reduction and durable turn outcomes; then provider transport and shared Reader integration; finally all product consumers and per-runtime duplicate-write shutdown. Existing schemas and compatible UI/provider work should be reused selectively. Each slice must wire its real entrypoint and exercise durable readback, cross-organization denial, stale/duplicate input, and Rust-unavailable behavior before claiming acceptance. The full six-runtime and Side Chat scope below is unchanged.
+
+#### Current adapter boundary inventory (October 16 implementation)
+
+| Operation / public path | Transport and Rust owner | Remaining Node responsibility and cutover | Regression evidence |
+| --- | --- | --- | --- |
+| `GET /api/orgs/:orgId/chats/:chatId/runtime-binding`; `GET /api/orgs/:orgId/runtime-bindings/:bindingId` | `server/src/routes/runtime-bindings.ts` and `services/runtime-binding-bridge.ts` relay to Rust `server-foundation::runtime_bindings` / `d1-persistence::runtime_bindings` | Existing authentication middleware resolves credential identity. The adapter signs the exact organization, operation and body, relays Rust status/body, and maps unavailable transport to 503. Rust revalidates database membership, Side Chat ownership and selected identity; it owns all binding queries/projection. No Node business lookup, writer, synthetic session or fallback. Native Chat implementation owner removes the adapter when public ingress resolves credentials directly. | Binding transport tests, real PostgreSQL public-route integration, Rust HTTP restart and authorization tests. Only these reads and private binding operations are covered; ordinary Chat send/control remain unmigrated debt. |
+| Private `runtime.binding.ensure` | `services/runtime-binding-bridge.ts` serializes the typed command; `d1-persistence::runtime_bindings` owns creation/idempotency/conflict and activity/outbox transaction | The binding authority is internal. Caller-supplied identity is not exposed as a public create endpoint; later Rust Run admission must derive the profile/workspace/revisions from authoritative configuration. First epoch only; no implicit rotation. | Concurrent ensure, identity conflict, audit uniqueness, rollback, org/owner denial and read-no-write tests. |
+| Cursor native session locator transport | `packages/agent-runtimes/cursor-local/src/server/{parse,index,execute}.ts` | Existing provider process/protocol adapter preserves nonblank opaque identifiers byte-for-byte. It does not establish new lifecycle/persistence authority. Existing CLI execution is still legacy runtime debt until Rust admission and terminal authority are wired. | Cursor adapter/execute regression tests for padded and blank identifiers. These tests do not prove native ACP support or live-provider acceptance. |
+
+These entries describe the partial implementation, not completion of W00–W13. Native turn projection tests alone do not establish durable admission or public send/reconnect/cancel coverage.
+
+The current durable Chat-to-Run association is `heartbeat_runs.context_snapshot.chatGenerationId`, supplied by the normal, queued and recovery call paths; it must be validated against the exact generation and conversation rather than inferred from the newest Run. Generation control and Run execution use separate owner tokens and epochs. The native event identity therefore includes both `generationAttemptEpoch` and `runAttemptEpoch`, plus organization, conversation, generation, binding, segment, Run, Attempt and connection epoch. Rust admission must create a real durable Attempt and populate its owner/epoch fields. The dedicated `chat-assistant.ts` path currently creates a Run and executes the adapter without writing `heartbeat_run_attempts`; the separate legacy heartbeat ledger leaves owner/epoch fields null. Neither path can satisfy the new span fence. Existing Rust Run, ChatScheduler and Attempt machines are pure state machines, not database admission authorities. The next slice must own Run/Attempt admission, budget checks, lease renewal and terminal transitions in Rust before wiring spans into Chat. Preserve fail-closed behavior until admission is migrated.
+
+Provider events cannot assert execution completion. The Rust Attempt authority supplies terminal evidence separately; a provider final plus successful execution evidence is required for completion. Commit an indeterminate submission checkpoint under the live fences before the transport writes input. An unknown or indeterminate submission reconnects to existing events without submitting input again. Checkpoint storage must use an exact predecessor/version check so restoring a valid older snapshot cannot overwrite cancellation, terminal evidence or deduplication history.
+
+Span/locator writes attach evidence to an already admitted Run. Side Chat expiry checks must distinguish new admission (reject expired or missing TTL) from a Run admitted before its expiry (may finish under its current execution fence). Neither history reads nor late callbacks refresh expiry or revive a committed expired/deleted conversation.
 
 Protect other migrations in progress in the worktree: do not overwrite, reset, or pull unrelated refactors wholesale into this PR. Complete changes to schema/shared/server/ui/native together and preserve existing compatibility reads. Completion of this project does not depend on the repository-wide Rust migration being finished.
 

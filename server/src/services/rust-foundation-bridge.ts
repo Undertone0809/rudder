@@ -1,13 +1,18 @@
 import { resolveRudderNativeTarget } from "@rudderhq/shared";
 import type { Request } from "express";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
-import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, existsSync, constants as fsConstants, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
+import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
+export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
+export { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
+export { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 
 import { requestActivityLinkRead, type ActivityLinkReadInput } from "./activity-link-read-bridge.js";
 import { requestActivityRead, type ActivityReadInput } from "./activity-read-bridge.js";
@@ -23,7 +28,7 @@ import { requestRequestRead, type RequestReadInput } from "./request-read-bridge
 import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
-export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
+import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -54,6 +59,7 @@ export type RustFoundationResponse = {
 };
 
 export interface RustFoundationBridge {
+  runtimeBinding?(actor: RustFoundationActor, orgId: string, input: RuntimeBindingInput): Promise<RustFoundationResponse>;
   automationRead?(actor: RustFoundationActor, orgId: string, input: AutomationReadInput): Promise<RustFoundationResponse>;
   activityLinkRead?(actor: RustFoundationActor, orgId: string, input: ActivityLinkReadInput): Promise<RustFoundationResponse>;
   issueMetadataRead?(actor: RustFoundationActor, orgId: string, input: IssueMetadataReadInput): Promise<RustFoundationResponse>;
@@ -161,30 +167,6 @@ export interface RustFoundationBridge {
   close(): Promise<void>;
 }
 
-export class RustFoundationBridgeError extends Error {
-  constructor(
-    public readonly code:
-      | "invalid_mode"
-      | "database_unconfigured"
-      | "actor_envelope_unconfigured"
-      | "binary_unavailable"
-      | "startup_failed"
-      | "not_ready"
-      | "request_failed",
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "RustFoundationBridgeError";
-  }
-}
-
-export type RustFoundationActor = Request["actor"] & {
-  sessionId?: string;
-  authEpoch?: number;
-};
-type BridgeActor = RustFoundationActor;
-
 type StartupReceipt = {
   boundAddr?: unknown;
   publicListener?: unknown;
@@ -195,7 +177,6 @@ type StartupReceipt = {
 type RustFoundationChild = ChildProcessByStdio<null, Readable, Readable>;
 type BridgeLifecycleState = "idle" | "starting" | "ready" | "closing";
 
-const ACTOR_ENVELOPE_AUDIENCE = "rudder-server-foundation";
 const ACTOR_ENVELOPE_ACTION = "organization.members.directory.read";
 const WORKSPACE_BACKUP_LIST_ACTION = "organization.workspace.backups.list";
 const WORKSPACE_BACKUP_LIST_STREAM_CONTENT_TYPE = "application/x-rudder-workspace-backup-list+ndjson";
@@ -205,9 +186,6 @@ const PROJECT_GOAL_SET_ACTION = "project.goal_set.replace";
 const PROJECT_DELETE_ACTION = "project.delete";
 const PROJECT_CREATE_ACTION = "project.create";
 const PROJECT_READ_ACTION = "project.read";
-const ACTOR_ENVELOPE_PROTOCOL_VERSION = 2;
-const ACTOR_ENVELOPE_SCHEMA = "rudder.actor-envelope.v2";
-const ACTOR_ENVELOPE_LIFETIME_SECONDS = 60;
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 const DEFAULT_READY_TIMEOUT_MS = 5_000;
 const DEFAULT_WORKSPACE_BACKUP_LIST_TIMEOUT_MS = 30_000;
@@ -320,122 +298,6 @@ function configuredMode(
     "invalid_mode",
     `${envName} must be off, shadow, or required; received ${mode}`,
   );
-}
-
-function actorIdentity(actor: BridgeActor) {
-  if (actor.type === "agent") {
-    if (!actor.agentId) throw new RustFoundationBridgeError("request_failed", "Authenticated agent has no agent id");
-    return { kind: "agent", id: actor.agentId };
-  }
-  if (actor.type === "board") {
-    return { kind: "user", id: actor.userId ?? "local-board" };
-  }
-  throw new RustFoundationBridgeError("request_failed", "Rust bridge requires an authenticated actor");
-}
-
-function actorSession(actor: BridgeActor) {
-  const explicit = actor.sessionId?.trim();
-  if (explicit) return explicit;
-  return `${actor.source}:${actor.keyId ?? actor.userId ?? actor.agentId ?? "unknown"}`;
-}
-
-function appendLengthPrefixed(output: Buffer[], value: string) {
-  const bytes = Buffer.from(value, "utf8");
-  const length = Buffer.allocUnsafe(8);
-  length.writeBigUInt64BE(BigInt(bytes.byteLength));
-  output.push(length, bytes);
-}
-
-function canonicalSigningBytes(input: {
-  actor: { kind: string; id: string };
-  organizationId: string;
-  sessionId: string;
-  authEpoch: number;
-  audience: string;
-  method: string;
-  path: string;
-  action: string;
-  bodySha256: string;
-  requestId: string;
-  nonce: string;
-  idempotencyKey?: string | null;
-  issuedAt: number;
-  expiresAt: number;
-}) {
-  const output: Buffer[] = [Buffer.from(ACTOR_ENVELOPE_SCHEMA, "utf8"), Buffer.from([0])];
-  const protocol = Buffer.allocUnsafe(2);
-  protocol.writeUInt16BE(ACTOR_ENVELOPE_PROTOCOL_VERSION);
-  output.push(protocol);
-  for (const field of [
-    input.actor.kind,
-    input.actor.id,
-    input.organizationId,
-    input.sessionId,
-    input.audience,
-    input.method,
-    input.path,
-    input.action,
-    input.bodySha256,
-    input.requestId,
-    input.nonce,
-  ]) {
-    appendLengthPrefixed(output, field);
-  }
-  if (input.idempotencyKey) {
-    appendLengthPrefixed(output, input.idempotencyKey);
-  }
-  for (const value of [input.authEpoch, input.issuedAt, input.expiresAt]) {
-    const encoded = Buffer.allocUnsafe(8);
-    encoded.writeBigUInt64BE(BigInt(value));
-    output.push(encoded);
-  }
-  return Buffer.concat(output);
-}
-
-export function createRustActorEnvelope(input: {
-  actor: BridgeActor;
-  organizationId: string;
-  method: string;
-  path: string;
-  action: string;
-  body: Buffer;
-  secret: string;
-  nowSeconds?: number;
-  requestId?: string;
-  nonce?: string;
-  idempotencyKey?: string;
-  allowAnonymous?: boolean;
-}) {
-  const now = input.nowSeconds ?? Math.floor(Date.now() / 1000);
-  const requestId = input.requestId ?? randomUUID();
-  const nonce = input.nonce ?? randomUUID();
-  const actor = input.allowAnonymous && input.actor.type === "none" ? { kind: "anonymous", id: "anonymous" } : actorIdentity(input.actor);
-  const sessionId = actorSession(input.actor);
-  const authEpoch = Number.isSafeInteger(input.actor.authEpoch) && (input.actor.authEpoch ?? 0) > 0
-    ? input.actor.authEpoch!
-    : 1;
-  const unsigned = {
-    protocolVersion: ACTOR_ENVELOPE_PROTOCOL_VERSION,
-    actor,
-    organizationId: input.organizationId,
-    sessionId,
-    authEpoch,
-    audience: ACTOR_ENVELOPE_AUDIENCE,
-    method: input.method,
-    path: input.path,
-    action: input.action,
-    bodySha256: createHash("sha256").update(input.body).digest("hex"),
-    requestId,
-    nonce,
-    idempotencyKey: input.idempotencyKey ?? null,
-    issuedAt: Math.max(1, now - 1),
-    expiresAt: now + ACTOR_ENVELOPE_LIFETIME_SECONDS,
-  };
-  const signature = createHmac(
-    "sha256",
-    Buffer.from(input.secret, "utf8"),
-  ).update(canonicalSigningBytes(unsigned)).digest("hex");
-  return { ...unsigned, signature };
 }
 
 function isLoopbackBoundAddress(value: string) {
@@ -831,6 +693,11 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       throw new RustFoundationBridgeError("not_ready", "Rust public ingress did not become ready");
     },
     start: ensureStarted,
+    async runtimeBinding(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestRuntimeBinding(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
     async automationRead(actor, orgId, input) {
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
