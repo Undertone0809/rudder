@@ -1125,9 +1125,14 @@ fn spawn_child(
         let child_stdin = child.stdin.take();
         thread::spawn(move || {
             let result = match child_stdin {
-                Some(mut pipe) => pipe
-                    .write_all(input.as_bytes())
-                    .map_err(|_| "stdin_write_failed"),
+                Some(mut pipe) => match pipe.write_all(input.as_bytes()) {
+                    Ok(()) => Ok(()),
+                    // Like the legacy process transport, let the real exit
+                    // status decide the outcome when the child closes stdin.
+                    // A short-lived command may finish before input delivery.
+                    Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+                    Err(_) => Err("stdin_write_failed"),
+                },
                 None => Err("stdin_unavailable"),
             };
             let _ = tx.send(result);
@@ -2085,7 +2090,7 @@ mod tests {
         }
         assert_eq!(was_stopped, stopped);
         assert!(cleanup_proven);
-        assert_eq!(stdin_error, Some("stdin_write_failed"));
+        assert_eq!(stdin_error, None);
         assert!(drain_output(Some(&fixture.child)));
         let counters = Counters {
             bytes_read: AtomicU64::new(0),
@@ -2100,7 +2105,7 @@ mod tests {
             true,
             stdin_error,
         );
-        assert!(!succeeded);
+        assert_eq!(succeeded, stopped || expected_exit == Some(0));
         let mut terminal = terminal_message(
             if succeeded { "succeeded" } else { "failed" },
             error,
@@ -2154,6 +2159,26 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn early_success_with_closed_stdin_preserves_real_exit_and_output() {
+        let fixture = launch("exec 0<&-; printf 'completed-without-input'; exit 0");
+        finish(&fixture, Some(0), false);
+        assert_eq!(
+            &*fixture.stdout.0.lock().unwrap(),
+            b"completed-without-input"
+        );
+    }
+
+    #[test]
+    fn closed_stdin_does_not_kill_a_still_running_child() {
+        let fixture = launch("exec 0<&-; sleep 1; printf 'completed-after-closing-input'; exit 0");
+        finish(&fixture, Some(0), false);
+        assert_eq!(
+            &*fixture.stdout.0.lock().unwrap(),
+            b"completed-after-closing-input"
+        );
     }
 
     #[test]
