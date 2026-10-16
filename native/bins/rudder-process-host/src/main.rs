@@ -9,9 +9,15 @@ use std::io::{self, BufReader, Read};
 use std::sync::{Arc, mpsc};
 use std::thread;
 
+mod stdio_mux;
+
 fn main() {
     if handle_metadata_args() {
         return;
+    }
+
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--stdio-mux")) {
+        std::process::exit(stdio_mux::run());
     }
 
     let lifecycle = match unsafe_fd(3) {

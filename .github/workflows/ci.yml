@@ -519,6 +519,14 @@ jobs:
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1
 
+      - name: Verify external Rust host caller-death cleanup
+        if: runner.os != 'Windows'
+        env:
+          RUDDER_TEST_PROCESS_HOST: ${{ github.workspace }}/native/target/debug/rudder-process-host
+        run: |
+          cargo build --locked --manifest-path native/Cargo.toml -p rudder-process-host
+          cargo test --locked --manifest-path native/Cargo.toml -p rudder-codex-app-server --test external_transport -- --ignored --test-threads=1
+
       - name: Verify New York DST planner parity
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: >-
