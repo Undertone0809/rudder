@@ -229,16 +229,24 @@ async fn ingress_readiness(state: web::Data<IngressState>, request: HttpRequest)
     if let Some(host) = request.headers().get(header::HOST) {
         probe = probe.insert_header((header::HOST, host.clone()));
     }
-    if let Some(session_auth) = state.config.session_auth.as_ref() {
+    let assertion_key = state
+        .config
+        .identity_auth
+        .as_ref()
+        .map(|auth| auth.assertion_key.as_str())
+        .or_else(|| {
+            state
+                .config
+                .session_auth
+                .as_ref()
+                .map(|auth| auth.assertion_key.as_str())
+        });
+    if let Some(assertion_key) = assertion_key {
         // Readiness is an internal anonymous request, subject to the same
-        // private-hop proof guard as public requests. Never bypass that guard.
+        // private-hop proof guard as public requests, including identity-only
+        // configurations without Cookie session authority.
         let anonymous = NativeIngressIdentity::None;
-        let proof = match issue_assertion(
-            &session_auth.assertion_key,
-            "GET",
-            "/api/health",
-            &anonymous,
-        ) {
+        let proof = match issue_assertion(assertion_key, "GET", "/api/health", &anonymous) {
             Ok(proof) => proof,
             Err(_) => {
                 return state.foundation.json_error(
