@@ -5,6 +5,10 @@ on:
   pull_request:
     paths:
       - .github/workflows/desktop-foundation-reuse-acceptance.yml
+      - .github/workflows/release.yml
+      - desktop/scripts/archive.mjs
+      - desktop/scripts/archive.test.mjs
+      - desktop/scripts/dist.mjs
       - desktop/scripts/stage-native.mjs
       - desktop/scripts/stage-native.test.mjs
       - scripts/desktop-foundation-reuse-acceptance.mjs
@@ -72,6 +76,7 @@ jobs:
       RELEASE_VERSION: ${{ needs.readiness.outputs.version }}
       RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR: ${{ github.workspace }}/dist/server-foundation-artifacts
       RUDDER_DESKTOP_TARGET_ARCH: x64
+      RUDDER_NATIVE_TARGET: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v6
         with:
@@ -97,6 +102,16 @@ jobs:
           github-token: ${{ github.token }}
       - name: Stage server foundation artifacts before Desktop build
         run: node server/scripts/stage-native.mjs --artifact-dir "$RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - name: Restore qualified Cargo dependency build
+        uses: actions/cache/restore@v5
+        with:
+          path: native/target
+          key: rudder-server-foundation-${{ runner.os }}-x86_64-apple-darwin-release-${{ hashFiles('native/Cargo.lock', 'native/Cargo.toml', 'native/**/Cargo.toml') }}
+          restore-keys: |
+            rudder-server-foundation-${{ runner.os }}-x86_64-apple-darwin-release-
       - name: Enable pnpm
         run: |
           corepack enable
@@ -127,7 +142,7 @@ jobs:
           test "$(git ls-files | wc -l | tr -d '[:space:]')" = 4
           node scripts/lint-imports.mjs
       - name: Test frozen staging implementation
-        run: pnpm exec vitest run desktop/scripts/stage-native.test.mjs
+        run: pnpm exec vitest run desktop/scripts/stage-native.test.mjs desktop/scripts/archive.test.mjs
       - name: Verify historical migration compatibility
         run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
       - name: Cache Playwright Chromium
