@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -345,6 +345,72 @@ test("existing Node edits require trusted hash-bound reviewer and Rust retiremen
   const head = buildInventory(headRoot, [record]);
   const accepted = compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
   assert.deepEqual(accepted.failures, []);
+});
+
+test("CLI retires diff-local Node reviews after their source changes enter the comparison base", (t) => {
+  const root = temporaryTree(t);
+  const sourcePath = "server/src/services/compat.ts";
+  const original = "export const value = 1;\n";
+  const reviewed = "export const value = 2;\n";
+  const next = "export const value = 3;\n";
+  const inventoryPath = path.join(root, "authority.json");
+  const checker = fileURLToPath(new URL("./rust-backend-authority-inventory.mjs", import.meta.url));
+  const run = (command, ...args) => spawnSync(process.execPath, [
+    checker, command, "--root", root, "--inventory", inventoryPath, ...args,
+  ], { encoding: "utf8" });
+  const git = (...args) => execFileSync("git", [
+    "-c", "core.autocrlf=false", "-c", "commit.gpgsign=false",
+    "-c", "user.name=Authority lifecycle test", "-c", "user.email=authority@example.test", ...args,
+  ], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const read = () => JSON.parse(fs.readFileSync(inventoryPath, "utf8"));
+  const write = (inventory) => fs.writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
+
+  git("init");
+  git("config", "core.autocrlf", "false");
+  put(root, sourcePath, original);
+  assert.equal(run("generate").status, 0);
+  git("add", ".");
+  git("commit", "-m", "fixture: original boundary");
+
+  put(root, sourcePath, reviewed);
+  assert.equal(run("generate").status, 0);
+  const admission = boundaryRecord(sourcePath, sha256(original), sha256(reviewed));
+  write({ ...read(), reviewed_node_changes: [admission] });
+  const accepted = run("compare", "--compare-ref", "HEAD");
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  git("add", ".");
+  git("commit", "-m", "fixture: reviewed Node boundary");
+
+  assert.equal(run("generate").status, 0);
+  assert.deepEqual(read().reviewed_node_changes, [admission], "generation must retain review metadata");
+  const stale = run("compare", "--compare-ref", "HEAD");
+  assert.equal(stale.status, 1, stale.stdout + stale.stderr);
+  assert.match(stale.stdout, /stale or unrelated reviewed_node_changes record/);
+
+  const beforeRetirement = read();
+  write({ ...beforeRetirement, reviewed_node_changes: [] });
+  assert.equal(run("check").status, 0);
+  const retired = run("compare", "--compare-ref", "HEAD");
+  assert.equal(retired.status, 0, retired.stdout + retired.stderr);
+  assert.deepEqual(read(), { ...beforeRetirement, reviewed_node_changes: [] });
+
+  put(root, sourcePath, next);
+  assert.equal(run("generate").status, 0);
+  const unreviewed = run("compare", "--compare-ref", "HEAD");
+  assert.equal(unreviewed.status, 1, unreviewed.stdout + unreviewed.stderr);
+  assert.match(unreviewed.stdout, /missing reviewed_node_changes record/);
+  write({ ...read(), reviewed_node_changes: [admission] });
+  const wrongHashes = run("compare", "--compare-ref", "HEAD");
+  assert.equal(wrongHashes.status, 1, wrongHashes.stdout + wrongHashes.stderr);
+  assert.match(wrongHashes.stdout, /head_sha256 does not match candidate source/);
+
+  put(root, sourcePath, reviewed);
+  put(root, "server/src/transport/new-bridge.ts", "export const forward = true;\n");
+  assert.equal(run("generate").status, 0);
+  write({ ...read(), reviewed_node_changes: [] });
+  const newSource = run("compare", "--compare-ref", "HEAD");
+  assert.equal(newSource.status, 1, newSource.stdout + newSource.stderr);
+  assert.match(newSource.stdout, /missing reviewed_node_changes record/);
 });
 
 test("new transport adapter requires a reviewed boundary and cannot add Node authority surfaces", (t) => {
