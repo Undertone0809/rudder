@@ -23,7 +23,7 @@ fn same_identity(root: &Path, org: &str) -> bool {
 }
 /// Admission is read-only: a known foreign owner must fail before any layout
 /// or migration write. Missing and corrupt identities retain legacy recovery.
-fn check_identity(root: &Path, org: &str) -> io::Result<()> {
+pub(super) fn check_identity(root: &Path, org: &str) -> io::Result<()> {
     let file = root.join(IDENTITY);
     match json(&file) {
         Ok(value) if value["orgId"] == org => Ok(()),
@@ -37,6 +37,56 @@ fn check_identity(root: &Path, org: &str) -> io::Result<()> {
         }
         Err(error) => Err(error),
     }
+}
+/// Read-only ownership preflight for runtime identity resolution. Unlike
+/// `ensure`, this never migrates, creates, or rewrites workspace state.
+pub(super) fn validate_readonly(host: &Host, org: &str, canonical: &Path) -> io::Result<()> {
+    assert_owned(canonical)?;
+    validate_readonly_path(Path::new(&host.workspace_home), canonical)?;
+    let instance = Path::new(&host.instance_root);
+    let canonical_storage = instance.join("organizations").join(key(org));
+    let legacy_storage = instance.join("organizations").join(org);
+    let canonical_legacy_workspace = canonical_storage.join("workspaces");
+    let legacy_workspace = legacy_storage.join("workspaces");
+    for workspace in [
+        canonical,
+        canonical_legacy_workspace.as_path(),
+        legacy_workspace.as_path(),
+        Path::new(&host.previous_documents_root),
+    ] {
+        check_identity(workspace, org)?;
+    }
+    Ok(())
+}
+
+/// Require every existing component beneath a trusted root to be a real path
+/// component. This is used only by Native Chat's read-only resolver; legacy
+/// recovery retains its existing alias and migration behavior.
+pub(super) fn validate_readonly_path(root: &Path, target: &Path) -> io::Result<()> {
+    if !target.starts_with(root) {
+        return Err(invalid("Runtime instruction path escaped its trusted root"));
+    }
+    let mut cursor = root.to_path_buf();
+    for component in target
+        .strip_prefix(root)
+        .map_err(io::Error::other)?
+        .components()
+    {
+        match component {
+            std::path::Component::CurDir => continue,
+            std::path::Component::Normal(part) => cursor.push(part),
+            _ => return Err(invalid("Runtime instruction path is not normalized")),
+        }
+        match fs::symlink_metadata(&cursor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(invalid("Runtime instruction path contains a symlink"));
+            }
+            Ok(_) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 fn ensure_identity(root: &Path, org: &str) -> io::Result<()> {
     let file = root.join(IDENTITY);
