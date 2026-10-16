@@ -19,6 +19,16 @@ export type HeartbeatSessionReuseSuppression =
 
 export type HeartbeatRunAttemptStatus = "started" | "waiting_for_network" | "succeeded" | "failed" | "cancelled" | "timed_out";
 export type HeartbeatRunAttemptResumeSource = "fresh" | "same_session" | "pristine_replay";
+export type NativeChatExecutionAuthority = "legacy_ts" | "native_rust";
+export type NativeChatProtocolPhase =
+  | "no_thread_request"
+  | "thread_start_indeterminate"
+  | "thread_known"
+  | "input_pre_submission"
+  | "input_indeterminate"
+  | "turn_known"
+  | "provider_terminal_observed"
+  | "execution_terminal_committed";
 
 export interface HeartbeatRunAttempt {
   id: string;
@@ -26,6 +36,10 @@ export interface HeartbeatRunAttempt {
   runId: string;
   agentId: string;
   attemptIndex: number;
+  /** Present on Rust native Chat attempts; run attempt epoch remains attemptEpoch. */
+  generationAttemptEpoch?: number | null;
+  connectionEpoch?: number | null;
+  protocolPhase?: NativeChatProtocolPhase | null;
   fallbackIndex: number | null;
   runtimeType: string;
   model: string | null;
@@ -94,6 +108,9 @@ export interface HeartbeatRun {
   shortRef?: string;
   orgId: string;
   agentId: string;
+  chatGenerationId?: string | null;
+  executionAuthority?: NativeChatExecutionAuthority;
+  nativeAdmissionHold?: boolean;
   invocationSource: HeartbeatInvocationSource;
   triggerDetail: WakeupTriggerDetail | null;
   status: HeartbeatRunStatus;

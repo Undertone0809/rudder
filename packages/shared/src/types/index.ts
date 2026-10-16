@@ -66,15 +66,14 @@ export type {
   ChatAskUserQuestion,
   ChatAskUserRequest, ChatAttachment,
   ChatContextLink, ChatControlAction, ChatControlActionKind, ChatControlDisposition, ChatConversation,
-  ChatGeneration, ChatGenerationControlState, ChatGenerationEvent, ChatGenerationEventKind, ChatGenerationStatus,
-  ChatGenerationTerminalOutboxEntry, ChatInlineAnnotation, ChatInlineAnnotationAgentRunAnchorKind, ChatInlineAnnotationInput,
+  ChatGeneration, ChatGenerationControlState, ChatGenerationEvent, ChatGenerationEventKind, ChatGenerationStatus, ChatGenerationTerminalOutboxEntry, ChatInlineAnnotation, ChatInlineAnnotationAgentRunAnchorKind, ChatInlineAnnotationInput,
   ChatInlineAnnotationSourceEntryId, ChatInlineAnnotationSurface, ChatInlineAnnotationTranscriptKind, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
   ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatProviderControlDisposition, ChatQueueClaimResponse, ChatQueueDeliveryIntent, ChatQueueRequestActor, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference,
   ChatRichReferenceDisplay,
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent, ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatStreamWaitingForNetworkEvent, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType
+  ChatStreamTranscriptTodoItemStatus, ChatStreamWaitingForNetworkEvent, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType, NativeChatTurnAdmissionReceipt, NativeChatTurnAdmissionRequest
 } from "./chat.js";
 export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendGranularity, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
 export type {
@@ -122,7 +121,7 @@ export type {
 export type {
   AgentRun, AgentRuntimeState, AgentTaskSession,
   AgentWakeupRequest, HeartbeatRecoveryMode,
-  HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunAttempt, HeartbeatRunAttemptResumeSource, HeartbeatRunAttemptStatus, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, HeartbeatSessionReuseSuppression, InstanceSchedulerHeartbeatAgent
+  HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunAttempt, HeartbeatRunAttemptResumeSource, HeartbeatRunAttemptStatus, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, HeartbeatSessionReuseSuppression, InstanceSchedulerHeartbeatAgent, NativeChatExecutionAuthority, NativeChatProtocolPhase
 } from "./heartbeat.js";
 export type {
   InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
