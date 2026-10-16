@@ -6,10 +6,13 @@
 
 use std::{collections::BTreeMap, io, path::Path};
 
+#[cfg(all(unix, any(target_os = "linux", target_os = "macos")))]
 const MAX_FILE_BYTES: usize = 1_048_576;
 const MAX_BUNDLE_BYTES: usize = 4_194_304;
 const MAX_BUNDLE_PATH_BYTES: usize = 4_194_304;
+#[cfg(all(unix, any(target_os = "linux", target_os = "macos")))]
 const MAX_ENTRIES: usize = 4_096;
+#[cfg(all(unix, any(target_os = "linux", target_os = "macos")))]
 const MAX_DEPTH: usize = 64;
 const MAX_RELATIVE_PATH_BYTES: usize = 16_384;
 type BundleContents = BTreeMap<String, Vec<u8>>;

@@ -1,7 +1,11 @@
-use super::{LocalHostContext, resolve_codex_config, runtime};
+use super::runtime;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use super::{LocalHostContext, resolve_codex_config};
 use crate::runtime_bindings::Error;
 use serde_json::{Value, json};
-use std::{fs, path::Path};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::fs;
+use std::path::Path;
 
 #[allow(dead_code)]
 #[path = "../../../tests/support/mod.rs"]
