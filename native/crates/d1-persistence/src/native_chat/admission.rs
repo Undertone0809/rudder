@@ -291,6 +291,7 @@ pub(super) async fn submit(
         "nativeSegmentId": &binding.segment_id,
         "messageId": message_id,
         "userMessageId": message_id,
+        "inputFingerprint": fingerprint,
         "turnVariant": turn_variant,
         "stream": true,
     });
