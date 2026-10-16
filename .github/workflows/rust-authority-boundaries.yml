@@ -15,25 +15,12 @@ jobs:
   native-boundaries:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: disposable-ci-only
-          POSTGRES_DB: native_auth_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
     env:
       CI: true
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      RUDDER_NATIVE_AUTH_TEST_DATABASE_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:5432/native_auth_test
-      RUDDER_MIGRATION_SERVICE_TEST_ADMIN_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:5432/postgres
-      RUDDER_MIGRATION_APPLY_TEST_ADMIN_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:5432/postgres
+      RUDDER_NATIVE_AUTH_TEST_DATABASE_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:54329/native_auth_test
+      RUDDER_MIGRATION_SERVICE_TEST_ADMIN_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:54329/postgres
+      RUDDER_MIGRATION_APPLY_TEST_ADMIN_URL: postgresql://postgres:disposable-ci-only@127.0.0.1:54329/postgres
       RUDDER_TEST_PG_DUMP: /usr/lib/postgresql/16/bin/pg_dump
       RUDDER_TEST_PSQL: /usr/lib/postgresql/16/bin/psql
     steps:
@@ -45,10 +32,15 @@ jobs:
       - name: Install fixture prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client-16
+          sudo apt-get install -y postgresql-16 postgresql-client-16
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
           pnpm install --frozen-lockfile
+      - name: Start isolated loopback PostgreSQL
+        run: |
+          /usr/lib/postgresql/16/bin/initdb -D "$RUNNER_TEMP/rudder-native-boundaries-pg" --username=postgres --auth=trust --no-locale
+          /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/rudder-native-boundaries-pg" -l "$RUNNER_TEMP/rudder-native-boundaries-pg.log" -o "-h 127.0.0.1 -p 54329 -k $RUNNER_TEMP" -w start
+          /usr/lib/postgresql/16/bin/createdb -h 127.0.0.1 -p 54329 -U postgres native_auth_test
       - name: Prepare legacy auth fixture
         working-directory: packages/db
         env:
@@ -69,3 +61,9 @@ jobs:
             -p rudder-migration-service --test postgres_apply -- --ignored --nocapture
           cargo test --locked --manifest-path native/Cargo.toml \
             -p rudder-migration-service --test apply_cli -- --ignored --nocapture
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/rudder-native-boundaries-pg/postmaster.pid" ]; then
+            /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/rudder-native-boundaries-pg" -m fast -w stop
+          fi
