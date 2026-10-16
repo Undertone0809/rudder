@@ -4,6 +4,7 @@ import express, { type Request } from "express";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  NativeSessionAssertionNonceRegistry,
   getVerifiedNativeSessionAssertion,
   nativeSessionAssertionMiddleware,
   signNativeSessionAssertion,
@@ -76,11 +77,15 @@ function sendJson(
   });
 }
 
-function protectedApp(key = KEY, nowSeconds: () => number = () => 1_000) {
+function protectedApp(
+  key = KEY,
+  nowSeconds: () => number = () => 1_000,
+  maxNonces?: number,
+) {
   const resolver = vi.fn(async () => null);
   const { db, selectedTables } = createLookupDb();
   const app = express();
-  app.use(nativeSessionAssertionMiddleware({ key, nowSeconds }));
+  app.use(nativeSessionAssertionMiddleware({ key, nowSeconds, maxNonces }));
   app.use(express.json());
   app.use(actorMiddleware(db, {
     deploymentMode: "authenticated",
@@ -106,6 +111,18 @@ function proof(target = "/protected?view=current", overrides: Partial<Parameters
     identity: { kind: "session", session_id: SESSION_ID, user_id: USER_ID },
     nowSeconds: 1_000,
     ...overrides,
+  });
+}
+
+function anonymousProof(nowSeconds: number, nonce: string) {
+  return signNativeSessionAssertion({
+    key: KEY,
+    method: "POST",
+    target: "/protected?view=current",
+    identity: { kind: "none" },
+    nowSeconds,
+    requestId: `00000000-0000-4000-8000-${nonce.slice(-12)}`,
+    nonce,
   });
 }
 
@@ -214,6 +231,59 @@ describe("native public-ingress session assertion", () => {
     } finally {
       await close(listener.server);
     }
+  });
+
+  it("bounds anonymous proof admission and reclaims entries after their expiry bucket passes", async () => {
+    let now = 1_000;
+    const { app, resolver } = protectedApp(KEY, () => now, 2);
+    const listener = await listen(app);
+    try {
+      for (const nonce of [
+        "10000000-0000-4000-8000-000000000001",
+        "10000000-0000-4000-8000-000000000002",
+      ]) {
+        const accepted = await sendJson(listener.origin, "/protected?view=current", {
+          headers: { "x-rudder-native-session-proof": anonymousProof(now, nonce) },
+        });
+        expect(accepted.status).toBe(200);
+        expect(JSON.parse(accepted.body).assertion).toEqual({ kind: "none" });
+      }
+
+      const full = await sendJson(listener.origin, "/protected?view=current", {
+        headers: {
+          "x-rudder-native-session-proof": anonymousProof(
+            now,
+            "10000000-0000-4000-8000-000000000003",
+          ),
+        },
+      });
+      expect(full.status).toBe(503);
+      expect(JSON.parse(full.body).code).toBe("native_session_proof_capacity");
+
+      now = 1_030;
+      const afterExpiry = await sendJson(listener.origin, "/protected?view=current", {
+        headers: {
+          "x-rudder-native-session-proof": anonymousProof(
+            now,
+            "10000000-0000-4000-8000-000000000004",
+          ),
+        },
+      });
+      expect(afterExpiry.status).toBe(200);
+      expect(resolver).not.toHaveBeenCalled();
+    } finally {
+      await close(listener.server);
+    }
+  });
+
+  it("bounds the production replay registry under an anonymous proof flood and expires old entries", () => {
+    const registry = new NativeSessionAssertionNonceRegistry();
+    for (let index = 0; index < 50_000; index += 1) {
+      expect(registry.consume(`anonymous-${index}`, 1_030, 1_000)).toBe("accepted");
+    }
+    expect(registry.consume("anonymous-overflow", 1_030, 1_000)).toBe("capacity");
+    expect(registry.consume("anonymous-after-expiry", 1_060, 1_030)).toBe("accepted");
+    expect(registry.consume("anonymous-after-expiry", 1_060, 1_030)).toBe("replayed");
   });
 
   it("fails a direct private-listener business request closed when the assertion is missing", async () => {

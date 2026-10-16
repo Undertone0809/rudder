@@ -1,12 +1,78 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Request, RequestHandler } from "express";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 const HEADER = "x-rudder-native-session-proof";
 const SCHEMA = "rudder.native-session-assertion.v1";
 const AUDIENCE = "rudder-node-private-ingress";
 const MAX_LIFETIME_SECONDS = 30;
 const MAX_NONCES = 50_000;
+const NONCE_EXPIRY_BUCKETS = 64;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type NonceExpiry = { nonce: string; expiresAt: number };
+type NonceConsumeResult = "accepted" | "replayed" | "capacity";
+
+/**
+ * A bounded replay set with expiry buckets. Each accepted nonce is indexed in
+ * one of 64 second slots (the signed proof lifetime is at most 30 seconds,
+ * with at most five seconds of allowed issue-time skew), so ordinary requests
+ * never scan the full registry. Entries are removed once as their expiry
+ * buckets pass; a clock jump visits each slot at most once.
+ */
+export class NativeSessionAssertionNonceRegistry {
+  private readonly usedNonces = new Map<string, number>();
+  private readonly expiryBuckets: NonceExpiry[][] = Array.from(
+    { length: NONCE_EXPIRY_BUCKETS },
+    () => [],
+  );
+  private lastSweepSecond: number | undefined;
+
+  constructor(private readonly capacity = MAX_NONCES) {
+    if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > MAX_NONCES) {
+      throw new RangeError(`Nonce registry capacity must be between 1 and ${MAX_NONCES}`);
+    }
+  }
+
+  consume(nonce: string, expiresAt: number, now: number): NonceConsumeResult {
+    this.purgeExpired(now);
+    if (this.usedNonces.has(nonce)) return "replayed";
+    if (this.usedNonces.size >= this.capacity) return "capacity";
+
+    this.usedNonces.set(nonce, expiresAt);
+    this.expiryBuckets[this.bucketIndex(expiresAt)]!.push({ nonce, expiresAt });
+    return "accepted";
+  }
+
+  private purgeExpired(now: number): void {
+    if (this.lastSweepSecond === undefined) {
+      this.lastSweepSecond = now;
+      return;
+    }
+    if (now <= this.lastSweepSecond) return;
+
+    // Expiries are bounded to a 35-second horizon. On a large clock jump,
+    // traversing the most recent full wheel is enough to visit every bucket.
+    const firstSecond = now - this.lastSweepSecond >= NONCE_EXPIRY_BUCKETS
+      ? now - NONCE_EXPIRY_BUCKETS + 1
+      : this.lastSweepSecond + 1;
+    for (let second = firstSecond; second <= now; second += 1) {
+      const index = this.bucketIndex(second);
+      const bucket = this.expiryBuckets[index]!;
+      if (!bucket.length) continue;
+      const retained: NonceExpiry[] = [];
+      for (const entry of bucket) {
+        if (entry.expiresAt <= now) this.usedNonces.delete(entry.nonce);
+        else retained.push(entry);
+      }
+      this.expiryBuckets[index] = retained;
+    }
+    this.lastSweepSecond = now;
+  }
+
+  private bucketIndex(second: number): number {
+    return ((second % NONCE_EXPIRY_BUCKETS) + NONCE_EXPIRY_BUCKETS) % NONCE_EXPIRY_BUCKETS;
+  }
+}
 
 export type NativeSessionAssertionIdentity =
   | { kind: "none" }
@@ -64,8 +130,10 @@ export function signNativeSessionAssertion(input: {
 export function nativeSessionAssertionMiddleware(options: {
   key: string;
   nowSeconds?: () => number;
+  /** Test seam; production uses the fixed MAX_NONCES limit. */
+  maxNonces?: number;
 }): RequestHandler {
-  const usedNonces = new Map<string, number>();
+  const nonceRegistry = new NativeSessionAssertionNonceRegistry(options.maxNonces ?? MAX_NONCES);
   return (req, res, next) => {
     if (isNodeOwnedLifecyclePath(req.method, req.originalUrl || req.url)) {
       next();
@@ -99,21 +167,18 @@ export function nativeSessionAssertionMiddleware(options: {
       return;
     }
 
-    for (const [nonce, expiresAt] of usedNonces) {
-      if (expiresAt <= now) usedNonces.delete(nonce);
-    }
-    if (usedNonces.has(payload.nonce)) {
+    const nonceResult = nonceRegistry.consume(payload.nonce, payload.expires_at, now);
+    if (nonceResult === "replayed") {
       res.status(401).json({ error: "Native session proof was already used", code: "native_session_proof_replayed" });
       return;
     }
-    if (usedNonces.size >= MAX_NONCES) {
+    if (nonceResult === "capacity") {
       res.status(503).json({ error: "Native session proof admission is full", code: "native_session_proof_capacity" });
       return;
     }
 
     // Consume the nonce and bind the proof before body parsing or any route
     // side effect. Slow/chunked JSON bodies may outlive the assertion TTL.
-    usedNonces.set(payload.nonce, payload.expires_at);
     verifiedAssertions.set(req, payload.identity);
     delete req.headers[HEADER];
     next();
