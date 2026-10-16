@@ -84,7 +84,16 @@ write, or fallback behind names such as bridge, gateway, adapter, or compatibili
 
 The source-backed authority ratchet is lexical evidence, not a semantic proof:
 it hashes runtime files and recognizes structural candidates, but cannot prove
-the behavior of arbitrary call graphs. The trusted-base checker pins two
+the behavior of arbitrary call graphs. `reviewed_node_changes` records cover
+only Node source changes against the current comparison base. Once those
+source changes are already in that base, remove their records from the next
+candidate; Git history retains the original review. Inventory generation
+preserves review metadata and does not retire these records automatically.
+New or modified Node sources still require fresh, matching base/head hashes
+and boundary review. Do not remove persistent `reviewed_transport_admissions`
+records while their exact admitted mounts remain present.
+
+The trusted-base checker pins two
 separate middleware admission capabilities: the exact Rust-signed native-session
 proof mount and the exact Rust-signed native-identity proof mount. Each
 capability pins its verifier module hash; the identity capability also pins the
