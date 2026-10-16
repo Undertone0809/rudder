@@ -9,6 +9,7 @@ pub(super) struct Conversation {
     pub kind: String,
     pub preferred_agent_id: Option<String>,
     pub routed_agent_id: Option<String>,
+    pub primary_issue_id: Option<String>,
 }
 
 pub(super) async fn authorize_org(
@@ -67,7 +68,8 @@ pub(super) async fn lock_conversation(
 ) -> Result<Conversation> {
     let row = sqlx::query(
         "SELECT status, conversation_kind, preferred_agent_id::text AS preferred_agent_id,
-                routed_agent_id::text AS routed_agent_id
+                routed_agent_id::text AS routed_agent_id,
+                primary_issue_id::text AS primary_issue_id
          FROM chat_conversations
          WHERE org_id=$1::uuid AND id=$2::uuid
          FOR UPDATE",
@@ -82,6 +84,7 @@ pub(super) async fn lock_conversation(
         kind: row.try_get("conversation_kind")?,
         preferred_agent_id: row.try_get("preferred_agent_id")?,
         routed_agent_id: row.try_get("routed_agent_id")?,
+        primary_issue_id: row.try_get("primary_issue_id")?,
     })
 }
 

@@ -4,10 +4,13 @@ mod support;
 use rudder_auth_core::{
     ActorEnvelope, ActorIdentity, NonceReplayGuard, RequestContext, VerifiedActor,
 };
-use rudder_d1_persistence::native_chat::{Error, Request, execute};
+use rudder_d1_persistence::native_chat::config::LocalHostContext;
+use rudder_d1_persistence::native_chat::{Error, Request, execute as execute_native};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use std::{fs, path::PathBuf, sync::OnceLock};
 use support::{CEO, Database, ORG};
+use tempfile::TempDir;
 
 const USER: &str = "native-chat-owner";
 const CHAT: &str = "21000000-0000-4000-8000-000000000101";
@@ -20,6 +23,9 @@ const CHAT_BUDGET_START: &str = "21000000-0000-4000-8000-000000000107";
 const CHAT_BUDGET_UNKNOWN: &str = "21000000-0000-4000-8000-000000000108";
 const CHAT_BUDGET_MONTH_START: &str = "21000000-0000-4000-8000-000000000109";
 const CHAT_BUDGET_MONTH_EDGES: &str = "21000000-0000-4000-8000-000000000110";
+const CHAT_UNSUPPORTED: &str = "21000000-0000-4000-8000-000000000111";
+const CHAT_LEGACY_CONTINUITY: &str = "21000000-0000-4000-8000-000000000112";
+const CHAT_HANDOFF_CONTINUITY: &str = "21000000-0000-4000-8000-000000000113";
 const WRONG_AGENT: &str = "50000000-0000-4000-8000-000000000002";
 const LEGACY_GENERATION: &str = "24000000-0000-4000-8000-000000000011";
 const LEGACY_RUN: &str = "25000000-0000-4000-8000-000000000011";
@@ -27,7 +33,115 @@ const LEGACY_ATTEMPT: &str = "26000000-0000-4000-8000-000000000011";
 const LEGACY_USER_MESSAGE: &str = "27000000-0000-4000-8000-000000000011";
 const LEGACY_ASSISTANT_MESSAGE: &str = "27000000-0000-4000-8000-000000000012";
 const SECRET: &[u8] = b"native-chat-admission-test-key";
-const OPAQUE_THREAD: &str = " 线程-α==  ";
+
+struct AdmissionHost {
+    _root: TempDir,
+    context: LocalHostContext,
+    executable: PathBuf,
+    cwd: PathBuf,
+}
+
+impl AdmissionHost {
+    fn new() -> Self {
+        let root = tempfile::tempdir().expect("create isolated admission host tree");
+        let instance = root.path().join("instance");
+        let workspace_home = root.path().join("workspaces");
+        let previous_documents = root.path().join("previous-documents");
+        let profiles = root.path().join("managed-profiles");
+        let operator_home = root.path().join("operator-home");
+        let executable = root.path().join("bin/codex");
+        let cwd = root.path().join("agent-cwd");
+        let org_key = ORG
+            .chars()
+            .filter(|character| *character != '-')
+            .take(12)
+            .collect::<String>();
+        let instructions = workspace_home
+            .join(org_key)
+            .join("workspaces/agents/codex-agent/instructions");
+        let profile_home = profiles.join(ORG).join(CEO).join("default");
+        let other_profile_home = profiles.join(ORG).join(WRONG_AGENT).join("default");
+        for directory in [
+            &instance,
+            &workspace_home,
+            &previous_documents,
+            &profiles,
+            &operator_home,
+            executable.parent().expect("binary directory"),
+            &cwd,
+            &instructions,
+            &profile_home,
+            &other_profile_home,
+        ] {
+            fs::create_dir_all(directory).expect("create isolated host directory");
+        }
+        fs::write(&executable, b"fake codex executable")
+            .expect("create non-running Codex executable fixture");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+                .expect("mark fake executable");
+        }
+        fs::write(
+            instructions.join("SOUL.md"),
+            "isolated admission instructions\n",
+        )
+        .expect("seed read-only instruction fixture");
+        let executable = executable
+            .canonicalize()
+            .expect("canonical fake executable");
+        let cwd = cwd.canonicalize().expect("canonical Agent cwd");
+        let context = LocalHostContext::from_rust_host(
+            "admission-test-host".into(),
+            instance,
+            workspace_home,
+            previous_documents,
+            false,
+            profiles,
+            operator_home,
+            executable.clone(),
+        )
+        .expect("construct trusted host context");
+        Self {
+            _root: root,
+            context,
+            executable,
+            cwd,
+        }
+    }
+
+    fn persisted_agent_config(&self) -> Value {
+        json!({
+            "command": self.executable.to_string_lossy(),
+            "cwd": self.cwd.to_string_lossy(),
+            "profileId": "default",
+            "instructionsBundleMode": "managed",
+            "search": false,
+        })
+    }
+}
+
+fn admission_host() -> &'static AdmissionHost {
+    static HOST: OnceLock<AdmissionHost> = OnceLock::new();
+    HOST.get_or_init(AdmissionHost::new)
+}
+
+async fn execute(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    request: &Request,
+) -> Result<Value, Error> {
+    execute_native(
+        pool,
+        actor,
+        organization_id,
+        request,
+        &admission_host().context,
+    )
+    .await
+}
 
 fn verified_actor(id: &str, nonce: &str) -> VerifiedActor {
     verified_actor_kind("user", id, nonce)
@@ -117,7 +231,8 @@ async fn seed_chat_in_org(pool: &PgPool, id: &str, organization_id: &str, agent_
 
 async fn prepare(database: &Database) {
     seed_membership(&database.pool, USER).await;
-    sqlx::query("UPDATE agents SET agent_runtime_type='codex_local', status='idle' WHERE org_id=$1::uuid AND id=$2::uuid")
+    sqlx::query("UPDATE agents SET agent_runtime_type='codex_local', status='idle', workspace_key='codex-agent', agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid")
+        .bind(admission_host().persisted_agent_config().to_string())
         .bind(ORG)
         .bind(CEO)
         .execute(&database.pool)
@@ -132,6 +247,13 @@ async fn prepare(database: &Database) {
     .execute(&database.pool)
     .await
     .expect("seed distinct organization Agent");
+    sqlx::query("UPDATE agents SET agent_runtime_type='codex_local', status='idle', workspace_key='codex-other', agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid")
+        .bind(admission_host().persisted_agent_config().to_string())
+        .bind(ORG)
+        .bind(WRONG_AGENT)
+        .execute(&database.pool)
+        .await
+        .expect("configure distinct Agent for budget preflight fixture");
     for id in [
         CHAT,
         CHAT_ROLLBACK,
@@ -142,6 +264,9 @@ async fn prepare(database: &Database) {
         CHAT_BUDGET_UNKNOWN,
         CHAT_BUDGET_MONTH_START,
         CHAT_BUDGET_MONTH_EDGES,
+        CHAT_UNSUPPORTED,
+        CHAT_LEGACY_CONTINUITY,
+        CHAT_HANDOFF_CONTINUITY,
     ] {
         seed_chat(&database.pool, id).await;
     }
@@ -190,7 +315,7 @@ async fn assert_native_attempt_update_rejected(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity() {
+async fn admission_is_atomic_idempotent_held_and_preserves_binding_identity() {
     let database = Database::start().await;
     prepare(&database).await;
     let actor = verified_actor(USER, "native-admit");
@@ -213,6 +338,51 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
     .expect("read fresh protocol checkpoint");
     assert_eq!(fresh_phase.0["phase"], "no_thread_request");
     assert_eq!(fresh_phase.1.as_deref(), Some("no_thread_request"));
+    let (run_snapshot, session_intent, session_scope, session_before): (
+        Value,
+        Value,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT context_snapshot, session_intent_json, session_reuse_scope, session_id_before
+         FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(receipt["runId"].as_str().unwrap())
+    .fetch_one(&database.pool)
+    .await
+    .expect("read admitted Run binding and SessionIntent");
+    let binding_id = run_snapshot["runtimeBindingId"]
+        .as_str()
+        .expect("binding id");
+    let segment_id = run_snapshot["nativeSegmentId"]
+        .as_str()
+        .expect("segment id");
+    let binding_state: (String, Option<String>, String, Option<String>) = sqlx::query_as(
+        "SELECT b.status, b.current_segment_id::text, s.state, s.native_session_id
+         FROM runtime_bindings b JOIN native_segments s
+           ON s.org_id=b.org_id AND s.binding_id=b.id
+         WHERE b.org_id=$1::uuid AND b.id=$2::uuid AND s.id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(binding_id)
+    .bind(segment_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read atomically created Native Chat binding");
+    assert_eq!(
+        binding_state,
+        (
+            "active".into(),
+            Some(segment_id.into()),
+            "pending".into(),
+            None
+        )
+    );
+    assert_eq!(session_intent["kind"], "fresh");
+    assert_eq!(session_intent["reuseScope"], "none");
+    assert_eq!(session_scope, "none");
+    assert!(session_before.is_none());
     for (label, sql) in [
         (
             "native epochs with null phase",
@@ -244,53 +414,6 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
         .await;
     }
 
-    // The schema accepts the provider Thread locator byte-for-byte, including
-    // padding and Unicode. This is a direct persistence constraint check; the
-    // admission command below remains fail-closed while an active Binding
-    // lacks trusted identity resolution.
-    let mut opaque_session = database
-        .pool
-        .begin()
-        .await
-        .expect("begin opaque SessionIntent persistence check");
-    sqlx::query("SELECT set_config('rudder.native_chat_write', 'native_chat:admission', true)")
-        .execute(&mut *opaque_session)
-        .await
-        .expect("mark authorized transaction");
-    let opaque_intent = json!({
-        "kind": "resume",
-        "reuseScope": "explicit",
-        "sourceRunId": null,
-        "sessionId": OPAQUE_THREAD,
-        "sessionParams": null,
-    });
-    sqlx::query(
-        "UPDATE heartbeat_runs
-         SET session_intent_json=$1::jsonb, session_reuse_scope='explicit', session_id_before=$2
-         WHERE org_id=$3::uuid AND id=$4::uuid",
-    )
-    .bind(opaque_intent.to_string())
-    .bind(OPAQUE_THREAD)
-    .bind(ORG)
-    .bind(receipt["runId"].as_str().unwrap())
-    .execute(&mut *opaque_session)
-    .await
-    .expect("persist padded opaque Thread locator");
-    opaque_session
-        .commit()
-        .await
-        .expect("commit opaque SessionIntent check");
-    let opaque_persisted: (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT session_intent_json->>'sessionId', session_id_before
-         FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
-    )
-    .bind(ORG)
-    .bind(receipt["runId"].as_str().unwrap())
-    .fetch_one(&database.pool)
-    .await
-    .expect("read persisted opaque Thread locator");
-    assert_eq!(opaque_persisted.0.as_deref(), Some(OPAQUE_THREAD));
-    assert_eq!(opaque_persisted.1.as_deref(), Some(OPAQUE_THREAD));
     let activity: (String, String, Option<String>, Value) = sqlx::query_as(
         "SELECT actor_type, actor_id, run_id::text, details
          FROM activity_log
@@ -312,8 +435,17 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
             .contains("first private prompt sentinel")
     );
 
-    // A byte-identical retry returns the original durable identities, with no
-    // duplicate message, authority rows, or activity.
+    // A byte-identical retry bypasses new configuration resolution and
+    // returns the original durable receipt even if config changed afterward.
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(json!({"mcpServers":{"unsupported":{"command":"tool"}}}).to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .expect("change Agent config after admission");
     let replay = execute(&database.pool, &actor, ORG, &first_request)
         .await
         .expect("exact retry returns original receipt");
@@ -322,6 +454,15 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
     }
     assert_eq!(replay["idempotentReplay"], true);
     assert_eq!(row_counts(&database.pool, CHAT).await, (1, 1, 1, 1, 1));
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(admission_host().persisted_agent_config().to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .expect("restore supported Agent config for later test paths");
 
     // Reusing the mutation key for changed content fails without side effects.
     assert!(matches!(
@@ -450,27 +591,40 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
         row_counts(&database.pool, CHAT_ROLLBACK).await,
         (0, 0, 0, 0, 0)
     );
+    let rollback_bindings: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_bindings WHERE org_id=$1::uuid AND target_id=$2),
+                (SELECT count(*) FROM native_segments s JOIN runtime_bindings b
+                   ON b.org_id=s.org_id AND b.id=s.binding_id
+                 WHERE b.org_id=$1::uuid AND b.target_id=$2)",
+    )
+    .bind(ORG)
+    .bind(CHAT_ROLLBACK)
+    .fetch_one(&database.pool)
+    .await
+    .expect("count rolled-back binding effects");
+    assert_eq!(rollback_bindings, (0, 0));
 
-    // An active Binding with a pending Segment is rejected before writes until
-    // Rust can prove the full trusted Binding identity and safe Thread state.
-    let binding_id = "22000000-0000-4000-8000-000000000103";
+    // An active Binding with a pending Segment but a different resolved
+    // identity conflicts without rotating the binding or adding a message.
+    let conflict_binding_id = "22000000-0000-4000-8000-000000000103";
     let segment_id = "23000000-0000-4000-8000-000000000103";
     sqlx::query(
         "INSERT INTO runtime_bindings
-           (id, org_id, conversation_id, principal_scope_ref, agent_id, runtime_type,
-            host_id, profile_id, instructions_revision, capability_revision, continuity,
-            binding_epoch, status)
-         VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::uuid, 'codex_local',
-                 'local', 'default', 'test', 'test', 'native', 0, 'active')",
+           (id, org_id, conversation_id, target_type, target_id,
+            principal_scope_ref, agent_id, runtime_type, host_id, profile_id,
+            instructions_revision, capability_revision, continuity, binding_epoch, status)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'chat_conversation', $3,
+                 $4, $5::uuid, 'codex_local', 'local', 'default', 'test', 'test',
+                 'native', 0, 'active')",
     )
-    .bind(binding_id)
+    .bind(conflict_binding_id)
     .bind(ORG)
     .bind(CHAT_OPAQUE)
     .bind(format!("org:{ORG}"))
     .bind(CEO)
     .execute(&database.pool)
     .await
-    .expect("seed exact active binding");
+    .expect("seed mismatched active binding identity");
     sqlx::query(
         "INSERT INTO native_segments
            (id, org_id, binding_id, runtime_type, segment_ordinal, native_session_id, state)
@@ -478,14 +632,14 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
     )
     .bind(segment_id)
     .bind(ORG)
-    .bind(binding_id)
+    .bind(conflict_binding_id)
     .execute(&database.pool)
     .await
     .expect("seed pending Segment");
     sqlx::query("UPDATE runtime_bindings SET current_segment_id=$1::uuid WHERE org_id=$2::uuid AND id=$3::uuid")
         .bind(segment_id)
         .bind(ORG)
-        .bind(binding_id)
+        .bind(conflict_binding_id)
         .execute(&database.pool)
         .await
         .expect("select exact current Segment");
@@ -495,7 +649,7 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
             &database.pool,
             &actor,
             ORG,
-            &request(CHAT_OPAQUE, "opaque-1", "must wait for identity proof"),
+            &request(CHAT_OPAQUE, "opaque-1", "must not rotate active identity"),
         )
         .await,
         Err(Error::Http(409, _))
@@ -504,24 +658,24 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
         row_counts(&database.pool, CHAT_OPAQUE).await,
         (0, 0, 0, 0, 0)
     );
-
-    // An exact same-key retry is resolved before the Binding guard, while a
-    // different new input on that conversation remains blocked.
-    sqlx::query(
-        "INSERT INTO runtime_bindings
-           (id, org_id, conversation_id, principal_scope_ref, agent_id, runtime_type,
-            host_id, profile_id, instructions_revision, capability_revision, continuity,
-            binding_epoch, status)
-         VALUES ('22000000-0000-4000-8000-000000000104'::uuid, $1::uuid, $2::uuid,
-                 $3, $4::uuid, 'codex_local', 'local', 'default', 'test', 'test', 'native', 0, 'active')",
+    let conflict_identity: (String, Option<String>, i32, String) = sqlx::query_as(
+        "SELECT b.id::text, b.current_segment_id::text, b.binding_epoch, s.id::text
+         FROM runtime_bindings b JOIN native_segments s
+           ON s.org_id=b.org_id AND s.binding_id=b.id
+         WHERE b.org_id=$1::uuid AND b.target_id=$2",
     )
     .bind(ORG)
-    .bind(CHAT)
-    .bind(format!("org:{ORG}"))
-    .bind(CEO)
-    .execute(&database.pool)
+    .bind(CHAT_OPAQUE)
+    .fetch_one(&database.pool)
     .await
-    .expect("seed active Binding on previously admitted conversation");
+    .expect("read unchanged conflicting binding");
+    assert_eq!(conflict_identity.0, conflict_binding_id);
+    assert_eq!(conflict_identity.1.as_deref(), Some(segment_id));
+    assert_eq!(conflict_identity.2, 0);
+    assert_eq!(conflict_identity.3, segment_id);
+
+    // Exact replay remains available with the active binding; new content is
+    // blocked by the existing active Run until reconciliation.
     let replay_through_binding = execute(&database.pool, &actor, ORG, &first_request)
         .await
         .expect("exact retry remains available under Binding guard");
@@ -656,6 +810,56 @@ async fn admission_is_atomic_idempotent_held_and_preserves_exact_thread_identity
         row_counts(&database.pool, CHAT_BUDGET).await,
         (0, 0, 0, 0, 0)
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unsupported_persisted_config_leaves_no_message_binding_or_audit() {
+    let database = Database::start().await;
+    prepare(&database).await;
+    let actor = verified_actor(USER, "native-config-unsupported");
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(json!({"mcpServers":{"unsupported":{"command":"tool"}}}).to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .expect("seed unsupported persisted configuration");
+
+    assert!(matches!(
+        execute(
+            &database.pool,
+            &actor,
+            ORG,
+            &request(
+                CHAT_UNSUPPORTED,
+                "unsupported-config",
+                "must not be admitted"
+            ),
+        )
+        .await,
+        Err(Error::Http(409, _))
+    ));
+    assert_eq!(
+        row_counts(&database.pool, CHAT_UNSUPPORTED).await,
+        (0, 0, 0, 0, 0)
+    );
+    let binding_effects: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_bindings WHERE org_id=$1::uuid AND target_id=$2),
+                (SELECT count(*) FROM native_segments s JOIN runtime_bindings b
+                   ON b.org_id=s.org_id AND b.id=s.binding_id
+                 WHERE b.org_id=$1::uuid AND b.target_id=$2),
+                (SELECT count(*) FROM activity_log
+                 WHERE org_id=$1::uuid AND entity_type='chat' AND entity_id=$2
+                   AND action='runtime.binding.created')",
+    )
+    .bind(ORG)
+    .bind(CHAT_UNSUPPORTED)
+    .fetch_one(&database.pool)
+    .await
+    .expect("count unsupported-config transaction effects");
+    assert_eq!(binding_effects, (0, 0, 0));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1091,3 +1295,6 @@ async fn migration_preserves_populated_legacy_chat_without_native_linkage() {
             .any(|row| row.0 == "legacy answer preserved" && row.1.as_deref() == Some(LEGACY_RUN))
     );
 }
+
+#[path = "native_chat/continuity.rs"]
+mod continuity;

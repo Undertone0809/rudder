@@ -11,18 +11,31 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 pub use crate::runtime_bindings::Error;
+use crate::runtime_bindings::IdentityInput;
 
 mod admission;
 mod auth;
 mod budget;
 pub mod config;
 pub mod execution;
+mod locks;
 mod validation;
 
 type Result<T> = std::result::Result<T, Error>;
 
 fn http(status: u16, message: impl Into<String>) -> Error {
     Error::Http(status, message.into())
+}
+
+fn binding_identity(config: &config::ResolvedCodexConfig) -> IdentityInput {
+    IdentityInput {
+        agent_id: config.identity.agent_id.clone(),
+        host_id: Some(config.identity.host_id.clone()),
+        profile_id: Some(config.identity.profile_id.clone()),
+        workspace_binding_id: config.identity.workspace_binding_id.clone(),
+        instructions_revision: Some(config.identity.instructions_revision.clone()),
+        capability_revision: Some(config.identity.capability_revision.clone()),
+    }
 }
 
 /// Strict private command. Organization and actor are supplied only by the
@@ -48,6 +61,7 @@ pub async fn execute(
     actor: &VerifiedActor,
     organization_id: &str,
     request: &Request,
+    host: &config::LocalHostContext,
 ) -> Result<Value> {
     let organization_id = validation::canonical_uuid(organization_id, "organization id")?;
     if actor.organization_id() != organization_id {
@@ -70,6 +84,7 @@ pub async fn execute(
                 &conversation_id,
                 &client_mutation_id,
                 &body,
+                host,
             )
             .await
         }

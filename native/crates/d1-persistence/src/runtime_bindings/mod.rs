@@ -27,9 +27,14 @@ fn http(status: u16, message: impl Into<String>) -> Error {
 mod auth;
 mod ensure;
 mod locks;
+mod native_chat;
 mod projection;
 mod reads;
 mod validation;
+
+pub(crate) use native_chat::{
+    ensure_native_chat_binding_tx, lock_native_chat_target_tx, read_native_chat_binding_tx,
+};
 
 /// Strict wire contract for the private signed runtime-binding route.
 ///

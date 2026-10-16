@@ -37,7 +37,7 @@ async fn assert_generation_unclaimed(database: &Database, generation_id: &str) {
 async fn remove_agent_in_transaction(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     agent_id: &str,
-) {
+) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT set_config('rudder.native_chat_write', 'native_chat:execution', true)")
         .execute(&mut **tx)
         .await
@@ -67,9 +67,9 @@ async fn remove_agent_in_transaction(
             .bind(ORG)
             .bind(agent_id)
             .execute(&mut **tx)
-            .await
-            .expect("execute existing Agent-removal cleanup step");
+            .await?;
     }
+    Ok(())
 }
 
 async fn assert_no_claim_effects(database: &Database, run_id: &str) {
@@ -89,6 +89,79 @@ async fn assert_no_claim_effects(database: &Database, run_id: &str) {
     .await
     .expect("read first-claim state after concurrent deletion");
     assert_eq!(state, (false, false, true, true, 0));
+}
+
+fn assert_binding_restrict_error(error: sqlx::Error) {
+    let sqlx::Error::Database(error) = error else {
+        panic!("expected the RuntimeBinding Agent foreign-key restriction, got {error}");
+    };
+    assert_eq!(error.code().as_deref(), Some("23503"));
+    assert_eq!(
+        error.constraint(),
+        Some("runtime_bindings_agent_id_agents_id_fk")
+    );
+}
+
+async fn assert_agent_removal_rolled_back(database: &Database, run_id: &str, generation_id: &str) {
+    assert_generation_unclaimed(database, generation_id).await;
+    assert_no_claim_effects(database, run_id).await;
+
+    let agent_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agents WHERE org_id=$1::uuid AND id=$2::uuid)",
+    )
+    .bind(ORG)
+    .bind(CEO)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read Agent after restricted removal");
+    assert!(
+        agent_exists,
+        "RuntimeBinding retention must preserve the Agent"
+    );
+
+    let selected: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT preferred_agent_id::text, routed_agent_id::text
+         FROM chat_conversations WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(CHAT)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read Chat selection after restricted removal");
+    assert_eq!(selected, (Some(CEO.to_owned()), None));
+
+    let execution_rows: (i64, i64, bool, bool) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid),
+           (SELECT count(*) FROM chat_generations WHERE org_id=$1::uuid AND id=$3::uuid),
+           (SELECT native_admission_hold FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid),
+           (SELECT native_admission_hold FROM chat_generations WHERE org_id=$1::uuid AND id=$3::uuid)",
+    )
+    .bind(ORG)
+    .bind(run_id)
+    .bind(generation_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read Run and Generation after restricted removal");
+    assert_eq!(execution_rows, (1, 1, false, false));
+
+    let binding_segments: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT b.id::text, b.continuity, b.status, s.state, s.native_session_id
+         FROM runtime_bindings b
+         JOIN native_segments s ON s.org_id=b.org_id AND s.binding_id=b.id
+                              AND s.id=b.current_segment_id
+         WHERE b.org_id=$1::uuid AND b.conversation_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(CHAT)
+    .fetch_all(&database.pool)
+    .await
+    .expect("read RuntimeBinding and Segment after restricted removal");
+    assert_eq!(binding_segments.len(), 1);
+    assert_eq!(binding_segments[0].1, "native");
+    assert_eq!(binding_segments[0].2, "active");
+    assert_eq!(binding_segments[0].3, "pending");
+    assert!(binding_segments[0].4.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -148,26 +221,20 @@ async fn agent_delete_lock_conflict_is_bounded_and_has_no_claim_effects() {
     }
     assert_generation_unclaimed(&database, &generation_id).await;
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        remove_agent_in_transaction(&mut deleting, CEO).await;
-        deleting
-            .commit()
+    let deletion_error = tokio::time::timeout(Duration::from_secs(5), async {
+        let error = remove_agent_in_transaction(&mut deleting, CEO)
             .await
-            .expect("commit concurrent Agent removal");
+            .expect_err("active binding must prevent Agent removal");
+        deleting
+            .rollback()
+            .await
+            .expect("roll back partial Agent-removal cleanup");
+        error
     })
     .await
-    .expect("Agent removal must finish after bounded claim rejection");
-    assert_generation_unclaimed(&database, &generation_id).await;
-    let selected: (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT preferred_agent_id::text, routed_agent_id::text
-         FROM chat_conversations WHERE org_id=$1::uuid AND id=$2::uuid",
-    )
-    .bind(ORG)
-    .bind(CHAT)
-    .fetch_one(&database.pool)
-    .await
-    .expect("read Chat selection after Agent removal");
-    assert_eq!(selected, (None, None));
+    .expect("restricted Agent removal must fail within the bound");
+    assert_binding_restrict_error(deletion_error);
+    assert_agent_removal_rolled_back(&database, &run_id, &generation_id).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -250,26 +317,20 @@ async fn run_lock_conflict_breaks_agent_removal_cycle_without_claim_effects() {
     }
     assert_generation_unclaimed(&database, &generation_id).await;
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        remove_agent_in_transaction(&mut deleting, CEO).await;
-        deleting
-            .commit()
+    let deletion_error = tokio::time::timeout(Duration::from_secs(5), async {
+        let error = remove_agent_in_transaction(&mut deleting, CEO)
             .await
-            .expect("commit concurrent Agent removal");
+            .expect_err("active binding must prevent Agent removal");
+        deleting
+            .rollback()
+            .await
+            .expect("roll back partial Agent-removal cleanup");
+        error
     })
     .await
-    .expect("Agent removal must finish after bounded claim rejection");
-    assert_generation_unclaimed(&database, &generation_id).await;
-    let selected: (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT preferred_agent_id::text, routed_agent_id::text
-         FROM chat_conversations WHERE org_id=$1::uuid AND id=$2::uuid",
-    )
-    .bind(ORG)
-    .bind(CHAT)
-    .fetch_one(&database.pool)
-    .await
-    .expect("read Chat selection after Agent removal");
-    assert_eq!(selected, (None, None));
+    .expect("restricted Agent removal must fail within the bound");
+    assert_binding_restrict_error(deletion_error);
+    assert_agent_removal_rolled_back(&database, &run_id, &generation_id).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
