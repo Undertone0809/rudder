@@ -82,7 +82,7 @@ and lifecycle owner.
 | Runs, execution, Chat, Side Chat, Automation, workers and providers (phase 5) | Rust runtime and payload/evidence crates provide components and contracts; selected run reads are wired through Rust. Components do not prove that Rust owns a complete scheduler, worker lease, conversation lifecycle or terminal state. | Node runtime-kernel/heartbeat, chat background ownership, provider integration and worker/scheduler paths continue to own state machines, retries, cancellation, recovery and process coordination. Migrate durable lifecycle units and prove race, replay, cancellation, restart and single-writer behavior through public workflows. |
 | First-party CLI/MCP and browser actions (phase 5-7) | `cli-mcp-contract-core` owns protocol/contract support. `rudder-native` provides native utility operations for files, archives and evidence; it is not the general product CLI/MCP backend. Browser CLI actions are statically listed but relay to Node. | Node/TypeScript CLI, MCP services and browser routes remain executable authorities. Build native dispatch against the public contracts, migrate domain semantics and effects, then remove the Node service and relay. Static action count alone does not show action semantics have moved. |
 | Identity, sessions, device/OAuth and access (phase 6) | `auth-core` provides signed-envelope verification; `native_bearer_auth.rs` resolves recognized `pcp_` Board/Agent keys for the member-directory path. | Better Auth session/cookie resolution, local identity and Agent JWT handling, Board actor membership/admin scopes, access routes and credential issuance/revocation remain Node-owned. The member-directory acceptance explicitly excludes these paths. Migrate credential families and access capabilities incrementally; no public cutover may assume a bearer-only resolver is full auth. |
-| Database migrations, embedded PostgreSQL, startup and recovery (phases 6-7) | `migration-service` plus `migration-apply` is an explicit opt-in Rust writer, sharing the advisory lock and SQL history. Author tests cover real source upgrade and dump/restore behavior; independent operator acceptance remains a separate gate. | `server/src/index.ts` still owns default `ensureMigrations` behavior, legacy journal repair, pre-migration backup/invariant sequencing and embedded PostgreSQL start/stop. Rust database migration authority is not the same as Rust database process lifecycle or default startup. Electron and frontend presentation may remain; Node product backend startup/migration ownership may not. |
+| Database migrations, embedded PostgreSQL, startup and recovery (phases 6-7) | `migration-service` plus `migration-apply` is an explicit opt-in Rust writer, sharing the advisory lock and SQL history. Author tests cover real source upgrade and dump/restore behavior; independent operator acceptance returned PASS and final review ACCEPT for the frozen opt-in slice. | `server/src/index.ts` still owns default `ensureMigrations` behavior, legacy journal repair, pre-migration backup/invariant sequencing and embedded PostgreSQL start/stop. Rust database migration authority is not the same as Rust database process lifecycle or default startup. Electron and frontend presentation may remain; Node product backend startup/migration ownership may not. |
 
 The approved plan's exit remains the controlling standard: no unresolved or
 legacy state-owning handler/process, no hidden Node business fallback, and
@@ -128,8 +128,8 @@ for every other route until its own credential-family boundaries migrate.
 
 ## Lifecycle: native migration before listener bind for one explicit mode
 
-First finish the repaired opt-in `migration-apply` operator's independent
-acceptance and final review. Then wire that same writer into one explicit native
+The repaired opt-in `migration-apply` operator passed independent acceptance
+and final review. Next wire that same writer into one explicit native
 startup mode for an externally managed PostgreSQL database: apply/validate
 migrations before the native listener becomes ready, and fail startup closed on
 missing migration support, lock/backup/apply failure, or post-migration
@@ -150,3 +150,14 @@ These are proposed next slices, not authorization to mark either capability
 complete. The current member-directory public-entry and migration-operator
 acceptance packets remain the sources of truth for their exact candidates and
 verdicts.
+
+## Ratchet governance boundary
+
+CI validates source hashes and reviewed-boundary record structure using the
+trusted base checker. A `review_status: reviewed` field is not an authenticated
+reviewer attestation. The current repository ruleset has no required approving
+review count, so independent review remains a separately enforced delivery gate;
+the scanner alone does not prove it occurred. The current transport exception
+has independent acceptance and final reviewer evidence linked in the delivery
+record. New Node authority remains prohibited even when a metadata record is
+syntactically valid; semantic review is required for compatibility exceptions.

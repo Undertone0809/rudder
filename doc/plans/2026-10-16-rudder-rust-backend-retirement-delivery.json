@@ -15,7 +15,7 @@
       "Reset user data",
       "Claim production deployment from source tests"
     ],
-    "authorization": "implementation and working-branch publication through protected PRs; production release/deployment not included"
+    "authorization": "Implementation, working-branch publication, protected-PR merging of needed qualified work, and closure of superseded PRs explicitly authorized; production release/deployment not included."
   },
   "candidate": {
     "branch": "codex/rust-backend-completion-20261016",
@@ -89,12 +89,12 @@
     "invalidated_receipts": []
   },
   "integration": {
-    "authorized": false,
+    "authorized": true,
     "mode": "isolated_risk",
     "target_ref": "refs/heads/main",
     "base_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+    "observed_remote_sha": "1021d5c5ba7d0b758fae42fd6569810c1a456a77",
     "branch_refs": [],
     "isolation_trigger": "concurrent_write_risk",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rust-backend-completion-20261016/rudder-oss",
@@ -127,5 +127,115 @@
     "delivered_tree_sha": null,
     "timestamp": null,
     "proof": []
+  },
+  "progress_snapshot": {
+    "source_sha": "24e86ee038971cebed653b05411c995319441652",
+    "scope": "Bounded accepted slices only; overall candidate and global receipts remain incomplete.",
+    "slices": [
+      {
+        "name": "Native pcp member-directory authority",
+        "verifier": "PASS",
+        "final_reviewer": "ACCEPT",
+        "evidence": "/tmp/acceptance-native-auth-20261016/acceptance-verdict.md",
+        "packet": "2026-10-16-native-bearer-slice-acceptance.md",
+        "remaining": "Cookie/session/device/OAuth/JWT and other public routes",
+        "source_checkpoint": "24e86ee038971cebed653b05411c995319441652",
+        "evidence_sha256": "1b9f14b365cb2e0395d5f99172f0bd3119fe380c0a3a0ee70d883c2edda5418c",
+        "manifest": "/tmp/acceptance-native-auth-20261016/evidence-manifest.sha256",
+        "manifest_sha256": "102d8ec4e77d9c45ca0cd266d5bc5c4435619f559a0bb31d3adf80c558b43a8a",
+        "packet_sha256": "d13c0fce7c96dd13e07d7ee53a3a9dea3292a63e3a6856e50387e42cf691705a",
+        "binary": {
+          "path": "/tmp/acceptance-native-auth-20261016/rudder-server-foundation.current",
+          "sha256": "900f952f08039f0bf11eca37d74b7251ce5d136ba63514b16f827d274b8596d1"
+        },
+        "runtime_data_identity": "PostgreSQL 18.1 isolated rudder_auth_acceptance_retest on 55473; Rust public55475/private55474; stopped after acceptance",
+        "content_equivalence": "Independent reviewer verified unchanged scoped source and dependency closure across dirty-source to24e86ee checkpoint; transport verifier explicitly rechecked24e86ee. Global source and runtime are not accepted.",
+        "source_closure_lease": {
+          "path": "/tmp/acceptance-native-auth-20261016/lease-retest-final.json",
+          "sha256": "b0e884156312f890bc7b67824d90473906b30d601132e16be6a98231dfe85f6e"
+        }
+      },
+      {
+        "name": "Explicit migration operator",
+        "verifier": "PASS",
+        "final_reviewer": "ACCEPT",
+        "evidence": "/tmp/acceptance-native-migration-20261016/acceptance-verdict.md",
+        "packet": "2026-10-16-native-migration-operator-acceptance.md",
+        "remaining": "Default startup ownership, historical repair, database lifecycle and packaging cutover",
+        "source_checkpoint": "24e86ee038971cebed653b05411c995319441652",
+        "evidence_sha256": "285204067c4b72c2303a87b7b3d94715b3ab203428b72d30e8a42fa32fcb1c2c",
+        "manifest": "/tmp/acceptance-native-migration-20261016/evidence-manifest.sha256",
+        "manifest_sha256": "5900f980fb8f1c9820db6afde7c03d53f6fd5f3149ef6d67384e2a7f37185fda",
+        "packet_sha256": "fb0bb98fb168dfe7839ac838632415ca6acb7156a6fe2ea4edecf3bd91ce476a",
+        "binary": {
+          "path": "/tmp/acceptance-native-migration-20261016/migration-apply.candidate",
+          "sha256": "f9e36277b4378840acd79391e7de305d8a1fb34557df8cbd861c0f7205b4c3bf"
+        },
+        "runtime_data_identity": "PostgreSQL 18.1 isolated14DBs on55483; psql/pg_dump18.3; stopped after acceptance",
+        "content_equivalence": "Independent reviewer verified unchanged scoped source and dependency closure across dirty-source to24e86ee checkpoint; transport verifier explicitly rechecked24e86ee. Global source and runtime are not accepted.",
+        "source_closure_lease": {
+          "path": "/tmp/acceptance-native-migration-20261016/lease-comparison.json",
+          "sha256": "e780e1ba09402edd02b846ac7bfafda332f577e8e33b935f6c10554c88acd4e1"
+        }
+      },
+      {
+        "name": "Rust child-exit transport compatibility",
+        "verifier": "PASS",
+        "final_reviewer": "ACCEPT",
+        "evidence": "/private/tmp/rudder-transport-reverify.D8KkWB/final-run/evidence/acceptance-ledger.md",
+        "manifest": "/private/tmp/rudder-transport-reverify.D8KkWB/evidence-manifest.sha256",
+        "packet": "2026-10-16-native-process-exit-acceptance.md",
+        "checks": {
+          "real_host": 6,
+          "runner": 51,
+          "providers": 113
+        },
+        "remaining": "Native provider adapters; this is a temporary transport, not Node retirement",
+        "source_checkpoint": "24e86ee038971cebed653b05411c995319441652",
+        "evidence_sha256": "2438e469ee789a661ef1e52d0325439af810f84837fb010dd5ece009c167909d",
+        "manifest_sha256": "f0aae5738cff9ea13c97c2f125862d0a6c49aa2442c1c31e1c7ed940c9050870",
+        "packet_sha256": "8d3a31ae92bcc83a42605b1b775a353ce9c401abecba5181c80c2666c95f2577",
+        "binary": {
+          "path": "/private/tmp/rudder-transport-reverify.D8KkWB/rudder-process-host",
+          "sha256": "cb24138f43109eb120a4b4a964546de6417f94208bfafc07df113aa6886432fa"
+        },
+        "runtime_data_identity": "macOS25.6 arm64; copied process host and disposable process fixtures; no organization data",
+        "content_equivalence": "Independent reviewer verified unchanged scoped source and dependency closure across dirty-source to24e86ee checkpoint; transport verifier explicitly rechecked24e86ee. Global source and runtime are not accepted."
+      }
+    ],
+    "pr_actions": [
+      {
+        "number": 289,
+        "state": "merged",
+        "merge_sha": "1021d5c5ba7d0b758fae42fd6569810c1a456a77"
+      },
+      {
+        "number": 276,
+        "state": "closed_superseded",
+        "replacements": [
+          302,
+          303,
+          304
+        ]
+      },
+      {
+        "number": 292,
+        "state": "rebased_waiting_ci",
+        "head_sha": "5e1f8221ea91b85d1a6644eb80817b53050fff72"
+      },
+      {
+        "number": 264,
+        "state": "selective_rebase_and_acceptance_in_progress"
+      },
+      {
+        "number": 262,
+        "state": "retained_pending_auth_policy_replacement"
+      },
+      {
+        "number": 226,
+        "state": "retained_for_selective_rust_successors"
+      }
+    ],
+    "deployment": "not performed"
   }
 }

@@ -61,6 +61,7 @@ function isTestOrGeneratedPath(relativePath) {
   const parts = normalized.split("/");
   const base = parts.at(-1) ?? "";
   return normalized.startsWith("desktop/release/")
+    || normalized.startsWith("desktop/node_modules-packaging-hidden/")
     || parts.some((part) => ["__tests__", "test", "tests", "fixtures", "fixture", "generated", ".generated"].includes(part))
     || /\.(?:test|spec)\.[^.]+$/i.test(base)
     || parts.some((part) => GENERATED_OR_VENDOR_DIRS.has(part));
@@ -131,7 +132,8 @@ function walkFiles(rootPath, relative = "", predicate = isPotentialNodeSource) {
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (GENERATED_OR_VENDOR_DIRS.has(entry.name)) continue;
     const child = path.join(relative, entry.name);
-    if (normalizePath(child) === "desktop/release") continue;
+    // dist.mjs temporarily parks vendor dependencies here while packaging.
+    if (["desktop/release", "desktop/node_modules-packaging-hidden"].includes(normalizePath(child))) continue;
     if (entry.isSymbolicLink()) {
       // Runtime symlinks could otherwise add untracked sources or entire trees.
       // Do not follow them outside this checkout or silently omit their authority.
