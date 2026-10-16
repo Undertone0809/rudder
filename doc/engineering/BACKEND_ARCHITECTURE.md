@@ -82,6 +82,26 @@ features must keep business authority in Rust even when a transport adapter is
 required. Do not hide a residual policy decision, session reducer, database
 write, or fallback behind names such as bridge, gateway, adapter, or compatibility.
 
+The source-backed authority ratchet is lexical evidence, not a semantic proof:
+it hashes runtime files and recognizes structural candidates, but cannot prove
+the behavior of arbitrary call graphs. Its only permitted middleware admission
+capability is the exact Rust-signed native-session proof mount. The trusted-base
+checker pins the verifier module hash, mount factory and caller path; the
+candidate inventory must bind the caller file hash, exact factory options and
+receiver, its position after the reserved workspace-preview handling and
+before body parsing, plus the Rust proof owner, retirement criterion and
+reviewer reference. The mount remains visible in the structural inventory and
+comparison output. The pinned adapter verifies the Rust assertion's method,
+target, signature, and freshness; consumes a bounded in-memory nonce; binds its
+session identity to the request; strips the proof header; rejects unsupported
+methods for the native get-session path; and preserves its explicit Bearer and
+Node-owned lifecycle pass-throughs. The capability grants no permission to add
+or change route registrations, database access, writers, timers, listeners, or
+other runtime surfaces. The checker cannot establish
+that the adapter has no indirect semantic effect, so reviewers must inspect the
+pinned source and surrounding call graph. This record does not claim that Node
+session or business authorization is migrated.
+
 Rust failure must be visible through the documented public error contract.
 Missing binaries, unavailable native processes, timeouts, malformed responses,
 and rejected operations must not quietly invoke a Node implementation, report
