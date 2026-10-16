@@ -171,5 +171,16 @@ fn public_payload(kind: &str, raw: &Value) -> Result<Value> {
         }
         payload[*key] = value.clone();
     }
+    if matches!(kind, "runtime_terminal" | "terminal_projected")
+        && let Some(disposition) = raw.get("inputDisposition")
+    {
+        if disposition != "not_submitted" || payload["status"] != "cancelled" {
+            return Err(http(
+                409,
+                "Native Chat terminal input disposition is invalid",
+            ));
+        }
+        payload["inputDisposition"] = disposition.clone();
+    }
     Ok(payload)
 }

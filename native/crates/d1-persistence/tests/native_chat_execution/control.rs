@@ -4,6 +4,9 @@ use rudder_d1_persistence::native_chat::control::{
 };
 use sha2::{Digest, Sha256};
 
+#[path = "preclaim.rs"]
+mod preclaim;
+
 fn hash(body: &str) -> String {
     format!("{:x}", Sha256::digest(body.as_bytes()))
 }

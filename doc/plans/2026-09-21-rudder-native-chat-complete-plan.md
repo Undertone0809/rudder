@@ -851,6 +851,18 @@ The read-only event API uses one authorized repeatable snapshot, follows the his
 
 This increment remains subject to scoped independent review and acceptance. It does not complete public Stop/send/reconnect, client checkpoint writes, streaming ingestion, cancellation dispatch/receipt finalization, restart reconciliation, six-runtime parity, Reader/Side Chat, billing settlement, or packaged acceptance. Those remain required by the full plan.
 
+### 10.11 Private pre-claim Stop terminalization
+
+The control ledger passed scoped independent C1–C8 acceptance and final review at `5b4f254db30fab50cebcd0933ba0304d517eb0fa`. The next Rust-only increment adds a separate `finalize_unclaimed_stop` operation. Recording intent remains distinct from completing a Stop; an exact `request_stop` retry continues to return its original intent receipt.
+
+New Stop actions pin the exact Run and Attempt IDs, index, Run/Generation/connection epochs, and domain-separated hashes of owner identity, persisted input context/session intent, and checkpoint. These private hashes carry no transport authority and are not returned by the event reader. Older unpinned actions fail closed in the new finalizer.
+
+Pre-claim completion is restricted to a single initial Attempt at index/epoch/connection 1, a zero empty-body cutoff, no Generation owner/lease/hold, and no process, span, output, usage, cost, or provider-effect evidence. The admission-time Run owner must still match the pinned Attempt owner; its lease may have expired because this path never adopts an executor. A claimed worker or indeterminate checkpoint cannot use this path. Stop and claim serialize through the same target and Conversation/Generation/Run/Attempt locks. Binding and Segment checks use the admitted identity, preserving either a fresh pending Segment or the exact previously established Thread in an open Segment.
+
+The transaction cancels Run/Attempt, commits a local execution-terminal checkpoint, stops the Generation, and appends one terminal event pair and audit record. It does not invent provider completion, process exit, an assistant answer, or zero usage/cost. `inputDisposition: not_submitted` is durable in the separate receipt, Run result, and safe terminal event projection. An exact finalization retry is read-only, including after a subsequent Send; a new Send uses a new mutation ID. Reusing the cancelled input's original mutation ID returns that original Run, and does not silently resubmit it.
+
+This implementation is private and awaits its own source-stage review, independent acceptance, and final review. Public wiring must explicitly surface the difference between a saved input and provider-submitted input and provide a clear new-send/resubmit flow. Live-worker interruption, ambiguous provider submission, owner-fenced cleanup receipts, full event ingestion, public UI, six-runtime parity, and packaged acceptance remain required by the full plan.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.

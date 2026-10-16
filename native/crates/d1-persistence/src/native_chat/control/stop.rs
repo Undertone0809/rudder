@@ -99,18 +99,22 @@ pub async fn request_stop(
     if generation.try_get::<i32, _>("attempt_epoch")? != request.expected_attempt_epoch {
         return Err(http(409, "Native Chat generation attempt changed"));
     }
-    let attempt = sqlx::query_scalar::<_, Option<i32>>(
-        "SELECT generation_attempt_epoch FROM heartbeat_run_attempts
+    let attempt = sqlx::query(
+        "SELECT id::text, generation_attempt_epoch FROM heartbeat_run_attempts
          WHERE org_id=$1::uuid AND run_id=$2::uuid ORDER BY attempt_index DESC LIMIT 1 FOR UPDATE",
     )
     .bind(org)
     .bind(&hint.run_id)
     .fetch_optional(&mut *tx)
     .await?
-    .flatten();
-    if attempt != Some(request.expected_attempt_epoch) {
+    .ok_or_else(|| http(409, "Native Chat Run attempt is missing"))?;
+    if attempt.try_get::<Option<i32>, _>("generation_attempt_epoch")?
+        != Some(request.expected_attempt_epoch)
+    {
         return Err(http(409, "Native Chat Run attempt changed"));
     }
+    let attempt_id: String = attempt.try_get("id")?;
+    let pin = pin::capture(&mut tx, org, &hint.run_id, &attempt_id).await?;
     // Both terminal writers and Stop hold the Generation lock. A committed
     // terminal wins without truncating its answer or changing provider state.
     let completion:bool=sqlx::query_scalar(
@@ -242,12 +246,13 @@ pub async fn request_stop(
           expected_control_version,applied_control_version,action_kind,local_disposition,provider_disposition,
           control_owner_token,requested_render_seq,requested_body_hash,accepted_through_seq,frozen_body_hash,last_error,resolved_at,provider_evidence)
          VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,'stop',$7,'not_sent',$8,$9,$10,$11,$12,$13,
-          CASE WHEN $14 THEN clock_timestamp() ELSE NULL END,'{\"authority\":\"native_rust_control_v1\"}'::jsonb)
+          CASE WHEN $14 THEN clock_timestamp() ELSE NULL END,$15)
          ON CONFLICT(id) DO NOTHING RETURNING id::text",
     ).bind(&request.control_action_id).bind(org).bind(&request.generation_id).bind(request.expected_attempt_epoch)
         .bind(request.expected_control_version).bind(receipt.applied_control_version).bind(disposition).bind(owner)
         .bind(request.requested_render_seq).bind(&requested_hash).bind(receipt.accepted_through_seq)
-        .bind(&receipt.frozen_body_hash).bind(reason).bind(completion||terminal).fetch_optional(&mut *tx).await?;
+        .bind(&receipt.frozen_body_hash).bind(reason).bind(completion||terminal)
+        .bind(json!({"authority":"native_rust_control_v1","executionPin":pin})).fetch_optional(&mut *tx).await?;
     if inserted.is_none() {
         return Err(http(
             409,
