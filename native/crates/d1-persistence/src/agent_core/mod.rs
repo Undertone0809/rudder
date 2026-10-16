@@ -3,7 +3,7 @@
 mod common;
 mod constants;
 mod detail;
-mod instructions;
+pub(crate) mod instructions;
 mod json_boundary;
 mod reads;
 mod redaction;

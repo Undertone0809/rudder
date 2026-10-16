@@ -15,6 +15,8 @@ pub use crate::runtime_bindings::Error;
 mod admission;
 mod auth;
 mod budget;
+pub mod config;
+pub mod execution;
 mod validation;
 
 type Result<T> = std::result::Result<T, Error>;

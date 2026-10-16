@@ -12,6 +12,7 @@ use super::common::*;
 use fs::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs as disk, io,
@@ -187,22 +188,31 @@ fn write_missing(root: &Path, relative_path: &str, body: &str) -> io::Result<()>
     let _ = disk::remove_file(temporary);
     result
 }
-fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value> {
+
+struct BundleLocation {
+    workspace: String,
+    agent_root: PathBuf,
+    managed: PathBuf,
+    configured: Option<PathBuf>,
+    entry: String,
+    legacy_path: Option<PathBuf>,
+    mode: Option<&'static str>,
+    legacy_managed: bool,
+}
+
+/// Shared, pure path and legacy-mode resolution. Both mutating Agent recovery
+/// and Native Chat's read-only identity resolver use this exact decision logic.
+fn bundle_location(
+    host: &Host,
+    row: &Value,
+    home: &str,
+    cwd: &str,
+    root: &Path,
+) -> io::Result<BundleLocation> {
     let org = text(row, "orgId");
-    let root = storage::ensure(host, org, Path::new(cwd))?;
     let workspace = super::reads::workspace_key(row);
-    if workspace.is_empty()
-        || !workspace
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-    {
-        return Err(invalid("Invalid Agent workspace key"));
-    }
     let agent_root = root.join("agents").join(&workspace);
     let managed = agent_root.join("instructions");
-    for directory in ["instructions", "memory", "life", "skills"] {
-        disk::create_dir_all(agent_root.join(directory))?;
-    }
     let config = &row["agentRuntimeConfig"];
     let mut mode = match config["instructionsBundleMode"].as_str() {
         Some("managed") => Some("managed"),
@@ -282,47 +292,93 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
         let resolved = path(&candidate.to_string_lossy(), Path::new(cwd));
         resolved != managed && (known.contains(&resolved) || historical(&resolved))
     });
-    if legacy_managed {
-        mode = Some("managed");
-        if let Some(source) = &configured
+    Ok(BundleLocation {
+        workspace,
+        agent_root,
+        managed,
+        configured,
+        entry,
+        legacy_path,
+        mode,
+        legacy_managed,
+    })
+}
+
+fn validated_workspace_key(row: &Value) -> io::Result<String> {
+    let workspace = super::reads::workspace_key(row);
+    if workspace.is_empty()
+        || !workspace
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(invalid("Invalid Agent workspace key"));
+    }
+    Ok(workspace)
+}
+
+fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value> {
+    let org = text(row, "orgId");
+    let root = storage::ensure(host, org, Path::new(cwd))?;
+    // Preserve the legacy mutating resolver's workspace-key validation after
+    // factoring shared path selection into `bundle_location`.
+    validated_workspace_key(row)?;
+    let location = bundle_location(host, row, home, cwd, &root)?;
+    for directory in ["instructions", "memory", "life", "skills"] {
+        disk::create_dir_all(location.agent_root.join(directory))?;
+    }
+    let config = &row["agentRuntimeConfig"];
+    if location.legacy_managed {
+        if let Some(source) = &location.configured
             && stat(source).is_some_and(|m| m.is_dir())
         {
             for file in files(source)? {
                 let body = disk::read(source.join(&file))?;
-                write_missing(&managed, &file, &String::from_utf8_lossy(&body))?;
+                write_missing(&location.managed, &file, &String::from_utf8_lossy(&body))?;
             }
         }
         let mut content = defaults(text(row, "role") == "ceo");
-        let legacy_body = legacy_path
+        let legacy_body = location
+            .legacy_path
             .as_ref()
             .and_then(|path| disk::read(path).ok())
             .map(|body| String::from_utf8_lossy(&body).into_owned())
             .or_else(|| string(config, "promptTemplate").map(str::to_owned))
             .unwrap_or_default();
         if !js_trim(&legacy_body).is_empty() {
-            content.insert(entry.clone(), legacy_body);
-        } else if !content.contains_key(&entry) {
+            content.insert(location.entry.clone(), legacy_body);
+        } else if !content.contains_key(&location.entry) {
             content.insert(
-                entry.clone(),
+                location.entry.clone(),
                 content.get("SOUL.md").cloned().unwrap_or_default(),
             );
         }
         for (file, body) in content {
-            write_missing(&managed, &file, &body)?;
+            write_missing(&location.managed, &file, &body)?;
         }
-        if !stat(&managed.join("MEMORY.md")).is_some_and(|m| m.is_file())
-            && stat(&agent_root.join("MEMORY.md")).is_some_and(|m| m.is_file())
+        if !stat(&location.managed.join("MEMORY.md")).is_some_and(|m| m.is_file())
+            && stat(&location.agent_root.join("MEMORY.md")).is_some_and(|m| m.is_file())
         {
-            let memory = disk::read(agent_root.join("MEMORY.md"))?;
-            write_missing(&managed, "MEMORY.md", &String::from_utf8_lossy(&memory))?;
+            let memory = disk::read(location.agent_root.join("MEMORY.md"))?;
+            write_missing(
+                &location.managed,
+                "MEMORY.md",
+                &String::from_utf8_lossy(&memory),
+            )?;
         }
     }
-    if !files(&managed)?.is_empty() && (configured.is_none() || mode != Some("external")) {
+    let mut mode = if location.legacy_managed {
+        Some("managed")
+    } else {
+        location.mode
+    };
+    if !files(&location.managed)?.is_empty()
+        && (location.configured.is_none() || mode != Some("external"))
+    {
         mode = Some("managed");
     }
     // getBundle stats all referenced summaries even though detail only returns
     // this mode-derived path. Preserve observable filesystem failures.
-    if let Some(configured) = configured
+    if let Some(configured) = location.configured
         && mode == Some("external")
     {
         for file in files(&configured)? {
@@ -330,10 +386,308 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
         }
     }
     Ok(if mode == Some("managed") {
-        json!(format!("agents/{workspace}/instructions"))
+        json!(format!("agents/{}/instructions", location.workspace))
     } else {
         Value::Null
     })
+}
+
+pub(crate) struct RuntimeInstructionRevision {
+    pub revision: String,
+    pub source_path: Option<PathBuf>,
+    /// The selected entry path relative to `source_path` when a bundle root
+    /// exists. This is metadata only; the content is carried separately.
+    pub entry_file: String,
+    /// Bounded UTF-8 content the native supervisor may pass as instruction
+    /// text. This intentionally has no `Debug` or serialization implementation.
+    pub entry_content: Option<String>,
+}
+
+pub(crate) fn managed_agent_workspace_path(
+    instance_root: &Path,
+    workspace_home: &Path,
+    previous_documents_root: &Path,
+    friendly_workspace_home: bool,
+    org: &str,
+    row: &Value,
+) -> io::Result<PathBuf> {
+    let host = Host {
+        instance_root: instance_root.to_string_lossy().into_owned(),
+        workspace_home: workspace_home.to_string_lossy().into_owned(),
+        previous_documents_root: previous_documents_root.to_string_lossy().into_owned(),
+        friendly_workspace_home,
+        hostname: "native-chat".to_owned(),
+    };
+    if text(row, "orgId") != org
+        || [instance_root, workspace_home, previous_documents_root]
+            .iter()
+            .any(|path| !path.is_absolute())
+    {
+        return Err(invalid("Invalid Native Chat instruction host facts"));
+    }
+    let (root, _) = storage::root(&host, org)?;
+    storage::validate_readonly(&host, org, &root)?;
+    let workspace = validated_workspace_key(row)?;
+    Ok(root.join("agents").join(workspace))
+}
+
+/// Resolve effective instruction files without creating, migrating, or
+/// rewriting the Agent workspace. The selected entry content is returned only
+/// to the Rust supervisor; it has no `Debug` or serialization implementation.
+/// All discovered bundle files contribute to the identity digest, but only the
+/// configured entry is returned as content.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_readonly_for_runtime(
+    instance_root: &Path,
+    workspace_home: &Path,
+    previous_documents_root: &Path,
+    friendly_workspace_home: bool,
+    org: &str,
+    row: &Value,
+    home: &Path,
+    cwd: &Path,
+) -> io::Result<RuntimeInstructionRevision> {
+    let host = Host {
+        instance_root: instance_root.to_string_lossy().into_owned(),
+        workspace_home: workspace_home.to_string_lossy().into_owned(),
+        previous_documents_root: previous_documents_root.to_string_lossy().into_owned(),
+        friendly_workspace_home,
+        hostname: "native-chat".to_owned(),
+    };
+    if [
+        instance_root,
+        workspace_home,
+        previous_documents_root,
+        home,
+        cwd,
+    ]
+    .iter()
+    .any(|path| !path.is_absolute())
+        || text(row, "orgId") != org
+    {
+        return Err(invalid("Invalid Native Chat instruction host facts"));
+    }
+    let (root, _) = storage::root(&host, org)?;
+    storage::validate_readonly(&host, org, &root)?;
+    validated_workspace_key(row)?;
+    let location = bundle_location(
+        &host,
+        row,
+        &home.to_string_lossy(),
+        &cwd.to_string_lossy(),
+        &root,
+    )?;
+    storage::validate_readonly_path(&root, &location.managed)?;
+    let managed_files = strict_files(&location.managed, true)?;
+    let mode = if location.legacy_managed
+        || (!managed_files.is_empty()
+            && (location.configured.is_none() || location.mode != Some("external")))
+    {
+        Some("managed")
+    } else {
+        location.mode
+    };
+
+    let mut contents = BTreeMap::<String, Vec<u8>>::new();
+    let source_path = match mode {
+        Some("managed") => {
+            read_bundle(&location.managed, true, &mut contents)?;
+            if location.legacy_managed {
+                if let Some(source) = &location.configured {
+                    read_bundle(source, true, &mut contents)?;
+                }
+                for (name, body) in defaults(text(row, "role") == "ceo") {
+                    contents.entry(name).or_insert_with(|| body.into_bytes());
+                }
+                let legacy_body = location
+                    .legacy_path
+                    .as_ref()
+                    .and_then(|path| disk::read(path).ok())
+                    .or_else(|| {
+                        string(&row["agentRuntimeConfig"], "promptTemplate")
+                            .map(|v| v.as_bytes().to_vec())
+                    })
+                    .unwrap_or_default();
+                if !js_trim(&String::from_utf8_lossy(&legacy_body)).is_empty() {
+                    contents
+                        .entry(location.entry.clone())
+                        .or_insert(legacy_body);
+                } else if !contents.contains_key(&location.entry) {
+                    let soul = contents.get("SOUL.md").cloned().unwrap_or_default();
+                    contents.insert(location.entry.clone(), soul);
+                }
+                let memory = location.agent_root.join("MEMORY.md");
+                if !contents.contains_key("MEMORY.md")
+                    && stat(&memory).is_some_and(|metadata| metadata.is_file())
+                {
+                    contents.insert("MEMORY.md".into(), disk::read(memory)?);
+                }
+            }
+            Some(location.managed)
+        }
+        Some("external") => {
+            let source = location
+                .configured
+                .as_ref()
+                .or_else(|| {
+                    location
+                        .legacy_path
+                        .as_ref()
+                        .and_then(|path| path.parent().map(|_| path))
+                })
+                .map(|path| {
+                    if path.is_file() {
+                        path.parent().unwrap_or(path)
+                    } else {
+                        path.as_path()
+                    }
+                });
+            if let Some(source) = source {
+                let canonical = source.canonicalize()?;
+                read_bundle(&canonical, false, &mut contents)?;
+                Some(canonical)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    let entry_content = if Path::new(&location.entry)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("HEARTBEAT.md"))
+    {
+        // The legacy TS loader explicitly ignores HEARTBEAT.md as an Agent
+        // instruction entry. Keep that behavior without reading it as prompt.
+        None
+    } else if let Some(bytes) = contents.get(&location.entry) {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| invalid("Instruction entry is not valid UTF-8"))?;
+        let effective = text.trim_end();
+        (!effective.is_empty()).then(|| effective.to_owned())
+    } else {
+        None
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"rudder-agent-instructions-v1\0");
+    hasher.update(mode.unwrap_or("none").as_bytes());
+    hasher.update([0]);
+    hasher.update(location.entry.as_bytes());
+    hasher.update([0]);
+    for (name, bytes) in contents {
+        hasher.update((name.len() as u64).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+    let digest = hasher.finalize();
+    let revision = format!(
+        "sha256:{}",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    Ok(RuntimeInstructionRevision {
+        revision,
+        source_path,
+        entry_file: location.entry,
+        entry_content,
+    })
+}
+
+fn strict_files(root: &Path, allow_missing: bool) -> io::Result<Vec<String>> {
+    let metadata = match disk::symlink_metadata(root) {
+        Ok(metadata) => metadata,
+        Err(error) if allow_missing && error.kind() == io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(invalid("Instruction bundle root is not a directory"));
+    }
+    let mut result = Vec::new();
+    fn walk(root: &Path, current: &Path, result: &mut Vec<String>, depth: usize) -> io::Result<()> {
+        if depth > 64 {
+            return Err(invalid("Instruction bundle nesting is too deep"));
+        }
+        for entry in disk::read_dir(current)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                if ![
+                    ".git",
+                    ".nox",
+                    ".pytest_cache",
+                    ".ruff_cache",
+                    ".tox",
+                    ".venv",
+                    "__pycache__",
+                    "node_modules",
+                    "venv",
+                ]
+                .contains(&name.as_str())
+                {
+                    walk(root, &entry.path(), result, depth + 1)?;
+                }
+            } else if kind.is_symlink() {
+                return Err(invalid("Instruction bundle contains a symbolic link"));
+            } else if kind.is_file()
+                && ![".DS_Store", "Thumbs.db", "Desktop.ini"].contains(&name.as_str())
+                && !name.starts_with(".rudder-write-probe-")
+                && !name.starts_with("._")
+                && !name.ends_with(".pyc")
+                && !name.ends_with(".pyo")
+            {
+                result.push(
+                    entry
+                        .path()
+                        .strip_prefix(root)
+                        .map_err(io::Error::other)?
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+                if result.len() > 4_096 {
+                    return Err(invalid("Instruction bundle contains too many files"));
+                }
+            }
+        }
+        Ok(())
+    }
+    walk(root, root, &mut result, 0)?;
+    result.sort();
+    Ok(result)
+}
+
+fn read_bundle(
+    root: &Path,
+    allow_missing: bool,
+    output: &mut BTreeMap<String, Vec<u8>>,
+) -> io::Result<()> {
+    for file in strict_files(root, allow_missing)? {
+        if output.contains_key(&file) {
+            continue;
+        }
+        let bytes = disk::read(root.join(&file))?;
+        if bytes.len() > 1_048_576
+            || output
+                .values()
+                .map(Vec::len)
+                .sum::<usize>()
+                .saturating_add(bytes.len())
+                > 4_194_304
+        {
+            return Err(invalid(
+                "Instruction bundle exceeds the Native Chat revision limit",
+            ));
+        }
+        output.insert(file, bytes);
+    }
+    Ok(())
 }
 pub(super) async fn library_path(tx: &mut Tx<'_>, ctx: &Context<'_>, row: &Value) -> Result<Value> {
     let host = ctx
