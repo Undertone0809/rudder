@@ -1,15 +1,26 @@
 import json
 import os
 import pathlib
+import signal
 import sys
+import time
 
 
 home = pathlib.Path(os.environ["HOME"])
 home.joinpath("provider-started").write_text("started", encoding="utf-8")
+home.joinpath("provider-pid").write_text(str(os.getpid()), encoding="utf-8")
 mode = home.joinpath("mode.txt").read_text(encoding="utf-8").strip()
 log_path = home.joinpath("provider-events.jsonl")
 thread_id = " 线程-native-thread== "
 turn_id = " turn/δ-native-turn== "
+
+
+def stopping(signum, frame):
+    home.joinpath("provider-stopped").write_text("stopped", encoding="utf-8")
+    raise SystemExit(0)
+
+
+signal.signal(signal.SIGTERM, stopping)
 
 
 def emit(value):
@@ -20,6 +31,16 @@ def emit(value):
 def record(value):
     with log_path.open("a", encoding="utf-8") as log:
         log.write(json.dumps(value, ensure_ascii=False) + "\n")
+
+
+def wait_for_thread_start_release():
+    home.joinpath("thread-start-pending").write_text("pending", encoding="utf-8")
+    release = home.joinpath("release-thread-start")
+    deadline = time.monotonic() + 30
+    while not release.exists():
+        if time.monotonic() >= deadline:
+            os._exit(24)
+        time.sleep(0.02)
 
 
 def terminal():
@@ -100,6 +121,8 @@ for raw in sys.stdin:
             })
         emit({"id": request_id, "result": result})
     elif method == "thread/start":
+        if mode in ("g6-lease-revoke", "g6-cancel-drop"):
+            wait_for_thread_start_release()
         emit({"id": request_id, "result": {"thread": {"id": thread_id, "ephemeral": False}}})
     elif method == "thread/resume":
         resumed_thread_id = "foreign-thread-mismatch" if mode == "mismatched-resume" else thread_id

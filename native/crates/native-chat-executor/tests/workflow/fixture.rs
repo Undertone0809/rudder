@@ -11,11 +11,18 @@ pub(crate) use rudder_d1_persistence::native_chat::{
 };
 pub(crate) use rudder_native_chat_executor::Error as ExecutorError;
 use rudder_native_chat_executor::{
-    ExecutionRequest, HostPaths, provision_profile, run_on_blocking_thread,
+    ExecutionRequest, HostPaths, OwnedExecutionRequest, execute, provision_profile,
+    run_on_blocking_thread,
 };
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use std::{fs, path::PathBuf, process::Command, sync::atomic::AtomicBool, time::Duration};
+use std::{
+    fs,
+    path::PathBuf,
+    process::Command,
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 #[path = "../../../d1-persistence/tests/support/mod.rs"]
 pub(crate) mod support;
 pub(crate) use support::{CEO, Database, ORG};
@@ -31,7 +38,7 @@ pub(crate) const TURN: &str = " turn/δ-native-turn== ";
 
 pub(crate) struct FixtureHost {
     root: TempDir,
-    context: LocalHostContext,
+    context: Option<LocalHostContext>,
     executable: PathBuf,
 }
 
@@ -107,13 +114,21 @@ impl FixtureHost {
         .expect("construct trusted local host context");
         Self {
             root,
-            context,
+            context: Some(context),
             executable,
         }
     }
 
     pub(crate) fn context(&self) -> &LocalHostContext {
-        &self.context
+        self.context
+            .as_ref()
+            .expect("fixture host context is present")
+    }
+
+    pub(crate) fn take_context(&mut self) -> LocalHostContext {
+        self.context
+            .take()
+            .expect("fixture host context is present")
     }
 
     fn persisted_agent_config(&self) -> Value {
@@ -144,8 +159,7 @@ impl FixtureHost {
     }
 
     pub(crate) fn events(&self) -> Vec<Value> {
-        let path = self.root.path().join("isolated-home/provider-events.jsonl");
-        let Ok(contents) = fs::read_to_string(path) else {
+        let Ok(contents) = fs::read_to_string(self.probe_path("provider-events.jsonl")) else {
             return Vec::new();
         };
         contents
@@ -155,10 +169,11 @@ impl FixtureHost {
     }
 
     pub(crate) fn provider_started(&self) -> bool {
-        self.root
-            .path()
-            .join("isolated-home/provider-started")
-            .exists()
+        self.probe_path("provider-started").exists()
+    }
+
+    pub(crate) fn probe_path(&self, name: &str) -> PathBuf {
+        self.root.path().join("isolated-home").join(name)
     }
 }
 
@@ -308,7 +323,16 @@ pub(crate) async fn execute_on_worker(
     Result<rudder_native_chat_executor::ExecutionObservation, ExecutorError>,
     FixtureHost,
 ) {
-    execute_on_worker_with_cancelled(database, host, actor, run_id, attempt_id, false).await
+    spawn_executor_worker(
+        database.pool.clone(),
+        host,
+        actor,
+        run_id,
+        attempt_id,
+        false,
+    )
+    .await
+    .expect("executor blocking worker must join")
 }
 
 pub(crate) async fn execute_cancelled_on_worker(
@@ -321,21 +345,22 @@ pub(crate) async fn execute_cancelled_on_worker(
     Result<rudder_native_chat_executor::ExecutionObservation, ExecutorError>,
     FixtureHost,
 ) {
-    execute_on_worker_with_cancelled(database, host, actor, run_id, attempt_id, true).await
+    spawn_executor_worker(database.pool.clone(), host, actor, run_id, attempt_id, true)
+        .await
+        .expect("executor blocking worker must join")
 }
 
-async fn execute_on_worker_with_cancelled(
-    database: &Database,
+pub(crate) fn spawn_executor_worker(
+    pool: PgPool,
     host: FixtureHost,
     actor: VerifiedActor,
     run_id: String,
     attempt_id: String,
     cancelled_before_start: bool,
-) -> (
+) -> tokio::task::JoinHandle<(
     Result<rudder_native_chat_executor::ExecutionObservation, ExecutorError>,
     FixtureHost,
-) {
-    let pool: PgPool = database.pool.clone();
+)> {
     let handle = Handle::current();
     tokio::task::spawn_blocking(move || {
         let paths = host.paths();
@@ -356,8 +381,31 @@ async fn execute_on_worker_with_cancelled(
         );
         (result, host)
     })
-    .await
-    .expect("executor blocking worker must join")
+}
+
+pub(crate) fn spawn_owned_executor_task(
+    pool: PgPool,
+    actor: VerifiedActor,
+    context: LocalHostContext,
+    paths: HostPaths,
+    run_id: String,
+    attempt_id: String,
+    cancelled: Arc<AtomicBool>,
+) -> tokio::task::JoinHandle<Result<rudder_native_chat_executor::ExecutionObservation, ExecutorError>>
+{
+    tokio::spawn(execute(
+        pool,
+        actor,
+        context,
+        paths,
+        OwnedExecutionRequest {
+            organization_id: ORG.to_owned(),
+            run_id,
+            attempt_id,
+            timeout: Duration::from_secs(30),
+            cancelled,
+        },
+    ))
 }
 
 pub(crate) fn assert_ignored_external_dependencies() {
