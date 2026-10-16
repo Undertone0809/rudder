@@ -17,13 +17,13 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use process::{OwnedProcessBoundary, monitor_child};
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::collections::BTreeMap;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::fs;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::path::PathBuf;
 
 const TERM_TIMEOUT: Duration = Duration::from_secs(2);
@@ -208,7 +208,7 @@ fn lifecycle_with_sink(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn lifecycle_for_writer(
     writer: impl Write + Send + 'static,
     request_id: &str,

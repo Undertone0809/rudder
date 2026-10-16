@@ -240,7 +240,7 @@ impl InteractiveStdin {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn recv(&mut self) -> Result<Event, mpsc::RecvError> {
         let event = self.receiver.recv()?;
         self.record_event(&event);
