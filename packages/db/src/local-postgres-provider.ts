@@ -187,12 +187,19 @@ export function buildOfficialPostgresInitdbArgs(options: LocalPostgresInstanceOp
   ];
 }
 
+export function resolveOfficialPostgresLogPath(databaseDir: string): string {
+  // Windows recovery fsync scans PGDATA. pg_ctl holds its log open, so putting
+  // it there causes a sharing violation and a 30-second retry after a crash.
+  // Keep a distinct sibling per cluster; leave historical in-cluster logs alone.
+  return `${path.resolve(databaseDir)}.postgres.log`;
+}
+
 export function buildOfficialPostgresStartArgs(options: LocalPostgresInstanceOptions): string[] {
   return [
     "-D",
     options.databaseDir,
     "-l",
-    path.join(options.databaseDir, "postgres.log"),
+    resolveOfficialPostgresLogPath(options.databaseDir),
     "-o",
     `-h 127.0.0.1 -p ${options.port}`,
     "-w",
@@ -371,7 +378,7 @@ export function createOfficialPostgresInstance(
         reject(new Error(
           `PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} start failed `
             + `(exit ${code ?? "none"}, signal ${signal ?? "none"}); `
-            + `see ${path.join(options.databaseDir, "postgres.log")}`,
+            + `see ${resolveOfficialPostgresLogPath(options.databaseDir)}`,
         ));
       });
     });

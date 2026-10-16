@@ -22,6 +22,7 @@ import {
   terminateProvenLocalAppProcessGroup,
 } from "./local-app-smoke-helpers.mjs";
 import { resolveNativeTarget } from "./native-target.mjs";
+import { verifyWindowsShell } from "./windows-shell-smoke.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -2686,8 +2687,10 @@ async function assertDesktopGlassShell(electronApp, page, context) {
       glass: document.documentElement.classList.contains("desktop-shell-glass"),
       macos: document.documentElement.classList.contains("desktop-shell-macos"),
       windows: document.documentElement.classList.contains("desktop-shell-windows"),
+      dark: document.documentElement.classList.contains("dark"),
       captionControls: document.querySelectorAll(".desktop-caption-control").length,
       shellBackground: getComputedStyle(shellProbe).backgroundImage,
+      shellTint: getComputedStyle(shellProbe).backgroundColor,
       shellBackdropFilter: getComputedStyle(shellProbe).backdropFilter,
       primaryRailBackground: getComputedStyle(primaryRailProbe).backgroundImage,
     };
@@ -2705,23 +2708,19 @@ async function assertDesktopGlassShell(electronApp, page, context) {
     assert.equal(rendererState.windows, true, `${context} should enable Windows shell styling`);
     assert.equal(rendererState.macos, false, `${context} should not enable macOS-only styling on Windows`);
     assert.equal(rendererState.captionControls, 3, `${context} should render minimize, maximize, and close controls`);
-    assert.match(
-      rendererState.shellBackground,
-      /rgba\(250,\s*248,\s*245,\s*0\.9\)/,
-      `${context} should tint the Windows shell enough to prevent readable background bleed`,
+    assert.equal(
+      rendererState.shellTint,
+      rendererState.dark ? "rgba(20, 22, 26, 0.78)" : "rgba(244, 240, 234, 0.78)",
+      `${context} should use the shared Windows shell tint`,
     );
-    assert.match(
+    assert.equal(
       rendererState.primaryRailBackground,
-      /rgba\(244,\s*242,\s*239,\s*0\.74\)/,
-      `${context} should keep the Windows navigation rail translucent but readable`,
+      "none",
+      `${context} should share the Windows shell tint without a separate rail gradient`,
     );
-    const cornerAlpha = await electronApp.evaluate(async ({ BrowserWindow }) => {
-      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-      if (!window) return null;
-      const image = await window.capturePage({ x: 0, y: 0, width: 1, height: 1 });
-      return image.toBitmap()[3] ?? null;
-    });
-    assert.equal(cornerAlpha, 0, `${context} should keep the rounded Windows corner fully transparent`);
+    // DWM acrylic and opaque fallbacks own pixels outside the renderer.
+    const radius = await page.evaluate(() => getComputedStyle(document.documentElement).borderTopLeftRadius);
+    assert.equal(radius, "10px", `${context} should retain rounded restored-window content`);
   }
 }
 
@@ -6198,6 +6197,7 @@ async function runCleanScenario(mode) {
     await verifyBundledSkills(firstRun.baseUrl, company.id);
     await verifySyntheticBrowserCookieImport(firstRun.electronApp, firstRun.page, browserImportFixture);
     const ceo = await createCeo(firstRun.baseUrl, company.id);
+    await verifyWindowsShell(firstRun.electronApp, firstRun.page, companyRouteKey, mode);
     await verifyAgentBrowserBroker(
       firstRun.electronApp,
       firstRun.baseUrl,
@@ -8174,6 +8174,32 @@ async function runAppBuilderScenario(mode) {
   if (shutdownError) throw shutdownError;
 }
 
+async function runWindowsShellScenario(mode) {
+  const ports = await allocateSmokePorts();
+  const scenarioRoot = path.join(tmpRoot, "windows-shell");
+  const packagedSmokeExecutable = mode === "packaged"
+    ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+    : null;
+  const run = await launchDesktop(
+    scenarioRoot,
+    mode,
+    ports,
+    packagedSmokeExecutable ? { RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1" } : {},
+    packagedSmokeExecutable,
+  );
+  try {
+    const company = await createCompany(run.baseUrl);
+    await createCeo(run.baseUrl, company.id);
+    await verifyWindowsShell(run.electronApp, run.page, company.urlKey ?? company.issuePrefix, mode);
+  } catch (error) {
+    console.error("[desktop-smoke] Windows shell scenario failed", error);
+    await run.page.screenshot({ path: path.join(tmpRoot, "windows-shell-failure.png") }).catch(() => {});
+    throw error;
+  } finally {
+    await closeDesktop(run.electronApp);
+  }
+}
+
 function resolveScenarioList(mode, scenario) {
   if (!scenario || scenario === "default") {
     const localApps = process.platform === "darwin" ? ["local-apps"] : [];
@@ -8195,6 +8221,7 @@ function resolveScenarioList(mode, scenario) {
   if (scenario === "account-gate"
     || scenario === "auto-update"
     || scenario === "auto-update-public"
+    || scenario === "windows-shell"
     || scenario === "startup-recovery"
     || scenario === "postgres-runtime-handoff"
     || scenario === "clean"
@@ -8216,7 +8243,9 @@ try {
   executedScenarios = resolveScenarioList(smokeMode, smokeScenario);
   for (const scenario of executedScenarios) {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
-    if (scenario === "account-gate") {
+    if (scenario === "windows-shell") {
+      await runWindowsShellScenario(smokeMode);
+    } else if (scenario === "account-gate") {
       await runAccountGateScenario(smokeMode);
     } else if (scenario === "auto-update") {
       await runAutoUpdateScenario(smokeMode);

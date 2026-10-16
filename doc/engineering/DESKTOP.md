@@ -181,12 +181,21 @@ Platform behavior:
 
 ## Desktop glass
 
-Rudder Desktop uses a transparent, tinted shell by default on Windows to keep
-the same paper-glass workspace character without relying on platform vibrancy.
-Windows uses a transparent frameless application window with Rudder-owned
-caption controls and rounded restored-window clipping. macOS and Linux keep the
-same paper-glass workspace character with macOS defaulting to native transparent
-vibrancy; Linux keeps its opaque default but can opt into a transparent mode.
+Rudder Desktop uses a transparent, tinted shell by default on macOS and Windows
+so both platforms keep the same paper-glass workspace character. macOS
+additionally uses native vibrancy.
+Windows 11 22H2 and later use native Acrylic on a non-layered frameless host,
+with a transparent renderer and theme tint. Earlier Windows versions fall back
+to a solid theme background; OS transparency and energy settings can also
+disable the native material. Explicit `transparent` mode remains available.
+Windows caption controls share a 38px full-width drag band above the workspace
+and settings dialog, so they never cover content headers. The primary rail and
+caption band share the outer shell tint without a separate rail overlay.
+Native Acrylic owns
+restored-window corners; explicit transparent mode retains custom clipping.
+Linux keeps the opaque
+default because compositor support varies, but can opt into a transparent mode.
+
 
 Use `RUDDER_DESKTOP_WINDOW_EFFECT_MODE=opaque` as the escape hatch when a
 platform, GPU driver, virtual machine, remote-desktop session, or compositor
@@ -218,6 +227,9 @@ Rudder business data lives under the shared Rudder home:
 - config: `~/.rudder/instances/<instance>/config.json`
 - env file: `~/.rudder/instances/<instance>/.env`
 - embedded Postgres: `~/.rudder/instances/<instance>/db`
+- Official PostgreSQL log (all platforms): `~/.rudder/instances/<instance>/db.postgres.log`
+  (a per-cluster sibling outside the data directory, so crash-recovery fsync
+  does not contend with the open log file; old `db/postgres.log` is retained)
 - storage: `~/.rudder/instances/<instance>/data/storage`
 
 Organization workspaces are user work files and default to the user's Documents

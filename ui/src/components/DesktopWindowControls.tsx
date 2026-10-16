@@ -54,48 +54,50 @@ export function DesktopWindowControls() {
   const desktopShell = readDesktopShell();
 
   return createPortal(
-    <div className="desktop-caption-controls desktop-window-no-drag" aria-label="Window controls">
-      <button
-        type="button"
-        className="desktop-caption-control"
-        aria-label="Minimize"
-        title="Minimize"
-        onClick={() => {
-          void desktopShell?.minimizeWindow?.();
-        }}
-      >
-        <Minus aria-hidden="true" size={14} strokeWidth={1.8} />
-      </button>
-      <button
-        type="button"
-        className="desktop-caption-control"
-        aria-label={maximized ? "Restore" : "Maximize"}
-        title={maximized ? "Restore" : "Maximize"}
-        onClick={() => {
-          void desktopShell?.toggleMaximizeWindow?.()
-            .then((value) => {
-              setMaximized(value);
-              syncMaximizedClass(value);
-            })
-            .catch(() => {
-              setMaximized(false);
-              syncMaximizedClass(false);
-            });
-        }}
-      >
-        <Square aria-hidden="true" size={12} strokeWidth={1.8} />
-      </button>
-      <button
-        type="button"
-        className="desktop-caption-control desktop-caption-control--close"
-        aria-label="Close"
-        title="Close"
-        onClick={() => {
-          void desktopShell?.closeWindow?.();
-        }}
-      >
-        <X aria-hidden="true" size={14} strokeWidth={1.8} />
-      </button>
+    <div className="desktop-caption-bar desktop-window-drag" data-testid="desktop-caption-bar">
+      <div className="desktop-caption-controls desktop-window-no-drag" aria-label="Window controls">
+        <button
+          type="button"
+          className="desktop-caption-control"
+          aria-label="Minimize"
+          title="Minimize"
+          onClick={() => {
+            void desktopShell?.minimizeWindow?.();
+          }}
+        >
+          <Minus aria-hidden="true" size={14} strokeWidth={1.8} />
+        </button>
+        <button
+          type="button"
+          className="desktop-caption-control"
+          aria-label={maximized ? "Restore" : "Maximize"}
+          title={maximized ? "Restore" : "Maximize"}
+          onClick={() => {
+            void desktopShell?.toggleMaximizeWindow?.()
+              .then((value) => {
+                setMaximized(value);
+                syncMaximizedClass(value);
+              })
+              .catch(() => {
+                setMaximized(false);
+                syncMaximizedClass(false);
+              });
+          }}
+        >
+          <Square aria-hidden="true" size={12} strokeWidth={1.8} />
+        </button>
+        <button
+          type="button"
+          className="desktop-caption-control desktop-caption-control--close"
+          aria-label="Close"
+          title="Close"
+          onClick={() => {
+            void desktopShell?.closeWindow?.();
+          }}
+        >
+          <X aria-hidden="true" size={14} strokeWidth={1.8} />
+        </button>
+      </div>
     </div>,
     document.body,
   );
