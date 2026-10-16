@@ -1,10 +1,10 @@
 // Test-only compatibility fixture: use the actual existing issuers, never an
 // independent reimplementation of their cookie signature algorithm.
-import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
-import { writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 const root = process.env.RUDDER_BROWSER_AUTH_ISSUER_ROOT!;
 const databaseUrl = process.env.RUDDER_NATIVE_AUTH_TEST_DATABASE_URL!;
 if (!root || !new URL(databaseUrl).pathname.includes('test')) throw new Error('disposable test database required');
