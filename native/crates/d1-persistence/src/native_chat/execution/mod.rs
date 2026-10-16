@@ -7,6 +7,7 @@ mod checkpoint;
 mod claim;
 mod context;
 mod lease;
+mod submission;
 mod types;
 
 pub use checkpoint::{
@@ -15,6 +16,7 @@ pub use checkpoint::{
 };
 pub use claim::{ClaimedExecution, claim};
 pub use lease::{LeaseReceipt, renew_lease};
+pub use submission::{SubmissionInput, load_submission};
 pub use types::{CheckpointSnapshot, ExecutionFence, ExecutionIdentity};
 
 use crate::runtime_bindings::Error;
