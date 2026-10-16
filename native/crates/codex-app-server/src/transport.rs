@@ -18,6 +18,8 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+mod external;
+
 const EVENT_CAPACITY: usize = 128;
 const COMMAND_CAPACITY: usize = 16;
 
@@ -66,6 +68,7 @@ pub enum TransportEvent {
 enum InputEvent {
     Lifecycle(Value),
     Stdout(Vec<u8>),
+    Failure,
 }
 
 struct EventQueue {
@@ -145,6 +148,33 @@ pub struct OwnedTransport {
 
 impl OwnedTransport {
     pub fn launch(launch: ProcessLaunch) -> Result<Self, TransportError> {
+        Self::launch_with_host(launch, None)
+    }
+
+    /// Launch the installed Rust host as a separate ownership process. Losing
+    /// this caller closes the command pipe, allowing that host to reap its
+    /// provider even when this process cannot run Drop (for example SIGKILL).
+    /// Host loss remains indeterminate; it never proves provider quiescence.
+    pub fn launch_external(
+        launch: ProcessLaunch,
+        host_executable: &std::path::Path,
+    ) -> Result<Self, TransportError> {
+        if !host_executable.is_absolute() {
+            return Err(TransportError::InvalidLaunch);
+        }
+        let host = host_executable
+            .canonicalize()
+            .map_err(|_| TransportError::InvalidLaunch)?;
+        if !host.is_file() {
+            return Err(TransportError::InvalidLaunch);
+        }
+        Self::launch_with_host(launch, Some(host))
+    }
+
+    fn launch_with_host(
+        launch: ProcessLaunch,
+        external_host: Option<std::path::PathBuf>,
+    ) -> Result<Self, TransportError> {
         let request_id = launch.request_id.clone();
         let owner_token = launch.owner_token.clone();
         let start = Command::StartProcess {
@@ -172,7 +202,15 @@ impl OwnedTransport {
         let (commands, input) = mpsc::sync_channel(COMMAND_CAPACITY);
         let sink = Arc::new(HostEvents(Arc::clone(&queue)));
         let output = Box::new(Stdout(Arc::clone(&queue)));
-        let host = thread::spawn(move || run_host(input, sink, output, Box::new(io::sink())));
+        let host_queue = Arc::clone(&queue);
+        let host_request = request_id.clone();
+        let host_owner = owner_token.clone();
+        let host = thread::spawn(move || match external_host {
+            Some(executable) => {
+                external::run(executable, input, host_queue, &host_request, &host_owner)
+            }
+            None => run_host(input, sink, output, Box::new(io::sink())),
+        });
         let transport = Self {
             commands: Some(commands),
             events,
@@ -314,6 +352,7 @@ impl OwnedTransport {
                     mpsc::RecvTimeoutError::Disconnected => TransportError::Closed,
                 })?;
             match event {
+                InputEvent::Failure => return Err(TransportError::Closed),
                 InputEvent::Stdout(bytes) => self.messages.extend(self.decoder.push(&bytes)?),
                 InputEvent::Lifecycle(value) => {
                     let kind = value
