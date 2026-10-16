@@ -22,6 +22,22 @@ const OPERATORS_BY_FIRST_CHAR = new Map([
   ["<", ["<="]], [">", [">="]], ["&", ["&&"]], ["|", ["||"]], ["+", ["++"]], ["-", ["--"]], ["*", ["**"]],
 ]);
 const DATABASE_RECEIVER = /^(?:db|tx|database|dbOrTx|txDb|identityDb|transaction|trx|pool|connection|conn|executor|statement|sqlite|postgres|pg|drizzle|sqlx)(?:[A-Z][A-Za-z0-9_]*)?$/;
+const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
+  "rust-native-session-proof-v1": Object.freeze({
+    id: "rust-native-session-proof-v1",
+    source_path: "server/src/bootstrap/create-http-app.ts",
+    receiver: "app",
+    factory_path: "server/src/auth/native-session-assertion.ts",
+    factory_import: "../auth/native-session-assertion.js",
+    factory_export: "nativeSessionAssertionMiddleware",
+    factory_sha256: "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5",
+    mount_expression: "nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })",
+    mount_guard: "opts.rustPublicIngress?.sessionAuth",
+    order_after: "workspace_preview_reserved_404",
+    order_before: "express_json_body_parser",
+    rust_proof_owner: "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion",
+  }),
+});
 
 const FAMILY_DEFINITIONS = [
   { id: "public_http_and_routes", owner: "Node/Express", roots: ["server/src/bootstrap", "server/src/routes", "server/src/app.ts"] },
@@ -518,7 +534,17 @@ function scanSource(relativePath, source) {
         }
       } else {
         const signature = `${relativePath}|middleware|${receiver}|<handler:${first.text}>`;
-        addSurface("middleware_mount", signature, { receiver, expression: first.text });
+        const admissionId = Object.entries(TRUSTED_TRANSPORT_ADMISSIONS).find(([id, policy]) =>
+          relativePath === policy.source_path
+          && receiver === policy.receiver
+          && args.argCount === 1
+          && first.text === policy.mount_expression
+        )?.[0];
+        addSurface("middleware_mount", signature, {
+          receiver,
+          expression: first.text,
+          ...(admissionId ? { transport_admission: admissionId } : {}),
+        });
         if (hasExplicitHandler) unknown.push({ type: "dynamic_middleware_mount", source: relativePath, line: location, receiver, expression: first.text });
       }
     }
@@ -656,7 +682,7 @@ function scanSource(relativePath, source) {
   return { surfaces, unknown };
 }
 
-function buildInventory(rootPath, reviewedNodeChanges = []) {
+function buildInventory(rootPath, reviewedNodeChanges = [], reviewedTransportAdmissions) {
   const sources = readCurrentSources(rootPath);
   const migrations = readCurrentMigrations(rootPath);
   const manifest = [];
@@ -716,7 +742,7 @@ function buildInventory(rootPath, reviewedNodeChanges = []) {
   });
   unknown.sort((a, b) => `${a.type}|${a.source}|${a.line ?? 0}|${a.expression ?? ""}|${a.migration ?? ""}`.localeCompare(`${b.type}|${b.source}|${b.line ?? 0}|${b.expression ?? ""}|${b.migration ?? ""}`));
   const backendSourceFiles = manifest.filter((entry) => !entry.path.startsWith("desktop/src/")).length;
-  return {
+  const inventory = {
     schema_version: "1.0",
     generated_by: "scripts/rust-backend-authority-inventory.mjs",
     source_scope: {
@@ -746,6 +772,8 @@ function buildInventory(rootPath, reviewedNodeChanges = []) {
     },
     reviewed_node_changes: reviewedNodeChanges,
   };
+  if (reviewedTransportAdmissions !== undefined) inventory.reviewed_transport_admissions = reviewedTransportAdmissions;
+  return inventory;
 }
 
 function readInventory(inventoryPath) {
@@ -758,13 +786,16 @@ function readInventory(inventoryPath) {
 }
 
 function stableGeneratedPart(inventory) {
-  const { reviewed_node_changes: _records, ...generated } = inventory;
+  const { reviewed_node_changes: _nodeRecords, reviewed_transport_admissions: _transportRecords, ...generated } = inventory;
   return generated;
 }
 
 function writeInventory(inventoryPath, current, prior) {
   fs.mkdirSync(path.dirname(inventoryPath), { recursive: true });
   const output = { ...current, reviewed_node_changes: prior?.reviewed_node_changes ?? [] };
+  if (prior && Object.hasOwn(prior, "reviewed_transport_admissions")) {
+    output.reviewed_transport_admissions = prior.reviewed_transport_admissions;
+  }
   fs.writeFileSync(inventoryPath, `${JSON.stringify(output, null, 2)}\n`);
 }
 
@@ -799,6 +830,142 @@ function countSignatures(surfaces, types) {
     result.set(surface.signature, (result.get(surface.signature) ?? 0) + 1);
   }
   return result;
+}
+
+function findAppUseCalls(source) {
+  const tokens = tokenize(source);
+  const bindings = staticBindings(tokens);
+  const calls = [];
+  for (let index = 0; index < tokens.length - 3; index += 1) {
+    if (tokens[index].value !== "app" || tokens[index + 1]?.value !== "."
+      || tokens[index + 2]?.value !== "use" || tokens[index + 3]?.value !== "(") continue;
+    const args = callArguments(tokens, index + 3);
+    if (!args) continue;
+    const first = firstArgument(tokens, source, args, bindings);
+    calls.push({
+      start: tokens[index].start,
+      end: tokens[args.closeIndex].end,
+      expression: first.text,
+      static_path: first.staticValue,
+      argument_count: args.argCount,
+    });
+  }
+  return { tokens, calls };
+}
+
+function findMatchingToken(tokens, openIndex, openValue, closeValue) {
+  if (tokens[openIndex]?.value !== openValue) return -1;
+  let depth = 0;
+  for (let index = openIndex; index < tokens.length; index += 1) {
+    if (tokens[index].value === openValue) depth += 1;
+    else if (tokens[index].value === closeValue) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function hasExactNamedImport(tokens, exportName, specifier) {
+  let matchingImports = 0;
+  for (let index = 0; index < tokens.length - 5; index += 1) {
+    if (tokens[index].value !== "import" || tokens[index + 1]?.value !== "{"
+      || tokens[index + 2]?.value !== exportName || tokens[index + 3]?.value !== "}"
+      || tokens[index + 4]?.value !== "from" || tokens[index + 5]?.kind !== "string"
+      || tokens[index + 5]?.value !== specifier) continue;
+    matchingImports += 1;
+  }
+  const identifierOccurrences = tokens.filter((token) => token.value === exportName).length;
+  return matchingImports === 1 && identifierOccurrences === 2;
+}
+
+function validateTransportAdmissionSource(policy, source, sourcePath) {
+  const problems = [];
+  if (sourcePath !== policy.source_path) problems.push("mount source path does not match trusted policy");
+  const { tokens, calls } = findAppUseCalls(source);
+  const proofCalls = calls.filter((call) => call.expression === policy.mount_expression);
+  if (proofCalls.length !== 1) problems.push("expected exactly one exact native session proof app.use mount");
+  if (!hasExactNamedImport(tokens, policy.factory_export, policy.factory_import)) {
+    problems.push("factory must be imported once by its exact named export from the trusted module");
+  }
+
+  const previewCalls = calls.filter((call) => call.static_path === "/workspace-preview");
+  const previewHandlerCalls = calls.filter((call) => call.expression.includes("workspacePreview.handlePreviewHostRequest"));
+  const parserCalls = calls.filter((call) => /^(?:express|bodyParser)\.(?:json|raw|text|urlencoded)\s*\(/.test(call.expression));
+  if (previewCalls.length !== 1) problems.push("expected exactly one reserved /workspace-preview 404 mount before proof admission");
+  if (previewHandlerCalls.length !== 1) problems.push("expected exactly one workspace preview host admission before proof admission");
+  if (parserCalls.length === 0) problems.push("expected a recognized body parser after proof admission");
+
+  if (proofCalls.length === 1 && previewCalls.length === 1 && previewHandlerCalls.length === 1 && parserCalls.length > 0) {
+    const proofIndex = calls.indexOf(proofCalls[0]);
+    const previewIndex = calls.indexOf(previewCalls[0]);
+    const previewHandlerIndex = calls.indexOf(previewHandlerCalls[0]);
+    const parserIndex = calls.indexOf(parserCalls[0]);
+    if (previewHandlerIndex !== previewIndex - 1) problems.push("workspace preview host handling must immediately precede its reserved 404 mount");
+    if (proofIndex !== previewIndex + 1) problems.push("proof admission must immediately follow the reserved workspace preview mount");
+    if (parserIndex !== proofIndex + 1) problems.push("proof admission must immediately precede the first body parser");
+    if (proofCalls[0].argument_count !== 1) problems.push("proof admission must use the single-argument app.use form");
+    if (previewHandlerCalls[0].start >= proofCalls[0].start) problems.push("workspace preview host handling must precede proof admission");
+    if (proofCalls[0].start >= parserCalls[0].start) problems.push("proof admission must run before body parsing");
+  }
+
+  const proofCall = proofCalls[0];
+  if (proofCall) {
+    const proofTokenIndex = tokens.findIndex((token) => token.start === proofCall.start);
+    let guardMatches = 0;
+    for (let index = 0; index < proofTokenIndex; index += 1) {
+      if (tokens[index].value !== "if" || tokens[index + 1]?.value !== "(") continue;
+      const conditionEnd = findMatchingToken(tokens, index + 1, "(", ")");
+      if (conditionEnd < 0 || normalizedTokens(tokens, source, index + 2, conditionEnd) !== policy.mount_guard) continue;
+      if (tokens[conditionEnd + 1]?.value !== "{") continue;
+      const bodyEnd = findMatchingToken(tokens, conditionEnd + 1, "{", "}");
+      if (bodyEnd > proofTokenIndex) guardMatches += 1;
+    }
+    if (guardMatches !== 1) problems.push("proof admission must be mounted once inside the exact configured session-auth guard");
+  }
+
+  const actorCalls = calls.filter((call) => call.expression.startsWith("actorMiddleware("));
+  if (actorCalls.length !== 1 || !proofCall || actorCalls[0].start <= proofCall.start) {
+    problems.push("proof admission must precede the existing actor resolver");
+  }
+  return problems;
+}
+
+function validateTransportAdmissionRecord(record, policy, headInventory, headContents) {
+  const problems = [];
+  if (!record) return ["missing reviewed_transport_admissions record"];
+  if (record.id !== policy.id) problems.push("record id does not match the trusted transport-admission capability");
+  if (record.mount_source_path !== policy.source_path) problems.push("mount_source_path does not match trusted policy");
+  if (record.mount_receiver !== policy.receiver) problems.push("mount_receiver does not match trusted policy");
+  if (record.mount_expression !== policy.mount_expression) problems.push("mount_expression does not match trusted policy");
+  if (record.mount_guard !== policy.mount_guard) problems.push("mount_guard does not match trusted policy");
+  if (record.order_after !== policy.order_after) problems.push("order_after does not match trusted policy");
+  if (record.order_before !== policy.order_before) problems.push("order_before does not match trusted policy");
+  if (record.factory_path !== policy.factory_path) problems.push("factory_path does not match trusted policy");
+  if (record.factory_export !== policy.factory_export) problems.push("factory_export does not match trusted policy");
+  if (record.factory_sha256 !== policy.factory_sha256) problems.push("factory_sha256 does not match trusted policy");
+  if (record.rust_proof_owner !== policy.rust_proof_owner) problems.push("rust_proof_owner does not match trusted policy");
+  for (const field of ["mount_source_sha256", "compatibility_boundary", "retirement_criterion", "reviewer", "review_reference"]) {
+    if (typeof record[field] !== "string" || !record[field].trim()) problems.push(`${field} is required`);
+  }
+  if (record.review_status !== "reviewed") problems.push('review_status must be "reviewed"');
+
+  const mountSource = headContents.get(policy.source_path);
+  const factorySource = headContents.get(policy.factory_path);
+  const manifestMountSource = headInventory.source_manifest.find((entry) => entry.path === policy.source_path);
+  const manifestFactorySource = headInventory.source_manifest.find((entry) => entry.path === policy.factory_path);
+  if (!mountSource || !manifestMountSource) problems.push("trusted mount source is absent from the candidate inventory");
+  else {
+    if (manifestMountSource.sha256 !== mountSource.sha256) problems.push("mount source content hash disagrees with the candidate inventory");
+    if (record.mount_source_sha256 !== mountSource.sha256) problems.push("mount_source_sha256 does not match candidate source");
+    problems.push(...validateTransportAdmissionSource(policy, mountSource.content, policy.source_path));
+  }
+  if (!factorySource || !manifestFactorySource) problems.push("trusted factory source is absent from the candidate inventory");
+  else {
+    if (manifestFactorySource.sha256 !== factorySource.sha256) problems.push("factory source content hash disagrees with the candidate inventory");
+    if (factorySource.sha256 !== policy.factory_sha256) problems.push("factory source hash does not match the trusted allowlist");
+  }
+  return problems;
 }
 
 function recordMap(records) {
@@ -897,7 +1064,7 @@ function compareMigrationManifests(baseInventory, headInventory, baseContents, h
   return { failures, added, changed, deleted };
 }
 
-function compareInventories(baseInventory, headInventory, baseContents, headContents) {
+function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents, headContents, trustedAdmissions) {
   const failures = [];
   const addedFiles = [];
   const changedFiles = [];
@@ -954,7 +1121,66 @@ function compareInventories(baseInventory, headInventory, baseContents, headCont
     const added = count - (oldSurfaceCounts.get(signature) ?? 0);
     if (added > 0) addedSurfaces.push({ signature, count: added });
   }
-  for (const surface of addedSurfaces) failures.push(`new Node authority surface is forbidden by the ratchet: ${surface.signature}`);
+
+  const hasTransportRecords = Object.hasOwn(headInventory, "reviewed_transport_admissions");
+  const transportRecords = headInventory.reviewed_transport_admissions;
+  if (hasTransportRecords && !Array.isArray(transportRecords)) {
+    failures.push("reviewed_transport_admissions must be an array");
+  }
+  const normalizedTransportRecords = Array.isArray(transportRecords) ? transportRecords : [];
+  const transportIds = normalizedTransportRecords.map((record) => record?.id).filter((value) => typeof value === "string");
+  for (const id of new Set(transportIds.filter((value, index) => transportIds.indexOf(value) !== index))) {
+    failures.push(`duplicate reviewed_transport_admissions record: ${id}`);
+  }
+
+  const headAdmissionSurfaces = headInventory.structural_surfaces.filter((surface) => surface.transport_admission);
+  const admissionSurfacesById = new Map();
+  for (const surface of headAdmissionSurfaces) {
+    const values = admissionSurfacesById.get(surface.transport_admission) ?? [];
+    values.push(surface);
+    admissionSurfacesById.set(surface.transport_admission, values);
+  }
+  const transportRecordsById = new Map(normalizedTransportRecords.map((record) => [record?.id, record]));
+  const allowedTransportSurfaceSignatures = new Set();
+  const allowedTransportAdmissions = [];
+  for (const [id, policy] of Object.entries(trustedAdmissions)) {
+    const surfacesForId = admissionSurfacesById.get(id) ?? [];
+    const record = transportRecordsById.get(id);
+    if (surfacesForId.length === 0 && record) failures.push(`stale reviewed_transport_admissions record: ${id}`);
+    if (surfacesForId.length > 1) failures.push(`${id}: trusted transport-admission mount must appear exactly once`);
+    if (surfacesForId.length === 0) continue;
+    if (!record) {
+      failures.push(`${id}: missing reviewed_transport_admissions record`);
+      continue;
+    }
+    const problems = validateTransportAdmissionRecord(record, policy, headInventory, headContents);
+    const surface = surfacesForId[0];
+    if (surface.type !== "middleware_mount" || surface.source !== policy.source_path
+      || surface.receiver !== policy.receiver || surface.expression !== policy.mount_expression) {
+      problems.push("generated middleware surface does not match the trusted mount identity");
+    }
+    if (problems.length) {
+      failures.push(`${id}: ${problems.join("; ")}`);
+      continue;
+    }
+    allowedTransportSurfaceSignatures.add(surface.signature);
+    allowedTransportAdmissions.push({ id, source_path: policy.source_path, signature: surface.signature });
+  }
+  for (const record of normalizedTransportRecords) {
+    if (typeof record?.id !== "string" || !Object.hasOwn(trustedAdmissions, record.id)) {
+      failures.push(`untrusted reviewed_transport_admissions record: ${record?.id ?? "<missing id>"}`);
+    }
+  }
+  for (const surface of headAdmissionSurfaces) {
+    if (!Object.hasOwn(trustedAdmissions, surface.transport_admission)) {
+      failures.push(`untrusted transport-admission surface: ${surface.transport_admission}`);
+    }
+  }
+
+  for (const surface of addedSurfaces) {
+    if (allowedTransportSurfaceSignatures.has(surface.signature) && surface.count === 1) continue;
+    failures.push(`new Node authority surface is forbidden by the ratchet: ${surface.signature}`);
+  }
 
   const oldUnknown = new Set(baseInventory.unknown.map((entry) => `${entry.type}|${entry.source}|${entry.expression ?? ""}`));
   const addedUnknown = headInventory.unknown.filter((entry) => !oldUnknown.has(`${entry.type}|${entry.source}|${entry.expression ?? ""}`));
@@ -967,9 +1193,17 @@ function compareInventories(baseInventory, headInventory, baseContents, headCont
   failures.push(...migrations.failures);
   return {
     failures, added_files: addedFiles, changed_files: changedFiles, deleted_files: deletedFiles,
-    added_surfaces: addedSurfaces, added_unknown: addedUnknown,
+    added_surfaces: addedSurfaces, allowed_transport_admissions: allowedTransportAdmissions, added_unknown: addedUnknown,
     migration_added: migrations.added, migration_changed: migrations.changed, migration_deleted: migrations.deleted,
   };
+}
+
+function compareInventories(baseInventory, headInventory, baseContents, headContents) {
+  return compareInventoriesWithPolicy(baseInventory, headInventory, baseContents, headContents, TRUSTED_TRANSPORT_ADMISSIONS);
+}
+
+function compareInventoriesWithTransportPolicyForTests(baseInventory, headInventory, baseContents, headContents, policy) {
+  return compareInventoriesWithPolicy(baseInventory, headInventory, baseContents, headContents, { [policy.id]: policy });
 }
 
 function inventoryContentsFromRoot(rootPath, inventory) {
@@ -1028,7 +1262,11 @@ function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (!["generate", "check", "compare"].includes(options.command)) throw new Error(`${usage()}\n`);
   const prior = readInventory(options.inventoryPath);
-  const current = buildInventory(options.root, prior?.reviewed_node_changes ?? []);
+  const current = buildInventory(
+    options.root,
+    prior?.reviewed_node_changes ?? [],
+    prior?.reviewed_transport_admissions,
+  );
   if (options.command === "generate") {
     writeInventory(options.inventoryPath, current, prior);
     process.stdout.write(`Generated ${options.inventory} (${current.source_manifest.length} source files, ${current.structural_surfaces.length} structural surfaces, ${current.unknown.length} unknowns).\n`);
@@ -1072,11 +1310,9 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(file
 export {
   buildInventory,
   buildInventoryFromSources,
-  compareInventories,
-  compareMigrationManifests,
+  compareInventories, compareInventoriesWithTransportPolicyForTests, compareMigrationManifests,
   journalAppendProblems,
   scanSource,
   sha256,
-  stableGeneratedPart,
-  validateBoundaryRecord
+  stableGeneratedPart, TRUSTED_TRANSPORT_ADMISSIONS, validateBoundaryRecord
 };

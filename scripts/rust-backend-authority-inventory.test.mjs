@@ -4,7 +4,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { buildInventory, compareInventories, scanSource, sha256 } from "./rust-backend-authority-inventory.mjs";
+import { fileURLToPath } from "node:url";
+import {
+  buildInventory,
+  compareInventories,
+  compareInventoriesWithTransportPolicyForTests,
+  scanSource,
+  sha256,
+  TRUSTED_TRANSPORT_ADMISSIONS,
+} from "./rust-backend-authority-inventory.mjs";
 
 
 function temporaryTree(t) {
@@ -43,6 +51,94 @@ function boundaryRecord(sourcePath, baseHash, headHash, overrides = {}) {
     review_status: "reviewed",
     ...overrides,
   };
+}
+
+const SESSION_ADMISSION_ID = "rust-native-session-proof-v1";
+const sessionAdmissionFixtureFactory = `export function nativeSessionAssertionMiddleware(options) {
+  return (request, _response, next) => next();
+}
+`;
+
+function sessionAdmissionAppSource({ mount = true, mountAfterParser = false, extra = "" } = {}) {
+  const middlewareMount = `if (opts.rustPublicIngress?.sessionAuth) {
+    app.use(nativeSessionAssertionMiddleware({
+      key: opts.rustPublicIngress.sessionAuth.assertionKey,
+    }));
+  }
+`;
+  const bodyParser = "app.use(express.json({}));\n";
+  const orderedBody = mountAfterParser
+    ? `${bodyParser}${mount ? middlewareMount : ""}`
+    : `${mount ? middlewareMount : ""}${bodyParser}`;
+  return `import { nativeSessionAssertionMiddleware } from "../auth/native-session-assertion.js";
+const app = express();
+app.use(async (req, res, next) => {
+  if (await workspacePreview.handlePreviewHostRequest(req, res)) return;
+  next();
+});
+app.use("/workspace-preview", (_req, res) => res.status(404).send("Not found"));
+${orderedBody}app.use(actorMiddleware(db, options));
+${extra}
+`;
+}
+
+function sessionAdmissionReviewRecord(policy, appSource, overrides = {}) {
+  return {
+    id: policy.id,
+    mount_source_path: policy.source_path,
+    mount_source_sha256: sha256(appSource),
+    mount_receiver: policy.receiver,
+    mount_expression: policy.mount_expression,
+    mount_guard: policy.mount_guard,
+    order_after: policy.order_after,
+    order_before: policy.order_before,
+    factory_path: policy.factory_path,
+    factory_export: policy.factory_export,
+    factory_sha256: policy.factory_sha256,
+    rust_proof_owner: policy.rust_proof_owner,
+    compatibility_boundary: "Node verifies only the Rust-signed ingress proof and binds request identity; Rust owns session proof issuance and business authorization.",
+    retirement_criterion: "Remove this adapter when Node no longer receives native public-ingress requests.",
+    reviewer: "auth-reviewer@example.test",
+    review_reference: "Reviewed transport admission policy test fixture",
+    review_status: "reviewed",
+    ...overrides,
+  };
+}
+
+function compareSessionAdmissionFixture(t, options = {}) {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const sourcePath = "server/src/bootstrap/create-http-app.ts";
+  const factoryPath = "server/src/auth/native-session-assertion.ts";
+  const baseSource = sessionAdmissionAppSource({ mount: false });
+  const headSource = options.headSource ?? sessionAdmissionAppSource(options.appOptions);
+  const factorySource = options.factorySource ?? sessionAdmissionFixtureFactory;
+  const trustedPolicy = {
+    ...TRUSTED_TRANSPORT_ADMISSIONS[SESSION_ADMISSION_ID],
+    factory_sha256: sha256(sessionAdmissionFixtureFactory),
+  };
+
+  put(baseRoot, sourcePath, baseSource);
+  put(headRoot, sourcePath, headSource);
+  put(headRoot, factoryPath, factorySource);
+  const base = buildInventory(baseRoot);
+  const nodeRecords = [
+    boundaryRecord(sourcePath, sha256(baseSource), sha256(headSource), {
+      node_role: "transport_adapter",
+      change_kind: "modified_node_compatibility",
+    }),
+    boundaryRecord(factoryPath, null, sha256(factorySource)),
+  ];
+  const admissionRecord = sessionAdmissionReviewRecord(trustedPolicy, headSource, options.recordOverrides);
+  const head = buildInventory(headRoot, nodeRecords, options.omitAdmissionRecord ? [] : [admissionRecord]);
+  const result = compareInventoriesWithTransportPolicyForTests(
+    base,
+    head,
+    contentsFor(baseRoot, base),
+    contentsFor(headRoot, head),
+    trustedPolicy,
+  );
+  return { result, base, head, trustedPolicy, admissionRecord };
 }
 
 test("inventory recognizes Express and direct identity routes without mistaking ordinary map updates for DB writers", () => {
@@ -181,6 +277,105 @@ test("new transport adapter requires a reviewed boundary and cannot add Node aut
   const headWithRoute = buildInventory(headRoot, [boundaryRecord(sourcePath, null, routeHash)]);
   const blocked = compareInventories(base, headWithRoute, contentsFor(baseRoot, base), contentsFor(headRoot, headWithRoute));
   assert(blocked.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+});
+
+test("trusted-base policy pins one exact session-proof admission factory and keeps its mount visible", (t) => {
+  assert.equal(
+    TRUSTED_TRANSPORT_ADMISSIONS[SESSION_ADMISSION_ID].factory_sha256,
+    "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5",
+  );
+  const { result, head } = compareSessionAdmissionFixture(t);
+  assert.deepEqual(result.failures, []);
+  assert.deepEqual(result.allowed_transport_admissions.map((entry) => entry.id), [SESSION_ADMISSION_ID]);
+  assert(result.added_surfaces.some((surface) => surface.signature.includes("nativeSessionAssertionMiddleware")));
+  assert(head.structural_surfaces.some((surface) => surface.transport_admission === SESSION_ADMISSION_ID));
+});
+
+test("session-proof transport admission rejects a changed pinned factory hash and an altered mount-source hash", (t) => {
+  const changedFactory = compareSessionAdmissionFixture(t, {
+    factorySource: `${sessionAdmissionFixtureFactory}// changed factory bytes\n`,
+  });
+  assert(changedFactory.result.failures.some((failure) => failure.includes("factory source hash does not match the trusted allowlist")));
+
+  const changedMountRecord = compareSessionAdmissionFixture(t, {
+    recordOverrides: { mount_source_sha256: "0".repeat(64) },
+  });
+  assert(changedMountRecord.result.failures.some((failure) => failure.includes("mount_source_sha256 does not match candidate source")));
+});
+
+test("session-proof transport admission rejects an altered callee, key option, or order", (t) => {
+  const original = sessionAdmissionAppSource();
+  const alteredCallee = compareSessionAdmissionFixture(t, {
+    headSource: original.replace("nativeSessionAssertionMiddleware({", "unreviewedMiddleware({"),
+  });
+  assert(alteredCallee.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(alteredCallee.result.failures.some((failure) => failure.includes("stale reviewed_transport_admissions record")));
+
+  const alteredKey = compareSessionAdmissionFixture(t, {
+    headSource: original.replace("sessionAuth.assertionKey", "legacyConfig.sessionKey"),
+  });
+  assert(alteredKey.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(alteredKey.result.failures.some((failure) => failure.includes("stale reviewed_transport_admissions record")));
+
+  const wrongOrder = compareSessionAdmissionFixture(t, {
+    appOptions: { mountAfterParser: true },
+  });
+  assert(wrongOrder.result.failures.some((failure) => failure.includes("must immediately follow the reserved workspace preview mount")));
+  assert(wrongOrder.result.failures.some((failure) => failure.includes("must immediately precede the first body parser")));
+
+  const duplicateMount = compareSessionAdmissionFixture(t, {
+    appOptions: {
+      extra: `if (opts.rustPublicIngress?.sessionAuth) {
+  app.use(nativeSessionAssertionMiddleware({
+    key: opts.rustPublicIngress.sessionAuth.assertionKey,
+  }));
+}
+`,
+    },
+  });
+  assert(duplicateMount.result.failures.some((failure) => failure.includes("must appear exactly once")));
+});
+
+test("one reviewed session-proof mount cannot authorize a Node database writer or unrelated middleware", (t) => {
+  const writer = compareSessionAdmissionFixture(t, {
+    appOptions: { extra: "db.update(users).set({ active: true });\n" },
+  });
+  assert(writer.head.structural_surfaces.some((surface) => surface.type === "database_write_candidate"));
+  assert(writer.head.structural_surfaces.some((surface) => surface.type === "database_call_candidate"));
+  assert(writer.result.failures.some((failure) => failure.includes("db-write-candidate")));
+  assert(writer.result.failures.some((failure) => failure.includes("db-call")));
+
+  const unrelatedMount = compareSessionAdmissionFixture(t, {
+    appOptions: { extra: 'app.use("/unrelated", unrelatedMiddleware);\n' },
+  });
+  assert(unrelatedMount.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(unrelatedMount.result.added_surfaces.some((surface) => surface.signature.includes("/unrelated")));
+});
+
+test("session-proof transport admission requires a current exact reviewed record", (t) => {
+  const missing = compareSessionAdmissionFixture(t, { omitAdmissionRecord: true });
+  assert(missing.result.failures.some((failure) => failure.includes("missing reviewed_transport_admissions record")));
+
+  const wrongReceiver = compareSessionAdmissionFixture(t, {
+    recordOverrides: { mount_receiver: "router" },
+  });
+  assert(wrongReceiver.result.failures.some((failure) => failure.includes("mount_receiver does not match trusted policy")));
+});
+
+test("inventory regeneration preserves optional transport-admission review records", (t) => {
+  const root = temporaryTree(t);
+  put(root, "server/src/main.ts", "export const main = true;\n");
+  const inventoryPath = path.join(root, "authority.json");
+  const reviewedRecord = [{ id: SESSION_ADMISSION_ID, reviewer: "reviewer@example.test" }];
+  fs.writeFileSync(inventoryPath, `${JSON.stringify({ reviewed_transport_admissions: reviewedRecord })}\n`);
+  const checker = fileURLToPath(new URL("./rust-backend-authority-inventory.mjs", import.meta.url));
+
+  const generated = spawnSync(process.execPath, [checker, "generate", "--root", root, "--inventory", inventoryPath], { encoding: "utf8" });
+  assert.equal(generated.status, 0, generated.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(inventoryPath, "utf8")).reviewed_transport_admissions, reviewedRecord);
+
+  const checked = spawnSync(process.execPath, [checker, "check", "--root", root, "--inventory", inventoryPath], { encoding: "utf8" });
+  assert.equal(checked.status, 0, checked.stderr);
 });
 
 test("SQL migrations can be appended with an append-only journal, while existing migration history is immutable", (t) => {

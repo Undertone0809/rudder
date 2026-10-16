@@ -58522,19 +58522,5 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [
-    {
-      "path": "packages/agent-runtime-utils/src/native-process-runner.ts",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "transport_adapter",
-      "base_sha256": "447806880d82428aa5e5bf47d4dfbc3087f66c0d694662426ca9132a309ff51e",
-      "head_sha256": "cf886f5e03f4bcccbf4142176ff76af46ed5ab8061aabb1b5a96ad02076584ae",
-      "rust_authority": "native/bins/rudder-process-host/src/main.rs::StartProcess/MonitorEvent::Exited owns spawn, wait, cleanup and receipt",
-      "compatibility_boundary": "Validate Rust lifecycle identity and map a unique verified failed/child_exit into the existing RunProcessResult only after cleanup and receipt proof. No post-acceptance Node fallback or execution ownership.",
-      "retirement_criterion": "Replace this TypeScript transport when native provider adapters consume Rust process results directly.",
-      "reviewer": "/root/auth_stage_review",
-      "review_reference": "doc/plans/2026-10-16-native-process-exit-acceptance.md; independent stage ACCEPT after PID and success/Stop evidence validation on 2026-10-16",
-      "review_status": "reviewed"
-    }
-  ]
+  "reviewed_node_changes": []
 }
