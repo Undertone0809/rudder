@@ -154,7 +154,9 @@ pub(super) fn parse_agent_config(
     // Reject before admission instead of silently executing a planning request
     // as a normal turn. Enable only with a verified native protocol mapping.
     if chat_plan_mode {
-        return Err(unsupported("planning mode has no verified native protocol mapping"));
+        return Err(unsupported(
+            "planning mode has no verified native protocol mapping",
+        ));
     }
 
     let cwd_override = optional_string(object, "cwd")?

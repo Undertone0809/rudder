@@ -64,6 +64,7 @@ pub async fn claim_with_preflight(
 
     let mut tx = pool.begin().await?;
     super::super::auth::authorize_org(&mut tx, actor, &organization_id).await?;
+    super::super::budget::lock_policy_state(&mut tx, &organization_id).await?;
     let hint = sqlx::query(
         "SELECT agent_id::text AS agent_id,
                 chat_conversation_id::text AS conversation_id,
@@ -383,7 +384,7 @@ pub async fn claim_with_preflight(
                     && checkpoint.turn_id().is_none()
                     && phase.as_deref() == Some(checkpoint.phase().as_str())
                     && session_reuse_scope == "explicit"
-                    && session_id_before.as_deref() == Some(thread_id)
+                    && session_id_before.is_none()
                     && session_intent
                         .get("kind")
                         .and_then(serde_json::Value::as_str)
@@ -478,6 +479,8 @@ pub async fn claim_with_preflight(
         return Err(http(409, "Run execution lease is stale"));
     }
 
+    super::super::budget::ensure_unknown_cost_allowed(&mut tx, &organization_id, &agent_id).await?;
+
     let generation_owner_token: String = sqlx::query_scalar("SELECT gen_random_uuid()::text")
         .fetch_one(&mut *tx)
         .await?;
@@ -523,7 +526,7 @@ pub async fn claim_with_preflight(
 
     let run_updated = sqlx::query(
         "UPDATE heartbeat_runs
-         SET native_admission_hold=true, session_id_after=$7, updated_at=clock_timestamp()
+         SET native_admission_hold=true, updated_at=clock_timestamp()
          WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid
            AND chat_conversation_id=$4::uuid AND chat_generation_id=$5::uuid
            AND execution_authority='native_rust' AND native_admission_hold=false
@@ -536,7 +539,6 @@ pub async fn claim_with_preflight(
     .bind(&conversation_id)
     .bind(&generation_id)
     .bind(&run_owner)
-    .bind(checkpoint.thread_id())
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -544,7 +546,27 @@ pub async fn claim_with_preflight(
         return Err(http(409, "Run execution lease expired during first claim"));
     }
 
+    // Open the primary span before any provider effect, in the same claim
+    // transaction. A later finalizer must seal this exact owned span.
+    let span_id: String = sqlx::query_scalar(
+        "INSERT INTO run_runtime_spans
+         (org_id,run_id,binding_id,segment_id,attempt_id,attempt_ref,attempt_epoch,
+          owner_token,ordinal,relation,state)
+         VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$5::text,$6,$7,$8,'primary','open') RETURNING id::text",
+    )
+    .bind(&organization_id)
+    .bind(&run_id)
+    .bind(&binding.binding_id)
+    .bind(&binding.segment_id)
+    .bind(&attempt_id)
+    .bind(run_attempt_epoch)
+    .bind(&run_owner)
+    .bind(attempt_index)
+    .fetch_one(&mut *tx)
+    .await?;
+
     let identity_details = json!({
+        "spanId": span_id,
         "conversationId": conversation_id,
         "generationId": generation_id,
         "runId": run_id,

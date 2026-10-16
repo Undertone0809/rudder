@@ -10,8 +10,36 @@ async fn exact_admitted_input_excludes_chat_history_and_persists_thread_turn_wit
     let (result, host) =
         execute_on_worker(&database, host, actor, run_id.clone(), attempt_id.clone()).await;
     let observation = result.expect("synthetic completed turn should be observed");
-    assert_eq!(observation.provider_terminal.thread_id, THREAD);
-    assert_eq!(observation.provider_terminal.turn_id, TURN);
+    assert_eq!(observation.turn_receipt.thread_id(), THREAD);
+    assert_eq!(observation.turn_receipt.turn_id(), TURN);
+    assert_eq!(
+        observation.turn_receipt.final_text(),
+        Some("synthetic answer")
+    );
+    let usage = observation
+        .turn_receipt
+        .usage()
+        .expect("typed token usage receipt");
+    assert_eq!(usage.input_tokens(), 5);
+    assert_eq!(usage.cached_input_tokens(), 2);
+    assert_eq!(usage.output_tokens(), 7);
+    assert_eq!(usage.reasoning_output_tokens(), 3);
+    assert_eq!(usage.total_tokens(), 12);
+    let cleanup = observation
+        .cleanup_receipt
+        .as_ref()
+        .expect("typed cleanup receipt");
+    assert!(cleanup.matches_execution(
+        &run_id,
+        &attempt_id,
+        observation.fence.run_execution_owner_token()
+    ));
+    assert!(cleanup.proves_quiescence_for(&observation.turn_receipt));
+    assert!(
+        cleanup
+            .evidence_fingerprint()
+            .starts_with("codex-owned-cleanup-v1:")
+    );
     assert!(
         observation.cleanup_proven,
         "accepted host must prove child cleanup"
@@ -55,7 +83,7 @@ async fn exact_admitted_input_excludes_chat_history_and_persists_thread_turn_wit
     assert_eq!(frame["params"]["clientUserMessageId"], source_message);
 
     let (run_status, run_hold, generation_status, generation_hold, phase, checkpoint, thread_id, turn_id, segment_thread): (
-        String, bool, String, bool, String, Value, String, String, Option<String>,
+        String, bool, String, bool, String, Value, String, Option<String>, Option<String>,
     ) = sqlx::query_as(
         "SELECT r.status, r.native_admission_hold, g.status, g.native_admission_hold,
                 a.protocol_phase, a.checkpoint_json, g.provider_thread_id, r.session_id_after,
@@ -89,7 +117,7 @@ async fn exact_admitted_input_excludes_chat_history_and_persists_thread_turn_wit
     assert_eq!(checkpoint["threadId"], THREAD);
     assert_eq!(checkpoint["turnId"], TURN);
     assert_eq!(thread_id, THREAD);
-    assert_eq!(turn_id, THREAD);
+    assert_eq!(turn_id, None);
     assert_eq!(segment_thread.as_deref(), Some(THREAD));
 }
 
@@ -103,8 +131,8 @@ async fn terminal_notification_before_turn_response_is_buffered_and_observed() {
         execute_on_worker(&database, host, actor, run_id.clone(), attempt_id.clone()).await;
     let observation = result.expect("early terminal must wait for its matching turn response");
     assert_eq!(
-        observation.provider_terminal.status,
-        rudder_native_chat_executor::ProviderStatus::Completed
+        observation.turn_receipt.status(),
+        rudder_codex_app_server::TurnStatus::Completed
     );
     assert!(observation.cleanup_proven);
     let phase: String = sqlx::query_scalar(

@@ -110,3 +110,51 @@ pub(super) async fn ensure_not_blocked(
     }
     Ok(())
 }
+
+/// This private Codex path has no authoritative billed-cost settlement yet.
+/// Recheck at claim, each effect authorization, and finalization. Missing cost
+/// must not silently bypass an applicable hard-stop policy.
+pub(super) async fn ensure_unknown_cost_allowed(
+    tx: &mut Tx<'_>,
+    organization_id: &str,
+    agent_id: &str,
+) -> Result<()> {
+    if has_unsettleable_policy(tx, organization_id, agent_id).await? {
+        return Err(http(
+            409,
+            "Native Chat cannot settle this billed-cost hard-stop policy",
+        ));
+    }
+    Ok(())
+}
+
+/// Acquire before Chat/Agent/Run row locks. Policy DML uses the same database
+/// trigger, including inserts into an otherwise empty policy set.
+pub(super) async fn lock_policy_state(tx: &mut Tx<'_>, organization_id: &str) -> Result<()> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('rudder:native-chat:budget:' || $1,0))",
+    )
+    .bind(organization_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn has_unsettleable_policy(
+    tx: &mut Tx<'_>,
+    organization_id: &str,
+    agent_id: &str,
+) -> Result<bool> {
+    let governed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM budget_policies
+         WHERE org_id=$1::uuid AND is_active=true AND hard_stop_enabled=true
+           AND metric='billed_cents'
+           AND ((scope_type='organization' AND scope_id=$1::uuid)
+             OR (scope_type='agent' AND scope_id=$2::uuid)))",
+    )
+    .bind(organization_id)
+    .bind(agent_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(governed)
+}

@@ -142,7 +142,7 @@ pub(super) async fn lock_current_execution(
                 chat_generation_id::text AS generation_id,
                 execution_authority, native_admission_hold, status,
                 execution_owner_token, scene, target_type, target_id,
-                process_pid, process_started_at, process_exited_at, session_id_after,
+                process_pid, process_started_at, process_exited_at, session_id_before, session_id_after,
                 context_snapshot
          FROM heartbeat_runs
          WHERE org_id=$1::uuid AND id=$2::uuid
@@ -285,8 +285,10 @@ pub(super) async fn lock_current_execution(
         || generation_turn.as_deref() != checkpoint.turn_id()
         || run
             .try_get::<Option<String>, _>("session_id_after")?
-            .as_deref()
-            != checkpoint.thread_id()
+            .is_some()
+        || run
+            .try_get::<Option<String>, _>("session_id_before")?
+            .is_some()
     {
         return Err(http(409, "Native Chat checkpoint identity is inconsistent"));
     }

@@ -338,7 +338,7 @@ async fn admission_resumes_exact_open_binding_thread_and_claim_preserves_it() {
     assert_eq!(intent["reuseScope"], "explicit");
     assert_eq!(intent["sessionId"], OPAQUE_THREAD);
     assert_eq!(reuse_scope, "explicit");
-    assert_eq!(session_before.as_deref(), Some(OPAQUE_THREAD));
+    assert!(session_before.is_none());
     let (phase, checkpoint_thread, provider_thread, resume_source): (
         String,
         Option<String>,

@@ -245,16 +245,15 @@ pub async fn advance_checkpoint(
 
     let run_updated = sqlx::query(
         "UPDATE heartbeat_runs
-         SET session_id_after=$4, updated_at=clock_timestamp()
+         SET updated_at=clock_timestamp()
          WHERE org_id=$1::uuid AND id=$2::uuid AND chat_generation_id=$3::uuid
            AND execution_authority='native_rust' AND native_admission_hold=true
-           AND execution_owner_token=$5
+           AND execution_owner_token=$4
            AND COALESCE(execution_lease_expires_at > clock_timestamp(), false)",
     )
     .bind(&fence.organization_id)
     .bind(&fence.run_id)
     .bind(&fence.generation_id)
-    .bind(next.thread_id())
     .bind(&fence.run_owner_token)
     .execute(&mut *tx)
     .await?

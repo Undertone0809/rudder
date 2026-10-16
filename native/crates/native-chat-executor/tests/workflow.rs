@@ -4,6 +4,10 @@
 mod dispatch_guards;
 #[path = "workflow/failures.rs"]
 mod failures;
+#[path = "workflow/finalization.rs"]
+mod finalization;
+#[path = "workflow/finalization_guards.rs"]
+mod finalization_guards;
 #[path = "workflow/fixture.rs"]
 mod fixture;
 #[path = "workflow/g6_lease_and_cancel.rs"]

@@ -28,6 +28,8 @@ fn with_fake_host(root: &Path, host: &Path) -> OwnedTransport {
             cwd: path.clone(),
             env: BTreeMap::new(),
             request_id: "external-test".into(),
+            run_id: "external-test-run".into(),
+            attempt_id: "external-test".into(),
             owner_token: "external-test-owner".into(),
             runtime_root: path,
         },
@@ -67,6 +69,8 @@ fn launch(root: &Path, script: &str) -> OwnedTransport {
             cwd: path.clone(),
             env: BTreeMap::new(),
             request_id: "external-test".into(),
+            run_id: "external-test-run".into(),
+            attempt_id: "external-test".into(),
             owner_token: "external-test-owner".into(),
             runtime_root: path,
         },
@@ -129,6 +133,10 @@ fn external_host_preserves_receipts_rpc_and_cleanup() {
             break;
         }
     }
+    let cleanup = transport
+        .take_cleanup_receipt()
+        .expect("typed external-host cleanup receipt");
+    assert!(cleanup.matches_execution("external-test-run", "external-test", "external-test-owner"));
 }
 
 #[test]
