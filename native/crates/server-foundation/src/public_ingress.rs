@@ -8,6 +8,8 @@ use crate::public_ingress_websocket::PublicIngressWebSocketProxy;
 use actix_web::guard;
 use uuid::Uuid;
 
+mod runtime_bindings;
+
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
 const LLM_REFLECTION_AUTH_PATH: &str = PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH;
 const LLM_REFLECTION_ACTION: &str = "llm.reflection.read";
@@ -59,6 +61,14 @@ impl PublicIngressRuntime {
                 .route(
                     "/api/orgs/{org_id}/members/directory",
                     web::get().to(member_directory),
+                )
+                .route(
+                    "/api/orgs/{org_id}/chats/{chat_id}/runtime-binding",
+                    web::get().to(runtime_bindings::current),
+                )
+                .route(
+                    "/api/orgs/{org_id}/runtime-bindings/{binding_id}",
+                    web::get().to(runtime_bindings::historical),
                 )
                 .route(
                     "/llms/agent-configuration.txt",
@@ -140,13 +150,14 @@ async fn proxy_request(
     // optional trailing slash. Never let a near-match under this namespace
     // fall back to Node in required-Rust mode: exact migrated routes are
     // handled above, and every remaining /llms path is deliberately closed.
-    if request
-        .uri()
-        .path()
-        .trim_start_matches('/')
-        .split('/')
-        .next()
-        .is_some_and(|segment| segment.eq_ignore_ascii_case("llms"))
+    if runtime_bindings::reserved_path(request.uri().path())
+        || request
+            .uri()
+            .path()
+            .trim_start_matches('/')
+            .split('/')
+            .next()
+            .is_some_and(|segment| segment.eq_ignore_ascii_case("llms"))
     {
         return state
             .foundation
@@ -562,6 +573,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::{env, str::FromStr};
     use uuid::Uuid;
+
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
     const INTERNAL: &str = "fedcba9876543210fedcba9876543210";
 

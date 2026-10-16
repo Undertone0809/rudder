@@ -157,6 +157,33 @@ pub async fn execute(
     }
 }
 
+/// Public projection only, in the caller's authorization snapshot. The caller
+/// must revalidate its native credential in this same read-only transaction.
+/// Private reads and mutation requests are deliberately rejected here.
+pub async fn execute_public_read_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    request: &Request,
+) -> Result<Value> {
+    let organization_id = validation::canonical_uuid(organization_id, "organization id")?;
+    if actor.organization_id() != organization_id {
+        return Err(http(403, "Organization access denied"));
+    }
+    let value = match request {
+        Request::PublicCurrent { target } => {
+            let id = validation::canonical_uuid(&target.target_id, "target id")?;
+            reads::current_tx(tx, actor, &organization_id, &id).await?
+        }
+        Request::PublicRead { binding_id } => {
+            let id = validation::canonical_uuid(binding_id, "binding id")?;
+            reads::read_tx(tx, actor, &organization_id, &id).await?
+        }
+        _ => return Err(http(422, "Public runtime binding read required")),
+    };
+    Ok(projection::public_view(&value))
+}
+
 async fn authorize_chat_target_tx(
     tx: &mut Tx<'_>,
     actor: &VerifiedActor,
