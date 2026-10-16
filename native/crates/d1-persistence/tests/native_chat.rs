@@ -51,14 +51,6 @@ impl AdmissionHost {
         let operator_home = root.path().join("operator-home");
         let executable = root.path().join("bin/codex");
         let cwd = root.path().join("agent-cwd");
-        let org_key = ORG
-            .chars()
-            .filter(|character| *character != '-')
-            .take(12)
-            .collect::<String>();
-        let instructions = workspace_home
-            .join(org_key)
-            .join("workspaces/agents/codex-agent/instructions");
         let profile_home = profiles.join(ORG).join(CEO).join("default");
         let other_profile_home = profiles.join(ORG).join(WRONG_AGENT).join("default");
         for directory in [
@@ -69,7 +61,6 @@ impl AdmissionHost {
             &operator_home,
             executable.parent().expect("binary directory"),
             &cwd,
-            &instructions,
             &profile_home,
             &other_profile_home,
         ] {
@@ -83,11 +74,24 @@ impl AdmissionHost {
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
                 .expect("mark fake executable");
         }
-        fs::write(
-            instructions.join("SOUL.md"),
-            "isolated admission instructions\n",
-        )
-        .expect("seed read-only instruction fixture");
+        // Windows admission/ledger tests use the supported absent-bundle path.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let org_key = ORG
+                .chars()
+                .filter(|character| *character != '-')
+                .take(12)
+                .collect::<String>();
+            let instructions = workspace_home
+                .join(org_key)
+                .join("workspaces/agents/codex-agent/instructions");
+            fs::create_dir_all(&instructions).expect("create instruction directory");
+            fs::write(
+                instructions.join("SOUL.md"),
+                "isolated admission instructions\n",
+            )
+            .expect("seed read-only instruction fixture");
+        }
         let executable = executable
             .canonicalize()
             .expect("canonical fake executable");
