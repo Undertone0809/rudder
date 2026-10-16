@@ -22,27 +22,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .transpose()?;
     let mut startup = serde_json::to_value(runtime.startup_receipt())?;
     if let Some(public) = public.as_ref() {
-        startup["publicIngress"] = serde_json::json!({
-            "boundAddr": public.bound_addr(), "publicListener": true,
-            "directAuthorities": ["organization_member_directory"],
-            "nativeAuthentication": {
-                "authority": "native-pcp-bearer-resolver",
-                "recognizedBearerPrefix": "pcp_",
-                "supportedCredentialStores": ["board_api_keys", "agent_api_keys"],
-                "directRoutes": ["organization_member_directory"],
-                "recognizedInvalidCredentialsFailClosed": true,
-            },
-            "compatibilityAuthentication": {
-                "authority": "private-node-adapter",
-                "credentialForms": [
-                    "Better Auth cookie sessions",
-                    "local Agent JWTs",
-                    "local-trusted and local-implicit identities",
-                    "non-pcp_ bearer credentials",
-                ],
-            },
-            "unmigratedHttpAuthority": "explicit-private-node-proxy",
-        });
+        startup["publicIngress"] = public.startup_receipt();
     }
     println!("{}", serde_json::to_string(&startup)?);
     std::io::stdout().flush()?;

@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import os from "node:os";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RudderAppHandle } from "../app.js";
 import { selectAvailablePort } from "../bootstrap/port-selection.js";
 import { assertPublicIngressExposure, preparePublicIngressStartup } from "../bootstrap/public-ingress-startup.js";
@@ -11,6 +11,7 @@ const config = (overrides: Partial<Config> = {}) => ({
   host: "127.0.0.1", deploymentMode: "local_trusted", rustPublicIngressMode: "required", ...overrides,
 }) as Config;
 beforeEach(() => vi.mocked(selectAvailablePort).mockReset());
+afterEach(() => vi.unstubAllEnvs());
 
 describe("explicit public ingress startup", () => {
   it("keeps the ordinary listener and app options when off", async () => {
@@ -48,6 +49,40 @@ describe("explicit public ingress startup", () => {
   it("fails closed if private port selection collides with the public port", async () => {
     vi.mocked(selectAvailablePort).mockResolvedValue(65535);
     await expect(preparePublicIngressStartup(config(), 65535)).rejects.toThrow("distinct ports");
+  });
+
+  it("requires the effective Better Auth session secret in authenticated native mode", async () => {
+    vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    vi.stubEnv("BETTER_AUTH_SECRET", undefined);
+    vi.stubEnv("RUDDER_AGENT_JWT_SECRET", undefined);
+    vi.stubEnv("RUDDER_PUBLIC_URL", undefined);
+    await expect(preparePublicIngressStartup(config({ deploymentMode: "authenticated" }), 3100))
+      .rejects.toThrow("configured Better Auth session secret");
+
+    vi.stubEnv("BETTER_AUTH_SECRET", "exact-better-auth-secret");
+    const ingress = await preparePublicIngressStartup(config({ deploymentMode: "authenticated" }), 3100);
+    expect(ingress.appOptions.rustPublicIngress?.sessionAuth).toMatchObject({
+      kind: "better_auth",
+      secret: "exact-better-auth-secret",
+      secureCookie: false,
+    });
+  });
+
+  it("requires Desktop's separate session secret and passes the exact local-cookie mode", async () => {
+    vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    await expect(preparePublicIngressStartup(config(), 3100, { sessionSecret: "   " }))
+      .rejects.toThrow("Desktop account session secret");
+
+    const ingress = await preparePublicIngressStartup(config(), 3100, {
+      sessionSecret: "desktop-session-secret",
+      secureCookie: true,
+    });
+    expect(ingress.appOptions.rustPublicIngress?.sessionAuth).toMatchObject({
+      kind: "local_account",
+      secret: "desktop-session-secret",
+      secureCookie: true,
+    });
+    expect(ingress.nodeListenHost).toBe("127.0.0.1");
   });
 
   it("waits for public readiness before reporting the listener and rejects missing identity", async () => {

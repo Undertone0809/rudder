@@ -4,6 +4,7 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { nativeSessionAssertionMiddleware } from "../auth/native-session-assertion.js";
 import { accountSessionRequired } from "../middleware/account-session-required.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import {
@@ -129,6 +130,15 @@ export async function createHttpApp(
   app.use("/workspace-preview", (_req, res) => {
     res.status(404).type("text/plain").send("Not found");
   });
+
+  // Validate and consume the private Rust session proof before body parsing.
+  // This anchors proof freshness at Node ingress while retaining streaming
+  // request bodies and the existing Express JSON limit.
+  if (opts.rustPublicIngress?.sessionAuth) {
+    app.use(nativeSessionAssertionMiddleware({
+      key: opts.rustPublicIngress.sessionAuth.assertionKey,
+    }));
+  }
 
   app.use(express.json({
     // Organization import/export payloads can inline full portable packages.

@@ -29,16 +29,10 @@ import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
+import { nativeSessionAuthEnvironment, type RustPublicIngressOptions } from "./rust-public-ingress-config.js";
+export type { RustPublicIngressOptions } from "./rust-public-ingress-config.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
-
-export type RustPublicIngressOptions = {
-  listenAddr: string;
-  nodeUpstream: string;
-  authorizationKey: string;
-  /** Explicit numeric proxy IP list; Rust validates and owns forwarding trust. */
-  trustedProxies?: string;
-};
 
 export type RustFoundationBridgeOptions = {
   databaseUrl: string;
@@ -355,6 +349,7 @@ function createFoundationChildEnvironment(input: {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      ...nativeSessionAuthEnvironment(input.publicIngress.sessionAuth),
       ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
     } : {}),
   };

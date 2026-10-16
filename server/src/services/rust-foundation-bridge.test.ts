@@ -400,6 +400,12 @@ describe("rust foundation bridge lifecycle", () => {
       nodeUpstream: "http://127.0.0.1:3101",
       authorizationKey: "0123456789abcdef0123456789abcdef",
       trustedProxies: "192.0.2.1,::1",
+      sessionAuth: {
+        kind: "better_auth" as const,
+        secret: "test-session-secret",
+        secureCookie: true,
+        assertionKey: "0123456789abcdef0123456789abcdef",
+      },
     };
     const bridge = createBridge(fixture, { mode: "off", publicIngress });
     expect(bridge.requiresStartup).toBe(true);
@@ -411,6 +417,11 @@ describe("rust foundation bridge lifecycle", () => {
       RUDDER_NATIVE_NODE_UPSTREAM: publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: publicIngress.authorizationKey,
       RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: publicIngress.trustedProxies,
+      RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
+      RUDDER_NATIVE_SESSION_AUTH_KIND: "better_auth",
+      RUDDER_NATIVE_SESSION_AUTH_SECRET: publicIngress.sessionAuth.secret,
+      RUDDER_NATIVE_SESSION_COOKIE_SECURE: "true",
+      RUDDER_NATIVE_SESSION_ASSERTION_KEY: publicIngress.sessionAuth.assertionKey,
     });
     await bridge.close();
     expect(bridge.publicIngressBaseUrl).toBeNull();

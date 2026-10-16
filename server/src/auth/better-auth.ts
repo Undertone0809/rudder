@@ -99,6 +99,26 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins?
   return betterAuth(authConfig);
 }
 
+/** Returns the exact cookie secret and default secure-cookie policy used by
+ * the current Better Auth instance so the native ingress can validate the
+ * same signed session cookie. The returned secret is never logged. */
+export function betterAuthSessionCookieSettings(config: Config): {
+  secret: string | null;
+  secureCookie: boolean;
+} {
+  const baseUrl = config.authBaseUrlMode === "explicit" ? config.authPublicBaseUrl : undefined;
+  const publicUrl = process.env.RUDDER_PUBLIC_URL ?? baseUrl;
+  const useSecureCookies = publicUrl?.startsWith("http://")
+    ? false
+    : baseUrl
+      ? baseUrl.startsWith("https://")
+      : process.env.NODE_ENV === "production";
+  return {
+    secret: process.env.BETTER_AUTH_SECRET ?? process.env.RUDDER_AGENT_JWT_SECRET ?? null,
+    secureCookie: useSecureCookies,
+  };
+}
+
 type BetterAuthInstance = ReturnType<typeof createBetterAuthInstance>;
 
 export function createBetterAuthHandler(auth: BetterAuthInstance): RequestHandler {

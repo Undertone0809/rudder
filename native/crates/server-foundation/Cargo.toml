@@ -11,6 +11,7 @@ awc = { version = "3.8.2", default-features = false }
 base64 = "0.22"
 crc32fast = "1.4"
 futures-util = "0.3"
+hmac = "0.12"
 percent-encoding = "2.3"
 rudder-archive-core = { path = "../archive-core" }
 rudder-auth-core = { path = "../auth-core" }
