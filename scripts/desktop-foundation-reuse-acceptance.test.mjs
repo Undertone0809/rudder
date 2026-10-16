@@ -115,6 +115,16 @@ test("workflow preserves the actual macOS Intel 25-minute ceiling and isolates r
   assert.match(jobSection("terminal"), /needs: \[readiness, package\]/);
   assert.match(jobSection("terminal"), /if: always\(\)/);
 });
+
+test("archive and release repairs trigger the same targeted Cargo-cache acceptance path", () => {
+  for (const file of [".github/workflows/release.yml", "desktop/scripts/archive.mjs", "desktop/scripts/archive.test.mjs", "desktop/scripts/dist.mjs"]) {
+    assert(workflowText.split("permissions:")[0].includes(`      - ${file}\n`));
+  }
+  const lane = jobSection("package");
+  assert.match(lane, /RUDDER_NATIVE_TARGET: x86_64-apple-darwin/);
+  assert.match(lane, /key: rudder-server-foundation-\$\{\{ runner\.os \}\}-x86_64-apple-darwin-release-/);
+  assert.match(lane, /stage-native\.test\.mjs desktop\/scripts\/archive\.test\.mjs/);
+});
 test("workflow keeps every canonical macOS x64 release gate in order", () => {
   const lane = jobSection("package");
   const gates = [

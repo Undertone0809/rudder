@@ -23,6 +23,13 @@ afterEach(() => {
   }
 });
 
+describe("macOS ZIP compression budget", () => {
+  it("uses fast compression for both portable and shell archives", () => {
+    const args = macPortableZipArgs("Rudder.app", "Rudder.zip");
+    expect(args[args.indexOf("--zlibCompressionLevel") + 1]).toBe("1");
+  });
+});
+
 describe.skipIf(process.platform !== "darwin")("macOS Desktop ZIP archive", () => {
   it("drops AppleDouble metadata while preserving executable modes and symlinks", () => {
     const root = mkdtempSync(path.join(tmpdir(), "rudder-desktop-archive-"));

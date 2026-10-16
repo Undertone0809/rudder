@@ -577,6 +577,12 @@ Shell artifacts remove the server runtime entirely and rely on the prepared
 versioned runtime cache. macOS portable and shell ZIPs disable resource forks, extended
 attributes, quarantine metadata, and ACL metadata so archives do not accumulate
 `__MACOSX` or AppleDouble entries.
+The macOS archives use zlib level 1 to keep portable and shell creation within
+the release job's 25-minute budget. Archive creation logs its start and elapsed
+time. Release Desktop jobs restore the qualification Cargo dependency cache for
+the explicit target; the four versioned native helpers still rebuild after the
+release version is applied, and the foundation executable still comes from the
+exact-source qualification artifact.
 Downloaded Desktop assets are cached under `~/.rudder/desktop-assets/` by
 SHA-256 checksum so repeated installs or retries can reuse an already verified
 portable asset instead of downloading the full release again.

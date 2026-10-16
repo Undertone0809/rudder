@@ -496,19 +496,24 @@ jobs:
           - platform: macos
             arch: x64
             runner: macos-15-intel
+            native_target: x86_64-apple-darwin
           - platform: macos
             arch: arm64
             runner: macos-14
+            native_target: aarch64-apple-darwin
           - platform: windows
             arch: x64
             runner: windows-latest
+            native_target: x86_64-pc-windows-msvc
           - platform: linux
             arch: x64
             runner: ubuntu-latest
+            native_target: x86_64-unknown-linux-gnu
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
       RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR: ${{ github.workspace }}/dist/server-foundation-artifacts
+      RUDDER_NATIVE_TARGET: ${{ matrix.native_target }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -531,6 +536,20 @@ jobs:
       - name: Stage server foundation artifacts before Desktop build
         run: node server/scripts/stage-native.mjs --artifact-dir "$RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR"
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.native_target }}
+
+      # Reuse dependency compilation from qualification, never its versioned
+      # executables. Cargo still rebuilds the four helpers at RELEASE_VERSION.
+      - name: Restore qualified Cargo dependency build
+        uses: actions/cache/restore@v5
+        with:
+          path: native/target
+          key: rudder-server-foundation-${{ runner.os }}-${{ matrix.native_target }}-release-${{ hashFiles('native/Cargo.lock', 'native/Cargo.toml', 'native/**/Cargo.toml') }}
+          restore-keys: |
+            rudder-server-foundation-${{ runner.os }}-${{ matrix.native_target }}-release-
+
       - name: Enable pnpm
         run: |
           corepack enable
@@ -549,6 +568,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify macOS archive round trip
+        if: matrix.platform == 'macos'
+        run: pnpm exec vitest run desktop/scripts/archive.test.mjs
 
       - name: Verify historical migration compatibility
         run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts

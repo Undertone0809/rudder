@@ -253,7 +253,10 @@ async function createPortableZip(platform, arch) {
 
   await fs.rm(outputPath, { force: true });
   if (platform === "macos") {
+    const startedAt = Date.now();
+    console.log(`[desktop:dist] archiving portable ${arch}: ${outputPath}`);
     await run("ditto", macPortableZipArgs(appDir, outputPath));
+    console.log(`[desktop:dist] archived portable ${arch} in ${Date.now() - startedAt}ms`);
     return;
   }
 
@@ -360,7 +363,10 @@ async function createShellZip(platform, arch) {
 
   await fs.rm(outputPath, { force: true });
   if (platform === "macos") {
+    const startedAt = Date.now();
+    console.log(`[desktop:dist] archiving shell ${arch}: ${outputPath}`);
     await run("ditto", macPortableZipArgs(appDir, outputPath));
+    console.log(`[desktop:dist] archived shell ${arch} in ${Date.now() - startedAt}ms`);
     return;
   }
 

@@ -1,7 +1,7 @@
 export function macPortableZipArgs(sourceAppDir, outputPath, options = {}) {
   const compressionLevel = Number.isInteger(options.compressionLevel)
     ? Math.max(0, Math.min(9, options.compressionLevel))
-    : 9;
+    : 1;
   return [
     "-c",
     "-k",
