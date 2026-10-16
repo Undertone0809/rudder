@@ -20,6 +20,7 @@ mod goal_sets;
 pub mod issue_metadata_reads;
 pub mod legacy_read_json;
 mod links;
+pub mod native_chat;
 pub mod organization_catalog_reads;
 mod organization_resources;
 pub mod overview_reads;

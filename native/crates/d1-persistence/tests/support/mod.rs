@@ -27,6 +27,15 @@ pub struct Database {
 
 impl Database {
     pub async fn start() -> Self {
+        Self::start_with_migrations(None).await
+    }
+
+    #[allow(dead_code)] // Used by the focused migration-compatibility integration test only.
+    pub async fn start_before_migration(tag: &str) -> Self {
+        Self::start_with_migrations(Some(tag)).await
+    }
+
+    async fn start_with_migrations(stop_before: Option<&str>) -> Self {
         let root = tempfile::tempdir().expect("create disposable PostgreSQL directory");
         let data = root.path().join("data");
         let port = TcpListener::bind("127.0.0.1:0")
@@ -84,12 +93,12 @@ impl Database {
             .await
             .expect("connect disposable PostgreSQL");
         let database = Self { pool, pg_ctl, root };
-        database.apply_migrations().await;
+        database.apply_migrations(stop_before).await;
         database.seed().await;
         database
     }
 
-    async fn apply_migrations(&self) {
+    async fn apply_migrations(&self, stop_before: Option<&str>) {
         let migrations =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../packages/db/src/migrations");
         let journal: serde_json::Value = serde_json::from_slice(
@@ -97,7 +106,11 @@ impl Database {
         )
         .expect("parse migration journal");
         for entry in journal["entries"].as_array().expect("migration entries") {
-            let name = format!("{}.sql", entry["tag"].as_str().expect("migration tag"));
+            let tag = entry["tag"].as_str().expect("migration tag");
+            if stop_before == Some(tag) {
+                break;
+            }
+            let name = format!("{tag}.sql");
             let sql = fs::read_to_string(migrations.join(&name)).expect("read migration SQL");
             let mut tx = self
                 .pool
@@ -110,6 +123,17 @@ impl Database {
                 .unwrap_or_else(|error| panic!("migration {name} failed: {error}"));
             tx.commit().await.expect("commit migration transaction");
         }
+    }
+
+    #[allow(dead_code)] // Used by the focused migration-compatibility integration test only.
+    pub async fn apply_migration(&self, tag: &str) -> Result<(), sqlx::Error> {
+        let migrations =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../packages/db/src/migrations");
+        let sql = fs::read_to_string(migrations.join(format!("{tag}.sql")))
+            .expect("read selected migration SQL");
+        let mut tx = self.pool.begin().await?;
+        sqlx::raw_sql(&sql).execute(&mut *tx).await?;
+        tx.commit().await
     }
 
     async fn seed(&self) {

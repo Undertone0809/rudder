@@ -6,12 +6,13 @@
  * @see doc/product/domains/execution/transcripts-and-results.md - transcript and result persistence
  * @see doc/product/domains/execution/run-admission-and-recovery.md - retry and process-loss recovery
  */
-import type { HeartbeatRunExecutionPhase } from "@rudderhq/shared";
+import type { HeartbeatRunExecutionPhase, NativeChatExecutionAuthority } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
-import { type AnyPgColumn, bigint, boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
 import { agents } from "./agents.js";
 import { chatConversations } from "./chat_conversations.js";
+import { nativeChatGenerationIdentityColumns } from "./chat_generations.js";
 import { goals } from "./goals.js";
 import { organizations } from "./organizations.js";
 
@@ -58,6 +59,10 @@ export const heartbeatRuns = pgTable(
     chatConversationId: uuid("chat_conversation_id").references((): AnyPgColumn => chatConversations.id, {
       onDelete: "set null",
     }),
+    /** Non-null only for rows admitted by the Rust native Chat authority. */
+    chatGenerationId: uuid("chat_generation_id"),
+    executionAuthority: text("execution_authority").$type<NativeChatExecutionAuthority>().notNull().default("legacy_ts"),
+    nativeAdmissionHold: boolean("native_admission_hold").notNull().default(false),
     /** Explicit Goal ownership for Goal Detail timelines; contextSnapshot remains compatibility data. */
     goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
     processPid: integer("process_pid"),
@@ -146,7 +151,21 @@ export const heartbeatRuns = pgTable(
     ),
     activeChatConversationUniqueIdx: uniqueIndex("heartbeat_runs_active_chat_conversation_uq")
       .on(table.orgId, table.chatConversationId)
-      .where(sql`${table.chatConversationId} is not null and (${table.status} in ('queued', 'running') or ${table.terminalEffectsPending} = true)`),
+      .where(sql`${table.chatConversationId} is not null and (${table.status} in ('queued', 'running') or ${table.terminalEffectsPending} = true or ${table.nativeAdmissionHold} = true)`),
+    nativeGenerationUniqueIdx: uniqueIndex("heartbeat_runs_native_generation_uq")
+      .on(table.orgId, table.chatGenerationId)
+      .where(sql`${table.chatGenerationId} is not null`),
+    nativeGenerationIdentityFk: foreignKey({
+      name: "heartbeat_runs_native_generation_fk",
+      columns: [table.orgId, table.chatGenerationId, table.chatConversationId, table.executionAuthority, table.nativeAdmissionHold],
+      foreignColumns: [
+        nativeChatGenerationIdentityColumns.orgId,
+        nativeChatGenerationIdentityColumns.id,
+        nativeChatGenerationIdentityColumns.conversationId,
+        nativeChatGenerationIdentityColumns.executionAuthority,
+        nativeChatGenerationIdentityColumns.nativeAdmissionHold,
+      ],
+    }).onDelete("restrict"),
     orgIdempotencyKeyUniqueIdx: uniqueIndex("heartbeat_runs_org_idempotency_key_uq")
       .on(table.orgId, table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
@@ -163,6 +182,22 @@ export const heartbeatRuns = pgTable(
         (${table.scene} is not null and ${table.targetType} is not null and ${table.targetId} is not null
           and ${table.idempotencyKey} is not null and ${table.sessionIntentJson} is not null)
       )`,
+    ),
+    nativeAuthorityShapeCheck: check(
+      "heartbeat_runs_native_authority_shape_check",
+      sql`(
+        (${table.executionAuthority} = 'legacy_ts' and ${table.chatGenerationId} is null
+          and ${table.nativeAdmissionHold} = false)
+        or
+        (${table.executionAuthority} = 'native_rust' and ${table.chatGenerationId} is not null
+          and ${table.chatConversationId} is not null and ${table.scene} = 'chat'
+          and ${table.targetType} = 'chat_conversation'
+          and ${table.targetId} = ${table.chatConversationId}::text)
+      )`,
+    ),
+    executionAuthorityCheck: check(
+      "heartbeat_runs_execution_authority_check",
+      sql`${table.executionAuthority} in ('legacy_ts', 'native_rust')`,
     ),
     sceneCheck: check(
       "heartbeat_runs_scene_check",
@@ -210,7 +245,10 @@ export const heartbeatRuns = pgTable(
               )
               and (
                 jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'null'
-                or (jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'string' and ${table.sessionIntentJson}->>'sessionId' = btrim(${table.sessionIntentJson}->>'sessionId') and btrim(${table.sessionIntentJson}->>'sessionId') <> '')
+                or (jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'string' and (
+                  (${table.executionAuthority} = 'native_rust' and btrim(${table.sessionIntentJson}->>'sessionId') <> '' and octet_length(${table.sessionIntentJson}->>'sessionId') <= 4096)
+                  or (${table.executionAuthority} = 'legacy_ts' and ${table.sessionIntentJson}->>'sessionId' = btrim(${table.sessionIntentJson}->>'sessionId') and btrim(${table.sessionIntentJson}->>'sessionId') <> '')
+                ))
               )
               and jsonb_typeof(${table.sessionIntentJson}->'sessionParams') in ('null', 'object')
               and not (${table.sessionIntentJson} ? 'sourceBoundaryRef')
@@ -228,7 +266,10 @@ export const heartbeatRuns = pgTable(
               and btrim(${table.sessionIntentJson}->>'sourceBoundaryRef') <> ''
               and (
                 jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'null'
-                or (jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'string' and ${table.sessionIntentJson}->>'sessionId' = btrim(${table.sessionIntentJson}->>'sessionId') and btrim(${table.sessionIntentJson}->>'sessionId') <> '')
+                or (jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'string' and (
+                  (${table.executionAuthority} = 'native_rust' and btrim(${table.sessionIntentJson}->>'sessionId') <> '' and octet_length(${table.sessionIntentJson}->>'sessionId') <= 4096)
+                  or (${table.executionAuthority} = 'legacy_ts' and ${table.sessionIntentJson}->>'sessionId' = btrim(${table.sessionIntentJson}->>'sessionId') and btrim(${table.sessionIntentJson}->>'sessionId') <> '')
+                ))
               )
               and jsonb_typeof(${table.sessionIntentJson}->'sessionParams') in ('null', 'object')
             )
