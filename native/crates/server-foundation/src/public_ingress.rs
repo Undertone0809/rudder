@@ -1133,6 +1133,7 @@ fn goal_query_number(value: &str) -> Option<f64> {
     value.parse::<f64>().ok()
 }
 
+#[allow(clippy::result_large_err)]
 fn goal_assigned_input(
     request: &HttpRequest,
     agent_id: String,
