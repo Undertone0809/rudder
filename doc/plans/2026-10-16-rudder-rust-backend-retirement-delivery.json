@@ -2536,24 +2536,14 @@
       "number": 330,
       "url": "https://github.com/Undertone0809/rudder/pull/330",
       "branch": "codex/agent-create-rust-foundation",
-      "head": "0c2bbf0c64d3a79edeb78c81e23b37da71822b80",
+      "head": "cc86fd6df83f04f7767ac58bf2acc1084286741c",
       "base_sha": "541748fb6870ee2360ec5d096d1f07838b12b433",
       "state": "open",
       "scope": "Private feature-gated Rust AgentCreate foundation; no public POST cutover.",
-      "stage_review": "pending exact-head final stage verdict",
+      "stage_review": "pending exact-head re-review after numeric/skill-sync/instruction-key parity fixes",
       "acceptance": {
-        "verdict": "PASS",
-        "head": "0c2bbf0c64d3a79edeb78c81e23b37da71822b80",
-        "binary_sha256": "7b3805c9f1f84116f159c21b65a975cf7da59cd2a50b52dfce1db3faeec7ef7c",
-        "evidence": [
-          "cargo check locked d1 persistence pass",
-          "agent_core integration 2/2 with disposable PostgreSQL 17.10 and migrations",
-          "validation unit 1/1",
-          "shared Zod corpus 1/1",
-          "create 201 with agent/workspace/membership/tasks:assign/budget/activity side effects",
-          "feature gate and no public Rust POST route verified"
-        ],
-        "limits": "Node route Vitest unavailable because checkout lacked node_modules; Node public POST remains intentionally owned by Node."
+        "verdict": "pending fresh exact-head verifier",
+        "head": "cc86fd6df83f04f7767ac58bf2acc1084286741c"
       },
       "local_checks": [
         "cargo check locked d1 persistence pass",
@@ -2569,8 +2559,9 @@
         "avatar assets"
       ],
       "blockers": [
-        "full protected CI pending",
-        "fresh stage/final review pending",
+        "fresh protected CI exact cc86",
+        "fresh independent verifier exact cc86",
+        "fresh stage review/final review",
         "public POST cutover requires remaining Node-owned semantics migration"
       ],
       "limits": "This is an internal foundation slice, not full Agent API migration or no-Node acceptance; production deployment not included."
