@@ -676,14 +676,18 @@ async fn public_send_stream_is_durable_and_exact_retry_never_dispatches_twice() 
     sqlx::query(
         "INSERT INTO runtime_bindings
            (id,org_id,conversation_id,target_type,target_id,principal_scope_ref,agent_id,
-            runtime_type,host_id,profile_id,instructions_revision,capability_revision,continuity)
-         VALUES($1::uuid,$2::uuid,$3::uuid,'chat_conversation',$3,'org:' || $2::text,$4::uuid,
-                'codex_local','host-test','default','instructions-v1','capabilities-v1','native')",
+            runtime_type,host_id,profile_id,workspace_binding_id,instructions_revision,
+            capability_revision,continuity)
+         SELECT $1::uuid,$2::uuid,$3::uuid,'chat_conversation',$3,b.principal_scope_ref,
+                b.agent_id,b.runtime_type,b.host_id,b.profile_id,b.workspace_binding_id,
+                b.instructions_revision,b.capability_revision,b.continuity
+         FROM runtime_bindings b
+         WHERE b.org_id=$2::uuid AND b.conversation_id=$4::uuid AND b.status='active'",
     )
-    .bind(binding_id)
+    .bind(binding_id.to_string())
     .bind(fixture::ORG)
     .bind(SEND_CHAT)
-    .bind(fixture::CEO)
+    .bind(fixture::CHAT)
     .execute(&database.pool)
     .await
     .unwrap();
@@ -692,9 +696,9 @@ async fn public_send_stream_is_durable_and_exact_retry_never_dispatches_twice() 
            (id,org_id,binding_id,runtime_type,segment_ordinal,state)
          VALUES($1::uuid,$2::uuid,$3::uuid,'codex_local',0,'pending')",
     )
-    .bind(segment_id)
+    .bind(segment_id.to_string())
     .bind(fixture::ORG)
-    .bind(binding_id)
+    .bind(binding_id.to_string())
     .execute(&database.pool)
     .await
     .unwrap();
@@ -702,9 +706,9 @@ async fn public_send_stream_is_durable_and_exact_retry_never_dispatches_twice() 
         "UPDATE runtime_bindings SET current_segment_id=$1::uuid
          WHERE org_id=$2::uuid AND id=$3::uuid",
     )
-    .bind(segment_id)
+    .bind(segment_id.to_string())
     .bind(fixture::ORG)
-    .bind(binding_id)
+    .bind(binding_id.to_string())
     .execute(&database.pool)
     .await
     .unwrap();
