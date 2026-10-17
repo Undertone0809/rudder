@@ -14,6 +14,11 @@ import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
 export { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 export { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
+export type {
+  RustBrowserSessionAuth,
+  RustNativeChatHost,
+  RustPublicIngressOptions,
+} from "./rust-public-ingress-config.js";
 
 import { requestActivityLinkRead, type ActivityLinkReadInput } from "./activity-link-read-bridge.js";
 import { requestActivityRead, type ActivityReadInput } from "./activity-read-bridge.js";
@@ -373,6 +378,15 @@ function createFoundationChildEnvironment(input: {
       ...nativeIdentityAuthEnvironment(input.publicIngress.identityAuth),
       ...nativeSessionAuthEnvironment(input.publicIngress.sessionAuth),
       ...nativeLocalAccountLifecycleEnvironment(input.publicIngress),
+      ...(input.publicIngress.nativeChatHost
+        ? {
+            RUDDER_NATIVE_CHAT_HOST: JSON.stringify(input.publicIngress.nativeChatHost),
+            PATH: input.publicIngress.nativeChatHost.executableSearchPath,
+          }
+        : {}),
+      ...(input.publicIngress.browserSessionAuth
+        ? { RUDDER_NATIVE_BROWSER_AUTH_ISSUER: JSON.stringify(input.publicIngress.browserSessionAuth) }
+        : {}),
       ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
     } : {}),
   };

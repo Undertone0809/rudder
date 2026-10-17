@@ -342,7 +342,7 @@ async fn stop(
             Ok(payload) => payload,
             Err(_) => return unavailable(),
         };
-        return forward_compatibility(state, proxy, request, payload).await;
+        return super::forward_compatibility(state, proxy, request, payload).await;
     }
     let input: StopInput = match serde_json::from_slice(&body) {
         Ok(input) => input,
@@ -550,6 +550,7 @@ mod tests {
         let state = web::Data::new(IngressState {
             foundation: Arc::new(AppState::new(ServerConfig::default()).unwrap()),
             config,
+            local_account: None,
         });
         let proxy = PublicIngressProxy::new(upstream).unwrap();
         let ws = PublicIngressWebSocketProxy::new(proxy.upstream_authority()).unwrap();

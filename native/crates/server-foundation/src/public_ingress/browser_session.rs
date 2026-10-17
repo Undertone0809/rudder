@@ -45,6 +45,11 @@ async fn resolve(
             .foundation
             .json_error(StatusCode::NOT_FOUND, "route_not_found");
     }
+    if request.method() != Method::GET {
+        return state
+            .foundation
+            .json_error(StatusCode::NOT_FOUND, "route_not_found");
+    }
     if !body.is_empty() {
         return state
             .foundation

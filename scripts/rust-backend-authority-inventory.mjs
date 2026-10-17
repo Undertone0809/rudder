@@ -97,6 +97,79 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
   }),
 });
 
+const LEGACY_FENCE_CHANGE_KINDS = new Set([
+  "target_advisory_lock",
+  "native_chat_queue_guard_helper",
+  "native_chat_conversation_authority_helper",
+  "native_chat_generation_hint_helper",
+  "native_chat_queued_message_hint_helper",
+  "native_chat_conversation_id_hint_helper",
+  "native_chat_queue_guard_callsite",
+  "existing_operation_mapping",
+]);
+const TARGET_LOCK_RECEIVERS = new Set(["tx"]);
+
+// These body digests are the only code allowed to implement the temporary
+// Native Chat negative fence. They are trusted policy literals, not values
+// supplied by reviewed_legacy_fence_changes. Updating one requires a separate
+// exact-source review of the helper body.
+// Exact reviewed caller files bind each negative guard, its argument aliases,
+// and the existing writer to one source contract. Inventory records cannot
+// update these pins. A caller edit needs a separately reviewed policy change;
+// the lexical checks below do not attempt general argument/data-flow proof.
+const TRUSTED_NATIVE_CHAT_FENCE_CALLERS = Object.freeze({
+  "server/src/services/chats.annotation-persistence.ts": "94c30f2e90d6f79b5b71e101e683914bab0723140656b39b49624094e95aabfd",
+  "server/src/services/chats.ts": "0ee118bb6d19b12c53a90a1c862a419ca2d938b56bc67b9b0df70780592a97a2",
+  "server/src/services/chat-generation-protocol.ts": "96ea9f4e2cc1e8ed63a22ec7fda76311bfcfe3f2d6f724ba203a02f30072f04d",
+  "server/src/services/chats.queued-message-create.ts": "7ca4c03b504f383750d452d7e09e0a51c9e059e76879eaefd7527f6e38f910b6",
+  "server/src/services/chat-steer-messages.ts": "eac974850d555f7fe3e3001e1518954e1df67d7993d495d03c11639a92d78611"
+});
+
+const TRUSTED_NATIVE_CHAT_HELPERS = Object.freeze({
+  lockLegacyNativeChatQueueTarget: Object.freeze({
+    path: "server/src/services/organization-mutation-fence.ts",
+    parameters: ["tx: TransactionClient", "organizationId: string", "conversationId: string"],
+    body_sha256: "eec4d580d06e7beb1fad0eb0cf05fc4358eadc7614e6a0bbb9bc7fd9a20c44a4",
+    surfaces: [
+      ["database_call_candidate", "execute", 3],
+      ["database_write_candidate", "execute", 3],
+    ],
+  }),
+  assertLegacyChatConversationAuthority: Object.freeze({
+    path: "server/src/services/chats.ts",
+    parameters: ["tx: any", "orgId: string", "conversationId: string"],
+    body_sha256: "031405e0595b803c2c575541d6b9b873acc1967f96e9ff468f71ac26c32888c8",
+    surfaces: [],
+    record_kind: "native_chat_conversation_authority_helper",
+    helper_reference: "queue_helper_id",
+  }),
+  assertLegacyChatGenerationAuthority: Object.freeze({
+    path: "server/src/services/chats.ts",
+    parameters: ["tx: any", "orgId: string", "generationId: string"],
+    body_sha256: "376ee9a168d578a5165886a1ba68d0f7edb26c5dfdfde214cb0ea646b7725708",
+    surfaces: [["database_call_candidate", "select", 1]],
+    record_kind: "native_chat_generation_hint_helper",
+    helper_reference: "conversation_helper_id",
+  }),
+  assertLegacyQueuedMessageAuthority: Object.freeze({
+    path: "server/src/services/chats.ts",
+    parameters: ["tx: any", "itemId: string", "expected?: { orgId?: string; conversationId?: string }"],
+    body_sha256: "f34fcb0cfc5f4ac89af18089874104361ce703acba93bdaefb6a3111b57f8602",
+    surfaces: [["database_call_candidate", "select", 1]],
+    record_kind: "native_chat_queued_message_hint_helper",
+    helper_reference: "conversation_helper_id",
+  }),
+  assertLegacyChatConversationIdAuthority: Object.freeze({
+    path: "server/src/services/chats.ts",
+    parameters: ["tx: any", "conversationId: string"],
+    body_sha256: "6eb6475e91f99c34877657c1562e0988dfe7128889f318f1c7422cc139de2fa9",
+    surfaces: [["database_call_candidate", "select", 1]],
+    record_kind: "native_chat_conversation_id_hint_helper",
+    helper_reference: "conversation_helper_id",
+  }),
+});
+
+
 // These existing Electron identity-policy modules are retained client code,
 // not Node backend adapters. Keep this allowlist explicit so new Desktop
 // runtime files cannot enter through the retained-client review path.
