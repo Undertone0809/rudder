@@ -105,8 +105,8 @@ mod tests {
         })
         .unwrap()
     }
-    fn body() -> serde_json::Value {
-        let now = unix_time_seconds() as i64 * 1000;
+    fn body(clock: u64) -> serde_json::Value {
+        let now = clock as i64 * 1000;
         let date = time::OffsetDateTime::from_unix_timestamp(now / 1000).unwrap();
         let start = time::Date::from_calendar_date(date.year(), date.month(), 1)
             .unwrap()
@@ -116,8 +116,7 @@ mod tests {
             * 1000;
         serde_json::json!({"operation":"budget-overview","nowMs":now,"hostLocalMonthStartMs":start})
     }
-    fn signed(body: &[u8], field: &str) -> HttpRequest {
-        let now = unix_time_seconds();
+    fn signed(body: &[u8], field: &str, now: u64) -> HttpRequest {
         let mut envelope = ActorEnvelope::new(
             ActorIdentity::new("user", "fixture").unwrap(),
             ORG,
@@ -154,7 +153,10 @@ mod tests {
     }
     #[actix_web::test]
     async fn signed_clock_validation_is_distinct_from_envelope_authentication() {
-        let valid = body();
+        // Body time and envelope issuance must share one captured clock, even
+        // when CI crosses a second boundary while exercising invalid inputs.
+        let clock = unix_time_seconds().saturating_sub(2);
+        let valid = body(clock);
         let now = valid["nowMs"].as_i64().unwrap();
         for patch in [
             serde_json::json!({"nowMs":now-60000}),
@@ -174,7 +176,7 @@ mod tests {
             let bytes = serde_json::to_vec(&input).unwrap();
             assert_eq!(
                 state()
-                    .overview_read(&signed(&bytes, "clock"), ORG, &bytes)
+                    .overview_read(&signed(&bytes, "clock", clock), ORG, &bytes)
                     .await
                     .status(),
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -185,13 +187,13 @@ mod tests {
         for field in ["expired", "org", "action"] {
             assert_eq!(
                 state()
-                    .overview_read(&signed(&bytes, field), ORG, &bytes)
+                    .overview_read(&signed(&bytes, field, clock), ORG, &bytes)
                     .await
                     .status(),
                 StatusCode::UNAUTHORIZED
             );
         }
-        let request = signed(&bytes, "tampered");
+        let request = signed(&bytes, "tampered", clock);
         let mut changed = valid.clone();
         changed["operation"] = serde_json::json!("dashboard-summary");
         assert_eq!(
@@ -202,7 +204,7 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
         let state = state();
-        let request = signed(&bytes, "replay");
+        let request = signed(&bytes, "replay", clock);
         assert_eq!(
             state.overview_read(&request, ORG, &bytes).await.status(),
             StatusCode::SERVICE_UNAVAILABLE

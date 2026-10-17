@@ -13,7 +13,10 @@ const execFileAsync = promisify(execFile);
 const ORIGINAL_ENV = { ...process.env };
 const nativeRoot = fileURLToPath(new URL("../../../native/", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const nativeBinary = path.join(nativeRoot, "target", "debug", process.platform === "win32" ? "rudder-native.exe" : "rudder-native");
+const nativeTargetRoot = process.env.CARGO_TARGET_DIR
+  ? path.resolve(nativeRoot, process.env.CARGO_TARGET_DIR)
+  : path.join(nativeRoot, "target");
+const nativeBinary = path.join(nativeTargetRoot, "debug", process.platform === "win32" ? "rudder-native.exe" : "rudder-native");
 const tsxBinary = path.join(repoRoot, "cli", "node_modules", "tsx", "dist", "cli.mjs");
 const serverFixture = fileURLToPath(new URL("./fixtures/runs-log-parity-server.mjs", import.meta.url));
 
