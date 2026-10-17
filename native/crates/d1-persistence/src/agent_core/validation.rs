@@ -111,7 +111,17 @@ fn secret_like_key(key: &str) -> bool {
 fn node_owned_runtime_key(key: &str) -> bool {
     matches!(
         key,
-        "rudderSkillSync" | "paperclipSkillSync" | "rudderRuntimeSkills" | "paperclipRuntimeSkills"
+        "rudderSkillSync"
+            | "paperclipSkillSync"
+            | "rudderRuntimeSkills"
+            | "paperclipRuntimeSkills"
+            | "instructionsFilePath"
+            | "agentsMdPath"
+            | "instructionsBundleMode"
+            | "instructionsRootPath"
+            | "instructionsEntryFile"
+            | "promptTemplate"
+            | "bootstrapPromptTemplate"
     )
 }
 
@@ -568,6 +578,13 @@ mod tests {
             "paperclipSkillSync",
             "rudderRuntimeSkills",
             "paperclipRuntimeSkills",
+            "instructionsFilePath",
+            "agentsMdPath",
+            "instructionsBundleMode",
+            "instructionsRootPath",
+            "instructionsEntryFile",
+            "promptTemplate",
+            "bootstrapPromptTemplate",
         ] {
             let mut runtime_config = serde_json::Map::new();
             runtime_config.insert(key.to_owned(), json!({"desiredSkills": []}));
