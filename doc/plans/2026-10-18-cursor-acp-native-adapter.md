@@ -56,7 +56,10 @@ cursor_login`, and `session/new`; the response exposed `loadSession: true`,
 `agent/plan/ask` modes, model/config options, and MCP HTTP/SSE capability. A
 real nested `session/update` notification (`available_commands_update`) was
 also observed. No prompt or project mutation was sent during this probe.
-This is `observed` evidence only. `session/load`, a real prompt, permission
+This is `observed` evidence only. A follow-up process reported
+`loadSession: true` but `session/load` for the no-prompt session returned
+`-32602 Session not found`; this does not test continuation because no prompt
+had created durable conversation content. A real prompt, permission
 decisions, plan/question extension responses, restart recovery, complete
 history, and precise Fork/Steer remain unverified.
 
