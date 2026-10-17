@@ -512,7 +512,7 @@ fn validate_public_runtime_snapshot(proof: &InitialDraftProof) -> Result<()> {
     let runtime = &proof.safe_chat_runtime;
     if proof.safe_runtime_descriptor.version != 1
         || runtime.version != 1
-        || !matches!(runtime_type, "codex_local" | "pi_local" | "hermes_local")
+        || !matches!(runtime_type, "codex_local" | "hermes_local")
         || runtime.source_type != "agent"
         || runtime.runtime_type != runtime_type
         || runtime.source_label.trim().is_empty()
