@@ -221,6 +221,7 @@ export function createDesktopIdentityRuntime(options: {
 
   return {
     accountRequired,
+    packagedSmokeLocalImplicitAuthRequested: packagedSmokePolicy.packagedSmokeLocalImplicitAuthRequested,
     telemetryStatePromise,
     controller,
     getAuthProviders(): Promise<DesktopIdentityAuthProviders> {

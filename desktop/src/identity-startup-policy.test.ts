@@ -46,6 +46,7 @@ describe("Desktop account startup policy", () => {
 
     expect(policy).toEqual({
       packagedSmokeBypassRequested: false,
+      packagedSmokeLocalImplicitAuthRequested: false,
       packagedSmokeMemoryStorageRequested: true,
     });
     expect(desktopStartupRequiresAccount({
@@ -126,6 +127,7 @@ describe("Desktop account startup policy", () => {
       authBypassRequested: false,
     })).toEqual({
       packagedSmokeBypassRequested: false,
+      packagedSmokeLocalImplicitAuthRequested: false,
       packagedSmokeMemoryStorageRequested: false,
     });
   });
@@ -141,6 +143,7 @@ describe("Desktop account startup policy", () => {
       memoryOnlyStorageOptInRequested: false,
     })).toEqual({
       packagedSmokeBypassRequested: true,
+      packagedSmokeLocalImplicitAuthRequested: true,
       packagedSmokeMemoryStorageRequested: false,
     });
   });
