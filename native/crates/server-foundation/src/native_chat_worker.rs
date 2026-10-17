@@ -791,7 +791,11 @@ fn finish_pi_observation(
     observation: rudder_native_chat_executor::PiNativeExecutionObservation,
 ) -> Completion {
     let provider = observation.observation;
-    let cleanup_proven = provider.cleanup_receipt.is_some()
+    let cleanup_proven = provider
+        .turn_receipt
+        .as_ref()
+        .zip(provider.cleanup_receipt.as_ref())
+        .is_some_and(|(turn, cleanup)| cleanup.proves_quiescence_for(turn))
         && matches!(
             provider.phase,
             rudder_native_chat_executor::PiExecutionPhase::Cleaned
