@@ -22,6 +22,7 @@ pub(super) async fn command(
         Some("bind_locator") => "runtime.span.bind_locator",
         Some("read") => "runtime.span.read",
         Some("read_transcript") => "runtime.span.read_transcript",
+        Some("read_message_transcript") => "runtime.span.read_message_transcript",
         _ => {
             return HttpResponse::UnprocessableEntity()
                 .json(json!({"error":"Invalid runtime span operation"}));
