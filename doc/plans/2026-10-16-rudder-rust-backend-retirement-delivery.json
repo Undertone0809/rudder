@@ -2483,7 +2483,7 @@
       "state": "open",
       "merge_state": "unstable",
       "scope": "Native Chat Codex/Hermes Rust ingress, recovery, and compatibility fences, rebased onto merged Goal collection reads main.",
-      "stage_review": "fresh review required exact bc4f69b08 after clippy-only Goal parser annotation",
+      "stage_review": "accept stage; final handoff blocked by packaged local-apps required-native route gap",
       "ci": {
         "latest_run_ids": [
           39069582522,
@@ -2496,11 +2496,11 @@
           "desktop identity /private/var test alias fixed in 1a6d2d999"
         ]
       },
-      "limits": "No merge or final packaged/installed-provider verifier PASS yet; desktop:verify dependency hydration and packaged smoke still pending; production deployment not included.",
+      "limits": "Do not merge yet; core Native Chat flows and dist/package integrity pass, but full required-native desktop workflow remains blocked by unimplemented Agent create ingress and CI failures.",
       "stage_blockers": [
-        "fresh protected CI exact bc4f69b08",
-        "independent verifier exact bc4f69b08",
-        "fresh stage/final review"
+        "protected CI Desktop packaged smoke failure: POST /api/orgs/:orgId/agents returned 404 under RUDDER_NATIVE_MODE=required",
+        "Linux native foundation CI failure is unrelated codex-app-server transport timeout; must be rerun/triaged",
+        "fresh final reviewer/verifier after agent-create route fix"
       ],
       "base_sha": "541748fb6870ee2360ec5d096d1f07838b12b433",
       "local_checks": [
@@ -2518,7 +2518,20 @@
         "native_chat_send_authority 5/5",
         "verify-app-identity-package Vitest 4/4 after realpath fix",
         "git diff --check"
-      ]
+      ],
+      "acceptance": {
+        "core_verdict": "PASS",
+        "head": "bc4f69b085005451003e072e02095dd70e9740ea",
+        "binary_hashes": {
+          "foundation": "151006b1f8eb074971bf9685fe360a4a687971be5634a3f679d6f38d8dda7b11",
+          "process_host": "06325154d6ee390464addc0852e5e2a34b294ca6acbc1d3e034146745cd6fcf6",
+          "browser_fixture": "cb775822877a9d65337016204c1b4d0d0746f0eabafc91be7e99c54c0624f763"
+        },
+        "playwright": "5/5 Codex/Hermes recovery/restart/resume/stop with DB no-duplicate assertions",
+        "desktop_dist": "PASS; packaged server-package verification PASS; app-builder packaged PASS",
+        "desktop_smoke": "FAIL: required-native local-apps 404 on POST /api/orgs/:orgId/agents; local auto-update packaged runtime startup timeout",
+        "missing": "Native Rust Agent create endpoint and rerun full protected CI/packaged smoke"
+      }
     }
   }
 }
