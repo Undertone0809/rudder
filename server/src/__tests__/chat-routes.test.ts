@@ -406,6 +406,7 @@ function createApp(
   },
   backgroundRuntime?: ChatBackgroundRuntime,
   registerNetworkWaitingRunHandler?: (handler: (run: any) => Promise<boolean>) => void,
+  rustFoundationBridge?: any,
 ) {
   const runtime = backgroundRuntime ?? createChatBackgroundRuntime();
   testBackgroundRuntimes.add(runtime);
@@ -417,7 +418,7 @@ function createApp(
   });
   app.use(
     "/api",
-    chatRoutes({} as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler),
+    chatRoutes({} as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler, rustFoundationBridge),
   );
   app.use(errorHandler);
   return app;
@@ -4177,7 +4178,7 @@ describe("chat routes", { retry: 2 }, () => {
   });
 
   it("returns a single chat message transcript for lazy loading", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ mutability: "external_bound_chat" });
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.getMessageTranscript.mockResolvedValueOnce({
       messageId: "message-1",
@@ -4190,6 +4191,34 @@ describe("chat routes", { retry: 2 }, () => {
     expect(res.status).toBe(200);
     expect(mockChatService.getMessageTranscript).toHaveBeenCalledWith("chat-1", "message-1");
     expect(res.body.transcript).toHaveLength(1);
+  });
+
+  it("binds native transcript reads to the URL conversation", async () => {
+    const conversation = createConversation({ id: "chat-a" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    const nativeChatTranscript = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ messageId: "message-b", transcript: [] })),
+    });
+
+    const res = await request(createApp(
+      undefined,
+      undefined,
+      undefined,
+      { nativeChatTranscript },
+    )).get("/api/chats/chat-a/messages/message-b/transcript");
+
+    expect(res.status).toBe(200);
+    expect(nativeChatTranscript).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      expect.objectContaining({
+        operation: "read_message_transcript",
+        conversationId: "chat-a",
+        messageId: "message-b",
+      }),
+    );
   });
 
   it("persists server-owned queued continuation transcripts incrementally in the generation ledger", async () => {

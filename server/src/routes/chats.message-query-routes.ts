@@ -61,6 +61,7 @@ export function registerChatMessageQueryRoutes(ctx: ChatMessageQueryRouteContext
         conversation.orgId,
         {
           operation: "read_message_transcript",
+          conversationId: conversation.id,
           messageId: req.params.messageId as string,
           afterSeq: boundedQueryNumber(req.query.afterSeq, 0),
           limit: boundedQueryNumber(req.query.limit, 100),
