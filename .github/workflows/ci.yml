@@ -126,7 +126,21 @@ jobs:
           else
             cp scripts/rust-backend-authority-inventory.mjs "$checker"
           fi
-          node "$checker" compare --root "$GITHUB_WORKSPACE" --compare-ref "$BASE_SHA"
+          if grep -q 'reviewed_legacy_fence_changes' "$checker"; then
+            node "$checker" compare --root "$GITHUB_WORKSPACE" --compare-ref "$BASE_SHA"
+          else
+            # One-time policy bootstrap: the base checker predates the
+            # reviewed legacy-fence record. Pin and test the candidate checker
+            # before asking it to compare; never silently skip the compare.
+            expected_checker_sha256="21ab42ed75fd52870ceb50680b01263fa31cbf5bf620c2a883fd8b1ae3f908c4"
+            candidate_checker_sha256="$(sha256sum scripts/rust-backend-authority-inventory.mjs | awk '{print $1}')"
+            if [[ "$candidate_checker_sha256" != "$expected_checker_sha256" ]]; then
+              echo "Candidate authority checker digest does not match the reviewed bootstrap pin" >&2
+              exit 1
+            fi
+            node --test scripts/rust-backend-authority-inventory.test.mjs
+            node scripts/rust-backend-authority-inventory.mjs compare --root "$GITHUB_WORKSPACE" --compare-ref "$BASE_SHA"
+          fi
 
       - name: Select deterministic qualification profile
         id: impact
