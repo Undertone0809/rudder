@@ -39,6 +39,9 @@ pub struct ResolvedCodexConfig {
     /// True only when the trusted Agent config requests the same bypass policy
     /// already effective in the selected Codex profile.
     pub bypass_approvals_and_sandbox: bool,
+    /// Existing Codex billing preference. Native finalization uses only
+    /// provider-reported usage/cost and never fabricates an estimate.
+    pub count_subscription_usage_as_cost: bool,
     pub profile: ManagedCodexProfile,
     /// Trusted operator HOME used by the established local Codex auth/config
     /// flow. The path is never accepted from a request or serialized.
@@ -288,6 +291,7 @@ pub(crate) async fn resolve_codex_config(
         plan_mode: settings.plan_mode,
         search_enabled: settings.search_enabled,
         bypass_approvals_and_sandbox: settings.bypass_approvals_and_sandbox,
+        count_subscription_usage_as_cost: settings.count_subscription_usage_as_cost,
         profile: ManagedCodexProfile {
             id: profile_id,
             home: profile_home,

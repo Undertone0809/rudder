@@ -270,6 +270,7 @@ pub(crate) async fn resolve_hermes_config(
         plan_mode: false,
         search_enabled: false,
         bypass_approvals_and_sandbox: false,
+        count_subscription_usage_as_cost: false,
         executable_search_path: host.executable_search_path().to_owned(),
         profile: super::ManagedCodexProfile {
             id: profile_id.clone(),
