@@ -249,4 +249,3 @@ test("resumes an active Run and then records an explicit Stop without another pr
     await fixture.stop({ preserveRoot: !passed });
   }
 });
-
