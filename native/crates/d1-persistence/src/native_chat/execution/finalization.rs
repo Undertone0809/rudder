@@ -574,6 +574,7 @@ async fn finalize_inner(
         )
     };
     let increment = increment.map(|mut value| {
+        value["attemptId"] = json!(id.attempt_id);
         value["modelSource"] = json!(model.as_ref().map(|_| "execution_config"));
         value["model"] = json!(model);
         value
