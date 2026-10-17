@@ -50,7 +50,7 @@ export const runtimeRetentionClaims = pgTable(
     timestampOrderCheck: check(
       "runtime_retention_claims_timestamp_order_check",
       sql`(
-        (${table.status} <> 'active' or ${table.expiresAt} is null or ${table.expiresAt} >= ${table.createdAt})
+        (${table.expiresAt} is null or ${table.expiresAt} >= ${table.createdAt})
         and (${table.releasedAt} is null or ${table.releasedAt} >= ${table.createdAt})
       )`,
     ),
@@ -106,7 +106,8 @@ export const runtimeSourceAliases = pgTable(
     timestampOrderCheck: check(
       "runtime_source_aliases_timestamp_order_check",
       sql`(
-        (${table.releasedAt} is null or ${table.releasedAt} >= ${table.createdAt})
+        (${table.expiresAt} is null or ${table.expiresAt} >= ${table.createdAt})
+        and (${table.releasedAt} is null or ${table.releasedAt} >= ${table.createdAt})
       )`,
     ),
     readOnlyCheck: check(
