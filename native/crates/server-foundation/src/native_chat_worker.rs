@@ -608,10 +608,8 @@ fn run(
                     quiescent: failure.process_quiescent(),
                 };
             };
-            if !cancelled.load(Ordering::Acquire)
-                && !failure.is_cancelled()
-                && failure.process_disposition()
-                    == rudder_native_chat_executor::ProcessDisposition::CleanupProven
+            if failure.process_disposition()
+                == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) =
                     (failure.fence(), failure.hermes_cleanup_receipt())
             {
@@ -637,6 +635,8 @@ fn run(
                             )
                             .await
                             .map(Some)
+                        } else if cancelled.load(Ordering::Acquire) || failure.is_cancelled() {
+                            Ok(None)
                         } else {
                             execution::finalize_hermes_failed(
                                 &pool,
@@ -658,10 +658,8 @@ fn run(
                 };
             }
             let cleanup = failure.cleanup_receipt();
-            let status = if !cancelled.load(Ordering::Acquire)
-                && !failure.is_cancelled()
-                && failure.process_disposition()
-                    == rudder_native_chat_executor::ProcessDisposition::CleanupProven
+            let status = if failure.process_disposition()
+                == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) = (failure.fence(), cleanup)
             {
                 match handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
@@ -685,6 +683,8 @@ fn run(
                         )
                         .await
                         .map(Some)
+                    } else if cancelled.load(Ordering::Acquire) || failure.is_cancelled() {
+                        Ok(None)
                     } else {
                         execution::finalize_failed(&pool, execution_actor, fence, cleanup)
                             .await
