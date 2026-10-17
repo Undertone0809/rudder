@@ -509,7 +509,7 @@
     },
     {
       "path": "server/src/services/chat-assistant.ts",
-      "lines": 1557,
+      "lines": 1559,
       "owner": "native-chat-migration",
       "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
       "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
