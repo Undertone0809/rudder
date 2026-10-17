@@ -4426,7 +4426,7 @@
     },
     {
       "path": "server/src/index.ts",
-      "sha256": "c7eed1d955d3f5b92ab758dd9374ba81a253f6af0d364fd5f7d84a7d85ae6d32",
+      "sha256": "3414f8b0f30943f66eaa44962620b5b6f096932edcef6a5a44f3c9fd7e9ff48b",
       "families": [
         "database_queries_and_writers",
         "server_lifecycle_and_workers"
@@ -15355,7 +15355,7 @@
       "type": "http_server_construction",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1117,
+      "line": 1108,
       "signature": "server/src/index.ts|http-server|appHandle.app as unknown as Parameters<typeof createServer>[0]",
       "expression": "appHandle.app as unknown as Parameters<typeof createServer>[0]"
     },
@@ -15363,7 +15363,7 @@
       "type": "listener_start",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1449,
+      "line": 1440,
       "signature": "server/src/index.ts|listener|server|ingress.nodeListenPort",
       "receiver": "server",
       "expression": "ingress.nodeListenPort"
@@ -15390,7 +15390,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1182,
+      "line": 1173,
       "signature": "server/src/index.ts|supervisor-own|feishu-runtime",
       "receiver": "supervisor",
       "resource": "feishu-runtime"
@@ -15399,7 +15399,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1188,
+      "line": 1179,
       "signature": "server/src/index.ts|supervisor-own|feishu-runtime-registry",
       "receiver": "supervisor",
       "resource": "feishu-runtime-registry"
@@ -15408,7 +15408,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1504,
+      "line": 1495,
       "signature": "server/src/index.ts|supervisor-own|http-ingress",
       "receiver": "supervisor",
       "resource": "http-ingress"
@@ -15417,7 +15417,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1126,
+      "line": 1117,
       "signature": "server/src/index.ts|supervisor-own|http-server-drain",
       "receiver": "supervisor",
       "resource": "http-server-drain"
@@ -15426,7 +15426,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1142,
+      "line": 1133,
       "signature": "server/src/index.ts|supervisor-own|live-events-websocket",
       "receiver": "supervisor",
       "resource": "live-events-websocket"
@@ -15435,7 +15435,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1176,
+      "line": 1167,
       "signature": "server/src/index.ts|supervisor-own|managed-mcp-oauth-session-gc",
       "receiver": "supervisor",
       "resource": "managed-mcp-oauth-session-gc"
@@ -15444,7 +15444,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1158,
+      "line": 1149,
       "signature": "server/src/index.ts|supervisor-own|name",
       "receiver": "supervisor",
       "resource": "name"
@@ -15453,7 +15453,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1562,
+      "line": 1553,
       "signature": "server/src/index.ts|supervisor-own|process-signal-listeners",
       "receiver": "supervisor",
       "resource": "process-signal-listeners"
@@ -15471,7 +15471,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1216,
+      "line": 1207,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .recoverNetworkWaitingRuns() .then(() => heartbeat.reapTimedOutRuns({ maxRuntim… [sha256:4ff3e87ec312f4bb922fe31fc5993b706c9a650f75df88884c1fb686c67f57bf]",
       "receiver": null,
       "method": "setInterval",
@@ -15481,7 +15481,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1231,
+      "line": 1222,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .tickTimers(new Date()) .then((result) => { if (result.enqueued > 0) { logger.i… [sha256:836394bb771c6983d27882ad1a77902f9b5b4b9d448a4d8b3ab46fc1871ff562]",
       "receiver": null,
       "method": "setInterval",
@@ -15491,7 +15491,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1303,
+      "line": 1294,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledBackup(); }",
       "receiver": null,
       "method": "setInterval",
@@ -15501,7 +15501,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1436,
+      "line": 1427,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledWorkspaceBackups(\"running\"); }",
       "receiver": null,
       "method": "setInterval",
@@ -58657,14 +58657,15 @@
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "base_sha256": "e68fab612c4e24ced3dfde26a7aaa9b23fea748acace045bbe4aff03b4412488",
-      "head_sha256": "c7eed1d955d3f5b92ab758dd9374ba81a253f6af0d364fd5f7d84a7d85ae6d32",
+      "head_sha256": "3414f8b0f30943f66eaa44962620b5b6f096932edcef6a5a44f3c9fd7e9ff48b",
       "rust_authority": "native::server_foundation::public_ingress_config and native::server_foundation::local_account_auth",
       "scope": "Forwards runtime owner and existing local-account identity/origin/offline config into Rust startup.",
       "compatibility_boundary": "Creates no new credential or route; passes through existing options when Rust ingress is enabled.",
       "retirement_criterion": "Retire when Rust ingress/lifecycle is no longer bootstrapped through the Node runtime.",
       "reviewer": "independent agent /root/auth_next_integration_review",
       "review_reference": "doc/plans/artifacts/2026-10-17-rust-identity-transport-stage-review.json",
-      "review_status": "reviewed"
+      "review_status": "reviewed",
+      "content_equivalence_note": "Formatting-only compression of the preparePublicIngressStartup call; parameters and runtime behavior unchanged; server typecheck and architecture audit passed."
     },
     {
       "path": "server/src/middleware/auth.ts",
