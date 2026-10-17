@@ -1762,6 +1762,7 @@ export function heartbeatService(
       .from(heartbeatRuns)
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
       .where(and(
+        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
         eq(heartbeatRuns.status, "running"),
         or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
       ));
