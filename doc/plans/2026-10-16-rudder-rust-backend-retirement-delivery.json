@@ -290,6 +290,12 @@
           "merged_at": "2026-10-16T17:00:49Z",
           "scope": "Bounded native Chat binding/span authority and direct read APIs; not full Chat workflow",
           "gates": "Independent final handoff ACCEPT; 21 success checks and intentional affected-qualification skip; no protection override used."
+        },
+        {
+          "number": 325,
+          "state": "open_ci_pending",
+          "head_sha": "eb0bc0736d0c2ceed5d413839b4381ac8047fb18",
+          "scope": "bounded native auth/Host ingress Rust ownership; protected merge pending required CI"
         }
       ],
       "managed_migration": {
@@ -2176,6 +2182,72 @@
         "scope": "Fresh native auth and packaged memory-mode candidate acceptance; no native vault/release/deployment claim.",
         "status": "ACTIVE"
       }
+    },
+    "auth_64857_final_acceptance": {
+      "recorded_utc": "2026-10-17T09:05:00Z",
+      "candidate": {
+        "source_sha": "64857cd2ac5b0a286cc594f96c99f6671f9da0b5",
+        "tree": "6512e04712e2e171fed26f5e5edca7e5d882ccea",
+        "published_head": "eb0bc0736d0c2ceed5d413839b4381ac8047fb18",
+        "published_tree": "c51d5babab4f8b84b69dbb6f0d160a65ec4e7edb",
+        "published_diff": "authority inventory JSON only"
+      },
+      "stage_review": {
+        "verdict": "accept",
+        "path": "/private/tmp/rudder-auth-host-stage-review-20261017/stage-review-64857.md",
+        "sha256": "54b62ed744473e5336e45345dc8b80bfd318a7130c45132dc55b938088fedb15"
+      },
+      "native_verifier": {
+        "verdict": "PASS",
+        "criteria": "78/78",
+        "path": "/private/tmp/rudder-auth-storage-packaged-20261017/next-candidate-64857/native61/acceptance-receipt.json",
+        "sha256": "ea428964f24e4d4924fc58710398adf4c5372d9bc6a495ef2d446d4285f4bfe1"
+      },
+      "packaged_verifier": {
+        "verdict": "PASS",
+        "path": "/private/tmp/rudder-auth-storage-packaged-20261017/next-candidate-64857/packaged/acceptance-receipt.json",
+        "sha256": "78bebe8c4e29da0bb1a585d6d8984cb10c5d40d6cc4d715956c63f2e61193e88"
+      },
+      "final_review": {
+        "verdict": "accept",
+        "path": "/private/tmp/rudder-auth-host-stage-review-20261017/final-64857.md",
+        "sha256": "ef7fb5538eca666fbde905645b9397c157b5b2c0b0cd32d37708159b2d1c006b"
+      },
+      "content_equivalence_rebind": {
+        "verdict": "accept",
+        "path": "/private/tmp/rudder-auth-host-stage-review-20261017/content-equivalence-rebind-eb0bc.md",
+        "sha256": "aec7ef0acf29f1b7a9eaf1d13a73be6bd5d103abc27211ba0a9f5dd9e0f6fa54"
+      },
+      "evidence_reconciliation": {
+        "path": "/private/tmp/rudder-auth-storage-packaged-20261017/next-candidate-64857/packet-evidence-reconciliation.json",
+        "sha256": "b901f119bf266ca098e4b49424a79cef183e3e9634db671d659dd18027c541dd"
+      },
+      "inventory": {
+        "status": "matches current source",
+        "summary": "910 source files, 4606 structural surfaces, 10 explicitly tracked unknowns; three reviewed compatibility records promoted after verifier and final review."
+      },
+      "scope_limits": "Native vault/Keychain, hosted OAuth, full charset/parser parity, native Desktop CI, release/deployment and complete Rust retirement remain unproven."
+    },
+    "auth_pr_325": {
+      "number": 325,
+      "url": "https://github.com/Undertone0809/rudder/pull/325",
+      "head": "eb0bc0736d0c2ceed5d413839b4381ac8047fb18",
+      "base": "d0410bab3f4a88af04351ebc4c447824b94e87e8",
+      "state": "open_ci_pending",
+      "merge_authority": "user authorized protected merge after required CI; no merge yet"
+    },
+    "full_baseline_test_current": {
+      "candidate": "6de654dd1d8a9790d5455497074fcba369e7f91c",
+      "status": "INTERRUPTED_ENVIRONMENT",
+      "receipt_path": "/private/tmp/rudder-auth-identity-package-fix-20261017/full-test-6de654.json",
+      "receipt_sha256": "bc9041bc0d95f6a067725974a10eefc1a2bacada90e685c2da989d4827d20161",
+      "limit": "Desktop test harness waited for pre-existing PID 4242; own test tree stopped, user process preserved; no full baseline PASS claim."
+    },
+    "cleanup_protection_2026_10_17": {
+      "status": "active",
+      "automation_id": "automation",
+      "receipt_sha256": "8f40fb6c726ad50421d0c66de8d60a1749a1af5f71f8ad1a56cb392727b482a6",
+      "scope": "Protect active migration worktrees/build directories/frozen acceptance artifacts; unrelated idle cleanup remains enabled."
     }
   }
 }
