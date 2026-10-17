@@ -23,7 +23,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fs,
     io::Read,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 use uuid::Uuid;
@@ -95,6 +95,117 @@ impl Default for ClaudeSessionSelector {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// An executable path resolved by the trusted Rust host.  The adapter never
+/// searches the caller's PATH and never accepts a path supplied by HTTP or an
+/// Agent configuration.  Canonicalizing once also prevents a later launch
+/// from silently switching through a symlink.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaudeExecutable(PathBuf);
+
+impl ClaudeExecutable {
+    pub fn resolve(path: &Path) -> Result<Self, ClaudeError> {
+        if !path.is_absolute() {
+            return Err(ClaudeError::InvalidLaunch);
+        }
+        let canonical = path
+            .canonicalize()
+            .map_err(|_| ClaudeError::InvalidLaunch)?;
+        let metadata = fs::symlink_metadata(&canonical).map_err(|_| ClaudeError::InvalidLaunch)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(ClaudeError::InvalidLaunch);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return Err(ClaudeError::InvalidLaunch);
+            }
+        }
+        Ok(Self(canonical))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+/// Rust-owned Claude configuration boundary.  Authentication remains in the
+/// operator home selected by the trusted host; mutable Claude state is kept
+/// in a per-runtime managed home.  This type only returns environment values;
+/// it never creates, copies, or reads credential files.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaudeRuntimeProfile {
+    operator_home: PathBuf,
+    managed_home: PathBuf,
+    config_dir: PathBuf,
+}
+
+impl ClaudeRuntimeProfile {
+    pub fn new(operator_home: PathBuf, managed_home: PathBuf) -> Result<Self, ClaudeError> {
+        let operator_home = canonical_directory(&operator_home)?;
+        let managed_home = canonical_directory(&managed_home)?;
+        if operator_home == managed_home {
+            return Err(ClaudeError::InvalidLaunch);
+        }
+        let config_dir = managed_home.join(".claude");
+        let canonical_config = canonical_directory(&config_dir)?;
+        if canonical_config != config_dir {
+            return Err(ClaudeError::InvalidLaunch);
+        }
+        Ok(Self {
+            operator_home,
+            managed_home,
+            config_dir,
+        })
+    }
+
+    pub fn operator_home(&self) -> &Path {
+        &self.operator_home
+    }
+
+    pub fn managed_home(&self) -> &Path {
+        &self.managed_home
+    }
+
+    pub fn config_dir(&self) -> &Path {
+        &self.config_dir
+    }
+
+    /// Return only the approved environment boundary.  Callers may merge
+    /// separately validated provider variables, but must not inherit the
+    /// ambient process environment wholesale.
+    pub fn environment(&self) -> Result<BTreeMap<String, String>, ClaudeError> {
+        let mut env = BTreeMap::new();
+        for (key, value) in [
+            ("HOME", &self.operator_home),
+            ("USERPROFILE", &self.operator_home),
+            ("CLAUDE_CONFIG_DIR", &self.config_dir),
+            ("RUDDER_CLAUDE_HOME", &self.managed_home),
+            ("RUDDER_OPERATOR_HOME", &self.operator_home),
+        ] {
+            // Reject non-UTF-8 paths rather than silently losing an
+            // environment boundary at process-host serialization time.
+            let value = value.to_str().ok_or(ClaudeError::InvalidLaunch)?;
+            env.insert(key.into(), value.into());
+        }
+        Ok(env)
+    }
+}
+
+fn canonical_directory(path: &Path) -> Result<PathBuf, ClaudeError> {
+    if !path.is_absolute() {
+        return Err(ClaudeError::InvalidLaunch);
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|_| ClaudeError::InvalidLaunch)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(ClaudeError::InvalidLaunch);
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| ClaudeError::InvalidLaunch)?;
+    Ok(canonical)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -381,6 +492,37 @@ impl ClaudeControlRequest {
     }
 }
 
+/// Single-owner lease for one in-flight native control request.  Claude may
+/// ask for permission or an answer while a turn is running; accepting a
+/// second request before the first response is acknowledged would make the
+/// control stream ambiguous, so the adapter fails closed.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ClaudeControlLease {
+    request_id: Option<String>,
+}
+
+impl ClaudeControlLease {
+    pub fn pending_request_id(&self) -> Option<&str> {
+        self.request_id.as_deref()
+    }
+
+    pub fn observe(&mut self, request: &ClaudeControlRequest) -> Result<(), ClaudeError> {
+        if self.request_id.is_some() {
+            return Err(ClaudeError::InvalidControlResponse);
+        }
+        self.request_id = Some(request.request_id.clone());
+        Ok(())
+    }
+
+    pub fn authorize(&mut self, request: &ClaudeControlRequest) -> Result<(), ClaudeError> {
+        if self.request_id.as_deref() != Some(request.request_id()) {
+            return Err(ClaudeError::InvalidControlResponse);
+        }
+        self.request_id = None;
+        Ok(())
+    }
+}
+
 impl ClaudeEvent {
     pub fn parse(raw: &[u8]) -> Result<Self, ClaudeError> {
         let value: Value = serde_json::from_slice(raw)?;
@@ -611,6 +753,7 @@ pub struct ClaudeTransport {
     request_id: String,
     owner_token: String,
     session_id: Option<ClaudeSessionSelector>,
+    control_lease: ClaudeControlLease,
     terminal: Option<ClaudeTurnReceipt>,
     terminal_received: bool,
 }
@@ -637,13 +780,14 @@ impl ClaudeTransport {
         permit: Option<ConnectionLaunchPermit>,
     ) -> Result<Self, ClaudeError> {
         launch.validate()?;
+        let executable = ClaudeExecutable::resolve(&launch.executable)?;
         let request_id = launch.attempt_id.clone();
         let owner_token = launch.owner_token.clone();
         let start = Command::StartProcess {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(request_id.clone()),
-            executable: launch
-                .executable
+            executable: executable
+                .path()
                 .to_str()
                 .ok_or(ClaudeError::InvalidLaunch)?
                 .to_owned(),
@@ -685,6 +829,7 @@ impl ClaudeTransport {
             request_id,
             owner_token,
             session_id: None,
+            control_lease: ClaudeControlLease::default(),
             terminal: None,
             terminal_received: false,
         })
@@ -727,7 +872,15 @@ impl ClaudeTransport {
         response: Value,
     ) -> Result<(), ClaudeError> {
         let frame = encode_control_response(request, response)?;
-        self.write_frame(frame)
+        if self.control_lease.pending_request_id() != Some(request.request_id()) {
+            return Err(ClaudeError::InvalidControlResponse);
+        }
+        self.write_frame(frame)?;
+        self.control_lease.authorize(request)
+    }
+
+    pub fn pending_control_request_id(&self) -> Option<&str> {
+        self.control_lease.pending_request_id()
     }
 
     /// Stop the owned provider process through the Rust process host. This is
@@ -842,7 +995,8 @@ impl ClaudeTransport {
                 }
                 self.terminal = Some(receipt_from_result(event.clone())?);
             }
-            ClaudeEvent::ControlRequest(_) | ClaudeEvent::Unknown { .. } => {}
+            ClaudeEvent::ControlRequest(request) => self.control_lease.observe(request)?,
+            ClaudeEvent::Unknown { .. } => {}
         }
         if self.events.len() >= MAX_EVENT_QUEUE {
             return Err(ClaudeError::OutputOverflow);
@@ -972,9 +1126,76 @@ impl ClaudeHistoryReader {
             .collect())
     }
 
+    /// Resolve the provider's deterministic project directory for one
+    /// canonical working directory.  The reader never scans a directory and
+    /// never chooses a latest session; the caller must provide the explicit
+    /// Session ID held by the Rust admission record.
+    pub fn path_for_cwd(&self, projects_root: &Path, cwd: &Path) -> Result<PathBuf, ClaudeError> {
+        let projects_root = canonical_directory(projects_root)?;
+        if !projects_root.starts_with(&self.root) {
+            return Err(ClaudeError::InvalidHistoryPath);
+        }
+        let cwd = canonical_directory(cwd)?;
+        let project_name = encoded_project_name(&cwd)?;
+        let project_dir = projects_root.join(project_name);
+        let project_dir_meta =
+            fs::symlink_metadata(&project_dir).map_err(|_| ClaudeError::InvalidHistoryPath)?;
+        if !project_dir_meta.is_dir() || project_dir_meta.file_type().is_symlink() {
+            return Err(ClaudeError::InvalidHistoryPath);
+        }
+        let project_dir = project_dir
+            .canonicalize()
+            .map_err(|_| ClaudeError::InvalidHistoryPath)?;
+        if !project_dir.starts_with(&projects_root) {
+            return Err(ClaudeError::InvalidHistoryPath);
+        }
+        Ok(project_dir.join(format!("{}.jsonl", self.session.as_str())))
+    }
+
+    pub fn read_for_cwd(
+        &self,
+        projects_root: &Path,
+        cwd: &Path,
+    ) -> Result<Vec<ClaudeHistoryEntry>, ClaudeError> {
+        let path = self.path_for_cwd(projects_root, cwd)?;
+        self.read_path(&path)
+    }
+
     pub fn session(&self) -> &ClaudeSessionSelector {
         &self.session
     }
+}
+
+fn encoded_project_name(cwd: &Path) -> Result<String, ClaudeError> {
+    let mut encoded = String::new();
+    for component in cwd.components() {
+        match component {
+            Component::RootDir => encoded.push('-'),
+            Component::Normal(value) => {
+                let value = value.to_str().ok_or(ClaudeError::InvalidHistoryPath)?;
+                if value.is_empty() || value.contains('\0') {
+                    return Err(ClaudeError::InvalidHistoryPath);
+                }
+                encoded.push('-');
+                encoded.push_str(value);
+            }
+            Component::Prefix(prefix) => {
+                let value = prefix
+                    .as_os_str()
+                    .to_str()
+                    .ok_or(ClaudeError::InvalidHistoryPath)?;
+                encoded.push('-');
+                encoded.push_str(value);
+            }
+            Component::CurDir | Component::ParentDir => {
+                return Err(ClaudeError::InvalidHistoryPath);
+            }
+        }
+    }
+    if encoded.is_empty() || encoded.len() > 4096 {
+        return Err(ClaudeError::InvalidHistoryPath);
+    }
+    Ok(encoded)
 }
 
 #[cfg(test)]
@@ -1090,5 +1311,80 @@ mod tests {
         let frame = encode_user_message("line1\nline2").unwrap();
         assert_eq!(frame.bytes().filter(|byte| *byte == b'\n').count(), 1);
         assert!(encode_user_message(&"x".repeat(MAX_USER_INPUT_BYTES)).is_err());
+    }
+
+    #[test]
+    fn trusted_executable_and_profile_are_canonical_and_isolated() {
+        let executable = ClaudeExecutable::resolve(&std::env::current_exe().unwrap()).unwrap();
+        assert!(executable.path().is_absolute());
+
+        let temp = tempfile::tempdir().unwrap();
+        let operator = temp.path().join("operator");
+        let managed = temp.path().join("managed");
+        fs::create_dir(&operator).unwrap();
+        fs::create_dir(&managed).unwrap();
+        fs::create_dir(managed.join(".claude")).unwrap();
+        let profile = ClaudeRuntimeProfile::new(operator.clone(), managed.clone()).unwrap();
+        let env = profile.environment().unwrap();
+        let operator = operator.canonicalize().unwrap();
+        let managed = managed.canonicalize().unwrap();
+        assert_eq!(env["HOME"], operator.to_str().unwrap());
+        assert_eq!(env["USERPROFILE"], operator.to_str().unwrap());
+        assert_eq!(
+            env["CLAUDE_CONFIG_DIR"],
+            managed.join(".claude").to_str().unwrap()
+        );
+        assert_eq!(env["RUDDER_CLAUDE_HOME"], managed.to_str().unwrap());
+        assert!(ClaudeRuntimeProfile::new(operator.clone(), operator).is_err());
+    }
+
+    #[test]
+    fn control_lease_rejects_concurrent_or_stale_owners() {
+        let first = ClaudeControlRequest {
+            request_id: "req-1".into(),
+            subtype: "permission_request".into(),
+            request: json!({"tool_name":"Bash"}),
+        };
+        let second = ClaudeControlRequest {
+            request_id: "req-2".into(),
+            subtype: "question".into(),
+            request: json!({"question":"continue?"}),
+        };
+        let mut lease = ClaudeControlLease::default();
+        lease.observe(&first).unwrap();
+        assert_eq!(lease.pending_request_id(), Some("req-1"));
+        assert!(lease.observe(&second).is_err());
+        assert!(lease.authorize(&second).is_err());
+        lease.authorize(&first).unwrap();
+        assert_eq!(lease.pending_request_id(), None);
+    }
+
+    #[test]
+    fn history_reader_resolves_only_the_explicit_cwd_and_session() {
+        let root = tempfile::tempdir().unwrap();
+        let projects = root.path().join("projects");
+        let cwd = root.path().join("workspace");
+        fs::create_dir(&projects).unwrap();
+        fs::create_dir(&cwd).unwrap();
+        let projects = projects.canonicalize().unwrap();
+        let cwd = cwd.canonicalize().unwrap();
+        let project_dir = projects.join(encoded_project_name(&cwd).unwrap());
+        fs::create_dir(&project_dir).unwrap();
+        let path = project_dir.join(format!("{}.jsonl", session().as_str()));
+        fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"{}\"}}\n",
+                session().as_str()
+            ),
+        )
+        .unwrap();
+
+        let reader = ClaudeHistoryReader::new(projects.clone(), session()).unwrap();
+        assert_eq!(reader.path_for_cwd(&projects, &cwd).unwrap(), path);
+        assert_eq!(reader.read_for_cwd(&projects, &cwd).unwrap().len(), 1);
+        let other = root.path().join("other");
+        fs::create_dir(&other).unwrap();
+        assert!(reader.path_for_cwd(&projects, &other).is_err());
     }
 }
