@@ -1,15 +1,23 @@
 import type { Router } from "express";
 import { hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { callNativeChatTranscript } from "../services/native-chat-transcript-bridge.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { paginateChatMessages } from "./chats.helpers.js";
 
 type ChatMessageQueryRouteContext = {
   router: Router;
   svc: any;
   assertConversationAccess: (...args: any[]) => Promise<any>;
+  rustFoundationBridge?: RustFoundationBridge;
 };
 
 export function registerChatMessageQueryRoutes(ctx: ChatMessageQueryRouteContext) {
-  const { router, svc, assertConversationAccess } = ctx;
+  const { router, svc, assertConversationAccess, rustFoundationBridge } = ctx;
+  const boundedQueryNumber = (value: unknown, fallback: number) => {
+    if (typeof value !== "string" || !/^\d+$/.test(value)) return fallback;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : fallback;
+  };
 
   router.get("/chats/:id/messages", async (req, res) => {
     const requestedOrgId = typeof req.query.orgId === "string"
@@ -44,6 +52,21 @@ export function registerChatMessageQueryRoutes(ctx: ChatMessageQueryRouteContext
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    if (conversation.mutability === "native_chat") {
+      const response = await callNativeChatTranscript(
+        rustFoundationBridge,
+        req.actor,
+        conversation.orgId,
+        {
+          operation: "read_message_transcript",
+          messageId: req.params.messageId as string,
+          afterSeq: boundedQueryNumber(req.query.afterSeq, 0),
+          limit: boundedQueryNumber(req.query.limit, 100),
+        },
+      );
+      res.status(response.status).type(response.contentType).send(response.body);
       return;
     }
     const transcript = await svc.getMessageTranscript(conversation.id, req.params.messageId as string);

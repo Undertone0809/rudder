@@ -35,6 +35,7 @@ import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
+import { requestNativeChatTranscript, type NativeChatTranscriptInput } from "./native-chat-transcript-bridge.js";
 import {
   nativeIdentityAuthEnvironment,
   nativeLocalAccountLifecycleEnvironment,
@@ -64,6 +65,7 @@ export type RustFoundationResponse = {
 
 export interface RustFoundationBridge {
   runtimeBinding?(actor: RustFoundationActor, orgId: string, input: RuntimeBindingInput): Promise<RustFoundationResponse>;
+  nativeChatTranscript?(actor: RustFoundationActor, orgId: string, input: NativeChatTranscriptInput): Promise<RustFoundationResponse>;
   automationRead?(actor: RustFoundationActor, orgId: string, input: AutomationReadInput): Promise<RustFoundationResponse>;
   activityLinkRead?(actor: RustFoundationActor, orgId: string, input: ActivityLinkReadInput): Promise<RustFoundationResponse>;
   issueMetadataRead?(actor: RustFoundationActor, orgId: string, input: IssueMetadataReadInput): Promise<RustFoundationResponse>;
@@ -741,6 +743,11 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
       return requestRuntimeBinding(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async nativeChatTranscript(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestNativeChatTranscript(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
     },
     async automationRead(actor, orgId, input) {
       await ensureStarted();

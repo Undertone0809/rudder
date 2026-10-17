@@ -3164,7 +3164,7 @@ export function chatRoutes(
       transcriptEventId: null,
     });
   });
-  registerChatMessageQueryRoutes({ router, svc, assertConversationAccess });
+  registerChatMessageQueryRoutes({ router, svc, assertConversationAccess, rustFoundationBridge });
 
   router.post(
     "/chats/:id/messages",
