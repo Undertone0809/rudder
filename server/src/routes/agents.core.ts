@@ -4,7 +4,11 @@ import { Router, type Request, type Response } from "express";
 import { homedir, hostname } from "node:os";
 import { resolveOrganizationAgentsDir, resolveOrganizationWorkspaceHomeDir, resolvePreviousDocumentsOrganizationWorkspaceRoot, resolveRudderInstanceRoot } from "../home-paths.js";
 import type { RustFoundationBridge, RustFoundationResponse } from "../services/rust-foundation-bridge.js";
-export function agentCoreRoutes(bridge: RustFoundationBridge | undefined, deploymentMode: string) {
+export function agentCoreRoutes(
+    bridge: RustFoundationBridge | undefined,
+    deploymentMode: string,
+    nativeAgentCorePaths = false,
+) {
     const router = Router();
     const reply = (res: Response, value: RustFoundationResponse) => res.status(value.status).set("content-type", value.contentType).send(value.body);
     const forward = (operation: string) => async (req: Request, res: Response) => {
@@ -44,8 +48,13 @@ export function agentCoreRoutes(bridge: RustFoundationBridge | undefined, deploy
     };
     router.get("/agents/me", forward("me"));
     router.get("/agents/:id", forward("detail"));
-    router.patch("/agents/:id/permissions", forward("permissions"));
-    router.get("/orgs/:orgId/agents", forward("list"));
+    // The managed public listener owns these two paths when native identity
+    // is enabled. Keep their private Node adapters only for compatibility
+    // deployments that have not selected that ingress.
+    if (!nativeAgentCorePaths) {
+        router.patch("/agents/:id/permissions", forward("permissions"));
+        router.get("/orgs/:orgId/agents", forward("list"));
+    }
     router.get("/orgs/:orgId/agent-configurations", forward("configurations"));
     router.get("/orgs/:orgId/agents/name-suggestion", forward("name-suggestion"));
     router.get("/agents/me/inbox-lite", forward("inbox"));

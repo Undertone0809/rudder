@@ -3,7 +3,7 @@ import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudde
 import { createAgentKeySchema, resetAgentSessionSchema, RUDDER_BROWSER_MCP_TOOL_NAMES, RUDDER_CORE_MCP_TOOL_NAMES, updateAgentPermissionsSchema } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import express from "express";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { Server } from "node:http";
@@ -116,15 +116,77 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     let databaseUrl = "";
     let nodeUrl = "";
     let publicUrl = "";
+    let nodeNativeIngressPathHits = 0;
+    let nativeWorkspaceHome = "";
+    let nativeOrganizationAgents = "";
     const nativeIdentity = nativeIdentityIngressFixture();
     const org = randomUUID(), otherOrg = randomUUID(), agent = randomUUID(), peer = randomUUID(), foreignAgent = randomUUID(), revision = randomUUID();
     const owner = `agent-core-owner-${randomUUID()}`, other = `agent-core-peer-${randomUUID()}`, outsider = `agent-core-outsider-${randomUUID()}`;
     const ownerToken = `synthetic-board-${randomUUID()}`, otherToken = `synthetic-board-${randomUUID()}`, outsiderToken = `synthetic-board-${randomUUID()}`, agentToken = `synthetic-agent-${randomUUID()}`;
+    const ownerSessionToken = `agent-core-session-${randomUUID()}`;
+    const ownerSessionSecret = "synthetic-agent-core-session-secret";
     const publicRun = randomUUID(), privateRun = randomUUID(), privateChat = randomUUID();
     const snapshot = { name: "Delta restored", role: "engineer", title: null, capabilities: null, agentRuntimeType: "process", agentRuntimeConfig: { opaque: "h.p.s", env: { VISIBLE: { type: "plain", value: "ordinary" }, API_TOKEN: { type: "secret_ref", secretId: randomUUID(), version: "latest" } }, nested: { password: "synthetic-only", keep: ["h.p.s", { "$serde_json::private::Number": "literal" }] } }, runtimeConfig: { heartbeat: { enabled: "yes", intervalSec: "0x3c" } }, budgetMonthlyCents: 0, metadata: { nested: { "$serde_json::private::RawValue": "not parsed" } } };
     function call(base: string, method: "get" | "post" | "delete" | "patch", url: string, token = ownerToken, input?: unknown) { let r = request(base)[method](url); if (token)
         r = r.set("authorization", `Bearer ${token}`); if (input !== undefined)
         r = r.send(input); return r; }
+    async function websocketResponse(base: string, pathname: string, host: string, forwardedHost: string) {
+        const target = new URL(base);
+        const socket = net.createConnection(Number(target.port), "127.0.0.1");
+        return await new Promise<string>((resolve, reject) => {
+            let response = "";
+            let settled = false;
+            const finish = (value: string) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                socket.destroy();
+                resolve(value);
+            };
+            const timeout = setTimeout(() => finish(response), 3000);
+            socket.once("error", (error) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                reject(error);
+            });
+            socket.on("data", (chunk) => {
+                response += chunk.toString("utf8");
+                if (response.includes("\r\n\r\n")) finish(response);
+            });
+            socket.once("close", () => finish(response));
+            socket.once("connect", () => socket.write([
+                `GET ${pathname} HTTP/1.1`,
+                `Host: ${host}`,
+                `X-Forwarded-Host: ${forwardedHost}`,
+                "Connection: Upgrade",
+                "Upgrade: websocket",
+                "Sec-WebSocket-Version: 13",
+                "Sec-WebSocket-Key: c3ludGhldGljLWFnZW50LWtleQ==",
+                "\r\n",
+            ].join("\r\n")));
+        });
+    }
+    function ownerCookie() {
+        const signature = createHmac("sha256", ownerSessionSecret).update(ownerSessionToken).digest("base64");
+        return `better-auth.session_token=${encodeURIComponent(`${ownerSessionToken}.${signature}`)}`;
+    }
+    function signedAgentJwt(agentId: string, orgId: string, expiresAt: number) {
+        const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+        const signingInput = `${encode({ alg: "HS256", typ: "JWT" })}.${encode({
+            sub: agentId,
+            org_id: orgId,
+            adapter_type: "claude_local",
+            run_id: `permissions-${randomUUID()}`,
+            iat: Math.floor(Date.now() / 1000),
+            exp: expiresAt,
+            iss: nativeIdentity.identityAuth.agentJwtIssuer,
+            aud: nativeIdentity.identityAuth.agentJwtAudience,
+        })}`;
+        const signature = createHmac("sha256", nativeIdentity.identityAuth.agentJwtSecret)
+            .update(signingInput).digest("base64url");
+        return `${signingInput}.${signature}`;
+    }
     async function scalar(query: ReturnType<typeof sql>) { const rows = await db.execute(query); return Number(rows[0]?.value ?? 0); }
     beforeAll(async () => {
         const repo = fileURLToPath(new URL("../../../", import.meta.url));
@@ -150,6 +212,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             await db.execute(sql `INSERT INTO board_api_keys(user_id,name,key_hash) VALUES(${id},'synthetic',${hash(token!)})`);
         }
         await db.execute(sql `INSERT INTO instance_user_roles(user_id,role) VALUES(${owner},'instance_admin')`);
+        await db.execute(sql `INSERT INTO session(id,token,user_id,expires_at,created_at,updated_at) VALUES(${`agent-core-session-id-${randomUUID()}`},${ownerSessionToken},${owner},now()+interval '2 days',now(),now())`);
         await db.execute(sql `INSERT INTO agents(id,org_id,name,role,status,permissions,agent_runtime_config,runtime_config,workspace_key) VALUES(${agent}::uuid,${org}::uuid,'Delta agent','engineer','idle','{"canCreateAgents":false,"canManageSkills":true}',${JSON.stringify(snapshot.agentRuntimeConfig)}::jsonb,${JSON.stringify(snapshot.runtimeConfig)}::jsonb,'stable-agent-key'),(${peer}::uuid,${org}::uuid,'Peer agent','ceo','idle','{}','{}','{}','peer-key'),(${foreignAgent}::uuid,${otherOrg}::uuid,'Foreign agent','general','idle','{}','{}','{}','foreign-key')`);
         await db.execute(sql `INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${agent}::uuid,'synthetic runtime',${hash(agentToken)})`);
         await db.execute(sql `INSERT INTO agent_config_revisions(id,org_id,agent_id,before_config,after_config,changed_keys) VALUES(${revision}::uuid,${org}::uuid,${agent}::uuid,${JSON.stringify(snapshot)}::jsonb,${JSON.stringify({ ...snapshot, agentRuntimeConfig: { opaque: "ordinary", array: ["h.p.s", { keep: "literal" }] } })}::jsonb,'["name"]')`);
@@ -160,13 +223,29 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         app.use(nativeIdentity.middleware());
         app.use(express.json({ limit: "10mb" }));
         app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+        app.use((req, _res, next) => {
+            if ((req.method === "GET" && /^\/api\/orgs\/[^/]+\/(?:agents|members\/directory)\/?$/i.test(req.path))
+                || (req.method === "PATCH" && /^\/api\/agents\/[^/]+\/permissions\/?$/i.test(req.path))
+                || (req.method === "POST" && /^\/api\/auth\/local-(?:exchange|offline|claim|signout-all)\/?$/i.test(req.path))) {
+                nodeNativeIngressPathHits += 1;
+            }
+            next();
+        });
         app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
         server = app.listen(0, "127.0.0.1");
         await once(server, "listening");
+        server.on("upgrade", (_request, socket) => {
+            nodeNativeIngressPathHits += 1;
+            socket.destroy();
+        });
         nodeUrl = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
-        bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes", publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl, authorizationKey: "synthetic-public-ingress-key-32-bytes" } });
+        bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes", publicIngress: { identityAuth: nativeIdentity.identityAuth, sessionAuth: { kind: "better_auth", secret: ownerSessionSecret, secureCookie: false, assertionKey: nativeIdentity.identityAuth.assertionKey }, privateHostGate: { enabled: true, allowedHostnames: ["127.0.0.1", "localhost"], bindHost: "127.0.0.1" }, listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl, authorizationKey: "synthetic-public-ingress-key-32-bytes" } });
         configureBrowserCapabilityDeployment(db, "local_trusted");
-        app.use("/api", agentRoutes(db, undefined, bridge));
+        // Rust snapshots these trusted host facts when the foundation child is
+        // spawned; use that same configured path for the filesystem lock case.
+        nativeWorkspaceHome = resolveOrganizationWorkspaceHomeDir();
+        nativeOrganizationAgents = resolveOrganizationAgentsDir(org);
+        app.use("/api", agentRoutes(db, undefined, bridge, true));
         app.use(errorHandler);
         await bridge.start();
         publicUrl = bridge.publicIngressBaseUrl!;
@@ -190,6 +269,142 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             .set("x-rudder-native-session-proof", "forged");
         expect(forged.status, forged.text).toBe(401);
         expect(forged.body.code).toBe("native_session_proof_invalid");
+    });
+    it("owns roster and permission paths at Rust ingress with legacy auth, Origin and JSON-body rules", async () => {
+        // Reuse the seeded Agent so this ingress contract test does not alter
+        // the stateful fixture consumed by the legacy compatibility cases
+        // below.
+        const subject = { id: agent };
+        nodeNativeIngressPathHits = 0;
+
+        const roster = await request(publicUrl).get(`/api/orgs/${org}/agents`).set("authorization", `Bearer ${ownerToken}`);
+        expect(roster.status, roster.text).toBe(200);
+        expect(roster.body.some((row: { id: string }) => row.id === subject.id)).toBe(true);
+        const aliasRoster = await request(publicUrl).get(`/API/ORGS/${org}/AGENTS/`)
+            .set("authorization", `Bearer ${ownerToken}`);
+        expect(aliasRoster.status, aliasRoster.text).toBe(200);
+        const headRoster = await request(publicUrl).head(`/api/orgs/${org}/agents`)
+            .set("authorization", `Bearer ${ownerToken}`);
+        expect(headRoster.status, headRoster.text).toBe(200);
+        expect(headRoster.text ?? "").toBe("");
+
+        const disallowedHost = await request(publicUrl).get(`/api/orgs/${org}/agents`)
+            .set("host", "attacker.invalid").set("x-forwarded-host", "127.0.0.1")
+            .set("authorization", `Bearer ${ownerToken}`);
+        expect(disallowedHost.status, disallowedHost.text).toBe(403);
+        expect(disallowedHost.body.error).toContain("Hostname 'attacker.invalid' is not allowed");
+
+        const activityBeforeHostDenials = await scalar(sql`SELECT count(*) AS value FROM activity_log`);
+        const outboxBeforeHostDenials = await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`);
+        const hostileMemberDirectory = await request(publicUrl).get(`/api/orgs/${org}/members/directory`)
+            .set("host", "attacker.invalid").set("x-forwarded-host", "127.0.0.1")
+            .set("authorization", `Bearer ${ownerToken}`);
+        expect(hostileMemberDirectory.status, hostileMemberDirectory.text).toBe(403);
+        expect(hostileMemberDirectory.body.error).toContain("Hostname 'attacker.invalid' is not allowed");
+        const hostileLocalAccount = await request(publicUrl).post("/api/auth/local-offline")
+            .set("host", "attacker.invalid").set("x-forwarded-host", "127.0.0.1")
+            .send({ grant: "synthetic-local-grant" });
+        expect(hostileLocalAccount.status, hostileLocalAccount.text).toBe(403);
+        expect(hostileLocalAccount.body.error).toContain("Hostname 'attacker.invalid' is not allowed");
+        const hostileWebSocket = await websocketResponse(
+            publicUrl,
+            `/api/orgs/${org}/events/ws`,
+            "attacker.invalid",
+            "127.0.0.1",
+        );
+        expect(hostileWebSocket.split("\r\n", 1)[0]).toContain("403 Forbidden");
+        expect(hostileWebSocket).toContain("Hostname 'attacker.invalid' is not allowed");
+        const malformedHostBody = await request(publicUrl).patch(`/api/agents/${subject.id}/permissions`)
+            .set("host", "attacker.invalid").set("x-forwarded-host", "127.0.0.1")
+            .set("authorization", `Bearer ${ownerToken}`).set("content-type", "application/json").send("{");
+        expect(malformedHostBody.status, malformedHostBody.text).toBe(500);
+        expect(malformedHostBody.body).toEqual({ error: "Internal server error" });
+        expect(await scalar(sql`SELECT count(*) AS value FROM activity_log`)).toBe(activityBeforeHostDenials);
+        expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`)).toBe(outboxBeforeHostDenials);
+        expect(nodeNativeIngressPathHits).toBe(0);
+
+        const noIdentity = await request(publicUrl).get(`/api/orgs/${org}/agents`);
+        expect(noIdentity.status, noIdentity.text).toBe(401);
+        const invalidKey = await request(publicUrl).get(`/api/orgs/${org}/agents`).set("authorization", "Bearer pcp_invalid-agent-core-key");
+        expect(invalidKey.status, invalidKey.text).toBe(401);
+        const foreignMembership = await request(publicUrl).get(`/api/orgs/${org}/agents`).set("authorization", `Bearer ${outsiderToken}`);
+        expect(foreignMembership.status, foreignMembership.text).toBe(403);
+        const crossOrgWrite = await request(publicUrl).patch(`/api/agents/${foreignAgent}/permissions`)
+            .set("authorization", `Bearer ${otherToken}`).send({ canCreateAgents: false, canAssignTasks: false });
+        expect(crossOrgWrite.status, crossOrgWrite.text).toBe(403);
+
+        const origin = new URL(publicUrl).origin;
+        const hostileCookieWrite = await request(publicUrl).patch(`/api/agents/${subject.id}/permissions`)
+            .set("cookie", ownerCookie()).set("origin", "https://attacker.invalid")
+            .send({ canCreateAgents: false, canAssignTasks: false });
+        expect(hostileCookieWrite.status, hostileCookieWrite.text).toBe(403);
+        expect(hostileCookieWrite.body).toEqual({ error: "Board mutation requires trusted browser origin" });
+
+        // Bearer Board keys are exempt from the browser-origin check just as
+        // they are in boardMutationGuard, while an unsupported form/text body
+        // is never interpreted as JSON by the native adapter.
+        const explicitFalse = await request(publicUrl).patch(`/api/agents/${subject.id}/permissions`)
+            .set("authorization", `Bearer ${ownerToken}`).set("origin", "https://attacker.invalid")
+            .send({ canCreateAgents: false, canAssignTasks: false });
+        expect(explicitFalse.status, explicitFalse.text).toBe(200);
+        expect(explicitFalse.body.permissions).toMatchObject({ canCreateAgents: false });
+
+        const unsupportedType = await request(publicUrl).patch(`/api/agents/${subject.id}/permissions`)
+            .set("authorization", `Bearer ${ownerToken}`).set("origin", origin)
+            .set("content-type", "text/plain")
+            .send(JSON.stringify({ canCreateAgents: true, canAssignTasks: true }));
+        expect(unsupportedType.status, unsupportedType.text).toBe(400);
+        expect(unsupportedType.body.error).toBe("Validation error");
+        const missingBody = await request(publicUrl).patch(`/api/agents/${subject.id}/permissions`)
+            .set("authorization", `Bearer ${ownerToken}`).set("origin", origin);
+        expect(missingBody.status, missingBody.text).toBe(400);
+        expect(missingBody.body.error).toBe("Validation error");
+
+        const parserBaseline = express();
+        parserBaseline.use(express.json({ limit: "10mb" }));
+        parserBaseline.patch("/permissions", validate(updateAgentPermissionsSchema), (_req, res) => res.json({ ok: true }));
+        parserBaseline.use(errorHandler);
+        for (const body of ["{", "null", "false"]) {
+            const actual = await request(publicUrl).patch(`/api/agents/${subject.id}/permissions`)
+                .set("authorization", `Bearer ${ownerToken}`).set("origin", origin)
+                .set("content-type", "application/json").send(body);
+            const expected = await request(parserBaseline).patch("/permissions")
+                .set("content-type", "application/json").send(body);
+            expect({ status: actual.status, body: actual.body }).toEqual({ status: expected.status, body: expected.body });
+        }
+        expect(nodeNativeIngressPathHits).toBe(0);
+    });
+    it("keeps local-implicit Origin exemption at the native public boundary", async () => {
+        const subject = { id: agent };
+        const localIdentity = nativeIdentityIngressFixture(true);
+        const localBridge = createRustFoundationBridge({
+            databaseUrl,
+            binaryPath: binary,
+            mode: "off",
+            organizationBrandingMode: "off",
+            projectGoalSetMode: "off",
+            actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes",
+            publicIngress: {
+                identityAuth: localIdentity.identityAuth,
+                deploymentMode: "local_trusted",
+                listenAddr: `127.0.0.1:${await port()}`,
+                nodeUpstream: nodeUrl,
+                authorizationKey: "synthetic-local-agent-foundation-key",
+            },
+        });
+        nodeNativeIngressPathHits = 0;
+        await localBridge.start();
+        try {
+            const response = await request(localBridge.publicIngressBaseUrl!)
+                .patch(`/api/agents/${subject.id}/permissions`)
+                .set("origin", "https://attacker.invalid")
+                .send({ canCreateAgents: false, canAssignTasks: false });
+            expect(response.status, response.text).toBe(200);
+            expect(response.body.permissions.canCreateAgents).toBe(false);
+            expect(nodeNativeIngressPathHits).toBe(0);
+        } finally {
+            await localBridge.close();
+        }
     });
     it("executes all fifteen contracts through the managed Rust public ingress", async () => {
         for (const base of [publicUrl]) {
@@ -448,7 +663,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         bridge!.agentCore = unavailable.agentCore;
         try {
             for (const base of [publicUrl]) {
-                expect((await call(base, "get", `/api/orgs/${org}/agents`)).status).toBe(503);
+                expect((await call(base, "get", `/api/agents/${agent}/configuration`)).status).toBe(503);
                 expect((await call(base, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(503);
             }
             expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`)).toBe(count);
@@ -481,6 +696,27 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         finally {
             await publisher.close();
         }
+    });
+    it("backfills a null workspace key through native permissions and preserves blank-key failure semantics", async () => {
+        const derived = randomUUID();
+        const preferred = `permissions-derived-${randomUUID()}`;
+        const preferredInstructions = path.join(nativeOrganizationAgents, preferred, "instructions");
+        await db.execute(sql`INSERT INTO agents(id,org_id,name,role,status,permissions,agent_runtime_config,workspace_key) VALUES(${derived}::uuid,${org}::uuid,'Permissions derived','engineer','idle','{}',${JSON.stringify({ instructionsRootPath: preferredInstructions })}::jsonb,NULL)`);
+        const backfilled = await call(publicUrl, "patch", `/api/agents/${derived}/permissions`, ownerToken, { canCreateAgents: false, canAssignTasks: false });
+        expect(backfilled.status, backfilled.text).toBe(200);
+        expect((await db.execute(sql`SELECT workspace_key FROM agents WHERE id=${derived}::uuid`))[0]?.workspace_key).toBe(preferred);
+        expect(fs.existsSync(path.join(nativeOrganizationAgents, preferred, "instructions"))).toBe(true);
+
+        const blank = randomUUID();
+        await db.execute(sql`INSERT INTO agents(id,org_id,name,role,status,permissions,agent_runtime_config,workspace_key) VALUES(${blank}::uuid,${org}::uuid,'Permissions blank','engineer','idle','{}','{}','   ')`);
+        const failed = await call(publicUrl, "patch", `/api/agents/${blank}/permissions`, ownerToken, { canCreateAgents: false, canAssignTasks: false });
+        expect(failed.status, failed.text).toBe(500);
+        expect((await db.execute(sql`SELECT workspace_key FROM agents WHERE id=${blank}::uuid`))[0]?.workspace_key).toBe("   ");
+        expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${blank}`)).toBe(0);
+        expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${blank}`)).toBe(0);
+        expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id AND a.org_id=o.org_id WHERE a.entity_id=${blank}`)).toBe(0);
+        expect(fs.readdirSync(nativeOrganizationAgents).some((name) => name.startsWith(`permissions-blank--${blank.replaceAll("-", "").slice(0, 8)}`))).toBe(false);
+        await db.execute(sql`DELETE FROM agents WHERE id=${blank}::uuid`);
     });
     it("preserves legacy inbox assignee/reviewer deduplication, priority and age ordering in Rust", async () => {
         const inboxAgent = randomUUID(), inboxToken = `synthetic-inbox-${randomUUID()}`;
@@ -616,6 +852,8 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 const blank=await detailSubject();await db.execute(sql`UPDATE agents SET workspace_key='   ',agent_runtime_config='{}' WHERE id=${blank.id}::uuid`);
                 expect((await call(base,"get",`/api/agents/${blank.id}`,caller.token)).status).toBe(500);
                 await db.execute(sql`UPDATE agents SET workspace_key=${blank.workspace} WHERE id=${blank.id}::uuid`);
+                await db.execute(sql`DELETE FROM agent_api_keys WHERE agent_id=${blank.id}::uuid`);
+                await db.execute(sql`DELETE FROM agents WHERE id=${blank.id}::uuid`);
 
             }
         } finally { if (original === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME; else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = original; }
@@ -712,11 +950,19 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             }
         }
         const original=bridge!.agentCore;bridge!.agentCore=async()=>{throw new Error("synthetic native outage")};
-        try {for(const base of [publicUrl])for(const [method,url,token,input] of [["get",`/api/agents/${subject.id}`,ownerToken,undefined],["get","/api/agents/me",subject.token,undefined],["patch",`/api/agents/${subject.id}/permissions`,ownerToken,valid]] as const){expect((await call(base,method,url,token,input)).status).toBe(503);}}
+        try {
+            for (const base of [publicUrl]) {
+                expect((await call(base, "get", `/api/agents/${subject.id}`, ownerToken)).status).toBe(503);
+                expect((await call(base, "get", "/api/agents/me", subject.token)).status).toBe(503);
+                const nativePermission = await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, valid);
+                expect(nativePermission.status, nativePermission.text).toBe(200);
+                expect(nativePermission.body.permissions.canCreateAgents).toBe(false);
+            }
+        }
         finally{bridge!.agentCore=original;}
     });
-    async function waitFor(check: () => Promise<boolean> | boolean, label: string) {
-        const deadline=Date.now()+8000;
+    async function waitFor(check: () => Promise<boolean> | boolean, label: string, timeoutMs = 8000) {
+        const deadline=Date.now()+timeoutMs;
         while(!await check()){if(Date.now()>deadline)throw new Error(`Timed out waiting for ${label}`);await new Promise(resolve=>setTimeout(resolve,20));}
     }
     it("Agent detail permissions recheck a revoked administrator while blocked on actual Agent locks", async () => {
@@ -794,17 +1040,9 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         } finally {fs.rmSync(lock,{recursive:true,force:true});}
         const retry=await call(publicUrl,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);expect(retry.status,retry.text).toBe(200);expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(1);
     },20000);
-    it.each(["configured", "unset"])("Agent detail file-lock wait rechecks credentials and preserves transaction rollback with %s RUDDER_HOME", async (homeMode) => {
-        const originalHome = process.env.RUDDER_HOME;
-        const originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-        const homeDirectory = vi.spyOn(os, "homedir").mockReturnValue(path.join(root, `synthetic-${homeMode}-user-home`));
-        delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-        if (homeMode === "unset") delete process.env.RUDDER_HOME;
-        else process.env.RUDDER_HOME = path.join(root, "configured-rudder-home");
-        try {
-        const subject=await detailSubject();const home=path.dirname(resolveOrganizationAgentsDir(org));
-        // Use the same canonical home resolver as the production map lock.
-        const workspaceHome=resolveOrganizationWorkspaceHomeDir();
+    it("Agent permission file-lock wait rechecks credentials and preserves rollback at the Rust host-path snapshot", async () => {
+        const subject=await detailSubject();
+        const workspaceHome=nativeWorkspaceHome;
         fs.mkdirSync(workspaceHome,{recursive:true});const lock=path.join(workspaceHome,".rudder-organizations.lock");const token=randomUUID();fs.mkdirSync(lock,{mode:0o700});
         fs.writeFileSync(path.join(lock,`.rudder-lock-owner-${token}.json`),JSON.stringify({kind:"rudder-organization-workspace-map-lock",version:1,token,pid:process.pid,hostname:os.hostname(),createdAt:new Date().toISOString()}),{flag:"wx",mode:0o600});
         const pending=call(publicUrl,"patch",`/api/agents/${subject.id}/permissions`,otherToken,{canCreateAgents:true,canAssignTasks:true}).then(response=>response);
@@ -814,12 +1052,69 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             fs.rmSync(lock,{recursive:true});const response=await pending;expect(response.status,response.text).toBe(401);
             expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
             expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id}`)).toBe(0);
-            expect(fs.existsSync(path.join(home,"agents",subject.workspace))).toBe(false);
+            expect(fs.existsSync(path.join(nativeOrganizationAgents,subject.workspace))).toBe(false);
         } finally {fs.rmSync(lock,{recursive:true,force:true});await db.execute(sql`UPDATE board_api_keys SET revoked_at=NULL WHERE key_hash=${hash(otherToken)}`);await pending;}
-        } finally {
-            homeDirectory.mockRestore();
-            if (originalHome === undefined) delete process.env.RUDDER_HOME; else process.env.RUDDER_HOME = originalHome;
-            if (originalWorkspaceHome === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME; else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
-        }
     },20000);
+    it("revalidates cookie sessions and Agent JWT expiry after a real instruction-map lock wait", async () => {
+        const workspaceHome = nativeWorkspaceHome;
+        const lock = path.join(workspaceHome, ".rudder-organizations.lock");
+        const requestOrigin = new URL(publicUrl).origin;
+        const valid = { canCreateAgents: true, canAssignTasks: true };
+        async function waitForLock(subject: { id: string; workspace: string }, send: () => Promise<{ status: number; text: string; body: Record<string, unknown> }>, invalidate: () => Promise<void>) {
+            await db.execute(sql`UPDATE agents SET workspace_key=NULL WHERE id=${subject.id}::uuid`);
+            const token = randomUUID();
+            fs.mkdirSync(workspaceHome, { recursive: true });
+            fs.mkdirSync(lock, { mode: 0o700 });
+            fs.writeFileSync(path.join(lock, `.rudder-lock-owner-${token}.json`), JSON.stringify({ kind: "rudder-organization-workspace-map-lock", version: 1, token, pid: process.pid, hostname: os.hostname(), createdAt: new Date().toISOString() }), { flag: "wx", mode: 0o600 });
+            let pending: Promise<{ status: number; text: string; body: Record<string, unknown> }> | undefined;
+            try {
+                pending = send();
+                try {
+                    await waitFor(() => fs.readdirSync(workspaceHome).some(name => name.startsWith(".rudder-organizations.lock.acquire-")), "native instruction-map lock acquisition", 30000);
+                } catch {
+                    // Some Linux runners map the native host workspace to a
+                    // different filesystem view and do not expose the
+                    // temporary acquisition directory. The held lock plus a
+                    // short grace period still exercises the same recheck.
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                await invalidate();
+                fs.rmSync(lock, { recursive: true, force: true });
+                const response = await pending;
+                expect(response.status, response.text).toBe(401);
+                expect(response.body).toMatchObject({ status: "error", reason: "unauthorized" });
+                expect((await db.execute(sql`SELECT workspace_key,permissions FROM agents WHERE id=${subject.id}::uuid`))[0]).toEqual({ workspace_key: null, permissions: { canCreateAgents: false, canManageSkills: false } });
+                expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
+                expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id}`)).toBe(0);
+                expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id AND a.org_id=o.org_id WHERE a.entity_id=${subject.id}`)).toBe(0);
+                expect(fs.existsSync(path.join(nativeOrganizationAgents, subject.workspace))).toBe(false);
+            } finally {
+                fs.rmSync(lock, { recursive: true, force: true });
+                await pending;
+            }
+        }
+
+        const sessionSubject = await detailSubject();
+        const sessionRow = await db.execute(sql`SELECT id FROM session WHERE token=${ownerSessionToken}`);
+        expect(sessionRow).toHaveLength(1);
+        try {
+            await waitForLock(
+                sessionSubject,
+                () => request(publicUrl).patch(`/api/agents/${sessionSubject.id}/permissions`).set("cookie", ownerCookie()).set("origin", requestOrigin).send(valid),
+                async () => { await db.execute(sql`UPDATE session SET expires_at=clock_timestamp()-interval '1 second' WHERE token=${ownerSessionToken}`); },
+            );
+        } finally {
+            await db.execute(sql`UPDATE session SET expires_at=clock_timestamp()+interval '2 days' WHERE token=${ownerSessionToken}`);
+        }
+
+        const ceo = await detailSubject("ceo");
+        const subject = await detailSubject();
+        const expiresAt = Math.floor(Date.now() / 1000) + 3;
+        const jwt = signedAgentJwt(ceo.id, org, expiresAt);
+        await waitForLock(
+            subject,
+            () => request(publicUrl).patch(`/api/agents/${subject.id}/permissions`).set("authorization", `Bearer ${jwt}`).send(valid),
+            async () => { await waitFor(() => Math.floor(Date.now() / 1000) > expiresAt, "Agent JWT wall-clock expiry"); },
+        );
+    },90000);
 });

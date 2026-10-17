@@ -50,11 +50,12 @@ pub(super) async fn execute(
     op: &str,
     current: Option<&Value>,
     input: &Value,
+    native_auth: Option<&dyn super::NativeAgentAuthorizer>,
 ) -> Result<Value> {
     let row = current.ok_or_else(|| http(404, "Agent not found"))?;
     let id = text(row, "id");
     match op {
-        "permissions" => super::detail::update_permissions(tx, ctx, row, input).await,
+        "permissions" => super::detail::update_permissions(tx, ctx, row, input, native_auth).await,
         "key-create" => {
             if row["status"] == "pending_approval" {
                 return Err(http(409, "Cannot create keys for pending approval agents"));

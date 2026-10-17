@@ -90,7 +90,12 @@ export function registerApiRoutes(
   );
   api.use("/orgs", aiSearchRoutes(db));
   api.use(organizationSkillRoutes(db));
-  api.use(agentRoutes(db, opts.storageService, rustFoundationBridge));
+  api.use(agentRoutes(
+    db,
+    opts.storageService,
+    rustFoundationBridge,
+    Boolean(opts.rustPublicIngress?.identityAuth),
+  ));
   api.use(managedMcpAgentBindingRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db, rustFoundationBridge));

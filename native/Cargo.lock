@@ -2237,6 +2237,7 @@ dependencies = [
  "crc32fast",
  "futures-util",
  "hmac",
+ "libc",
  "percent-encoding",
  "reqwest",
  "ring",

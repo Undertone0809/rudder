@@ -1,5 +1,5 @@
 //! Complete Agent access and capability projections from persisted authority.
-use super::{common::*, reads};
+use super::{NativeAgentAuthorizer, common::*, reads};
 use serde_json::{Value, json};
 
 async fn access(tx: &mut Tx<'_>, row: &Value) -> Result<Value> {
@@ -109,6 +109,7 @@ pub(super) async fn build(
     ctx: &Context<'_>,
     mut row: Value,
     restricted: bool,
+    native_auth: Option<&dyn NativeAgentAuthorizer>,
 ) -> Result<Value> {
     let access = access(tx, &row).await?;
     let integrations = if restricted {
@@ -124,7 +125,7 @@ pub(super) async fn build(
     let library = if restricted {
         Value::Null
     } else {
-        super::instructions::library_path(tx, ctx, &row).await?
+        super::instructions::library_path(tx, ctx, &row, native_auth).await?
     };
     // buildAgentDetail uses redactEventPayload(value ?? {}) ?? {}; its falsy
     // primitive inputs become an empty configuration, while other opaque JSON
@@ -156,6 +157,7 @@ pub(super) async fn update_permissions(
     ctx: &Context<'_>,
     row: &Value,
     input: &Value,
+    native_auth: Option<&dyn NativeAgentAuthorizer>,
 ) -> Result<Value> {
     if let Some(actor) = ctx.agent() {
         let actor = stored(tx, actor)
@@ -194,7 +196,7 @@ pub(super) async fn update_permissions(
             .bind(ctx.org).bind(id).execute(&mut **tx).await?;
     }
     activity(tx,ctx,"agent.permissions_updated",id,Some(&json!({"canCreateAgents":next["canCreateAgents"],"canManageSkills":next["canManageSkills"],"canAssignTasks":assign}))).await?;
-    build(tx, ctx, row, false).await
+    build(tx, ctx, row, false, native_auth).await
 }
 
 #[cfg(test)]

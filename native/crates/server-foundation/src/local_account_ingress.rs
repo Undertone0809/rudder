@@ -25,7 +25,7 @@ use url::Url;
 const MAX_LOCAL_ACCOUNT_BODY_BYTES: usize = 256 * 1024;
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 const SESSION_REQUIRED_ERROR: &str = "Rudder Account session required";
-const BOARD_ORIGIN_ERROR: &str = "Board mutation requires trusted browser origin";
+pub(crate) const BOARD_ORIGIN_ERROR: &str = "Board mutation requires trusted browser origin";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LocalAccountEndpoint {
@@ -842,7 +842,7 @@ fn session_required() -> HttpResponse {
     }))
 }
 
-fn has_trusted_board_origin(request: &HttpRequest) -> bool {
+pub(crate) fn has_trusted_board_origin(request: &HttpRequest) -> bool {
     let mut allowed = vec![
         "http://localhost:3100".to_owned(),
         "http://127.0.0.1:3100".to_owned(),

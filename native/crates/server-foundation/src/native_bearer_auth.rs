@@ -448,6 +448,12 @@ pub(super) async fn revalidate_native_agent_jwt_in_snapshot(
     identity: &NativeAgentJwtIdentity,
     requested_org_id: Option<&str>,
 ) -> Result<NativeBearerAccess, sqlx::Error> {
+    // Long-lived AgentCore mutations may wait on organization fences after
+    // signature verification; expiry must still be current when that lock wait
+    // ends, using the existing Node-compatible exp < now boundary.
+    if identity.expires_at < crate::unix_time_seconds() as f64 {
+        return Ok(NativeBearerAccess::Unauthorized);
+    }
     let agent = sqlx::query_as::<_, (String, String)>(
         "SELECT org_id::text, status FROM agents WHERE id = $1::uuid LIMIT 1",
     )

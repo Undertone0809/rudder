@@ -13,7 +13,8 @@ use common::*;
 use rudder_auth_core::VerifiedActor;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
+use std::{future::Future, pin::Pin};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentCoreError {
@@ -21,6 +22,26 @@ pub enum AgentCoreError {
     Http(u16, String, Option<Value>),
     #[error("Agent database operation failed")]
     Database(#[from] sqlx::Error),
+}
+
+/// Credential authority supplied by the trusted native ingress adapter. This
+/// is separate from AgentCoreRequest, so client JSON cannot carry auth proof.
+/// The check runs on AgentCore's transaction connection after mutation locks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeAgentAccess {
+    Authorized,
+    Unauthorized,
+    Forbidden,
+}
+
+pub trait NativeAgentAuthorizer: Send + Sync {
+    fn revalidate<'a>(
+        &'a self,
+        connection: &'a mut PgConnection,
+        org_id: &'a str,
+    ) -> Pin<
+        Box<dyn Future<Output = std::result::Result<NativeAgentAccess, sqlx::Error>> + Send + 'a>,
+    >;
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -154,6 +175,27 @@ pub async fn execute_agent(
     actor: &VerifiedActor,
     r: &AgentCoreRequest,
 ) -> Result<(u16, String)> {
+    execute_agent_inner(pool, actor, r, None).await
+}
+
+/// Execute a command admitted by native public ingress. The typed credential
+/// proof is not part of request JSON and is revalidated within AgentCore's
+/// transaction. Private bridge requests retain the existing API above.
+pub async fn execute_agent_with_native_auth(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    r: &AgentCoreRequest,
+    native_auth: &dyn NativeAgentAuthorizer,
+) -> Result<(u16, String)> {
+    execute_agent_inner(pool, actor, r, Some(native_auth)).await
+}
+
+async fn execute_agent_inner(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    r: &AgentCoreRequest,
+    native_auth: Option<&dyn NativeAgentAuthorizer>,
+) -> Result<(u16, String)> {
     json_boundary::run(async{
         admit_agent(actor,r)?;
         let mut tx=pool.begin().await?;
@@ -171,7 +213,13 @@ pub async fn execute_agent(
             sqlx::query_scalar::<_,String>("SELECT org_id::text FROM agent_api_keys WHERE id=$1::uuid AND agent_id=$2::uuid").bind(r.key_id.as_deref()).bind(id.as_deref()).fetch_optional(&mut *tx).await?.ok_or_else(||http(404,"Key not found"))?
         }else if r.operation=="keys"{tx.commit().await?;return Ok((200,"[]".into()))}else{return Err(http(404,"Agent not found"))};
         let ctx=Context{org:&org,actor,request:r,admin};authorize_org(&mut tx,&ctx).await?;
-        if r.resolve_only{tx.commit().await?;return Ok((200,json!({"orgId":org,"id":id}).to_string()))}
+        if r.resolve_only{
+            // Native public adapters may need the resolved organization to
+            // derive trusted filesystem placement before the final command.
+            // Recheck current credentials in this read transaction as well.
+            revalidate_native_auth(native_auth, &mut tx, &org).await?;
+            tx.commit().await?;return Ok((200,json!({"orgId":org,"id":id}).to_string()))
+        }
         let op=r.operation.as_str();let is_write=matches!(op,"key-create"|"key-revoke"|"rollback"|"reset-session"|"permissions");
         if is_write{
             // Match runtime admission lock order: Issues, Agents, organization.
@@ -179,6 +227,11 @@ pub async fn execute_agent(
             sqlx::query("SELECT id FROM agents WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
             let fence=sqlx::query_scalar::<_,i64>("SELECT mutation_version FROM organization_mutation_state WHERE org_id=$1::uuid FOR UPDATE").bind(&org).fetch_optional(&mut *tx).await?;
             if fence.is_none(){return Err(http(409,"Organization mutation authority is not provisioned"))}
+            // Recheck the credential after all awaited mutation locks, before
+            // any helper can write rows or touch the host filesystem. This is
+            // especially important for permissions, whose detail projection
+            // can resolve host-backed instructions state.
+            revalidate_native_auth(native_auth, &mut tx, &org).await?;
             // The pre-lock row is never authority for concurrent transitions.
             let current=if let Some(id)=&id{stored(&mut tx,id).await?}else{None};
             let current=if op!="key-revoke"{if let Some(row)=current{Some(reads::ensure_workspace_key(&mut tx,&ctx,row).await?)}else{None}}else{current};
@@ -186,7 +239,7 @@ pub async fn execute_agent(
             let fresh_admin=if op=="permissions" && ctx.user().is_some(){sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut *tx).await?}else{ctx.admin};
             let ctx=Context{admin:fresh_admin,..ctx};
             authorize_org(&mut tx,&ctx).await?;
-            let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input).await?;
+            let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth).await?;
             sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(&org).execute(&mut *tx).await?;
             tx.commit().await?;return Ok((if op=="key-create"{201}else{200},body.to_string()));
         }
@@ -197,8 +250,9 @@ pub async fn execute_agent(
             let ctx=Context{admin,..ctx};authorize_org(&mut tx,&ctx).await?;
             let restricted=ctx.agent().is_some() && ctx.agent()!=id.as_deref() && !can_read_configs(&mut tx,&ctx).await?;
             let row=reads::ensure_workspace_key(&mut tx,&ctx,current).await?;
-            let body=detail::build(&mut tx,&ctx,row,restricted).await?;tx.commit().await?;return Ok((200,body.to_string()));
+            let body=detail::build(&mut tx,&ctx,row,restricted,native_auth).await?;tx.commit().await?;return Ok((200,body.to_string()));
         }
+        revalidate_native_auth(native_auth, &mut tx, &org).await?;
         let row=current.unwrap_or(Value::Null);
         let row=if !row.is_null()&&!matches!(op,"keys"|"inbox"){reads::ensure_workspace_key(&mut tx,&ctx,row).await?}else{row};
         let body=match op{
@@ -215,6 +269,22 @@ pub async fn execute_agent(
         tx.commit().await?;Ok((200,body.to_string()))
     }).await
 }
+
+async fn revalidate_native_auth(
+    native_auth: Option<&dyn NativeAgentAuthorizer>,
+    tx: &mut common::Tx<'_>,
+    org_id: &str,
+) -> Result<()> {
+    let Some(native_auth) = native_auth else {
+        return Ok(());
+    };
+    match native_auth.revalidate(tx, org_id).await? {
+        NativeAgentAccess::Authorized => Ok(()),
+        NativeAgentAccess::Unauthorized => Err(common::http(401, "Unauthorized")),
+        NativeAgentAccess::Forbidden => Err(common::http(403, "Forbidden")),
+    }
+}
+
 async fn resolve_id(
     tx: &mut Tx<'_>,
     actor: &VerifiedActor,

@@ -199,6 +199,7 @@ impl Database {
         .expect("seed CEO agent");
     }
 
+    #[allow(dead_code)]
     pub async fn counts(&self) -> (i64, i64, i64) {
         sqlx::query_as(
             "SELECT
@@ -217,6 +218,7 @@ impl Database {
         .expect("read mutation counts")
     }
 
+    #[allow(dead_code)]
     pub async fn name(&self) -> String {
         sqlx::query_scalar("SELECT name FROM organizations WHERE id=$1::uuid")
             .bind(ORG)
@@ -225,6 +227,7 @@ impl Database {
             .expect("read organization name")
     }
 
+    #[allow(dead_code)]
     pub async fn brand_color(&self) -> Option<String> {
         sqlx::query_scalar("SELECT brand_color FROM organizations WHERE id=$1::uuid")
             .bind(ORG)
@@ -233,6 +236,7 @@ impl Database {
             .expect("read organization brand color")
     }
 
+    #[allow(dead_code)]
     pub async fn sql(&self, sql: &str) {
         sqlx::raw_sql(sql)
             .execute(&self.pool)

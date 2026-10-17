@@ -189,8 +189,15 @@ fn write_missing(root: &Path, relative_path: &str, body: &str) -> io::Result<()>
 }
 fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value> {
     let org = text(row, "orgId");
-    let root = storage::ensure(host, org, Path::new(cwd))?;
-    let workspace = super::reads::workspace_key(row);
+    // NULL keys are backfilled by the caller before recovery. A persisted
+    // blank key is intentionally not treated as missing: the Node adapter
+    // keeps that stored value and the existing workspace-path contract fails
+    // closed instead of writing into a derived directory.
+    let workspace = if row["workspaceKey"].is_null() {
+        super::reads::workspace_key(row)
+    } else {
+        js_trim(text(row, "workspaceKey")).to_owned()
+    };
     if workspace.is_empty()
         || !workspace
             .bytes()
@@ -198,6 +205,7 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
     {
         return Err(invalid("Invalid Agent workspace key"));
     }
+    let root = storage::ensure(host, org, Path::new(cwd))?;
     let agent_root = root.join("agents").join(&workspace);
     let managed = agent_root.join("instructions");
     for directory in ["instructions", "memory", "life", "skills"] {
@@ -335,7 +343,12 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
         Value::Null
     })
 }
-pub(super) async fn library_path(tx: &mut Tx<'_>, ctx: &Context<'_>, row: &Value) -> Result<Value> {
+pub(super) async fn library_path(
+    tx: &mut Tx<'_>,
+    ctx: &Context<'_>,
+    row: &Value,
+    native_auth: Option<&dyn super::NativeAgentAuthorizer>,
+) -> Result<Value> {
     let host = ctx
         .request
         .instructions_host
@@ -349,6 +362,10 @@ pub(super) async fn library_path(tx: &mut Tx<'_>, ctx: &Context<'_>, row: &Value
     .await
     .map_err(|_| http(500, "Internal server error"))?
     .map_err(|_| http(500, "Internal server error"))?;
+    // A credential can expire or be revoked while waiting for the filesystem
+    // lock. Revalidate before recover() performs host writes; denial also
+    // rolls back any uncommitted permissions update.
+    super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
     // A filesystem lock wait is also an authorization boundary. A revoked key,
     // membership or administrator role cannot use pre-wait authority.
     let admin=ctx.user().is_some() && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut **tx).await?;
