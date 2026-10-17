@@ -1432,14 +1432,14 @@
     },
     {
       "path": "desktop/src/identity-runtime.ts",
-      "sha256": "5eed3a747969cfe2805dddd560d78d36eea852c3930e5ca14d4bd1dedf8bd11c",
+      "sha256": "0b5e16bb9e8e52ab3f450d3ba582d990ced23a5121338ee5130de40bca08852d",
       "families": [
         "electron_process_graph"
       ]
     },
     {
       "path": "desktop/src/identity-safe-storage-policy.ts",
-      "sha256": "15c0d3b8b418e56f47162b482b8c9409c9fdbdab9b56637426dbf7c8b25224b1",
+      "sha256": "c5265b36a16a1841508be22686c51e715496cdd7049701c7b4e38ff51297741d",
       "families": [
         "electron_process_graph"
       ]
@@ -1453,7 +1453,7 @@
     },
     {
       "path": "desktop/src/identity-startup-policy.ts",
-      "sha256": "5f25e39ed5862993352ae67f44c13e7f8a1b675dea273cdca66b1493a44e23f8",
+      "sha256": "da53db74303d88e736c44a713039926696591e5095c8e8d95d96b41bdd909ef1",
       "families": [
         "electron_process_graph"
       ]
