@@ -2273,7 +2273,13 @@
           "merge_state": "blocked_by_protected_ci",
           "last_observed": "2026-10-17T13:04:35Z"
         },
-        "next": "Do not merge or bypass protection. Re-run only after the existing macOS websocket test is repaired or an authorized CI policy change lands; then rebind #326 to the merged checker bootstrap."
+        "next": "Do not merge or bypass protection. Re-run only after the existing macOS websocket test is repaired or an authorized CI policy change lands; then rebind #326 to the merged checker bootstrap.",
+        "local_focus": {
+          "verdict": "PASS",
+          "path": "/private/tmp/rudder-checker-bootstrap-acceptance-20261017-local-macos-focus.json",
+          "sha256": "8bdead56422b9bfad59ca0972c95ee885c4438abd3fb9d8f7d6ca89850b0f571",
+          "limits": "Local macOS pass does not override protected GitHub macOS failure."
+        }
       }
     },
     "auth_64857_final_acceptance": {
@@ -2380,4 +2386,4 @@
       "reason": "Older member-directory-only auth slice superseded by merged native auth/public ingress PR #325; no separate merge or release claim."
     }
   }
-}
+}\n
