@@ -635,7 +635,9 @@ fn run(
                             )
                             .await
                             .map(Some)
-                        } else if cancelled.load(Ordering::Acquire) || failure.is_cancelled() {
+                        } else if cancelled.load(Ordering::Acquire)
+                            || !failure.is_definitive_failure()
+                        {
                             Ok(None)
                         } else {
                             execution::finalize_hermes_failed(
@@ -683,7 +685,8 @@ fn run(
                         )
                         .await
                         .map(Some)
-                    } else if cancelled.load(Ordering::Acquire) || failure.is_cancelled() {
+                    } else if cancelled.load(Ordering::Acquire) || !failure.is_definitive_failure()
+                    {
                         Ok(None)
                     } else {
                         execution::finalize_failed(&pool, execution_actor, fence, cleanup)

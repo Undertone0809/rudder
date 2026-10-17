@@ -261,6 +261,17 @@ impl ExecutionFailure {
         matches!(&self.0.error, Error::Cancelled)
     }
 
+    /// Only failures that prove the provider rejected or could not accept the
+    /// request before any provider effect may release the durable hold. All
+    /// transport, approval, deadline, and observation failures remain
+    /// indeterminate until a governed reconciliation path resolves them.
+    pub fn is_definitive_failure(&self) -> bool {
+        matches!(
+            &self.0.error,
+            Error::ProviderRejected | Error::UnsupportedConfiguration
+        )
+    }
+
     fn not_launched(error: Error) -> Self {
         Self(Box::new(ExecutionFailureEvidence {
             error,
