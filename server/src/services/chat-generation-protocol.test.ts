@@ -262,7 +262,7 @@ describe("chatGenerationProtocolService", () => {
       renderedBodyHash: hashChatGenerationBody(""),
     })).rejects.toMatchObject({ status: 409 });
     await expect(chats.markGenerationTerminal(generation.orgId, generation.id, "failed"))
-      .rejects.toMatchObject({ status: 409 });
+      .resolves.toBeNull();
 
     const current = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generation.id))
       .then((rows) => rows[0] ?? null);

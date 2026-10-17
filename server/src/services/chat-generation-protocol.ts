@@ -398,6 +398,9 @@ export function chatGenerationProtocolService(db: Db) {
     return db.transaction(async (tx) => {
       const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, input);
+      if (generation.executionAuthority === "native_rust") {
+        throw conflict("Native Rust owns Chat generation checkpoints");
+      }
       if (!(OUTPUT_ADMITTING_GENERATION_STATUSES as readonly string[]).includes(generation.status)) {
         throw conflict("Chat generation checkpoint arrived after output admission closed");
       }
