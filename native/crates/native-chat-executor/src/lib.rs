@@ -2,8 +2,12 @@
 //! finalization authority lives here. Every exit retains the admission hold;
 //! provider terminal data and host receipts require a separate finalizer.
 mod hermes;
+mod pi;
 mod profile;
 mod wire;
+pub use pi::{
+    PiExecution, PiExecutionObservation, PiExecutionPhase, PiStateSnapshot, PiUnknownReason,
+};
 pub use profile::provision_profile;
 
 use crate::wire::ProviderTerminal;

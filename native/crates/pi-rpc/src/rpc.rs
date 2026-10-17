@@ -851,6 +851,7 @@ fn is_known_event(kind: &str) -> bool {
     matches!(
         kind,
         "agent_start"
+            | "agent_settled"
             | "session"
             | "agent_end"
             | "turn_start"
@@ -1043,6 +1044,10 @@ mod tests {
         {
             PiRpcMessage::Event(event) => assert_eq!(event.kind(), "session"),
             PiRpcMessage::Response(_) => panic!("session classified as response"),
+        }
+        match parse_message(json!({"type":"agent_settled"})).unwrap() {
+            PiRpcMessage::Event(event) => assert_eq!(event.kind(), "agent_settled"),
+            PiRpcMessage::Response(_) => panic!("agent_settled classified as response"),
         }
         for value in [
             json!({"type":"mystery_event"}),
