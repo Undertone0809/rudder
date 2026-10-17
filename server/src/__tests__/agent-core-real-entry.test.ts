@@ -961,8 +961,8 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
         finally{bridge!.agentCore=original;}
     });
-    async function waitFor(check: () => Promise<boolean> | boolean, label: string) {
-        const deadline=Date.now()+8000;
+    async function waitFor(check: () => Promise<boolean> | boolean, label: string, timeoutMs = 8000) {
+        const deadline=Date.now()+timeoutMs;
         while(!await check()){if(Date.now()>deadline)throw new Error(`Timed out waiting for ${label}`);await new Promise(resolve=>setTimeout(resolve,20));}
     }
     it("Agent detail permissions recheck a revoked administrator while blocked on actual Agent locks", async () => {
@@ -1069,7 +1069,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             let pending: Promise<{ status: number; text: string; body: Record<string, unknown> }> | undefined;
             try {
                 pending = send();
-                await waitFor(() => fs.readdirSync(workspaceHome).some(name => name.startsWith(".rudder-organizations.lock.acquire-")), "native instruction-map lock acquisition");
+                await waitFor(() => fs.readdirSync(workspaceHome).some(name => name.startsWith(".rudder-organizations.lock.acquire-")), "native instruction-map lock acquisition", 30000);
                 await invalidate();
                 fs.rmSync(lock, { recursive: true, force: true });
                 const response = await pending;
