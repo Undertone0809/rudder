@@ -1927,6 +1927,10 @@ export function chatGenerationProtocolService(db: Db) {
       .select({ id: chatGenerations.id, orgId: chatGenerations.orgId })
       .from(chatGenerations)
       .where(and(
+        // Native Rust owns terminal recovery and projection. The legacy
+        // protocol must never claim a native generation or attempt a Drizzle
+        // write without the Rust transaction marker.
+        eq(chatGenerations.executionAuthority, "legacy_ts"),
         inArray(chatGenerations.status, RECOVERABLE_CONTROL_GENERATION_STATUSES),
         isNotNull(chatGenerations.controlOwnerToken),
         input.assumeAllOwnersStale

@@ -191,7 +191,20 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
             .await
             .unwrap();
         assert!(retry.idempotent);
-        assert_eq!(retry.outcome, stop_result.outcome);
+        // A retry reads the durable control row after the terminal finalizer
+        // may have advanced the original Stop receipt from its admission
+        // outcome to `stopped`. That progression is the same idempotent
+        // action, and is covered by the live-stop recovery cases as well.
+        assert!(
+            retry.outcome == stop_result.outcome
+                || matches!(
+                    (stop_result.outcome, retry.outcome),
+                    (
+                        StopOutcome::StopIntentRecorded | StopOutcome::StopInProgress,
+                        StopOutcome::Stopped
+                    )
+                )
+        );
         assert_eq!(
             host.events()
                 .iter()

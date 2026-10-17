@@ -667,6 +667,23 @@ async fn public_send_stream_is_durable_and_exact_retry_never_dispatches_twice() 
     .execute(&database.pool)
     .await
     .unwrap();
+    // This is an already Native-owned Chat with persisted history. The
+    // binding is the durable authority evidence that permits another Native
+    // turn; an unbound Chat with legacy history must remain a 409 import
+    // conflict.
+    sqlx::query(
+        "INSERT INTO runtime_bindings
+           (org_id,conversation_id,target_type,target_id,principal_scope_ref,agent_id,
+            runtime_type,host_id,profile_id,instructions_revision,capability_revision,continuity)
+         VALUES($1::uuid,$2::uuid,'chat_conversation',$2,'org:' || $1::text,$3::uuid,
+                'codex_local','host-test','default','instructions-v1','capabilities-v1','native')",
+    )
+    .bind(fixture::ORG)
+    .bind(SEND_CHAT)
+    .bind(fixture::CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
 
     let token = format!("native-public-send-session-{}", uuid::Uuid::new_v4());
     let session_id = format!("native-public-send-session-row-{}", uuid::Uuid::new_v4());
