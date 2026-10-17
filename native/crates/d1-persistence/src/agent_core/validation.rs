@@ -1,12 +1,11 @@
 //! Schemas for the independently migrated Agent endpoints. Absent root, null,
 //! empty strings and unknown fields retain the exact public Zod distinction.
 use super::{
-    AgentCoreError, AgentCreateInstructionsBundle, AgentCreateNodeOwned, AgentCreatePermissions,
-    AgentCreateRequest,
+    AgentCoreError, AgentCreateNodeOwned, AgentCreatePermissions, AgentCreateRequest,
     common::{Result, Tx, uuid_like},
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, env};
+use std::env;
 fn received(value: Option<&Value>) -> &'static str {
     match value {
         None => "undefined",
@@ -136,15 +135,6 @@ fn env_key(key: &str) -> bool {
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
-fn instruction_relative_path(value: &str) -> bool {
-    let value = value.replace('\\', "/");
-    !value.is_empty()
-        && !value.starts_with('/')
-        && value
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
-}
-
 fn normalized_env_binding(value: &Value, path: &str) -> Result<Value> {
     match value {
         Value::String(value) => Ok(json!({"type":"plain","value":value})),
@@ -241,7 +231,6 @@ fn validate_model_fallbacks(value: &Value, path: &str) -> Result<()> {
         let runtime = record
             .get("agentRuntimeType")
             .and_then(Value::as_str)
-            .map(str::trim)
             .filter(|value| !value.is_empty())
             .filter(|value| valid_runtime_type(value))
             .ok_or_else(|| unsupported_field(&format!("{item_path}.agentRuntimeType")))?;
@@ -257,6 +246,7 @@ fn validate_model_fallbacks(value: &Value, path: &str) -> Result<()> {
             if !config.is_object() {
                 return Err(unsupported_field(&format!("{item_path}.config")));
             }
+            reject_secret_like(config, &format!("{item_path}.config"))?;
             if let Some(env) = config.get("env") {
                 validate_env(env, &format!("{item_path}.config.env"))?;
             }
@@ -547,73 +537,6 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             if node.contains_key("instructionsBundle") {
                 return Err(unsupported_field("nodeOwned.instructionsBundle"));
             }
-            let instructions_bundle = match node.get("instructionsBundle") {
-                None | Some(Value::Null) => None,
-                Some(Value::Object(bundle)) => {
-                    if bundle.contains_key("clearLegacyPromptTemplate") {
-                        return Err(unsupported_field(
-                            "nodeOwned.instructionsBundle.clearLegacyPromptTemplate",
-                        ));
-                    }
-                    let entry_file = match bundle.get("entryFile") {
-                        Some(Value::String(value)) => {
-                            let trimmed = value.trim();
-                            if !instruction_relative_path(trimmed) {
-                                return Err(unsupported_field(
-                                    "nodeOwned.instructionsBundle.entryFile",
-                                ));
-                            }
-                            trimmed.to_owned()
-                        }
-                        value => {
-                            return Err(validation_error(vec![wrong(
-                                "string",
-                                value,
-                                json!(["nodeOwned", "instructionsBundle", "entryFile"]),
-                            )]));
-                        }
-                    };
-                    let files = match bundle.get("files") {
-                        Some(Value::Object(files)) => files
-                            .iter()
-                            .map(|(path, value)| {
-                                if !instruction_relative_path(path) {
-                                    return Err(unsupported_field(&format!(
-                                        "nodeOwned.instructionsBundle.files.{path}"
-                                    )));
-                                }
-                                if !value.is_string() {
-                                    return Err(validation_error(vec![wrong(
-                                        "string",
-                                        Some(value),
-                                        json!(["nodeOwned", "instructionsBundle", "files", path]),
-                                    )]));
-                                }
-                                Ok((path.clone(), value.as_str().unwrap_or_default().to_owned()))
-                            })
-                            .collect::<Result<BTreeMap<_, _>>>()?,
-                        value => {
-                            return Err(validation_error(vec![wrong(
-                                "object",
-                                value,
-                                json!(["nodeOwned", "instructionsBundle", "files"]),
-                            )]));
-                        }
-                    };
-                    Some(AgentCreateInstructionsBundle {
-                        entry_file,
-                        files,
-                        clear_legacy_prompt_template: false,
-                    })
-                }
-                value => {
-                    return Err(validation_error(vec![wrong(
-                        "object",
-                        value,
-                        json!(["nodeOwned", "instructionsBundle"]),
-                    )]));
-                }
-            };
             if node.keys().any(|key| {
                 !matches!(
                     key.as_str(),
@@ -624,7 +547,6 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             }
             Some(AgentCreateNodeOwned {
                 normalized_agent_runtime_config: config.clone(),
-                instructions_bundle,
             })
         }
         value => {
@@ -963,9 +885,12 @@ mod tests {
         for malformed in [
             json!({"agentRuntimeConfig":{"modelFallbacks":[{"foo":1}]}}),
             json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":"bogus","model":"x"}]}}),
+            json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":" codex_local ","model":"x"}]}}),
             json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":"codex_local"}]}}),
             json!({"agentRuntimeConfig":{"modelFallbacks":[""]}}),
             json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":"codex_local","model":"x","config":{"env":[]}}]}}),
+            json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":"codex_local","model":"x","config":{"apiKey":"raw"}}]}}),
+            json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":"codex_local","model":"x","config":{"privateKey":"raw"}}]}}),
         ] {
             assert!(matches!(
                 parse_create(&malformed),
@@ -1016,8 +941,7 @@ mod tests {
             }
         }))
         .expect("typed preparation");
-        let prepared = request.node_owned.expect("node-owned preparation");
-        assert!(prepared.instructions_bundle.is_none());
+        assert!(request.node_owned.is_some());
         assert_eq!(request.agent_runtime_config["env"]["MODEL"], "fast");
 
         for input in [

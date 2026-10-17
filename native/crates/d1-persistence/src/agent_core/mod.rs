@@ -14,7 +14,7 @@ use rudder_auth_core::VerifiedActor;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
-use std::{collections::BTreeMap, future::Future, pin::Pin};
+use std::{future::Future, pin::Pin};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentCoreError {
@@ -95,8 +95,7 @@ pub struct AgentCreateRequest {
     pub metadata: Option<Value>,
     /// Node-owned preparation is accepted only by the private Rust bridge.
     /// The public create route does not expose this field until parity is
-    /// complete. It carries normalized secret references and an explicit
-    /// instruction file plan; raw provider material and legacy prompt keys are
+    /// complete. Raw provider material and unsupported runtime fields are
     /// rejected by validation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_owned: Option<AgentCreateNodeOwned>,
@@ -116,17 +115,6 @@ pub struct AgentCreateNodeOwned {
     /// bindings or organization secret references; provider material is never
     /// carried over the AgentCreate boundary.
     pub normalized_agent_runtime_config: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub instructions_bundle: Option<AgentCreateInstructionsBundle>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentCreateInstructionsBundle {
-    pub entry_file: String,
-    pub files: BTreeMap<String, String>,
-    #[serde(default)]
-    pub clear_legacy_prompt_template: bool,
 }
 
 impl AgentCreateRequest {

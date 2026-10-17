@@ -372,6 +372,27 @@ async fn rust_create_normalizes_secret_refs_and_fallback_configs_with_org_isolat
         "plain"
     );
 
+    for (name, fallback) in [
+        (
+            "Fallback Raw Key",
+            json!({"agentRuntimeType":"codex_local","model":"x","config":{"apiKey":"raw"}}),
+        ),
+        (
+            "Fallback Whitespace Runtime",
+            json!({"agentRuntimeType":" codex_local ","model":"x"}),
+        ),
+    ] {
+        let result = execute_create_body(
+            &database,
+            json!({"operation":"create","orgId":ORG,"input":{"name":name,"agentRuntimeConfig":{"modelFallbacks":[fallback]}}}),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AgentCoreError::Http(422, _, _))),
+            "{name}: {result:?}"
+        );
+    }
+
     unsafe { std::env::set_var("RUDDER_SECRETS_STRICT_MODE", "true") };
     let strict = execute_create_body(
         &database,
