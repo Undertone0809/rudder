@@ -150,7 +150,22 @@ describe("constructed issuer through the real Rust application launcher", () => 
     const issuer = runtime.browserSessionAuth;
     const localIssuer = issuer?.issuer === "local_account"
       ? { sessionSecret: issuer.secret, secureCookie: issuer.secureCookie } : undefined;
-    const ingress = await preparePublicIngressStartup(config, publicPort, localIssuer, issuer);
+    const localAccountLifecycle = runtime.localAccountExchangePolicy
+      ? {
+          installationId: "auth-launcher-test",
+          expectedIssuer: runtime.localAccountExchangePolicy.expectedIssuer,
+          audience: runtime.localAccountExchangePolicy.audience,
+          identityOrigin: runtime.localAccountExchangePolicy.expectedIssuer,
+          offline: runtime.localAccountExchangePolicy.offline,
+        }
+      : undefined;
+    const ingress = await preparePublicIngressStartup(
+      config,
+      publicPort,
+      localIssuer,
+      issuer,
+      localAccountLifecycle,
+    );
     // Reserve the selected compatibility port before Rust binds an ephemeral
     // private bridge port; macOS can otherwise assign that same next port.
     server = createServer((req, res) => {
@@ -266,11 +281,18 @@ describe("constructed issuer through the real Rust application launcher", () => 
             expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie } })).status).toBe(200);
           }
           const signout = issuer === "better_auth" ? "sign-out" : "local-signout-all";
+          const beforeLogout = nodePaths.length;
           const logout = await fetch(`${base}/api/auth/${signout}`, {
             method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: "{}",
           });
           expect(logout.status).toBe(200);
-          expect(nodePaths.at(-1)).toBe(`/api/auth/${signout}`);
+          if (issuer === "better_auth") {
+            expect(nodePaths.at(-1)).toBe(`/api/auth/${signout}`);
+          } else {
+            // Local-account lifecycle is Rust-owned; the private Node bridge
+            // must not observe the native sign-out request.
+            expect(nodePaths.length).toBe(beforeLogout);
+          }
           const afterLogout = nodePaths.length;
           expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie } })).status).toBe(401);
           expect(nodePaths.length).toBe(afterLogout);
