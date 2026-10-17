@@ -297,6 +297,11 @@
           "head_sha": "eb0bc0736d0c2ceed5d413839b4381ac8047fb18",
           "scope": "bounded native auth/Host ingress Rust ownership; protected merge pending required CI",
           "merge_sha": "0e8656e2146d73810df991a89c27ab3c3ca655ac"
+        },
+        {
+          "number": 262,
+          "state": "closed_superseded",
+          "replacement_pr": 325
         }
       ],
       "managed_migration": {
@@ -2279,6 +2284,13 @@
       "automation_id": "automation",
       "receipt_sha256": "8f40fb6c726ad50421d0c66de8d60a1749a1af5f71f8ad1a56cb392727b482a6",
       "scope": "Protect active migration worktrees/build directories/frozen acceptance artifacts; unrelated idle cleanup remains enabled."
+    },
+    "auth_pr_262_superseded": {
+      "number": 262,
+      "state": "closed_superseded",
+      "closed_at_utc": "2026-10-17T10:18:11Z",
+      "replacement_pr": 325,
+      "reason": "Older member-directory-only auth slice superseded by merged native auth/public ingress PR #325; no separate merge or release claim."
     }
   }
 }
