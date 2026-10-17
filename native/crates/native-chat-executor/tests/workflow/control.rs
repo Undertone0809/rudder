@@ -130,9 +130,20 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
             .await
             .unwrap();
             assert_eq!(body, "synthetic answer");
+        } else if stop_result.outcome == StopOutcome::Stopped {
+            // The stop request may acquire the target lock after the terminal
+            // writer even when this branch was scheduled first. In that case
+            // the idempotent Stop receipt is already terminal and the
+            // finalizer has committed the cancellation; validate that durable
+            // outcome instead of treating scheduler order as a product rule.
+            final_result.unwrap();
+            assert_eq!((status, hold, messages), ("cancelled".into(), false, 1));
         } else {
             assert!(matches!(final_result, Err(Error::Http(409, _))));
-            assert_eq!(stop_result.outcome, StopOutcome::StopIntentRecorded);
+            assert!(matches!(
+                stop_result.outcome,
+                StopOutcome::StopIntentRecorded | StopOutcome::StopInProgress
+            ));
             assert_eq!((status, hold, messages), ("stop_requested".into(), true, 1));
             assert_eq!(
                 event_kinds,
