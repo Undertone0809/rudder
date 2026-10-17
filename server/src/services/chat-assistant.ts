@@ -544,6 +544,8 @@ export function chatAssistantService(
           linkedIssueIds,
           linkedProjectId,
           linkedGoalId,
+          runtimeType: runtimeAgentType,
+          model: runtimeSource.descriptor.model ?? null,
           runContext: {
             ...(input.runContext ?? {}),
             managedMcpPolicySnapshot: config.managedExternalMcpBindings ?? [],

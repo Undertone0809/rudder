@@ -1,6 +1,6 @@
 import type { AgentRuntimeNetworkSuspension, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { chatMessages, goals, heartbeatRuns } from "@rudderhq/db";
+import { agents, chatMessages, goals, heartbeatRunAttempts, heartbeatRuns } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -133,6 +133,9 @@ export function chatAgentRunService(db: Db) {
     linkedGoalId?: string | null;
     runContext?: Record<string, unknown> | null;
     sourceMetadata?: Record<string, unknown> | null;
+    /** Runtime identity is supplied by the Chat resolver; legacy callers derive it from Agent. */
+    runtimeType?: string | null;
+    model?: string | null;
   }) {
     const linkedGoalId = input.linkedGoalId ?? null;
     if (linkedGoalId) {
@@ -170,30 +173,92 @@ export function chatAgentRunService(db: Db) {
       // aligned even when runtime context contains a stale Goal value.
       goalId: linkedGoalId,
     };
-    const run = await db
-      .insert(heartbeatRuns)
-      .values({
-        orgId: input.conversation.orgId,
-        agentId: input.agentId,
-        invocationSource: "chat",
-        triggerDetail: input.triggerDetail,
-        status: "running",
-        startedAt: now,
-        sessionReuseScope: "none",
-        executionOwnerToken,
-        executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
-        chatConversationId: input.conversation.id,
-        goalId: linkedGoalId,
-        contextSnapshot,
-      })
-      .returning()
-      .then((rows) => rows[0])
-      .catch((error: unknown) => {
-        if (isActiveChatRunConflict(error)) {
-          throw new Error("A chat assistant run is already active for this conversation");
-        }
-        throw error;
+    let admitted: {
+      run: typeof heartbeatRuns.$inferSelect;
+      attempt: typeof heartbeatRunAttempts.$inferSelect;
+    };
+    try {
+      admitted = await db.transaction(async (tx) => {
+        // The selected runtime is part of the admission record. Legacy
+        // integration callers do not carry a resolver snapshot, so derive the
+        // value from the organization-scoped Agent row as a compatibility
+        // fallback instead of inventing a second runtime authority.
+        const [agent] = await tx
+          .select({ runtimeType: agents.agentRuntimeType })
+          .from(agents)
+          .where(and(
+            eq(agents.id, input.agentId),
+            eq(agents.orgId, input.conversation.orgId),
+          ))
+          .limit(1);
+        const runtimeType = input.runtimeType ?? agent?.runtimeType ?? "unknown";
+        const [run] = await tx
+          .insert(heartbeatRuns)
+          .values({
+            orgId: input.conversation.orgId,
+            agentId: input.agentId,
+            invocationSource: "chat",
+            triggerDetail: input.triggerDetail,
+            status: "running",
+            startedAt: now,
+            sessionReuseScope: "none",
+            executionOwnerToken,
+            executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
+            chatConversationId: input.conversation.id,
+            goalId: linkedGoalId,
+            contextSnapshot,
+          })
+          .returning();
+        if (!run) throw new Error("Failed to create chat agent run");
+
+        // Keep the initial attempt in the same transaction as the Run. This
+        // makes a first Chat send an all-or-nothing admission unit and gives
+        // recovery a durable owner fence even while the legacy TS transport
+        // still mirrors the transcript lifecycle.
+        const [attempt] = await tx
+          .insert(heartbeatRunAttempts)
+          .values({
+            orgId: run.orgId,
+            runId: run.id,
+            agentId: run.agentId,
+            attemptIndex: 0,
+            fallbackIndex: null,
+            runtimeType,
+            model: input.model ?? null,
+            isFallback: false,
+            resumeSource: "fresh",
+            status: "started",
+            ownerToken: executionOwnerToken,
+            attemptEpoch: 1,
+          })
+          .returning();
+        if (!attempt) throw new Error("Failed to create chat run attempt");
+
+        // Preserve the attempt identity in the compatibility snapshot for
+        // recovery/diagnostics. The authoritative attempt row remains the
+        // heartbeat_run_attempts record above.
+        const [runWithAttempt] = await tx
+          .update(heartbeatRuns)
+          .set({
+            contextSnapshot: {
+              ...contextSnapshot,
+              attemptId: attempt.id,
+              attemptEpoch: attempt.attemptEpoch,
+            },
+            updatedAt: now,
+          })
+          .where(eq(heartbeatRuns.id, run.id))
+          .returning();
+        if (!runWithAttempt) throw new Error("Failed to persist chat run admission identity");
+        return { run: runWithAttempt, attempt };
       });
+    } catch (error) {
+      if (isActiveChatRunConflict(error)) {
+        throw new Error("A chat assistant run is already active for this conversation");
+      }
+      throw error;
+    }
+    const run = admitted.run;
     if (!run) throw new Error("Failed to create chat agent run");
 
     const renewalTimer = setInterval(() => {
