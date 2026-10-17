@@ -672,11 +672,7 @@ export function chatService(
     return row;
   }
 
-  async function markGenerationTerminal(
-    first: string | null | undefined,
-    second: "completed" | "failed" | "stopped" | "aborted" | string,
-    third?: "completed" | "failed" | "stopped" | "aborted",
-  ) {
+  async function markGenerationTerminal(first: string | null | undefined, second: "completed" | "failed" | "stopped" | "aborted" | string, third?: "completed" | "failed" | "stopped" | "aborted") {
     const generationId = third === undefined ? first : second;
     const status = third === undefined ? second as "completed" | "failed" | "stopped" | "aborted" : third;
     if (!generationId) return null;
@@ -959,7 +955,6 @@ export function chatService(
   }
 
   async function markGenerationControlAttemptCompleted(input: {
-    orgId?: string;
     generationId: string;
     attemptEpoch: number;
     ownerToken: string;

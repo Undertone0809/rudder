@@ -1513,13 +1513,7 @@ export function heartbeatService(
         .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
         .where(and(
           eq(heartbeatRuns.executionAuthority, "legacy_ts"),
-          or(
-            and(
-              eq(heartbeatRuns.status, "running"),
-              or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
-            ),
-            eq(heartbeatRuns.terminalEffectsPending, true),
-          ),
+          or(and(eq(heartbeatRuns.status, "running"), or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network"))), eq(heartbeatRuns.terminalEffectsPending, true)),
         ));
 
       for (const { run, agentRuntimeType } of activeRuns) {
