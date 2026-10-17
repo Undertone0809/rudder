@@ -80,7 +80,7 @@ export interface RustFoundationBridge {
   readonly projectGoalSetMode: RustFoundationMode;
   readonly requiresStartup: boolean;
   readonly publicIngressBaseUrl?: string | null;
-  readonly nativeChatHostEnabled: boolean;
+  readonly nativeChatHostEnabled?: boolean;
   waitForPublicIngressReady?(): Promise<void>;
   start(): Promise<void>;
   calendar?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
