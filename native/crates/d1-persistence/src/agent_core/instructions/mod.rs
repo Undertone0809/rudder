@@ -211,7 +211,21 @@ fn bundle_location(
     root: &Path,
 ) -> io::Result<BundleLocation> {
     let org = text(row, "orgId");
-    let workspace = super::reads::workspace_key(row);
+    // Preserve the persisted workspace-key semantics used by AgentCore: a
+    // missing key may be derived by the read helper, while an explicit blank
+    // key fails closed instead of selecting a derived workspace.
+    let workspace = if row["workspaceKey"].is_null() {
+        super::reads::workspace_key(row)
+    } else {
+        js_trim(text(row, "workspaceKey")).to_owned()
+    };
+    if workspace.is_empty()
+        || !workspace
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(invalid("Invalid Agent workspace key"));
+    }
     let agent_root = root.join("agents").join(&workspace);
     let managed = agent_root.join("instructions");
     let config = &row["agentRuntimeConfig"];
@@ -593,7 +607,12 @@ pub(crate) fn resolve_readonly_for_runtime(
     })
 }
 
-pub(super) async fn library_path(tx: &mut Tx<'_>, ctx: &Context<'_>, row: &Value) -> Result<Value> {
+pub(super) async fn library_path(
+    tx: &mut Tx<'_>,
+    ctx: &Context<'_>,
+    row: &Value,
+    native_auth: Option<&dyn super::NativeAgentAuthorizer>,
+) -> Result<Value> {
     let host = ctx
         .request
         .instructions_host
@@ -607,6 +626,9 @@ pub(super) async fn library_path(tx: &mut Tx<'_>, ctx: &Context<'_>, row: &Value
     .await
     .map_err(|_| http(500, "Internal server error"))?
     .map_err(|_| http(500, "Internal server error"))?;
+    // A credential can expire or be revoked while waiting for the filesystem
+    // lock. Revalidate before recover() performs host writes.
+    super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
     // A filesystem lock wait is also an authorization boundary. A revoked key,
     // membership or administrator role cannot use pre-wait authority.
     let admin=ctx.user().is_some() && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut **tx).await?;
