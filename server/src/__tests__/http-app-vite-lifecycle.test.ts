@@ -99,7 +99,7 @@ describe("createHttpApp Vite lifecycle", () => {
       await expect(createHttpApp({} as never, {
         ...baseOpts, uiMode: "none", serverPort: 3100, deploymentMode, authRequirement: "required",
         rustPublicIngress: { listenAddr: "127.0.0.1:3100", nodeUpstream: "http://127.0.0.1:3101", authorizationKey: "test" },
-      } as never)).rejects.toThrow("constructed issuer configuration");
+      } as never)).rejects.toThrow("matching private authorization and explicit actor signing keys");
     }
     expect(createRustFoundationBridge).not.toHaveBeenCalled();
     expect(registerApiRoutes).not.toHaveBeenCalled();

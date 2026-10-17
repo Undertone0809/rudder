@@ -104,7 +104,7 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
-import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { lockLegacyNativeChatQueueTarget, lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
@@ -657,24 +657,32 @@ export function chatService(
 
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
     const now = new Date();
-    const [row] = await db
-      .insert(chatGenerations)
-      .values({
-        orgId,
-        conversationId,
-        status: "active",
-        controlOwnerToken: null,
-        controlLeaseExpiresAt: null,
-        startedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
+    const [row] = await db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, orgId);
+      const ownership = await lockLegacyNativeChatQueueTarget(tx, orgId, conversationId);
+      if (ownership === "native_owned") {
+        throw conflict("Native Chat owns this conversation");
+      }
+      return tx
+        .insert(chatGenerations)
+        .values({
+          orgId,
+          conversationId,
+          status: "active",
+          controlOwnerToken: null,
+          controlLeaseExpiresAt: null,
+          startedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+    });
     if (!row) throw new Error("Failed to create chat generation");
     return row;
   }
 
   async function markGenerationTerminal(first: string | null | undefined, second: "completed" | "failed" | "stopped" | "aborted" | string, third?: "completed" | "failed" | "stopped" | "aborted") {
+    const orgId = third === undefined ? undefined : first;
     const generationId = third === undefined ? first : second;
     const status = third === undefined ? second as "completed" | "failed" | "stopped" | "aborted" : third;
     if (!generationId) return null;
@@ -693,6 +701,7 @@ export function chatService(
         .where(
           and(
             eq(chatGenerations.id, generationId),
+            ...(orgId ? [eq(chatGenerations.orgId, orgId)] : []),
             eq(chatGenerations.executionAuthority, "legacy_ts"),
             inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
           ),
@@ -4378,6 +4387,11 @@ export function chatService(
       const transcriptFromPayload = chatTranscriptFromPayload(sanitizedPayload);
       const transcript = input.transcript ?? transcriptFromPayload;
       const { message, created } = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, input.orgId);
+        const ownership = await lockLegacyNativeChatQueueTarget(tx, input.orgId, conversationId);
+        if (ownership === "native_owned") {
+          throw conflict("Native Chat owns this conversation");
+        }
         const values = {
           orgId: input.orgId,
           conversationId,
