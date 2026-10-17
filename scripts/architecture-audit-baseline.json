@@ -424,6 +424,104 @@
       "rationale": "The issue list currently coordinates pagination, lane state, filtering, and row actions while the board/list controller boundary stabilizes.",
       "target": "Extract list state and row actions behind focused components and reduce the list below 1500 lines.",
       "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/components/side-panel/RunFeedbackChatPanel.tsx",
+      "lines": 1501,
+      "owner": "native-chat-migration",
+      "rationale": "Native Chat recovery and stream ownership remain concentrated while the Rust migration settles.",
+      "target": "Extract the recovery/stream orchestration into focused modules and reduce the file below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/routes/chats.stream-routes.ts",
+      "lines": 1501,
+      "owner": "native-chat-migration",
+      "rationale": "Native Chat recovery and stream ownership remain concentrated while the Rust migration settles.",
+      "target": "Extract the recovery/stream orchestration into focused modules and reduce the file below 1500 lines.",
+      "expiry": "2027-03-31"
+    }
+  ],
+  "comparisonDebtExceptions": [
+    {
+      "path": "ui/src/pages/Chat.tsx",
+      "lines": 5023,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/components/side-panel/RunFeedbackChatPanel.tsx",
+      "lines": 1525,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/pages/Chat.messages.tsx",
+      "lines": 3304,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/routes/chats.stream-routes.ts",
+      "lines": 1512,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/index.ts",
+      "lines": 1649,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "desktop/src/main.ts",
+      "lines": 3446,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/runtime-kernel/heartbeat.ts",
+      "lines": 2806,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/routes/chats.ts",
+      "lines": 3456,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/chat-assistant.ts",
+      "lines": 1557,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/chats.ts",
+      "lines": 5263,
+      "owner": "native-chat-migration",
+      "rationale": "Native Codex/Hermes Rust migration adds a bounded compatibility and recovery slice to this existing oversized module; keep the exception visible while the module is split.",
+      "target": "Extract the Native Chat compatibility and recovery paths into focused modules and reduce the file below the 1500-line threshold.",
+      "expiry": "2027-03-31"
     }
   ]
 }
