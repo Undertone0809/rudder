@@ -982,6 +982,18 @@ The Stop UI increment reads the current target before dispatch and rejects captu
 
 The October 17 local inventory observed Codex `0.163.0-alpha.10.2`, Claude Code `2.1.216`, OpenCode `1.15.11`, Pi `0.76.0`, and Cursor agent `2026.06.19-20-24-33-653a7fb`. Hermes package metadata reports `0.21.0`; its CLI version probe timed out, so that metadata does not establish gateway readiness. These are local probe identities, not minimum supported versions or successful real-runtime acceptance. No global upgrade or default-model change is implied. Verify each installed protocol before implementing its Rust adapter, and preserve the authorized selected Profile and feature set. A subsequent isolated Pi `--mode rpc` probe returned a successful correlated `get_state` response and its session ID, streaming/compacting flags, model, and queue counters; the task-owned process was reaped. The probe used an empty task-owned HOME/agent directory and disabled discovery, sent no prompt, and accessed no operator credentials. It establishes RPC readiness only, not selected-Profile parity, native persistence, session-tree reading, or a wired Rust adapter.
 
+### October 18 Pi boundary increment
+
+The branch now contains a Rust-owned Pi RPC execution boundary and bounded
+session-tree Reader. It validates the managed session file, distinguishes
+`agent_end` from settled/idle state, preserves Pi session and leaf identities,
+and proves cleanup through the shared process host. The shared Foundation worker
+can carry a typed Pi observation and reports terminal-but-unprojectable or
+unknown-cleanup states without coercing Pi IDs into Codex Thread/Turn columns.
+Pi D1 configuration/claim reachability and Pi-native finalization projection
+remain in progress; this increment is not Pi Chat acceptance and does not close
+W09 or the six-runtime completion requirement.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.
