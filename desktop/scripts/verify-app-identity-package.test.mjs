@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -44,7 +44,7 @@ describe("packaged Desktop identity dependency", () => {
     const { root, app } = await fixture();
     const ancestor = await identityPackage(root);
     expect(createRequire(path.join(app, "package.json")).resolve("@rudderhq/identity-core/electron"))
-      .toBe(path.join(ancestor, "dist", "index.js"));
+      .toBe(await realpath(path.join(ancestor, "dist", "index.js")));
     await expect(verifyDesktopIdentityPackage(app)).rejects.toThrow();
   });
 
