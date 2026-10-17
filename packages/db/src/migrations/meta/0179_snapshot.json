@@ -1,5 +1,5 @@
 {
-  "id": "c30678dd-c009-464a-8a78-d84608fecc67",
+  "id": "bc88b3a5-6e4e-4f52-957f-978823d8a000",
   "prevId": "bda24a85-cd9b-4032-9494-75ab60828bd9",
   "version": "7",
   "dialect": "postgresql",
@@ -4273,23 +4273,7 @@
           "notNull": true
         }
       },
-      "indexes": {
-        "session_token_idx": {
-          "name": "session_token_idx",
-          "columns": [
-            {
-              "expression": "token",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "session_user_id_user_id_fk": {
           "name": "session_user_id_user_id_fk",
@@ -30033,7 +30017,7 @@
         },
         "runtime_retention_claims_timestamp_order_check": {
           "name": "runtime_retention_claims_timestamp_order_check",
-          "value": "(\n        (\"runtime_retention_claims\".\"expires_at\" is null or \"runtime_retention_claims\".\"expires_at\" >= \"runtime_retention_claims\".\"created_at\")\n        and (\"runtime_retention_claims\".\"released_at\" is null or \"runtime_retention_claims\".\"released_at\" >= \"runtime_retention_claims\".\"created_at\")\n      )"
+          "value": "(\n        (\"runtime_retention_claims\".\"status\" <> 'active' or \"runtime_retention_claims\".\"expires_at\" is null or \"runtime_retention_claims\".\"expires_at\" >= \"runtime_retention_claims\".\"created_at')\n        and (\"runtime_retention_claims\".\"released_at\" is null or \"runtime_retention_claims\".\"released_at\" >= \"runtime_retention_claims\".\"created_at')\n      )"
         }
       },
       "isRLSEnabled": false
@@ -30393,7 +30377,7 @@
         },
         "runtime_source_aliases_timestamp_order_check": {
           "name": "runtime_source_aliases_timestamp_order_check",
-          "value": "(\n        (\"runtime_source_aliases\".\"expires_at\" is null or \"runtime_source_aliases\".\"expires_at\" >= \"runtime_source_aliases\".\"created_at\")\n        and (\"runtime_source_aliases\".\"released_at\" is null or \"runtime_source_aliases\".\"released_at\" >= \"runtime_source_aliases\".\"created_at\")\n      )"
+          "value": "(\"runtime_source_aliases\".\"released_at\" is null or \"runtime_source_aliases\".\"released_at\" >= \"runtime_source_aliases\".\"created_at\")"
         },
         "runtime_source_aliases_read_only_check": {
           "name": "runtime_source_aliases_read_only_check",
