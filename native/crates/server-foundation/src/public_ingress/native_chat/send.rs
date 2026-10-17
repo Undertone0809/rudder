@@ -86,7 +86,7 @@ pub(super) async fn send(
         };
     let actor = match native_principal(&authenticated, &organization_id) {
         Ok(actor) => actor,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     match native_chat::classify_existing_send(&pool, &actor, &organization_id, &chat).await {
         Ok(native_chat::SendAuthority::Legacy) => {
@@ -182,7 +182,7 @@ pub(super) async fn first_send(
         };
     let actor = match native_principal(&authenticated, &organization_id) {
         Ok(actor) => actor,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let routing = match first_send_routing_fields(&request, &body) {
         Ok(fields) => fields,
@@ -520,11 +520,11 @@ async fn send_admission(
     // Foundation-verified credential digest; D1 revalidates every transaction.
     let lookup_actor = match native_principal(&authenticated, &organization_id) {
         Ok(actor) => actor,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let admission_actor = match native_principal(&authenticated, &organization_id) {
         Ok(actor) => actor,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let preflight = match lookup_admission(&pool, &lookup_actor, &organization_id, &command).await {
         Ok(receipt) => receipt,
@@ -559,7 +559,7 @@ async fn send_admission(
         };
         let marker_actor = match native_principal(&authenticated, &organization_id) {
             Ok(actor) => actor,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
         let pool_for_task = pool.clone();
         let organization_for_task = organization_id.clone();
@@ -1022,10 +1022,10 @@ async fn run_admission_and_dispatch(
 fn native_principal(
     actor: &BrowserActor,
     organization_id: &str,
-) -> Result<BrowserPrincipal, HttpResponse> {
+) -> Result<BrowserPrincipal, Box<HttpResponse>> {
     actor
         .native_chat_principal(organization_id)
-        .map_err(auth_error)
+        .map_err(|error| Box::new(auth_error(error)))
 }
 
 pub(super) fn input_error(error_: InputError) -> HttpResponse {

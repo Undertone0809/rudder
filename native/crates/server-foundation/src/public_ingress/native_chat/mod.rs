@@ -131,13 +131,13 @@ fn result<T: Serialize>(value: Result<T, PersistenceError>) -> HttpResponse {
     }
 }
 
-fn canonical(request: &HttpRequest, chat: &str, suffix: &str) -> Result<(), HttpResponse> {
+fn canonical(request: &HttpRequest, chat: &str, suffix: &str) -> Result<(), Box<HttpResponse>> {
     if Uuid::parse_str(chat)
         .ok()
         .is_none_or(|id| id.to_string() != chat)
         || request.uri().path() != format!("/api/chats/{chat}/messages/stream/{suffix}")
     {
-        return Err(error(StatusCode::NOT_FOUND, "route_not_found"));
+        return Err(Box::new(error(StatusCode::NOT_FOUND, "route_not_found")));
     }
     Ok(())
 }
@@ -238,7 +238,7 @@ async fn checkpoint(
     body: web::Bytes,
 ) -> HttpResponse {
     if let Err(response) = canonical(&request, &chat, "checkpoint") {
-        return response;
+        return *response;
     }
     if !request.query_string().is_empty() {
         return error(StatusCode::BAD_REQUEST, "query_not_allowed");
@@ -302,7 +302,7 @@ async fn stop(
     body: web::Bytes,
 ) -> HttpResponse {
     if let Err(response) = canonical(&request, &chat, "stop") {
-        return response;
+        return *response;
     }
     if !request.query_string().is_empty() {
         return error(StatusCode::BAD_REQUEST, "query_not_allowed");
@@ -428,7 +428,7 @@ async fn events(
     query: web::Query<EventsQuery>,
 ) -> HttpResponse {
     if let Err(response) = canonical(&request, &chat, "events") {
-        return response;
+        return *response;
     }
     if !body.is_empty() {
         return error(StatusCode::BAD_REQUEST, "body_not_allowed");
@@ -471,7 +471,7 @@ async fn control_state(
     query: web::Query<TurnQuery>,
 ) -> HttpResponse {
     if let Err(response) = canonical(&request, &chat, "control") {
-        return response;
+        return *response;
     }
     if !body.is_empty() {
         return error(StatusCode::BAD_REQUEST, "body_not_allowed");
@@ -505,7 +505,7 @@ async fn turn(
     query: web::Query<TurnQuery>,
 ) -> HttpResponse {
     if let Err(response) = canonical(&request, &chat, "turn") {
-        return response;
+        return *response;
     }
     if !body.is_empty() {
         return error(StatusCode::BAD_REQUEST, "body_not_allowed");

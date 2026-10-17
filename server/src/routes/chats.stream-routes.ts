@@ -728,7 +728,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   },
                   onAttemptCompleted: async ({ generationId, attemptEpoch, ownerToken }) => {
                     await svc.markGenerationControlAttemptCompleted({
-                      orgId: conversation.orgId,
                       generationId,
                       attemptEpoch,
                       ownerToken,
