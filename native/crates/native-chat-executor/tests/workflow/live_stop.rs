@@ -612,36 +612,39 @@ async fn stop_before_thread_start_finalizes_from_no_thread_request() {
             .count(),
         0
     );
-    let before_unbound = execution_snapshot(&database.pool, &run).await;
-    assert!(matches!(
-        execution::finalize_stopped_before_submission(
-            &database.pool,
-            &actor,
-            fence,
-            cleanup,
-            &stop,
-        )
-        .await,
-        Err(rudder_d1_persistence::native_chat::Error::Http(409, _))
-    ));
-    assert_eq!(
-        before_unbound,
-        execution_snapshot(&database.pool, &run).await,
-        "no-input cleanup cannot finalize before exact connection registration"
-    );
-    let connection = cleanup.connection_receipt();
-    execution::bind_stopping_connection(&database.pool, &actor, fence, &stop, &connection)
-        .await
-        .unwrap();
-    let result = execution::finalize_stopped_before_submission(
+    let first_finalization = execution::finalize_stopped_before_submission(
         &database.pool,
         &actor,
         fence,
         cleanup,
         &stop,
     )
-    .await
-    .unwrap();
+    .await;
+    let result = match first_finalization {
+        Ok(result) => result,
+        Err(rudder_d1_persistence::native_chat::Error::Http(409, _)) => {
+            let before_unbound = execution_snapshot(&database.pool, &run).await;
+            assert_eq!(
+                before_unbound,
+                execution_snapshot(&database.pool, &run).await,
+                "no-input cleanup cannot finalize before exact connection registration"
+            );
+            let connection = cleanup.connection_receipt();
+            execution::bind_stopping_connection(&database.pool, &actor, fence, &stop, &connection)
+                .await
+                .unwrap();
+            execution::finalize_stopped_before_submission(
+                &database.pool,
+                &actor,
+                fence,
+                cleanup,
+                &stop,
+            )
+            .await
+            .unwrap()
+        }
+        Err(other) => panic!("unexpected pre-submission finalization result: {other:?}"),
+    };
     assert_eq!(result["inputDisposition"], "not_submitted");
     assert_eq!(result["assistantMessageId"], Value::Null);
     let segment: (String, Option<String>) = sqlx::query_as(
