@@ -1519,9 +1519,9 @@
         "publication": "none; previous c72d stage REJECT retained"
       },
       "current_state_as_of_latest": {
-        "recorded_utc": "2026-10-17T08:20:47.270296+00:00",
+        "recorded_utc": "2026-10-17T08:29:48.418931+00:00",
         "source_delivered": "PR316 merged at d041. Duplicate PR314/317/319/320 closed with branches retained. PR323 remains draft.",
-        "auth": "64857 Host parser/readiness repair checkpoint awaiting exact reround stage review; no verifier lease or PR.",
+        "auth": "64857 stage accept; verifier lease active, native/package acceptance pending.",
         "migration": "223ac owner SIGTERM repair stage accepted; rebase onto current auth then composed runtime acceptance required, e67 C3 FAIL preserved.",
         "agent_core": "5bf Agent roster/permission slice rebased onto auth; focused source checks PASS, independent review and real acceptance pending.",
         "backend_retirement_complete": false,
@@ -2027,10 +2027,15 @@
       "full_baseline_test_execution": {
         "candidate": "6de654dd1d8a9790d5455497074fcba369e7f91c",
         "receipt_path": "/private/tmp/rudder-auth-identity-package-fix-20261017/full-test-6de654.json",
-        "status": "running; one inherited main-identical approval-read test failure observed, run continues to terminal receipt",
+        "status": "INTERRUPTED_ENVIRONMENT",
         "canonical_tmpdir": "/private/tmp/rudder-auth-identity-package-fix-20261017/bt",
         "postgres_cleanup_scope": "/private/tmp/rudder-auth-identity-package-fix-20261017/bt/rudder-",
-        "isolation": "Global test cleanup now confined to this unique TMPDIR rather than shared system temp; no other task PGDATA falls under the prefix."
+        "isolation": "Global test cleanup now confined to this unique TMPDIR rather than shared system temp; no other task PGDATA falls under the prefix.",
+        "receipt_sha256": "3672829413f6137926c62b1ed689c5d10b9bb8448327c5a7148dc100cb793e1d",
+        "candidate_at_start": "6de654 dirty precheckpoint content-equivalent to later64857 source files, but not exact committed candidate",
+        "terminal": "Desktop harness waited for pre-existing Rudder Desktop PID4242. Root stopped only own test parent/children after SIGINT; PID4242 and unrelated processes preserved.",
+        "completed_scope": "identity build, package tests, server and UI progress through Desktop wait; no full baseline PASS claim.",
+        "remaining": "Run exact current candidate baseline only after user-controlled Desktop PID is no longer blocking; this is separate from required verifier and native-vault CI."
       },
       "root_identity_reset_2026_10_17": {
         "recorded_utc": "2026-10-17T08:12:12.865020+00:00",
