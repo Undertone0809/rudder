@@ -14,6 +14,7 @@ use crate::public_ingress_websocket::PublicIngressWebSocketProxy;
 use actix_web::guard;
 use actix_web::http::Method;
 use actix_web::http::header::HeaderMap;
+use rudder_d1_persistence::goal_reads::{GoalReadRequest, GoalReadView};
 use uuid::Uuid;
 
 mod agent_core;
@@ -256,6 +257,15 @@ impl PublicIngressRuntime {
                     "/api/orgs/{org_id}/runtime-bindings/{binding_id}",
                     web::get().to(runtime_bindings::historical),
                 )
+                .route("/api/orgs/{org_id}/goals", web::get().to(goal_collection))
+                .route(
+                    "/api/orgs/{org_id}/goals/workspace",
+                    web::get().to(goal_workspace_collection),
+                )
+                .route(
+                    "/api/orgs/{org_id}/goals/assigned",
+                    web::get().to(goal_assigned_collection),
+                )
                 .route(
                     "/llms/agent-configuration.txt",
                     web::route()
@@ -343,7 +353,12 @@ fn public_ingress_startup_receipt(
     native_identity_enabled: bool,
     local_implicit_enabled: bool,
 ) -> serde_json::Value {
-    let mut direct_routes = vec!["/api/orgs/:org_id/members/directory"];
+    let mut direct_routes = vec![
+        "/api/orgs/:org_id/members/directory",
+        "/api/orgs/:org_id/goals",
+        "/api/orgs/:org_id/goals/workspace",
+        "/api/orgs/:org_id/goals/assigned",
+    ];
     if native_identity_enabled {
         direct_routes.extend([
             "/api/orgs/:org_id/agents",
@@ -484,6 +499,16 @@ async fn proxy_request(
         {
             return get_session(state, request).await;
         }
+    }
+    if let Some((org_id, view, assigned)) = public_goal_collection_route(&request) {
+        return goal_collection_proxy_alias(state, request, payload, org_id, view, assigned).await;
+    }
+    if is_goal_collection_namespace(&request)
+        && matches!(*request.method(), Method::GET | Method::HEAD)
+    {
+        return state
+            .foundation
+            .json_error(StatusCode::NOT_FOUND, "route_not_found");
     }
     // Express's compatibility router is case-insensitive and accepts an
     // optional trailing slash. Never let a near-match under this namespace
@@ -936,6 +961,391 @@ async fn get_session(state: web::Data<IngressState>, request: HttpRequest) -> Ht
             StatusCode::SERVICE_UNAVAILABLE,
             "native_session_unavailable",
         ),
+    }
+}
+
+fn goal_query_value(request: &HttpRequest, key: &str) -> Option<String> {
+    let mut values = request.uri().query().into_iter().flat_map(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .filter(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.into_owned())
+    });
+    let value = values.next()?;
+    // Express's `req.query` represents duplicate keys as arrays. The Node
+    // optionalQueryString helper rejects those by returning null; preserve
+    // that contract on the native public ingress instead of selecting a value.
+    if values.next().is_some() {
+        return None;
+    }
+    let value = value.trim().to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
+fn goal_query_number(value: &str) -> Option<f64> {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        return u64::from_str_radix(hex, 16)
+            .ok()
+            .map(|number| number as f64);
+    }
+    if let Some(binary) = value
+        .strip_prefix("0b")
+        .or_else(|| value.strip_prefix("0B"))
+    {
+        return u64::from_str_radix(binary, 2)
+            .ok()
+            .map(|number| number as f64);
+    }
+    if let Some(octal) = value
+        .strip_prefix("0o")
+        .or_else(|| value.strip_prefix("0O"))
+    {
+        return u64::from_str_radix(octal, 8)
+            .ok()
+            .map(|number| number as f64);
+    }
+    value.parse::<f64>().ok()
+}
+
+fn goal_assigned_input(
+    request: &HttpRequest,
+    agent_id: String,
+) -> Result<GoalReadRequest, HttpResponse> {
+    let lifecycle = goal_query_value(request, "lifecycle").unwrap_or_else(|| "active".into());
+    if !matches!(lifecycle.as_str(), "draft" | "active" | "closed" | "all") {
+        return Err(HttpResponse::BadRequest().json(serde_json::json!({
+            "error":"Goal lifecycle must be draft, active, closed, or all"
+        })));
+    }
+    let focus = match goal_query_value(request, "focus").as_deref() {
+        None => None,
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        Some(_) => {
+            return Err(HttpResponse::BadRequest().json(serde_json::json!({
+                "error":"Goal focus must be true or false"
+            })));
+        }
+    };
+    let facet = goal_query_value(request, "facet");
+    if facet.as_deref().is_some_and(|value| {
+        !matches!(
+            value,
+            "agent_advancing"
+                | "waiting_external"
+                | "waiting_focus"
+                | "needs_attention"
+                | "ready_for_acceptance"
+                | "closed"
+        )
+    }) {
+        return Err(
+            HttpResponse::BadRequest().json(serde_json::json!({"error":"Goal facet is invalid"}))
+        );
+    }
+    let limit = match goal_query_value(request, "limit") {
+        None => 20,
+        Some(value) => match goal_query_number(&value) {
+            Some(value)
+                if value.is_finite() && value.fract() == 0.0 && (1.0..=100.0).contains(&value) =>
+            {
+                value as u16
+            }
+            _ => {
+                return Err(HttpResponse::BadRequest().json(serde_json::json!({
+                    "error":"Goal list limit must be between 1 and 100"
+                })));
+            }
+        },
+    };
+    Ok(GoalReadRequest {
+        view: GoalReadView::Assigned,
+        goal_id: None,
+        cursor: None,
+        limit: Some(limit.to_string()),
+        agent_id: Some(agent_id),
+        lifecycle: Some(lifecycle),
+        focus,
+        facet,
+    })
+}
+
+async fn goal_collection(
+    state: web::Data<IngressState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    org_id: web::Path<String>,
+) -> HttpResponse {
+    goal_collection_read(
+        state,
+        request,
+        body,
+        org_id.into_inner(),
+        GoalReadView::List,
+        false,
+    )
+    .await
+}
+
+async fn goal_workspace_collection(
+    state: web::Data<IngressState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    org_id: web::Path<String>,
+) -> HttpResponse {
+    goal_collection_read(
+        state,
+        request,
+        body,
+        org_id.into_inner(),
+        GoalReadView::WorkspaceCards,
+        false,
+    )
+    .await
+}
+
+async fn goal_assigned_collection(
+    state: web::Data<IngressState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    org_id: web::Path<String>,
+) -> HttpResponse {
+    goal_collection_read(
+        state,
+        request,
+        body,
+        org_id.into_inner(),
+        GoalReadView::Assigned,
+        true,
+    )
+    .await
+}
+
+async fn goal_collection_read(
+    state: web::Data<IngressState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    org_id: String,
+    view: GoalReadView,
+    assigned: bool,
+) -> HttpResponse {
+    if let Some(response) = malformed_public_json_response(&request, &body) {
+        return response;
+    }
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
+    let _permit = match state.foundation.admission.acquire().await {
+        Ok(permit) => permit,
+        Err(AdmissionError::QueueFull) => {
+            return state
+                .foundation
+                .json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full");
+        }
+    };
+    let identity = if state.config.identity_auth.is_some() {
+        match resolve_public_http_identity(&state, &request).await {
+            Ok(identity) => identity,
+            Err((status, code)) => return state.foundation.json_error(status, code),
+        }
+    } else {
+        return state.foundation.json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "native_identity_unavailable",
+        );
+    };
+    if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
+        return response;
+    }
+    if assigned && matches!(identity, NativeIngressIdentity::None) {
+        return state
+            .foundation
+            .json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    let input = match (&view, identity_agent_id(&identity), assigned) {
+        (GoalReadView::Assigned, Some(agent_id), true) => {
+            match goal_assigned_input(&request, agent_id.to_owned()) {
+                Ok(input) => input,
+                Err(response) => return response,
+            }
+        }
+        (GoalReadView::Assigned, _, true) => {
+            return HttpResponse::Forbidden()
+                .json(serde_json::json!({"error":"Agent authentication required for Goal runtime context"}));
+        }
+        _ => GoalReadRequest {
+            view,
+            goal_id: None,
+            cursor: None,
+            limit: None,
+            agent_id: None,
+            lifecycle: None,
+            focus: None,
+            facet: None,
+        },
+    };
+    dispatch_goal_collection_read(&state, &org_id, &input, identity).await
+}
+
+fn public_goal_collection_route(request: &HttpRequest) -> Option<(String, GoalReadView, bool)> {
+    if !matches!(*request.method(), Method::GET | Method::HEAD) {
+        return None;
+    }
+    let segments = request
+        .uri()
+        .path()
+        .trim_end_matches('/')
+        .split('/')
+        .collect::<Vec<_>>();
+    if segments.len() < 5
+        || !segments[1].eq_ignore_ascii_case("api")
+        || !segments[2].eq_ignore_ascii_case("orgs")
+        || segments[3].is_empty()
+        || !segments[4].eq_ignore_ascii_case("goals")
+    {
+        return None;
+    }
+    match segments.as_slice() {
+        ["", _, _, org_id, _] => Some(((*org_id).to_owned(), GoalReadView::List, false)),
+        ["", _, _, org_id, _, suffix] if suffix.eq_ignore_ascii_case("workspace") => {
+            Some(((*org_id).to_owned(), GoalReadView::WorkspaceCards, false))
+        }
+        ["", _, _, org_id, _, suffix] if suffix.eq_ignore_ascii_case("assigned") => {
+            Some(((*org_id).to_owned(), GoalReadView::Assigned, true))
+        }
+        _ => None,
+    }
+}
+
+async fn goal_collection_proxy_alias(
+    state: web::Data<IngressState>,
+    request: HttpRequest,
+    payload: web::Payload,
+    org_id: String,
+    view: GoalReadView,
+    assigned: bool,
+) -> HttpResponse {
+    let body =
+        match actix_web::body::to_bytes(actix_web::body::BodyStream::new(payload.into_inner()))
+            .await
+        {
+            Ok(body) => body,
+            Err(_) => {
+                return state
+                    .foundation
+                    .json_error(StatusCode::INTERNAL_SERVER_ERROR, "request_body_invalid");
+            }
+        };
+    goal_collection_read(state, request, body, org_id, view, assigned).await
+}
+
+fn is_goal_collection_namespace(request: &HttpRequest) -> bool {
+    let segments = request
+        .uri()
+        .path()
+        .trim_end_matches('/')
+        .split('/')
+        .collect::<Vec<_>>();
+    segments.len() >= 5
+        && segments[1].eq_ignore_ascii_case("api")
+        && segments[2].eq_ignore_ascii_case("orgs")
+        && !segments[3].is_empty()
+        && segments[4].eq_ignore_ascii_case("goals")
+}
+
+fn identity_agent_id(identity: &NativeIngressIdentity) -> Option<&str> {
+    match identity {
+        NativeIngressIdentity::AgentKey { agent_id, .. }
+        | NativeIngressIdentity::AgentJwt(crate::native_agent_jwt::NativeAgentJwtIdentity {
+            agent_id,
+            ..
+        }) => Some(agent_id.as_str()),
+        _ => None,
+    }
+}
+
+async fn dispatch_goal_collection_read(
+    state: &IngressState,
+    org_id: &str,
+    input: &GoalReadRequest,
+    identity: NativeIngressIdentity,
+) -> HttpResponse {
+    match identity {
+        NativeIngressIdentity::Session(identity) => {
+            state
+                .foundation
+                .goal_read_with_native_session(
+                    org_id,
+                    input,
+                    &identity,
+                    state
+                        .config
+                        .session_auth
+                        .as_ref()
+                        .map_or(NativeSessionAuthKind::BetterAuth, |config| config.kind),
+                )
+                .await
+        }
+        NativeIngressIdentity::BoardKey {
+            user_id,
+            key_id,
+            token_hash,
+        } => {
+            let Ok(actor) = ActorIdentity::new("user", &user_id) else {
+                return state
+                    .foundation
+                    .json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+            };
+            state
+                .foundation
+                .goal_read_with_native_bearer(
+                    org_id,
+                    input,
+                    &actor,
+                    &format!("board-key:{key_id}"),
+                    &token_hash,
+                )
+                .await
+        }
+        NativeIngressIdentity::AgentKey {
+            agent_id,
+            key_id,
+            token_hash,
+            ..
+        } => {
+            let Ok(actor) = ActorIdentity::new("agent", &agent_id) else {
+                return state
+                    .foundation
+                    .json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+            };
+            state
+                .foundation
+                .goal_read_with_native_bearer(
+                    org_id,
+                    input,
+                    &actor,
+                    &format!("agent-key:{key_id}"),
+                    &token_hash,
+                )
+                .await
+        }
+        NativeIngressIdentity::AgentJwt(identity) => {
+            state
+                .foundation
+                .goal_read_with_native_agent_jwt(org_id, input, &identity)
+                .await
+        }
+        NativeIngressIdentity::LocalImplicit => {
+            state
+                .foundation
+                .goal_read_with_native_implicit_board(org_id, input)
+                .await
+        }
+        NativeIngressIdentity::None => state
+            .foundation
+            .json_error(StatusCode::UNAUTHORIZED, "unauthorized"),
     }
 }
 
@@ -1578,7 +1988,7 @@ mod tests {
         postgres::{PgConnectOptions, PgPoolOptions},
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::{env, str::FromStr};
+    use std::{env, str::FromStr, time::Instant};
     use uuid::Uuid;
 
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
@@ -1666,13 +2076,68 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn goal_query_optional_strings_match_node_blank_and_duplicate_contract() {
+        let agent = "20000000-0000-4000-8000-000000000001".to_owned();
+        for query in [
+            "lifecycle=%20%20&focus=%20&facet=%20&limit=%20",
+            "lifecycle=closed&lifecycle=active&focus=true&focus=false&facet=closed&facet=all&limit=7&limit=8",
+        ] {
+            let request = test::TestRequest::get()
+                .uri(&format!("/api/orgs/org-1/goals/assigned?{query}"))
+                .to_http_request();
+            let input = goal_assigned_input(&request, agent.clone()).unwrap();
+            assert_eq!(input.lifecycle.as_deref(), Some("active"));
+            assert_eq!(input.focus, None);
+            assert_eq!(input.facet, None);
+            assert_eq!(input.limit.as_deref(), Some("20"));
+        }
+    }
+
+    #[actix_web::test]
+    async fn goal_query_limit_matches_node_number_formats_and_bounds() {
+        let agent = "20000000-0000-4000-8000-000000000001".to_owned();
+        for (raw, expected) in [
+            ("0x10", 16),
+            ("0b10", 2),
+            ("0o10", 8),
+            ("1e2", 100),
+            ("1.0", 1),
+            ("+1", 1),
+        ] {
+            let request = test::TestRequest::get()
+                .uri(&format!("/api/orgs/org-1/goals/assigned?limit={raw}"))
+                .to_http_request();
+            let input = goal_assigned_input(&request, agent.clone()).unwrap();
+            let expected = expected.to_string();
+            assert_eq!(input.limit.as_deref(), Some(expected.as_str()));
+        }
+        for raw in ["0", "101", "1.5", "Infinity", "NaN"] {
+            let request = test::TestRequest::get()
+                .uri(&format!("/api/orgs/org-1/goals/assigned?limit={raw}"))
+                .to_http_request();
+            assert_eq!(
+                goal_assigned_input(&request, agent.clone())
+                    .unwrap_err()
+                    .status(),
+                StatusCode::BAD_REQUEST,
+                "{raw}"
+            );
+        }
+    }
+
+    #[actix_web::test]
     async fn startup_receipt_reports_only_the_configured_public_auth_authorities() {
         let address = "127.0.0.1:3100".parse().unwrap();
         let bearer_only = public_ingress_startup_receipt(address, None, false, false);
         assert_eq!(bearer_only["publicListener"], true);
         assert_eq!(
             bearer_only["nativeAuthentication"]["directRoutes"],
-            serde_json::json!(["/api/orgs/:org_id/members/directory"])
+            serde_json::json!([
+                "/api/orgs/:org_id/members/directory",
+                "/api/orgs/:org_id/goals",
+                "/api/orgs/:org_id/goals/workspace",
+                "/api/orgs/:org_id/goals/assigned"
+            ])
         );
         assert!(bearer_only["nativeAuthentication"]["sessionCookieAuthority"].is_null());
 
@@ -1696,6 +2161,9 @@ mod tests {
             with_better_auth["nativeAuthentication"]["directRoutes"],
             serde_json::json!([
                 "/api/orgs/:org_id/members/directory",
+                "/api/orgs/:org_id/goals",
+                "/api/orgs/:org_id/goals/workspace",
+                "/api/orgs/:org_id/goals/assigned",
                 "/api/orgs/:org_id/agents",
                 "/api/agents/:agent_id/permissions",
                 "/api/auth/get-session"
@@ -1839,6 +2307,44 @@ mod tests {
             )
             .await
             .expect("connect to the migrated disposable test database")
+    }
+
+    fn database_url_with_application_name(database_url: &str, application_name: &str) -> String {
+        let mut parsed = url::Url::parse(database_url).expect("test database URL must be valid");
+        let existing = parsed
+            .query_pairs()
+            .filter(|(key, _)| key != "application_name")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect::<Vec<_>>();
+        parsed.set_query(None);
+        {
+            let mut query = parsed.query_pairs_mut();
+            for (key, value) in existing {
+                query.append_pair(&key, &value);
+            }
+            query.append_pair("application_name", application_name);
+        }
+        parsed.to_string()
+    }
+
+    async fn wait_for_goal_read_relation_lock(pool: &PgPool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let blocked = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity AS activity JOIN pg_locks AS relation_lock ON relation_lock.pid = activity.pid JOIN pg_class AS relation ON relation.oid = relation_lock.relation WHERE activity.state = 'active' AND activity.wait_event_type = 'Lock' AND relation_lock.granted = false AND relation.relname = 'goals')",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if blocked {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native goal read did not reach its goals query while the table lock was held"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     #[actix_web::test]
@@ -1998,6 +2504,180 @@ mod tests {
         task.await.unwrap().unwrap();
         sqlx::query("DELETE FROM board_api_keys WHERE id = $1::uuid")
             .bind(&key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "DELETE FROM organization_memberships WHERE org_id = $1::uuid AND principal_id = $2",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(r#"DELETE FROM "user" WHERE id = $1"#)
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM organizations WHERE id = $1::uuid")
+            .bind(&org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    #[actix_web::test]
+    #[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL pointing at a migrated disposable DB"]
+    async fn native_goal_read_revalidates_and_reads_in_one_repeatable_read_transaction() {
+        let pool = disposable_native_auth_pool().await;
+        let suffix = Uuid::new_v4().simple().to_string();
+        let org_id: String = sqlx::query_scalar(
+            "INSERT INTO organizations (url_key, name, issue_prefix) VALUES ($1, $2, $3) RETURNING id::text",
+        )
+        .bind(format!("native-goal-read-{suffix}"))
+        .bind(format!("Native goal read {suffix}"))
+        .bind(format!("G{}", suffix[..7].to_ascii_uppercase()))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let user_id = format!("native-goal-read-user-{suffix}");
+        sqlx::query(
+            r#"INSERT INTO "user" (id, name, email, created_at, updated_at)
+               VALUES ($1, 'Native goal read user', $2, now(), now())"#,
+        )
+        .bind(&user_id)
+        .bind(format!("{user_id}@invalid.test"))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_memberships (org_id, principal_type, principal_id, status) VALUES ($1::uuid, 'user', $2, 'active')",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let agent_id: String = sqlx::query_scalar(
+            "INSERT INTO agents (org_id, name, status) VALUES ($1::uuid, 'Native goal read agent', 'idle') RETURNING id::text",
+        )
+        .bind(&org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let token = format!("pcp_native_goal_read_{suffix}");
+        let key_id: String = sqlx::query_scalar(
+            "INSERT INTO agent_api_keys (agent_id, org_id, name, key_hash) VALUES ($1::uuid, $2::uuid, 'Native goal read key', $3) RETURNING id::text",
+        )
+        .bind(&agent_id)
+        .bind(&org_id)
+        .bind(native_bearer_auth::hash_token(&token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let goal_id: String = sqlx::query_scalar(
+            "INSERT INTO goals (org_id, title) VALUES ($1::uuid, 'Goal title before auth snapshot') RETURNING id::text",
+        )
+        .bind(&org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let application_name = format!("rudder-native-goal-read-{}", &suffix[..12]);
+        let database_url = database_url_with_application_name(
+            &env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap(),
+            &application_name,
+        );
+        let foundation = Arc::new(
+            AppState::new(ServerConfig {
+                database_url: Some(database_url),
+                actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                workers: 1,
+                ..ServerConfig::default()
+            })
+            .unwrap(),
+        );
+        let mut blocker = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE goals IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE goals SET title = 'Goal title changed after auth snapshot' WHERE id = $1::uuid",
+        )
+        .bind(&goal_id)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+        let input = GoalReadRequest {
+            view: GoalReadView::List,
+            goal_id: None,
+            cursor: None,
+            limit: None,
+            agent_id: None,
+            lifecycle: None,
+            focus: None,
+            facet: None,
+        };
+        let actor = ActorIdentity::new("agent", &agent_id).unwrap();
+        let token_hash = native_bearer_auth::hash_token(&token);
+        let release_lock = tokio::spawn({
+            let pool = pool.clone();
+            async move {
+                wait_for_goal_read_relation_lock(&pool).await;
+                blocker.commit().await.unwrap();
+            }
+        });
+        let response = foundation
+            .goal_read_with_native_bearer(
+                &org_id,
+                &input,
+                &actor,
+                &format!("agent-key:{key_id}"),
+                &token_hash,
+            )
+            .await;
+        tokio::time::timeout(Duration::from_secs(5), release_lock)
+            .await
+            .expect("native goal read should reach its goals query")
+            .unwrap();
+
+        let status = response.status();
+        let body = actix_web::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::OK);
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let goal = payload
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|goal| goal["id"] == goal_id)
+            .expect("seeded goal should be visible to the authorized agent");
+        assert_eq!(goal["title"], "Goal title before auth snapshot");
+        let current_title: String =
+            sqlx::query_scalar("SELECT title FROM goals WHERE id = $1::uuid")
+                .bind(&goal_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(current_title, "Goal title changed after auth snapshot");
+
+        sqlx::query("DELETE FROM goals WHERE id = $1::uuid")
+            .bind(&goal_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM agent_api_keys WHERE id = $1::uuid")
+            .bind(&key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM agents WHERE id = $1::uuid")
+            .bind(&agent_id)
             .execute(&pool)
             .await
             .unwrap();

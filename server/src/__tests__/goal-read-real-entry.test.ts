@@ -380,6 +380,40 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     for (const query of ["limit=0", "limit=101", "limit=NaN", "limit=1.5", "cursor=invalid"]) expect((await get(`/api/goals/${goalId}/history?${query}`)).status).toBe(400);
     expect(await snapshot()).toEqual(baseline);
   });
+  it("serves Goal collection reads from the managed public ingress without a Node fallback", async () => {
+    if (ingress !== "required") return;
+    const nativeGoalRead = bridge.goalRead;
+    bridge.goalRead = async () => { throw new Error("Node Goal read bridge must not be used"); };
+    try {
+      const paths = [
+        `/api/orgs/${orgId}/goals`,
+        `/api/orgs/${orgId}/goals/`,
+        `/API/ORGS/${orgId}/GOALS/WORKSPACE`,
+        `/api/orgs/${orgId}/goals/assigned?lifecycle=all&focus=true&facet=ready_for_acceptance&limit=1`,
+      ];
+      for (const path of paths) {
+        const response = await get(path);
+        expect(response.status, JSON.stringify(response.body)).toBe(200);
+      }
+      expect((await get(`/api/orgs/${orgId}/goals/unknown`)).status).toBe(404);
+    } finally {
+      bridge.goalRead = nativeGoalRead;
+    }
+  });
+  it("revalidates revoked Agent API keys before every native Goal collection read", async () => {
+    if (ingress !== "required") return;
+    const keyHash = createHash("sha256").update(agentToken).digest("hex");
+    await db.update(agentApiKeys).set({ revokedAt: new Date() }).where(eq(agentApiKeys.keyHash, keyHash));
+    try {
+      for (const url of [`/api/orgs/${orgId}/goals`, `/api/orgs/${orgId}/goals/workspace`, `/api/orgs/${orgId}/goals/assigned`]) {
+        const response = await get(url);
+        expect(response.status, JSON.stringify(response.body)).toBe(401);
+      }
+    } finally {
+      await db.update(agentApiKeys).set({ revokedAt: null }).where(eq(agentApiKeys.keyHash, keyHash));
+    }
+    expect(await snapshot()).toEqual(baseline);
+  });
   it("fails closed when the native Goal read transport is unavailable", async () => {
     const nativeGoalRead = bridge.goalRead;
     bridge.goalRead = async () => { throw new Error("simulated native Goal read transport failure"); };
@@ -388,7 +422,17 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
         expect((await request(server).get("/api/health")).status).toBe(401);
         expect((await request(target).get("/api/health")).status).toBe(200);
       }
-      for (const url of [`/api/orgs/${orgId}/goals`, `/api/orgs/${orgId}/goals/workspace`, `/api/orgs/${orgId}/goals/assigned`, `/api/goals/${goalId}`, `/api/goals/${goalId}/workspace`, `/api/goals/${goalId}/agent-context`, `/api/goals/${goalId}/activities`, `/api/goals/${goalId}/history`, `/api/goals/${goalId}/timeline`, `/api/goals/${goalId}/dependencies`]) {
+      const collectionUrls = [`/api/orgs/${orgId}/goals`, `/api/orgs/${orgId}/goals/workspace`, `/api/orgs/${orgId}/goals/assigned`];
+      if (ingress === "required") {
+        for (const url of collectionUrls) {
+          const response = await request(target).get(url).set("authorization", `Bearer ${agentToken}`);
+          expect(response.status, JSON.stringify(response.body)).toBe(200);
+        }
+      }
+      const nodeOwnedUrls = ingress === "required"
+        ? [`/api/goals/${goalId}`, `/api/goals/${goalId}/workspace`, `/api/goals/${goalId}/agent-context`, `/api/goals/${goalId}/activities`, `/api/goals/${goalId}/history`, `/api/goals/${goalId}/timeline`, `/api/goals/${goalId}/dependencies`]
+        : [...collectionUrls, `/api/goals/${goalId}`, `/api/goals/${goalId}/workspace`, `/api/goals/${goalId}/agent-context`, `/api/goals/${goalId}/activities`, `/api/goals/${goalId}/history`, `/api/goals/${goalId}/timeline`, `/api/goals/${goalId}/dependencies`];
+      for (const url of nodeOwnedUrls) {
         const response = await request(target).get(url).set("authorization", `Bearer ${agentToken}`);
         expect(response.status, JSON.stringify(response.body)).toBe(503);
         expect(response.body.error).toBe("Rust Goal reads are unavailable");
