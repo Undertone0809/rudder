@@ -111,6 +111,12 @@ fn unavailable() -> HttpResponse {
     error(StatusCode::SERVICE_UNAVAILABLE, "native_chat_unavailable")
 }
 
+type HttpResponseResult<T> = Result<T, Box<HttpResponse>>;
+
+fn boxed(response: HttpResponse) -> Box<HttpResponse> {
+    Box::new(response)
+}
+
 fn result<T: Serialize>(value: Result<T, PersistenceError>) -> HttpResponse {
     match value {
         Ok(value) => HttpResponse::Ok()
@@ -150,11 +156,11 @@ async fn principal(
     request: &HttpRequest,
     chat: &str,
     mutation: bool,
-) -> Result<(PgPool, BrowserPrincipal), HttpResponse> {
+) -> HttpResponseResult<(PgPool, BrowserPrincipal)> {
     let (pool, actor, organization_id) = browser_actor(state, request, chat, mutation).await?;
     let principal = actor
         .native_chat_principal(&organization_id)
-        .map_err(auth_error)?;
+        .map_err(|error_| boxed(auth_error(error_)))?;
     Ok((pool, principal))
 }
 
@@ -166,15 +172,15 @@ async fn browser_actor(
     request: &HttpRequest,
     chat: &str,
     mutation: bool,
-) -> Result<(PgPool, BrowserActor, String), HttpResponse> {
+) -> HttpResponseResult<(PgPool, BrowserActor, String)> {
     let (pool, actor) = authenticate_browser_actor(state, request, mutation).await?;
     let org: Option<String> =
         sqlx::query_scalar("SELECT org_id::text FROM chat_conversations WHERE id=$1::uuid")
             .bind(chat)
             .fetch_optional(&pool)
             .await
-            .map_err(|_| unavailable())?;
-    let org = org.ok_or_else(|| error(StatusCode::NOT_FOUND, "chat_not_found"))?;
+            .map_err(|_| boxed(unavailable()))?;
+    let org = org.ok_or_else(|| boxed(error(StatusCode::NOT_FOUND, "chat_not_found")))?;
     Ok((pool, actor, org))
 }
 
@@ -183,7 +189,7 @@ pub(super) async fn browser_actor_for_org(
     request: &HttpRequest,
     organization_id: &str,
     mutation: bool,
-) -> Result<(PgPool, BrowserActor, String), HttpResponse> {
+) -> HttpResponseResult<(PgPool, BrowserActor, String)> {
     let (pool, actor) = authenticate_browser_actor(state, request, mutation).await?;
     Ok((pool, actor, organization_id.to_owned()))
 }
@@ -192,32 +198,36 @@ async fn authenticate_browser_actor(
     state: &IngressState,
     request: &HttpRequest,
     mutation: bool,
-) -> Result<(PgPool, BrowserActor), HttpResponse> {
+) -> HttpResponseResult<(PgPool, BrowserActor)> {
     if state.config.forwarding_policy.identity(request).is_err() {
-        return Err(error(
+        return Err(boxed(error(
             StatusCode::BAD_REQUEST,
             "invalid_forwarding_identity",
-        ));
+        )));
     }
-    let config = state.config.browser_auth.as_ref().ok_or_else(unavailable)?;
+    let config = state
+        .config
+        .browser_auth
+        .as_ref()
+        .ok_or_else(|| boxed(unavailable()))?;
     let DatabaseState::Configured(pool) = &state.foundation.database else {
-        return Err(unavailable());
+        return Err(boxed(unavailable()));
     };
-    let mut connection = pool.acquire().await.map_err(|_| unavailable())?;
+    let mut connection = pool.acquire().await.map_err(|_| boxed(unavailable()))?;
     // Origin authorization follows credential verification for cookie-backed
     // mutations. Keep this endpoint's resolver read-only with respect to
     // Better Auth session expiry so a rejected Origin cannot slide a session.
     let actor = browser_auth::authenticate_without_refresh(config, request, &mut connection, None)
         .await
-        .map_err(auth_error)?;
+        .map_err(|error_| boxed(auth_error(error_)))?;
     if mutation {
         state
             .config
             .native_chat_mutations
             .as_ref()
-            .ok_or_else(unavailable)?
+            .ok_or_else(|| boxed(unavailable()))?
             .authorize(&actor, request)
-            .map_err(auth_error)?;
+            .map_err(|error_| boxed(auth_error(error_)))?;
     }
     Ok((pool.clone(), actor))
 }
@@ -253,7 +263,7 @@ async fn checkpoint(
     };
     let (pool, actor) = match principal(&state, &request, &chat, true).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     result(
         control::record_client_checkpoint(
@@ -317,7 +327,7 @@ async fn stop(
     };
     let (pool, actor) = match principal(&state, &request, &chat, true).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let authority = match control::read_stop_target_authority(
         &pool,
@@ -439,7 +449,7 @@ async fn events(
     };
     let (pool, actor) = match principal(&state, &request, &chat, false).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     result(
         control::read_events(
@@ -482,7 +492,7 @@ async fn control_state(
     };
     let (pool, actor) = match principal(&state, &request, &chat, false).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     result(
         control::read_control_state(
@@ -516,7 +526,7 @@ async fn turn(
     };
     let (pool, actor) = match principal(&state, &request, &chat, false).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     result(
         control::read_turn_for_control(
