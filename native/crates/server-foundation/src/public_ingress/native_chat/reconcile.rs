@@ -26,7 +26,7 @@ pub(super) async fn reconcile(
 ) -> HttpResponse {
     let chat = chat.into_inner();
     if let Err(response) = canonical(&request, &chat, "reconcile") {
-        return response;
+        return *response;
     }
     if !request.query_string().is_empty() {
         return error(StatusCode::BAD_REQUEST, "query_not_allowed");

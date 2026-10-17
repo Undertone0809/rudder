@@ -1440,7 +1440,6 @@ export function chatRoutes(
             },
             onAttemptCompleted: async ({ generationId, attemptEpoch, ownerToken }) => {
               await svc.markGenerationControlAttemptCompleted({
-                orgId: conversation.orgId,
                 generationId,
                 attemptEpoch,
                 ownerToken,
@@ -1807,7 +1806,6 @@ export function chatRoutes(
             },
             onAttemptCompleted: async ({ generationId: currentGenerationId, attemptEpoch, ownerToken: attemptOwnerToken }) => {
               await svc.markGenerationControlAttemptCompleted({
-                orgId: conversation.orgId,
                 generationId: currentGenerationId,
                 attemptEpoch,
                 ownerToken: attemptOwnerToken,
