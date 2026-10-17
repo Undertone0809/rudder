@@ -18,7 +18,9 @@ use thiserror::Error;
 use url::Url;
 
 pub const OPENCODE_RUNTIME_TYPE: &str = "opencode_local";
-pub const OPENCODE_INSTALLED_VERSION: &str = "1.15.11";
+/// Version against which this wire boundary was calibrated. The live Server
+/// version should still be checked during host startup before claiming parity.
+pub const OPENCODE_CALIBRATED_VERSION: &str = "1.15.11";
 pub const OPENCODE_OPENAPI_PATH: &str = "/doc";
 
 /// The native operations this adapter currently implements.  Capabilities
@@ -50,7 +52,7 @@ pub enum OpenCodeUnsupportedCapability {
 #[serde(rename_all = "camelCase")]
 pub struct OpenCodeCapabilityManifest {
     pub runtime_type: &'static str,
-    pub installed_version: &'static str,
+    pub calibrated_version: &'static str,
     pub openapi_path: &'static str,
     pub supported: Vec<OpenCodeCapability>,
     pub unsupported: Vec<OpenCodeUnsupportedCapability>,
@@ -60,7 +62,7 @@ impl Default for OpenCodeCapabilityManifest {
     fn default() -> Self {
         Self {
             runtime_type: OPENCODE_RUNTIME_TYPE,
-            installed_version: OPENCODE_INSTALLED_VERSION,
+            calibrated_version: OPENCODE_CALIBRATED_VERSION,
             openapi_path: OPENCODE_OPENAPI_PATH,
             supported: vec![
                 OpenCodeCapability::SessionCreate,
