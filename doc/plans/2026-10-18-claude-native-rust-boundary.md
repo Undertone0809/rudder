@@ -89,6 +89,44 @@ following in the owning worker/config scopes:
 Until those pieces are complete, this slice must not enable `claude_local` in
 Native Chat or be described as Claude runtime parity.
 
+## W06 audit and safe follow-up slice
+
+The 2026-10-18 audit found the installed executable at
+`/Users/zeeland/.local/bin/claude` (Claude Code `2.1.216`). It is a trusted
+local wrapper whose target is the installed Claude Code binary. No authenticated
+prompt was sent during this audit, so the executable probe is not a provider
+acceptance result.
+
+The Claude-owned crate now also provides three fail-closed helpers:
+
+- `ClaudeExecutable::resolve` canonicalizes a host-selected executable and
+  rejects non-files or non-executable files; it never searches an HTTP- or
+  Agent-provided PATH.
+- `ClaudeRuntimeProfile` emits only the approved operator HOME and managed
+  `CLAUDE_CONFIG_DIR` boundary. It does not copy or read credentials and
+  rejects a managed home that aliases the operator home.
+- `ClaudeControlLease` enforces one in-flight permission/question owner, and
+  `ClaudeHistoryReader::path_for_cwd`/`read_for_cwd` deterministically resolves
+  one explicit cwd and Session ID without scanning for a latest session.
+
+These helpers remain transport boundaries. The W06 acceptance matrix is still
+unmet and is recorded conservatively:
+
+| Case | Current status | Evidence or blocker |
+| --- | --- | --- |
+| CL-01 explicit resumption | blocked | Explicit `--resume` is encoded, but no shared-worker/admission or restart acceptance exists. |
+| CL-02 pre-compaction raw history | partial | Bounded explicit JSONL Reader and cwd resolver exist; authorized D1 projection is not wired. |
+| CL-03 Fork IDs | partial | `--fork-session` and optional child ID are encoded; child mapping and old-ID fencing are not integrated. |
+| CL-04 configuration and interaction | partial | Invocation/profile boundaries are typed; same-auth native-vs-Rudder parity and live controls are unverified. |
+| CL-05 checkpoint | blocked | No Claude checkpoint or cloud mirror authority exists in the shared worker. |
+| CL-06 mirror failure | blocked | No mirror/listSubkeys/child recovery implementation or real failure exercise exists. |
+
+The shared executor still admits only Codex, Hermes, and Pi. Wiring this crate
+into `native-chat-executor`, public admission, D1 finalization, retention, or
+checkpoint/mirror state requires changes in shared worker and persistence
+owners; that work must stay a follow-up and must not be inferred from these
+transport tests.
+
 ## Verification evidence
 
 The following checks passed on the candidate containing this note and crate:
@@ -100,8 +138,9 @@ cargo clippy --manifest-path native/Cargo.toml -p rudder-claude-code --all-targe
 cargo test --manifest-path native/Cargo.toml -p rudder-claude-code --lib -- --test-threads=1
 ```
 
-Five unit tests cover explicit resume/fork arguments, the installed 2.1.216
-init/result shape, control request-id binding, exact Session JSONL identity and
-future event preservation, and bounded JSON-LF input. They do not prove
-provider authentication, model success, complete native controls, or shared
-Run finalization.
+Eight unit tests cover explicit resume/fork arguments, the installed 2.1.216
+init/result shape, executable/profile isolation, single-owner control leases,
+control request-id binding, deterministic cwd/session JSONL resolution, exact
+Session JSONL identity and future event preservation, and bounded JSON-LF input.
+They do not prove provider authentication, model success, complete native
+controls, or shared Run finalization.
