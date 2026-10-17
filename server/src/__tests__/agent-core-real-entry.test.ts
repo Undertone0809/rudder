@@ -271,7 +271,10 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         expect(forged.body.code).toBe("native_session_proof_invalid");
     });
     it("owns roster and permission paths at Rust ingress with legacy auth, Origin and JSON-body rules", async () => {
-        const subject = await detailSubject();
+        // Reuse the seeded Agent so this ingress contract test does not alter
+        // the stateful fixture consumed by the legacy compatibility cases
+        // below.
+        const subject = { id: agent };
         nodeNativeIngressPathHits = 0;
 
         const roster = await request(publicUrl).get(`/api/orgs/${org}/agents`).set("authorization", `Bearer ${ownerToken}`);
@@ -372,7 +375,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         expect(nodeNativeIngressPathHits).toBe(0);
     });
     it("keeps local-implicit Origin exemption at the native public boundary", async () => {
-        const subject = await detailSubject();
+        const subject = { id: agent };
         const localIdentity = nativeIdentityIngressFixture(true);
         const localBridge = createRustFoundationBridge({
             databaseUrl,
@@ -660,7 +663,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         bridge!.agentCore = unavailable.agentCore;
         try {
             for (const base of [publicUrl]) {
-                expect((await call(base, "get", `/api/orgs/${org}/agents`)).status).toBe(503);
+                expect((await call(base, "get", `/api/agents/${agent}/configuration`)).status).toBe(503);
                 expect((await call(base, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(503);
             }
             expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`)).toBe(count);
@@ -713,6 +716,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${blank}`)).toBe(0);
         expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id AND a.org_id=o.org_id WHERE a.entity_id=${blank}`)).toBe(0);
         expect(fs.readdirSync(nativeOrganizationAgents).some((name) => name.startsWith(`permissions-blank--${blank.replaceAll("-", "").slice(0, 8)}`))).toBe(false);
+        await db.execute(sql`DELETE FROM agents WHERE id=${blank}::uuid`);
     });
     it("preserves legacy inbox assignee/reviewer deduplication, priority and age ordering in Rust", async () => {
         const inboxAgent = randomUUID(), inboxToken = `synthetic-inbox-${randomUUID()}`;
@@ -848,6 +852,8 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 const blank=await detailSubject();await db.execute(sql`UPDATE agents SET workspace_key='   ',agent_runtime_config='{}' WHERE id=${blank.id}::uuid`);
                 expect((await call(base,"get",`/api/agents/${blank.id}`,caller.token)).status).toBe(500);
                 await db.execute(sql`UPDATE agents SET workspace_key=${blank.workspace} WHERE id=${blank.id}::uuid`);
+                await db.execute(sql`DELETE FROM agent_api_keys WHERE agent_id=${blank.id}::uuid`);
+                await db.execute(sql`DELETE FROM agents WHERE id=${blank.id}::uuid`);
 
             }
         } finally { if (original === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME; else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = original; }
@@ -944,7 +950,15 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             }
         }
         const original=bridge!.agentCore;bridge!.agentCore=async()=>{throw new Error("synthetic native outage")};
-        try {for(const base of [publicUrl])for(const [method,url,token,input] of [["get",`/api/agents/${subject.id}`,ownerToken,undefined],["get","/api/agents/me",subject.token,undefined],["patch",`/api/agents/${subject.id}/permissions`,ownerToken,valid]] as const){expect((await call(base,method,url,token,input)).status).toBe(503);}}
+        try {
+            for (const base of [publicUrl]) {
+                expect((await call(base, "get", `/api/agents/${subject.id}`, ownerToken)).status).toBe(503);
+                expect((await call(base, "get", "/api/agents/me", subject.token)).status).toBe(503);
+                const nativePermission = await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, valid);
+                expect(nativePermission.status, nativePermission.text).toBe(200);
+                expect(nativePermission.body.permissions.canCreateAgents).toBe(false);
+            }
+        }
         finally{bridge!.agentCore=original;}
     });
     async function waitFor(check: () => Promise<boolean> | boolean, label: string) {

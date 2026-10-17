@@ -252,6 +252,14 @@ fn system_hostname() -> Option<String> {
 mod tests {
     use super::*;
 
+    fn portable(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{}", path.replace('/', "\\"))
+        } else {
+            path.to_owned()
+        }
+    }
+
     fn environment(
         rudder_home: Option<&str>,
         instance_id: Option<&str>,
@@ -261,8 +269,8 @@ mod tests {
             rudder_home: rudder_home.map(str::to_owned),
             instance_id: instance_id.map(str::to_owned),
             organization_workspace_home: organization_workspace_home.map(str::to_owned),
-            home_directory: "/Users/example".to_owned(),
-            process_working_directory: "/app/current".to_owned(),
+            home_directory: portable("/Users/example"),
+            process_working_directory: portable("/app/current"),
             hostname: "rudder-host".to_owned(),
         }
     }
@@ -270,19 +278,21 @@ mod tests {
     #[test]
     fn default_paths_match_documents_workspace_layout() {
         let facts = AgentHostFacts::resolve_from(&environment(None, None, None), "org-1").unwrap();
-        assert_eq!(facts.home_directory, "/Users/example");
-        assert_eq!(facts.process_working_directory, "/app/current");
+        assert_eq!(facts.home_directory, portable("/Users/example"));
+        assert_eq!(facts.process_working_directory, portable("/app/current"));
         assert_eq!(
             facts.instructions_host.instance_root,
-            "/Users/example/.rudder/instances/default"
+            portable("/Users/example/.rudder/instances/default")
         );
         assert_eq!(
             facts.instructions_host.workspace_home,
-            "/Users/example/Documents/Rudder"
+            portable("/Users/example/Documents/Rudder")
         );
         assert_eq!(
             facts.instructions_host.previous_documents_root,
-            "/Users/example/Documents/Rudder/instances/default/organizations/org-1/workspaces"
+            portable(
+                "/Users/example/Documents/Rudder/instances/default/organizations/org-1/workspaces"
+            )
         );
         assert!(facts.instructions_host.friendly_workspace_home);
     }
@@ -296,15 +306,17 @@ mod tests {
         .unwrap();
         assert_eq!(
             facts.instructions_host.instance_root,
-            "/app/state/instances/worktree_2"
+            portable("/app/state/instances/worktree_2")
         );
         assert_eq!(
             facts.instructions_host.workspace_home,
-            "/app/state/instances/worktree_2/organizations"
+            portable("/app/state/instances/worktree_2/organizations")
         );
         assert_eq!(
             facts.instructions_host.previous_documents_root,
-            "/Users/example/Documents/Rudder/instances/worktree_2/organizations/123e4567e89b/workspaces"
+            portable(
+                "/Users/example/Documents/Rudder/instances/worktree_2/organizations/123e4567e89b/workspaces"
+            )
         );
         assert!(!facts.instructions_host.friendly_workspace_home);
     }
@@ -318,11 +330,11 @@ mod tests {
         .unwrap();
         assert_eq!(
             facts.instructions_host.workspace_home,
-            "/Users/example/workspaces"
+            portable("/Users/example/workspaces")
         );
         assert_eq!(
             facts.instructions_host.previous_documents_root,
-            "/Users/example/workspaces/instances/default/organizations/org-1/workspaces"
+            portable("/Users/example/workspaces/instances/default/organizations/org-1/workspaces")
         );
         assert!(facts.instructions_host.friendly_workspace_home);
     }

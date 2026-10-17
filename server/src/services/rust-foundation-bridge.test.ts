@@ -2,7 +2,7 @@ import { resolveRudderNativeTarget } from "@rudderhq/shared";
 import type { Request } from "express";
 import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -536,6 +536,9 @@ describe("rust foundation bridge lifecycle", () => {
         RUDDER_NATIVE_DATABASE_REQUIRED: "true",
         RUDDER_NATIVE_DATABASE_URL: "postgres://bridge-test",
         RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
+        RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
+        RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
+        RUDDER_NATIVE_HOST_HOSTNAME: hostname(),
         RUDDER_SECRETS_MASTER_KEY_FILE: resolve(process.cwd(), "data/secrets/master.key"),
       };
       expect(childEnv).toMatchObject(requiredEnv);

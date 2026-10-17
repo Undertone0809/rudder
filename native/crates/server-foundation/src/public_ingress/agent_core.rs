@@ -368,7 +368,11 @@ fn request_command(
         "id": id,
         "query": query_value(request.uri().query().unwrap_or_default()),
         "localImplicit": false,
-        "actorRunId": null,
+        "actorRunId": request
+            .headers()
+            .get("x-rudder-run-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
         "resolveOnly": false,
         "organizationAgentsRoot": "",
         "homeDirectory": "",
