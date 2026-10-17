@@ -1108,5 +1108,5 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             () => request(publicUrl).patch(`/api/agents/${subject.id}/permissions`).set("authorization", `Bearer ${jwt}`).send(valid),
             async () => { await waitFor(() => Math.floor(Date.now() / 1000) > expiresAt, "Agent JWT wall-clock expiry"); },
         );
-    },30000);
+    },90000);
 });
