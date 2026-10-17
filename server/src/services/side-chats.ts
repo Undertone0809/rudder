@@ -501,19 +501,32 @@ export function sideChatService(db: Db) {
     }
     const deleted = await db.transaction(async (tx) => {
       await lockNodeMutationAuthority(tx, conversation.orgId);
+      const current = await tx
+        .select({
+          id: chatConversations.id,
+          createdByUserId: chatConversations.createdByUserId,
+          conversationKind: chatConversations.conversationKind,
+          messengerVisible: chatConversations.messengerVisible,
+          sideChatState: chatConversations.sideChatState,
+        })
+        .from(chatConversations)
+        .where(eq(chatConversations.id, conversation.id))
+        .then((rows) => rows[0] ?? null);
+      if (
+        !current ||
+        current.createdByUserId !== input.userId ||
+        current.conversationKind !== "side_chat" ||
+        current.messengerVisible ||
+        current.sideChatState === "kept"
+      ) {
+        throw conflict("Side Chat could not be destroyed");
+      }
       const now = new Date();
-      await tx.update(runtimeRetentionClaims).set({
-        status: "released", releasedAt: now, updatedAt: now,
-        cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
-      }).where(and(
-        eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversation.id}`),
-        eq(runtimeRetentionClaims.status, "active"),
-      ));
       await tx.update(runtimeSourceAliases).set({
         conversationId: null, releasedAt: now, updatedAt: now,
         cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`,
       }).where(and(eq(runtimeSourceAliases.conversationId, conversation.id), isNull(runtimeSourceAliases.releasedAt)));
-      return tx
+      const deleted = await tx
         .delete(chatConversations)
         .where(and(
           eq(chatConversations.id, conversation.id),
@@ -523,6 +536,15 @@ export function sideChatService(db: Db) {
           ne(chatConversations.sideChatState, "kept"),
         ))
         .returning({ id: chatConversations.id });
+      if (!deleted[0]) throw conflict("Side Chat could not be destroyed");
+      await tx.update(runtimeRetentionClaims).set({
+        status: "released", releasedAt: now, updatedAt: now,
+        cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
+      }).where(and(
+        eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversation.id}`),
+        eq(runtimeRetentionClaims.status, "active"),
+      ));
+      return deleted;
     });
     if (!deleted[0]) throw conflict("Side Chat could not be destroyed");
     return deleted[0];
