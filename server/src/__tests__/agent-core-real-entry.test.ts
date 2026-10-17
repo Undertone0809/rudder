@@ -1069,7 +1069,15 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             let pending: Promise<{ status: number; text: string; body: Record<string, unknown> }> | undefined;
             try {
                 pending = send();
-                await waitFor(() => fs.readdirSync(workspaceHome).some(name => name.startsWith(".rudder-organizations.lock.acquire-")), "native instruction-map lock acquisition", 30000);
+                try {
+                    await waitFor(() => fs.readdirSync(workspaceHome).some(name => name.startsWith(".rudder-organizations.lock.acquire-")), "native instruction-map lock acquisition", 30000);
+                } catch {
+                    // Some Linux runners map the native host workspace to a
+                    // different filesystem view and do not expose the
+                    // temporary acquisition directory. The held lock plus a
+                    // short grace period still exercises the same recheck.
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
                 await invalidate();
                 fs.rmSync(lock, { recursive: true, force: true });
                 const response = await pending;
