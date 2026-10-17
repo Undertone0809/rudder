@@ -2420,10 +2420,9 @@
       "state": "open",
       "merge_state": "unstable",
       "scope": "Rust public ingress owns Goal collection list, workspace cards, and assigned reads; preserves Node query/error compatibility and reserves near-match paths.; retired provenance records preserved in doc/plans/2026-10-16-rudder-rust-backend-retired-authority-records.json.; real server-foundation auth+read lock-wait test directly exercises AppState.goal_read_with_native_bearer and observes the goals relation lock through pg_locks/pg_class to avoid pg_stat_activity query truncation.",
-      "stage_review": "pending refreshed exact-head review",
+      "stage_review": "accept",
       "stage_blockers": [
-        "protected CI still pending",
-        "final review after independent verifier still required"
+        "protected GitHub checks still pending"
       ],
       "local_checks": [
         "cargo fmt --all -- --check",
@@ -2447,7 +2446,7 @@
           "pg_stat_activity query-text observer timed out because PostgreSQL truncated the long Goal SQL; test-only relation-lock observer fix in 183030e98"
         ]
       },
-      "limits": "No merge, final review, or no-Node backend acceptance claim yet; production deployment not included.",
+      "limits": "No merge yet; no no-Node backend acceptance claim; production deployment not included.",
       "verifier": {
         "verdict": "PASS",
         "head": "183030e9835083ca68162b8b026ec5f3094adf67",
@@ -2459,6 +2458,19 @@
           "ignored repeatable-read transaction test 1 passed"
         ],
         "limits": "No final review, merge, or no-Node backend acceptance claim; production deployment not included."
+      },
+      "final_review": {
+        "verdict": "accept",
+        "head": "183030e9835083ca68162b8b026ec5f3094adf67",
+        "tree": "7255e1965bdf286e91477dec4741323a88a0cb57",
+        "evidence": [
+          "inventory 910 source files/4606 structural surfaces/10 unknowns; authority check pass",
+          "architecture audit 18/18",
+          "direct Rust Goal list/workspace/assigned routes with shared repeatable-read auth+projection transaction",
+          "stage review accept",
+          "independent verifier PASS"
+        ],
+        "blocker": "protected GitHub checks must be green before merge"
       }
     },
     "native_chat_pr_324": {
