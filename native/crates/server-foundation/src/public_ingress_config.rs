@@ -1,7 +1,9 @@
 //! Explicit listener topology for the next public-ingress authority slice.
 //! This configuration does not enable a cutover by itself.
 
-use std::net::SocketAddr;
+use rudder_d1_persistence::native_chat::config::LocalHostContext;
+use rudder_native_chat_executor::HostPaths;
+use std::{net::SocketAddr, time::Duration};
 use thiserror::Error;
 
 use crate::local_account_auth::{
@@ -17,10 +19,35 @@ pub struct PublicIngressConfig {
     pub(crate) authorization_key: String,
     pub(crate) forwarding_policy: crate::public_ingress_forwarding::ForwardingPolicy,
     pub(crate) session_auth: Option<NativeSessionAuthConfig>,
+    pub(crate) browser_auth: Option<crate::browser_auth::BrowserAuthConfig>,
+    pub(crate) native_chat_mutations: Option<crate::browser_auth::BrowserMutationPolicy>,
+    pub(crate) native_chat_runtime: Option<NativeChatPublicRuntime>,
     pub(crate) local_account_auth: Option<NativeLocalAccountAuthConfig>,
     pub(crate) identity_auth: Option<NativeIdentityAuthConfig>,
     pub(crate) websocket_cookie_fallback: NativeWebSocketCookieFallback,
     pub(crate) private_host_gate: Option<crate::private_host_gate::NativePrivateHostGate>,
+}
+
+/// Trusted installation context required by the explicitly enabled public
+/// Native Chat send route. It is constructed by Rust startup code.
+#[derive(Clone)]
+pub struct NativeChatPublicRuntime {
+    pub(crate) host: LocalHostContext,
+    pub(crate) paths: HostPaths,
+    pub(crate) timeout: Duration,
+}
+
+impl NativeChatPublicRuntime {
+    pub fn new(
+        host: LocalHostContext,
+        paths: HostPaths,
+        timeout: Duration,
+    ) -> Result<Self, PublicIngressConfigError> {
+        if timeout.is_zero() || timeout > Duration::from_secs(3600) {
+            return Err(PublicIngressConfigError::InvalidNativeChatRuntime);
+        }
+        Ok(Self { host, paths, timeout })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,6 +165,8 @@ pub enum PublicIngressConfigError {
     AssertionKeyMismatch,
     #[error("native transport assertion key must differ from credential signing secrets")]
     AssertionKeyReusedForCredentialSigning,
+    #[error("Native Chat public runtime timeout must be between 1 and 3600 seconds")]
+    InvalidNativeChatRuntime,
 }
 
 impl PublicIngressConfig {
@@ -387,6 +416,7 @@ impl PublicIngressConfig {
                         "local implicit authentication requires a loopback listener",
                     ));
                 }
+                let browser_auth = crate::browser_auth::BrowserAuthConfig::from_env()?;
                 Self::new(listen, &upstream, &key)
                     .map(|mut config| {
                         config.deployment_mode = deployment_mode;
@@ -396,6 +426,7 @@ impl PublicIngressConfig {
                         config.identity_auth = identity_auth;
                         config.websocket_cookie_fallback = websocket_cookie_fallback;
                         config.private_host_gate = private_host_gate;
+                        config.browser_auth = browser_auth;
                         config
                     })
                     .map(Some)
@@ -451,6 +482,9 @@ impl PublicIngressConfig {
             authorization_key: authorization_key.to_owned(),
             forwarding_policy: Default::default(),
             session_auth: None,
+            browser_auth: None,
+            native_chat_mutations: None,
+            native_chat_runtime: None,
             local_account_auth: None,
             identity_auth: None,
             websocket_cookie_fallback: NativeWebSocketCookieFallback::SessionCookie,
@@ -460,6 +494,32 @@ impl PublicIngressConfig {
 
     pub fn node_upstream(&self) -> &str {
         &self.node_upstream
+    }
+
+    pub fn with_browser_auth(
+        mut self,
+        config: crate::browser_auth::BrowserAuthConfig,
+    ) -> Result<Self, crate::browser_auth::BrowserAuthConfigError> {
+        config.validate_listener(self.listen_addr)?;
+        self.browser_auth = Some(config);
+        Ok(self)
+    }
+
+    pub fn with_native_chat_mutation_policy(
+        mut self,
+        policy: crate::browser_auth::BrowserMutationPolicy,
+    ) -> Self {
+        self.native_chat_mutations = Some(policy);
+        self
+    }
+
+    pub fn with_native_chat_runtime(mut self, runtime: NativeChatPublicRuntime) -> Self {
+        self.native_chat_runtime = Some(runtime);
+        self
+    }
+
+    pub fn browser_session_authentication_enabled(&self) -> bool {
+        self.browser_auth.is_some() || self.session_auth.is_some()
     }
 
     pub(crate) fn build_local_account_auth_service(

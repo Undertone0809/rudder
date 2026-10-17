@@ -27,7 +27,7 @@ describe("chat stream timeouts", () => {
       })
     )));
 
-    const pending = chatsApi.sendMessageStream("chat-1", "hello", { onEvent: vi.fn() }).catch((error) => error);
+    const pending = chatsApi.sendMessageStream("chat-1", "hello", { clientMutationId: "mutation-timeout", onEvent: vi.fn() }).catch((error) => error);
     await vi.advanceTimersByTimeAsync(CHAT_REQUEST_TIMEOUT_MS);
 
     await expect(pending).resolves.toBeInstanceOf(ApiTimeoutError);
@@ -48,7 +48,7 @@ describe("chat stream timeouts", () => {
       return new Response(stream);
     }));
 
-    const pending = chatsApi.sendMessageStream("chat-1", "hello", { onEvent });
+    const pending = chatsApi.sendMessageStream("chat-1", "hello", { clientMutationId: "mutation-stream", onEvent });
     await Promise.resolve();
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(CHAT_REQUEST_TIMEOUT_MS);
@@ -70,7 +70,7 @@ describe("chat stream timeouts", () => {
     });
     vi.stubGlobal("fetch", vi.fn(async () => new Response(stream)));
 
-    const pending = chatsApi.sendMessageStream("chat-1", "hello", { onEvent: vi.fn() }).catch((error) => error);
+    const pending = chatsApi.sendMessageStream("chat-1", "hello", { clientMutationId: "mutation-timeout", onEvent: vi.fn() }).catch((error) => error);
     await Promise.resolve();
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(CHAT_STREAM_IDLE_TIMEOUT_MS);
@@ -98,6 +98,7 @@ describe("chat stream timeouts", () => {
     }));
 
     const pending = chatsApi.sendMessageStream("chat-1", "hello", {
+      clientMutationId: "mutation-abort",
       signal: callerController.signal,
       onEvent: vi.fn(),
     });
@@ -112,6 +113,16 @@ describe("chat stream timeouts", () => {
 });
 
 describe("chat stream mutation identity", () => {
+  it("rejects an empty identity before opening a connection", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(chatsApi.sendMessageStream("chat-1", "hello", {
+      clientMutationId: " ",
+      onEvent: vi.fn(),
+    })).rejects.toThrow("stable chat submission identity");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("includes the mutation identity in JSON requests", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(
       '{"type":"final","messages":[]}\n',
@@ -393,6 +404,7 @@ describe("atomic chat draft API", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await chatsApi.sendMessageStream("chat-1", "", {
+      clientMutationId: "mutation-annotation",
       inlineAnnotations: [inlineAnnotation],
       onEvent: vi.fn(),
     });
@@ -401,6 +413,7 @@ describe("atomic chat draft API", () => {
     expect(new Headers(request?.headers).get("Content-Type")).toBe("application/json");
     expect(JSON.parse(String(request?.body))).toEqual({
       body: "",
+      clientMutationId: "mutation-annotation",
       inlineAnnotations: [inlineAnnotation],
       modelOverride: null,
       effortOverride: null,
@@ -421,6 +434,7 @@ describe("atomic chat draft API", () => {
     };
 
     await chatsApi.sendMessageStream("chat-1", "Review this", {
+      clientMutationId: "mutation-files",
       files: [regularFile, annotationFile],
       inlineAnnotations: [annotationWithFile],
       modelOverride: "gpt-5.6-luna",
@@ -447,6 +461,7 @@ describe("atomic chat draft API", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await chatsApi.sendMessageStream("chat-1", "Use Agent defaults", {
+      clientMutationId: "mutation-defaults",
       files: [new File(["prompt"], "prompt.txt", { type: "text/plain" })],
       modelOverride: null,
       effortOverride: null,

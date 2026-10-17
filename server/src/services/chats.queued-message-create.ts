@@ -18,7 +18,7 @@ import {
   withQueuedAnnotationAssetState,
   type StagedQueuedAnnotationAttachment,
 } from "./chat-queued-message-materialization.js";
-import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { lockLegacyNativeChatQueueTarget, lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { isPostgresError } from "./postgres-errors.js";
 
 export async function createQueuedMessageWithStagedAttachments(
@@ -94,6 +94,12 @@ export async function createQueuedMessageWithStagedAttachments(
             accepted: false,
             cleanupAttachments: [...input.stagedAttachments],
           };
+        }
+
+        const targetAuthority = await lockLegacyNativeChatQueueTarget(tx, input.orgId, input.conversationId);
+        if (targetAuthority === "missing") throw conflict("Chat conversation not found");
+        if (targetAuthority === "native_owned") {
+          throw conflict("This chat is controlled by the Rust Native Chat runtime");
         }
 
         await validateCanonicalChatInlineAnnotations(tx, {

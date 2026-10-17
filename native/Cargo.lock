@@ -2015,6 +2015,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-codex-app-server"
+version = "0.7.24"
+dependencies = [
+ "rudder-native-process-transport",
+ "rudder-native-protocol",
+ "rudder-process-host",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-d1-persistence"
 version = "0.7.24"
 dependencies = [
@@ -2026,8 +2039,10 @@ dependencies = [
  "regex-lite",
  "ring",
  "rudder-auth-core",
+ "rudder-codex-app-server",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",
+ "rudder-runtime-core",
  "serde",
  "serde_json",
  "sha2",
@@ -2110,6 +2125,33 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "rudder-native-chat-executor"
+version = "0.7.24"
+dependencies = [
+ "rudder-auth-core",
+ "rudder-codex-app-server",
+ "rudder-d1-persistence",
+ "rudder-runtime-core",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "rudder-native-process-transport"
+version = "0.7.24"
+dependencies = [
+ "rudder-native-protocol",
+ "rudder-process-host",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2244,6 +2286,7 @@ dependencies = [
  "rudder-archive-core",
  "rudder-auth-core",
  "rudder-d1-persistence",
+ "rudder-native-chat-executor",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",
  "serde",

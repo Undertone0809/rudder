@@ -13,7 +13,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -104,6 +104,14 @@ describe("chatGenerationProtocolService", () => {
   }, 30_000);
 
   afterEach(async () => {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+      await tx.delete(chatGenerationTerminalOutbox);
+      await tx.delete(chatGenerationEvents);
+      await tx.delete(chatControlActions);
+      await tx.delete(chatGenerations).where(eq(chatGenerations.executionAuthority, "native_rust"));
+      await tx.delete(chatMessages);
+    });
     await db.delete(chatGenerationTerminalOutbox);
     await db.delete(chatGenerationEvents);
     await db.delete(chatControlActions);
@@ -126,6 +134,7 @@ describe("chatGenerationProtocolService", () => {
     controlVersion?: number;
     ownerToken?: string | null;
     leaseExpiresAt?: Date | null;
+    executionAuthority?: "legacy_ts" | "native_rust";
   } = {}) {
     const orgId = input.orgId ?? randomUUID();
     const conversationId = input.conversationId ?? randomUUID();
@@ -149,17 +158,39 @@ describe("chatGenerationProtocolService", () => {
       orgId,
       title: "Protocol test",
     });
-    const [generation] = await db.insert(chatGenerations).values({
+    const sourceMessage = input.executionAuthority === "native_rust"
+      ? await db.insert(chatMessages).values({
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Native admission source",
+      }).returning({ id: chatMessages.id })
+        .then((rows) => rows[0] ?? null)
+      : null;
+    if (input.executionAuthority === "native_rust" && !sourceMessage) {
+      throw new Error("Failed to seed native source message");
+    }
+    const [generation] = await db.transaction(async (tx) => {
+      if (input.executionAuthority === "native_rust") {
+        await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+      }
+      return tx.insert(chatGenerations).values({
       id: generationId,
       orgId,
       conversationId,
+      executionAuthority: input.executionAuthority ?? "legacy_ts",
+      sourceMessageId: sourceMessage?.id ?? null,
+      sourceTurnVariant: sourceMessage ? 0 : null,
       status: input.status ?? "running",
       attemptEpoch: input.attemptEpoch ?? 3,
       controlVersion: input.controlVersion ?? 0,
       controlState: input.ownerToken === null ? "unregistered" : "ready",
       controlOwnerToken: input.ownerToken === undefined ? "owner-1" : input.ownerToken,
       controlLeaseExpiresAt: input.leaseExpiresAt ?? new Date(Date.now() + 60_000),
-    }).returning();
+      }).returning();
+    });
     if (!generation) throw new Error("Failed to seed generation");
     return generation;
   }
@@ -208,6 +239,44 @@ describe("chatGenerationProtocolService", () => {
       status: "control_lost",
       terminalReason: "control_owner_stale",
     });
+  });
+
+  it("excludes native generations from legacy stale-owner recovery and checkpoints", async () => {
+    const generation = await seedGeneration({
+      executionAuthority: "native_rust",
+      status: "running",
+      leaseExpiresAt: new Date(Date.now() - 60_000),
+    });
+    const chats = chatService(db);
+
+    await expect(protocol.recoverStaleControlOwners({
+      now: new Date(Date.now() + 60_000),
+      assumeAllOwnersStale: true,
+    })).resolves.toEqual([]);
+    await expect(protocol.recordClientCheckpoint({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      generationSeq: 0,
+      renderedBodyHash: hashChatGenerationBody(""),
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(chats.markGenerationTerminal(generation.orgId, generation.id, "failed"))
+      .rejects.toMatchObject({ status: 409 });
+
+    const current = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generation.id))
+      .then((rows) => rows[0] ?? null);
+    expect(current).toMatchObject({
+      executionAuthority: "native_rust",
+      status: "running",
+      controlOwnerToken: generation.controlOwnerToken,
+      lastClientCheckpointSeq: null,
+      lastClientCheckpointHash: null,
+    });
+    expect(await db.select().from(chatGenerationEvents)
+      .where(eq(chatGenerationEvents.generationId, generation.id))).toEqual([]);
+    expect(await db.select().from(chatGenerationTerminalOutbox)
+      .where(eq(chatGenerationTerminalOutbox.generationId, generation.id))).toEqual([]);
   });
 
   it("keeps streaming transcript evidence in the ledger without rewriting message JSON", async () => {

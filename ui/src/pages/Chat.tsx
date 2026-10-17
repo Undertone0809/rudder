@@ -27,11 +27,17 @@ import {
   ChatProjectSelectorButton,
 } from "@/components/chat/ChatProjectSelector";
 import {
+  ChatSendRecoveryNotice,
+  ChatSendRecoveryProblem,
+  type ChatSendRecovery,
+} from "@/components/chat/ChatSendRecoveryNotice";
+import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
   useResponseAnnotationEditorController,
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
+import { useChatSendRecoveryDiscovery } from "@/components/chat/useChatSendRecoveryDiscovery";
 import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
@@ -125,7 +131,10 @@ import {
   type ChatResponseAnnotationState,
 } from "@/lib/chat-response-annotations";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
-import { preparePendingChatSendMutation } from "@/lib/chat-send-mutation-storage";
+import {
+  PendingChatSendAlreadyAcceptedError,
+  preparePendingChatSendMutation,
+} from "@/lib/chat-send-mutation-storage";
 import {
   buildChatSkillOptions,
   buildChatSkillReferenceOptions,
@@ -288,6 +297,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     scopeKey: draftStorageScopeKey,
     value: initialComposerDraftRef.current?.body ?? "",
   }));
+  const [chatSendRecovery, setChatSendRecovery] = useState<(ChatSendRecovery & { orgId: string; conversationId: string }) | null>(null);
   const [responseAnnotationState, dispatchResponseAnnotation] = useReducer(
     responseAnnotationReducer,
     initialComposerDraftRef.current?.inlineAnnotations ?? [],
@@ -565,7 +575,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     searchParams,
     selectedOrganizationId, visibleProjects, draftPreferredAgentId, ]); const selectedConversation = activeConversationBelongsToSelectedOrganization
     ? conversationQuery.data ?? activeConversationFromList
-    : null; const customGroupsQuery = useQuery({
+    : null;
+  const recoveryDiscovery = useChatSendRecoveryDiscovery(selectedConversation && selectedOrganizationId
+    ? { orgId: selectedOrganizationId, conversationId: selectedConversation.id }
+    : null);
+  const activeChatSendRecovery = chatSendRecovery ?? (recoveryDiscovery.recovery && selectedOrganizationId && selectedConversation
+    ? { ...recoveryDiscovery.recovery, orgId: selectedOrganizationId, conversationId: selectedConversation.id }
+    : null);
+  const customGroupsQuery = useQuery({
     queryKey: queryKeys.messenger.customGroups(selectedOrganizationId ?? "__none__"),
     queryFn: () => messengerApi.listCustomGroups(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && !!selectedConversation,
@@ -1333,8 +1350,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
       inlineAnnotationsOverride?: ChatInlineAnnotationInput[];
       annotationDraftPersistence?: AnnotationDraftPersistence;
-      editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; forceImmediateSend?: boolean; },
+      editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; forceImmediateSend?: boolean; resumeClientMutationId?: string; },
   ) => {
+    const isResume = Boolean(options?.resumeClientMutationId);
+    if (!isResume && (recoveryDiscovery.checking || recoveryDiscovery.problem || activeChatSendRecovery)) return;
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined && options?.inlineAnnotationsOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
     const editUserMessageId = options?.editUserMessageIdOverride ?? null;
@@ -1367,11 +1386,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       }),
       pushToast,
     })) return;
-    const filesToUpload = [...regularFilesToUpload, ...serializedAnnotations.files]; let pendingFilesClearedAfterAck = false; const submittedComposerDraft = usesComposerState ? {
+    const filesToUpload = [...regularFilesToUpload, ...serializedAnnotations.files]; let pendingFilesClearedAfterAck = false; let composerClearedForSubmission = false; let streamSetupComplete = false; const submittedComposerDraft = usesComposerState ? {
           body,
           files: regularFilesToUpload,
           inlineAnnotations: chatResponseAnnotationsForDraft(responseAnnotationState),
-          orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamScopeKey: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false; let networkWaiting = false;
+          orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamScopeKey: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false; let mutationAcknowledged = false; let mutationTerminal = false; let pendingSendMutation: Awaited<ReturnType<typeof preparePendingChatSendMutation>> | null = null; let networkWaiting = false;
+    let requestDispatched = false;
     try {
       if (!conversation && conversationId) { conversation = await chatsApi.get(conversationId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
@@ -1380,6 +1400,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         return;
       }
       if (!conversation) {
+        if (isResume) throw new Error("The original chat is no longer selected. Your accepted response was not replayed.");
         if (firstTurnStore.getSnapshot().pending) return;
         const selectedDraftAgentId = draftPreferredAgentId === NO_CHAT_AGENT_ID ? null : draftPreferredAgentId;
         if (!selectedDraftAgentId) {
@@ -1528,7 +1549,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             }
             const streamScopeKey = activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, conversation);
             if (event.type === "waiting_for_network") networkWaiting = true;
-            if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "waiting_for_network" || event.type === "transcript_entry") {
+            if (event.type === "assistant_delta" || event.type === "assistant_snapshot" || event.type === "assistant_state" || event.type === "waiting_for_network" || event.type === "transcript_entry") {
               setStreamDraftForChat(streamScopeKey, (current) => applyChatStreamProgressEvent(current, streamKey, event));
               return;
             }
@@ -1572,7 +1593,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         return;
       }
       const chatId = conversation.id; const streamScopeKey = chatGenerationScopeKey(selectedOrganizationId, conversation); const activeDraftForChat = readChatScopedState(streamDrafts, streamScopeKey);
-      if (!options?.queuedMessageId && !options?.forceImmediateSend && (activeDraftForChat || serverActiveGenerationId)) {
+      if (!isResume && chatSendRecovery?.orgId === selectedOrganizationId
+        && chatSendRecovery.conversationId === chatId) {
+        pushToast({ title: "Response needs recovery", body: "Resume the accepted response before sending another message in this chat.", tone: "warn" });
+        return;
+      }
+      if (!isResume && !options?.queuedMessageId && !options?.forceImmediateSend && (activeDraftForChat || serverActiveGenerationId)) {
         if (editUserMessageId) {
           const isRetry = options?.editIntent === "retry";
           pushToast({
@@ -1594,10 +1620,73 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       } if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; activeStreamScopeKey = streamScopeKey; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
       if (!conversation.preferredAgentId && selectedAgentId) { conversation = await chatsApi.update(conversation.id, { preferredAgentId: selectedAgentId }); setDraftPreferredAgentId(selectedAgentId); rememberChatAgentId(selectedOrganizationId, selectedAgentId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
+      const pendingSend = await preparePendingChatSendMutation({
+        orgId: selectedOrganizationId,
+        conversationId: chatId,
+        editUserMessageId,
+        queuedMessageId: options?.queuedMessageId,
+        body,
+        files: filesToUpload,
+        inlineAnnotations: serializedAnnotations.inlineAnnotations,
+        modelOverride: isResume ? null : activeRuntimeOverrides.modelOverride,
+        effortOverride: isResume ? null : activeRuntimeOverrides.effortOverride,
+        resumeClientMutationId: options?.resumeClientMutationId,
+        reconcilePendingMutation: (clientMutationId, exactBody) => chatsApi.reconcilePendingMessageSend(chatId, {
+          clientMutationId,
+          body: exactBody,
+        }),
+      });
+      if (pendingSend.status === "recovered") {
+        if (pendingSend.reconciliation?.outcome === "accepted") {
+          upsertMessages(chatId, [pendingSend.reconciliation.message]);
+          setChatSendRecovery((current) => current?.clientMutationId === pendingSend.clientMutationId ? null : current);
+        }
+        pushToast({ title: "Previous message recovered", body: "The earlier response already reached a terminal state. Your current draft was not sent.", tone: "info" });
+        await refreshChat(chatId);
+        return;
+      }
+      if (pendingSend.status === "resume_required") {
+        setChatSendRecovery({
+          orgId: selectedOrganizationId,
+          conversationId: chatId,
+          clientMutationId: pendingSend.clientMutationId,
+          body: pendingSend.recoveryBody ?? (pendingSend.reconciliation?.outcome === "accepted"
+            ? pendingSend.reconciliation.message.body
+            : body),
+          action: "resume",
+        });
+        if (pendingSend.reconciliation?.outcome === "accepted") upsertMessages(chatId, [pendingSend.reconciliation.message]);
+        await refreshChat(chatId);
+        pushToast({ title: "Response needs recovery", body: "The original message was accepted. Resume its response below; this draft was not sent again.", tone: "warn" });
+        return;
+      }
+      if (pendingSend.status === "retry_required") {
+        setChatSendRecovery({
+          orgId: selectedOrganizationId,
+          conversationId: chatId,
+          clientMutationId: pendingSend.clientMutationId,
+          body: pendingSend.recoveryBody ?? body,
+          action: "retry",
+        });
+        pushToast({ title: "Previous message not found", body: "The earlier message was not admitted. Retry that exact message below; your current draft was not sent.", tone: "info" });
+        return;
+      }
       if (newConversationLockAcquired && activeStreamKey) { firstTurnStore.finish(firstTurnOwner, activeStreamKey);
         newConversationLockAcquired = false; }
-      if (usesComposerState) { setBranchPreview(null); setDraft("");
-        clearPendingFilesForCurrentScope(); } setChatSendInFlight(streamScopeKey, true); const abortController = new AbortController(); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; streamOwnershipRef.current[chatId] = { streamKey, controller: abortController }; setStreamAbortController(streamScopeKey, abortController); conversation = upsertOptimisticConversation(conversation, body, startedAt);
+      if (usesComposerState && !isResume) {
+        setBranchPreview(null);
+        setDraft("");
+        clearPendingFilesForCurrentScope();
+        composerClearedForSubmission = true;
+      }
+      const abortController = new AbortController();
+      const startedAt = new Date();
+      const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`;
+      activeStreamKey = streamKey;
+      streamOwnershipRef.current[chatId] = { streamKey, controller: abortController };
+      setStreamAbortController(streamScopeKey, abortController);
+      setChatSendInFlight(streamScopeKey, true);
+      conversation = upsertOptimisticConversation(conversation, body, startedAt);
       setStreamDraftForChat(streamScopeKey, {
         chatId,
         streamKey,
@@ -1616,19 +1705,32 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         state: "streaming",
         createdAt: startedAt,
         transcript: [], replyingAgentId: conversation.chatRuntime.runtimeAgentId ?? conversation.preferredAgentId ?? null, });
-      const { clientMutationId, settle: settleClientMutation } = preparePendingChatSendMutation({ orgId: selectedOrganizationId, conversationId: chatId, editUserMessageId, body, files: filesToUpload, inlineAnnotations: serializedAnnotations.inlineAnnotations, modelOverride: activeRuntimeOverrides.modelOverride, effortOverride: activeRuntimeOverrides.effortOverride });
+      streamSetupComplete = true;
+      pendingSendMutation = pendingSend;
+      const settleClientMutation = async () => {
+        mutationTerminal = true;
+        await pendingSend.settle();
+        setChatSendRecovery((current) => current?.clientMutationId === pendingSend.clientMutationId ? null : current);
+      };
+      const { clientMutationId } = pendingSend;
+      requestDispatched = true;
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
         clientMutationId,
         editUserMessageId,
-        modelOverride: activeRuntimeOverrides.modelOverride,
-        effortOverride: activeRuntimeOverrides.effortOverride,
+        modelOverride: isResume && pendingSend.recoveryModelOverride !== undefined
+          ? pendingSend.recoveryModelOverride
+          : isResume ? null : activeRuntimeOverrides.modelOverride,
+        effortOverride: isResume && pendingSend.recoveryEffortOverride !== undefined
+          ? pendingSend.recoveryEffortOverride
+          : isResume ? null : activeRuntimeOverrides.effortOverride,
         files: filesToUpload,
         inlineAnnotations: serializedAnnotations.inlineAnnotations,
         queuedMessageId: options?.queuedMessageId ?? null,
         onEvent: async (event) => {
           if (event.type === "queued") {
-            settleClientMutation();
+            mutationAcknowledged = true;
+            await pendingSend.markAccepted();
             queryClient.setQueryData(
               queryKeys.chats.queue(selectedOrganizationId, chatId),
               (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
@@ -1650,7 +1752,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
             return;
           }
-          if (event.type === "ack") { userMessageAcknowledged = true; settleClientMutation(); upsertMessages(chatId, [event.userMessage]);
+          if (event.type === "ack") { userMessageAcknowledged = true; mutationAcknowledged = true; await pendingSend.markAccepted(); upsertMessages(chatId, [event.userMessage]);
             if (usesComposerState) {
               setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
               dispatchResponseAnnotation({ type: "clear" });
@@ -1679,6 +1781,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               } : current), );
             return; }
           if (event.type === "error") {
+            if (event.messageId) {
+              mutationAcknowledged = true;
+              await pendingSend.markAccepted();
+            }
+            if (event.terminal) {
+              await settleClientMutation();
+            } else if (mutationAcknowledged) {
+              await pendingSend.markRecoverable();
+              setChatSendRecovery({ orgId: selectedOrganizationId, conversationId: chatId, clientMutationId, body });
+            }
             if (!userMessageAcknowledged && event.messageId) {
               userMessageAcknowledged = true;
               if (usesComposerState) {
@@ -1701,10 +1813,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             throw new Error(event.error);
           }
           if (event.type === "waiting_for_network") networkWaiting = true;
-          if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "waiting_for_network" || event.type === "transcript_entry") {
+          if (event.type === "assistant_delta" || event.type === "assistant_snapshot" || event.type === "assistant_state" || event.type === "waiting_for_network" || event.type === "transcript_entry") {
             setStreamDraftForChat(streamScopeKey, (current) => applyChatStreamProgressEvent(current, streamKey, event));
             return; }
           if (event.type === "final") {
+            await settleClientMutation();
             const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, chatId);
             if (stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
               if (pendingStop?.frozenDraft?.streamKey === streamKey) {
@@ -1728,6 +1841,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               }
             }
           } }, });
+      if (mutationAcknowledged && !mutationTerminal) {
+        throw new Error("The message was accepted, but Rudder did not confirm the response's terminal state. Resume the response to check it without sending the message again.");
+      }
       if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }
       await refreshChat(chatId);
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
@@ -1735,6 +1851,28 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
       }
     } catch (error) {
+      if (pendingSendMutation && requestDispatched && !mutationAcknowledged && !mutationTerminal) {
+        await pendingSendMutation.markUnknown();
+      }
+      if (pendingSendMutation && requestDispatched && !mutationAcknowledged && !mutationTerminal
+        && conversation
+        && activeDraftScopeRef.current === resolveChatPendingAttachmentScopeKey(
+          selectedOrganizationId,
+          conversation.id,
+        )) {
+        recoveryDiscovery.retry();
+      }
+      if (pendingSendMutation && mutationAcknowledged && !mutationTerminal) {
+        await pendingSendMutation.markRecoverable();
+        if (conversation) {
+          setChatSendRecovery({
+            orgId: selectedOrganizationId,
+            conversationId: conversation.id,
+            clientMutationId: pendingSendMutation.clientMutationId,
+            body,
+          });
+        }
+      }
       const isFirstTurn = activeStreamKey?.startsWith("new:") === true;
 
       const pendingStop = conversation
@@ -1772,7 +1910,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       const firstTurnRecovery = isFirstTurn && activeStreamKey && submittedComposerDraft && !userMessageAcknowledged
         ? firstTurnStore.recoverDraft(firstTurnOwner, activeStreamKey, submittedComposerDraft.orgId, submittedComposerDraft.conversationId)
         : null;
-      if (submittedComposerDraft && !userMessageAcknowledged && !isFirstTurn) { const restoreConversationId = conversation?.id ?? submittedComposerDraft.conversationId; const restoreScopeKey = resolveChatPendingAttachmentScopeKey(
+      if (submittedComposerDraft && composerClearedForSubmission && !userMessageAcknowledged && !isFirstTurn) { const restoreConversationId = conversation?.id ?? submittedComposerDraft.conversationId; const restoreScopeKey = resolveChatPendingAttachmentScopeKey(
           submittedComposerDraft.orgId, restoreConversationId, ); saveChatComposerDraft(
           submittedComposerDraft.orgId,
           restoreConversationId,
@@ -1797,16 +1935,24 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setInlineEditDraft(body);
         requestAnimationFrame(() => { inlineEditEditorRef.current?.focus(); });
       }
-      pushToast({
-        ...chatErrorToast(error, "send"), tone: "error",
-        ...firstChatTurnRecoveryToast(location.pathname, firstTurnRecovery),
-      });
+      if (error instanceof PendingChatSendAlreadyAcceptedError) {
+        pushToast({
+          title: "Previous message recovered",
+          body: "It was already accepted and was not sent again. Your draft is still here; press Send again to create a new message.",
+          tone: "success",
+        });
+      } else {
+        pushToast({
+          ...chatErrorToast(error, "send"), tone: "error",
+          ...firstChatTurnRecoveryToast(location.pathname, firstTurnRecovery),
+        });
+      }
       if (conversation) {
         void refreshChat(conversation.id).catch(() => null);
       }
       return;
     } finally {
-      if (activeChatId && !networkWaiting) { const ownedStream = streamOwnershipRef.current[activeChatId];
+      if (activeChatId && streamSetupComplete && !networkWaiting) { const ownedStream = streamOwnershipRef.current[activeChatId];
         if (!ownedStream || ownedStream.streamKey === activeStreamKey) {
           delete streamOwnershipRef.current[activeChatId];
           const streamScopeKey = activeStreamScopeKey ?? activeChatId;
@@ -2947,13 +3093,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       document.body,
     );
   };
+  const recoveryCheckBlocksSubmit = recoveryDiscovery.checking
+    && (sendButtonMode === "send" || sendButtonMode === "queue" || sendButtonMode === "continue");
   const sendButtonDisabled = chatSendButtonDisabled({
     selectedConversationExternalBound,
     modelSelectionPending: runtimeSelectionPending,
     composerUnavailable,
     sendButtonMode,
     hasDraft: hasSubmittableComposerDraft,
-  });
+  }) || recoveryCheckBlocksSubmit || Boolean(recoveryDiscovery.problem) || Boolean(activeChatSendRecovery);
   const canSteerQueuedMessages = Boolean(
     (
       serverActiveGenerationId
@@ -3312,6 +3460,55 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       fileDragActive={composerFileDragActive}
       fileDropTargetProps={composerFileDropTargetProps}
     >
+      {chatSendRecovery && selectedConversation?.id === chatSendRecovery.conversationId
+        && selectedOrganizationId === chatSendRecovery.orgId ? (
+        <ChatSendRecoveryNotice
+          disabled={Boolean(selectedConversationStreamScopeKey && sendInFlightByChatId[selectedConversationStreamScopeKey])}
+          action={chatSendRecovery.action}
+          onResume={() => {
+            recoveryDiscovery.clearRecovery();
+            recoveryDiscovery.clearCompletedNotice();
+            setChatSendRecovery(null);
+            void sendMessage({
+              bodyOverride: chatSendRecovery.body,
+              filesOverride: [],
+              inlineAnnotationsOverride: [],
+              conversationOverride: selectedConversation,
+              forceImmediateSend: true,
+              resumeClientMutationId: chatSendRecovery.clientMutationId,
+            });
+          }}
+        />
+      ) : activeChatSendRecovery ? (
+        <ChatSendRecoveryNotice
+          disabled={Boolean(selectedConversationStreamScopeKey && sendInFlightByChatId[selectedConversationStreamScopeKey])}
+          action={activeChatSendRecovery.action}
+          onResume={() => {
+            recoveryDiscovery.clearRecovery();
+            recoveryDiscovery.clearCompletedNotice();
+            setChatSendRecovery(null);
+            void sendMessage({
+              bodyOverride: activeChatSendRecovery.body,
+              filesOverride: [],
+              inlineAnnotationsOverride: [],
+              conversationOverride: selectedConversation!,
+              forceImmediateSend: true,
+              resumeClientMutationId: activeChatSendRecovery.clientMutationId,
+            });
+          }}
+        />
+      ) : null}
+      {recoveryDiscovery.problem ? (
+        <ChatSendRecoveryProblem message={recoveryDiscovery.problem} onRetry={recoveryDiscovery.retry} />
+      ) : null}
+      {recoveryDiscovery.checking ? (
+        <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">
+          Checking the previous message before sending. Your current draft is preserved.
+        </div>
+      ) : null}
+      {recoveryDiscovery.completedNotice ? (
+        <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">{recoveryDiscovery.completedNotice}</div>
+      ) : null}
       {composerFileDragActive ? <ChatComposerFileDropOverlay /> : null}
       {selectedConversation && visibleQueueItems.length > 0 ? (
         <div data-testid="chat-running-queue" className="mb-2.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] p-2">
@@ -3479,7 +3676,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           )}
           placeholder={composerPlaceholder}
           onSubmit={() => {
-            if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending) return;
+            if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending || recoveryDiscovery.checking) return;
             if (selectedConversationHasActiveReply && selectedConversation) {
               void queueComposerMessage(selectedConversation);
               return;
@@ -4191,12 +4388,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       <AskUserPanel
                         message={pendingAskUserMessage}
                         request={pendingAskUserRequest} disabled={controlsDisabled || composerUnavailable}
+                        checking={recoveryDiscovery.checking}
+                        submitDisabled={recoveryDiscovery.checking || Boolean(recoveryDiscovery.problem) || Boolean(activeChatSendRecovery)}
                         pendingFiles={pendingFiles}
                         onAddAttachment={() => fileInputRef.current?.click()}
                         onDropAttachments={appendPendingFiles}
                         onRemovePendingFile={removePendingFile}
                         onPasteAttachment={handlePendingAttachmentPasteCapture}
-                        onSubmit={(body) => { if (!selectedConversation) return;
+                        onSubmit={(body) => { if (!selectedConversation || recoveryDiscovery.checking || recoveryDiscovery.problem || activeChatSendRecovery) return;
                           void sendMessage({
                             bodyOverride: body,
                             filesOverride: [...pendingFiles], conversationOverride: selectedConversation,

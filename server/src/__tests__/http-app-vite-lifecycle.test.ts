@@ -94,6 +94,17 @@ describe("createHttpApp Vite lifecycle", () => {
     vi.clearAllMocks();
   });
 
+  it("rejects required native ingress without issuer facts before acquiring app resources", async () => {
+    for (const deploymentMode of ["local_trusted", "authenticated"] as const) {
+      await expect(createHttpApp({} as never, {
+        ...baseOpts, uiMode: "none", serverPort: 3100, deploymentMode, authRequirement: "required",
+        rustPublicIngress: { listenAddr: "127.0.0.1:3100", nodeUpstream: "http://127.0.0.1:3101", authorizationKey: "test" },
+      } as never)).rejects.toThrow("constructed issuer configuration");
+    }
+    expect(createRustFoundationBridge).not.toHaveBeenCalled();
+    expect(registerApiRoutes).not.toHaveBeenCalled();
+  });
+
   it("closes the Chat runtime when API route registration fails", async () => {
     const db = createLifecycleDb();
     vi.mocked(registerApiRoutes).mockImplementationOnce((_db, _opts, _preview, runtime) => {
