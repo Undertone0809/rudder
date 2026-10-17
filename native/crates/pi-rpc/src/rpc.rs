@@ -977,9 +977,9 @@ mod tests {
         let path = directory.path().join("session.jsonl");
         let mut fixture = fixture_session_header();
         fixture.push('\n');
-        fixture.push_str(concat!(
-            "{\"type\":\"message\",\"id\":\"aaaaaaaa\",\"parentId\":null,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"visible\"},{\"type\":\"future_audio\",\"data\":\"hidden\"}],\"stopReason\":\"stop\"}}\n"
-        ));
+        fixture.push_str(
+            "{\"type\":\"message\",\"id\":\"aaaaaaaa\",\"parentId\":null,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"visible\"},{\"type\":\"future_audio\",\"data\":\"hidden\"}],\"stopReason\":\"stop\"}}\n",
+        );
         std::fs::write(&path, fixture).unwrap();
         assert_eq!(
             PiSessionTree::read(&path, directory.path()).err(),
