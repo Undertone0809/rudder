@@ -212,6 +212,25 @@ function identityAdmissionReviewRecord(policy, appSource, overrides = {}) {
   };
 }
 
+function compatibilityAdmissionReviewRecord(policy, source) {
+  return {
+    id: policy.id,
+    mount_source_path: policy.source_path,
+    mount_source_sha256: sha256(source),
+    mount_receiver: policy.receiver,
+    mount_expression: policy.mount_expression,
+    mount_guard: policy.mount_guard,
+    order_after: policy.order_after,
+    order_before: policy.order_before,
+    rust_proof_owner: policy.rust_proof_owner,
+    compatibility_boundary: "Node retains only the compatibility route projection; Rust owns the admitted AgentCore public paths and business authority.",
+    retirement_criterion: "Remove the adapter when Rust owns these AgentCore paths in every deployment mode.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed native AgentCore compatibility adapter fixture",
+    review_status: "reviewed",
+  };
+}
+
 function compareIdentityAdmissionFixture(t, options = {}) {
   const baseRoot = temporaryTree(t);
   const headRoot = temporaryTree(t);
@@ -579,7 +598,12 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
   const sessionPolicy = TRUSTED_TRANSPORT_ADMISSIONS[SESSION_ADMISSION_ID];
   assert.equal(sessionPolicy.factory_sha256, "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5");
   assert.equal(sessionPolicy.mount_expression, "nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })");
-  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [IDENTITY_ADMISSION_ID, SESSION_ADMISSION_ID].sort());
+  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [
+    IDENTITY_ADMISSION_ID,
+    SESSION_ADMISSION_ID,
+    "rust-native-agent-core-handler-v1",
+    "rust-native-agent-core-router-v1",
+  ].sort());
 
   const baseRoot = temporaryTree(t);
   const headRoot = temporaryTree(t);
@@ -897,4 +921,99 @@ test("identity admission only replaces the existing actor mount and keeps its de
   assert(retainedOld.result.failures.some((failure) => failure.includes("existing actor mount must be replaced exactly once")));
   const noProof = compareIdentityAdmissionFixture(t, { omitAdmissionRecord: true });
   assert(noProof.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden") && failure.includes("actorMiddleware")));
+});
+
+test("AgentCore compatibility mounts require exact reviewed Rust ownership", (t) => {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const routerPath = "server/src/bootstrap/register-api-routes.ts";
+  const handlerPath = "server/src/routes/agents.ts";
+  const routerPolicy = TRUSTED_TRANSPORT_ADMISSIONS["rust-native-agent-core-router-v1"];
+  const handlerPolicy = TRUSTED_TRANSPORT_ADMISSIONS["rust-native-agent-core-handler-v1"];
+  const baseRouter = "const api = Router();\napi.use(organizationSkillRoutes(db));\napi.use(agentRoutes(db, opts.storageService, rustFoundationBridge));\napi.use(managedMcpAgentBindingRoutes(db));\n";
+  const headRouter = `const api = Router();\napi.use(organizationSkillRoutes(db));\napi.use(${routerPolicy.mount_expression});\napi.use(managedMcpAgentBindingRoutes(db));\n`;
+  const baseHandler = "const router = Router();\nrouter.use(agentCoreRoutes(rustFoundationBridge, resolveBrowserCapabilityDeployment(db)));\nconst svc = agentService(db);\n";
+  const headHandler = `const router = Router();\nrouter.use(${handlerPolicy.mount_expression});\nconst svc = agentService(db);\n`;
+  put(baseRoot, routerPath, baseRouter);
+  put(baseRoot, handlerPath, baseHandler);
+  put(headRoot, routerPath, headRouter);
+  put(headRoot, handlerPath, headHandler);
+  const base = buildInventory(baseRoot);
+  const dormant = compareInventories(base, base, contentsFor(baseRoot, base), contentsFor(baseRoot, base));
+  assert.deepEqual(dormant.failures, []);
+  assert.deepEqual(dormant.allowed_transport_admissions, []);
+
+  const head = buildInventory(headRoot, [
+    boundaryRecord(routerPath, sha256(baseRouter), sha256(headRouter)),
+    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
+  ], [
+    compatibilityAdmissionReviewRecord(routerPolicy, headRouter),
+    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
+  ]);
+  const allowed = compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
+  assert.deepEqual(allowed.failures, []);
+  assert.equal(allowed.allowed_transport_admissions.length, 2);
+
+  const wrongGuard = `const api = Router();\napi.use(organizationSkillRoutes(db));\napi.use(agentRoutes( db, opts.storageService, rustFoundationBridge, true ));\napi.use(managedMcpAgentBindingRoutes(db));\n`;
+  const wrongGuardRoot = temporaryTree(t);
+  put(wrongGuardRoot, routerPath, wrongGuard);
+  put(wrongGuardRoot, handlerPath, headHandler);
+  const wrongGuardHead = buildInventory(wrongGuardRoot, [
+    boundaryRecord(routerPath, sha256(baseRouter), sha256(wrongGuard)),
+    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
+  ], [
+    compatibilityAdmissionReviewRecord(routerPolicy, wrongGuard),
+    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
+  ]);
+  const wrongGuardResult = compareInventories(base, wrongGuardHead, contentsFor(baseRoot, base), contentsFor(wrongGuardRoot, wrongGuardHead));
+  assert(wrongGuardResult.failures.some((failure) => failure.includes("stale reviewed_transport_admissions record: rust-native-agent-core-router-v1") || failure.includes("new Node authority surface is forbidden")));
+
+  const wrongOrder = `const api = Router();\napi.use(${routerPolicy.mount_expression});\napi.use(organizationSkillRoutes(db));\napi.use(managedMcpAgentBindingRoutes(db));\n`;
+  const wrongOrderRoot = temporaryTree(t);
+  put(wrongOrderRoot, routerPath, wrongOrder);
+  put(wrongOrderRoot, handlerPath, headHandler);
+  const wrongOrderHead = buildInventory(wrongOrderRoot, [
+    boundaryRecord(routerPath, sha256(baseRouter), sha256(wrongOrder)),
+    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
+  ], [
+    compatibilityAdmissionReviewRecord(routerPolicy, wrongOrder),
+    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
+  ]);
+  const wrongOrderResult = compareInventories(base, wrongOrderHead, contentsFor(baseRoot, base), contentsFor(wrongOrderRoot, wrongOrderHead));
+  assert(wrongOrderResult.failures.some((failure) => failure.includes("rust-native-agent-core-router-v1") && failure.includes("order-after")));
+
+  const commentOnly = `const api = Router();\n// api.use(organizationSkillRoutes(db));\napi.use(${routerPolicy.mount_expression});\n// api.use(managedMcpAgentBindingRoutes(db));\n`;
+  const commentOnlyRoot = temporaryTree(t);
+  put(commentOnlyRoot, routerPath, commentOnly);
+  put(commentOnlyRoot, handlerPath, headHandler);
+  const commentOnlyHead = buildInventory(commentOnlyRoot, [
+    boundaryRecord(routerPath, sha256(baseRouter), sha256(commentOnly)),
+    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
+  ], [
+    compatibilityAdmissionReviewRecord(routerPolicy, commentOnly),
+    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
+  ]);
+  const commentOnlyResult = compareInventories(base, commentOnlyHead, contentsFor(baseRoot, base), contentsFor(commentOnlyRoot, commentOnlyHead));
+  assert(commentOnlyResult.failures.some((failure) => failure.includes("rust-native-agent-core-router-v1") && failure.includes("missing its order-after anchor")));
+
+  const nonCallAnchors = `const api = Router();\nconst before = organizationSkillRoutes(db);\napi.use(${routerPolicy.mount_expression});\nconst after = managedMcpAgentBindingRoutes(db);\n`;
+  const nonCallRoot = temporaryTree(t);
+  put(nonCallRoot, routerPath, nonCallAnchors);
+  put(nonCallRoot, handlerPath, headHandler);
+  const nonCallHead = buildInventory(nonCallRoot, [
+    boundaryRecord(routerPath, sha256(baseRouter), sha256(nonCallAnchors)),
+    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
+  ], [
+    compatibilityAdmissionReviewRecord(routerPolicy, nonCallAnchors),
+    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
+  ]);
+  const nonCallResult = compareInventories(base, nonCallHead, contentsFor(baseRoot, base), contentsFor(nonCallRoot, nonCallHead));
+  assert(nonCallResult.failures.some((failure) => failure.includes("rust-native-agent-core-router-v1") && failure.includes("missing its order-after anchor")));
+
+  const missing = buildInventory(headRoot, [
+    boundaryRecord(routerPath, sha256(baseRouter), sha256(headRouter)),
+    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
+  ], [compatibilityAdmissionReviewRecord(routerPolicy, headRouter)]);
+  const blocked = compareInventories(base, missing, contentsFor(baseRoot, base), contentsFor(headRoot, missing));
+  assert(blocked.failures.some((failure) => failure.includes("rust-native-agent-core-handler-v1: missing reviewed_transport_admissions record")));
 });

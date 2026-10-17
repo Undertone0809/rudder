@@ -60,6 +60,41 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     order_before: "express_json_body_parser",
     rust_proof_owner: "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion",
   }),
+  // These mounts remain Node compatibility adapters. They are admitted only
+  // as route projections because Rust owns the corresponding public paths;
+  // they do not grant a second Node business or auth authority.
+  "rust-native-agent-core-router-v1": Object.freeze({
+    id: "rust-native-agent-core-router-v1",
+    admission_label: "native AgentCore router adapter",
+    validation_kind: "compatibility_mount",
+    source_path: "server/src/bootstrap/register-api-routes.ts",
+    receiver: "api",
+    mount_expression: "agentRoutes( db, opts.storageService, rustFoundationBridge, Boolean(opts.rustPublicIngress?.identityAuth), )",
+    mount_guard: "Boolean(opts.rustPublicIngress?.identityAuth)",
+    order_after: "api_route_registration",
+    order_before: "agent_core_compatibility_handlers",
+    order_after_expression: "organizationSkillRoutes(db)",
+    order_before_expression: "managedMcpAgentBindingRoutes(db)",
+    order_after_call: true,
+    order_before_call: true,
+    rust_proof_owner: "native/crates/server-foundation/src/public_ingress/agent_core.rs",
+  }),
+  "rust-native-agent-core-handler-v1": Object.freeze({
+    id: "rust-native-agent-core-handler-v1",
+    admission_label: "native AgentCore handler adapter",
+    validation_kind: "compatibility_mount",
+    source_path: "server/src/routes/agents.ts",
+    receiver: "router",
+    mount_expression: "agentCoreRoutes( rustFoundationBridge, resolveBrowserCapabilityDeployment(db), nativeAgentCorePaths, )",
+    mount_guard: "nativeAgentCorePaths",
+    order_after: "agent_router_initialization",
+    order_before: "agent_core_compatibility_handlers",
+    order_after_expression: null,
+    order_before_expression: "const svc = agentService(db);",
+    order_after_call: false,
+    order_before_call: false,
+    rust_proof_owner: "native/crates/server-foundation/src/public_ingress/agent_core.rs",
+  }),
 });
 
 // These existing Electron identity-policy modules are retained client code,
@@ -864,12 +899,12 @@ function countSignatures(surfaces, types) {
   return result;
 }
 
-function findAppUseCalls(source) {
+function findAppUseCalls(source, receiver = "app") {
   const tokens = tokenize(source);
   const bindings = staticBindings(tokens);
   const calls = [];
   for (let index = 0; index < tokens.length - 3; index += 1) {
-    if (tokens[index].value !== "app" || tokens[index + 1]?.value !== "."
+    if (tokens[index].value !== receiver || tokens[index + 1]?.value !== "."
       || tokens[index + 2]?.value !== "use" || tokens[index + 3]?.value !== "(") continue;
     const args = callArguments(tokens, index + 3);
     if (!args) continue;
@@ -898,6 +933,23 @@ function findMatchingToken(tokens, openIndex, openValue, closeValue) {
   return -1;
 }
 
+function findTokenSequence(tokens, expression) {
+  if (!expression) return -1;
+  const expected = tokenize(expression).map((token) => token.value);
+  if (!expected.length) return -1;
+  for (let index = 0; index <= tokens.length - expected.length; index += 1) {
+    let matches = true;
+    for (let offset = 0; offset < expected.length; offset += 1) {
+      if (tokens[index + offset]?.value !== expected[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return index;
+  }
+  return -1;
+}
+
 function hasExactNamedImport(tokens, exportName, specifier) {
   let matchingImports = 0;
   for (let index = 0; index < tokens.length - 5; index += 1) {
@@ -914,8 +966,37 @@ function hasExactNamedImport(tokens, exportName, specifier) {
 function validateTransportAdmissionSource(policy, source, sourcePath) {
   const problems = [];
   if (sourcePath !== policy.source_path) problems.push("mount source path does not match trusted policy");
-  const { tokens, calls } = findAppUseCalls(source);
+  const { tokens, calls } = findAppUseCalls(source, policy.receiver);
   const proofCalls = calls.filter((call) => call.expression === policy.mount_expression);
+  if (policy.validation_kind === "compatibility_mount") {
+    if (proofCalls.length !== 1) {
+      problems.push(`expected exactly one exact ${policy.admission_label} app.use mount`);
+    } else {
+      const proofCall = proofCalls[0];
+      if (proofCall.argument_count !== 1) {
+        problems.push(`${policy.admission_label} must use the single-argument app.use form`);
+      }
+      if (policy.mount_guard && !proofCall.expression.includes(policy.mount_guard)) {
+        problems.push(`${policy.admission_label} must carry the exact configured native-path guard argument`);
+      }
+      const proofTokenIndex = tokens.findIndex((token) => token.start === proofCall.start);
+      const anchorIndex = (expression, callAware) => {
+        if (!expression) return -1;
+        if (callAware) {
+          const anchor = calls.find((call) => call.expression === expression);
+          return anchor ? tokens.findIndex((token) => token.start === anchor.start) : -1;
+        }
+        return findTokenSequence(tokens, expression);
+      };
+      const after = anchorIndex(policy.order_after_expression, policy.order_after_call);
+      const before = anchorIndex(policy.order_before_expression, policy.order_before_call);
+      if (policy.order_after_expression && after < 0) problems.push(`${policy.admission_label} is missing its order-after anchor`);
+      if (policy.order_before_expression && before < 0) problems.push(`${policy.admission_label} is missing its order-before anchor`);
+      if (after >= 0 && after >= proofTokenIndex) problems.push(`${policy.admission_label} must appear after its order-after anchor`);
+      if (before >= 0 && before <= proofTokenIndex) problems.push(`${policy.admission_label} must appear before its order-before anchor`);
+    }
+    return problems;
+  }
   if (proofCalls.length !== 1) problems.push(`expected exactly one exact ${policy.admission_label} app.use mount`);
   if (!hasExactNamedImport(tokens, policy.factory_export, policy.factory_import)) {
     problems.push("factory must be imported once by its exact named export from the trusted module");
@@ -983,6 +1064,17 @@ function validateTransportAdmissionRecord(record, policy, headInventory, headCon
   if (record.review_status !== "reviewed") problems.push('review_status must be "reviewed"');
 
   const mountSource = headContents.get(policy.source_path);
+  if (policy.validation_kind === "compatibility_mount") {
+    if (!mountSource) problems.push("trusted mount source is absent from the candidate inventory");
+    else {
+      const manifestMountSource = headInventory.source_manifest.find((entry) => entry.path === policy.source_path);
+      if (!manifestMountSource) problems.push("trusted mount source is absent from the candidate inventory");
+      else if (manifestMountSource.sha256 !== mountSource.sha256) problems.push("mount source content hash disagrees with the candidate inventory");
+      if (record.mount_source_sha256 !== mountSource.sha256) problems.push("mount_source_sha256 does not match candidate source");
+      problems.push(...validateTransportAdmissionSource(policy, mountSource.content, policy.source_path));
+    }
+    return problems;
+  }
   const factorySource = headContents.get(policy.factory_path);
   const manifestMountSource = headInventory.source_manifest.find((entry) => entry.path === policy.source_path);
   const manifestFactorySource = headInventory.source_manifest.find((entry) => entry.path === policy.factory_path);

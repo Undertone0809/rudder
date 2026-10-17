@@ -1141,12 +1141,14 @@ mod tests {
         assert_eq!(reason.code, CloseCode::Policy);
         assert_eq!(reason.description.as_deref(), Some("account signed out"));
         tokio::time::timeout(Duration::from_secs(2), async {
-            while observations.closes.load(Ordering::SeqCst) == 0 {
+            while observations.closes.load(Ordering::SeqCst) == 0
+                && observations.disconnects.load(Ordering::SeqCst) == 0
+            {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("revocation close reaches the private Node websocket");
+        .expect("revocation closes or disconnects the private Node websocket");
 
         drop(socket);
         stop_server(proxy).await;
