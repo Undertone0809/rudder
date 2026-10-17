@@ -994,6 +994,21 @@ Pi D1 configuration/claim reachability and Pi-native finalization projection
 remain in progress; this increment is not Pi Chat acceptance and does not close
 W09 or the six-runtime completion requirement.
 
+### October 18 Codex and Hermes real local acceptance
+
+Candidate `9d5d26053` was exercised through the Rust public ingress against a
+disposable PostgreSQL instance with the installed local Codex and Hermes
+executables. Codex completed a first turn, a continuation, and a continuation
+after restarting the Node/Foundation pair, with one persisted native provider
+thread and three projected assistant answers. Hermes completed the same three
+turns after the Rust launcher kept the trusted operator `HOME` separate from
+the selected `HERMES_HOME` profile and re-applied the configured model on
+session load. The Hermes Agent runtime also carried its provider credential
+through the existing governed `env` configuration; Rust does not inherit
+ambient operator variables. This is real Codex/Hermes evidence for the exact
+candidate, but it does not close the remaining four adapters, full product
+journeys, or the independent final review and required CI gates.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.
