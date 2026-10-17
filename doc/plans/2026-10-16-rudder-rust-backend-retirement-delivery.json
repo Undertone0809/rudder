@@ -293,9 +293,10 @@
         },
         {
           "number": 325,
-          "state": "open_ci_pending",
+          "state": "merged",
           "head_sha": "eb0bc0736d0c2ceed5d413839b4381ac8047fb18",
-          "scope": "bounded native auth/Host ingress Rust ownership; protected merge pending required CI"
+          "scope": "bounded native auth/Host ingress Rust ownership; protected merge pending required CI",
+          "merge_sha": "0e8656e2146d73810df991a89c27ab3c3ca655ac"
         }
       ],
       "managed_migration": {
@@ -2226,15 +2227,45 @@
         "status": "matches current source",
         "summary": "910 source files, 4606 structural surfaces, 10 explicitly tracked unknowns; three reviewed compatibility records promoted after verifier and final review."
       },
-      "scope_limits": "Native vault/Keychain, hosted OAuth, full charset/parser parity, native Desktop CI, release/deployment and complete Rust retirement remain unproven."
+      "scope_limits": "Native vault/Keychain, hosted OAuth, full charset/parser parity, native Desktop CI, release/deployment and complete Rust retirement remain unproven.",
+      "published_candidate": {
+        "source_sha": "e6eed444bd1eb2f524480347dde7b5f114bee071",
+        "source_tree": "noted in rebind receipt",
+        "pr_head": "e6eed444bd1eb2f524480347dde7b5f114bee071",
+        "rebind_receipt": {
+          "path": "/private/tmp/rudder-auth-host-stage-review-20261017/content-equivalence-rebind-e6eed.md",
+          "sha256": "8cca5647fba7ad89f17ef3987b5e7cc8232a6bde2de7eef77172044b51ab46b4"
+        }
+      }
     },
     "auth_pr_325": {
       "number": 325,
       "url": "https://github.com/Undertone0809/rudder/pull/325",
-      "head": "eb0bc0736d0c2ceed5d413839b4381ac8047fb18",
+      "head": "e6eed444bd1eb2f524480347dde7b5f114bee071",
       "base": "d0410bab3f4a88af04351ebc4c447824b94e87e8",
-      "state": "open_ci_pending",
-      "merge_authority": "user authorized protected merge after required CI; no merge yet"
+      "state": "merged",
+      "merge_sha": "0e8656e2146d73810df991a89c27ab3c3ca655ac",
+      "merge_method": "squash",
+      "merged_at_utc": "2026-10-17T10:14:37Z",
+      "ci": {
+        "rust_authority_boundaries": {
+          "run_id": 39020825345,
+          "run_number": 40,
+          "conclusion": "success"
+        },
+        "d1_real_entry_smoke": {
+          "run_id": 39020825341,
+          "run_number": 296,
+          "conclusion": "success"
+        },
+        "test": {
+          "run_id": 39020825347,
+          "run_number": 3184,
+          "conclusion": "success",
+          "note": "Apple websocket revocation jobs were rerun and passed."
+        }
+      },
+      "scope": "bounded native auth/Host ingress Rust ownership; no release/deployment or complete Rust retirement claim"
     },
     "full_baseline_test_current": {
       "candidate": "6de654dd1d8a9790d5455497074fcba369e7f91c",
