@@ -93,6 +93,14 @@ pub(super) async fn send(
             return forward_legacy_body(state, proxy, request, body).await;
         }
         Ok(native_chat::SendAuthority::Native) => (),
+        Err(PersistenceError::Http(409, _)) if body_has_native_unsupported_input(&body) => {
+            // Preserve the compatibility classifier for valid legacy bodies,
+            // but report the Native DTO's deterministic 422 contract when a
+            // request already carries a field that Native Chat rejects. This
+            // keeps malformed/unsupported input from being masked by a legacy
+            // context import conflict.
+            return input_error(InputError::UnsupportedInput);
+        }
         Err(error_) => return result::<Value>(Err(error_)),
     }
     if body.len() > NATIVE_SEND_BODY_LIMIT {
@@ -122,6 +130,27 @@ pub(super) async fn send(
         AdmissionOperation::Existing(command),
     )
     .await
+}
+
+fn body_has_native_unsupported_input(body: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    [
+        "modelOverride",
+        "effortOverride",
+        "editUserMessageId",
+        "queuedMessageId",
+    ]
+    .iter()
+    .any(|key| object.get(*key).is_some_and(|value| !value.is_null()))
+        || object
+            .get("inlineAnnotations")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
 }
 
 pub(super) async fn first_send(
@@ -1466,6 +1495,19 @@ fn encode_line(value: &Value) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_native_fields_are_detected_without_rejecting_null_ui_defaults() {
+        assert!(!body_has_native_unsupported_input(
+            br#"{"body":"x","clientMutationId":"m","modelOverride":null,"effortOverride":null,"inlineAnnotations":[]}"#,
+        ));
+        assert!(body_has_native_unsupported_input(
+            br#"{"body":"x","clientMutationId":"m","modelOverride":"caller-model"}"#,
+        ));
+        assert!(body_has_native_unsupported_input(
+            br#"{"body":"x","clientMutationId":"m","inlineAnnotations":[{"text":"x"}]}"#,
+        ));
+    }
 
     #[test]
     fn multipart_first_send_router_reads_unique_bounded_fields_and_ignores_file_content() {
