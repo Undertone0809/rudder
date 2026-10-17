@@ -608,8 +608,9 @@ fn run(
                     quiescent: failure.process_quiescent(),
                 };
             };
-            if failure.process_disposition()
-                == rudder_native_chat_executor::ProcessDisposition::CleanupProven
+            if !failure.is_cancelled()
+                && failure.process_disposition()
+                    == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) =
                     (failure.fence(), failure.hermes_cleanup_receipt())
             {
@@ -656,8 +657,9 @@ fn run(
                 };
             }
             let cleanup = failure.cleanup_receipt();
-            let status = if failure.process_disposition()
-                == rudder_native_chat_executor::ProcessDisposition::CleanupProven
+            let status = if !failure.is_cancelled()
+                && failure.process_disposition()
+                    == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) = (failure.fence(), cleanup)
             {
                 match handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {

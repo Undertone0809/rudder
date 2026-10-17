@@ -255,6 +255,12 @@ impl ExecutionFailure {
         self.0.error
     }
 
+    /// Cancellation means the caller abandoned execution without a provider
+    /// terminal receipt; cleanup alone must not release the durable hold.
+    pub fn is_cancelled(&self) -> bool {
+        matches!(&self.0.error, Error::Cancelled)
+    }
+
     fn not_launched(error: Error) -> Self {
         Self(Box::new(ExecutionFailureEvidence {
             error,
