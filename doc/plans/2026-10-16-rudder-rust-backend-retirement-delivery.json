@@ -2336,6 +2336,33 @@
         }
       }
     },
+    "agent_core_pr_326": {
+      "number": 326,
+      "url": "https://github.com/Undertone0809/rudder/pull/326",
+      "head": "3e3e6d751c3d01f2dd5b2cb9504ec08dd25cd947",
+      "tree": "1ec4c4c30f9b26a816e90b56c860edf90fc54da3",
+      "state": "merged",
+      "merge_sha": "57e3e92a1e35ad08601562669a2084c269ebbe37",
+      "merged_at_utc": "2026-10-17T19:08:57Z",
+      "scope": "Rust public ingress owns Agent roster and permissions; actor run-id audit forwarding; cross-platform host-path and lock-test qualification stability.",
+      "stage_review": {
+        "verdict": "accept",
+        "path": "/private/tmp/rudder-agent-core-stage-review-20261018/stage-review-3e3e6d.md",
+        "sha256": "023595252890806ea336ea4cfafc7481bebcac601f388ef779c7a40c8d6e8cb5"
+      },
+      "verifier": {
+        "verdict": "PASS",
+        "path": "/private/tmp/rudder-checker-agent-core-3e3e6d-independent-20261018.md",
+        "sha256": "8946bcc114e68c6c2020205618eaf59ff90bd1caa4ec6b2ec5999cdacd1ce8d1",
+        "checks": "targeted lock-marker fallback 1/1; prior exact source-equivalent public real-entry 39/39, bridge 53/53, Rust foundation 183 passed/4 ignored, D1 1/1"
+      },
+      "ci": {
+        "workflow_run": 39058534922,
+        "required": "all passed",
+        "qualification_summary": "passed"
+      },
+      "limits": "Scoped Agent ingress slice only; full Rust backend retirement, no-Node packaged acceptance, release and deployment remain incomplete."
+    },
     "auth_pr_325": {
       "number": 325,
       "url": "https://github.com/Undertone0809/rudder/pull/325",
