@@ -138,6 +138,7 @@ export function createDesktopIdentityRuntime(options: {
     ),
   });
   const packagedSmokeBypassRequested = packagedSmokePolicy.packagedSmokeBypassRequested;
+  process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH = packagedSmokePolicy.packagedSmokeLocalImplicitAuthRequested ? "1" : "0";
   const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,
     isPackaged: app.isPackaged,

@@ -17,8 +17,8 @@ export function assertPublicIngressExposure(
   config: Config,
   localAccountAuth: boolean,
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
-  localImplicitAuth = false,
 ): void {
+  const localImplicitAuth = process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH?.trim() === "1";
   if (config.rustPublicIngressMode !== "required") return;
   if (config.deploymentMode === "local_trusted" && runtimeOwnerKind === "desktop" && !localAccountAuth && !localImplicitAuth) {
     throw new Error("Desktop local-trusted runtime requires Desktop account authentication");
@@ -38,7 +38,6 @@ export async function preparePublicIngressStartup(
   localAccountLifecycle?: RustLocalAccountLifecycleOptions,
   nativeChatHost?: RustNativeChatHost,
   browserSessionAuth?: RustBrowserSessionAuth,
-  localImplicitAuth = false,
 ) {
   // Older native-auth callers passed the constructed browser issuer in the
   // fourth slot before runtime ownership was added. Accept that shape while
@@ -53,7 +52,7 @@ export async function preparePublicIngressStartup(
       throw new Error("issuer settings disagree");
     }
   }
-  assertPublicIngressExposure(config, Boolean(localAccountAuth), effectiveRuntimeOwnerKind, localImplicitAuth);
+  assertPublicIngressExposure(config, Boolean(localAccountAuth), effectiveRuntimeOwnerKind);
   const enabled = config.rustPublicIngressMode === "required";
   const nodeListenHost = enabled ? "127.0.0.1" : config.host;
   const nodeListenPort = enabled
@@ -116,7 +115,8 @@ export async function preparePublicIngressStartup(
         agentJwtAudience: agentJwt.audience,
         localImplicitEnabled: config.deploymentMode === "local_trusted"
           && !localAccountAuth
-          && (effectiveRuntimeOwnerKind !== "desktop" || localImplicitAuth),
+          && (effectiveRuntimeOwnerKind !== "desktop"
+            || process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH?.trim() === "1"),
       },
       ...(sessionAuth ? { sessionAuth } : {}),
       ...(localAccountLifecycle ? { localAccountLifecycle } : {}),

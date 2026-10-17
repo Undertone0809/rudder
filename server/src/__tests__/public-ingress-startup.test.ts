@@ -43,7 +43,8 @@ describe("explicit public ingress startup", () => {
     expect(() => assertPublicIngressExposure(config({ host: "0.0.0.0" }), false)).toThrow("implicit local Board");
     expect(() => assertPublicIngressExposure(config({ host: "localhost" }), false)).toThrow("numeric listener");
     expect(() => assertPublicIngressExposure(config(), false, "desktop")).toThrow("Desktop account authentication");
-    expect(() => assertPublicIngressExposure(config(), false, "desktop", true)).not.toThrow();
+    vi.stubEnv("RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH", "1");
+    expect(() => assertPublicIngressExposure(config(), false, "desktop")).not.toThrow();
     expect(() => assertPublicIngressExposure(config({ host: "::1" }), false)).not.toThrow();
     expect(() => assertPublicIngressExposure(config({ host: "0.0.0.0", deploymentMode: "authenticated" }), false)).not.toThrow();
   });
@@ -157,16 +158,8 @@ describe("explicit public ingress startup", () => {
     expect(ingress.appOptions.rustPublicIngress?.identityAuth?.localImplicitEnabled).toBe(false);
     expect(ingress.nodeListenHost).toBe("127.0.0.1");
 
-    const smokeIngress = await preparePublicIngressStartup(
-      config(),
-      3100,
-      undefined,
-      "desktop",
-      undefined,
-      undefined,
-      undefined,
-      true,
-    );
+    vi.stubEnv("RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH", "1");
+    const smokeIngress = await preparePublicIngressStartup(config(), 3100, undefined, "desktop");
     expect(smokeIngress.appOptions.rustPublicIngress?.identityAuth?.localImplicitEnabled).toBe(true);
   });
 

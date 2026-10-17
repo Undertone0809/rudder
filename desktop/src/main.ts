@@ -951,9 +951,7 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   process.env.RUDDER_DEPLOYMENT_MODE = "local_trusted";
   process.env.RUDDER_DEPLOYMENT_EXPOSURE = "private";
   process.env.HOST = "127.0.0.1";
-  // Native Chat is part of the Desktop runtime; keep an explicit operator override.
-  process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE ??= "required";
-  process.env.SERVE_UI = "true";
+  process.env.SERVE_UI = "true"; process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE ??= "required";
   process.env.RUDDER_UI_DEV_MIDDLEWARE = "false";
   process.env.RUDDER_OPEN_ON_LISTEN = "false";
   if (app.isPackaged) reconcilePackagedDesktopPostgresBinDir(process.resourcesPath, externalServerRuntimeCacheDir);
@@ -2261,9 +2259,6 @@ async function startLocalRudder(): Promise<void> {
         ownerKind: "desktop",
         takeoverOnVersionMismatch: true,
         preferredOwner: shouldPreferDesktopRuntimeOwnership(app.isPackaged),
-        ...(identityRuntime.packagedSmokeLocalImplicitAuthRequested
-          ? { localImplicitAuth: true }
-          : {}),
         ...(localAccountSession.localAccountAuth
           ? { localAccountAuth: localAccountSession.localAccountAuth }
           : {}),
@@ -3303,9 +3298,6 @@ async function runAutomaticUpdateProbation(): Promise<void> {
       ownerKind: "desktop",
       takeoverOnVersionMismatch: true,
       preferredOwner: true,
-      ...(desktopIdentityRuntime?.packagedSmokeLocalImplicitAuthRequested
-        ? { localImplicitAuth: true }
-        : {}),
       ...serverRuntimeOptions(),
     });
     if (handle.runtime.mode !== "owned"
