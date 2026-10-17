@@ -108,6 +108,13 @@ fn secret_like_key(key: &str) -> bool {
     .any(|needle| normalized.contains(needle))
 }
 
+fn node_owned_runtime_key(key: &str) -> bool {
+    matches!(
+        key,
+        "rudderSkillSync" | "paperclipSkillSync" | "rudderRuntimeSkills" | "paperclipRuntimeSkills"
+    )
+}
+
 fn reject_secret_like(value: &Value, path: &str) -> Result<()> {
     if let Some(array) = value.as_array() {
         for (index, child) in array.iter().enumerate() {
@@ -124,7 +131,7 @@ fn reject_secret_like(value: &Value, path: &str) -> Result<()> {
         } else {
             format!("{path}.{key}")
         };
-        if secret_like_key(key) || key == "env" {
+        if secret_like_key(key) || key == "env" || node_owned_runtime_key(key) {
             return Err(unsupported_field(&child_path));
         }
         reject_secret_like(child, &child_path)?;
@@ -538,7 +545,9 @@ mod tests {
             "desiredSkills",
             "seedOrganizationIntelligenceDefaults",
         ] {
-            let error = parse_create(&json!({key:"unsupported"})).expect_err("unsupported field");
+            let mut input = serde_json::Map::new();
+            input.insert(key.to_owned(), json!("unsupported"));
+            let error = parse_create(&Value::Object(input)).expect_err("unsupported field");
             assert!(
                 matches!(error, AgentCoreError::Http(422, _, _)),
                 "{key}: {error:?}"
@@ -554,5 +563,24 @@ mod tests {
         }))
         .expect_err("nested secret runtime config");
         assert!(matches!(error, AgentCoreError::Http(422, _, _)));
+        for key in [
+            "rudderSkillSync",
+            "paperclipSkillSync",
+            "rudderRuntimeSkills",
+            "paperclipRuntimeSkills",
+        ] {
+            let mut runtime_config = serde_json::Map::new();
+            runtime_config.insert(key.to_owned(), json!({"desiredSkills": []}));
+            let input = json!({
+                "runtimeConfig": {
+                    "nested": [Value::Object(runtime_config)]
+                }
+            });
+            let error = parse_create(&input).expect_err("Node-owned runtime config");
+            assert!(
+                matches!(error, AgentCoreError::Http(422, _, _)),
+                "{key}: {error:?}"
+            );
+        }
     }
 }
