@@ -614,6 +614,9 @@ export interface ModelFallbackConfig {
 
 export interface CreateConfigValues {
   agentRuntimeType: string;
+  /** Existing local Hermes profile; omitted selects its default profile. */
+  codexProfileId?: string;
+  hermesProfileId?: string;
   cwd: string;
   instructionsFilePath?: string;
   promptTemplate: string;

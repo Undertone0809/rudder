@@ -2,7 +2,8 @@
 //! Provider locators, private output provenance and execution capabilities never
 //! enter this DTO. Reading an admitted turn never dispatches or resumes it.
 use super::*;
-use serde_json::Value;
+use crate::native_chat::Error;
+use serde_json::{Value, json};
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -29,6 +30,10 @@ pub struct TurnView {
     pub runtime_terminal: bool,
     pub native_admission_hold: bool,
     pub last_sequence: i32,
+    /// The latest checkpoint explicitly persisted by the current UI client.
+    /// `None` means that only the empty projection is durably checkpointed.
+    pub last_client_checkpoint_seq: Option<i32>,
+    pub last_client_checkpoint_hash: Option<String>,
 }
 
 pub async fn read_turn(
@@ -54,6 +59,7 @@ pub async fn read_turn(
     .await?;
     let generation = sqlx::query(
         "SELECT source_message_id::text,status,attempt_epoch,control_version,
+           last_client_checkpoint_seq,last_client_checkpoint_hash,
            runtime_terminal_at IS NOT NULL AS terminal,native_admission_hold,
            CASE
              WHEN g.runtime_terminal_at IS NOT NULL AND g.control_lease_expires_at IS NULL THEN false
@@ -146,8 +152,89 @@ pub async fn read_turn(
         runtime_terminal: generation.try_get("terminal")?,
         native_admission_hold: generation.try_get("native_admission_hold")?,
         last_sequence: generation.try_get("last_sequence")?,
+        last_client_checkpoint_seq: generation.try_get("last_client_checkpoint_seq")?,
+        last_client_checkpoint_hash: generation.try_get("last_client_checkpoint_hash")?,
     };
     auth::preauthorize_org(&mut tx, actor, org).await?;
     tx.commit().await?;
     Ok(view)
+}
+
+/// Public control read with an explicit writer-authority disposition. Native
+/// turns receive the bounded projection above. A legacy disposition is only
+/// returned for an exact, same-organization ordinary Chat generation that is
+/// still marked `legacy_ts` and passes the same target authorization check.
+/// Callers must not infer legacy ownership from a native read error.
+pub async fn read_turn_for_control(
+    pool: &PgPool,
+    actor: &impl NativeChatActor,
+    request: &ReadTurn,
+) -> Result<Value> {
+    match read_turn(pool, actor, request).await {
+        Ok(view) => {
+            let mut value = serde_json::to_value(view)
+                .map_err(|_| http(500, "Native Chat turn projection failed"))?;
+            let object = value
+                .as_object_mut()
+                .ok_or_else(|| http(500, "Native Chat turn projection failed"))?;
+            object.insert("executionAuthority".into(), json!("native_rust"));
+            Ok(value)
+        }
+        Err(Error::Http(404, _)) => read_legacy_turn_authority(pool, actor, request).await,
+        Err(error) => Err(error),
+    }
+}
+
+async fn read_legacy_turn_authority(
+    pool: &PgPool,
+    actor: &impl NativeChatActor,
+    request: &ReadTurn,
+) -> Result<Value> {
+    validate_ids(actor, &request.conversation_id, &request.generation_id)?;
+    let organization_id = actor.organization_id();
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL statement_timeout = '5s'")
+        .execute(&mut *tx)
+        .await?;
+    auth::preauthorize_org(&mut tx, actor, organization_id).await?;
+
+    let row = sqlx::query(
+        "SELECT g.id::text AS generation_id, g.attempt_epoch, g.control_version,
+                COALESCE(c.preferred_agent_id, c.routed_agent_id)::text AS selected_agent_id
+         FROM chat_generations g
+         JOIN chat_conversations c ON c.org_id=g.org_id AND c.id=g.conversation_id
+         WHERE g.org_id=$1::uuid AND g.conversation_id=$2::uuid AND g.id=$3::uuid
+           AND g.execution_authority='legacy_ts' AND c.conversation_kind='chat'",
+    )
+    .bind(organization_id)
+    .bind(&request.conversation_id)
+    .bind(&request.generation_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| http(404, "Chat generation not found"))?;
+    let generation_id: String = row.try_get("generation_id")?;
+    let attempt_epoch: i32 = row.try_get("attempt_epoch")?;
+    let control_version: i32 = row.try_get("control_version")?;
+    if attempt_epoch < 1 {
+        return Err(http(409, "Legacy Chat generation epoch is invalid"));
+    }
+    let selected_agent_id: Option<String> = row.try_get("selected_agent_id")?;
+    runtime_bindings::preauthorize_chat_target_read_tx(
+        &mut tx,
+        actor,
+        organization_id,
+        &request.conversation_id,
+        selected_agent_id.as_deref().unwrap_or(""),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(json!({
+        "executionAuthority": "legacy_ts",
+        "generationId": generation_id,
+        "attemptEpoch": attempt_epoch,
+        "controlVersion": control_version,
+    }))
 }

@@ -94,6 +94,7 @@ mod organization_catalog_reads;
 mod overview_reads;
 mod private_host_gate;
 mod project_reads;
+mod native_chat_startup;
 mod public_ingress;
 mod public_ingress_config;
 mod public_ingress_forwarding;

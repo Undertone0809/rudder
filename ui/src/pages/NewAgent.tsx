@@ -75,6 +75,7 @@ function createValuesForAdapterType(
     nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
     nextValues.dangerouslyBypassSandbox =
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
+    nextValues.codexProfileId = "operator-default";
   } else if (agentRuntimeType === "cursor") {
     nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
   } else if (requiresExplicitProviderModel(agentRuntimeType)) {

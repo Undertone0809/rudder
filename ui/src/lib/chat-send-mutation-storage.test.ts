@@ -2,9 +2,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  capturePendingChatSendMutationIdentity,
   preparePendingChatSendMutation,
-  recoverPendingChatSendMutation,
   readPendingChatSendMutation,
+  recoverPendingChatSendMutation,
+  settlePendingChatSendMutationIdentity,
   type ChatSendReconciliationResult,
 } from "./chat-send-mutation-storage";
 
@@ -146,6 +148,98 @@ describe("chat send mutation storage", () => {
       id: intentionalRepeat.clientMutationId,
       status: "pending",
     });
+  });
+
+  it("settles only a captured mutation ID, fingerprint, scope, and ordinal", async () => {
+    installCryptoStub();
+    const input = {
+      orgId: "org-stop-settle",
+      conversationId: "chat-stop-settle",
+      body: "The exact acknowledged input",
+      files: [],
+      inlineAnnotations: [],
+    } as const;
+    const prepared = await preparePendingChatSendMutation(input);
+    await prepared.markAccepted();
+
+    const captured = await capturePendingChatSendMutationIdentity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      body: input.body,
+    });
+    expect(captured).toEqual({
+      clientMutationId: prepared.clientMutationId,
+      fingerprint: expect.any(String),
+      ordinal: 1,
+      editUserMessageId: null,
+    });
+
+    expect(await settlePendingChatSendMutationIdentity({
+      orgId: "org-other",
+      conversationId: input.conversationId,
+      identity: captured!,
+    })).toBe(false);
+    expect(await settlePendingChatSendMutationIdentity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      identity: { ...captured!, clientMutationId: "different-id" },
+    })).toBe(false);
+    expect(readPendingChatSendMutation(input.orgId, input.conversationId)?.status).toBe("accepted");
+
+    expect(await settlePendingChatSendMutationIdentity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      identity: captured!,
+    })).toBe(true);
+    expect(readPendingChatSendMutation(input.orgId, input.conversationId)?.status).toBe("settled");
+    expect(await settlePendingChatSendMutationIdentity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      identity: captured!,
+    })).toBe(true);
+
+    const later = await preparePendingChatSendMutation(input);
+    expect(later.clientMutationId).not.toBe(captured?.clientMutationId);
+  });
+
+  it("does not capture a different body or ambiguous unresolved mutation", async () => {
+    installCryptoStub();
+    const input = {
+      orgId: "org-stop-capture",
+      conversationId: "chat-stop-capture",
+      body: "First input",
+      files: [],
+      inlineAnnotations: [],
+    } as const;
+    await preparePendingChatSendMutation(input);
+    expect(await capturePendingChatSendMutationIdentity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      body: "New composer text",
+    })).toBeNull();
+
+    const { key, document } = scopeDocumentFor(input.orgId, input.conversationId);
+    const second = {
+      id: "mutation-ambiguous",
+      fingerprint: JSON.stringify({
+        body: "Second input",
+        editUserMessageId: null,
+        files: [],
+        inlineAnnotations: [],
+        modelOverride: null,
+        effortOverride: null,
+      }),
+      ordinal: 2,
+      status: "accepted",
+    };
+    document.nextOrdinal = 3;
+    document.mutations[second.id] = second;
+    localStorage.setItem(key, JSON.stringify(document));
+    expect(await capturePendingChatSendMutationIdentity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      body: input.body,
+    })).toBeNull();
   });
 
   it("reconciles an accepted nonterminal send but only replays it after an explicit resume", async () => {

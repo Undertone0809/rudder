@@ -5,18 +5,24 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startManagedLocalServer } from "../index.js";
 import { resolveLocalRuntimePaths } from "../local-runtime.js";
+import { serverVersion } from "../version.js";
 
 describe("local runtime version takeover", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("does not terminate a version-mismatched Desktop runtime when takeover is disabled", async () => {
+  it.each([
+    { nativeRequired: false, version: "0.0.0-active-run", expected: "already running version 0.0.0-active-run" },
+    { nativeRequired: true, version: serverVersion, expected: "does not provide Rust Native Chat" },
+  ])("preserves an existing runtime rather than attaching with an incompatible contract ($nativeRequired)", async ({ nativeRequired, version, expected }) => {
+    const previousIngressMode = process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE;
+    process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE = nativeRequired ? "required" : "off";
     const previousHome = process.env.RUDDER_HOME;
     const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
     const previousLocalEnv = process.env.RUDDER_LOCAL_ENV;
     const home = await mkdtemp(path.join(tmpdir(), "rudder-runtime-version-guard."));
-    const oldVersion = "0.0.0-active-run";
+    const oldVersion = version;
     const healthServer = createServer((_request, response) => {
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({
@@ -58,11 +64,13 @@ describe("local runtime version takeover", () => {
       await expect(startManagedLocalServer({
         ownerKind: "cli",
         takeoverOnVersionMismatch: false,
-      })).rejects.toThrow(`already running version ${oldVersion}`);
+      })).rejects.toThrow(expected);
       expect(killSpy.mock.calls.some(([, signal]) => signal === "SIGTERM")).toBe(false);
     } finally {
       await new Promise<void>((resolve) => healthServer.close(() => resolve()));
       await rm(home, { recursive: true, force: true });
+      if (previousIngressMode === undefined) delete process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE;
+      else process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE = previousIngressMode;
       if (previousHome === undefined) delete process.env.RUDDER_HOME;
       else process.env.RUDDER_HOME = previousHome;
       if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;

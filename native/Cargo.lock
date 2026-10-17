@@ -2040,6 +2040,7 @@ dependencies = [
  "ring",
  "rudder-auth-core",
  "rudder-codex-app-server",
+ "rudder-hermes-acp",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",
  "rudder-runtime-core",
@@ -2055,6 +2056,20 @@ dependencies = [
  "url",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rudder-hermes-acp"
+version = "0.7.24"
+dependencies = [
+ "rudder-native-process-transport",
+ "rudder-native-protocol",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
@@ -2134,6 +2149,7 @@ dependencies = [
  "rudder-auth-core",
  "rudder-codex-app-server",
  "rudder-d1-persistence",
+ "rudder-hermes-acp",
  "rudder-runtime-core",
  "serde_json",
  "sha2",
@@ -2169,6 +2185,19 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "rudder-pi-rpc"
+version = "0.7.24"
+dependencies = [
+ "rudder-native-process-transport",
+ "rudder-native-protocol",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 

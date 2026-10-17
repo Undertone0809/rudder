@@ -1,17 +1,21 @@
-use super::{LocalHostContext, Result, fingerprint, invalid, runtime};
+use super::{LocalHostContext, Result, fingerprint, invalid, runtime, unsupported};
 use crate::agent_core::instructions;
 use serde_json::{Value, json};
 use sqlx::{Postgres, Row, Transaction};
 use std::{
-    fs,
+    fs::{self, File, OpenOptions},
+    io::{self, Read},
     path::{Path, PathBuf},
 };
 
 pub struct ManagedCodexProfile {
     /// Stable, non-path identity persisted with the RuntimeBinding.
     pub id: String,
-    /// Managed CODEX_HOME. The resolver never reads or creates this directory.
+    /// Selected CODEX_HOME. The resolver never creates or modifies it.
     pub home: PathBuf,
+    /// True only when the trusted Rust host explicitly selected the existing
+    /// per-Agent Rudder Codex home; false for isolated synthetic fixtures.
+    pub native_managed: bool,
 }
 
 pub struct RuntimeBindingIdentity {
@@ -32,13 +36,25 @@ pub struct ResolvedCodexConfig {
     pub reasoning_effort: Option<String>,
     pub plan_mode: bool,
     pub search_enabled: bool,
+    /// True only when the trusted Agent config requests the same bypass policy
+    /// already effective in the selected Codex profile.
+    pub bypass_approvals_and_sandbox: bool,
     pub profile: ManagedCodexProfile,
+    /// Trusted operator HOME used by the established local Codex auth/config
+    /// flow. The path is never accepted from a request or serialized.
+    pub operator_home: PathBuf,
+    /// Trusted child executable search path; only this host-provided value is
+    /// inherited by Codex so configured native MCP commands remain resolvable.
+    pub executable_search_path: String,
     pub instruction_source_path: Option<PathBuf>,
     /// Relative selected entry name, plus its bounded effective UTF-8 text.
     /// Instruction content is sensitive and intentionally has no `Debug` or
     /// serialization implementation on this result type.
     pub instruction_entry_file: String,
     pub instruction_content: Option<String>,
+    /// Provider-specific resolved data. The Codex public carrier remains
+    /// source-compatible; Hermes execution reads only this closed branch.
+    pub hermes: Option<super::HermesLocalConfig>,
 }
 
 /// Resolve the selected Agent and all identity-bearing runtime inputs from the
@@ -55,6 +71,11 @@ pub(crate) async fn resolve_codex_config(
         super::super::validation::canonical_uuid(organization_id, "organization id")?;
     let conversation_id =
         super::super::validation::canonical_uuid(conversation_id, "conversation id")?;
+    if host.uses_native_codex_profile() && !host.has_trusted_executable_search_path() {
+        return Err(invalid(
+            "selected native Codex profile requires trusted executable paths",
+        ));
+    }
     let row = match sqlx::query(
         "/* native_chat_config_agent_lock */
          SELECT c.status AS conversation_status, c.conversation_kind,
@@ -120,12 +141,14 @@ pub(crate) async fn resolve_codex_config(
     let model_override: Option<String> = row.try_get("model_override")?;
     let effort_override: Option<String> = row.try_get("effort_override")?;
     let plan_mode: bool = row.try_get("plan_mode")?;
-    let settings = runtime::parse_agent_config(
+    let native_managed_profile = host.uses_native_codex_profile();
+    let settings = runtime::parse_agent_config_with_profile_defaults(
         config.clone(),
         model_override,
         effort_override,
         plan_mode,
         host.operator_home(),
+        native_managed_profile,
     )?;
     if let Some(configured_command) = &settings.command {
         let canonical = configured_command
@@ -203,17 +226,49 @@ pub(crate) async fn resolve_codex_config(
     )
     .map_err(|_| invalid("Agent instruction bundle cannot be resolved safely"))?;
 
-    let profile_home = managed_profile_home(
-        host.managed_profiles_root(),
-        &organization_id,
-        &agent_id,
-        &settings.profile_id,
-    )?;
+    let (profile_home, profile_config_fingerprint) = if native_managed_profile {
+        let home = match settings.profile_id.as_str() {
+            "default" => {
+                existing_agent_codex_home(host.instance_root(), &organization_id, &agent_id)?
+            }
+            "operator-default" => host
+                .operator_codex_home()
+                .ok_or_else(|| unsupported("the existing operator Codex Profile is unavailable"))?
+                .to_path_buf(),
+            _ => {
+                return Err(unsupported(
+                    "the selected native Codex Profile is unavailable",
+                ));
+            }
+        };
+        let revision = codex_profile_config_revision(&home)?;
+        (home, Some(revision))
+    } else {
+        (
+            managed_profile_home(
+                host.managed_profiles_root(),
+                &organization_id,
+                &agent_id,
+                &settings.profile_id,
+            )?,
+            None,
+        )
+    };
     let profile_id = format!("managed-codex:{}:{}", agent_id, settings.profile_id);
     let workspace_binding_id = issue_workspace_binding(&workspace);
     let mut revision_input = settings.capability_revision_input;
     revision_input["effectiveCwd"] = json!(cwd.to_string_lossy());
     revision_input["workspaceBindingId"] = json!(workspace_binding_id);
+    revision_input["nativeManagedCodexProfile"] = json!(native_managed_profile);
+    revision_input["selectedCodexProfileConfigRevision"] = json!(profile_config_fingerprint);
+    revision_input["selectedCodexProfileLocationRevision"] = json!(fingerprint::digest(
+        profile_home.to_string_lossy().as_bytes()
+    ));
+    if native_managed_profile {
+        revision_input["nativeExecutableSearchPathRevision"] = json!(fingerprint::digest(
+            host.executable_search_path().as_bytes()
+        ));
+    }
     let capability_revision = fingerprint::json_revision(&revision_input);
 
     Ok(ResolvedCodexConfig {
@@ -232,26 +287,147 @@ pub(crate) async fn resolve_codex_config(
         reasoning_effort: settings.effort,
         plan_mode: settings.plan_mode,
         search_enabled: settings.search_enabled,
+        bypass_approvals_and_sandbox: settings.bypass_approvals_and_sandbox,
         profile: ManagedCodexProfile {
             id: profile_id,
             home: profile_home,
+            native_managed: native_managed_profile,
         },
+        operator_home: host.operator_home().to_path_buf(),
+        executable_search_path: host.executable_search_path().to_owned(),
         instruction_source_path: instructions.source_path,
         instruction_entry_file: instructions.entry_file,
         instruction_content: instructions.entry_content,
+        hermes: None,
     })
 }
 
-struct ResolvedWorkspace {
-    id: String,
-    cwd: PathBuf,
+/// Resolve the same per-Agent CODEX_HOME used by the installed Codex adapter:
+/// `<instance>/organizations/<org-storage-key>/codex-home/agents/<agent>`.
+/// UUIDs are already canonicalized by the caller, so removing hyphens and
+/// retaining the first twelve lowercase hex digits matches the shared runtime
+/// storage-key rule without accepting a path fragment from the Agent config.
+fn existing_agent_codex_home(
+    instance_root: &Path,
+    organization_id: &str,
+    agent_id: &str,
+) -> Result<PathBuf> {
+    let organization_key = organization_id
+        .bytes()
+        .filter(|byte| *byte != b'-')
+        .take(12)
+        .map(char::from)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if organization_key.len() != 12 {
+        return Err(invalid("managed Codex organization identity is invalid"));
+    }
+    let expected = instance_root
+        .join("organizations")
+        .join(organization_key)
+        .join("codex-home")
+        .join("agents")
+        .join(agent_id);
+    let metadata = fs::symlink_metadata(&expected)
+        .map_err(|_| invalid("selected managed Codex profile is unavailable"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(invalid("selected managed Codex profile is not a directory"));
+    }
+    let canonical = expected
+        .canonicalize()
+        .map_err(|_| invalid("selected managed Codex profile is unavailable"))?;
+    if canonical != expected || !canonical.starts_with(instance_root) {
+        return Err(invalid(
+            "selected managed Codex profile escaped its host root",
+        ));
+    }
+    Ok(canonical)
 }
 
-fn issue_workspace_binding(workspace: &Option<ResolvedWorkspace>) -> Option<String> {
+/// Bind the selected profile's non-secret Codex configuration bytes into the
+/// existing capability revision. Never read auth.json or return/log config
+/// values; only the digest leaves this resolver.
+fn codex_profile_config_revision(home: &Path) -> Result<String> {
+    const MAX_CONFIG_BYTES: usize = 1024 * 1024;
+    let path = home.join("config.toml");
+    let bytes = match read_codex_config_nofollow(&path, MAX_CONFIG_BYTES) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(fingerprint::digest(b"native-codex-config-absent-v1"));
+        }
+        Err(_) => {
+            return Err(invalid(
+                "selected Codex profile configuration is unavailable",
+            ));
+        }
+    };
+    Ok(fingerprint::digest(&bytes))
+}
+
+/// Read only a bounded regular config file without following a symlink or
+/// blocking on a FIFO. The content stays in this function's caller and only a
+/// one-way digest is retained by the resolver.
+fn read_codex_config_nofollow(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+    ensure_regular_config_file(&file)?;
+    let mut bytes = Vec::with_capacity(limit.saturating_add(1));
+    file.take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Codex profile config exceeds its size limit",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn ensure_regular_config_file(file: &File) -> io::Result<()> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Codex profile config is not a regular file",
+        ));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Codex profile config is a reparse point",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) struct ResolvedWorkspace {
+    pub id: String,
+    pub cwd: PathBuf,
+}
+
+pub(super) fn issue_workspace_binding(workspace: &Option<ResolvedWorkspace>) -> Option<String> {
     workspace.as_ref().map(|workspace| workspace.id.clone())
 }
 
-async fn resolve_issue_workspace(
+pub(super) async fn resolve_issue_workspace(
     tx: &mut Transaction<'_, Postgres>,
     organization_id: &str,
     issue_id: Option<&str>,
@@ -360,7 +536,7 @@ fn validate_workspace(row: sqlx::postgres::PgRow) -> Result<ResolvedWorkspace> {
     })
 }
 
-fn canonical_cwd(path: &Path) -> Result<PathBuf> {
+pub(super) fn canonical_cwd(path: &Path) -> Result<PathBuf> {
     if !path.is_absolute()
         || path
             .components()
@@ -379,7 +555,7 @@ fn canonical_cwd(path: &Path) -> Result<PathBuf> {
         .map_err(|_| invalid("resolved cwd is unavailable"))
 }
 
-fn validate_managed_cwd(path: &Path, workspace_home: &Path) -> Result<PathBuf> {
+pub(super) fn validate_managed_cwd(path: &Path, workspace_home: &Path) -> Result<PathBuf> {
     if path.starts_with(workspace_home) {
         let canonical = canonical_cwd(path)?;
         if canonical.starts_with(workspace_home) {
@@ -389,7 +565,7 @@ fn validate_managed_cwd(path: &Path, workspace_home: &Path) -> Result<PathBuf> {
     Err(invalid("managed Agent cwd escaped its trusted workspace"))
 }
 
-fn managed_profile_home(
+pub(super) fn managed_profile_home(
     root: &Path,
     organization_id: &str,
     agent_id: &str,
@@ -422,5 +598,34 @@ fn managed_profile_home(
         Ok(canonical)
     } else {
         Ok(expected)
+    }
+}
+
+#[cfg(test)]
+mod selected_codex_config_tests {
+    use super::read_codex_config_nofollow;
+    use std::fs;
+
+    #[test]
+    fn profile_config_read_is_bounded_and_regular_file_only() {
+        let root = tempfile::tempdir().expect("temporary Codex profile");
+        let config = root.path().join("config.toml");
+        fs::write(&config, b"safe profile config").expect("write fixture config");
+        assert_eq!(
+            read_codex_config_nofollow(&config, 32).expect("bounded config read"),
+            b"safe profile config"
+        );
+        assert!(read_codex_config_nofollow(&config, 8).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_config_read_does_not_follow_symlinks() {
+        let root = tempfile::tempdir().expect("temporary Codex profile");
+        let target = root.path().join("target.toml");
+        let link = root.path().join("config.toml");
+        fs::write(&target, b"safe profile config").expect("write fixture target");
+        std::os::unix::fs::symlink(&target, &link).expect("create config symlink");
+        assert!(read_codex_config_nofollow(&link, 32).is_err());
     }
 }

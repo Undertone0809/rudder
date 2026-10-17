@@ -108,7 +108,20 @@ function combineChatUsage(
   };
 }
 
-export function chatAssistantService(db: Db, storage?: StorageService) {
+export function chatAssistantService(
+  db: Db,
+  storage?: StorageService,
+  ownership: { nativeLocalChatOwner?: "rust" } = {},
+) {
+  // Installation-level compatibility boundary, never a request routing choice.
+  // Check the exact captured execution target so a concurrent Agent edit cannot
+  // turn a positively classified legacy request into Native execution in Node.
+  const nativeLocalChatOwnedByRust = ownership.nativeLocalChatOwner === "rust";
+  const isRustOwnedRuntime = (type: string) => nativeLocalChatOwnedByRust
+    && (type === "codex_local" || type === "hermes_local");
+  const assertCompatibilityRuntime = (type: string) => {
+    if (isRustOwnedRuntime(type)) throw new Error("This local chat runtime is owned by Rust Native Chat. Send through the native route.");
+  };
   const agentsSvc = agentService(db);
   const runContextSvc = agentRunContextService(db);
   const chatRunsSvc = chatAgentRunService(db);
@@ -303,6 +316,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     }
 
     const shouldPrepareRuntimeConfig = options?.prepareRuntimeConfig !== false;
+    if (shouldPrepareRuntimeConfig) assertCompatibilityRuntime(agentAdapterType);
     const preparedAgentRuntimeConfig = shouldPrepareRuntimeConfig && options?.materializeManagedInstructions
       ? await runContextSvc.materializeManagedInstructionsForRun({
         id: agent.id,
@@ -397,7 +411,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           || chatEffortFromConfig(agentRuntime.agentRuntimeType, agentRuntime.agentRuntimeConfig) !== null;
         let runtimeModelCatalog: Awaited<ReturnType<typeof discoverAgentRuntimeModels>>;
         if (
-          shouldValidateRuntimeEffort
+          !isRustOwnedRuntime(agentRuntime.agentRuntimeType)
+          && shouldValidateRuntimeEffort
           && ["codex_local", "opencode_local", "pi_local", "cursor"].includes(agentRuntime.agentRuntimeType)
         ) {
           try {
@@ -444,6 +459,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
   async function enrichConversation<T extends ChatConversation>(conversation: T): Promise<T> {
     const resolved = await resolveConversationRuntime(conversation, {
+      prepareRuntimeConfig: !nativeLocalChatOwnedByRust,
       materializeMissingRuntimeSkills: false,
     });
     let shortRef = conversation.shortRef;
@@ -465,6 +481,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     return enrichConversationRuntimeDescriptors(
       conversations,
       async (conversation) => (await resolveConversationRuntime(conversation, {
+        prepareRuntimeConfig: !nativeLocalChatOwnedByRust,
         materializeMissingRuntimeSkills: false,
       })).descriptor,
     );
@@ -1057,7 +1074,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             }
           },
         }, {
-          resolveAdapter: findServerAdapter,
+          resolveAdapter: (type) => isRustOwnedRuntime(type) ? null : findServerAdapter(type),
           createAuthToken: (agentRuntimeType) =>
             createLocalAgentJwt(
               runtimeAgentId,
@@ -1066,12 +1083,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               runId,
             ) ?? undefined,
           onAttemptStart: (_attempt, attemptAdapter) => {
+            assertCompatibilityRuntime(attemptAdapter.type);
             parser = attemptAdapter.parseStdoutLine;
           },
         });
       };
 
       const executeChatRepairAdapter = async (chatPrompt: string) => {
+        assertCompatibilityRuntime(adapter.type);
         parser = adapter.parseStdoutLine;
         const repairConfig = projectPrimaryRuntimeConfig(config, runtimeAgentType);
         return adapter.execute({
@@ -1478,6 +1497,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       const resolved = await resolveChatInvocation({
         conversation,
         contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
+        prepareExecutionContext: !nativeLocalChatOwnedByRust,
         materializeMissingRuntimeSkills: false,
       });
       return resolved.runtimeSource.descriptor.available && !resolved.availabilityError

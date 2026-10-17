@@ -527,3 +527,234 @@ describe("atomic chat draft API", () => {
     expect(form.getAll("files")).toEqual([annotationFile]);
   });
 });
+
+describe("Native Chat first-send negotiation", () => {
+  const firstSendConversation = (
+    overrides: Partial<ChatConversation> = {},
+  ): ChatConversation => ({
+    id: "00000000-0000-4000-8000-000000000001",
+    orgId: "00000000-0000-4000-8000-000000000002",
+    status: "active",
+    conversationKind: "chat",
+    messengerVisible: true,
+    sideChatState: null,
+    sideChatExpiresAt: null,
+    sideChatCompletedAt: null,
+    sideChatKeptAt: null,
+    sideChatClientMutationId: null,
+    initialClientMutationId: "stable-native-first-send",
+    mutability: "native_chat",
+    title: "A first chat",
+    summary: null,
+    latestReplyPreview: null,
+    latestUserMessagePreview: "Hello from a stable identity",
+    userMessageCount: 1,
+    preferredAgentId: "00000000-0000-4000-8000-000000000003",
+    modelOverride: null,
+    effortOverride: null,
+    routedAgentId: null,
+    primaryIssueId: null,
+    forkedFromConversationId: null,
+    forkedFromMessageId: null,
+    forkRootConversationId: null,
+    primaryIssue: null,
+    issueCreationMode: "manual_approval",
+    planMode: false,
+    createdByUserId: "00000000-0000-4000-8000-000000000006",
+    lastMessageAt: new Date("2026-10-17T00:00:00.000Z"),
+    lastReadAt: null,
+    isPinned: false,
+    isUnread: false,
+    unreadCount: 0,
+    needsAttention: false,
+    resolvedAt: null,
+    contextLinks: [],
+    sourceMetadata: null,
+    chatRuntime: {
+      sourceType: "agent",
+      sourceLabel: "Codex agent",
+      runtimeAgentId: "00000000-0000-4000-8000-000000000003",
+      agentRuntimeType: "codex_local",
+      model: "gpt-6.1-sol",
+      effort: "medium",
+      available: true,
+      error: null,
+    },
+    createdAt: new Date("2026-10-17T00:00:00.000Z"),
+    updatedAt: new Date("2026-10-17T00:00:00.000Z"),
+    ...overrides,
+  });
+
+  it("uses the closed capability contract and treats only route_not_found as a legacy server", async () => {
+    const capabilities = {
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: false,
+      nativeControls: false,
+    };
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(capabilities), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(chatsApi.getNativeChatCapabilities()).resolves.toEqual(capabilities);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/native-chat/capabilities",
+      expect.objectContaining({ credentials: "include" }),
+    );
+
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ error: "route_not_found" }),
+      { status: 404, headers: { "Content-Type": "application/json" } },
+    )));
+    await expect(chatsApi.getNativeChatCapabilities()).resolves.toBeNull();
+
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ error: "not_found" }),
+      { status: 404, headers: { "Content-Type": "application/json" } },
+    )));
+    await expect(chatsApi.getNativeChatCapabilities()).rejects.toMatchObject({ status: 404 });
+
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      ...capabilities,
+      futureFallback: true,
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    await expect(chatsApi.getNativeChatCapabilities()).rejects.toThrow("capability response was invalid");
+  });
+
+  it("sends the stored first-message identity and accepts only a safe runtime conversation acknowledgement", async () => {
+    const conversation = firstSendConversation();
+    const ack = {
+      type: "ack",
+      conversation,
+      userMessage: {
+        id: "00000000-0000-4000-8000-000000000004",
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Hello from a stable identity",
+        structuredPayload: null,
+        approvalId: null,
+        approval: null,
+        attachments: [],
+        replyingAgentId: null,
+        chatTurnId: null,
+        turnVariant: 0,
+        supersededAt: null,
+        createdAt: new Date("2026-10-17T00:00:00.000Z"),
+        updatedAt: new Date("2026-10-17T00:00:00.000Z"),
+      },
+      generationId: "00000000-0000-4000-8000-000000000005",
+    } satisfies ChatStreamEvent;
+    const wireAck = JSON.parse(JSON.stringify(ack)) as ChatStreamEvent;
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(`${JSON.stringify(wireAck)}\n`, {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onEvent = vi.fn();
+
+    await chatsApi.sendNativeFirstMessageStream(conversation.orgId, {
+      clientMutationId: "stable-native-first-send",
+      body: "Hello from a stable identity",
+      preferredAgentId: conversation.preferredAgentId,
+      title: null,
+      issueCreationMode: "manual_approval",
+      modelOverride: null,
+      effortOverride: null,
+    }, { onEvent });
+
+    expect(onEvent).toHaveBeenCalledWith(wireAck);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      body: "Hello from a stable identity",
+      clientMutationId: "stable-native-first-send",
+      preferredAgentId: conversation.preferredAgentId,
+      title: null,
+      issueCreationMode: "manual_approval",
+      modelOverride: null,
+      effortOverride: null,
+      planMode: false,
+      contextLinks: [],
+    });
+  });
+
+  it.each(["00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000009", null])("accepts exact recovery after mutable preferences change to %s", async (preferredAgentId) => {
+    const original = firstSendConversation();
+    const changed = preferredAgentId !== original.preferredAgentId;
+    const conversation = firstSendConversation({
+      preferredAgentId,
+      ...(changed ? { chatRuntime: {
+        sourceType: "agent", sourceLabel: "Agent", runtimeAgentId: preferredAgentId,
+        agentRuntimeType: null, model: null, effort: null, available: false,
+        error: "Refresh this chat to load its current Agent.",
+      } satisfies ChatRuntimeDescriptor } : {}),
+      status: "resolved",
+      summary: "Summary added after the first turn",
+      latestReplyPreview: "A later assistant response",
+      planMode: true,
+    });
+    const input = {
+      clientMutationId: "stable-native-first-send",
+      body: "Hello from a stable identity",
+      preferredAgentId: original.preferredAgentId,
+      title: null,
+      issueCreationMode: "manual_approval" as const,
+      modelOverride: null,
+      effortOverride: null,
+    };
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      outcome: "accepted",
+      clientMutationId: input.clientMutationId,
+      conversation,
+      message: {
+        id: "00000000-0000-4000-8000-000000000004",
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        role: "user",
+        body: input.body,
+      },
+      generationId: "00000000-0000-4000-8000-000000000005",
+      runId: "00000000-0000-4000-8000-000000000007",
+      attemptEpoch: 1,
+      generationSeq: 0,
+      bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      generationStatus: "completed",
+      runStatus: "succeeded",
+      runtimeTerminal: true,
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(chatsApi.reconcileNativeFirstSend(conversation.orgId, input)).resolves.toMatchObject({
+      outcome: "accepted",
+      conversation: { status: "resolved", planMode: true, summary: "Summary added after the first turn", preferredAgentId },
+    });
+  });
+
+  it("rejects an acknowledgement that leaks extra runtime projection fields", async () => {
+    const validConversation = firstSendConversation();
+    const conversation = {
+      ...validConversation,
+      chatRuntime: { ...validConversation.chatRuntime, executablePath: "/private/path" },
+    } as unknown as ChatConversation;
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(`${JSON.stringify({
+      type: "ack",
+      conversation,
+      userMessage: { id: "message-1", body: "hello" },
+    })}\n`, {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(chatsApi.sendNativeFirstMessageStream("org-1", {
+      clientMutationId: "stable-native-first-send",
+      body: "hello",
+      preferredAgentId: "agent-1",
+      title: null,
+      issueCreationMode: "manual_approval",
+      modelOverride: null,
+      effortOverride: null,
+    }, { onEvent: vi.fn() })).rejects.toThrow("safe conversation projection");
+  });
+});

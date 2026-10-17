@@ -1,9 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { createDb } from "../../packages/db/src/index.js";
 import { access, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createDb } from "../../packages/db/src/index.js";
 import { startNativeChatFixture } from "./support/native-chat-fixture";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -197,7 +196,7 @@ test("resumes the exact accepted Run after reload without replacing a newer draf
   }
 });
 
-test("resumes an active Run and then records an explicit Stop without another provider start", async ({ page }) => {
+test("resumes an active Run and then records an explicit Stop without another provider start", async ({ page }, testInfo) => {
   const fixture = await startNativeChatFixture({ ...(await fixtureOptions()), mode: "complete" });
   let passed = false;
   try {
@@ -219,10 +218,20 @@ test("resumes an active Run and then records an explicit Stop without another pr
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1]).toEqual(requests[0]);
     await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toBeVisible({ timeout: 30_000 });
+    const afterStopDraft = "Keep this unsent draft while the stopped Run settles.";
+    await composer.fill(afterStopDraft);
     await page.getByRole("button", { name: "Stop streaming", exact: true }).click();
     await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0, { timeout: 45_000 });
     await expect(page.getByText("Stopped", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+    await page.screenshot({ path: testInfo.outputPath("native-chat-stop-confirmed.png"), fullPage: true });
 
+    await expect(composer).toContainText(afterStopDraft);
+    await expect(page.getByRole("button", { name: "Resume response", exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(composer).toContainText(afterStopDraft);
+    await expect(page.getByRole("button", { name: "Resume response", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+    await page.screenshot({ path: testInfo.outputPath("native-chat-stop-after-reload-terminal.png"), fullPage: true });
     const snapshot = await databaseSnapshot(
       fixture.databaseUrl,
       fixture.orgId,

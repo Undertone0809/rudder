@@ -37,6 +37,10 @@ pub enum BrowserAuthConfigError {
 }
 
 impl BrowserAuthConfig {
+    pub(crate) fn is_local_implicit(&self) -> bool {
+        matches!(self.mode, Mode::LocalImplicit)
+    }
+
     pub fn required(
         secret: &[u8],
         secure_cookie: bool,

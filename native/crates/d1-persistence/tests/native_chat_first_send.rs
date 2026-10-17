@@ -10,7 +10,8 @@ use rudder_d1_persistence::native_chat::execution::{
     CheckpointTransition, advance_checkpoint, load_submission, validate_submission_source,
 };
 use rudder_d1_persistence::native_chat::{
-    Error, FirstSendRequest, Request, execute_first_send, lookup_submission,
+    Error, FirstSendRequest, Request, execute_first_send, lookup_first_send_submission,
+    lookup_submission,
 };
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase as Phase;
 use serde_json::{Value, json};
@@ -415,6 +416,85 @@ async fn first_send_creates_one_conversation_and_exact_retry_keeps_original_agen
         counts(&database.pool, "first-mutation-1").await,
         (1, 1, 1, 1, 1, 1)
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn first_send_recovery_survives_changed_or_removed_current_agent_preference() {
+    let database = Database::start().await;
+    prepare(&database).await;
+    let request = first_send(
+        "first-agent-changed",
+        "keep the accepted input",
+        Some(CEO),
+        None,
+        None,
+    );
+    let accepted = run(&database.pool, &actor("agent-change-initial"), &request)
+        .await
+        .expect("admit original Agent turn");
+    let chat_id = accepted["conversationId"].as_str().unwrap();
+    let replacement = "50000000-0000-4000-8000-000000000093";
+    sqlx::query(
+        "INSERT INTO agents(id,org_id,name,role,status,agent_runtime_type,agent_runtime_config)
+        VALUES($1::uuid,$2::uuid,'New preference','general','idle','codex_local','{}'::jsonb)",
+    )
+    .bind(replacement)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .expect("seed replacement with no executable config");
+    for preference in [Some(replacement), None] {
+        sqlx::query("UPDATE chat_conversations SET preferred_agent_id=$3::uuid WHERE org_id=$1::uuid AND id=$2::uuid")
+            .bind(ORG).bind(chat_id).bind(preference).execute(&database.pool).await.expect("change current preference");
+        let replay = run(&database.pool, &actor("agent-change-retry"), &request)
+            .await
+            .expect("exact retry uses original Run proof");
+        let reconciled = lookup_first_send_submission(
+            &database.pool,
+            &actor("agent-change-read"),
+            ORG,
+            &request,
+        )
+        .await
+        .expect("reconcile original admitted input")
+        .expect("accepted receipt remains available");
+        for receipt in [&replay, &reconciled] {
+            for field in [
+                "conversationId",
+                "userMessageId",
+                "generationId",
+                "runId",
+                "attemptId",
+            ] {
+                assert_eq!(receipt[field], accepted[field]);
+            }
+            let conversation = &receipt["conversation"];
+            assert_eq!(conversation["preferredAgentId"], json!(preference));
+            assert_eq!(
+                conversation["chatRuntime"]["runtimeAgentId"],
+                json!(preference)
+            );
+            assert_eq!(conversation["chatRuntime"]["available"], false);
+            assert_eq!(conversation["chatRuntime"]["agentRuntimeType"], Value::Null);
+            assert_eq!(
+                conversation["chatRuntime"]["error"],
+                "Refresh this chat to load its current Agent."
+            );
+        }
+        assert_eq!(
+            counts(&database.pool, "first-agent-changed").await,
+            (1, 1, 1, 1, 1, 1)
+        );
+        let original_agent: String = sqlx::query_scalar(
+            "SELECT agent_id::text FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+        )
+        .bind(ORG)
+        .bind(accepted["runId"].as_str().unwrap())
+        .fetch_one(&database.pool)
+        .await
+        .expect("read original Run Agent");
+        assert_eq!(original_agent, CEO);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

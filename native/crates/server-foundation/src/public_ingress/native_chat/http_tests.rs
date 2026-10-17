@@ -351,10 +351,46 @@ async fn public_control_http_uses_real_auth_and_postgres_without_provider_dispat
     .await;
     assert_eq!(turn_status, StatusCode::OK);
     let turn: serde_json::Value = serde_json::from_slice(&turn_bytes).unwrap();
+    assert_eq!(turn["executionAuthority"], "native_rust");
     assert_eq!(turn["generationId"], generation_id);
     assert_eq!(turn["generationStatus"], "starting");
     assert_eq!(turn["attemptEpoch"], 1);
     assert_eq!(turn["assistantMessage"], serde_json::Value::Null);
+    assert_eq!(turn["lastClientCheckpointSeq"], serde_json::Value::Null);
+    assert_eq!(turn["lastClientCheckpointHash"], serde_json::Value::Null);
+
+    let legacy_generation_id = "71000000-0000-4000-8000-000000000077";
+    sqlx::query(
+        "INSERT INTO chat_generations(id,org_id,conversation_id,status)
+         VALUES($1::uuid,$2::uuid,$3::uuid,'completed')",
+    )
+    .bind(legacy_generation_id)
+    .bind(fixture::ORG)
+    .bind(fixture::CHAT)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let legacy_turn_url = format!(
+        "{base}/api/chats/{}/messages/stream/turn?generationId={legacy_generation_id}",
+        fixture::CHAT
+    );
+    let (legacy_status, legacy_bytes) = request(
+        &client,
+        Method::GET,
+        legacy_turn_url,
+        Some(&cookie),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(legacy_status, StatusCode::OK);
+    let legacy_turn: serde_json::Value = serde_json::from_slice(&legacy_bytes).unwrap();
+    assert_eq!(legacy_turn["executionAuthority"], "legacy_ts");
+    assert_eq!(legacy_turn["generationId"], legacy_generation_id);
+    assert_eq!(legacy_turn["attemptEpoch"], 1);
+    assert_eq!(legacy_turn["controlVersion"], 0);
+    assert!(legacy_turn.get("sourceMessage").is_none());
+    assert!(legacy_turn.get("runId").is_none());
 
     let (events_status, events_bytes) = request(
         &client,
@@ -1161,7 +1197,7 @@ async fn public_first_send_creates_and_dispatches_one_exact_native_chat_turn() {
     );
     let foundation = Arc::new(
         crate::AppState::new(crate::ServerConfig {
-            database_url: Some(database_url),
+            database_url: Some(database_url.clone()),
             actor_envelope_key: Some(rudder_auth_core::SigningKey::new(AUTH_ENVELOPE_KEY).unwrap()),
             workers: 1,
             ..crate::ServerConfig::default()
@@ -1192,6 +1228,8 @@ async fn public_first_send_creates_and_dispatches_one_exact_native_chat_turn() {
     .unwrap()
     .with_native_chat_mutation_policy(mutation_policy)
     .with_native_chat_runtime(runtime_config);
+    let mut recovery_config = config.clone();
+    recovery_config.native_chat_runtime = None;
     let runtime = PublicIngressRuntime::bind(config, Arc::clone(&foundation)).unwrap();
     let base = format!("http://{}", runtime.bound_addr());
     let stop_server = runtime.control();
@@ -1329,7 +1367,7 @@ async fn public_first_send_creates_and_dispatches_one_exact_native_chat_turn() {
         url,
         Some(&cookie),
         Some(ALLOWED_ORIGIN),
-        Some(input),
+        Some(input.clone()),
     )
     .await;
     assert_eq!(retry_status, StatusCode::OK);
@@ -1352,6 +1390,149 @@ async fn public_first_send_creates_and_dispatches_one_exact_native_chat_turn() {
 
     stop_server.stop(true).await;
     server_task.await.unwrap().unwrap();
+    // Read-only first-send reconciliation survives disabling new dispatch and
+    // no longer consults the Agent's mutable execution configuration.
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config='{}'::jsonb WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(fixture::ORG)
+    .bind(fixture::CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    // A restart constructs a fresh SQLx pool on the new listener runtime;
+    // connections belonging to the stopped Actix worker must not be reused.
+    let recovery_foundation = Arc::new(
+        crate::AppState::new(crate::ServerConfig {
+            database_url: Some(database_url),
+            actor_envelope_key: Some(rudder_auth_core::SigningKey::new(AUTH_ENVELOPE_KEY).unwrap()),
+            workers: 1,
+            ..crate::ServerConfig::default()
+        })
+        .unwrap(),
+    );
+    let recovery = PublicIngressRuntime::bind(recovery_config, recovery_foundation).unwrap();
+    let recovery_base = format!("http://{}", recovery.bound_addr());
+    let recovery_control = recovery.control();
+    let recovery_task = actix_web::rt::spawn(recovery.run());
+    let reconcile_url = format!(
+        "{recovery_base}/api/orgs/{}/chats/messages/stream/reconcile",
+        fixture::ORG
+    );
+    let before = chat_business_counts(&database.pool, &persisted.0).await;
+    let (reconciled_status, reconciled_bytes) = request(
+        &client,
+        Method::POST,
+        reconcile_url.clone(),
+        Some(&cookie),
+        Some(ALLOWED_ORIGIN),
+        Some(input.clone()),
+    )
+    .await;
+    assert_eq!(
+        reconciled_status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&reconciled_bytes)
+    );
+    let reconciled: serde_json::Value = serde_json::from_slice(&reconciled_bytes).unwrap();
+    assert_eq!(reconciled["outcome"], "accepted");
+    assert_eq!(reconciled["conversation"]["id"], persisted.0);
+    assert_eq!(reconciled["message"]["id"], persisted.1);
+    assert_eq!(reconciled["generationId"], persisted.3);
+    assert_eq!(reconciled["runId"], persisted.4);
+    assert_eq!(
+        reconciled["conversation"]["chatRuntime"]["model"],
+        fixture::MODEL
+    );
+    // Current preferences may change while an acknowledgement is lost.
+    // Recover the original execution without claiming that its old runtime
+    // describes the newly unconfigured Conversation.
+    sqlx::query(
+        "UPDATE chat_conversations SET preferred_agent_id=NULL,plan_mode=true
+        WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(fixture::ORG)
+    .bind(&persisted.0)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let (changed_preference_status, changed_preference_bytes) = request(
+        &client,
+        Method::POST,
+        reconcile_url.clone(),
+        Some(&cookie),
+        Some(ALLOWED_ORIGIN),
+        Some(input.clone()),
+    )
+    .await;
+    assert_eq!(
+        changed_preference_status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&changed_preference_bytes)
+    );
+    let changed_preference: serde_json::Value =
+        serde_json::from_slice(&changed_preference_bytes).unwrap();
+    assert_eq!(changed_preference["runId"], persisted.4);
+    assert!(changed_preference["conversation"]["preferredAgentId"].is_null());
+    assert_eq!(changed_preference["conversation"]["planMode"], true);
+    assert_eq!(
+        changed_preference["conversation"]["chatRuntime"]["available"],
+        false
+    );
+    assert!(changed_preference["conversation"]["chatRuntime"]["agentRuntimeType"].is_null());
+    let mut changed = input.clone();
+    changed["body"] = serde_json::json!("different accepted input");
+    let (changed_status, _) = request(
+        &client,
+        Method::POST,
+        reconcile_url.clone(),
+        Some(&cookie),
+        Some(ALLOWED_ORIGIN),
+        Some(changed),
+    )
+    .await;
+    assert_eq!(changed_status, StatusCode::CONFLICT);
+    let mut missing = input.clone();
+    missing["clientMutationId"] = serde_json::json!("missing-first-send-reconcile");
+    let (missing_status, missing_bytes) = request(
+        &client,
+        Method::POST,
+        reconcile_url.clone(),
+        Some(&cookie),
+        Some(ALLOWED_ORIGIN),
+        Some(missing),
+    )
+    .await;
+    assert_eq!(missing_status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&missing_bytes).unwrap()["outcome"],
+        "not_found"
+    );
+    let (origin_status, _) = request(
+        &client,
+        Method::POST,
+        reconcile_url,
+        Some(&cookie),
+        Some("https://foreign.invalid"),
+        Some(input),
+    )
+    .await;
+    assert_eq!(origin_status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        before,
+        chat_business_counts(&database.pool, &persisted.0).await
+    );
+    assert_eq!(
+        host.events()
+            .iter()
+            .filter(|event| event["received"]["method"] == "thread/start")
+            .count(),
+        1
+    );
+    recovery_control.stop(false).await;
+    recovery_task.await.unwrap().unwrap();
     database.pool.close().await;
 }
 
@@ -1606,3 +1787,9 @@ async fn expired_claim_after_admission_ack_is_recoverable_and_exact_retry_never_
     assert_eq!(admitted_inputs, 1);
     database.pool.close().await;
 }
+
+#[path = "stop_compatibility_tests.rs"]
+mod stop_compatibility_tests;
+
+#[path = "send_compatibility_tests.rs"]
+mod send_compatibility_tests;

@@ -4,6 +4,7 @@
 
 use super::{IdentityInput, Result, Tx, http};
 use crate::native_chat::NativeChatActor;
+use rudder_runtime_core::native_chat::HermesSessionSelector;
 use sqlx::Row;
 
 pub(crate) struct EnsuredNativeChatBinding {
@@ -92,12 +93,17 @@ async fn locked_segment(
     if continuity != "native" {
         return Err(http(409, "Native Chat requires native binding continuity"));
     }
-    let valid = match (state.as_str(), native_session_id.as_deref()) {
-        ("pending", None) => true,
-        ("open", Some(id)) => !id.trim().is_empty() && id.len() <= 4096,
+    let valid = match (
+        runtime_type.as_str(),
+        state.as_str(),
+        native_session_id.as_deref(),
+    ) {
+        (_, "pending", None) => true,
+        ("codex_local", "open", Some(id)) => !id.trim().is_empty() && id.len() <= 4096,
+        ("hermes_local", "open", Some(id)) => HermesSessionSelector::from_persisted(id).is_ok(),
         _ => false,
     };
-    if !valid || sealed || runtime_type != "codex_local" {
+    if !valid || sealed || !matches!(runtime_type.as_str(), "codex_local" | "hermes_local") {
         return Err(http(409, "Native Chat segment cannot admit new input"));
     }
     Ok(EnsuredNativeChatBinding {

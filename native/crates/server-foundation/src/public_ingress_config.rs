@@ -429,13 +429,14 @@ impl PublicIngressConfig {
                         config.browser_auth = browser_auth;
                         config
                     })
-                    .map(Some)
                     .map_err(|error| {
                         crate::ConfigError::invalid(
                             "RUDDER_NATIVE_PUBLIC_INGRESS",
                             &error.to_string(),
                         )
                     })
+                    .and_then(crate::native_chat_startup::configure)
+                    .map(Some)
             }
             _ => Err(crate::ConfigError::invalid(
                 "RUDDER_NATIVE_PUBLIC_INGRESS",

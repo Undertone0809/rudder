@@ -3,6 +3,7 @@ import { claudeLocalUIAdapter } from "./claude-local";
 import { codexLocalUIAdapter } from "./codex-local";
 import { cursorLocalUIAdapter } from "./cursor";
 import { hermesGatewayUIAdapter } from "./hermes-gateway";
+import { hermesLocalUIAdapter } from "./hermes-local";
 import { httpUIAdapter } from "./http";
 import { openClawGatewayUIAdapter } from "./openclaw-gateway";
 import { openCodeLocalUIAdapter } from "./opencode-local";
@@ -18,6 +19,7 @@ const uiAdapters: UIAgentRuntimeModule[] = [
   cursorLocalUIAdapter,
   openClawGatewayUIAdapter,
   hermesGatewayUIAdapter,
+  hermesLocalUIAdapter,
   processUIAdapter,
   httpUIAdapter,
 ];

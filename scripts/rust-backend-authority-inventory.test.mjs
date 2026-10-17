@@ -7,13 +7,21 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   buildInventory,
-  compareInventories,
+  compareInventoriesWithLegacyFenceSourcePolicyForTests,
   compareInventoriesWithTransportPolicyForTests,
+  compareInventories as compareProductionInventories,
   scanSource,
   sha256,
   TRUSTED_TRANSPORT_ADMISSIONS,
 } from "./rust-backend-authority-inventory.mjs";
 
+
+// Fixed canonical caller fixture, never derived from the mutated candidate.
+function compareInventories(base, head, before, after) {
+  return compareInventoriesWithLegacyFenceSourcePolicyForTests(base, head, before, after, {
+    [queueGuardCallerPath]: sha256(queueGuardCallerHead),
+  });
+}
 
 function temporaryTree(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-authority-inventory-test-"));
@@ -69,6 +77,547 @@ function retainedClientRecord(sourcePath, baseHash, headHash, overrides = {}) {
     ...overrides,
   };
 }
+
+function surfaceRef(inventory, sourcePath, type, method) {
+  const surface = inventory.structural_surfaces.find((entry) => entry.source === sourcePath
+    && entry.type === type && entry.method === method);
+  assert(surface, `missing ${type}/${method} surface in ${sourcePath}`);
+  return { type: surface.type, signature: surface.signature, line: surface.line };
+}
+
+function legacyFenceRecord(t, { sourcePath, baseSource, headSource, changeKind, overrides = {} }) {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  put(baseRoot, sourcePath, baseSource);
+  put(headRoot, sourcePath, headSource);
+  const base = buildInventory(baseRoot);
+  const head = buildInventory(headRoot);
+  const record = {
+    id: `${changeKind}:${sourcePath.replaceAll("/", ".")}`,
+    path: sourcePath,
+    base_sha256: base.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+    head_sha256: head.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+    change_kind: changeKind,
+    semantic_operation: "chat_queue.claim",
+    ...(changeKind === "existing_operation_mapping" ? {} : {
+      transaction_mapping_id: `existing-operation:${sourcePath.replaceAll("/", ".")}`,
+    }),
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "This exact Node callsite is a temporary ordering fence; Rust owns admission and durable authority.",
+    retirement_criterion: "Delete after Node queue workers and direct mutations are removed from production.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed exact legacy fence callsite",
+    review_status: "reviewed",
+  };
+  if (changeKind === "target_advisory_lock") {
+    record.head_surfaces = [
+      surfaceRef(head, sourcePath, "database_call_candidate", "execute"),
+      surfaceRef(head, sourcePath, "database_write_candidate", "execute"),
+    ];
+    record.base_protected_surface = surfaceRef(base, sourcePath, "database_write_candidate", "insert");
+    record.head_protected_surface = surfaceRef(head, sourcePath, "database_write_candidate", "insert");
+  }
+  Object.assign(record, overrides);
+  return { baseRoot, headRoot, base, head, record };
+}
+
+function compareLegacyFenceFixture(fixture, record = fixture.record, { includeOperationMapping = true } = {}) {
+  const records = Array.isArray(record) ? [...record] : [record];
+  const transactionKey = (surface) => surface.type === "database_call_candidate" && surface.method === "transaction";
+  const oldTransactions = fixture.base.structural_surfaces.filter((surface) => surface.source === fixture.record.path && transactionKey(surface));
+  const newTransactions = fixture.head.structural_surfaces.filter((surface) => surface.source === fixture.record.path && transactionKey(surface));
+  const oldSignatures = new Set(oldTransactions.map((surface) => surface.signature));
+  const newSignatures = new Set(newTransactions.map((surface) => surface.signature));
+  const removed = oldTransactions.filter((surface) => !newSignatures.has(surface.signature));
+  const added = newTransactions.filter((surface) => !oldSignatures.has(surface.signature));
+  if (includeOperationMapping && removed.length === 1 && added.length === 1) {
+    records.push({
+      id: `existing-operation:${fixture.record.path.replaceAll("/", ".")}`,
+      path: fixture.record.path,
+      base_sha256: fixture.record.base_sha256,
+      head_sha256: fixture.record.head_sha256,
+      change_kind: "existing_operation_mapping",
+      semantic_operation: "chat_queue.claim",
+      base_surface: { type: removed[0].type, signature: removed[0].signature, line: removed[0].line },
+      head_surface: { type: added[0].type, signature: added[0].signature, line: added[0].line },
+      base_protected_surface: surfaceRef(fixture.base, fixture.record.path, "database_write_candidate", "insert"),
+      head_protected_surface: surfaceRef(fixture.head, fixture.record.path, "database_write_candidate", "insert"),
+      rust_authority: "native::native_chat::admission",
+      compatibility_boundary: "The callback remains the same existing queue claim operation; the exact body change is separately reviewed.",
+      retirement_criterion: "Delete after the Node queue claim is removed from production.",
+      reviewer: "maintainer@example.test",
+      review_reference: "Reviewed exact transaction callback mapping",
+      review_status: "reviewed",
+    });
+  }
+  const nodeRecords = [...new Map(records.map((entry) => [entry.path, boundaryRecord(entry.path, entry.base_sha256, entry.head_sha256)])).values()];
+  const head = buildInventory(fixture.headRoot, nodeRecords, undefined, records);
+  return compareInventories(fixture.base, head, contentsFor(fixture.baseRoot, fixture.base), contentsFor(fixture.headRoot, head));
+}
+
+const queueGuardHelperPath = "server/src/services/organization-mutation-fence.ts";
+const queueGuardCallerPath = "server/src/services/chat-queue.ts";
+const queueGuardHelperBase = `export async function lockNodeMutationAuthority(tx, organizationId) {
+  await tx.execute(sql\`select owner from organization_mutation_state where org_id = ${"${organizationId}"}::uuid for update\`);
+}
+`;
+const trustedQueueGuardBody = [
+  "{",
+  "  const hintResult = await tx.execute(sql`",
+  "    SELECT c.org_id::text AS org_id, c.id::text AS id",
+  "    FROM chat_conversations c",
+  "    WHERE c.org_id = ${organizationId}::uuid",
+  "      AND c.id = ${conversationId}::uuid",
+  "  `) as { rows?: LegacyChatTargetHint[] } | LegacyChatTargetHint[];",
+  "  const hint = Array.isArray(hintResult) ? hintResult[0] : hintResult.rows?.[0];",
+  "  if (!hint) return \"missing\";",
+  "",
+  "  // Use UUID values read back from PostgreSQL. This matches Rust's canonical",
+  "  // UUID string when callers supplied uppercase but equivalent UUID text.",
+  "  const targetKey = `runtime-binding:target:chat_conversation:${hint.org_id}:${hint.id}`;",
+  "  await tx.execute(sql`",
+  "    SELECT pg_advisory_xact_lock(hashtextextended(${targetKey}, 0))",
+  "  `);",
+  "",
+  "  const result = await tx.execute(sql`",
+  "    SELECT c.id::text AS id,",
+  "      EXISTS (",
+  "        SELECT 1",
+  "        FROM chat_generations native_generation",
+  "        WHERE native_generation.org_id = c.org_id",
+  "          AND native_generation.conversation_id = c.id",
+  "          AND native_generation.execution_authority = 'native_rust'",
+  "      ) AS native_owned",
+  "    FROM chat_conversations c",
+  "    WHERE c.org_id = ${organizationId}::uuid",
+  "      AND c.id = ${conversationId}::uuid",
+  "    FOR SHARE OF c",
+  "  `) as { rows?: LegacyChatTargetRow[] } | LegacyChatTargetRow[];",
+  "  const row = Array.isArray(result) ? result[0] : result.rows?.[0];",
+  "  if (!row) return \"missing\";",
+  "  return row.native_owned ? \"native_owned\" : \"available\";",
+  "}",
+].join("\n");
+const queueGuardHelperHead = `${queueGuardHelperBase}
+export async function lockLegacyNativeChatQueueTarget(tx: TransactionClient, organizationId: string, conversationId: string): Promise<"available" | "native_owned" | "missing"> ${trustedQueueGuardBody}
+`;
+const queueGuardCallerBase = `import { lockLegacyNativeChatQueueTarget } from "./organization-mutation-fence.js";
+export async function enqueue(db, input) {
+  await db.transaction(async (tx) => {
+    await tx.insert(chatMessages).values({ conversationId: input.conversationId, body: input.body });
+  });
+}
+`;
+const queueGuardCallerHead = `import { lockLegacyNativeChatQueueTarget } from "./organization-mutation-fence.js";
+export async function enqueue(db, input) {
+  await db.transaction(async (tx) => {
+    const targetAuthority = await lockLegacyNativeChatQueueTarget(tx, input.orgId, input.conversationId);
+    if (targetAuthority === "missing") throw notFound("Chat conversation not found");
+    if (targetAuthority === "native_owned") { throw conflict("Native Chat owns this target"); }
+    await tx.insert(chatMessages).values({ conversationId: input.conversationId, body: input.body });
+  });
+}
+`;
+
+function queueGuardRecords(baseRoot, headRoot, helperHeadSource = queueGuardHelperHead, callerHeadSource = queueGuardCallerHead) {
+  const base = buildInventory(baseRoot);
+  const headWithoutRecords = buildInventory(headRoot);
+  const helperStartLine = helperHeadSource.slice(0, helperHeadSource.indexOf("export async function lockLegacyNativeChatQueueTarget")).split("\n").length;
+  const helperHead = headWithoutRecords.structural_surfaces.filter((surface) => surface.source === queueGuardHelperPath
+    && ["database_call_candidate", "database_write_candidate"].includes(surface.type)
+    && surface.method === "execute" && surface.line >= helperStartLine);
+  const helperRecord = {
+    id: "native-chat-queue-guard:helper",
+    path: queueGuardHelperPath,
+    base_sha256: base.source_manifest.find((entry) => entry.path === queueGuardHelperPath).sha256,
+    head_sha256: headWithoutRecords.source_manifest.find((entry) => entry.path === queueGuardHelperPath).sha256,
+    change_kind: "native_chat_queue_guard_helper",
+    helper_name: "lockLegacyNativeChatQueueTarget",
+    semantic_operation: "chat.queue.mutation-fence",
+    head_surfaces: helperHead.map((surface) => ({ type: surface.type, signature: surface.signature, line: surface.line })),
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "This exact Node helper serializes the existing queue writers with Rust admission and checks the Native owner under the same transaction.",
+    retirement_criterion: "Delete after legacy Node chat queue mutation paths and workers are retired.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed exact queue helper and caller source hashes",
+    review_status: "reviewed",
+  };
+  const baseCaller = base.structural_surfaces.filter((surface) => surface.source === queueGuardCallerPath);
+  const headCaller = headWithoutRecords.structural_surfaces.filter((surface) => surface.source === queueGuardCallerPath);
+  const oldTransaction = baseCaller.find((surface) => surface.type === "database_call_candidate" && surface.method === "transaction");
+  const newTransaction = headCaller.find((surface) => surface.type === "database_call_candidate" && surface.method === "transaction");
+  const oldWriter = baseCaller.find((surface) => surface.type === "database_write_candidate" && surface.method === "insert");
+  const newWriter = headCaller.find((surface) => surface.type === "database_write_candidate" && surface.method === "insert");
+  const mapping = {
+    id: "native-chat-queue-guard:operation",
+    path: queueGuardCallerPath,
+    base_sha256: base.source_manifest.find((entry) => entry.path === queueGuardCallerPath).sha256,
+    head_sha256: headWithoutRecords.source_manifest.find((entry) => entry.path === queueGuardCallerPath).sha256,
+    change_kind: "existing_operation_mapping",
+    semantic_operation: "chat.queue.mutation-fence",
+    base_surface: { type: oldTransaction.type, signature: oldTransaction.signature, line: oldTransaction.line },
+    head_surface: { type: newTransaction.type, signature: newTransaction.signature, line: newTransaction.line },
+    base_protected_surface: { type: oldWriter.type, signature: oldWriter.signature, line: oldWriter.line },
+    head_protected_surface: { type: newWriter.type, signature: newWriter.signature, line: newWriter.line },
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "The existing queue insert remains the same operation inside its existing transaction.",
+    retirement_criterion: "Delete after legacy Node chat queue mutation paths and workers are retired.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed exact queue helper and caller source hashes",
+    review_status: "reviewed",
+  };
+  const callStart = callerHeadSource.indexOf("await lockLegacyNativeChatQueueTarget(");
+  const helperNameStart = callStart + "await ".length;
+  const line = callerHeadSource.slice(0, callStart).split("\n").length;
+  const callClose = callerHeadSource.indexOf(");", callStart) + 1;
+  const callsite = callerHeadSource.slice(helperNameStart, callClose).replace(/\s+/g, " ").trim();
+  const callsiteRecord = {
+    id: "native-chat-queue-guard:caller",
+    path: queueGuardCallerPath,
+    base_sha256: base.source_manifest.find((entry) => entry.path === queueGuardCallerPath).sha256,
+    head_sha256: headWithoutRecords.source_manifest.find((entry) => entry.path === queueGuardCallerPath).sha256,
+    change_kind: "native_chat_queue_guard_callsite",
+    semantic_operation: "chat.queue.mutation-fence",
+    transaction_mapping_id: mapping.id,
+    guard_helper_id: helperRecord.id,
+    head_guard_callsite: { type: "guard_callsite", signature: callsite, line },
+    base_protected_surface: mapping.base_protected_surface,
+    head_protected_surface: mapping.head_protected_surface,
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "This exact callsite acquires the queue fence before the unchanged message insert.",
+    retirement_criterion: "Delete after legacy Node chat queue mutation paths and workers are retired.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed exact queue helper and caller source hashes",
+    review_status: "reviewed",
+  };
+  return { base, headWithoutRecords, records: [helperRecord, mapping, callsiteRecord] };
+}
+
+function compareQueueGuardFixture(t, { helperHeadSource = queueGuardHelperHead, callerHeadSource = queueGuardCallerHead } = {}) {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  put(baseRoot, queueGuardHelperPath, queueGuardHelperBase);
+  put(headRoot, queueGuardHelperPath, helperHeadSource);
+  put(baseRoot, queueGuardCallerPath, queueGuardCallerBase);
+  put(headRoot, queueGuardCallerPath, callerHeadSource);
+  const { base, records } = queueGuardRecords(baseRoot, headRoot, helperHeadSource, callerHeadSource);
+  const nodeRecords = [
+    boundaryRecord(queueGuardHelperPath, sha256(queueGuardHelperBase), sha256(helperHeadSource)),
+    boundaryRecord(queueGuardCallerPath, sha256(queueGuardCallerBase), sha256(callerHeadSource)),
+  ];
+  const head = buildInventory(headRoot, nodeRecords, undefined, records);
+  return { baseRoot, headRoot, base, head, records,
+    result: compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head)) };
+}
+
+const chatAuthorityHelperPath = "server/src/services/chats.ts";
+const chatAuthorityHelperBase = `export function chatService() { return null; }
+`;
+const trustedChatHelperBodies = {
+  assertLegacyChatConversationAuthority: [
+    "{",
+    "    const authority = await lockLegacyNativeChatQueueTarget(tx, orgId, conversationId);",
+    "    if (authority === \"missing\") throw notFound(\"Chat conversation not found\");",
+    "    if (authority === \"native_owned\") {",
+    "      throw conflict(\"This chat is controlled by the Rust Native Chat runtime\");",
+    "    }",
+    "  }",
+  ].join("\n"),
+  assertLegacyChatGenerationAuthority: [
+    "{",
+    "    const hint = await tx",
+    "      .select({ orgId: chatGenerations.orgId, conversationId: chatGenerations.conversationId })",
+    "      .from(chatGenerations)",
+    "      .where(and(",
+    "        eq(chatGenerations.orgId, orgId),",
+    "        eq(chatGenerations.id, generationId),",
+    "      ))",
+    "      .limit(1)",
+    "      .then((rows: Array<{ orgId: string; conversationId: string }>) => rows[0] ?? null);",
+    "    if (hint) await assertLegacyChatConversationAuthority(tx, hint.orgId, hint.conversationId);",
+    "    return hint;",
+    "  }",
+  ].join("\n"),
+  assertLegacyQueuedMessageAuthority: [
+    "{",
+    "    const hint = await tx",
+    "      .select({ orgId: chatQueuedMessages.orgId, conversationId: chatQueuedMessages.conversationId })",
+    "      .from(chatQueuedMessages)",
+    "      .where(and(",
+    "        eq(chatQueuedMessages.id, itemId),",
+    "        expected?.orgId ? eq(chatQueuedMessages.orgId, expected.orgId) : undefined,",
+    "        expected?.conversationId ? eq(chatQueuedMessages.conversationId, expected.conversationId) : undefined,",
+    "      ))",
+    "      .limit(1)",
+    "      .then((rows: Array<{ orgId: string; conversationId: string }>) => rows[0] ?? null);",
+    "    if (hint) await assertLegacyChatConversationAuthority(tx, hint.orgId, hint.conversationId);",
+    "    return hint;",
+    "  }",
+  ].join("\n"),
+  assertLegacyChatConversationIdAuthority: [
+    "{",
+    "    const hint = await tx",
+    "      .select({ orgId: chatConversations.orgId })",
+    "      .from(chatConversations)",
+    "      .where(eq(chatConversations.id, conversationId))",
+    "      .limit(1)",
+    "      .then((rows: Array<{ orgId: string }>) => rows[0] ?? null);",
+    "    if (!hint) throw notFound(\"Chat conversation not found\");",
+    "    await assertLegacyChatConversationAuthority(tx, hint.orgId, conversationId);",
+    "    return hint;",
+    "  }",
+  ].join("\n"),
+};
+const chatAuthorityHelperHead = `import { lockLegacyNativeChatQueueTarget } from "./organization-mutation-fence.js";
+export function chatService() {
+  async function assertLegacyChatConversationAuthority(tx: any, orgId: string, conversationId: string) ${trustedChatHelperBodies.assertLegacyChatConversationAuthority}
+  async function assertLegacyChatGenerationAuthority(tx: any, orgId: string, generationId: string) ${trustedChatHelperBodies.assertLegacyChatGenerationAuthority}
+  async function assertLegacyQueuedMessageAuthority(tx: any, itemId: string, expected?: { orgId?: string; conversationId?: string }) ${trustedChatHelperBodies.assertLegacyQueuedMessageAuthority}
+  async function assertLegacyChatConversationIdAuthority(tx: any, conversationId: string) ${trustedChatHelperBodies.assertLegacyChatConversationIdAuthority}
+  return null;
+}
+`;
+
+function chatAuthorityHelperFixture(t, headSource = chatAuthorityHelperHead) {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  put(baseRoot, queueGuardHelperPath, queueGuardHelperBase);
+  put(headRoot, queueGuardHelperPath, queueGuardHelperHead);
+  put(baseRoot, chatAuthorityHelperPath, chatAuthorityHelperBase);
+  put(headRoot, chatAuthorityHelperPath, headSource);
+  const base = buildInventory(baseRoot);
+  const headWithoutRecords = buildInventory(headRoot);
+  const queueBaseHash = base.source_manifest.find((entry) => entry.path === queueGuardHelperPath).sha256;
+  const queueHeadHash = headWithoutRecords.source_manifest.find((entry) => entry.path === queueGuardHelperPath).sha256;
+  const helperStartLine = queueGuardHelperHead.slice(0, queueGuardHelperHead.indexOf("export async function lockLegacyNativeChatQueueTarget")).split("\n").length;
+  const rawHelperSurfaces = headWithoutRecords.structural_surfaces.filter((surface) => surface.source === queueGuardHelperPath
+    && ["database_call_candidate", "database_write_candidate"].includes(surface.type)
+    && surface.method === "execute" && surface.line >= helperStartLine)
+    .map((surface) => ({ type: surface.type, signature: surface.signature, line: surface.line }));
+  const queueHelper = {
+    id: "native-chat-authority-helper:raw",
+    path: queueGuardHelperPath,
+    base_sha256: queueBaseHash,
+    head_sha256: queueHeadHash,
+    change_kind: "native_chat_queue_guard_helper",
+    helper_name: "lockLegacyNativeChatQueueTarget",
+    semantic_operation: "chat.queue.mutation-fence",
+    head_surfaces: rawHelperSurfaces,
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "This exact raw helper serializes legacy queue operations with Rust admission.",
+    retirement_criterion: "Remove after legacy Node chat mutation paths are retired.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed exact helper source hashes",
+    review_status: "reviewed",
+  };
+  const chatsBaseHash = base.source_manifest.find((entry) => entry.path === chatAuthorityHelperPath).sha256;
+  const chatsHeadHash = headWithoutRecords.source_manifest.find((entry) => entry.path === chatAuthorityHelperPath).sha256;
+  const selectForHelper = (table, helperName) => {
+    const start = chatAuthorityHelperHead.indexOf(`async function ${helperName}(`);
+    assert.notEqual(start, -1, `${helperName} must exist in the fixture`);
+    const followingHelper = chatAuthorityHelperHead.indexOf("  async function ", start + 1);
+    const end = followingHelper < 0 ? chatAuthorityHelperHead.indexOf("  return null;", start) : followingHelper;
+    const startLine = chatAuthorityHelperHead.slice(0, start).split("\n").length;
+    const endLine = chatAuthorityHelperHead.slice(0, end).split("\n").length;
+    const matches = headWithoutRecords.structural_surfaces.filter((surface) => surface.source === chatAuthorityHelperPath
+      && surface.type === "database_call_candidate" && surface.method === "select"
+      && surface.signature.includes(table) && surface.line >= startLine && surface.line < endLine);
+    return matches.map((surface) => ({ type: surface.type, signature: surface.signature, line: surface.line }));
+  };
+  const conversationHelper = {
+    id: "native-chat-authority-helper:conversation",
+    path: chatAuthorityHelperPath,
+    base_sha256: chatsBaseHash,
+    head_sha256: chatsHeadHash,
+    change_kind: "native_chat_conversation_authority_helper",
+    semantic_operation: "chat.queue.mutation-fence",
+    helper_name: "assertLegacyChatConversationAuthority",
+    head_surfaces: [],
+    queue_helper_id: queueHelper.id,
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "This helper delegates the exact scoped target decision to the reviewed queue fence.",
+    retirement_criterion: "Remove after legacy Node chat mutation paths are retired.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed exact helper source hashes",
+    review_status: "reviewed",
+  };
+  const generationHelper = {
+    id: "native-chat-authority-helper:generation",
+    path: chatAuthorityHelperPath,
+    base_sha256: chatsBaseHash,
+    head_sha256: chatsHeadHash,
+    change_kind: "native_chat_generation_hint_helper",
+    semantic_operation: "chat.queue.mutation-fence",
+    helper_name: "assertLegacyChatGenerationAuthority",
+    head_surfaces: selectForHelper("chatGenerations", "assertLegacyChatGenerationAuthority"),
+    conversation_helper_id: conversationHelper.id,
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "This exact org-scoped hint resolves a generation to its conversation before the reviewed conversation fence.",
+    retirement_criterion: "Remove after legacy Node chat mutation paths are retired.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed exact helper source hashes",
+    review_status: "reviewed",
+  };
+  const queuedMessageHelper = {
+    id: "native-chat-authority-helper:queued-message",
+    path: chatAuthorityHelperPath,
+    base_sha256: chatsBaseHash,
+    head_sha256: chatsHeadHash,
+    change_kind: "native_chat_queued_message_hint_helper",
+    semantic_operation: "chat.queue.mutation-fence",
+    helper_name: "assertLegacyQueuedMessageAuthority",
+    head_surfaces: selectForHelper("chatQueuedMessages", "assertLegacyQueuedMessageAuthority"),
+    conversation_helper_id: conversationHelper.id,
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "This item hint scopes the exact queue row before the reviewed conversation fence.",
+    retirement_criterion: "Remove after legacy Node chat mutation paths are retired.",
+  };
+  const conversationIdHelper = {
+    id: "native-chat-authority-helper:conversation-id",
+    path: chatAuthorityHelperPath,
+    base_sha256: chatsBaseHash,
+    head_sha256: chatsHeadHash,
+    change_kind: "native_chat_conversation_id_hint_helper",
+    semantic_operation: "chat.queue.mutation-fence",
+    helper_name: "assertLegacyChatConversationIdAuthority",
+    head_surfaces: selectForHelper("chatConversations", "assertLegacyChatConversationIdAuthority"),
+    conversation_helper_id: conversationHelper.id,
+    rust_authority: "native::native_chat::admission",
+    compatibility_boundary: "This conversation-id hint resolves the organization before the reviewed conversation fence.",
+    retirement_criterion: "Remove after legacy Node chat mutation paths are retired.",
+  };
+  const nodeRecords = [
+    boundaryRecord(queueGuardHelperPath, queueBaseHash, queueHeadHash),
+    boundaryRecord(chatAuthorityHelperPath, chatsBaseHash, chatsHeadHash),
+  ];
+  const records = [queueHelper, conversationHelper, generationHelper, queuedMessageHelper, conversationIdHelper];
+  const head = buildInventory(headRoot, nodeRecords, undefined, records);
+  return { baseRoot, headRoot, base, head, records,
+    result: compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head)) };
+}
+
+function compareChatAuthorityHelperFixture(fixture) {
+  return compareInventories(
+    fixture.base,
+    fixture.head,
+    contentsFor(fixture.baseRoot, fixture.base),
+    contentsFor(fixture.headRoot, fixture.head),
+  );
+}
+
+test("legacy Native Chat helper chain pins the exact scoped hint and reviewed target fence", (t) => {
+  const fixture = chatAuthorityHelperFixture(t);
+  assert.deepEqual(fixture.result.failures, []);
+
+  const unscoped = chatAuthorityHelperHead.replace(
+    `      .where(and(
+        eq(chatGenerations.orgId, orgId),
+        eq(chatGenerations.id, generationId),
+      ))`,
+    `      .where(eq(chatGenerations.id, generationId))`,
+  );
+  assert.notEqual(unscoped, chatAuthorityHelperHead);
+  const unscopedResult = chatAuthorityHelperFixture(t, unscoped).result;
+  assert(unscopedResult.failures.some((failure) => failure.includes("statically trusted exact-source digest")));
+
+  const broadened = chatAuthorityHelperHead.replace(
+    `      .where(and(
+        eq(chatGenerations.orgId, orgId),
+        eq(chatGenerations.id, generationId),
+      ))`,
+    `      .where(or(
+        eq(chatGenerations.orgId, orgId),
+        eq(chatGenerations.id, generationId),
+      ))`,
+  );
+  assert.notEqual(broadened, chatAuthorityHelperHead);
+  const broadenedResult = chatAuthorityHelperFixture(t, broadened).result;
+  assert(broadenedResult.failures.some((failure) => failure.includes("statically trusted exact-source digest")));
+
+  const extraRead = chatAuthorityHelperHead.replace(
+    "    if (hint) await assertLegacyChatConversationAuthority(tx, hint.orgId, hint.conversationId);",
+    `    await tx.select({ id: chatGenerations.id }).from(chatGenerations).where(and(
+      eq(chatGenerations.orgId, orgId), eq(chatGenerations.conversationId, conversationId),
+    ));
+    if (hint) await assertLegacyChatConversationAuthority(tx, hint.orgId, hint.conversationId);`,
+  );
+  assert.notEqual(extraRead, chatAuthorityHelperHead);
+  const extraReadResult = chatAuthorityHelperFixture(t, extraRead).result;
+  assert(extraReadResult.failures.some((failure) => failure.includes("unmatched")));
+
+  const wrongLink = chatAuthorityHelperFixture(t);
+  const generationRecord = wrongLink.head.reviewed_legacy_fence_changes.find((record) =>
+    record.change_kind === "native_chat_generation_hint_helper");
+  generationRecord.conversation_helper_id = "unreviewed-helper";
+  const wrongLinkResult = compareChatAuthorityHelperFixture(wrongLink);
+  assert(wrongLinkResult.failures.some((failure) => failure.includes("exact conversation authority helper record")));
+
+  const wrongRawLink = chatAuthorityHelperFixture(t);
+  const conversationRecord = wrongRawLink.head.reviewed_legacy_fence_changes.find((record) =>
+    record.change_kind === "native_chat_conversation_authority_helper");
+  conversationRecord.queue_helper_id = "unreviewed-raw-fence";
+  const wrongRawLinkResult = compareChatAuthorityHelperFixture(wrongRawLink);
+  assert(wrongRawLinkResult.failures.some((failure) => failure.includes("exact raw queue fence record")));
+
+  const broadQueuedHint = chatAuthorityHelperHead.replace(
+    "expected?.orgId ? eq(chatQueuedMessages.orgId, expected.orgId) : undefined,",
+    "undefined,",
+  );
+  const broadQueuedResult = chatAuthorityHelperFixture(t, broadQueuedHint).result;
+  assert(broadQueuedResult.failures.some((failure) => failure.includes("statically trusted exact-source digest")));
+
+  const unscopedConversationId = chatAuthorityHelperHead.replace(
+    ".where(eq(chatConversations.id, conversationId))",
+    ".where(or(eq(chatConversations.id, conversationId), eq(chatConversations.orgId, orgId)))",
+  );
+  const unscopedConversationResult = chatAuthorityHelperFixture(t, unscopedConversationId).result;
+  assert(unscopedConversationResult.failures.some((failure) => failure.includes("statically trusted exact-source digest")));
+});
+
+test("trusted helper semantics come from checker-pinned digests, not record review metadata", (t) => {
+  const fixture = chatAuthorityHelperFixture(t);
+  const records = structuredClone(fixture.head.reviewed_legacy_fence_changes);
+  const metadataFree = structuredClone(records);
+  for (const entry of metadataFree) {
+    delete entry.reviewer;
+    delete entry.review_reference;
+    delete entry.review_status;
+  }
+  const metadataFreeHead = buildInventory(fixture.headRoot, fixture.head.reviewed_node_changes, undefined, metadataFree);
+  assert.deepEqual(compareInventories(
+    fixture.base, metadataFreeHead,
+    contentsFor(fixture.baseRoot, fixture.base), contentsFor(fixture.headRoot, metadataFreeHead),
+  ).failures, []);
+
+  const rawRecord = records.find((entry) => entry.change_kind === "native_chat_queue_guard_helper");
+  rawRecord.reviewer = "unverified text";
+  rawRecord.review_reference = "not an authenticated receipt";
+  rawRecord.review_status = "reviewed";
+  rawRecord.helper_body_sha256 = sha256("attacker supplied value");
+  const unsupported = buildInventory(fixture.headRoot, fixture.head.reviewed_node_changes, undefined, records);
+  assert(compareInventories(
+    fixture.base, unsupported, contentsFor(fixture.baseRoot, fixture.base), contentsFor(fixture.headRoot, unsupported),
+  ).failures.some((failure) => failure.includes("unsupported record field helper_body_sha256")));
+
+  delete rawRecord.helper_body_sha256;
+  const attackerBody = queueGuardHelperHead.replace(
+    "return row.native_owned ? \"native_owned\" : \"available\";",
+    "return \"available\";",
+  );
+  put(fixture.headRoot, queueGuardHelperPath, attackerBody);
+  rawRecord.head_sha256 = sha256(attackerBody);
+  const nodeRecords = structuredClone(fixture.head.reviewed_node_changes).map((entry) => entry.path === queueGuardHelperPath
+    ? { ...entry, head_sha256: sha256(attackerBody) }
+    : entry);
+  const mutatedInventory = buildInventory(fixture.headRoot, nodeRecords, undefined, records);
+  const result = compareInventories(
+    fixture.base,
+    mutatedInventory,
+    contentsFor(fixture.baseRoot, fixture.base),
+    contentsFor(fixture.headRoot, mutatedInventory),
+  );
+  assert(result.failures.some((failure) => failure.includes("statically trusted exact-source digest")));
+});
 
 const SESSION_ADMISSION_ID = "rust-native-session-proof-v1";
 const IDENTITY_ADMISSION_ID = "rust-native-identity-proof-v1";
@@ -209,25 +758,6 @@ function identityAdmissionReviewRecord(policy, appSource, overrides = {}) {
     review_reference: "Reviewed identity transport admission policy test fixture",
     review_status: "reviewed",
     ...overrides,
-  };
-}
-
-function compatibilityAdmissionReviewRecord(policy, source) {
-  return {
-    id: policy.id,
-    mount_source_path: policy.source_path,
-    mount_source_sha256: sha256(source),
-    mount_receiver: policy.receiver,
-    mount_expression: policy.mount_expression,
-    mount_guard: policy.mount_guard,
-    order_after: policy.order_after,
-    order_before: policy.order_before,
-    rust_proof_owner: policy.rust_proof_owner,
-    compatibility_boundary: "Node retains only the compatibility route projection; Rust owns the admitted AgentCore public paths and business authority.",
-    retirement_criterion: "Remove the adapter when Rust owns these AgentCore paths in every deployment mode.",
-    reviewer: "maintainer@example.test",
-    review_reference: "Reviewed native AgentCore compatibility adapter fixture",
-    review_status: "reviewed",
   };
 }
 
@@ -598,12 +1128,7 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
   const sessionPolicy = TRUSTED_TRANSPORT_ADMISSIONS[SESSION_ADMISSION_ID];
   assert.equal(sessionPolicy.factory_sha256, "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5");
   assert.equal(sessionPolicy.mount_expression, "nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })");
-  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [
-    IDENTITY_ADMISSION_ID,
-    SESSION_ADMISSION_ID,
-    "rust-native-agent-core-handler-v1",
-    "rust-native-agent-core-router-v1",
-  ].sort());
+  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [IDENTITY_ADMISSION_ID, SESSION_ADMISSION_ID].sort());
 
   const baseRoot = temporaryTree(t);
   const headRoot = temporaryTree(t);
@@ -789,12 +1314,17 @@ test("inventory regeneration preserves optional transport-admission review recor
   put(root, "server/src/main.ts", "export const main = true;\n");
   const inventoryPath = path.join(root, "authority.json");
   const reviewedRecord = [{ id: SESSION_ADMISSION_ID, reviewer: "reviewer@example.test" }];
-  fs.writeFileSync(inventoryPath, `${JSON.stringify({ reviewed_transport_admissions: reviewedRecord })}\n`);
+  const fenceRecord = [{ id: "queue.read-fence", path: "server/src/services/queue.ts", reviewer: "reviewer@example.test" }];
+  fs.writeFileSync(inventoryPath, `${JSON.stringify({
+    reviewed_transport_admissions: reviewedRecord,
+    reviewed_legacy_fence_changes: fenceRecord,
+  })}\n`);
   const checker = fileURLToPath(new URL("./rust-backend-authority-inventory.mjs", import.meta.url));
 
   const generated = spawnSync(process.execPath, [checker, "generate", "--root", root, "--inventory", inventoryPath], { encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
   assert.deepEqual(JSON.parse(fs.readFileSync(inventoryPath, "utf8")).reviewed_transport_admissions, reviewedRecord);
+  assert.deepEqual(JSON.parse(fs.readFileSync(inventoryPath, "utf8")).reviewed_legacy_fence_changes, fenceRecord);
 
   const checked = spawnSync(process.execPath, [checker, "check", "--root", root, "--inventory", inventoryPath], { encoding: "utf8" });
   assert.equal(checked.status, 0, checked.stderr);
@@ -923,97 +1453,46 @@ test("identity admission only replaces the existing actor mount and keeps its de
   assert(noProof.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden") && failure.includes("actorMiddleware")));
 });
 
-test("AgentCore compatibility mounts require exact reviewed Rust ownership", (t) => {
-  const baseRoot = temporaryTree(t);
-  const headRoot = temporaryTree(t);
-  const routerPath = "server/src/bootstrap/register-api-routes.ts";
-  const handlerPath = "server/src/routes/agents.ts";
-  const routerPolicy = TRUSTED_TRANSPORT_ADMISSIONS["rust-native-agent-core-router-v1"];
-  const handlerPolicy = TRUSTED_TRANSPORT_ADMISSIONS["rust-native-agent-core-handler-v1"];
-  const baseRouter = "const api = Router();\napi.use(organizationSkillRoutes(db));\napi.use(agentRoutes(db, opts.storageService, rustFoundationBridge));\napi.use(managedMcpAgentBindingRoutes(db));\n";
-  const headRouter = `const api = Router();\napi.use(organizationSkillRoutes(db));\napi.use(${routerPolicy.mount_expression});\napi.use(managedMcpAgentBindingRoutes(db));\n`;
-  const baseHandler = "const router = Router();\nrouter.use(agentCoreRoutes(rustFoundationBridge, resolveBrowserCapabilityDeployment(db)));\nconst svc = agentService(db);\n";
-  const headHandler = `const router = Router();\nrouter.use(${handlerPolicy.mount_expression});\nconst svc = agentService(db);\n`;
-  put(baseRoot, routerPath, baseRouter);
-  put(baseRoot, handlerPath, baseHandler);
-  put(headRoot, routerPath, headRouter);
-  put(headRoot, handlerPath, headHandler);
-  const base = buildInventory(baseRoot);
-  const dormant = compareInventories(base, base, contentsFor(baseRoot, base), contentsFor(baseRoot, base));
-  assert.deepEqual(dormant.failures, []);
-  assert.deepEqual(dormant.allowed_transport_admissions, []);
 
-  const head = buildInventory(headRoot, [
-    boundaryRecord(routerPath, sha256(baseRouter), sha256(headRouter)),
-    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
-  ], [
-    compatibilityAdmissionReviewRecord(routerPolicy, headRouter),
-    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
-  ]);
-  const allowed = compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
-  assert.deepEqual(allowed.failures, []);
-  assert.equal(allowed.allowed_transport_admissions.length, 2);
+test("trusted helper calls reject parameter, destructuring, catch, and alias shadowing", (t) => {
+  const helper = "lockLegacyNativeChatQueueTarget";
+  const mutations = [
+    queueGuardCallerHead.replace("enqueue(db, input)", `enqueue(db, input, ${helper} = async () => "available")`),
+    queueGuardCallerHead.replace("enqueue(db, input)", `enqueue(db, input, { ${helper} })`),
+    queueGuardCallerHead.replace("enqueue(db, input)", `enqueue(db, input, { guard: ${helper} })`),
+    queueGuardCallerHead.replace("  await db.transaction", `  const alias = ${helper};\n  await db.transaction`),
+    queueGuardCallerHead.replace("  await db.transaction", `  try { throw async () => "available"; } catch (${helper}) {\n  await db.transaction`).replace("  });\n}", "  });\n  }\n}"),
+  ];
+  for (const callerHeadSource of mutations) {
+    const fixture = compareQueueGuardFixture(t, { callerHeadSource });
+    assert(fixture.result.failures.length > 0, "only the pinned binding may be called");
+  }
+});
 
-  const wrongGuard = `const api = Router();\napi.use(organizationSkillRoutes(db));\napi.use(agentRoutes( db, opts.storageService, rustFoundationBridge, true ));\napi.use(managedMcpAgentBindingRoutes(db));\n`;
-  const wrongGuardRoot = temporaryTree(t);
-  put(wrongGuardRoot, routerPath, wrongGuard);
-  put(wrongGuardRoot, handlerPath, headHandler);
-  const wrongGuardHead = buildInventory(wrongGuardRoot, [
-    boundaryRecord(routerPath, sha256(baseRouter), sha256(wrongGuard)),
-    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
-  ], [
-    compatibilityAdmissionReviewRecord(routerPolicy, wrongGuard),
-    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
-  ]);
-  const wrongGuardResult = compareInventories(base, wrongGuardHead, contentsFor(baseRoot, base), contentsFor(wrongGuardRoot, wrongGuardHead));
-  assert(wrongGuardResult.failures.some((failure) => failure.includes("stale reviewed_transport_admissions record: rust-native-agent-core-router-v1") || failure.includes("new Node authority surface is forbidden")));
 
-  const wrongOrder = `const api = Router();\napi.use(${routerPolicy.mount_expression});\napi.use(organizationSkillRoutes(db));\napi.use(managedMcpAgentBindingRoutes(db));\n`;
-  const wrongOrderRoot = temporaryTree(t);
-  put(wrongOrderRoot, routerPath, wrongOrder);
-  put(wrongOrderRoot, handlerPath, headHandler);
-  const wrongOrderHead = buildInventory(wrongOrderRoot, [
-    boundaryRecord(routerPath, sha256(baseRouter), sha256(wrongOrder)),
-    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
-  ], [
-    compatibilityAdmissionReviewRecord(routerPolicy, wrongOrder),
-    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
-  ]);
-  const wrongOrderResult = compareInventories(base, wrongOrderHead, contentsFor(baseRoot, base), contentsFor(wrongOrderRoot, wrongOrderHead));
-  assert(wrongOrderResult.failures.some((failure) => failure.includes("rust-native-agent-core-router-v1") && failure.includes("order-after")));
+test("pinned helper chains reject dependency shadowing outside the fixed body", (t) => {
+  for (const helper of ["lockLegacyNativeChatQueueTarget", "assertLegacyChatConversationAuthority"]) {
+    const head = helper === "lockLegacyNativeChatQueueTarget"
+      ? chatAuthorityHelperHead.replace("chatService()", `chatService(${helper}: any)`)
+      : chatAuthorityHelperHead.replace("  return null;", `  async function legacyWriter(${helper} = async () => {}) { await ${helper}(null, null, null); }\n  return null;`);
+    const fixture = chatAuthorityHelperFixture(t, head);
+    assert(fixture.result.failures.some((failure) => failure.includes("shadowing binding")));
+  }
+});
 
-  const commentOnly = `const api = Router();\n// api.use(organizationSkillRoutes(db));\napi.use(${routerPolicy.mount_expression});\n// api.use(managedMcpAgentBindingRoutes(db));\n`;
-  const commentOnlyRoot = temporaryTree(t);
-  put(commentOnlyRoot, routerPath, commentOnly);
-  put(commentOnlyRoot, handlerPath, headHandler);
-  const commentOnlyHead = buildInventory(commentOnlyRoot, [
-    boundaryRecord(routerPath, sha256(baseRouter), sha256(commentOnly)),
-    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
-  ], [
-    compatibilityAdmissionReviewRecord(routerPolicy, commentOnly),
-    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
-  ]);
-  const commentOnlyResult = compareInventories(base, commentOnlyHead, contentsFor(baseRoot, base), contentsFor(commentOnlyRoot, commentOnlyHead));
-  assert(commentOnlyResult.failures.some((failure) => failure.includes("rust-native-agent-core-router-v1") && failure.includes("missing its order-after anchor")));
 
-  const nonCallAnchors = `const api = Router();\nconst before = organizationSkillRoutes(db);\napi.use(${routerPolicy.mount_expression});\nconst after = managedMcpAgentBindingRoutes(db);\n`;
-  const nonCallRoot = temporaryTree(t);
-  put(nonCallRoot, routerPath, nonCallAnchors);
-  put(nonCallRoot, handlerPath, headHandler);
-  const nonCallHead = buildInventory(nonCallRoot, [
-    boundaryRecord(routerPath, sha256(baseRouter), sha256(nonCallAnchors)),
-    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
-  ], [
-    compatibilityAdmissionReviewRecord(routerPolicy, nonCallAnchors),
-    compatibilityAdmissionReviewRecord(handlerPolicy, headHandler),
-  ]);
-  const nonCallResult = compareInventories(base, nonCallHead, contentsFor(baseRoot, base), contentsFor(nonCallRoot, nonCallHead));
-  assert(nonCallResult.failures.some((failure) => failure.includes("rust-native-agent-core-router-v1") && failure.includes("missing its order-after anchor")));
-
-  const missing = buildInventory(headRoot, [
-    boundaryRecord(routerPath, sha256(baseRouter), sha256(headRouter)),
-    boundaryRecord(handlerPath, sha256(baseHandler), sha256(headHandler)),
-  ], [compatibilityAdmissionReviewRecord(routerPolicy, headRouter)]);
-  const blocked = compareInventories(base, missing, contentsFor(baseRoot, base), contentsFor(headRoot, missing));
-  assert(blocked.failures.some((failure) => failure.includes("rust-native-agent-core-handler-v1: missing reviewed_transport_admissions record")));
+test("guard targets stay bound to the fixed reviewed caller, independently for org and conversation", (t) => {
+  for (const callerHeadSource of [
+    queueGuardCallerHead.replace("tx, input.orgId, input.conversationId", "tx, otherOrgId, input.conversationId"),
+    queueGuardCallerHead.replace("tx, input.orgId, input.conversationId", "tx, input.orgId, otherConversationId"),
+    queueGuardCallerHead.replace("conversationId: input.conversationId", "conversationId: otherConversationId"),
+  ]) {
+    const fixture = compareQueueGuardFixture(t, { callerHeadSource });
+    assert(fixture.result.failures.some((failure) => failure.includes("guard-to-writer target contract")));
+  }
+  const fixture = compareQueueGuardFixture(t);
+  const result = compareProductionInventories(fixture.base, fixture.head,
+    contentsFor(fixture.baseRoot, fixture.base), contentsFor(fixture.headRoot, fixture.head));
+  assert(result.failures.some((failure) => failure.includes("guard-to-writer target contract")),
+    "inventory records cannot self-admit a caller missing from the production policy table");
 });

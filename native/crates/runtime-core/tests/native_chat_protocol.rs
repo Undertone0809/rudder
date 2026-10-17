@@ -1,6 +1,7 @@
 use rudder_runtime_core::native_chat::{
     MAX_NATIVE_CHAT_PROVIDER_ID_BYTES, NativeChatProtocolCheckpoint as Checkpoint,
-    NativeChatProtocolPhase as Phase, NativeChatProtocolStart as Start,
+    NativeChatProtocolPhase as Phase, NativeChatProtocolStart as Start, NativeChatProvider,
+    PiSessionSelector,
 };
 
 fn restored(state: &Checkpoint) -> Checkpoint {
@@ -172,4 +173,98 @@ fn phase_graph_allows_only_forward_edges_and_execution_authority_terminal_edges(
             assert_eq!(from.permits_transition(*to), expected, "{from:?} -> {to:?}");
         }
     }
+}
+
+fn pi_selector(leaf_id: Option<&str>) -> PiSessionSelector {
+    PiSessionSelector {
+        session_id: "71a7e431-289c-4cd8-987e-2bf46c517c30".into(),
+        session_file: "/managed/pi/sessions/chat.jsonl".into(),
+        leaf_id: leaf_id.map(str::to_owned),
+    }
+}
+
+#[test]
+fn pi_checkpoint_tracks_exact_session_tree_without_codex_identity() {
+    let fresh = Checkpoint::new_pi_fresh_session().unwrap();
+    assert_eq!(fresh.provider(), NativeChatProvider::PiLocal);
+    assert!(fresh.pi_session().is_none());
+    assert!(fresh.prepare_input(0).is_err());
+
+    let starting = restored(&fresh.prepare_thread_start(0).unwrap());
+    assert!(starting.record_pi_session(0, pi_selector(Some("a1b2c3d4"))).is_err());
+    let known = restored(
+        &starting
+            .record_pi_session(1, pi_selector(Some("a1b2c3d4")))
+            .unwrap(),
+    );
+    assert_eq!(known.phase(), Phase::ThreadKnown);
+    assert_eq!(known.thread_id(), None);
+    assert_eq!(known.turn_id(), None);
+    assert_eq!(known.pi_session().unwrap().session_id, pi_selector(None).session_id);
+    assert_eq!(known.pi_session().unwrap().leaf_id.as_deref(), Some("a1b2c3d4"));
+
+    let pending = known
+        .prepare_input(2)
+        .unwrap()
+        .mark_input_indeterminate(3)
+        .unwrap();
+    assert!(pending.prepare_input(4).is_err());
+    let turn = restored(
+        &pending
+            .record_pi_turn_entry(4, "71a7e431-289c-4cd8-987e-2bf46c517c30", "a1b2c3d5".into())
+            .unwrap(),
+    );
+    assert_eq!(turn.phase(), Phase::TurnKnown);
+    assert_eq!(turn.thread_id(), None);
+    assert_eq!(turn.turn_id(), None);
+    assert_eq!(turn.pi_turn_entry_id(), Some("a1b2c3d5"));
+    assert!(turn
+        .record_pi_turn_entry(5, "another-session", "a1b2c3d6".into())
+        .is_err());
+
+    let terminal = restored(
+        &turn
+            .record_pi_provider_terminal(
+                5,
+                "71a7e431-289c-4cd8-987e-2bf46c517c30",
+                "a1b2c3d5",
+                "a1b2c3d6".into(),
+            )
+            .unwrap(),
+    );
+    assert_eq!(terminal.phase(), Phase::ProviderTerminalObserved);
+    assert_eq!(terminal.pi_session().unwrap().leaf_id.as_deref(), Some("a1b2c3d6"));
+    assert_eq!(terminal.pi_turn_entry_id(), Some("a1b2c3d5"));
+}
+
+#[test]
+fn pi_resume_starts_from_exact_persisted_leaf_and_malformed_selectors_fail_closed() {
+    let resumed = Checkpoint::new_pi_existing_session(pi_selector(Some("cafef00d"))).unwrap();
+    assert_eq!(resumed.phase(), Phase::ThreadKnown);
+    assert_eq!(resumed.revision(), 0);
+    assert!(resumed.prepare_thread_start(0).is_err());
+    assert_eq!(restored(&resumed).pi_session().unwrap().leaf_id.as_deref(), Some("cafef00d"));
+    assert!(Checkpoint::new_pi_existing_session(pi_selector(None)).is_err());
+
+    for bad_leaf in ["", "not-hex!", "1234567", "123456789"] {
+        assert!(PiSessionSelector {
+            leaf_id: Some(bad_leaf.into()),
+            ..pi_selector(None)
+        }
+        .validate()
+        .is_err());
+    }
+
+    let mut wrong_provider = serde_json::to_value(&resumed).unwrap();
+    wrong_provider["provider"] = serde_json::to_value(NativeChatProvider::CodexLocal).unwrap();
+    assert!(serde_json::from_value::<Checkpoint>(wrong_provider)
+        .unwrap()
+        .validate()
+        .is_err());
+    let mut wrong_phase = serde_json::to_value(&resumed).unwrap();
+    wrong_phase["phase"] = serde_json::to_value(Phase::TurnKnown).unwrap();
+    assert!(serde_json::from_value::<Checkpoint>(wrong_phase)
+        .unwrap()
+        .validate()
+        .is_err());
 }

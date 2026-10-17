@@ -21,6 +21,7 @@ pub mod control;
 pub mod execution;
 mod first_send;
 mod locks;
+mod send_authority;
 mod validation;
 
 pub(crate) use actor::BrowserCredentialKind;
@@ -28,6 +29,7 @@ pub use actor::{
     BrowserCredentialBinding, BrowserPrincipal, BrowserPrincipalError, NativeChatActor,
     NativeChatExecutionActor, NativeChatExecutionPrincipal,
 };
+pub use send_authority::{SendAuthority, classify_existing_send, classify_first_send};
 
 type Result<T> = std::result::Result<T, Error>;
 

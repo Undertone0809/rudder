@@ -20,10 +20,17 @@ struct FixtureConfig {
     node_upstream: String,
     listen_addr: SocketAddr,
     process_host: PathBuf,
+    runtime_type: Option<String>,
 }
 
 impl FixtureConfig {
     fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if !matches!(
+            self.runtime_type.as_deref(),
+            None | Some("codex_local") | Some("hermes_local")
+        ) {
+            return Err("unsupported synthetic runtime".into());
+        }
         let root = self.fixture_root.canonicalize()?;
         let temporary = std::env::temp_dir().canonicalize()?;
         if root != self.fixture_root
@@ -82,7 +89,12 @@ impl FixtureConfig {
         let interpreter = PathBuf::from(interpreter);
         if !interpreter.is_absolute()
             || !interpreter.canonicalize()?.is_file()
-            || body != include_bytes!("../../native-chat-executor/tests/fixtures/fake_codex.py")
+            || body
+                != if self.runtime_type.as_deref() == Some("hermes_local") {
+                    &include_bytes!("../../../../tests/e2e/fixtures/fake-hermes.py")[..]
+                } else {
+                    &include_bytes!("../../native-chat-executor/tests/fixtures/fake_codex.py")[..]
+                }
         {
             return Err("provider must match the compiled synthetic Codex fixture".into());
         }
@@ -127,6 +139,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.join("operator-home"),
         root.join("bin/provider"),
     )?;
+    let host = if config.runtime_type.as_deref() == Some("hermes_local") {
+        host.with_executable_search_path("/usr/bin:/bin".into())?
+            .with_hermes_runtime(
+                root.join("bin/provider"),
+                root.join("operator-home/hermes-profile"),
+            )?
+    } else {
+        host
+    };
     let paths = HostPaths {
         process_host: config.process_host.canonicalize()?,
         runtime_root: root.join("runtime-root").canonicalize()?,

@@ -112,6 +112,7 @@ export function registerApiRoutes(
     chatBackgroundRuntime,
     opts.registerNetworkWaitingRunHandler,
     rustFoundationBridge,
+    opts.rustPublicIngress?.nativeChatHost ? "rust" : undefined,
   ));
   api.use(automationRoutes(db, rustFoundationBridge));
   api.use(calendarRoutes(db, rustFoundationBridge));

@@ -1,11 +1,15 @@
 //! Narrow continuation of an already-owned execution after durable Stop intent.
 //! It can observe late responses and dispatch one interrupt, never submit input.
-use super::{CheckpointReceipt, CheckpointTransition, ExecutionFence, LeaseReceipt, Result, http};
+use super::{
+    CheckpointReceipt, CheckpointTransition, ExecutionFence, LeaseReceipt, Result,
+    checkpoint::StoppingObservation, http,
+};
 use crate::native_chat::{NativeChatExecutionActor, auth, control::pin};
 use rudder_codex_app_server::{
     CleanupReceipt, ConnectionReceipt, EffectResponseReceipt, OwnedTransport, RequestId,
     TransportError, TurnReceipt,
 };
+use rudder_hermes_acp::{HermesCleanupReceipt, HermesTurnReceipt};
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -273,16 +277,9 @@ pub(super) async fn record_checkpoint(
     stop: &StopIntent,
     previous: &rudder_runtime_core::native_chat::NativeChatProtocolCheckpoint,
     next: &rudder_runtime_core::native_chat::NativeChatProtocolCheckpoint,
-    observation: &EffectResponseReceipt,
+    observation: &StoppingObservation<'_>,
 ) -> Result<()> {
-    let identity = fence.identity();
-    if !observation.matches_connection_claim(
-        identity.run_id,
-        identity.attempt_id,
-        fence.run_execution_owner_token(),
-        identity.connection_epoch,
-        &fence.connection_claim_id,
-    ) {
+    if !observation.matches_claim(fence) {
         return Err(http(409, "Stop response belongs to another connection"));
     }
     let current =
@@ -361,7 +358,68 @@ pub async fn advance_stopping_checkpoint(
         phase,
         revision,
         transition,
-        Some((stop, observation)),
+        Some((stop, StoppingObservation::Codex(observation))),
+    )
+    .await
+}
+
+/// Persist a late Hermes `session/new` receipt under an already requested
+/// Stop. This records the exact ACP session selector without creating any
+/// Codex Thread locator or permitting input submission.
+pub async fn advance_stopping_hermes_session(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    stop: &StopIntent,
+    phase: NativeChatProtocolPhase,
+    revision: u64,
+    observation: &rudder_hermes_acp::HermesSessionStartReceipt,
+) -> Result<CheckpointReceipt> {
+    if !StoppingObservation::HermesSession(observation).matches_claim(fence) {
+        return Err(http(
+            409,
+            "Hermes Stop response belongs to another execution",
+        ));
+    }
+    super::checkpoint::advance(
+        pool,
+        actor,
+        fence,
+        phase,
+        revision,
+        CheckpointTransition::RecordHermesSession {
+            session_id: observation.session().as_str().to_owned(),
+        },
+        Some((stop, StoppingObservation::HermesSession(observation))),
+    )
+    .await
+}
+
+/// Persist a late Hermes prompt receipt under an already requested Stop. The
+/// next checkpoint is `TurnKnown`; Stop finalization owns the terminal write.
+pub async fn advance_stopping_hermes_turn(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    stop: &StopIntent,
+    phase: NativeChatProtocolPhase,
+    revision: u64,
+    observation: &HermesTurnReceipt,
+) -> Result<CheckpointReceipt> {
+    if !StoppingObservation::HermesTurn(observation).matches_claim(fence) {
+        return Err(http(
+            409,
+            "Hermes Stop response belongs to another execution",
+        ));
+    }
+    super::checkpoint::advance(
+        pool,
+        actor,
+        fence,
+        phase,
+        revision,
+        CheckpointTransition::RecordHermesTurn,
+        Some((stop, StoppingObservation::HermesTurn(observation))),
     )
     .await
 }
@@ -651,6 +709,69 @@ pub(super) async fn resolve_action_pre_submission(
     Ok(())
 }
 
+pub(super) async fn resolve_action_hermes_pre_submission(
+    tx: &mut auth::Tx<'_>,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    stop: &StopIntent,
+    cleanup: &HermesCleanupReceipt,
+    result: &Value,
+) -> Result<()> {
+    if !fence.matches_hermes_cleanup_receipt(cleanup) {
+        return Err(http(
+            409,
+            "Stop cleanup receipt belongs to another execution",
+        ));
+    }
+    let mut evidence: Value = sqlx::query_scalar(
+        "SELECT provider_evidence FROM chat_control_actions WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&fence.organization_id)
+    .bind(&stop.action_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let interrupt_disposition: String = sqlx::query_scalar(
+        "SELECT provider_disposition FROM chat_control_actions WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&fence.organization_id)
+    .bind(&stop.action_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if interrupt_disposition != "not_sent" || evidence.get("interruptConnectionProof").is_some() {
+        return Err(http(
+            409,
+            "Stop interrupt evidence conflicts with no-input finalization",
+        ));
+    }
+    let connection = pin::digest(
+        "stop_connection_v1",
+        &json!(cleanup.connection_receipt_id()),
+    );
+    if evidence["stoppingConnectionProof"].as_str() != Some(connection.as_str())
+        || evidence["stoppingConnectionEpoch"].as_i64()
+            != Some(i64::from(fence.identity().connection_epoch))
+        || evidence.get("stoppingObservations").is_some_and(|value| {
+            value.as_array().is_none_or(|chain| {
+                chain.iter().any(|entry| {
+                    entry["phase"] != "thread_known"
+                        || entry["connectionProof"].as_str() != Some(connection.as_str())
+                })
+            })
+        })
+    {
+        return Err(http(409, "Stop response connection conflicts with cleanup"));
+    }
+    evidence["stopResolution"] = json!({
+        "result":result,
+        "inputDisposition":"not_submitted",
+        "connectionProof":connection,
+    });
+    sqlx::query("UPDATE chat_control_actions SET local_disposition='stopped',resolved_at=clock_timestamp(),updated_at=clock_timestamp(),provider_evidence=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(&fence.organization_id).bind(&stop.action_id).bind(evidence).execute(&mut **tx).await?;
+    auth::authorize_execution_org(tx, actor, fence).await?;
+    Ok(())
+}
+
 pub(super) async fn resolve_action(
     tx: &mut auth::Tx<'_>,
     actor: &impl NativeChatExecutionActor,
@@ -690,6 +811,71 @@ pub(super) async fn resolve_action(
         return Err(http(409, "Stop late response connection changed"));
     }
     evidence["stopResolution"] = json!({"result":result,"actualProviderStatus":format!("{:?}",turn.status()),"connectionProof":connection});
+    sqlx::query("UPDATE chat_control_actions SET local_disposition='stopped',resolved_at=clock_timestamp(),updated_at=clock_timestamp(),provider_evidence=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(&fence.organization_id).bind(&stop.action_id).bind(evidence).execute(&mut **tx).await?;
+    auth::authorize_execution_org(tx, actor, fence).await?;
+    Ok(())
+}
+
+pub(super) async fn resolve_action_hermes(
+    tx: &mut auth::Tx<'_>,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    stop: &StopIntent,
+    turn: &HermesTurnReceipt,
+    cleanup: &HermesCleanupReceipt,
+    result: &Value,
+) -> Result<()> {
+    if !fence.matches_hermes_cleanup_receipt(cleanup)
+        || !turn.matches_connection_claim(
+            &fence.run_id,
+            &fence.attempt_id,
+            fence.run_execution_owner_token(),
+            fence.identity().connection_epoch,
+            &fence.connection_claim_id,
+        )
+        || !cleanup.proves_quiescence_for(turn)
+    {
+        return Err(http(
+            409,
+            "Hermes Stop receipt belongs to another execution",
+        ));
+    }
+    let mut evidence: Value = sqlx::query_scalar(
+        "SELECT provider_evidence FROM chat_control_actions WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&fence.organization_id)
+    .bind(&stop.action_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let connection = pin::digest(
+        "stop_connection_v1",
+        &json!(cleanup.connection_receipt_id()),
+    );
+    if evidence
+        .get("interruptConnectionProof")
+        .is_some_and(|value| value.as_str() != Some(connection.as_str()))
+        || evidence
+            .get("stoppingObservations")
+            .and_then(Value::as_array)
+            .is_some_and(|chain| {
+                chain
+                    .iter()
+                    .any(|entry| entry["connectionProof"].as_str() != Some(connection.as_str()))
+            })
+    {
+        return Err(http(409, "Hermes Stop cleanup connection changed"));
+    }
+    evidence["stopResolution"] = json!({
+        "result":result,
+        "actualProviderStatus":match turn.stop_reason() {
+            rudder_hermes_acp::HermesStopReason::EndTurn => "end_turn",
+            rudder_hermes_acp::HermesStopReason::Cancelled => "cancelled",
+            rudder_hermes_acp::HermesStopReason::Refusal => "refusal",
+            rudder_hermes_acp::HermesStopReason::ApprovalRequired => "approval_required",
+        },
+        "connectionProof":connection,
+    });
     sqlx::query("UPDATE chat_control_actions SET local_disposition='stopped',resolved_at=clock_timestamp(),updated_at=clock_timestamp(),provider_evidence=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(&fence.organization_id).bind(&stop.action_id).bind(evidence).execute(&mut **tx).await?;
     auth::authorize_execution_org(tx, actor, fence).await?;

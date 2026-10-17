@@ -27,6 +27,18 @@ pub(super) fn reserved_path(path: &str) -> bool {
             && part(&parts, 5, "stream"))
 }
 
+/// Keep capability negotiation out of the Node compatibility proxy even when
+/// Native Chat is disabled. An exact `route_not_found` is the only signal that
+/// lets an older ingress select its legacy first-send path.
+pub(super) fn capability_path(path: &str) -> bool {
+    let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
+    let parts: Vec<_> = decoded.split('/').filter(|part| !part.is_empty()).collect();
+    parts.len() == 3
+        && part(&parts, 0, "api")
+        && part(&parts, 1, "native-chat")
+        && part(&parts, 2, "capabilities")
+}
+
 fn part(parts: &[&str], index: usize, expected: &str) -> bool {
     parts
         .get(index)

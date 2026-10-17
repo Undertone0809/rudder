@@ -23,8 +23,8 @@ pub use event::{
 };
 pub use identity::NativeChatTurnIdentity;
 pub use protocol::{
-    MAX_NATIVE_CHAT_PROVIDER_ID_BYTES, NativeChatProtocolCheckpoint, NativeChatProtocolPhase,
-    NativeChatProtocolStart,
+    HermesSessionSelector, MAX_NATIVE_CHAT_PROVIDER_ID_BYTES, NativeChatProtocolCheckpoint,
+    NativeChatProtocolPhase, NativeChatProtocolStart, NativeChatProvider, PiSessionSelector,
 };
 pub use reducer::NativeChatTurnReducer;
 

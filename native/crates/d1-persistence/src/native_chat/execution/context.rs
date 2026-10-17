@@ -1,7 +1,9 @@
 use super::{ExecutionFence, Result, http};
 use crate::native_chat::NativeChatExecutionActor;
 use crate::runtime_bindings;
-use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
+use rudder_runtime_core::native_chat::{
+    NativeChatProtocolCheckpoint, NativeChatProtocolPhase, NativeChatProvider,
+};
 use serde_json::Value;
 use sqlx::{Postgres, Row, Transaction};
 
@@ -157,7 +159,7 @@ async fn lock_execution(
         } else {
             !matches!(control_state.as_str(), "unregistered" | "ready")
         }
-        || control_runtime_type.as_deref() != Some("codex_local")
+        || control_runtime_type.as_deref() != Some(fence.runtime_type())
         || control_owner.as_deref() != Some(fence.generation_owner_token.as_str())
         || runtime_terminal
     {
@@ -256,7 +258,7 @@ async fn lock_execution(
     let attempt_turn: Option<String> = attempt.try_get("provider_turn_id")?;
     let attempt_model: Option<String> = attempt.try_get("model")?;
     if attempt_agent_id != id.agent_id
-        || attempt_runtime != "codex_local"
+        || attempt_runtime != fence.runtime_type()
         || !matches!(attempt_status.as_str(), "started" | "waiting_for_network")
         || attempt_owner.as_deref() != Some(fence.run_owner_token.as_str())
         || attempt_epoch != Some(id.run_attempt_epoch)
@@ -278,7 +280,7 @@ async fn lock_execution(
     .ok_or_else(|| http(404, "Agent not found"))?;
     let agent_runtime: String = agent.try_get("agent_runtime_type")?;
     let agent_status: String = agent.try_get("status")?;
-    if agent_runtime != "codex_local"
+    if agent_runtime != fence.runtime_type()
         || matches!(agent_status.as_str(), "terminated" | "pending_approval")
     {
         return Err(http(409, "Native Chat Agent is not available"));
@@ -310,10 +312,6 @@ async fn lock_execution(
     if phase != checkpoint.phase().as_str()
         || checkpoint.phase() == NativeChatProtocolPhase::ExecutionTerminalCommitted
         || checkpoint.observation_only()
-        || attempt_thread.as_deref() != checkpoint.thread_id()
-        || attempt_turn.as_deref() != checkpoint.turn_id()
-        || generation_thread.as_deref() != checkpoint.thread_id()
-        || generation_turn.as_deref() != checkpoint.turn_id()
         || run
             .try_get::<Option<String>, _>("session_id_after")?
             .is_some()
@@ -323,7 +321,6 @@ async fn lock_execution(
     {
         return Err(http(409, "Native Chat checkpoint identity is inconsistent"));
     }
-
     // The narrow Stop path locks and validates its exact action after Attempt
     // and before Binding. No effect authorization can use this mode.
     if let Some(stop) = stop {
@@ -373,7 +370,7 @@ async fn lock_execution(
         || binding_conversation_id.as_deref() != Some(id.conversation_id)
         || binding_target_type.as_deref() != Some("chat_conversation")
         || binding_target_id.as_deref() != Some(id.conversation_id)
-        || binding_runtime_type != "codex_local"
+        || binding_runtime_type != fence.runtime_type()
         || attempt_runtime != binding_runtime_type
         || segment_runtime_type != binding_runtime_type
         || binding_scope != principal_scope_ref
@@ -384,27 +381,48 @@ async fn lock_execution(
     {
         return Err(http(409, "Run, binding, and current segment do not match"));
     }
-    let segment_matches_checkpoint = match (
-        segment_state.as_str(),
-        native_session_id.as_deref(),
-        checkpoint.thread_id(),
-    ) {
-        ("pending", None, None) => {
-            matches!(
+    let codex_identity_matches = checkpoint.provider() == NativeChatProvider::CodexLocal
+        && fence.runtime_type() == "codex_local"
+        && attempt_thread.as_deref() == checkpoint.thread_id()
+        && attempt_turn.as_deref() == checkpoint.turn_id()
+        && generation_thread.as_deref() == checkpoint.thread_id()
+        && generation_turn.as_deref() == checkpoint.turn_id()
+        && match (
+            segment_state.as_str(),
+            native_session_id.as_deref(),
+            checkpoint.thread_id(),
+        ) {
+            ("pending", None, None) => matches!(
                 checkpoint.phase(),
                 NativeChatProtocolPhase::NoThreadRequest
                     | NativeChatProtocolPhase::ThreadStartIndeterminate
-            ) && checkpoint.turn_id().is_none()
-        }
-        ("open", Some(stored_thread), Some(checkpoint_thread)) => {
-            stored_thread == checkpoint_thread && !stored_thread.trim().is_empty()
-        }
-        _ => false,
-    };
-    if !segment_matches_checkpoint {
+            ),
+            ("open", Some(stored), Some(thread)) => stored == thread && !stored.trim().is_empty(),
+            _ => false,
+        };
+    let hermes_identity_matches = checkpoint.provider() == NativeChatProvider::HermesLocal
+        && fence.runtime_type() == "hermes_local"
+        && attempt_thread.is_none()
+        && attempt_turn.is_none()
+        && generation_thread.is_none()
+        && generation_turn.is_none()
+        && match (
+            segment_state.as_str(),
+            native_session_id.as_deref(),
+            checkpoint.hermes_session(),
+        ) {
+            ("pending", None, None) => matches!(
+                checkpoint.phase(),
+                NativeChatProtocolPhase::NoThreadRequest
+                    | NativeChatProtocolPhase::ThreadStartIndeterminate
+            ),
+            ("open", Some(stored), Some(selector)) => stored == selector.as_str(),
+            _ => false,
+        };
+    if !codex_identity_matches && !hermes_identity_matches {
         return Err(http(
             409,
-            "Native Chat checkpoint does not match its current segment",
+            "Native Chat checkpoint does not match its provider and current segment",
         ));
     }
 

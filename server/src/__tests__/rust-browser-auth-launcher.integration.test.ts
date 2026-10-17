@@ -18,6 +18,15 @@ import { localAccountAuthService } from "../services/local-account-auth.js";
 
 // Real bootstrap components, issuer lifecycle, public HTTP, source-built Rust,
 // and disposable PostgreSQL. No mocked session resolver or Rust bridge.
+// Better Auth captures NODE_ENV at module evaluation. Set production before
+// static bootstrap imports run; changing it only in beforeAll leaves origin
+// protection disabled by the dependency's cached test-mode constant.
+const issuerEnvironment = vi.hoisted(() => {
+  const previous = { NODE_ENV: process.env.NODE_ENV, TEST: process.env.TEST };
+  process.env.NODE_ENV = "production";
+  process.env.TEST = "false";
+  return previous;
+});
 type Pg = { initialise(): Promise<void>; start(): Promise<void>; stop(): Promise<void> };
 type PgConstructor = new (options: Record<string, unknown>) => Pg;
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -36,6 +45,8 @@ async function freePort() {
 
 describe("constructed issuer through the real Rust application launcher", () => {
   const previousEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
+  previousEnv.NODE_ENV = issuerEnvironment.NODE_ENV;
+  previousEnv.TEST = issuerEnvironment.TEST;
   let temporary = "", binary = "", databaseUrl = "", rustDatabaseUrl = "";
   let databaseProxy: net.Server | undefined;
   let databasePort = 0, proxyPort = 0;
@@ -98,17 +109,29 @@ describe("constructed issuer through the real Rust application launcher", () => 
     }
     if (!binary) throw new Error("No source-built Rust foundation binary");
     console.info("Auth launcher source binary", { binary, sha256: createHash("sha256").update(await readFile(binary)).digest("hex") });
-    const port = await freePort();
-    const EmbeddedPostgres = (await import("embedded-postgres")).default as PgConstructor;
-    pg = new EmbeddedPostgres({ databaseDir: path.join(temporary, "pg"), user: "rudder", password: "rudder", port, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], postgresFlags: ["-k", ""], onLog: () => {}, onError: () => {} });
-    await pg.initialise(); await pg.start();
-    await ensurePostgresDatabase(`postgres://rudder:rudder@127.0.0.1:${port}/postgres`, "rudder_auth_launcher_test");
-    databaseUrl = `postgres://rudder:rudder@127.0.0.1:${port}/rudder_auth_launcher_test`;
+    const external = process.env.RUDDER_BROWSER_AUTH_LAUNCHER_TEST_DATABASE_URL?.trim();
+    if (external) {
+      const parsed = new URL(external);
+      if (parsed.hostname !== "127.0.0.1" || !/^\/[a-z0-9_]+_test$/.test(parsed.pathname)) {
+        throw new Error("Launcher integration requires a loopback database with a name ending _test");
+      }
+      databaseUrl = external;
+      databasePort = Number(parsed.port);
+    } else {
+      const port = await freePort();
+      const EmbeddedPostgres = (await import("embedded-postgres")).default as PgConstructor;
+      pg = new EmbeddedPostgres({ databaseDir: path.join(temporary, "pg"), user: "rudder", password: "rudder", port, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], postgresFlags: ["-k", ""], onLog: () => {}, onError: () => {} });
+      await pg.initialise(); await pg.start();
+      await ensurePostgresDatabase(`postgres://rudder:rudder@127.0.0.1:${port}/postgres`, "rudder_auth_launcher_test");
+      databaseUrl = `postgres://rudder:rudder@127.0.0.1:${port}/rudder_auth_launcher_test`;
+      databasePort = port;
+    }
     await applyPendingMigrations(databaseUrl);
     db = createDb(databaseUrl);
-    databasePort = port;
     await startDatabaseProxy();
-    rustDatabaseUrl = `postgres://rudder:rudder@127.0.0.1:${proxyPort}/rudder_auth_launcher_test`;
+    const proxied = new URL(databaseUrl);
+    proxied.port = String(proxyPort);
+    rustDatabaseUrl = proxied.toString();
   }, 180_000);
 
   afterEach(closeApp, 30_000);
@@ -124,7 +147,10 @@ describe("constructed issuer through the real Rust application launcher", () => 
   }, 30_000);
 
   async function start(config: Config, runtime: AuthRuntime, publicPort: number) {
-    const ingress = await preparePublicIngressStartup(config, publicPort, runtime.browserSessionAuth);
+    const issuer = runtime.browserSessionAuth;
+    const localIssuer = issuer?.issuer === "local_account"
+      ? { sessionSecret: issuer.secret, secureCookie: issuer.secureCookie } : undefined;
+    const ingress = await preparePublicIngressStartup(config, publicPort, localIssuer, issuer);
     // Reserve the selected compatibility port before Rust binds an ephemeral
     // private bridge port; macOS can otherwise assign that same next port.
     server = createServer((req, res) => {

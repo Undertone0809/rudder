@@ -1,0 +1,17 @@
+[package]
+name = "rudder-pi-rpc"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rudder-native-process-transport = { path = "../native-process-transport" }
+rudder-native-protocol = { path = "../native-protocol" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+
+[dev-dependencies]
+serde_json = "1.0"
+tempfile = "3.27"

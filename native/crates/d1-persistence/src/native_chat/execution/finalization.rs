@@ -7,6 +7,7 @@ use crate::{
     runtime_bindings,
 };
 use rudder_codex_app_server::{CleanupReceipt, TurnReceipt, TurnStatus};
+use rudder_hermes_acp::{HermesCleanupReceipt, HermesStopReason, HermesTurnReceipt};
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -24,7 +25,36 @@ pub async fn finalize(
     turn: &TurnReceipt,
     cleanup: &CleanupReceipt,
 ) -> Result<Value> {
-    finalize_inner(pool, actor, fence, Some(turn), cleanup, None).await
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Codex(turn)),
+        ProviderCleanup::Codex(cleanup),
+        None,
+    )
+    .await
+}
+
+/// Atomically project a terminal Hermes ACP answer and close the exact owned
+/// execution. The Hermes session selector is checked against its private D1
+/// checkpoint and Segment; it is never represented as a Codex Thread/Turn.
+pub async fn finalize_hermes(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    turn: &HermesTurnReceipt,
+    cleanup: &HermesCleanupReceipt,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Hermes(turn)),
+        ProviderCleanup::Hermes(cleanup),
+        None,
+    )
+    .await
 }
 
 /// Resolve operator Stop only from the exact terminal and same-connection
@@ -37,7 +67,36 @@ pub async fn finalize_stopped(
     cleanup: &CleanupReceipt,
     stop: &super::stopping::StopIntent,
 ) -> Result<Value> {
-    finalize_inner(pool, actor, fence, Some(turn), cleanup, Some(stop)).await
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Codex(turn)),
+        ProviderCleanup::Codex(cleanup),
+        Some(stop),
+    )
+    .await
+}
+
+/// Resolve operator Stop from a same-connection Hermes terminal and cleanup
+/// receipt. This never manufactures Codex identifiers or provider success.
+pub async fn finalize_hermes_stopped(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    turn: &HermesTurnReceipt,
+    cleanup: &HermesCleanupReceipt,
+    stop: &super::stopping::StopIntent,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Hermes(turn)),
+        ProviderCleanup::Hermes(cleanup),
+        Some(stop),
+    )
+    .await
 }
 
 /// Cancel a claimed execution only when the durable checkpoint proves the
@@ -51,31 +110,242 @@ pub async fn finalize_stopped_before_submission(
     cleanup: &CleanupReceipt,
     stop: &super::stopping::StopIntent,
 ) -> Result<Value> {
-    finalize_inner(pool, actor, fence, None, cleanup, Some(stop)).await
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Codex(cleanup),
+        Some(stop),
+    )
+    .await
+}
+
+/// Resolve an unsubmitted Hermes Stop only from the exact owned host cleanup.
+pub async fn finalize_hermes_stopped_before_submission(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    cleanup: &HermesCleanupReceipt,
+    stop: &super::stopping::StopIntent,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Hermes(cleanup),
+        Some(stop),
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum ProviderTurn<'a> {
+    Codex(&'a TurnReceipt),
+    Hermes(&'a HermesTurnReceipt),
+}
+
+#[derive(Clone, Copy)]
+enum ProviderCleanup<'a> {
+    Codex(&'a CleanupReceipt),
+    Hermes(&'a HermesCleanupReceipt),
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum TerminalStatus {
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+impl<'a> ProviderTurn<'a> {
+    fn status(self) -> TerminalStatus {
+        match self {
+            Self::Codex(turn) => match turn.status() {
+                TurnStatus::Completed => TerminalStatus::Completed,
+                TurnStatus::Failed => TerminalStatus::Failed,
+                TurnStatus::Interrupted => TerminalStatus::Interrupted,
+            },
+            Self::Hermes(turn) => match turn.stop_reason() {
+                HermesStopReason::EndTurn | HermesStopReason::Refusal => TerminalStatus::Completed,
+                HermesStopReason::Cancelled => TerminalStatus::Interrupted,
+                HermesStopReason::ApprovalRequired => TerminalStatus::Failed,
+            },
+        }
+    }
+
+    fn final_text(self) -> Option<&'a str> {
+        match self {
+            Self::Codex(turn) => turn.final_text(),
+            Self::Hermes(turn) => Some(turn.final_text()),
+        }
+    }
+
+    fn provider_status(self) -> &'static str {
+        match self {
+            Self::Codex(turn) => match turn.status() {
+                TurnStatus::Completed => "completed",
+                TurnStatus::Failed => "failed",
+                TurnStatus::Interrupted => "interrupted",
+            },
+            Self::Hermes(turn) => match turn.stop_reason() {
+                HermesStopReason::EndTurn => "end_turn",
+                HermesStopReason::Cancelled => "cancelled",
+                HermesStopReason::Refusal => "refusal",
+                HermesStopReason::ApprovalRequired => "approval_required",
+            },
+        }
+    }
+
+    fn usage_json(self) -> Option<Value> {
+        match self {
+            Self::Codex(turn) => turn.usage().map(|usage| json!({
+                "source":"thread/tokenUsage/updated.tokenUsage.last", "scope":"latest_reported_increment",
+                "inputTokens":usage.input_tokens(), "cachedInputTokens":usage.cached_input_tokens(),
+                "outputTokens":usage.output_tokens(), "reasoningOutputTokens":usage.reasoning_output_tokens(),
+                "totalTokens":usage.total_tokens(),
+            })),
+            // Hermes reports session-cumulative usage. Do not mislabel it as a
+            // per-Run increment or use it to release a billed-cost hold.
+            Self::Hermes(_) => None,
+        }
+    }
+
+    fn retry_predicate(self) -> ProviderRetryPredicate<'a> {
+        match self {
+            Self::Codex(turn) => ProviderRetryPredicate::Codex {
+                thread_id: turn.thread_id(),
+                turn_id: turn.turn_id(),
+            },
+            Self::Hermes(turn) => ProviderRetryPredicate::Hermes {
+                session_id: turn.session().as_str(),
+                request_id: turn.request_id(),
+            },
+        }
+    }
+
+    fn checkpoint_matches(self, checkpoint: &NativeChatProtocolCheckpoint) -> bool {
+        match self {
+            Self::Codex(turn) => {
+                checkpoint.thread_id() == Some(turn.thread_id())
+                    && checkpoint.turn_id() == Some(turn.turn_id())
+            }
+            Self::Hermes(turn) => {
+                checkpoint.provider()
+                    == rudder_runtime_core::native_chat::NativeChatProvider::HermesLocal
+                    && checkpoint.hermes_session().map(|session| session.as_str())
+                        == Some(turn.session().as_str())
+                    && checkpoint.hermes_prompt_request_id() == Some(turn.request_id())
+            }
+        }
+    }
+
+    fn selector(self) -> Value {
+        match self {
+            Self::Codex(turn) => {
+                json!({"kind":"codex_turn","threadId":turn.thread_id(),"turnId":turn.turn_id()})
+            }
+            Self::Hermes(turn) => {
+                json!({"kind":"hermes_acp_prompt","sessionDigest":hash(turn.session().as_str()),"requestId":turn.request_id()})
+            }
+        }
+    }
+
+    fn native_execution_ref(self) -> Option<String> {
+        match self {
+            Self::Codex(turn) => Some(turn.turn_id().to_owned()),
+            Self::Hermes(turn) => Some(format!("hermes-acp-request:{}", turn.request_id())),
+        }
+    }
+
+    fn input_correlation_ref(self) -> Option<String> {
+        match self {
+            Self::Codex(_) => None,
+            Self::Hermes(turn) => Some(turn.user_message_id().to_owned()),
+        }
+    }
+
+    fn evidence_facts(self) -> Value {
+        match self {
+            Self::Codex(turn) => {
+                json!({"provider":"codex_local","threadId":turn.thread_id(),"turnId":turn.turn_id()})
+            }
+            Self::Hermes(turn) => {
+                json!({"provider":"hermes_local","sessionId":turn.session().as_str(),"requestId":turn.request_id(),
+                "userMessageId":turn.user_message_id(),"inputFingerprint":turn.input_fingerprint(),
+                "providerStatus":self.provider_status(),"finalTextDigest":hash(turn.final_text())})
+            }
+        }
+    }
+}
+
+impl<'a> ProviderCleanup<'a> {
+    fn matches_claim(self, fence: &ExecutionFence) -> bool {
+        match self {
+            Self::Codex(cleanup) => fence.matches_cleanup_receipt(cleanup),
+            Self::Hermes(cleanup) => fence.matches_hermes_cleanup_receipt(cleanup),
+        }
+    }
+
+    fn proves_turn(self, turn: ProviderTurn<'_>) -> bool {
+        match (self, turn) {
+            (Self::Codex(cleanup), ProviderTurn::Codex(turn)) => {
+                cleanup.proves_quiescence_for(turn)
+            }
+            (Self::Hermes(cleanup), ProviderTurn::Hermes(turn)) => {
+                cleanup.proves_quiescence_for(turn)
+            }
+            _ => false,
+        }
+    }
+
+    fn evidence_fingerprint(self) -> String {
+        match self {
+            Self::Codex(cleanup) => cleanup.evidence_fingerprint(),
+            Self::Hermes(cleanup) => cleanup.evidence_fingerprint(),
+        }
+    }
+}
+
+enum ProviderRetryPredicate<'a> {
+    Codex {
+        thread_id: &'a str,
+        turn_id: &'a str,
+    },
+    Hermes {
+        session_id: &'a str,
+        request_id: u64,
+    },
 }
 
 async fn finalize_inner(
     pool: &PgPool,
     actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
-    turn: Option<&TurnReceipt>,
-    cleanup: &CleanupReceipt,
+    turn: Option<ProviderTurn<'_>>,
+    cleanup: ProviderCleanup<'_>,
     stop: Option<&super::stopping::StopIntent>,
 ) -> Result<Value> {
     let id = fence.identity();
     if actor.organization_id() != id.organization_id {
         return Err(http(403, "Organization access denied"));
     }
-    let cleanup_matches = cleanup.matches_connection_claim(
-        id.run_id,
-        id.attempt_id,
-        fence.run_execution_owner_token(),
-        id.connection_epoch,
-        &fence.connection_claim_id,
-    );
+    let cleanup_matches = cleanup.matches_claim(fence);
     let turn_matches = turn.is_none_or(|turn| {
-        cleanup.proves_quiescence_for(turn)
-            && turn.matches_execution(id.run_id, id.attempt_id, fence.run_execution_owner_token())
+        cleanup.proves_turn(turn)
+            && match turn {
+                ProviderTurn::Codex(turn) => turn.matches_execution(
+                    id.run_id,
+                    id.attempt_id,
+                    fence.run_execution_owner_token(),
+                ),
+                ProviderTurn::Hermes(turn) => turn.matches_execution(
+                    id.run_id,
+                    id.attempt_id,
+                    fence.run_execution_owner_token(),
+                ),
+            }
     });
     let pre_submission_stop = stop.is_some() && turn.is_none();
     if !cleanup_matches || !turn_matches || (turn.is_none() && stop.is_none()) {
@@ -86,7 +356,7 @@ async fn finalize_inner(
     }
     let unprojectable = turn.is_some_and(|turn| {
         stop.is_none()
-            && turn.status() == TurnStatus::Completed
+            && turn.status() == TerminalStatus::Completed
             && turn.final_text().is_none_or(|text| text.trim().is_empty())
     });
     let (run_status, generation_status) = if stop.is_some() {
@@ -95,19 +365,18 @@ async fn finalize_inner(
         let turn =
             turn.ok_or_else(|| http(409, "Provider finalization requires a Turn receipt"))?;
         match turn.status() {
-            TurnStatus::Completed if unprojectable => ("failed", "failed"),
-            TurnStatus::Completed => ("succeeded", "completed"),
-            TurnStatus::Failed => ("failed", "failed"),
-            TurnStatus::Interrupted => ("cancelled", "stopped"),
+            TerminalStatus::Completed if unprojectable => ("failed", "failed"),
+            TerminalStatus::Completed => ("succeeded", "completed"),
+            TerminalStatus::Failed => ("failed", "failed"),
+            TerminalStatus::Interrupted => ("cancelled", "stopped"),
         }
     };
-    let increment = turn.and_then(|turn| turn.usage().map(|usage| json!({
-        "source":"thread/tokenUsage/updated.tokenUsage.last", "scope":"latest_reported_increment",
-        "attemptId":id.attempt_id,
-        "inputTokens":usage.input_tokens(), "cachedInputTokens":usage.cached_input_tokens(),
-        "outputTokens":usage.output_tokens(), "reasoningOutputTokens":usage.reasoning_output_tokens(),
-        "totalTokens":usage.total_tokens(),
-    })));
+    if turn.is_some_and(|turn| {
+        matches!(turn, ProviderTurn::Hermes(_)) && turn.status() == TerminalStatus::Failed
+    }) {
+        return Err(http(409, "Hermes requires a governed approval decision"));
+    }
+    let increment = turn.and_then(ProviderTurn::usage_json);
     let cost = json!({
         "status":"unknown",
         "reason":if pre_submission_stop { "input_not_submitted_cost_not_established" } else { "provider_cost_not_reported" },
@@ -121,21 +390,20 @@ async fn finalize_inner(
         "generationEpoch":id.generation_attempt_epoch, "attemptEpoch":id.run_attempt_epoch,
         "connectionEpoch":id.connection_epoch, "generationOwner":fence.generation_control_owner_token(),
         "runOwner":fence.run_execution_owner_token(),
-        "threadId":turn.map(TurnReceipt::thread_id),
-        "turnId":turn.map(TurnReceipt::turn_id),
-        "status":run_status, "answer":turn.and_then(TurnReceipt::final_text),
+        "providerEvidence":turn.map(ProviderTurn::evidence_facts),
+        "status":run_status, "answer":turn.and_then(ProviderTurn::final_text),
         "usage":increment, "selectedModel":fence.selected_model,
         "cost":cost, "cleanupReceipt":cleanup.evidence_fingerprint(),
     });
     if let Some(stop) = stop {
         facts["stopActionId"] = json!(stop.action_id);
         if let Some(turn) = turn {
-            facts["actualProviderStatus"] = json!(format!("{:?}", turn.status()));
+            facts["actualProviderStatus"] = json!(turn.provider_status());
         } else {
             facts["inputDisposition"] = json!("not_submitted");
         }
     }
-    let fingerprint = format!("{:x}", Sha256::digest(facts.to_string().as_bytes()));
+    let fingerprint = hash(&facts.to_string());
     let stop_action_id = stop.map(|value| value.action_id.as_str());
     let mut tx = pool.begin().await?;
     super::super::budget::lock_policy_state(&mut tx, id.organization_id).await?;
@@ -199,35 +467,48 @@ async fn finalize_inner(
         .await?
         .flatten()
     } else {
-        let Some(turn) = turn else {
-            return Err(http(409, "Provider retry requires a Turn receipt"));
-        };
-        sqlx::query_scalar(
-            "SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r
-             JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
-             JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id AND a.id=$7::uuid
-             WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.execution_authority='native_rust'
-               AND r.chat_conversation_id=$3::uuid AND r.chat_generation_id=$4::uuid
-               AND r.execution_owner_token=$5 AND g.control_owner_token=$6 AND a.owner_token=$5
-               AND g.attempt_epoch=$8 AND a.generation_attempt_epoch=$8 AND a.attempt_epoch=$9
-               AND a.connection_epoch=$10 AND a.protocol_phase='execution_terminal_committed'
-               AND a.provider_thread_id=$11 AND a.provider_turn_id=$12",
-        )
-        .bind(id.organization_id)
-        .bind(id.run_id)
-        .bind(id.conversation_id)
-        .bind(id.generation_id)
-        .bind(fence.run_execution_owner_token())
-        .bind(fence.generation_control_owner_token())
-        .bind(id.attempt_id)
-        .bind(id.generation_attempt_epoch)
-        .bind(id.run_attempt_epoch)
-        .bind(id.connection_epoch)
-        .bind(turn.thread_id())
-        .bind(turn.turn_id())
-        .fetch_optional(&mut *tx)
-        .await?
-        .flatten()
+        let turn = turn.ok_or_else(|| http(409, "Provider retry requires a Turn receipt"))?;
+        match turn.retry_predicate() {
+            ProviderRetryPredicate::Codex { thread_id, turn_id } => {
+                sqlx::query_scalar(
+                    "SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r
+                     JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
+                     JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id AND a.id=$7::uuid
+                     WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.execution_authority='native_rust'
+                       AND r.chat_conversation_id=$3::uuid AND r.chat_generation_id=$4::uuid
+                       AND r.execution_owner_token=$5 AND g.control_owner_token=$6 AND a.owner_token=$5
+                       AND g.attempt_epoch=$8 AND a.generation_attempt_epoch=$8 AND a.attempt_epoch=$9
+                       AND a.connection_epoch=$10 AND a.protocol_phase='execution_terminal_committed'
+                       AND a.provider_thread_id=$11 AND a.provider_turn_id=$12",
+                )
+                .bind(id.organization_id).bind(id.run_id).bind(id.conversation_id).bind(id.generation_id)
+                .bind(fence.run_execution_owner_token()).bind(fence.generation_control_owner_token())
+                .bind(id.attempt_id).bind(id.generation_attempt_epoch).bind(id.run_attempt_epoch)
+                .bind(id.connection_epoch).bind(thread_id).bind(turn_id)
+                .fetch_optional(&mut *tx).await?.flatten()
+            }
+            ProviderRetryPredicate::Hermes { session_id, request_id } => {
+                sqlx::query_scalar(
+                    "SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r
+                     JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
+                     JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id AND a.id=$7::uuid
+                     WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.execution_authority='native_rust'
+                       AND r.chat_conversation_id=$3::uuid AND r.chat_generation_id=$4::uuid
+                       AND r.execution_owner_token=$5 AND g.control_owner_token=$6 AND a.owner_token=$5
+                       AND g.attempt_epoch=$8 AND a.generation_attempt_epoch=$8 AND a.attempt_epoch=$9
+                       AND a.connection_epoch=$10 AND a.protocol_phase='execution_terminal_committed'
+                       AND a.provider_thread_id IS NULL AND a.provider_turn_id IS NULL
+                       AND a.checkpoint_json->>'provider'='hermes_local'
+                       AND a.checkpoint_json->>'hermesSession'=$11
+                       AND a.checkpoint_json->>'hermesPromptRequestId'=$12",
+                )
+                .bind(id.organization_id).bind(id.run_id).bind(id.conversation_id).bind(id.generation_id)
+                .bind(fence.run_execution_owner_token()).bind(fence.generation_control_owner_token())
+                .bind(id.attempt_id).bind(id.generation_attempt_epoch).bind(id.run_attempt_epoch)
+                .bind(id.connection_epoch).bind(session_id).bind(request_id.to_string())
+                .fetch_optional(&mut *tx).await?.flatten()
+            }
+        }
     };
     if let Some(existing) = existing {
         if existing["fingerprint"].as_str() != Some(fingerprint.as_str()) {
@@ -258,8 +539,7 @@ async fn finalize_inner(
     } else if let Some(turn) = turn {
         (locked.checkpoint.phase() == NativeChatProtocolPhase::ProviderTerminalObserved
             || (stop.is_some() && locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown))
-            && locked.checkpoint.thread_id() == Some(turn.thread_id())
-            && locked.checkpoint.turn_id() == Some(turn.turn_id())
+            && turn.checkpoint_matches(&locked.checkpoint)
     } else {
         false
     };
@@ -328,7 +608,7 @@ async fn finalize_inner(
     let message_id: Option<String> = if let Some(stop) = stop {
         super::stopping::frozen_message(&mut tx, fence, stop).await?
     } else {
-        let final_text = turn.and_then(TurnReceipt::final_text);
+        let final_text = turn.and_then(ProviderTurn::final_text);
         let existing = sqlx::query(
             "SELECT id::text,status,kind,replying_agent_id::text AS replying_agent_id,
               chat_turn_id::text AS chat_turn_id,turn_variant,
@@ -368,7 +648,19 @@ async fn finalize_inner(
             {
                 return Err(http(409, "Native Chat assistant projection changed"));
             }
-            output::validate_final_projection(&mut tx, fence, cleanup, &message_id, &body).await?;
+            match (turn, cleanup) {
+                (Some(ProviderTurn::Codex(_)), ProviderCleanup::Codex(cleanup)) => {
+                    output::validate_final_projection(&mut tx, fence, cleanup, &message_id, &body)
+                        .await?;
+                }
+                // The first Hermes adapter intentionally supports final-text
+                // projection only. Until it has a typed live-output receipt,
+                // it may not adopt a message written by another projector.
+                (Some(ProviderTurn::Hermes(_)), _) => {
+                    return Err(http(409, "Hermes live output projection is unsupported"));
+                }
+                _ => return Err(http(409, "Native Chat projection receipt is invalid")),
+            }
             let status = match run_status {
                 "succeeded" => "completed",
                 "cancelled" => "stopped",
@@ -416,22 +708,21 @@ async fn finalize_inner(
             None
         }
     };
-    let (span_completeness, native_execution_ref, input_correlation_ref, selector) =
-        if let Some(turn) = turn {
-            (
-                "terminal_only",
-                Some(turn.turn_id().to_owned()),
-                locked.admitted_message_id.clone(),
-                json!({"kind":"codex_turn","threadId":turn.thread_id(),"turnId":turn.turn_id()}),
-            )
-        } else {
-            (
-                "partial",
-                None,
-                None,
-                json!({"kind":"codex_pre_submission_stop","inputDisposition":"not_submitted"}),
-            )
-        };
+    let (span_completeness, native_execution_ref, input_correlation_ref, selector) = match turn {
+        Some(turn) => (
+            "terminal_only",
+            turn.native_execution_ref(),
+            turn.input_correlation_ref()
+                .or(locked.admitted_message_id.clone()),
+            turn.selector(),
+        ),
+        None => (
+            "partial",
+            None,
+            None,
+            json!({"kind":"native_pre_submission_stop","inputDisposition":"not_submitted"}),
+        ),
+    };
     let span_id: String = sqlx::query_scalar(
         "UPDATE run_runtime_spans SET state='sealed',completeness=$8,
          native_execution_ref=$9,input_correlation_ref=$10,selector_json=$11,
@@ -500,10 +791,20 @@ async fn finalize_inner(
         }).bind(held).execute(&mut *tx).await?;
     if let Some(stop) = stop {
         if pre_submission_stop {
-            super::stopping::resolve_action_pre_submission(
-                &mut tx, actor, fence, stop, cleanup, &result,
-            )
-            .await?;
+            match cleanup {
+                ProviderCleanup::Codex(cleanup) => {
+                    super::stopping::resolve_action_pre_submission(
+                        &mut tx, actor, fence, stop, cleanup, &result,
+                    )
+                    .await?;
+                }
+                ProviderCleanup::Hermes(cleanup) => {
+                    super::stopping::resolve_action_hermes_pre_submission(
+                        &mut tx, actor, fence, stop, cleanup, &result,
+                    )
+                    .await?;
+                }
+            }
         } else {
             let Some(turn) = turn else {
                 return Err(http(
@@ -511,8 +812,21 @@ async fn finalize_inner(
                     "Provider Stop finalization requires a Turn receipt",
                 ));
             };
-            super::stopping::resolve_action(&mut tx, actor, fence, stop, turn, cleanup, &result)
-                .await?;
+            match (turn, cleanup) {
+                (ProviderTurn::Codex(turn), ProviderCleanup::Codex(cleanup)) => {
+                    super::stopping::resolve_action(
+                        &mut tx, actor, fence, stop, turn, cleanup, &result,
+                    )
+                    .await?;
+                }
+                (ProviderTurn::Hermes(turn), ProviderCleanup::Hermes(cleanup)) => {
+                    super::stopping::resolve_action_hermes(
+                        &mut tx, actor, fence, stop, turn, cleanup, &result,
+                    )
+                    .await?;
+                }
+                _ => return Err(http(409, "Provider Stop evidence does not match")),
+            }
         }
     }
     for event in ["runtime_terminal", "terminal_projected"] {
@@ -586,4 +900,8 @@ async fn finalize_inner(
     super::super::auth::authorize_execution_org(&mut tx, actor, fence).await?;
     tx.commit().await?;
     Ok(result)
+}
+
+fn hash(value: &str) -> String {
+    format!("{:x}", Sha256::digest(value.as_bytes()))
 }

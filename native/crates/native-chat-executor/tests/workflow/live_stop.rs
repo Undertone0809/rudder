@@ -264,7 +264,8 @@ async fn live_stop_interrupts_once_and_preserves_actual_terminal_without_tail_pr
             .await
             .unwrap();
         assert!(retry.idempotent);
-        assert_eq!(retry.outcome, initial.outcome);
+        assert_eq!(initial.outcome, StopOutcome::StopIntentRecorded);
+        assert_eq!(retry.outcome, StopOutcome::Stopped);
         let next:AdmissionRequest=serde_json::from_value(serde_json::json!({"operation":"submit_native_chat_turn","conversationId":CHAT,"clientMutationId":"after-live-stop","body":"new input"})).unwrap();
         let next = admit(&database.pool, &actor, ORG, &next, host.context())
             .await

@@ -1,6 +1,7 @@
 //! Private, single-owner Codex turn execution. No public HTTP activation or Run
 //! finalization authority lives here. Every exit retains the admission hold;
 //! provider terminal data and host receipts require a separate finalizer.
+mod hermes;
 mod profile;
 mod wire;
 pub use profile::provision_profile;
@@ -21,6 +22,7 @@ use rudder_d1_persistence::{
     },
     runtime_bindings,
 };
+use rudder_hermes_acp::{HermesCleanupReceipt, HermesTransportError, HermesTurnReceipt};
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -47,6 +49,8 @@ pub enum Error {
     Persistence(#[source] runtime_bindings::Error),
     #[error(transparent)]
     Transport(#[from] TransportError),
+    #[error(transparent)]
+    HermesTransport(#[from] HermesTransportError),
     #[error("Native Chat operation deadline expired; reconcile the held attempt")]
     Deadline,
     #[error("Native Chat execution was cancelled; reconcile the held attempt")]
@@ -145,6 +149,22 @@ pub struct ExecutionObservation {
     pub stop: Option<execution::StopIntent>,
 }
 
+/// Closed provider result returned to the Foundation owner. Provider-specific
+/// identifiers remain in their typed receipt and are never projected as
+/// Codex Thread/Turn IDs.
+pub enum NativeExecutionObservation {
+    Codex(ExecutionObservation),
+    Hermes(HermesExecutionObservation),
+}
+
+pub struct HermesExecutionObservation {
+    pub execution_principal: NativeChatExecutionPrincipal,
+    pub fence: ExecutionFence,
+    pub turn_receipt: HermesTurnReceipt,
+    pub cleanup_receipt: Option<HermesCleanupReceipt>,
+    pub stop: Option<execution::StopIntent>,
+}
+
 fn db<T>(
     handle: &Handle,
     deadline: Instant,
@@ -182,6 +202,7 @@ struct ExecutionFailureEvidence {
     fence: Option<ExecutionFence>,
     execution_principal: Option<NativeChatExecutionPrincipal>,
     cleanup_receipt: Option<CleanupReceipt>,
+    hermes_cleanup_receipt: Option<HermesCleanupReceipt>,
 }
 
 impl fmt::Debug for ExecutionFailure {
@@ -196,6 +217,10 @@ impl fmt::Debug for ExecutionFailure {
                 &self.0.execution_principal.is_some(),
             )
             .field("hasCleanupReceipt", &self.0.cleanup_receipt.is_some())
+            .field(
+                "hasHermesCleanupReceipt",
+                &self.0.hermes_cleanup_receipt.is_some(),
+            )
             .finish()
     }
 }
@@ -223,6 +248,9 @@ impl ExecutionFailure {
     pub fn cleanup_receipt(&self) -> Option<&CleanupReceipt> {
         self.0.cleanup_receipt.as_ref()
     }
+    pub fn hermes_cleanup_receipt(&self) -> Option<&HermesCleanupReceipt> {
+        self.0.hermes_cleanup_receipt.as_ref()
+    }
     pub fn into_error(self) -> Error {
         self.0.error
     }
@@ -234,6 +262,7 @@ impl ExecutionFailure {
             fence: None,
             execution_principal: None,
             cleanup_receipt: None,
+            hermes_cleanup_receipt: None,
         }))
     }
 
@@ -248,6 +277,7 @@ impl ExecutionFailure {
             fence: Some(fence),
             execution_principal: Some(execution_principal),
             cleanup_receipt: None,
+            hermes_cleanup_receipt: None,
         }))
     }
 
@@ -270,6 +300,30 @@ impl ExecutionFailure {
             fence: Some(fence),
             execution_principal: Some(execution_principal),
             cleanup_receipt,
+            hermes_cleanup_receipt: None,
+        }))
+    }
+
+    fn after_claim_hermes(
+        error: Error,
+        execution_principal: NativeChatExecutionPrincipal,
+        fence: ExecutionFence,
+        cleanup_receipt: Option<HermesCleanupReceipt>,
+    ) -> Self {
+        let cleanup_receipt =
+            cleanup_receipt.filter(|cleanup| fence.matches_hermes_cleanup_receipt(cleanup));
+        let process = if cleanup_receipt.is_some() {
+            ProcessDisposition::CleanupProven
+        } else {
+            ProcessDisposition::Unresolved
+        };
+        Self(Box::new(ExecutionFailureEvidence {
+            error,
+            process,
+            fence: Some(fence),
+            execution_principal: Some(execution_principal),
+            cleanup_receipt: None,
+            hermes_cleanup_receipt: cleanup_receipt,
         }))
     }
 
@@ -292,6 +346,7 @@ impl ExecutionFailure {
             fence: Some(fence),
             execution_principal: None,
             cleanup_receipt,
+            hermes_cleanup_receipt: None,
         }))
     }
 }
@@ -349,6 +404,46 @@ pub fn run_observed_with_request_actor_on_blocking_thread<A>(
 where
     A: NativeChatActor,
 {
+    match run_observed_native_with_request_actor_on_blocking_thread_impl(
+        handle, pool, actor, host, paths, request, false,
+    )? {
+        NativeExecutionObservation::Codex(observation) => Ok(observation),
+        NativeExecutionObservation::Hermes(_) => Err(ExecutionFailure::not_launched(
+            Error::UnsupportedConfiguration,
+        )),
+    }
+}
+
+/// Provider-discriminated entrypoint for the trusted Foundation worker. The
+/// durable selected Agent runtime chooses the branch; HTTP cannot select it.
+pub fn run_observed_native_with_request_actor_on_blocking_thread<A>(
+    handle: &Handle,
+    pool: &PgPool,
+    actor: A,
+    host: &LocalHostContext,
+    paths: &HostPaths,
+    request: ExecutionRequest<'_>,
+) -> std::result::Result<NativeExecutionObservation, ExecutionFailure>
+where
+    A: NativeChatActor,
+{
+    run_observed_native_with_request_actor_on_blocking_thread_impl(
+        handle, pool, actor, host, paths, request, true,
+    )
+}
+
+fn run_observed_native_with_request_actor_on_blocking_thread_impl<A>(
+    handle: &Handle,
+    pool: &PgPool,
+    actor: A,
+    host: &LocalHostContext,
+    paths: &HostPaths,
+    request: ExecutionRequest<'_>,
+    allow_hermes: bool,
+) -> std::result::Result<NativeExecutionObservation, ExecutionFailure>
+where
+    A: NativeChatActor,
+{
     if request.timeout.is_zero()
         || request.timeout > Duration::from_secs(3600)
         || request.cancelled.load(Ordering::Acquire)
@@ -376,10 +471,15 @@ where
                         "Native Chat execution was cancelled".into(),
                     ));
                 }
-                profile::validate(config, paths).map_err(|_| {
+                match config.identity.runtime_type.as_str() {
+                    "codex_local" => profile::validate(config, paths),
+                    "hermes_local" if allow_hermes => hermes::validate_config(config, host, paths),
+                    _ => Err(Error::UnsupportedConfiguration),
+                }
+                .map_err(|_| {
                     runtime_bindings::Error::Http(
                         409,
-                        "Native Chat profile configuration is unsupported".into(),
+                        "Native Chat runtime configuration is unsupported".into(),
                     )
                 })
             },
@@ -391,6 +491,20 @@ where
     // Request authentication has served its sole purpose. Every continuation
     // below is fenced by the principal minted in the same D1 claim transaction.
     drop(actor);
+    if claimed_config.identity.runtime_type == "hermes_local" {
+        return hermes::run_claimed(
+            handle,
+            pool,
+            execution_principal,
+            claimed_fence,
+            claimed_config,
+            connection_launch_permit,
+            request.cancelled,
+            deadline,
+            paths,
+        )
+        .map(NativeExecutionObservation::Hermes);
+    }
     let (launch, snapshot) = match (|| -> Result<_> {
         if request.cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
@@ -506,14 +620,14 @@ where
     let fence = driver.fence.clone();
     let stop = driver.stop.take();
     drop(driver);
-    Ok(ExecutionObservation {
+    Ok(NativeExecutionObservation::Codex(ExecutionObservation {
         execution_principal,
         fence,
         turn_receipt,
         cleanup_receipt,
         cleanup_proven,
         stop,
-    })
+    }))
 }
 
 fn validate_paths(paths: &HostPaths) -> Result<()> {
@@ -540,7 +654,7 @@ fn process_launch(
     fence: &ExecutionFence,
     paths: &HostPaths,
 ) -> Result<ProcessLaunch> {
-    if config.plan_mode || config.search_enabled {
+    if config.plan_mode || (config.search_enabled && !config.profile.native_managed) {
         return Err(Error::UnsupportedConfiguration);
     }
     profile::validate(config, paths)?;
@@ -553,16 +667,23 @@ fn process_launch(
     env.insert("HOME".into(), utf8(&paths.isolated_home)?);
     env.insert("USERPROFILE".into(), utf8(&paths.isolated_home)?);
     env.insert("CODEX_HOME".into(), utf8(&config.profile.home)?);
-    env.insert("PATH".into(), "/usr/bin:/bin".into());
+    env.insert("PATH".into(), config.executable_search_path.clone());
     Ok(ProcessLaunch {
         executable: utf8(&config.executable)?,
-        argv: vec![
-            "app-server".into(),
-            "--strict-config".into(),
-            "--disable".into(),
-            "plugins".into(),
-        ],
-        cwd: utf8(&paths.isolated_home)?,
+        // Keep extensions in the selected Codex profile active. Native
+        // execution validates the effective policy after `config/read` and
+        // lets the App Server inherit it; it never rewrites the profile or
+        // supplies per-Thread policy overrides.
+        argv: if config.profile.id.ends_with(":operator-default") {
+            vec!["app-server".into()]
+        } else {
+            vec!["app-server".into(), "--strict-config".into()]
+        },
+        cwd: utf8(if config.profile.native_managed {
+            &config.cwd
+        } else {
+            &paths.isolated_home
+        })?,
         env,
         request_id: fence.identity().attempt_id.into(),
         run_id: fence.identity().run_id.into(),
@@ -601,7 +722,16 @@ impl Driver<'_> {
             "config/read",
             json!({"cwd":self.config.cwd.to_string_lossy(),"includeLayers":true}),
         )?;
-        profile::validate_layers(&observed, &self.config.profile.home)?;
+        if self.config.profile.native_managed {
+            profile::validate_selected_layers(
+                &observed,
+                &self.config.profile.home,
+                &self.config.cwd,
+                self.config.bypass_approvals_and_sandbox,
+            )?;
+        } else {
+            profile::validate_layers(&observed, &self.config.profile.home)?;
+        }
         profile::validate(&self.config, self.paths)?;
         Ok(())
     }
