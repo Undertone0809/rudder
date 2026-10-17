@@ -2479,24 +2479,34 @@
       "number": 324,
       "url": "https://github.com/Undertone0809/rudder/pull/324",
       "branch": "codex/native-chat-main-refresh-integration-20261017",
-      "head": "e619a20c2d9d5fb4fe265a275b24424548b40d07",
+      "head": "efbc2ad080d205587aea924bd7b04f3a83b67c0d",
       "state": "open",
       "merge_state": "unstable",
-      "scope": "Native Chat Codex/Hermes Rust ingress, recovery, and compatibility fences.",
-      "stage_review": "needs_more_evidence_on_prior_candidate; fresh final review required for e619a20c",
+      "scope": "Native Chat Codex/Hermes Rust ingress, recovery, and compatibility fences, rebased onto merged Goal collection reads main.",
+      "stage_review": "fresh stage review pending exact rebased head",
       "ci": {
-        "latest_run_ids": [
-          39065990006
-        ],
-        "status": "in_progress",
+        "latest_run_ids": [],
+        "status": "not_started_after_rebase",
         "known_failures_before_latest_head": [
-          "Desktop packaged smoke local-apps config failure fixed via marked smoke local implicit identity; architecture regression removed"
+          "Desktop packaged smoke local-apps config failure fixed via marked smoke local implicit identity; old CI was invalidated by rebase onto Goal merge"
         ]
       },
-      "limits": "No merge or independent packaged/installed-provider verifier PASS yet; production deployment not included.",
+      "limits": "No merge or independent packaged/installed-provider verifier PASS yet; targeted chat-generation-protocol suite was environment-blocked by embedded PostgreSQL SIGABRT; production deployment not included.",
       "stage_blockers": [
-        "fresh full protected CI pending",
-        "independent packaged/installed-provider verifier still missing"
+        "fresh protected CI on rebased exact head",
+        "independent packaged/installed-provider verifier",
+        "fresh stage and final review"
+      ],
+      "base_sha": "541748fb6870ee2360ec5d096d1f07838b12b433",
+      "local_checks": [
+        "pnpm rust:inventory:check",
+        "pnpm rust:authority:test (33/33)",
+        "pnpm rust:authority:check",
+        "pnpm architecture:audit:test (18/18)",
+        "server typecheck",
+        "desktop typecheck",
+        "chat-routes Vitest 191 passed",
+        "git diff --check"
       ]
     }
   }
