@@ -219,8 +219,12 @@ async fn submit_effect_dispatch_contains_exact_thread_message_and_admitted_body(
                 body.to_owned(),
             ),
             EffectDispatch::StartThread => panic!("Submit permit produced Thread start"),
-            EffectDispatch::StartHermesSession => panic!("Submit permit produced Hermes session start"),
-            EffectDispatch::SubmitHermesInput { .. } => panic!("Submit permit produced Hermes input"),
+            EffectDispatch::StartHermesSession => {
+                panic!("Submit permit produced Hermes session start")
+            }
+            EffectDispatch::SubmitHermesInput { .. } => {
+                panic!("Submit permit produced Hermes input")
+            }
         })
         .expect("dispatch exact Submit request");
     assert_eq!(dispatch.0, OPAQUE_THREAD);

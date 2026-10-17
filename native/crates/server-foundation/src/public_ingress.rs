@@ -177,7 +177,8 @@ impl PublicIngressRuntime {
         }
         let listen_addr = config.listen_addr;
         let session_auth_kind = config.session_auth.as_ref().map(|settings| settings.kind);
-        let browser_session_auth_enabled = config.browser_auth.is_some() || session_auth_kind.is_some();
+        let browser_session_auth_enabled =
+            config.browser_auth.is_some() || session_auth_kind.is_some();
         if config.identity_auth.as_ref().is_some_and(|identity| {
             identity.local_implicit_enabled && !listen_addr.ip().is_loopback()
         }) {

@@ -86,6 +86,7 @@ pub use native_session_revocation::NativeSessionRevocationRegistry;
 use public_ingress_config::NativeSessionAuthKind;
 pub mod native_chat_worker;
 
+mod native_chat_startup;
 #[cfg(all(test, unix))]
 #[allow(unused_imports)]
 #[path = "../../native-chat-executor/tests/workflow/fixture.rs"]
@@ -94,7 +95,6 @@ mod organization_catalog_reads;
 mod overview_reads;
 mod private_host_gate;
 mod project_reads;
-mod native_chat_startup;
 mod public_ingress;
 mod public_ingress_config;
 mod public_ingress_forwarding;
