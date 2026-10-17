@@ -482,6 +482,9 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                 )]));
             }
             reject_secret_like(config, "nodeOwned.normalizedAgentRuntimeConfig")?;
+            if node.contains_key("instructionsBundle") {
+                return Err(unsupported_field("nodeOwned.instructionsBundle"));
+            }
             let instructions_bundle = match node.get("instructionsBundle") {
                 None | Some(Value::Null) => None,
                 Some(Value::Object(bundle)) => {
@@ -930,16 +933,12 @@ mod tests {
             "nodeOwned": {
                 "normalizedAgentRuntimeConfig": {
                     "env": {"MODEL": {"type":"plain", "value":"fast"}}
-                },
-                "instructionsBundle": {
-                    "entryFile": "SOUL.md",
-                    "files": {"SOUL.md": "# Prepared"}
                 }
             }
         }))
         .expect("typed preparation");
         let prepared = request.node_owned.expect("node-owned preparation");
-        assert_eq!(prepared.instructions_bundle.unwrap().entry_file, "SOUL.md");
+        assert!(prepared.instructions_bundle.is_none());
         assert_eq!(request.agent_runtime_config["env"]["MODEL"], "fast");
 
         for input in [

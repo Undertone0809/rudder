@@ -2,17 +2,6 @@ use super::{AgentCreateRequest, common::*, constants::*, reads, redaction};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
-
-pub(super) struct MutationOutcome {
-    pub value: Value,
-    pub instruction_cleanup: Option<super::instructions::MaterializedCreateBundle>,
-}
-fn plain(value: Value) -> MutationOutcome {
-    MutationOutcome {
-        value,
-        instruction_cleanup: None,
-    }
-}
 pub(super) fn random_hex(bytes: usize) -> Result<String> {
     let mut output = vec![0_u8; bytes];
     getrandom::getrandom(&mut output).map_err(|_| http(503, "Secure randomness is unavailable"))?;
@@ -63,16 +52,14 @@ pub(super) async fn execute(
     current: Option<&Value>,
     input: &Value,
     native_auth: Option<&dyn super::NativeAgentAuthorizer>,
-) -> Result<MutationOutcome> {
+) -> Result<Value> {
     if op == "create" {
         return create(tx, ctx, input).await;
     }
     let row = current.ok_or_else(|| http(404, "Agent not found"))?;
     let id = text(row, "id");
     match op {
-        "permissions" => super::detail::update_permissions(tx, ctx, row, input, native_auth)
-            .await
-            .map(plain),
+        "permissions" => super::detail::update_permissions(tx, ctx, row, input, native_auth).await,
         "key-create" => {
             if row["status"] == "pending_approval" {
                 return Err(http(409, "Cannot create keys for pending approval agents"));
@@ -96,16 +83,16 @@ pub(super) async fn execute(
                 Some(&json!({"keyId":key["id"],"name":key["name"]})),
             )
             .await?;
-            Ok(plain(
+            Ok(
                 json!({"id":key["id"],"name":key["name"],"token":token,"createdAt":key["createdAt"]}),
-            ))
+            )
         }
         "key-revoke" => {
             let changed=sqlx::query("UPDATE agent_api_keys SET revoked_at=now() WHERE org_id=$1::uuid AND agent_id=$2::uuid AND id=$3::uuid").bind(ctx.org).bind(id).bind(ctx.request.key_id.as_deref()).execute(&mut **tx).await?.rows_affected();
             if changed == 0 {
                 return Err(http(404, "Key not found"));
             }
-            Ok(plain(json!({"ok":true})))
+            Ok(json!({"ok":true}))
         }
         "reset-session" => {
             reads::ensure_state(tx, ctx, row).await?;
@@ -127,14 +114,14 @@ pub(super) async fn execute(
                 Some(&json!({"taskKey":key})),
             )
             .await?;
-            Ok(plain(state))
+            Ok(state)
         }
-        "rollback" => rollback(tx, ctx, row).await.map(plain),
+        "rollback" => rollback(tx, ctx, row).await,
         _ => Err(http(400, "Invalid Agent command")),
     }
 }
 
-async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<MutationOutcome> {
+async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Value> {
     let request = AgentCreateRequest::parse(input)?;
     let config_source = request
         .node_owned
@@ -242,63 +229,14 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Mut
         })),
     )
     .await?;
-    let materialized = if let Some(bundle) = request
-        .node_owned
-        .as_ref()
-        .and_then(|prepared| prepared.instructions_bundle.as_ref())
-    {
-        let host = ctx
-            .request
-            .instructions_host
-            .clone()
-            .ok_or_else(|| http(503, "Rust Agent instruction placement is unavailable"))?;
-        let org_for_fs = ctx.org.to_owned();
-        let workspace_key_for_fs = workspace_key.clone();
-        let bundle = bundle.clone();
-        let cwd = std::path::PathBuf::from(&ctx.request.process_working_directory);
-        Some(
-            tokio::task::spawn_blocking(move || {
-                super::instructions::materialize_create_bundle(
-                    &host,
-                    &org_for_fs,
-                    &workspace_key_for_fs,
-                    &bundle,
-                    &cwd,
-                )
-                .map_err(|_| http(500, "Internal server error"))
-            })
-            .await
-            .map_err(|_| http(500, "Internal server error"))??,
-        )
-    } else {
-        None
-    };
     let row = match stored(tx, &id).await {
         Ok(Some(row)) => row,
-        Ok(None) => {
-            if let Some(materialized) = materialized {
-                let _ = super::instructions::compensate_create_bundle(materialized);
-            }
-            return Err(http(500, "Agent create did not persist"));
-        }
-        Err(error) => {
-            if let Some(materialized) = materialized {
-                let _ = super::instructions::compensate_create_bundle(materialized);
-            }
-            return Err(error);
-        }
+        Ok(None) => return Err(http(500, "Agent create did not persist")),
+        Err(error) => return Err(error),
     };
     match reads::public_row(tx, row, true, false).await {
-        Ok(value) => Ok(MutationOutcome {
-            value,
-            instruction_cleanup: materialized,
-        }),
-        Err(error) => {
-            if let Some(materialized) = materialized {
-                let _ = super::instructions::compensate_create_bundle(materialized);
-            }
-            Err(error)
-        }
+        Ok(value) => Ok(value),
+        Err(error) => Err(error),
     }
 }
 

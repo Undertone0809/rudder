@@ -1,6 +1,4 @@
 use super::*;
-use crate::agent_core::AgentCreateInstructionsBundle;
-use std::collections::BTreeMap;
 const ORG: &str = "10000000-0000-4000-8000-000000000001";
 #[test]
 fn canonical_workspace_tolerates_corrupt_optional_alias_probe() {
@@ -64,84 +62,6 @@ fn no_replace_publication_keeps_an_existing_destination() {
     );
     assert_eq!(disk::read_to_string(&target).unwrap(), "existing");
     assert_eq!(disk::read_to_string(&source).unwrap(), "new");
-}
-
-#[test]
-fn create_bundle_materialization_is_bounded_and_compensatable() {
-    let f = Fixture::new();
-    let bundle = AgentCreateInstructionsBundle {
-        entry_file: "SOUL.md".into(),
-        files: BTreeMap::from([
-            ("SOUL.md".into(), "prepared soul".into()),
-            ("nested/TOOLS.md".into(), "prepared tools".into()),
-        ]),
-        clear_legacy_prompt_template: true,
-    };
-    let materialized =
-        materialize_create_bundle(&f.host, ORG, "builder-key", &bundle, f.root.path()).unwrap();
-    assert_eq!(
-        disk::read_to_string(f.instructions().join("SOUL.md")).unwrap(),
-        "prepared soul"
-    );
-    assert_eq!(
-        disk::read_to_string(f.instructions().join("nested/TOOLS.md")).unwrap(),
-        "prepared tools"
-    );
-    // Replaying the same private preparation is idempotent and does not
-    // overwrite files that the first attempt already materialized.
-    let replay =
-        materialize_create_bundle(&f.host, ORG, "builder-key", &bundle, f.root.path()).unwrap();
-    assert!(replay.created_files.is_empty());
-    compensate_create_bundle(replay).unwrap();
-    // A failed SQL commit can remove only files created by this attempt.
-    compensate_create_bundle(materialized).unwrap();
-    assert!(!f.instructions().join("SOUL.md").exists());
-    assert!(!f.instructions().join("nested/TOOLS.md").exists());
-}
-
-#[test]
-fn create_bundle_rejects_path_escape_before_writing() {
-    let f = Fixture::new();
-    let bundle = AgentCreateInstructionsBundle {
-        entry_file: "../outside.md".into(),
-        files: BTreeMap::from([("../outside.md".into(), "blocked".into())]),
-        clear_legacy_prompt_template: false,
-    };
-    assert!(
-        materialize_create_bundle(&f.host, ORG, "builder-key", &bundle, f.root.path()).is_err()
-    );
-    assert!(!f.root.path().join("outside.md").exists());
-}
-
-#[test]
-fn create_bundle_failure_compensates_files_written_earlier() {
-    let f = Fixture::new();
-    let bundle = AgentCreateInstructionsBundle {
-        entry_file: "SOUL.md".into(),
-        files: BTreeMap::from([
-            ("A.md".into(), "prepared".into()),
-            ("../outside.md".into(), "blocked".into()),
-        ]),
-        clear_legacy_prompt_template: false,
-    };
-    assert!(
-        materialize_create_bundle(&f.host, ORG, "builder-key", &bundle, f.root.path()).is_err()
-    );
-    assert!(!f.instructions().join("A.md").exists());
-    assert!(!f.root.path().join("outside.md").exists());
-}
-
-#[test]
-fn create_bundle_rejects_relative_host_facts() {
-    let f = Fixture::new();
-    let mut host = f.host.clone();
-    host.workspace_home = "relative-workspace".into();
-    let bundle = AgentCreateInstructionsBundle {
-        entry_file: "SOUL.md".into(),
-        files: BTreeMap::new(),
-        clear_legacy_prompt_template: false,
-    };
-    assert!(materialize_create_bundle(&host, ORG, "builder-key", &bundle, f.root.path()).is_err());
 }
 #[test]
 fn legacy_absolute_file_normalizes_only_for_managed_root_matching() {
