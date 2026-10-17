@@ -2496,11 +2496,12 @@
           "desktop identity /private/var test alias fixed in 1a6d2d999"
         ]
       },
-      "limits": "Do not merge yet; core Native Chat flows and dist/package integrity pass, but full required-native desktop workflow remains blocked by unimplemented Agent create ingress and CI failures.",
+      "limits": "Do not merge yet. Core Native Chat flows, dist/package integrity, and app-builder packaged assets pass; required-native Desktop local-apps workflow remains blocked by unimplemented Agent create ingress and startup recovery timeout.",
       "stage_blockers": [
         "protected CI Desktop packaged smoke failure: POST /api/orgs/:orgId/agents returned 404 under RUDDER_NATIVE_MODE=required",
-        "Linux native foundation CI failure is unrelated codex-app-server transport timeout; must be rerun/triaged",
-        "fresh final reviewer/verifier after agent-create route fix"
+        "Linux native foundation CI failure is unrelated rudder-codex-app-server transport timeout in prior_resumed_turn_usage_is_ignored_before_next_turn_start; rerun required",
+        "Agent create route requires full Rust semantics: managed MCP bindings, instructions materialization, skills, intelligence defaults, budget policy, activity/permissions; partial SQL would be unsafe",
+        "fresh final reviewer/verifier after complete agent-create route and packaged smoke fix"
       ],
       "base_sha": "541748fb6870ee2360ec5d096d1f07838b12b433",
       "local_checks": [
