@@ -9,7 +9,7 @@ use super::{
 };
 use crate::StoreError;
 use serde_json::{Value, json};
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::{Postgres, Row, Transaction};
 
 const CURRENT_PROGRESS_ACTIVITY_KINDS: &[&str] =
     &["progress", "evidence", "checkpoint", "closeout"];
@@ -59,8 +59,8 @@ pub(super) struct OpaqueJson {
     raw: String,
 }
 
-pub(super) async fn read_workspace(
-    pool: &PgPool,
+pub(super) async fn read_workspace_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
     org: &str,
     input: &GoalReadRequest,
     verified_run_owner: Option<&str>,
@@ -83,10 +83,6 @@ pub(super) async fn read_workspace(
         return Err(StoreError::InvalidInput.into());
     }
 
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        .execute(&mut *tx)
-        .await?;
     let sql = format!(
         "{} WHERE t.org_id=$1::uuid AND ($2::uuid IS NULL OR t.id=$2::uuid) ORDER BY t.created_at",
         row_sql(
@@ -102,7 +98,7 @@ pub(super) async fn read_workspace(
     let rows = sqlx::query(&sql)
         .bind(org)
         .bind(&goal_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await?;
     let mut goals = Vec::with_capacity(rows.len());
     for raw in rows {
@@ -120,7 +116,7 @@ pub(super) async fn read_workspace(
         GoalReadView::WorkspaceCards => {
             let mut cards = Vec::with_capacity(goals.len());
             for goal in &goals {
-                cards.push(workspace_card(&mut tx, org, goal, verified_run_owner).await?);
+                cards.push(workspace_card(tx, org, goal, verified_run_owner).await?);
             }
             Value::Array(cards)
         }
@@ -138,7 +134,7 @@ pub(super) async fn read_workspace(
                 {
                     continue;
                 }
-                let card = workspace_card(&mut tx, org, goal, verified_run_owner).await?;
+                let card = workspace_card(tx, org, goal, verified_run_owner).await?;
                 if facet.is_none_or(|expected| card["facet"] == expected) {
                     cards.push(card);
                 }
@@ -158,19 +154,19 @@ pub(super) async fn read_workspace(
         }
         GoalReadView::Workspace => {
             let goal = &goals[0];
-            workspace_summary(&mut tx, org, goal, &mut opaque, verified_run_owner).await?
+            workspace_summary(tx, org, goal, &mut opaque, verified_run_owner).await?
         }
         GoalReadView::AgentContext => {
             let goal = &goals[0];
-            let raw = context::goal_context_raw(&mut tx, org, &goal.public).await?;
+            let raw = context::goal_context_raw(tx, org, &goal.public).await?;
             let mut workspace =
-                workspace_summary(&mut tx, org, goal, &mut opaque, verified_run_owner).await?;
+                workspace_summary(tx, org, goal, &mut opaque, verified_run_owner).await?;
             if let Some(marker) = workspace["goal"]["ownerAgentRuntimeOverrides"].as_str() {
                 opaque.retain(|registered| registered.marker != marker);
             }
             workspace["goal"]["ownerAgentRuntimeOverrides"] = Value::Null;
             context::agent_context(
-                &mut tx,
+                tx,
                 org,
                 goal,
                 &raw,
@@ -182,7 +178,7 @@ pub(super) async fn read_workspace(
         }
         GoalReadView::Timeline => {
             timeline::timeline(
-                &mut tx,
+                tx,
                 org,
                 &goals[0].public,
                 input,
@@ -193,8 +189,6 @@ pub(super) async fn read_workspace(
         }
         _ => return Err(StoreError::InvalidInput.into()),
     };
-    tx.commit().await?;
-
     let mut final_opaque = Vec::with_capacity(opaque.len());
     let mut candidate_index = 0usize;
     for entry in &opaque {

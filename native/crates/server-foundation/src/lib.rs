@@ -14,7 +14,7 @@ use rudder_d1_persistence::{
     OrganizationResourceOperation, ProjectCreateCommand, ProjectCreateProvisionRequest,
     ProjectCreateProvisioned, ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
     ProjectPatchMutationOrigin, ResultState, StoreError,
-    goal_reads::{GoalReadError, GoalReadRequest, read_goals_for_actor},
+    goal_reads::{GoalReadError, GoalReadRequest, read_goals_for_actor_in_transaction},
     project_library::{
         ProjectLibraryCommand, ProjectLibraryError, ensure_project_create_intent,
         ensure_project_library,
@@ -1624,10 +1624,14 @@ impl AppState {
                 return self.json_error(StatusCode::FORBIDDEN, "forbidden");
             }
         }
-        if transaction.commit().await.is_err() {
-            return self.json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed");
-        }
-        match read_goals_for_actor(pool, org_id, input, owner).await {
+        let response = match read_goals_for_actor_in_transaction(
+            &mut transaction,
+            org_id,
+            input,
+            owner,
+        )
+        .await
+        {
             Ok(response) => HttpResponse::Ok()
                 .content_type("application/json")
                 .body(response),
@@ -1645,7 +1649,14 @@ impl AppState {
                 serde_json::json!({"error":"Goal activity timeline limit must be between 1 and 100"}),
             ),
             Err(_) => self.json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed"),
+        };
+        if !response.status().is_success() {
+            return response;
         }
+        if transaction.commit().await.is_err() {
+            return self.json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed");
+        }
+        response
     }
 
     pub(crate) async fn goal_read_with_native_bearer(

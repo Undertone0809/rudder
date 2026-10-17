@@ -965,11 +965,48 @@ async fn get_session(state: web::Data<IngressState>, request: HttpRequest) -> Ht
 }
 
 fn goal_query_value(request: &HttpRequest, key: &str) -> Option<String> {
-    request.uri().query().and_then(|query| {
+    let mut values = request.uri().query().into_iter().flat_map(|query| {
         url::form_urlencoded::parse(query.as_bytes())
-            .find(|(candidate, _)| candidate == key)
+            .filter(|(candidate, _)| candidate == key)
             .map(|(_, value)| value.into_owned())
-    })
+    });
+    let value = values.next()?;
+    // Express's `req.query` represents duplicate keys as arrays. The Node
+    // optionalQueryString helper rejects those by returning null; preserve
+    // that contract on the native public ingress instead of selecting a value.
+    if values.next().is_some() {
+        return None;
+    }
+    let value = value.trim().to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
+fn goal_query_number(value: &str) -> Option<f64> {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        return u64::from_str_radix(hex, 16)
+            .ok()
+            .map(|number| number as f64);
+    }
+    if let Some(binary) = value
+        .strip_prefix("0b")
+        .or_else(|| value.strip_prefix("0B"))
+    {
+        return u64::from_str_radix(binary, 2)
+            .ok()
+            .map(|number| number as f64);
+    }
+    if let Some(octal) = value
+        .strip_prefix("0o")
+        .or_else(|| value.strip_prefix("0O"))
+    {
+        return u64::from_str_radix(octal, 8)
+            .ok()
+            .map(|number| number as f64);
+    }
+    value.parse::<f64>().ok()
 }
 
 fn goal_assigned_input(
@@ -1010,8 +1047,12 @@ fn goal_assigned_input(
     }
     let limit = match goal_query_value(request, "limit") {
         None => 20,
-        Some(value) => match value.parse::<u16>() {
-            Ok(value) if (1..=100).contains(&value) => value,
+        Some(value) => match goal_query_number(&value) {
+            Some(value)
+                if value.is_finite() && value.fract() == 0.0 && (1.0..=100.0).contains(&value) =>
+            {
+                value as u16
+            }
             _ => {
                 return Err(HttpResponse::BadRequest().json(serde_json::json!({
                     "error":"Goal list limit must be between 1 and 100"
@@ -2032,6 +2073,56 @@ mod tests {
         let encoded =
             percent_encoding::utf8_percent_encode(&signed, percent_encoding::NON_ALPHANUMERIC);
         format!("{name}={encoded}")
+    }
+
+    #[actix_web::test]
+    async fn goal_query_optional_strings_match_node_blank_and_duplicate_contract() {
+        let agent = "20000000-0000-4000-8000-000000000001".to_owned();
+        for query in [
+            "lifecycle=%20%20&focus=%20&facet=%20&limit=%20",
+            "lifecycle=closed&lifecycle=active&focus=true&focus=false&facet=closed&facet=all&limit=7&limit=8",
+        ] {
+            let request = test::TestRequest::get()
+                .uri(&format!("/api/orgs/org-1/goals/assigned?{query}"))
+                .to_http_request();
+            let input = goal_assigned_input(&request, agent.clone()).unwrap();
+            assert_eq!(input.lifecycle.as_deref(), Some("active"));
+            assert_eq!(input.focus, None);
+            assert_eq!(input.facet, None);
+            assert_eq!(input.limit.as_deref(), Some("20"));
+        }
+    }
+
+    #[actix_web::test]
+    async fn goal_query_limit_matches_node_number_formats_and_bounds() {
+        let agent = "20000000-0000-4000-8000-000000000001".to_owned();
+        for (raw, expected) in [
+            ("0x10", 16),
+            ("0b10", 2),
+            ("0o10", 8),
+            ("1e2", 100),
+            ("1.0", 1),
+            ("+1", 1),
+        ] {
+            let request = test::TestRequest::get()
+                .uri(&format!("/api/orgs/org-1/goals/assigned?limit={raw}"))
+                .to_http_request();
+            let input = goal_assigned_input(&request, agent.clone()).unwrap();
+            let expected = expected.to_string();
+            assert_eq!(input.limit.as_deref(), Some(expected.as_str()));
+        }
+        for raw in ["0", "101", "1.5", "Infinity", "NaN"] {
+            let request = test::TestRequest::get()
+                .uri(&format!("/api/orgs/org-1/goals/assigned?limit={raw}"))
+                .to_http_request();
+            assert_eq!(
+                goal_assigned_input(&request, agent.clone())
+                    .unwrap_err()
+                    .status(),
+                StatusCode::BAD_REQUEST,
+                "{raw}"
+            );
+        }
     }
 
     #[actix_web::test]

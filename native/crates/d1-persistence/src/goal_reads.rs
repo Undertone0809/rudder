@@ -441,6 +441,26 @@ pub async fn read_goals_for_actor(
     input: &GoalReadRequest,
     verified_run_owner: Option<&str>,
 ) -> Result<String, GoalReadError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let response =
+        read_goals_for_actor_in_transaction(&mut tx, organization_id, input, verified_run_owner)
+            .await?;
+    tx.commit().await?;
+    Ok(response)
+}
+
+/// Execute a Goal read on a caller-owned transaction. The caller controls the
+/// transaction snapshot, so native auth revalidation and the public projection
+/// can observe the same organization membership state without a TOCTOU gap.
+pub async fn read_goals_for_actor_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    input: &GoalReadRequest,
+    verified_run_owner: Option<&str>,
+) -> Result<String, GoalReadError> {
     let org = organization_id.to_ascii_lowercase();
     transaction::uuid(&org)?;
     let goal_id = input.goal_id.as_ref().map(|s| s.to_ascii_lowercase());
@@ -469,12 +489,8 @@ pub async fn read_goals_for_actor(
             | GoalReadView::AgentContext
             | GoalReadView::Timeline
     ) {
-        return workspace::read_workspace(pool, &org, input, verified_run_owner).await;
+        return workspace::read_workspace_in_transaction(tx, &org, input, verified_run_owner).await;
     }
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        .execute(&mut *tx)
-        .await?;
     let sql = format!(
         "{} WHERE t.org_id=$1::uuid AND ($2::uuid IS NULL OR t.id=$2::uuid) ORDER BY t.created_at",
         row_sql(
@@ -490,7 +506,7 @@ pub async fn read_goals_for_actor(
     let raw_goals = sqlx::query(&sql)
         .bind(&org)
         .bind(&goal_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await?;
     let mut goals = Vec::new();
     let mut overrides = Vec::new();
@@ -512,7 +528,7 @@ pub async fn read_goals_for_actor(
                 let activities = sqlx::query_scalar::<_, String>(&sql)
                     .bind(&org)
                     .bind(&id)
-                    .fetch_all(&mut *tx)
+                    .fetch_all(&mut **tx)
                     .await?
                     .iter()
                     .map(|s| row(s).map(|r| public_activity(&r)))
@@ -527,7 +543,7 @@ pub async fn read_goals_for_actor(
                     let assignment = sqlx::query_scalar::<_, String>(&sql)
                         .bind(&org)
                         .bind(&id)
-                        .fetch_optional(&mut *tx)
+                        .fetch_optional(&mut **tx)
                         .await?
                         .map(|s| row(&s))
                         .transpose()?;
@@ -539,7 +555,7 @@ pub async fn read_goals_for_actor(
                         .bind(&org)
                         .bind(&id)
                         .bind(goal["planRevision"].as_i64().unwrap_or(0) as i32)
-                        .fetch_optional(&mut *tx)
+                        .fetch_optional(&mut **tx)
                         .await?
                         .map(|s| row(&s))
                         .transpose()?;
@@ -552,8 +568,8 @@ pub async fn read_goals_for_actor(
                     result
                 }
             }
-            GoalReadView::History => history(&mut tx, &org, &id, input).await?,
-            GoalReadView::Dependencies => dependencies(&mut tx, &org, goal).await?,
+            GoalReadView::History => history(tx, &org, &id, input).await?,
+            GoalReadView::Dependencies => dependencies(tx, &org, goal).await?,
             GoalReadView::List => unreachable!(),
             GoalReadView::WorkspaceCards
             | GoalReadView::Assigned
@@ -564,7 +580,6 @@ pub async fn read_goals_for_actor(
             }
         }
     };
-    tx.commit().await?;
     match input.view {
         GoalReadView::List => {
             let goals = result.as_array().ok_or(StoreError::InvalidReceipt)?;

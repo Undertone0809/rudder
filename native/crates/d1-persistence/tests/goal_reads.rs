@@ -30,6 +30,72 @@ fn input(view: GoalReadView, id: Option<&str>) -> GoalReadRequest {
 }
 
 #[tokio::test]
+async fn goal_read_can_share_the_auth_repeatable_read_snapshot() {
+    let db = Database::start().await;
+    let user_id = "goal-read-snapshot-user";
+    sqlx::query(
+        r#"INSERT INTO "user"(id,name,email,created_at,updated_at)
+           VALUES ($1,'Goal snapshot user',$2,now(),now())"#,
+    )
+    .bind(&user_id)
+    .bind(format!("{user_id}@invalid.test"))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,status) VALUES ($1::uuid,'user',$2,'active')",
+    )
+    .bind(ORG)
+    .bind(&user_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let mut tx = db.pool.begin().await.unwrap();
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let active_before: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM organization_memberships WHERE org_id=$1::uuid AND principal_id=$2 AND status='active')",
+    )
+    .bind(ORG)
+    .bind(&user_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert!(active_before);
+
+    // Commit the revocation after the auth query established the snapshot.
+    // A read routed through the same transaction must observe that exact
+    // snapshot rather than opening a second connection after the revoke.
+    sqlx::query(
+        "UPDATE organization_memberships SET status='revoked' WHERE org_id=$1::uuid AND principal_id=$2",
+    )
+    .bind(ORG)
+    .bind(&user_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let response = rudder_d1_persistence::goal_reads::read_goals_for_actor_in_transaction(
+        &mut tx,
+        ORG,
+        &input(GoalReadView::List, None),
+        Some(&user_id),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let goals: Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(goals.as_array().unwrap().len(), 2);
+
+    db.sql(&format!(
+        "DELETE FROM organization_memberships WHERE org_id='{ORG}'::uuid AND principal_id='{user_id}'; DELETE FROM \"user\" WHERE id='{user_id}';"
+    ))
+    .await;
+}
+
+#[tokio::test]
 async fn goal_reads_sql_public_projection_scope_history_and_dependencies() {
     let db = Database::start().await;
     let before = db.counts().await;
