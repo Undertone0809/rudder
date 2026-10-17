@@ -2411,6 +2411,68 @@
       "closed_at_utc": "2026-10-17T10:18:11Z",
       "replacement_pr": 325,
       "reason": "Older member-directory-only auth slice superseded by merged native auth/public ingress PR #325; no separate merge or release claim."
+    },
+    "goal_reads_pr_329": {
+      "number": 329,
+      "url": "https://github.com/Undertone0809/rudder/pull/329",
+      "branch": "codex/goal-reads-public-ingress-20261018",
+      "head": "92b568f4865600ad18fbd3ae185a3cb8b2bdbc5d",
+      "state": "open",
+      "merge_state": "unstable",
+      "scope": "Rust public ingress owns Goal collection list, workspace cards, and assigned reads; preserves Node query/error compatibility and reserves near-match paths.",
+      "stage_review": "needs_more_evidence",
+      "stage_blockers": [
+        "CI for exact head is still pending",
+        "snapshot race test was strengthened in 92b568f4 and requires fresh independent review"
+      ],
+      "local_checks": [
+        "cargo fmt --all -- --check",
+        "cargo clippy -p rudder-d1-persistence --test goal_reads -- -D warnings",
+        "cargo check -p rudder-d1-persistence -p rudder-server-foundation-core",
+        "cargo test -p rudder-d1-persistence --test goal_reads (2 passed)",
+        "cargo test -p rudder-server-foundation-core --lib goal_reads::tests (4 passed)",
+        "public_ingress tests 47 passed/2 ignored",
+        "inventory check/compare pass"
+      ],
+      "ci": {
+        "latest_run_ids": [
+          39064383569,
+          39064383560,
+          39064383662
+        ],
+        "status": "in_progress",
+        "known_failures_before_latest_head": [
+          "Linux/Windows clippy needless borrow on pre-race test; fixed in 92b568f4"
+        ]
+      },
+      "limits": "No merge, final review, or no-Node backend acceptance claim yet; production deployment not included."
+    },
+    "native_chat_pr_324": {
+      "number": 324,
+      "url": "https://github.com/Undertone0809/rudder/pull/324",
+      "branch": "codex/native-chat-main-refresh-integration-20261017",
+      "head": "80f63c812cf874fa19048d4d77fd2dbcdcff4d35",
+      "state": "open",
+      "merge_state": "unstable",
+      "scope": "Native Chat Codex/Hermes Rust ingress, recovery, and compatibility fences.",
+      "stage_review": "needs_more_evidence_on_prior_candidate; fresh final review required for 80f63c81",
+      "ci": {
+        "workflow_run": 39063292382,
+        "status": "queued/in_progress",
+        "passed": [
+          "plan qualification",
+          "architecture ratchet",
+          "docs qualification",
+          "D1 real-entry",
+          "native-boundaries"
+        ],
+        "pending": [
+          "cross-platform foundations",
+          "Verify jobs",
+          "packaged Desktop smoke"
+        ]
+      },
+      "limits": "No merge or independent packaged/installed-provider verifier PASS yet; production deployment not included."
     }
   }
 }
