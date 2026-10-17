@@ -263,6 +263,19 @@ pub(super) async fn require_configs(tx: &mut Tx<'_>, ctx: &Context<'_>) -> Resul
         ))
     }
 }
+
+/// Agent creation has a distinct board permission in the public service. Keep
+/// the check after the organization and mutation locks so a concurrent revoke
+/// cannot race a new row into existence.
+pub(super) async fn require_create(_tx: &mut Tx<'_>, ctx: &Context<'_>) -> Result<()> {
+    if ctx.user().is_some() {
+        // Direct Agent creation is a board operation. Organization
+        // membership is already checked by authorize_org; the
+        // agents:create grant is reserved for agent-hire/configuration lanes.
+        return Ok(());
+    }
+    Err(http(403, "Board access required"))
+}
 pub(super) async fn require_update(tx: &mut Tx<'_>, ctx: &Context<'_>, id: &str) -> Result<()> {
     if ctx.user().is_some() || ctx.agent() == Some(id) {
         return Ok(());
