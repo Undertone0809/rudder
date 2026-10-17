@@ -2416,36 +2416,50 @@
       "number": 329,
       "url": "https://github.com/Undertone0809/rudder/pull/329",
       "branch": "codex/goal-reads-public-ingress-20261018",
-      "head": "56e82e15323551dccac1a6a09259fff198478116",
+      "head": "183030e9835083ca68162b8b026ec5f3094adf67",
       "state": "open",
       "merge_state": "unstable",
-      "scope": "Rust public ingress owns Goal collection list, workspace cards, and assigned reads; preserves Node query/error compatibility and reserves near-match paths.; retired provenance records preserved in doc/plans/2026-10-16-rudder-rust-backend-retired-authority-records.json.; real server-foundation auth+read lock-wait test now directly exercises AppState.goal_read_with_native_bearer.",
-      "stage_review": "accept",
+      "scope": "Rust public ingress owns Goal collection list, workspace cards, and assigned reads; preserves Node query/error compatibility and reserves near-match paths.; retired provenance records preserved in doc/plans/2026-10-16-rudder-rust-backend-retired-authority-records.json.; real server-foundation auth+read lock-wait test directly exercises AppState.goal_read_with_native_bearer and observes the goals relation lock through pg_locks/pg_class to avoid pg_stat_activity query truncation.",
+      "stage_review": "pending refreshed exact-head review",
       "stage_blockers": [
-        "CI and independent verifier still pending",
-        "ignored disposable DB verifier requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL"
+        "protected CI still pending",
+        "final review after independent verifier still required"
       ],
       "local_checks": [
         "cargo fmt --all -- --check",
         "cargo clippy -p rudder-d1-persistence --test goal_reads -- -D warnings",
         "cargo check -p rudder-d1-persistence -p rudder-server-foundation-core",
+        "cargo check -p rudder-server-foundation --tests",
         "cargo test -p rudder-d1-persistence --test goal_reads (2 passed)",
         "cargo test -p rudder-server-foundation-core --lib goal_reads::tests (4 passed)",
-        "public_ingress tests 47 passed/2 ignored",
-        "inventory check/compare pass"
+        "public_ingress tests 11 passed/3 ignored",
+        "inventory check/compare pass",
+        "ignored disposable DB transaction test 1 passed"
       ],
       "ci": {
         "latest_run_ids": [
-          39064383569,
-          39064383560,
-          39064383662
+          39066645504,
+          39066645527,
+          39066645754
         ],
         "status": "in_progress",
         "known_failures_before_latest_head": [
-          "Linux/Windows clippy needless borrow on pre-race test; fixed in 92b568f4"
+          "pg_stat_activity query-text observer timed out because PostgreSQL truncated the long Goal SQL; test-only relation-lock observer fix in 183030e98"
         ]
       },
-      "limits": "No merge, final review, or no-Node backend acceptance claim yet; production deployment not included."
+      "limits": "No merge, final review, or no-Node backend acceptance claim yet; production deployment not included.",
+      "verifier": {
+        "verdict": "PASS",
+        "head": "183030e9835083ca68162b8b026ec5f3094adf67",
+        "binary_sha256": "7ad85e00bdafb74bdfb08aa470440931df31d411507b7f7941ea1ff28c73a518",
+        "evidence": [
+          "goal-read-real-entry 10/10 with off and required",
+          "public ingress 11 passed/3 ignored",
+          "isolated PostgreSQL 17.10 migrated with 182 migrations",
+          "ignored repeatable-read transaction test 1 passed"
+        ],
+        "limits": "No final review, merge, or no-Node backend acceptance claim; production deployment not included."
+      }
     },
     "native_chat_pr_324": {
       "number": 324,
