@@ -2479,22 +2479,27 @@
       "number": 324,
       "url": "https://github.com/Undertone0809/rudder/pull/324",
       "branch": "codex/native-chat-main-refresh-integration-20261017",
-      "head": "1a6d2d999",
+      "head": "bc4f69b085005451003e072e02095dd70e9740ea",
       "state": "open",
       "merge_state": "unstable",
       "scope": "Native Chat Codex/Hermes Rust ingress, recovery, and compatibility fences, rebased onto merged Goal collection reads main.",
-      "stage_review": "fresh review required exact head after desktop path-test repair",
+      "stage_review": "fresh review required exact bc4f69b08 after clippy-only Goal parser annotation",
       "ci": {
-        "latest_run_ids": [],
-        "status": "not_started_after_desktop_test_fix",
+        "latest_run_ids": [
+          39069582522,
+          39069582505,
+          39069582508
+        ],
+        "status": "in_progress",
         "known_failures_before_latest_head": [
-          "Linux/Windows native foundation failures from prior run pending log; desktop identity test /private/var alias failure fixed in 1a6d2d999"
+          "result_large_err clippy on goal ingress parser fixed by one-line allow in bc4f69b08",
+          "desktop identity /private/var test alias fixed in 1a6d2d999"
         ]
       },
-      "limits": "No merge or independent packaged/installed-provider verifier PASS yet; desktop:verify/package smoke still needs rerun after dependency/cache repair; production deployment not included.",
+      "limits": "No merge or final packaged/installed-provider verifier PASS yet; desktop:verify dependency hydration and packaged smoke still pending; production deployment not included.",
       "stage_blockers": [
-        "fresh protected CI exact 1a6d2d999",
-        "independent packaged/installed-provider verifier exact 1a6d2d999",
+        "fresh protected CI exact bc4f69b08",
+        "independent verifier exact bc4f69b08",
         "fresh stage/final review"
       ],
       "base_sha": "541748fb6870ee2360ec5d096d1f07838b12b433",
