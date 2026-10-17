@@ -1,0 +1,225 @@
+{
+  "task": "Read-only Node compatibility and transport-admission review",
+  "candidate": {
+    "worktree": "/Users/zeeland/.codex/worktrees/rust-native-agent-auth-20261016/rudder-oss",
+    "branch": "codex/rust-auth-lifecycle-integration-20261017",
+    "base_sha": "367b44a0447f193d2d470a9e03eaec32da9c11df",
+    "parent_sha": "b1091d485105b7c008e013d4d76f98a2bc1c2f55",
+    "head_sha": "df6b5eb0149538676c29a006c227026d8152c935",
+    "parent_tree_sha": "fb1b04383d8203f7cf90b08221e620f03eb0f9d5",
+    "head_tree_sha": "3aee30b56f245ced9955650591f9acbb690b7d17",
+    "worktree_clean": true,
+    "delta_from_parent": {
+      "path": "server/src/__tests__/rust-native-session-workflow.test.ts",
+      "status": "M",
+      "before_sha256": "358c3dd92530e79da6e8545a27675715a5a653c30c9181dbb24e156055368e4b",
+      "after_sha256": "fb01054299c5f1066898cb7e5d394486107553bdad0404788a1f6994beb231ab",
+      "summary": "Adds cross-version offline replay coverage: seed the Node-compatible durable redemption key for a valid grant/proof, send through Rust local-offline, expect 409 and unchanged session count. Test-only; no production Node diff from b109."
+    }
+  },
+  "verdict": {
+    "value": "accept",
+    "level": "stage verdict",
+    "scope": "Source-level Node compatibility boundary and bounded identity-proof admission proposal only. Not final acceptance of Rust auth internals, runtime, CI, or Desktop.",
+    "basis": "Static source and exact-hash review only."
+  },
+  "prior_receipt": {
+    "path": "/private/tmp/rudder-local-account-unit-20261017/auth-lifecycle-source-integration.json",
+    "sha256": "ba12de20ef9dd70185bc09aa67ddfefc8cd0ccc8f79ab119ba0dbcfbc705f109",
+    "head_sha_at_review": "b1091d485105b7c008e013d4d76f98a2bc1c2f55",
+    "inheritance": "The only df6 delta is under server/src/__tests__, excluded by the inventory scanner. Production Node source and inventory scripts are byte-identical to b109; prior 13 compare findings remain the relevant source inventory."
+  },
+  "inventory": {
+    "generated_check_from_prior_receipt": "PASS: 910 source files, 4606 structural surfaces, 10 unknowns",
+    "compare_exit_from_prior_receipt": 1,
+    "compare_findings": 13,
+    "reviewed_node_changes_currently": [],
+    "reviewed_transport_admissions_currently": [],
+    "finding_resolution_map": {
+      "missing_reviewed_node_changes": "9 exact per-file records proposed below",
+      "missing_reviewed_transport_admissions": "one rust-native-identity-proof-v1 record proposed below",
+      "create_http_app_actor_mount_and_proof_mount": "admitted only by the one exact identity admission, pinned source/factory hashes and exact expressions",
+      "create_http_app_dynamic_middleware_mount": "remains visible as debt; admission permits only the exact replacement of the existing actorMiddleware mount, not a second mount"
+    }
+  },
+  "node_change_record_proposals": [
+    {
+      "path": "server/src/agent-auth-jwt.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "719c4a2ebbf71f2f524dd96eedd164ad0cb4169cfc01345d7fac82d30ad4c5ae",
+      "head_sha256": "52e73a6c716f7fab347ce9e2f541cafc3efa678086e61f2091797b2b6a2471c6",
+      "rust_authority": "native::server_foundation::native_agent_jwt",
+      "scope": "Exports the existing JWT secret/issuer/audience selector for Rust startup; Node verifier uses the same selector and TTL behavior.",
+      "compatibility_boundary": "Retain RUDDER_AGENT_JWT_SECRET then BETTER_AUTH_SECRET then rudder-dev-secret precedence and existing issuer/audience defaults; this does not add credential verification or claims.",
+      "retirement_criterion": "Retire the adapter when Rust startup no longer consumes this legacy Node-selected configuration and standalone Node JWT verification is separately retired in every supported Node-only mode."
+    },
+    {
+      "path": "server/src/auth/native-session-assertion.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5",
+      "head_sha256": "26c438378ca462495348fbf70333608d7622fe7f818844048cbb8947d9a8654d",
+      "rust_authority": "native::server_foundation::native_session_auth::issue_assertion",
+      "scope": "Verifies the Rust private-hop envelope and binds the Rust-resolved identity to the Express request; does not validate public credentials.",
+      "compatibility_boundary": "Exact schema/audience, HMAC-SHA256, method and original target, bounded freshness/lifetime, UUID request/nonce, exact identity fields and one-use nonce registry; consumes proof before body parse. Removed prior Bearer-prefix bypass.",
+      "retirement_criterion": "Retire when Node no longer receives Rust public-ingress private-hop requests; evaluate legacy Node auth separately."
+    },
+    {
+      "path": "server/src/bootstrap/create-http-app.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "2ecc2944698fe0df3cd0dd7e97b6bd5dd013dbf3a747cedca0cd277eaf7cc278",
+      "head_sha256": "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+      "rust_authority": "native::http_gateway and native::server_foundation::native_session_auth::issue_assertion",
+      "scope": "One proof mount guarded by nativeIdentityAssertionKey, before JSON parsing; exactly one pre-existing actorMiddleware mount changes to the required-auth variable.",
+      "compatibility_boundary": "Retains the existing Node actor/request adapter. Rust-ingress mode suppresses Node local-trusted implicit actor; only a validated Rust local_implicit proof maps to it. No second actor mount.",
+      "retirement_criterion": "Remove proof mount once Node is no longer Rust private upstream. Retire actorMiddleware only through a separate review after Node no longer serves product APIs or legacy auth."
+    },
+    {
+      "path": "server/src/bootstrap/public-ingress-startup.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "2ca28726d8cc2d63822eafcfec65613dafbd04c51124f8e129fca6412f58defc",
+      "head_sha256": "ea677e6cd38da58d28b63808646cdafd7debfcc624b3c28a1f2ec3fe4d730a56",
+      "rust_authority": "native::http_gateway and native::server_foundation::public_ingress_config",
+      "scope": "Builds private-loopback upstream and forwards existing session/JWT config, shared identity/session proof key, runtime-owner exposure policy and optional lifecycle config.",
+      "compatibility_boundary": "Preserves listener constraints; Desktop local_trusted requires account auth; local implicit is non-Desktop and loopback; identity and session proofs share one generated key.",
+      "retirement_criterion": "Retire Node-side config assembly when Rust ingress is no longer supervised/configured by this Node runtime."
+    },
+    {
+      "path": "server/src/bootstrap/register-api-routes.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "18980a0da08e33bd27fad61a1339e9b5533d853619a8f26a2032ac9a43446382",
+      "head_sha256": "f469d00a07b69830ca41f3e2e960c079e4ab565f5a1b82cb18df5cf5ef6b9c92",
+      "rust_authority": "native::server_foundation::local_account_auth",
+      "scope": "Does not mount Node local-account exchange/offline/claim/signout-all router when localAccountLifecycle is configured; keeps it for non-Rust lifecycle modes.",
+      "compatibility_boundary": "Selected lifecycle has one Rust route owner and no Node fallback on Rust rejection/loss. This is conditional retirement, not global removal.",
+      "retirement_criterion": "Delete legacy Node local-account routes only after Rust owns lifecycle in every supported deployment mode; retain the selected-mode unmount guard meanwhile."
+    },
+    {
+      "path": "server/src/index.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "e68fab612c4e24ced3dfde26a7aaa9b23fea748acace045bbe4aff03b4412488",
+      "head_sha256": "c7eed1d955d3f5b92ab758dd9374ba81a253f6af0d364fd5f7d84a7d85ae6d32",
+      "rust_authority": "native::server_foundation::public_ingress_config and native::server_foundation::local_account_auth",
+      "scope": "Forwards runtime owner and existing local-account identity/origin/offline config into Rust startup.",
+      "compatibility_boundary": "Creates no new credential or route; passes through existing options when Rust ingress is enabled.",
+      "retirement_criterion": "Retire when Rust ingress/lifecycle is no longer bootstrapped through the Node runtime."
+    },
+    {
+      "path": "server/src/middleware/auth.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "2b1655b28f3c3366591e55ab0e710631034a9404cc61f51be58540e6039765b5",
+      "head_sha256": "9ad5746e5207e141a89a089c068eac211f999d351e5fb076ed1fda00a7c5729a",
+      "rust_authority": "native::server_foundation::native_session_auth::issue_assertion",
+      "scope": "Projects verified proof identity into existing req.actor; board identity reuses current Node resolveBoardAccess and session identity reuses current permission queries.",
+      "compatibility_boundary": "Native branch consumes request-local verified identity; it does not parse/verify public credentials. Legacy direct Node Bearer/session validation remains in non-Rust paths and remains visible debt.",
+      "retirement_criterion": "Retire proof projection when Node no longer receives native ingress requests. Retire legacy direct Node auth separately when Node-only modes are removed."
+    },
+    {
+      "path": "server/src/services/rust-foundation-bridge.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "ef956cf33e856f108b5e5807a8466b9cfe463be3048aace356bbc3dfea3ea24f",
+      "head_sha256": "f2df5c805459300d4dcb7c63118482a1af39daf56751e8882659bbc9666ddda8",
+      "rust_authority": "native::server_foundation::public_ingress_config and native::server_foundation::local_account_auth",
+      "scope": "Serializes identity/session/lifecycle env and requires startup receipt to confirm Rust lifecycle authority, protocol v1 and the four routes.",
+      "compatibility_boundary": "Bridge/config only; startup fails closed if selected Rust route owner/route set is not attested.",
+      "retirement_criterion": "Retire fields and receipt check when the Node bridge no longer supervises this Rust child."
+    },
+    {
+      "path": "server/src/services/rust-public-ingress-config.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "7b49ebaa9a2701689de7075666591e6836eca9f51dc2a7f5826f15c23fecab70",
+      "head_sha256": "26d64385bc1d8ba89d325ef4a5f6831ab3d71f2326a4dbe747af5669600106c4",
+      "rust_authority": "native::http_gateway::PublicIngressConfig and native server-foundation session/lifecycle config",
+      "scope": "Defines/serializes existing identity/session/lifecycle settings; requires explicit websocket fallback for local-account session and local-account session for lifecycle config.",
+      "compatibility_boundary": "Transport/config adapter only; it does not authenticate clients.",
+      "retirement_criterion": "Retire serializers when Node no longer configures Rust public ingress."
+    }
+  ],
+  "transport_admission_proposal": {
+    "id": "rust-native-identity-proof-v1",
+    "recommendation": "One exact admission covers identity-only and session-backed requests; do not add a second session-only admission record for this mount.",
+    "fields": {
+      "mount_source_path": "server/src/bootstrap/create-http-app.ts",
+      "mount_source_sha256": "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+      "mount_receiver": "app",
+      "mount_expression": "nativeSessionAssertionMiddleware({ key: nativeIdentityAssertionKey, })",
+      "mount_guard": "nativeIdentityAssertionKey",
+      "order_after": "workspace_preview_reserved_404",
+      "order_before": "express_json_body_parser",
+      "factory_path": "server/src/auth/native-session-assertion.ts",
+      "factory_export": "nativeSessionAssertionMiddleware",
+      "factory_sha256": "26c438378ca462495348fbf70333608d7622fe7f818844048cbb8947d9a8654d",
+      "rust_proof_owner": "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion",
+      "compatibility_boundary": "Node validates only the Rust-signed identity envelope and binds its resolved identity to the exact request. Rust owns public credential resolution/proof issuance. Node retains existing req.actor/current-permission projection and legacy non-Rust auth as separately visible debt; this record grants no second actor owner.",
+      "retirement_criterion": "Remove verifier when Node no longer receives Rust public-ingress private-hop requests; retire actorMiddleware/direct Node auth only through separate scoped review.",
+      "existing_mount_replacement": {
+        "before": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement: opts.authRequirement, resolveSession: opts.resolveSession, })",
+        "after": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement, resolveSession: opts.resolveSession, })",
+        "exact_count": 1,
+        "additional_actor_mounts_allowed": 0
+      },
+      "mode_binding": {
+        "identity_only": "Key comes from identityAuth.assertionKey.",
+        "session_backed": "Node startup generates one identityAssertionKey and assigns it to identityAuth and sessionAuth; Rust config rejects mismatched keys.",
+        "session_only_compatibility": "Mount falls back to sessionAuth.assertionKey if identityAuth is absent."
+      },
+      "reviewer": null,
+      "review_reference": null,
+      "review_status": null,
+      "metadata_status": "proposal only; intentionally not an inventory-approved record"
+    },
+    "hardcoded_allowlist": {
+      "current_source_sha256": "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+      "pinned_source_sha256": "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+      "current_factory_sha256": "26c438378ca462495348fbf70333608d7622fe7f818844048cbb8947d9a8654d",
+      "pinned_factory_sha256": "26c438378ca462495348fbf70333608d7622fe7f818844048cbb8947d9a8654d",
+      "inventory_script_and_test_unchanged": true,
+      "result": "Exact pins remain accurate at df6."
+    }
+  },
+  "semantics": {
+    "verified_security_properties": [
+      "Node and Rust issuer agree on schema rudder.native-identity-assertion.v1 and audience rudder-node-private-ingress.",
+      "HMAC-SHA256 signature, exact method/target binding, bounded expiry/skew, UUID request/nonce, exact identity shape and one-use replay checks are enforced.",
+      "Node consumes nonce, stores identity in request WeakMap and removes proof header before parsing body.",
+      "Authorization: Bearer no longer bypasses proof validation.",
+      "Rust ingress forces required auth in Node, preventing a direct/private Node local-trusted implicit actor; local implicit actor is accepted only from Rust proof and is loopback/non-Desktop constrained.",
+      "Selected localAccountLifecycle unmounts Node routes; Rust startup receipt must attest rust authority, protocol v1 and all four lifecycle routes."
+    ],
+    "retained_node_responsibilities": [
+      "Node still projects identity to req.actor and evaluates current board membership/admin permissions; these are not removed by the transport admission.",
+      "Existing direct Node Bearer/session auth and Node local-account router remain for non-Rust/legacy modes. The new admission must not be described as global Node auth retirement.",
+      "The proof bypass helper covers all /api/auth/** except get-session, not only the four lifecycle paths; this behavior is unchanged from base. Selected lifecycle safety comes from conditional Node-router unmount, and the broad exception must remain explicit in the compatibility boundary."
+    ],
+    "review_questions": [
+      "The exported JWT settings function can return an empty selected secret, while the old verifier returned null for an empty value. Confirm required Rust ingress intentionally fails closed for this malformed environment rather than preserving a disabled-JWT interpretation; this is an edge compatibility question, not evidence of a new auth fallback.",
+      "Keep index.ts wiring invariant: whenever localAccountAuth is selected with required Rust ingress, pass localAccountLifecycle so the Node local router is unmounted. Current source does so."
+    ]
+  },
+  "evidence_boundary": {
+    "reviewed": "All 9 production Node diffs against 367b, proof validator/signer shape, exact create-http-app mount/order, route unmount, bridge receipt check, startup wiring, allowlist pins, and df6 test delta.",
+    "not_run": [
+      "No pnpm/TypeScript tests or checks",
+      "No Cargo/build/tests",
+      "No PostgreSQL or runtime/HTTP",
+      "No Desktop verification",
+      "No inventory compare rerun"
+    ],
+    "basis_for_inherited_findings": "The scanner excludes __tests__ paths; the only df6 delta is test-only and production Node files plus inventory policy scripts are unchanged from b109."
+  },
+  "metadata_integrity": {
+    "official_inventory_modified": false,
+    "reviewed_node_records_written": false,
+    "reviewed_transport_admission_written": false,
+    "approval_fields_fabricated": false,
+    "child_agents_spawned": false
+  }
+}
