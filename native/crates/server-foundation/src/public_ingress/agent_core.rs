@@ -42,8 +42,11 @@ pub(super) async fn permissions(
     .await
 }
 
-pub(super) fn is_reserved_path(path: &str) -> bool {
-    endpoint_for_path(path).is_some()
+pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
+    endpoint_for_path(path).is_some_and(|endpoint| match endpoint {
+        Endpoint::Roster(_) => matches!(*method, Method::GET | Method::HEAD),
+        Endpoint::Permissions(_) => *method == Method::PATCH,
+    })
 }
 
 /// Handles Express-compatible casing and the optional trailing slash from the
