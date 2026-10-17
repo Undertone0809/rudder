@@ -112,6 +112,7 @@ mod tests {
             instruction_entry_file: "AGENTS.md".into(),
             instruction_content: Some("Use the selected profile.".into()),
             hermes: None,
+            pi: None,
         }
     }
 

@@ -58,6 +58,9 @@ pub struct ResolvedCodexConfig {
     /// Provider-specific resolved data. The Codex public carrier remains
     /// source-compatible; Hermes execution reads only this closed branch.
     pub hermes: Option<super::HermesLocalConfig>,
+    /// Provider-neutral extension for the native Pi RPC branch. Pi session
+    /// and leaf identities never use the Codex thread/turn fields above.
+    pub pi: Option<super::PiLocalConfig>,
 }
 
 /// Resolve the selected Agent and all identity-bearing runtime inputs from the
@@ -303,6 +306,7 @@ pub(crate) async fn resolve_codex_config(
         instruction_entry_file: instructions.entry_file,
         instruction_content: instructions.entry_content,
         hermes: None,
+        pi: None,
     })
 }
 

@@ -20,6 +20,9 @@ pub struct LocalHostContext {
     operator_codex_home: Option<PathBuf>,
     hermes_executable: Option<PathBuf>,
     hermes_profiles_root: Option<PathBuf>,
+    pi_node_executable: Option<PathBuf>,
+    pi_cli_entry: Option<PathBuf>,
+    pi_profiles_root: Option<PathBuf>,
 }
 
 impl LocalHostContext {
@@ -63,6 +66,9 @@ impl LocalHostContext {
             operator_codex_home: None,
             hermes_executable: None,
             hermes_profiles_root: None,
+            pi_node_executable: None,
+            pi_cli_entry: None,
+            pi_profiles_root: None,
         })
     }
 
@@ -121,6 +127,21 @@ impl LocalHostContext {
         Ok(self)
     }
 
+    /// Attach the installed Pi Node launcher, CLI entrypoint, and the
+    /// Rust-owned profile root discovered by the local host. These paths are
+    /// installation facts and cannot be supplied by HTTP or Agent config.
+    pub fn with_pi_runtime(
+        mut self,
+        node_executable: PathBuf,
+        pi_cli_entry: PathBuf,
+        profiles_root: PathBuf,
+    ) -> std::result::Result<Self, super::Error> {
+        self.pi_node_executable = Some(canonical_file(node_executable, "Pi Node executable")?);
+        self.pi_cli_entry = Some(canonical_file(pi_cli_entry, "Pi CLI entrypoint")?);
+        self.pi_profiles_root = Some(canonical_directory(profiles_root, "Pi profile root")?);
+        Ok(self)
+    }
+
     pub fn host_id(&self) -> &str {
         &self.host_id
     }
@@ -135,6 +156,14 @@ impl LocalHostContext {
 
     pub fn hermes_profiles_root(&self) -> Option<&Path> {
         self.hermes_profiles_root.as_deref()
+    }
+
+    pub(super) fn pi_runtime(&self) -> Option<(&Path, &Path, &Path)> {
+        Some((
+            self.pi_node_executable.as_deref()?,
+            self.pi_cli_entry.as_deref()?,
+            self.pi_profiles_root.as_deref()?,
+        ))
     }
 
     pub(super) fn instance_root(&self) -> &Path {
