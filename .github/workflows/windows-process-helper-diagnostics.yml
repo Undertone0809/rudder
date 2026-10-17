@@ -1,0 +1,42 @@
+name: Windows process helper diagnostics
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-process-helper-diagnostics.yml
+      - scripts/diagnostics/windows-process-helper.mjs
+      - scripts/diagnostics/windows-process-helper.test.mjs
+      - desktop/src/local-app-windows-processes.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-helper-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capture-boundary:
+    name: Diagnose Windows capture boundary (not release qualification)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Test diagnostic isolation and cleanup
+        run: node --test scripts/diagnostics/windows-process-helper.test.mjs
+      - name: Observe fresh PowerShell helpers
+        run: node scripts/diagnostics/windows-process-helper.mjs --output diagnostic-artifacts/windows-process-helper.json
+      - name: Keep sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-process-helper-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostic-artifacts/windows-process-helper.json
+          if-no-files-found: warn
+          retention-days: 3
