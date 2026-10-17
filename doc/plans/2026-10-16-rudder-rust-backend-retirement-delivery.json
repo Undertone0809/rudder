@@ -351,6 +351,18 @@
           "number": 262,
           "state": "closed_superseded",
           "replacement_pr": 325
+        },
+        {
+          "number": 327,
+          "state": "open_ci_blocked_existing_macos_websocket_flake",
+          "head_sha": "8534334ff66959167618c1c3d2a22f9dd5ee33fb",
+          "ci_run": 39029440212
+        },
+        {
+          "number": 326,
+          "state": "open_blocked_on_checker_bootstrap_and_protected_ci",
+          "head_sha": "d12f39766e42ddf1ba47980c12350ae0e59e8293",
+          "checker_pr": 327
         }
       ],
       "managed_migration": {
@@ -2236,6 +2248,32 @@
         "lease_id": "auth-64857-83fcabe2e0da4c24b78a3c9e680c9779",
         "scope": "Fresh native auth and packaged memory-mode candidate acceptance; no native vault/release/deployment claim.",
         "status": "ACTIVE"
+      },
+      "checker_bootstrap_20261017": {
+        "pr": 327,
+        "branch": "codex/inventory-transport-admission-bootstrap-20261017",
+        "source_sha": "8534334ff66959167618c1c3d2a22f9dd5ee33fb",
+        "source_tree": "697e82e1f46ad87c63ff97d8005cc6e3716308ad",
+        "scope": "Authority inventory/checker bootstrap for reviewed native transport mounts; no product mount activated and no retirement claim.",
+        "stage_review": {
+          "verdict": "accept",
+          "path": "/private/tmp/rudder-checker-bootstrap-stage-review-20261017/post-commit-rebind-8534334.md",
+          "sha256": "e369fc4d2bb4c68d9e58a20a287a587424650249ef335a3857f7b1b2d53292d9"
+        },
+        "verifier": {
+          "verdict": "PASS",
+          "path": "/private/tmp/rudder-checker-bootstrap-acceptance-20261017.md",
+          "sha256": "b385d0a44205732d62ad52d8315cc2305ee03d1545e56a916518ad0e7485b7eb",
+          "checks": "29/29 inventory tests; check; compare origin/main; git diff --check"
+        },
+        "ci": {
+          "run_id": 39029440212,
+          "initial_result": "FAIL",
+          "reruns": "Windows passed; macOS x86_64 failed three times at the same existing websocket revocation race test: committed_session_revocation_closes_public_and_private_sockets (178 passed, 1 failed). Ubuntu, docs, architecture, packaged desktop and artifact jobs passed.",
+          "merge_state": "blocked_by_protected_ci",
+          "last_observed": "2026-10-17T13:04:35Z"
+        },
+        "next": "Do not merge or bypass protection. Re-run only after the existing macOS websocket test is repaired or an authorized CI policy change lands; then rebind #326 to the merged checker bootstrap."
       }
     },
     "auth_64857_final_acceptance": {
