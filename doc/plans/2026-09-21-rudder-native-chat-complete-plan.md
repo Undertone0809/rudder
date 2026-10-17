@@ -994,20 +994,19 @@ Pi D1 configuration/claim reachability and Pi-native finalization projection
 remain in progress; this increment is not Pi Chat acceptance and does not close
 W09 or the six-runtime completion requirement.
 
-### October 18 Codex and Hermes real local acceptance
+### October 18 Codex and Hermes acceptance status
 
-Candidate `9d5d26053` was exercised through the Rust public ingress against a
-disposable PostgreSQL instance with the installed local Codex and Hermes
-executables. Codex completed a first turn, a continuation, and a continuation
-after restarting the Node/Foundation pair, with one persisted native provider
-thread and three projected assistant answers. Hermes completed the same three
-turns after the Rust launcher kept the trusted operator `HOME` separate from
-the selected `HERMES_HOME` profile and re-applied the configured model on
-session load. The Hermes Agent runtime also carried its provider credential
-through the existing governed `env` configuration; Rust does not inherit
-ambient operator variables. This is real Codex/Hermes evidence for the exact
-candidate, but it does not close the remaining four adapters, full product
-journeys, or the independent final review and required CI gates.
+Candidate `5bb50b9ad` has passing synthetic Rust public-ingress journeys for
+Codex and Hermes, including continuation and restart persistence. Those tests
+use the repository's controlled provider fixtures and are supporting evidence
+only. An independent probe of the installed Codex App Server (`0.163.0-alpha.10.2`)
+with a disposable profile reached `initialize` and `thread/start`, but provider
+turn events returned HTTP 401 because the isolated process had no provider
+credential; no terminal reply was observed. Therefore the installed-runtime
+three-turn acceptance remains open and must be rerun with the user's authorized
+local profile without printing or copying credentials. This milestone does not
+close the remaining four adapters, full product journeys, independent final
+review, or required CI gates.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 

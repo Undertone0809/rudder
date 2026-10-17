@@ -24,6 +24,27 @@ export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
 const SIDE_CHAT_TITLE_PREFIX = "Side chat from: ";
 const CHAT_TITLE_MAX_LENGTH = 200;
 
+export async function releaseSideChatLineage(tx: any, conversationId: string, at: Date) {
+  await tx.update(runtimeSourceAliases).set({
+    conversationId: null,
+    releasedAt: at,
+    updatedAt: at,
+    cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`,
+  }).where(and(
+    eq(runtimeSourceAliases.conversationId, conversationId),
+    isNull(runtimeSourceAliases.releasedAt),
+  ));
+  await tx.update(runtimeRetentionClaims).set({
+    status: "released",
+    releasedAt: at,
+    updatedAt: at,
+    cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
+  }).where(and(
+    eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversationId}`),
+    eq(runtimeRetentionClaims.status, "active"),
+  ));
+}
+
 type ConversationRow = typeof chatConversations.$inferSelect;
 
 function expiresAtFrom(at: Date) {
