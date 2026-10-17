@@ -5,7 +5,10 @@
 //! Direct Rust routes therefore gate on the original Host only; trusting
 //! `X-Forwarded-Host` here would create a different trust boundary.
 
-use actix_web::{HttpRequest, HttpResponse, http::header::HOST};
+use actix_web::{
+    HttpRequest, HttpResponse,
+    http::header::{self, HOST, Header},
+};
 use serde::Deserialize;
 use url::Url;
 
@@ -44,9 +47,7 @@ impl NativePrivateHostGate {
             .map(str::trim)
             .filter(|value| !value.is_empty());
         let Some(raw_host) = raw_host else {
-            return Some(HttpResponse::Forbidden().json(serde_json::json!({
-                "error": "Missing Host header. If you want to allow a hostname, run pnpm rudder allowed-hostname <host>."
-            })));
+            return Some(host_rejection(request, "Missing Host header. If you want to allow a hostname, run pnpm rudder allowed-hostname <host>.".to_owned()));
         };
 
         // Match Express's `new URL(http://${raw}).hostname` behavior. Invalid
@@ -70,12 +71,69 @@ impl NativePrivateHostGate {
             return None;
         }
 
-        Some(HttpResponse::Forbidden().json(serde_json::json!({
-            "error": format!(
+        Some(host_rejection(
+            request,
+            format!(
                 "Hostname '{hostname}' is not allowed for this Rudder instance. If you want to allow this hostname, please run pnpm rudder allowed-hostname {hostname}"
-            )
-        })))
+            ),
+        ))
     }
+}
+
+fn host_rejection(request: &HttpRequest, message: String) -> HttpResponse {
+    if request.path().starts_with("/api") || prefers_json(request) {
+        HttpResponse::Forbidden().json(serde_json::json!({ "error": message }))
+    } else {
+        HttpResponse::Forbidden()
+            .content_type("text/plain; charset=utf-8")
+            .body(message)
+    }
+}
+
+/// Match Express accepts(["json", "html", "text"]), including q=0 exclusions,
+/// media specificity, client order, and finally the server's offered order.
+fn prefers_json(request: &HttpRequest) -> bool {
+    if request
+        .headers()
+        .get(header::ACCEPT)
+        .is_none_or(|value| value.as_bytes().is_empty())
+    {
+        return true;
+    }
+    let Ok(accept) = header::Accept::parse(request) else {
+        return false;
+    };
+    let mut selected = None;
+    for (offered, (kind, subtype)) in [("application", "json"), ("text", "html"), ("text", "plain")]
+        .into_iter()
+        .enumerate()
+    {
+        let priority = accept
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                let mime = &item.item;
+                if (mime.type_().as_str() != kind && mime.type_() != "*")
+                    || (mime.subtype().as_str() != subtype && mime.subtype() != "*")
+                    || mime.params().any(|(_, value)| value != "*")
+                {
+                    return None;
+                }
+                let specificity = u8::from(mime.type_().as_str() == kind) * 4
+                    + u8::from(mime.subtype().as_str() == subtype) * 2;
+                Some((specificity, item.quality, std::cmp::Reverse(index)))
+            })
+            .max();
+        if let Some((specificity, quality, order)) = priority
+            && quality > header::Quality::ZERO
+        {
+            let rank = (quality, specificity, order, std::cmp::Reverse(offered));
+            if selected.as_ref().is_none_or(|(best, _)| rank > *best) {
+                selected = Some((rank, offered));
+            }
+        }
+    }
+    selected.is_some_and(|(_, offered)| offered == 0)
 }
 
 #[cfg(test)]

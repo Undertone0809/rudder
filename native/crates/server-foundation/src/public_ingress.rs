@@ -69,6 +69,51 @@ pub(crate) fn malformed_public_json_response(
     }
 }
 
+/// Guard the public boundary before Actix chooses a route or returns 405.
+/// For denied hosts retain Express's strict JSON-parser error precedence.
+/// Accepted requests keep their original payload and existing parser owner.
+async fn enforce_private_host_gate(
+    state: web::Data<IngressState>,
+    payload: web::Payload,
+    mut request: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<actix_web::dev::ServiceResponse<impl MessageBody>, Error> {
+    if !matches!(request.path(), "/healthz" | "/readyz")
+        && let Some(rejection) = private_host_rejection(&state, request.request())
+    {
+        let is_json = request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .eq_ignore_ascii_case("application/json")
+            });
+        let response = if is_json {
+            let stream = actix_web::body::BodyStream::new(
+                actix_web::dev::Decompress::from_headers(payload.into_inner(), request.headers()),
+            );
+            match actix_web::body::to_bytes_limited(stream, 10 * 1024 * 1024).await {
+                Ok(Ok(body)) => {
+                    malformed_public_json_response(request.request(), &body).unwrap_or(rejection)
+                }
+                _ => HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": "Internal server error"
+                })),
+            }
+        } else {
+            rejection
+        };
+        return Ok(request.into_response(response).map_into_right_body());
+    }
+    request.set_payload(payload.into_inner());
+    Ok(next.call(request).await?.map_into_left_body())
+}
+
 pub struct PublicIngressRuntime {
     server: actix_web::dev::Server,
     handle: actix_web::dev::ServerHandle,
@@ -147,6 +192,7 @@ impl PublicIngressRuntime {
                 .app_data(data.clone())
                 .app_data(web::Data::new(proxy))
                 .app_data(web::Data::new(websocket_proxy))
+                .wrap(middleware::from_fn(enforce_private_host_gate))
                 .wrap(middleware::from_fn(reject_unsupported_websocket_upgrade))
                 .route("/healthz", web::get().to(ingress_health))
                 .route("/readyz", web::get().to(ingress_readiness))

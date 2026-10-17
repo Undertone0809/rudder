@@ -17,6 +17,7 @@ import os from "node:os";
 import path, { dirname, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createLocalAgentJwt, localAgentJwtAuthSettings } from "../agent-auth-jwt.js";
@@ -325,7 +326,7 @@ async function stopRustChild() {
   rustChild = undefined;
 }
 
-function getPublicIngress(path: string, headers: Record<string, string> = {}, method = "GET") {
+function getPublicIngress(path: string, headers: Record<string, string> = {}, method = "GET", requestBody?: string | Buffer) {
   if (publicPort === undefined) throw new Error("Public Actix listener is not started");
   return new Promise<{
     status: number;
@@ -350,7 +351,7 @@ function getPublicIngress(path: string, headers: Record<string, string> = {}, me
     });
     req.setTimeout(5_000, () => req.destroy(new Error("Public Actix request timed out")));
     req.once("error", rejectResponse);
-    req.end();
+    req.end(requestBody);
   });
 }
 
@@ -761,6 +762,100 @@ describe("source-binary public Actix authentication workflow", () => {
     expect(privateRequestCalls).toBe(privateCallsBefore);
     expect(boardKeyLookupCalls).toBe(boardLookupsBefore);
     expect(authorizationObservations).toHaveLength(observationsBefore);
+  });
+
+  it.each([
+    `/api/orgs/${organizationId}/members/directory`,
+    `/api/orgs/${organizationId}/chats/chat-1/runtime-binding`,
+    `/api/orgs/${organizationId}/runtime-bindings/binding-1`,
+    "/llms/agent-configuration.txt",
+    "/llms/agent-icons.txt",
+    "/llms/agent-configuration/codex.txt",
+    "/api/auth/get-session",
+    "/api/not-a-migrated-route",
+  ])("rejects a denied Host before method or path dispatch for %s", async (publicPath) => {
+    const privateBefore = privateRequestCalls;
+    const lookupsBefore = boardKeyLookupCalls + agentKeyLookupCalls + sessionResolverCalls;
+    const response = await getPublicIngress(publicPath, {
+      host: "attacker.example.test",
+      "x-forwarded-host": "public.example",
+    }, "POST");
+    expect(response.status).toBe(403);
+    expect(privateRequestCalls).toBe(privateBefore);
+    expect(boardKeyLookupCalls + agentKeyLookupCalls + sessionResolverCalls).toBe(lookupsBefore);
+  });
+
+  it.each([
+    ["{", 500],
+    ["true", 500],
+    ["{}", 403],
+    ["", 403],
+  ] as const)("retains strict JSON error precedence for a denied Host: %s", async (body, status) => {
+    const privateBefore = privateRequestCalls;
+    const response = await getPublicIngress("/api/auth/get-session", {
+      host: "attacker.example.test",
+      "content-type": "application/json; charset=utf-8",
+      "content-length": String(Buffer.byteLength(body)),
+    }, "POST", body);
+    expect(response.status).toBe(status);
+    expect(privateRequestCalls).toBe(privateBefore);
+  });
+
+  it.each([
+    { body: "{}", status: 403 },
+    { body: "{", status: 500 },
+    { body: JSON.stringify({ value: "x".repeat(10 * 1024 * 1024) }), status: 500 },
+  ])("inflates denied-host JSON within the parser limit: $status", async ({ body, status }) => {
+    const compressed = gzipSync(body);
+    const response = await getPublicIngress("/api/auth/get-session", {
+      host: "attacker.example.test",
+      "content-type": "application/json",
+      "content-encoding": "gzip",
+      "content-length": String(compressed.length),
+    }, "POST", compressed);
+    expect(response.status).toBe(status);
+  });
+
+  it.each([
+    { encoding: "br", compress: brotliCompressSync },
+    { encoding: "deflate", compress: deflateSync },
+  ])("retains valid denied-host JSON inflation: $encoding", async ({ encoding, compress }) => {
+    const body = compress(Buffer.from("{}"));
+    const response = await getPublicIngress("/api/auth/get-session", {
+      host: "attacker.example.test",
+      "content-type": "application/json",
+      "content-encoding": encoding,
+      "content-length": String(body.length),
+    }, "POST", body);
+    expect(response.status).toBe(403);
+  });
+
+  it.each([
+    { accept: "application/json", json: true },
+    { accept: "text/plain", json: false },
+    { accept: "text/html,application/json;q=0.8", json: false },
+    { accept: "*/*", json: true },
+    { accept: "application/json;q=0,*/*;q=1", json: false },
+    { accept: "text/*;q=0.8,application/json;q=0.9", json: true },
+    { accept: "image/png", json: false },
+    { accept: "text/plain,application/json", json: false },
+    { accept: "application/json,text/plain", json: true },
+  ])("preserves non-API Host denial negotiation: $accept", async ({ accept, json }) => {
+    const response = await getPublicIngress("/llms/agent-icons.txt", {
+      host: "attacker.example.test",
+      accept,
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers["content-type"]).toContain(json ? "application/json" : "text/plain");
+    const message = json ? JSON.parse(response.body).error : response.body;
+    expect(message).toContain("Hostname 'attacker.example.test' is not allowed");
+  });
+
+  it("keeps health and readiness probes outside the public Host gate", async () => {
+    const health = await getPublicIngress("/healthz", { host: "attacker.example.test" });
+    expect(health.status).toBe(200);
+    const readiness = await getPublicIngress("/readyz", { host: "attacker.example.test" });
+    expect(readiness.status).not.toBe(403);
   });
 
   it("resolves a persisted same-organization Agent key directly and preserves its CLI context", async () => {
