@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertAuthDeploymentConfig } from "./auth-deployment-config.js";
+import { assertAuthDeploymentConfig } from "./auth-runtime.js";
 
 type Deployment = Parameters<typeof assertAuthDeploymentConfig>[0];
 const local: Deployment = {

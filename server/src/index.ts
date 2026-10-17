@@ -44,8 +44,8 @@ import { pathToFileURL } from "node:url";
 import { createRudderApp, createRudderAppStartupOptions, ownRudderAppAndOutbox } from "./app.js";
 import { shouldStartAutomaticBackupSchedulers } from "./backup-scheduler-policy.js";
 import { getBoardClaimWarningUrl } from "./board-claim.js";
-import { assertAuthDeploymentConfig } from "./bootstrap/auth-deployment-config.js";
 import {
+  assertAuthDeploymentConfig,
   createAuthRuntime,
   type LocalAccountAuthOptions,
 } from "./bootstrap/auth-runtime.js";
