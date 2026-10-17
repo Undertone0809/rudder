@@ -363,6 +363,23 @@
           "state": "open_blocked_on_checker_bootstrap_and_protected_ci",
           "head_sha": "d12f39766e42ddf1ba47980c12350ae0e59e8293",
           "checker_pr": 327
+        },
+        {
+          "number": 331,
+          "state": "open_ci_pending_stage_accept_final_review_pending",
+          "head_sha": "e1054aa0bffbf5c23fe97d29423012787c461cc0",
+          "base_sha": "c43c0ada9e4064b271b9be00af4c4459dd284415",
+          "scope": "private feature-gated AgentCreate runtime normalization only: typed env plain/secret_ref normalization, org/purpose secret validation, strict sensitive plaintext rejection, nested modelFallback parity including gemini_local; no public POST, instruction materialization, skills, MCP, intelligence or avatar cutover",
+          "stage_review": "ACCEPT exact e1054aa0bffbf5c23fe97d29423012787c461cc0",
+          "final_review": "needs_more_evidence while protected native/packaged CI pending; rerun after CI settles",
+          "validation": [
+            "cargo fmt --all -- --check",
+            "cargo check -p rudder-d1-persistence",
+            "focused parser tests",
+            "disposable PostgreSQL secret/fallback organization-isolation test",
+            "transactional Agent create PostgreSQL test"
+          ],
+          "mergeability": "MERGEABLE at observation; do not merge until required checks and final handoff review are green"
         }
       ],
       "managed_migration": {
