@@ -58705,6 +58705,50 @@
       "reviewer": "independent agent /root/auth_next_integration_review",
       "review_reference": "doc/plans/artifacts/2026-10-17-rust-identity-transport-stage-review.json",
       "review_status": "reviewed"
+    },
+    {
+      "path": "desktop/src/identity-runtime.ts",
+      "change_kind": "modified_retained_client",
+      "node_role": "retained_client",
+      "base_sha256": "5eed3a747969cfe2805dddd560d78d36eea852c3930e5ca14d4bd1dedf8bd11c",
+      "head_sha256": "0b5e16bb9e8e52ab3f450d3ba582d990ced23a5121338ee5130de40bca08852d",
+      "client_responsibility": "Electron composes the account-gate identity client, its local credential/session stores, offline-grant store, and IPC controller. Electron owns client-side session orchestration and the local device vault; it does not implement server credential validation or local-account lifecycle authority.",
+      "associated_backend_authority": "native::server_foundation::local_account_auth (related server-side account lifecycle consumed by the client; not ownership of Electron storage or UI)",
+      "scope": "Adds the separately scoped memory-only store selection for an isolated marked packaged smoke fixture. Ordinary packaged Desktop continues to use native safeStorage and the existing secure credential vault.",
+      "compatibility_boundary": "The packaged auth-bypass predicate remains unchanged and independent of the memory-only storage flag. The memory path requires a packaged Rudder-smoke copy, valid test marker, Darwin, explicit memory mode and explicit opt-in; it does not add a server auth fallback.",
+      "retirement_criterion": "Remove only the smoke memory-storage override after a deterministic packaged native-keychain fixture can test the signed-out account gate without touching a developer's Keychain. Retain the Electron identity runtime and secure client vault while Desktop continues to hold identity credentials.",
+      "reviewer": "independent reviewer /root/auth_final_review",
+      "review_reference": "doc/plans/artifacts/2026-10-17-rudder-auth-desktop-storage-implementation-stage-review-accepted.json#sha256=85256e2c0741d990b1662f00acbdd0648cd098f0af50a94386131e335edd364e",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "desktop/src/identity-safe-storage-policy.ts",
+      "change_kind": "modified_retained_client",
+      "node_role": "retained_client",
+      "base_sha256": "15c0d3b8b418e56f47162b482b8c9409c9fdbdab9b56637426dbf7c8b25224b1",
+      "head_sha256": "c5265b36a16a1841508be22686c51e715496cdd7049701c7b4e38ff51297741d",
+      "client_responsibility": "Electron selects and uses the local platform credential-storage backend for the Desktop identity client. The Rust server does not own Electron safeStorage or the local credential file.",
+      "scope": "Preserves native safeStorage as the packaged default and permits the in-memory shim only for the explicitly opted-in marked Darwin smoke fixture.",
+      "compatibility_boundary": "Unpackaged Darwin behavior and the prior auth-smoke storage behavior remain unchanged. Ordinary packaged apps and unmarked artifacts cannot select memory storage through the new flag; production credentials still require the platform secure vault.",
+      "retirement_criterion": "Remove only the packaged smoke memory-storage branch after a deterministic packaged native-keychain fixture can cover the account gate without touching a developer's Keychain. Keep native safeStorage policy for the retained Electron client.",
+      "reviewer": "independent reviewer /root/auth_final_review",
+      "review_reference": "doc/plans/artifacts/2026-10-17-rudder-auth-desktop-storage-implementation-stage-review-accepted.json#sha256=85256e2c0741d990b1662f00acbdd0648cd098f0af50a94386131e335edd364e",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "desktop/src/identity-startup-policy.ts",
+      "change_kind": "modified_retained_client",
+      "node_role": "retained_client",
+      "base_sha256": "5f25e39ed5862993352ae67f44c13e7f8a1b675dea273cdca66b1493a44e23f8",
+      "head_sha256": "da53db74303d88e736c44a713039926696591e5095c8e8d95d96b41bdd909ef1",
+      "client_responsibility": "Electron controls the client-side account-gate startup and maps identity-client status into startup behavior. It does not implement backend authentication, token exchange, or revocation.",
+      "associated_backend_authority": "native::server_foundation::local_account_auth (related server-side account lifecycle whose client status feeds the Desktop account gate; Electron remains the client policy owner)",
+      "scope": "Separates the existing account-bypass result from the new packaged Darwin memory-storage fixture result and its process-memory session fallback.",
+      "compatibility_boundary": "The old account-bypass truth table and default packaged startup behavior are unchanged. Storage-only opt-in does not bypass the account gate; packaged Darwin memory-session fallback remains disabled without all fixture guards.",
+      "retirement_criterion": "Remove only the smoke storage policy after a deterministic packaged native-keychain fixture can test the signed-out account gate without touching a developer's Keychain. Retain the account-startup policy while the Electron identity client owns account-gate startup behavior.",
+      "reviewer": "independent reviewer /root/auth_final_review",
+      "review_reference": "doc/plans/artifacts/2026-10-17-rudder-auth-desktop-storage-implementation-stage-review-accepted.json#sha256=85256e2c0741d990b1662f00acbdd0648cd098f0af50a94386131e335edd364e",
+      "review_status": "reviewed"
     }
   ],
   "reviewed_transport_admissions": [

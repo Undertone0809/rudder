@@ -10,14 +10,28 @@ related_plans: [2026-10-16-rudder-rust-backend-retirement.md]
 supersedes: []
 related_code: [native/crates/server-foundation, server/src/auth/native-session-assertion.ts]
 commit_refs: []
-updated_at: 2026-10-16
+updated_at: 2026-10-17
 ---
 
 # Native cookie session authority acceptance
 
 ## Current candidate and limits
 
-### Independent startup corrective acceptance (2026-10-16)
+### Current integrated native authentication slice (2026-10-17)
+
+PR [#316](https://github.com/Undertone0809/rudder/pull/316) merged through the protected PR path as `d0410bab3f4a88af04351ebc4c447824b94e87e8`. The dependent native bearer/JWT/runtime-binding and four-route local-account lifecycle candidate is locally checkpointed at `5952972d5d364a9a9c3cc03617c097ebf06abfaa`, tree `228700c2e8b5d0edc125f1c7d9eb00db7d784216`. It has not been pushed or merged. The sections below preserve historical candidates and do not certify this dependent candidate.
+
+Independent public HTTP/PostgreSQL acceptance passed **61/61** on `ba85140c7fe1b54a495b130ecf4893deb881541a`, with an explicit source-equivalence rebind to `73fa84370f12c818e8f41ba05a3fb6241c97dc57`. The immutable foundation artifact SHA-256 is `957533b29743d79cbb1233ba20844b15de2684fa9ff3b7cf9eff53679c5ff940`; the 56-file native source/Cargo manifest digest is `21acbc750e26396549ba3d37d1304fab05b165a2faa6029bd5389dca8dc6867c`. The summary receipt is `/private/tmp/rudder-auth-independent-ba851-20261017/auth-independent-acceptance-ba851-final.json` (SHA-256 `08a4b39eea20ba212bd37018468b7a68a2cd0ab5929e3e303aedeafb5b0a99a8`); the rebind receipt is in the same directory as `auth-independent-acceptance-ba851-rebind-73fa.json` (SHA-256 `1a90305e8390a3608efd090a063999275705346693cb98f9efd8386976eb914e`). Later Desktop/CI changes do not change those native source bytes; a final candidate-specific evidence rebind is still required.
+
+That acceptance covers native keys/JWT scope and revocation, exchange/replay, legacy claim transfer and retries, offline proof/device/replay checks, current roles, same-configuration restart, selective durable signout, live WebSocket closure after signout, and database outage with zero Node HTTP fallback. The counting WebSocket fixture proves transport closure, not production Node WebSocket authorization. Controlled local Identity exchange does not establish hosted Identity/OAuth. Dynamic offline-policy refresh and persisted offline-grant epoch revocation remain incomplete.
+
+The original full repository test command **failed**; focused reruns resolved its three failing groups (complete runtime-binding identity fixture, explicit watcher artifact, and normal Electron installation). This does not turn the original command green. Four previously ignored PostgreSQL auth/ingress cases subsequently passed on a disposable PostgreSQL 18.4 cluster. Recursive typecheck passed on the current content. Lint still reports the same 19 baseline findings, with no added findings in this slice.
+
+The exact `pnpm desktop:verify` run on `73fa84370f12c818e8f41ba05a3fb6241c97dc57` **failed** after development smoke and packaging passed: packaged signed-out startup blocked in native Keychain authorization before the first window or Rust backend launch. The failure receipt is `/private/tmp/rudder-auth-ba851-desktop/desktop-verify-execution.json` (SHA-256 `69305f46493f860ced7639b6a811ed2aa2105d3c2c4ee3f46be5d81f4410d0fb`). A separate native stack sample confirmed the wait; the original failure is retained.
+
+The scoped repair keeps native storage as the default and adds an explicitly opted-in, marked Darwin smoke-only memory-storage mode, separate from the existing auth-bypass predicate. Memory mode keeps the account gate active and explicitly does not test native vault persistence. Independent implementation-stage review found no functional blocker but returned **needs more evidence** because the inventory schema could not truthfully describe retained Electron client policies. The schema repair now has independent implementation-stage **accept**; the three exact retained-client records and accepted receipt are archived in this candidate. See [the stage receipt](artifacts/2026-10-17-rudder-auth-desktop-storage-implementation-stage-review-accepted.json). Exact-candidate packaged acceptance, final independent review, and protected PR CI remain pending. Native-storage CI must pass before merge; memory-fixture acceptance cannot replace it. No overall authentication completion, Node retirement, release, or production deployment is claimed.
+
+### Historical startup corrective acceptance (2026-10-16)
 
 The independent verifier returned **PASS for startup readiness only** on clean candidate `09d3cb01bd1c73c6c55a65cffa6887ff5b1ac2fb`, tree `ef364810e0c8ec8d59b35e7f9710561636bc0114`. Tracked-source archive SHA-256 stayed `806ed02e508162924526088313f34c798ff80a418f14f4f5d222a6227e79b953`; the supplied foundation binary stayed `106aa2a6a7215607e586319da1b7acccbe1b3270cdc127ef15e7a0e9ad7d2229`. Receipt: `/private/tmp/rudder-native-session-startup-blackbox-20261016/receipt.json`; source/runtime lease: `lease.json` in the same directory.
 

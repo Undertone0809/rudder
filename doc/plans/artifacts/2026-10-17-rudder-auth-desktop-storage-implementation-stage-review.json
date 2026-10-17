@@ -1,0 +1,52 @@
+{
+  "task": "Rudder packaged account-gate memory-only storage implementation",
+  "reviewer": "independent reviewer /root/auth_final_review",
+  "review_level": "implementation stage",
+  "verdict": "needs more evidence",
+  "candidate": {
+    "commit": "5952972d5d364a9a9c3cc03617c097ebf06abfaa",
+    "tree": "228700c2e8b5d0edc125f1c7d9eb00db7d784216",
+    "worktree_clean": true,
+    "comparison_base": "73fa84370f12c818e8f41ba05a3fb6241c97dc57"
+  },
+  "review_scope": [
+    ".github/workflows/rust-authority-boundaries.yml",
+    "desktop/scripts/smoke.mjs",
+    "desktop/src/identity-runtime.ts",
+    "desktop/src/identity-safe-storage-policy.ts",
+    "desktop/src/identity-safe-storage-policy.test.ts",
+    "desktop/src/identity-startup-policy.ts",
+    "desktop/src/identity-startup-policy.test.ts",
+    "doc/plans/2026-10-16-rudder-rust-backend-authority-inventory.json"
+  ],
+  "findings": [
+    {
+      "severity": "blocking-evidence-schema-gap",
+      "detail": "The implementation treats three changed Electron client files as retained desktop client code, but the inventory validator requires a reviewed_node_changes record for each changed runtime source and currently only allows compatibility_adapter/transport_adapter roles with nonempty rust_authority. These files are neither Node backend adapters nor Rust-owned implementations. Calling them transport_adapter or claiming Rust owns the Electron credential vault/startup policy would be inaccurate. Add a narrowly scoped retained_client role (and a matching modified_retained_client change kind) for desktop client sources, with validator tests and field semantics that distinguish associated backend authority from client-side credential storage."
+    },
+    {
+      "severity": "non-blocking",
+      "detail": "No functional blocker found in the reviewed diff. The legacy account-bypass predicate is preserved; the new storage-memory predicate requires packaged mode, Rudder-smoke name, valid marker, Darwin, memory mode, and explicit opt-in; default packaged storage and packaged Darwin process-memory fallback remain native/disabled. The memory account-gate path explicitly disables both auth-bypass flags, uses production Identity for provider handoff, checks account_required/no local server, skips Electron safeStorage probes/decrypt, and labels vault persistence NOT EXECUTED. Native mode remains the default and keeps its encryption/restart-decrypt assertions."
+    }
+  ],
+  "verification_boundary": {
+    "independently_verified": [
+      "HEAD/tree/worktree identity and the eight-file delta from the comparison base",
+      "source-level policy separation and smoke launch wiring",
+      "base/head SHA-256 for the three retained Electron client files",
+      "git diff --check"
+    ],
+    "author_claimed_not_rerun": [
+      "36/36 focused tests, Desktop typecheck, smoke syntax check: /private/tmp/rudder-auth-desktop-storage-author-20261017/author-receipt.json (SHA-256 bd809d74d39e71ac72fa8c7deb77ee40eadb400f1d3b9a1080bed5ded6cc636c)",
+      "workspace pnpm -r typecheck PASS and existing 19 lint failures unchanged per parent receipts"
+    ],
+    "not_run_by_reviewer": [
+      "black-box packaged account-gate memory fixture",
+      "native Keychain vault persistence",
+      "Desktop packaging/build, PostgreSQL, Cargo, browser/UI execution"
+    ]
+  },
+  "migration_boundary": "This review does not claim full Rust migration. The changed Electron files remain client/runtime code; Rust local_account_auth remains backend authority for server-side local-account lifecycle. Existing completion inventory still reports 794 backend Node files and 10 unknown sources, with retained Electron shell sources explicitly excluded from that backend count.",
+  "next_gate": "After the inventory policy can truthfully record retained Electron client changes and the candidate metadata is updated, request/review the exact candidate again. A stage verdict is not final handoff acceptance; later exact-candidate black-box verifier and same-candidate native CI/package evidence remain required.",
+  "read_only": true
+}
