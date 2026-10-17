@@ -118,6 +118,8 @@ describe("sideChatService", () => {
     await db.delete(assets);
     await db.delete(chatContextLinks);
     await db.delete(chatMessages);
+    await db.delete(runtimeSourceAliases);
+    await db.delete(runtimeRetentionClaims);
     await db.delete(chatConversations);
     await db.delete(organizations);
   });
@@ -783,6 +785,12 @@ describe("sideChatService", () => {
     const sideChat = await createSideChat(source);
     await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).resolves.toEqual({ id: sideChat.id });
     expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id))).toHaveLength(0);
+    expect(await db.select().from(runtimeRetentionClaims).where(eq(runtimeRetentionClaims.resourceRef, `side_chat:${sideChat.id}`))).toMatchObject([
+      { status: "released" },
+    ]);
+    expect(await db.select().from(runtimeSourceAliases).where(eq(runtimeSourceAliases.sourceRef, source.sourceConversationId))).toMatchObject([
+      { conversationId: null, releasedAt: expect.any(Date) },
+    ]);
 
     const other = await service.create({
       ...source,
@@ -795,6 +803,9 @@ describe("sideChatService", () => {
     await expect(service.assertMutable(stale, source.userId, new Date(expiredAt.getTime() + 1))).rejects.toMatchObject({ status: 409 });
     const [expired] = await db.select().from(chatConversations).where(eq(chatConversations.id, other.id));
     expect(expired?.sideChatState).toBe("expired");
+    const [expiredClaim] = await db.select().from(runtimeRetentionClaims)
+      .where(eq(runtimeRetentionClaims.resourceRef, `side_chat:${other.id}`));
+    expect(expiredClaim).toMatchObject({ status: "expired", expiresAt: expect.any(Date) });
 
     const staleKeep = await service.create({
       ...source,
