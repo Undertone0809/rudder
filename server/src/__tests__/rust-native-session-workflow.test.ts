@@ -1141,6 +1141,40 @@ describe("source-built Rust public native session workflow", () => {
         grant, proof,
         devicePublicKeySpki: deviceKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url"),
       };
+      const nodeGrantJti = randomUUID();
+      const nodeNonce = randomBytes(24).toString("base64url");
+      const nodeGrant = issueOfflineGrant({
+        signingPrivateKey: identityKeys.privateKey, keyId: "native-lifecycle-key",
+        issuer: identityOrigin, accountId: subject, deviceId: "native-test-device", installationId,
+        publicKeyThumbprint: deviceKeys.thumbprint, nowMs: trustedTime, trustedTimeMs: trustedTime,
+        localSignOutEpoch: 0, authSchemaEpoch: 2, accountAuthEpoch: 0, deviceAuthEpoch: 0,
+        jti: nodeGrantJti,
+      });
+      const nodeProof = createOfflineGrantProof({
+        grant: nodeGrant, devicePrivateKey: deviceKeys.privateKey, method: "POST", path: "/api/auth/local-offline",
+        bodyHash: offlineRequestBodyHash(""), nonce: nodeNonce, issuedAtMs: Date.now(),
+      });
+      const nodeNonceHash = createHash("sha256").update(nodeNonce).digest("base64url");
+      // Seed the Node service's durable key for this still-valid proof before Rust handles it.
+      await fixtureSql!`
+        INSERT INTO server_exchange_redemptions (issuer, jti, audience, subject, expires_at)
+        VALUES (
+          ${identityOrigin}, ${`offline:${nodeGrantJti}:${nodeNonceHash}`},
+          'rudder-local-board', ${subject}, to_timestamp(${trustedTime}::double precision / 1000.0) + interval '30 days'
+        )
+      `;
+      const [sessionsBeforeNodeReplay] = await fixtureSql!`
+        SELECT count(*)::int AS count FROM session WHERE user_id = ${issued.userId}
+      `;
+      expect((await post("local-offline", {
+        grant: nodeGrant,
+        proof: nodeProof,
+        devicePublicKeySpki: deviceKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url"),
+      })).status).toBe(409);
+      const [sessionsAfterNodeReplay] = await fixtureSql!`
+        SELECT count(*)::int AS count FROM session WHERE user_id = ${issued.userId}
+      `;
+      expect(sessionsAfterNodeReplay.count).toBe(sessionsBeforeNodeReplay.count);
       const copiedDevice = generateOfflineDeviceKeyPair();
       expect((await post("local-offline", { ...offlineInput,
         devicePublicKeySpki: copiedDevice.publicKey.export({ format: "der", type: "spki" }).toString("base64url"),
