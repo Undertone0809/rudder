@@ -307,13 +307,11 @@ async fn send_dispatch_preserves_legacy_bytes_and_never_falls_back_from_native_o
     assert_eq!(foreign_agent_status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(calls.load(Ordering::SeqCst), 3);
 
-    let captured = captured.lock().unwrap();
+    let captured = captured.lock().unwrap().clone();
     assert_eq!(captured.len(), 3);
     for (index, (path, bytes, proof, content_type)) in captured.iter().enumerate() {
         let expected_path = if index == 0 {
             legacy_existing_path.as_str()
-        } else if index == 1 {
-            legacy_first_path.as_str()
         } else {
             legacy_first_path.as_str()
         };
