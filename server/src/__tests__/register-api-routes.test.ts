@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as localAccountRoutes from "../routes/local-account-auth.js";
 import { registerApiRoutes } from "../bootstrap/register-api-routes.js";
+import * as localAccountRoutes from "../routes/local-account-auth.js";
 
 describe("registerApiRoutes", () => {
   it("builds the API router from the current server dependencies", () => {
