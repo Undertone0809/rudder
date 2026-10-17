@@ -1,6 +1,7 @@
-use super::{common::*, constants::*, reads, redaction};
+use super::{AgentCreateRequest, common::*, constants::*, reads, redaction};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 pub(super) fn random_hex(bytes: usize) -> Result<String> {
     let mut output = vec![0_u8; bytes];
     getrandom::getrandom(&mut output).map_err(|_| http(503, "Secure randomness is unavailable"))?;
@@ -52,6 +53,9 @@ pub(super) async fn execute(
     input: &Value,
     native_auth: Option<&dyn super::NativeAgentAuthorizer>,
 ) -> Result<Value> {
+    if op == "create" {
+        return create(tx, ctx, input).await;
+    }
     let row = current.ok_or_else(|| http(404, "Agent not found"))?;
     let id = text(row, "id");
     match op {
@@ -115,6 +119,167 @@ pub(super) async fn execute(
         "rollback" => rollback(tx, ctx, row).await,
         _ => Err(http(400, "Invalid Agent command")),
     }
+}
+
+async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Value> {
+    let request = AgentCreateRequest::parse(input)?;
+    let requested_name = request
+        .name
+        .as_deref()
+        .map(js_trim)
+        .filter(|value| !value.is_empty());
+    let base_name = match requested_name {
+        Some(value) => value.to_owned(),
+        None => suggest_name(tx, ctx.org).await?,
+    };
+    let existing_names = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM agents WHERE org_id=$1::uuid AND status<>'terminated'",
+    )
+    .bind(ctx.org)
+    .fetch_all(&mut **tx)
+    .await?;
+    let unique_name = deduplicate_name(&base_name, &existing_names);
+    let icon = default_avatar_icon()?;
+
+    // Generate the id in PostgreSQL so the same transaction owns the id,
+    // workspace key, row, membership, grant, activity, and budget policy.
+    let id = sqlx::query_scalar::<_, String>(
+        "INSERT INTO agents
+           (org_id,name,role,title,icon,capabilities,agent_runtime_type,agent_runtime_config,runtime_config,
+            budget_monthly_cents,spent_monthly_cents,permissions,metadata,status,last_heartbeat_at)
+         VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,0,$11::jsonb,$12::jsonb,'idle',NULL)
+         RETURNING id::text",
+    )
+    .bind(ctx.org)
+    .bind(&unique_name)
+    .bind(&request.role)
+    .bind(request.title.as_deref())
+    .bind(&icon)
+    .bind(request.capabilities.as_deref())
+    .bind(&request.agent_runtime_type)
+    .bind(request.agent_runtime_config.to_string())
+    .bind(request.runtime_config.to_string())
+    .bind(request.budget_monthly_cents as i32)
+    .bind(serde_json::to_string(&request.permissions).map_err(|_| http(500, "Internal server error"))?)
+    .bind(request.metadata.as_ref().map(Value::to_string))
+    .fetch_one(&mut **tx)
+    .await?;
+
+    let existing_keys = sqlx::query_scalar::<_, String>(
+        "SELECT workspace_key FROM agents WHERE org_id=$1::uuid AND id<>$2::uuid AND workspace_key IS NOT NULL",
+    )
+    .bind(ctx.org)
+    .bind(&id)
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .filter(|key| !key.trim().is_empty())
+    .collect::<std::collections::BTreeSet<_>>();
+    let workspace_key = derive_workspace_key(&unique_name, &id, &existing_keys)?;
+    sqlx::query(
+        "UPDATE agents SET workspace_key=$1,updated_at=now() WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(&workspace_key)
+    .bind(ctx.org)
+    .bind(&id)
+    .execute(&mut **tx)
+    .await?;
+
+    // Every created Agent is an active organization principal and receives
+    // the same default task-assignment grant as the Node route.
+    sqlx::query("INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES($1::uuid,'agent',$2,'member','active') ON CONFLICT(org_id,principal_type,principal_id) DO UPDATE SET membership_role='member',status='active',updated_at=now()")
+        .bind(ctx.org)
+        .bind(&id)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key,scope,granted_by_user_id) VALUES($1::uuid,'agent',$2,'tasks:assign',NULL,$3) ON CONFLICT(org_id,principal_type,principal_id,permission_key) DO UPDATE SET scope=NULL,granted_by_user_id=excluded.granted_by_user_id,updated_at=now()")
+        .bind(ctx.org)
+        .bind(&id)
+        .bind(ctx.user())
+        .execute(&mut **tx)
+        .await?;
+
+    if request.budget_monthly_cents > 0 {
+        sqlx::query("INSERT INTO budget_policies(org_id,scope_type,scope_id,metric,window_kind,amount,warn_percent,hard_stop_enabled,notify_enabled,is_active,created_by_user_id,updated_by_user_id) VALUES($1::uuid,'agent',$2::uuid,'billed_cents','calendar_month_utc',$3,80,true,true,true,$4,$4) ON CONFLICT(org_id,scope_type,scope_id,metric,window_kind) DO UPDATE SET amount=excluded.amount,warn_percent=excluded.warn_percent,hard_stop_enabled=excluded.hard_stop_enabled,notify_enabled=excluded.notify_enabled,is_active=true,updated_by_user_id=excluded.updated_by_user_id,updated_at=now()")
+            .bind(ctx.org)
+            .bind(&id)
+            .bind(request.budget_monthly_cents as i32)
+            .bind(ctx.user())
+            .execute(&mut **tx)
+            .await?;
+    }
+
+    activity(
+        tx,
+        ctx,
+        "agent.created",
+        &id,
+        Some(&json!({
+            "name": unique_name,
+            "role": request.role,
+            "workspaceKey": workspace_key,
+            "budgetMonthlyCents": request.budget_monthly_cents,
+        })),
+    )
+    .await?;
+    let row = stored(tx, &id)
+        .await?
+        .ok_or_else(|| http(500, "Agent create did not persist"))?;
+    reads::public_row(tx, row, true, false).await
+}
+
+fn default_avatar_icon() -> Result<String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::getrandom(&mut bytes).map_err(|_| http(503, "Secure randomness is unavailable"))?;
+    // Match UUID v4 formatting used by the shared Oreo avatar validator.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(format!("oreo:bloom:rose-milk:{}", Uuid::from_bytes(bytes)))
+}
+
+fn deduplicate_name(base: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|name| slug(name) == slug(base)) {
+        return base.to_owned();
+    }
+    for suffix in 2..=100 {
+        let candidate = format!("{base} {suffix}");
+        if !existing.iter().any(|name| slug(name) == slug(&candidate)) {
+            return candidate;
+        }
+    }
+    format!(
+        "{base} {}",
+        time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
+    )
+}
+
+fn derive_workspace_key(
+    name: &str,
+    id: &str,
+    existing: &std::collections::BTreeSet<String>,
+) -> Result<String> {
+    let slug_name = slug(name);
+    let slug_name = if slug_name.is_empty() {
+        "agent"
+    } else {
+        &slug_name
+    };
+    let hex_id = id.replace('-', "");
+    let mut length = 8usize;
+    while length <= hex_id.len() {
+        let candidate = format!("{slug_name}--{}", &hex_id[..length]);
+        if !existing.contains(&candidate) {
+            return Ok(candidate);
+        }
+        if length == hex_id.len() {
+            break;
+        }
+        length = (length + 4).min(hex_id.len());
+    }
+    Err(http(
+        500,
+        "Unable to allocate unique workspace key for agent",
+    ))
 }
 const REVISION_FIELDS: &[&str] = &[
     "name",

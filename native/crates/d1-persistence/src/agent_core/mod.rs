@@ -11,7 +11,7 @@ mod validation;
 mod writes;
 use common::*;
 use rudder_auth_core::VerifiedActor;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 use std::{future::Future, pin::Pin};
@@ -73,6 +73,39 @@ pub struct AgentCoreRequest {
     #[serde(default)]
     pub deployment_mode: String,
     pub instructions_host: Option<instructions::Host>,
+}
+
+/// The deliberately small Rust-owned portion of the Agent create contract.
+/// The public Express route still owns secret normalization, skills,
+/// instructions, managed MCP, intelligence defaults, and avatar assets.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentCreateRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub role: String,
+    pub title: Option<String>,
+    pub capabilities: Option<String>,
+    pub agent_runtime_type: String,
+    pub agent_runtime_config: Value,
+    pub runtime_config: Value,
+    pub budget_monthly_cents: i64,
+    pub permissions: AgentCreatePermissions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentCreatePermissions {
+    pub can_create_agents: bool,
+    pub can_manage_skills: bool,
+}
+
+impl AgentCreateRequest {
+    pub fn parse(value: &Value) -> std::result::Result<Self, AgentCoreError> {
+        validation::parse_create(value)
+    }
 }
 impl AgentCoreRequest {
     pub fn parse(body: &[u8]) -> std::result::Result<Self, serde_json::Error> {
@@ -141,6 +174,7 @@ pub fn admit_agent(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
 }
 fn admit_inner(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
     if ![
+        "create",
         "list",
         "detail",
         "me",
@@ -198,6 +232,9 @@ async fn execute_agent_inner(
 ) -> Result<(u16, String)> {
     json_boundary::run(async{
         admit_agent(actor,r)?;
+        if r.operation == "create" && !agent_create_feature_enabled() {
+            return Err(http(404, "Rust Agent create authority is disabled"));
+        }
         let mut tx=pool.begin().await?;
         let admin=actor.actor().kind=="user"&&sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(&actor.actor().id).fetch_one(&mut *tx).await?;
         if actor.actor().kind=="user" { authorize_user(&mut tx,&Context{org:"",actor,request:r,admin}).await?; }
@@ -220,7 +257,7 @@ async fn execute_agent_inner(
             revalidate_native_auth(native_auth, &mut tx, &org).await?;
             tx.commit().await?;return Ok((200,json!({"orgId":org,"id":id}).to_string()))
         }
-        let op=r.operation.as_str();let is_write=matches!(op,"key-create"|"key-revoke"|"rollback"|"reset-session"|"permissions");
+        let op=r.operation.as_str();let is_write=matches!(op,"create"|"key-create"|"key-revoke"|"rollback"|"reset-session"|"permissions");
         if is_write{
             // Match runtime admission lock order: Issues, Agents, organization.
             sqlx::query("SELECT id FROM issues WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
@@ -239,9 +276,12 @@ async fn execute_agent_inner(
             let fresh_admin=if op=="permissions" && ctx.user().is_some(){sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut *tx).await?}else{ctx.admin};
             let ctx=Context{admin:fresh_admin,..ctx};
             authorize_org(&mut tx,&ctx).await?;
+            if op == "create" {
+                require_create(&mut tx, &ctx).await?;
+            }
             let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth).await?;
             sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(&org).execute(&mut *tx).await?;
-            tx.commit().await?;return Ok((if op=="key-create"{201}else{200},body.to_string()));
+            tx.commit().await?;return Ok((if matches!(op,"create"|"key-create"){201}else{200},body.to_string()));
         }
         if matches!(op,"detail"|"me") {
             sqlx::query("SELECT id FROM agents WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
@@ -283,6 +323,17 @@ async fn revalidate_native_auth(
         NativeAgentAccess::Unauthorized => Err(common::http(401, "Unauthorized")),
         NativeAgentAccess::Forbidden => Err(common::http(403, "Forbidden")),
     }
+}
+
+fn agent_create_feature_enabled() -> bool {
+    std::env::var("RUDDER_AGENT_CREATE_RUST_ENABLED")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
 }
 
 async fn resolve_id(

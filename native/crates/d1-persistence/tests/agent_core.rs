@@ -8,11 +8,14 @@ use rudder_d1_persistence::agent_core::{
     execute_agent_with_native_auth,
 };
 use sqlx::PgConnection;
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::OnceLock};
 use support::{Database, ORG};
+use tokio::sync::Mutex;
 
 const SECRET: &[u8] = b"native-agent-core-roster-revalidation-test-key";
 const BOARD_USER: &str = "roster-board-user";
+const CREATE_USER: &str = "create-board-user";
+static CREATE_FEATURE_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn verified_board_user() -> VerifiedActor {
     let actor = ActorIdentity::new("user", BOARD_USER).expect("valid board user identity");
@@ -45,6 +48,48 @@ fn verified_board_user() -> VerifiedActor {
         1,
         "rudder-server-foundation",
         "GET",
+        &path,
+        "agent-core.execute",
+        body,
+        request_id,
+        1_050,
+    );
+    envelope
+        .verify_to_actor(SECRET, &request, &mut NonceReplayGuard::new())
+        .expect("verified actor envelope")
+}
+
+fn verified_create_user() -> VerifiedActor {
+    let actor = ActorIdentity::new("user", CREATE_USER).expect("valid board user identity");
+    let path = format!("/internal/agent-core/{ORG}/create");
+    let body = br#"{"operation":"create","orgId":"10000000-0000-4000-8000-000000000001","input":{"name":"Rust Created","budgetMonthlyCents":1250}}"#;
+    let request_id = "agent-core-create-request";
+    let nonce = "agent-core-create-nonce";
+    let envelope = ActorEnvelope::new(
+        actor.clone(),
+        ORG,
+        "board-session",
+        1,
+        "rudder-server-foundation",
+        "POST",
+        &path,
+        "agent-core.execute",
+        body,
+        request_id,
+        nonce,
+        1_000,
+        1_100,
+    )
+    .expect("unsigned actor envelope")
+    .sign(SECRET)
+    .expect("signed actor envelope");
+    let request = RequestContext::new(
+        &actor,
+        ORG,
+        "board-session",
+        1,
+        "rudder-server-foundation",
+        "POST",
         &path,
         "agent-core.execute",
         body,
@@ -131,4 +176,86 @@ async fn roster_revalidation_denial_returns_forbidden_after_initial_board_access
         Err(AgentCoreError::Http(403, message, _)) => assert_eq!(message, "Forbidden"),
         other => panic!("expected revalidation denial, got {other:?}"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rust_create_is_transactional_and_records_default_side_effects() {
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Create User','create-user@example.test',now(),now())",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed create user");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(ORG)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed create membership");
+
+    let request = AgentCoreRequest::parse(
+        br#"{"operation":"create","orgId":"10000000-0000-4000-8000-000000000001","input":{"name":"Rust Created","budgetMonthlyCents":1250}}"#,
+    )
+    .expect("valid create request");
+    // This operation is intentionally private and disabled unless explicitly
+    // enabled by the migration pilot.
+    let result = {
+        let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .await;
+        unsafe { std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1") };
+        let result = rudder_d1_persistence::agent_core::execute_agent(
+            &database.pool,
+            &verified_create_user(),
+            &request,
+        )
+        .await;
+        unsafe { std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED") };
+        result
+    };
+    let (status, body) = result.expect("create succeeds");
+    assert_eq!(status, 201);
+    let response: serde_json::Value = serde_json::from_str(&body).expect("JSON response");
+    let agent_id = response["id"].as_str().expect("created id");
+    assert_eq!(response["name"], "Rust Created");
+    assert!(
+        response["icon"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("oreo:bloom:rose-milk:"))
+    );
+    assert!(sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM agents WHERE id=$1::uuid AND org_id=$2::uuid AND workspace_key IS NOT NULL)")
+        .bind(agent_id)
+        .bind(ORG)
+        .fetch_one(&database.pool)
+        .await
+        .expect("agent row"));
+    assert!(sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organization_memberships WHERE org_id=$1::uuid AND principal_type='agent' AND principal_id=$2 AND status='active')")
+        .bind(ORG)
+        .bind(agent_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("agent membership"));
+    assert!(sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM principal_permission_grants WHERE org_id=$1::uuid AND principal_type='agent' AND principal_id=$2 AND permission_key='tasks:assign')")
+        .bind(ORG)
+        .bind(agent_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("task assignment grant"));
+    assert_eq!(sqlx::query_scalar::<_, i32>("SELECT amount FROM budget_policies WHERE org_id=$1::uuid AND scope_type='agent' AND scope_id=$2::uuid AND window_kind='calendar_month_utc'")
+        .bind(ORG)
+        .bind(agent_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("budget policy"), 1250);
+    assert!(sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM activity_log WHERE org_id=$1::uuid AND action='agent.created' AND entity_id=$2)")
+        .bind(ORG)
+        .bind(agent_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("creation activity"));
 }
