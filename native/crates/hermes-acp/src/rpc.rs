@@ -81,6 +81,9 @@ pub struct HermesLaunch {
     pub ephemeral_system_prompt: Option<String>,
     pub process_host: PathBuf,
     pub runtime_root: PathBuf,
+    /// Trusted operator HOME used by Hermes. This is distinct from the
+    /// selected profile root carried in HERMES_HOME.
+    pub operator_home: PathBuf,
     pub hermes_home: PathBuf,
     pub cwd: PathBuf,
     pub run_id: String,
@@ -501,10 +504,11 @@ impl HermesAcpTransport {
         if env.keys().any(|key| protected_environment_key(key)) {
             return Err(HermesTransportError::InvalidLaunch);
         }
-        let home = launch.hermes_home.to_string_lossy().into_owned();
-        env.insert("HOME".into(), home.clone());
-        env.insert("USERPROFILE".into(), home.clone());
-        env.insert("HERMES_HOME".into(), home);
+        let operator_home = launch.operator_home.to_string_lossy().into_owned();
+        let hermes_home = launch.hermes_home.to_string_lossy().into_owned();
+        env.insert("HOME".into(), operator_home.clone());
+        env.insert("USERPROFILE".into(), operator_home);
+        env.insert("HERMES_HOME".into(), hermes_home);
         env.insert("PATH".into(), launch.executable_search_path.clone());
         let (executable, argv) = if let Some(prompt) = launch.ephemeral_system_prompt {
             let python = launch
@@ -1254,6 +1258,7 @@ fn validate_launch(launch: HermesLaunch) -> Result<HermesLaunch, HermesTransport
     let hermes_executable = canonical_file(&launch.hermes_executable)?;
     let process_host = canonical_file(&launch.process_host)?;
     let runtime_root = canonical_dir(&launch.runtime_root)?;
+    let operator_home = canonical_dir(&launch.operator_home)?;
     let hermes_home = canonical_dir(&launch.hermes_home)?;
     let cwd = canonical_dir(&launch.cwd)?;
     if launch.executable_search_path.is_empty()
@@ -1316,6 +1321,7 @@ fn validate_launch(launch: HermesLaunch) -> Result<HermesLaunch, HermesTransport
         hermes_executable,
         process_host,
         runtime_root,
+        operator_home,
         hermes_home,
         cwd,
         executable_search_path: launch.executable_search_path,
@@ -1534,6 +1540,7 @@ mod tests {
             ephemeral_system_prompt: None,
             process_host: host,
             runtime_root: temp.path().to_path_buf(),
+            operator_home: temp.path().to_path_buf(),
             hermes_home: temp.path().to_path_buf(),
             cwd: temp.path().to_path_buf(),
             run_id: "run".into(),
@@ -1623,6 +1630,7 @@ mod tests {
             ephemeral_system_prompt: None,
             process_host: process_host.clone(),
             runtime_root: temp.path().to_path_buf(),
+            operator_home: home.clone(),
             hermes_home: home.clone(),
             cwd: cwd.to_path_buf(),
             run_id: "00000000-0000-4000-8000-000000000001".into(),
@@ -1717,6 +1725,7 @@ mod tests {
             ephemeral_system_prompt: None,
             process_host: process_host.clone(),
             runtime_root: runtime_root.clone(),
+            operator_home: home.clone(),
             hermes_home: home.clone(),
             cwd: cwd.clone(),
             run_id: run_id.into(),
