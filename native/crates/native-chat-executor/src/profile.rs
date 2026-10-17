@@ -503,16 +503,13 @@ mod tests {
         }});
         assert!(validate_selected_layers(&granular, &home, &cwd, false).is_ok());
 
-        for unknown in [serde_json::json!("auto-approve")] {
-            let mut effective = base.clone();
-            effective["config"]["approval_policy"] = unknown;
-            assert!(validate_selected_layers(&effective, &home, &cwd, false).is_err());
-        }
-        for unknown in [serde_json::json!("unrestricted")] {
-            let mut effective = base.clone();
-            effective["config"]["sandbox_mode"] = unknown;
-            assert!(validate_selected_layers(&effective, &home, &cwd, false).is_err());
-        }
+        let mut effective = base.clone();
+        effective["config"]["approval_policy"] = serde_json::json!("auto-approve");
+        assert!(validate_selected_layers(&effective, &home, &cwd, false).is_err());
+
+        let mut effective = base.clone();
+        effective["config"]["sandbox_mode"] = serde_json::json!("unrestricted");
+        assert!(validate_selected_layers(&effective, &home, &cwd, false).is_err());
         let mut unknown_granular = base.clone();
         unknown_granular["config"]["approval_policy"] = serde_json::json!({"granular": {
             "mcp_elicitations": true,
