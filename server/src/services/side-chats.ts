@@ -522,10 +522,19 @@ export function sideChatService(db: Db) {
         throw conflict("Side Chat could not be destroyed");
       }
       const now = new Date();
+      // Detach aliases and release retention claims before deleting the conversation.
+      // Its runtime binding cascade is guarded by NO ACTION claim FKs.
       await tx.update(runtimeSourceAliases).set({
         conversationId: null, releasedAt: now, updatedAt: now,
         cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`,
       }).where(and(eq(runtimeSourceAliases.conversationId, conversation.id), isNull(runtimeSourceAliases.releasedAt)));
+      await tx.update(runtimeRetentionClaims).set({
+        status: "released", releasedAt: now, updatedAt: now,
+        cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
+      }).where(and(
+        eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversation.id}`),
+        eq(runtimeRetentionClaims.status, "active"),
+      ));
       const deleted = await tx
         .delete(chatConversations)
         .where(and(
@@ -537,13 +546,6 @@ export function sideChatService(db: Db) {
         ))
         .returning({ id: chatConversations.id });
       if (!deleted[0]) throw conflict("Side Chat could not be destroyed");
-      await tx.update(runtimeRetentionClaims).set({
-        status: "released", releasedAt: now, updatedAt: now,
-        cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
-      }).where(and(
-        eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversation.id}`),
-        eq(runtimeRetentionClaims.status, "active"),
-      ));
       return deleted;
     });
     if (!deleted[0]) throw conflict("Side Chat could not be destroyed");
