@@ -46,7 +46,11 @@ impl NativeChatPublicRuntime {
         if timeout.is_zero() || timeout > Duration::from_secs(3600) {
             return Err(PublicIngressConfigError::InvalidNativeChatRuntime);
         }
-        Ok(Self { host, paths, timeout })
+        Ok(Self {
+            host,
+            paths,
+            timeout,
+        })
     }
 }
 

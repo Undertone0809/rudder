@@ -438,13 +438,9 @@ mod tests {
         let mut effective = observed(home);
         effective["config"]["approval_policy"] = Value::Null;
         effective["config"]["sandbox_mode"] = Value::Null;
-        assert!(validate_selected_layers(
-            &effective,
-            home,
-            Path::new("/workspace"),
-            false,
-        )
-        .is_ok());
+        assert!(
+            validate_selected_layers(&effective, home, Path::new("/workspace"), false,).is_ok()
+        );
     }
 
     #[test]

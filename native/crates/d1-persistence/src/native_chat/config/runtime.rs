@@ -191,7 +191,11 @@ pub(super) fn parse_agent_config_with_profile_defaults(
     let count_subscription_usage_as_cost = match object.get("countSubscriptionUsageAsCost") {
         None | Some(Value::Null) => true,
         Some(Value::Bool(value)) => *value,
-        Some(_) => return Err(invalid("subscription usage billing setting must be boolean")),
+        Some(_) => {
+            return Err(invalid(
+                "subscription usage billing setting must be boolean",
+            ));
+        }
     };
     for key in ["args", "extraArgs"] {
         if let Some(value) = object.get(key)
