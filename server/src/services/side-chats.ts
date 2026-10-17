@@ -126,7 +126,7 @@ export function sideChatService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!conversation) return;
       await lockNodeMutationAuthority(tx, conversation.orgId);
-      await tx
+      const expired = await tx
         .update(chatConversations)
         .set({
           sideChatState: "expired",
@@ -137,8 +137,9 @@ export function sideChatService(db: Db) {
           eq(chatConversations.id, conversationId),
           eq(chatConversations.conversationKind, "side_chat"),
           eq(chatConversations.sideChatState, "active"),
-        ));
-      await markRuntimeRetentionExpired(tx, conversationId, now);
+        ))
+        .returning({ id: chatConversations.id });
+      if (expired.length > 0) await markRuntimeRetentionExpired(tx, conversationId, now);
     });
   }
 
@@ -509,7 +510,7 @@ export function sideChatService(db: Db) {
         eq(runtimeRetentionClaims.status, "active"),
       ));
       await tx.update(runtimeSourceAliases).set({
-        releasedAt: now, updatedAt: now,
+        conversationId: null, releasedAt: now, updatedAt: now,
         cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`,
       }).where(and(eq(runtimeSourceAliases.conversationId, conversation.id), isNull(runtimeSourceAliases.releasedAt)));
       return tx
