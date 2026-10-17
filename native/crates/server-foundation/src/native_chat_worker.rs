@@ -608,7 +608,8 @@ fn run(
                     quiescent: failure.process_quiescent(),
                 };
             };
-            if !failure.is_cancelled()
+            if !cancelled.load(Ordering::Acquire)
+                && !failure.is_cancelled()
                 && failure.process_disposition()
                     == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) =
@@ -657,7 +658,8 @@ fn run(
                 };
             }
             let cleanup = failure.cleanup_receipt();
-            let status = if !failure.is_cancelled()
+            let status = if !cancelled.load(Ordering::Acquire)
+                && !failure.is_cancelled()
                 && failure.process_disposition()
                     == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) = (failure.fence(), cleanup)
