@@ -22,8 +22,8 @@ use tempfile::TempDir;
 static DATABASE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 const ADMIN_URL_ENV: &str = "RUDDER_MIGRATION_SERVICE_TEST_ADMIN_URL";
-const SHIPPED_JOURNAL_ENTRIES: usize = 180;
-const SHIPPED_MIGRATION_FILES: usize = 182;
+const SHIPPED_JOURNAL_ENTRIES: usize = 181;
+const SHIPPED_MIGRATION_FILES: usize = 183;
 const TEST_RECOVERY_DUMP: &[u8] = b"-- Rudder database backup\n--\n-- PostgreSQL database dump\n--\nSET statement_timeout = 0;\nCREATE SCHEMA drizzle;\nCREATE TABLE drizzle.__drizzle_migrations (\n    id integer NOT NULL,\n    hash text NOT NULL,\n    created_at bigint\n);\nCOPY drizzle.__drizzle_migrations (id, hash, created_at) FROM stdin;\n1\tabc\t1000\n\\.\n--\n-- PostgreSQL database dump complete\n--\n";
 
 struct DisposableDatabase {
@@ -437,7 +437,7 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
         "idx": SHIPPED_JOURNAL_ENTRIES,
         "version": "7",
         "when": 1_800_000_000_000_u64,
-        "tag": "0180_rust_apply_upgrade_probe",
+        "tag": "0181_rust_apply_upgrade_probe",
         "breakpoints": true
     }));
     fs::write(
@@ -446,7 +446,7 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
     )
     .unwrap();
     fs::write(
-        copied_migrations.join("0180_rust_apply_upgrade_probe.sql"),
+        copied_migrations.join("0181_rust_apply_upgrade_probe.sql"),
         "CREATE TABLE public.rust_apply_upgrade_probe (id integer PRIMARY KEY);",
     )
     .unwrap();
@@ -466,7 +466,7 @@ async fn shipped_source_bootstraps_reconciles_legacy_index_and_upgrades() {
         .expect("actual shipped history prefix should accept the appended migration");
     assert_eq!(
         upgrade.applied_migrations,
-        ["0180_rust_apply_upgrade_probe.sql"]
+        ["0181_rust_apply_upgrade_probe.sql"]
     );
     assert!(upgrade.recovery_point.is_some());
     let upgraded_history_count: i64 =
