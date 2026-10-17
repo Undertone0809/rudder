@@ -1128,7 +1128,12 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
   const sessionPolicy = TRUSTED_TRANSPORT_ADMISSIONS[SESSION_ADMISSION_ID];
   assert.equal(sessionPolicy.factory_sha256, "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5");
   assert.equal(sessionPolicy.mount_expression, "nativeSessionAssertionMiddleware({ key: opts.rustPublicIngress.sessionAuth.assertionKey, })");
-  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [IDENTITY_ADMISSION_ID, SESSION_ADMISSION_ID].sort());
+  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [
+    "rust-native-agent-core-handler-v1",
+    "rust-native-agent-core-router-v1",
+    IDENTITY_ADMISSION_ID,
+    SESSION_ADMISSION_ID,
+  ].sort());
 
   const baseRoot = temporaryTree(t);
   const headRoot = temporaryTree(t);
