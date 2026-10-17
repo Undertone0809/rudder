@@ -12,6 +12,8 @@ import {
   messengerCustomGroups,
   organizations,
   productAnalyticsEvents,
+  runtimeRetentionClaims,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -860,6 +862,16 @@ describe("sideChatService", () => {
       `chat:${sideChat.id}`,
     ]);
     await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).rejects.toMatchObject({ status: 409 });
+    const [claim] = await db
+      .select({ status: runtimeRetentionClaims.status, expiresAt: runtimeRetentionClaims.expiresAt })
+      .from(runtimeRetentionClaims)
+      .where(eq(runtimeRetentionClaims.resourceRef, `side_chat:${sideChat.id}`));
+    expect(claim).toMatchObject({ status: "active", expiresAt: null });
+    const [alias] = await db
+      .select({ conversationId: runtimeSourceAliases.conversationId, releasedAt: runtimeSourceAliases.releasedAt })
+      .from(runtimeSourceAliases)
+      .where(eq(runtimeSourceAliases.conversationId, sideChat.id));
+    expect(alias).toMatchObject({ conversationId: sideChat.id, releasedAt: null });
   });
 
   it("creates a fork-family Messenger group when the source is not grouped", async () => {
