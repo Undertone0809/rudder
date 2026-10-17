@@ -245,13 +245,12 @@ pub(super) async fn read_message_transcript(
         "SELECT generation_seq, event_kind, payload, recorded_at::text AS recorded_at
          FROM chat_generation_events
          WHERE org_id=$1::uuid AND generation_id=$2::uuid
-           AND assistant_message_id=$3::uuid AND generation_seq>$4
+           AND generation_seq>$3
            AND event_kind IN ('assistant_delta','runtime_output')
-         ORDER BY generation_seq ASC LIMIT $5",
+           ORDER BY generation_seq ASC LIMIT $4",
     )
     .bind(organization_id)
     .bind(&generation_id)
-    .bind(&message_id)
     .bind(*after_seq)
     .bind(limit + 1)
     .fetch_all(&mut *tx)
