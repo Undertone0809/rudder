@@ -207,6 +207,64 @@ fn validate_env(value: &Value, path: &str) -> Result<Value> {
     Ok(Value::Object(output))
 }
 
+fn valid_runtime_type(value: &str) -> bool {
+    matches!(
+        value,
+        "process"
+            | "http"
+            | "claude_local"
+            | "codex_local"
+            | "opencode_local"
+            | "pi_local"
+            | "cursor"
+            | "openclaw_gateway"
+            | "hermes_gateway"
+            | "hermes_local"
+    )
+}
+
+fn validate_model_fallbacks(value: &Value, path: &str) -> Result<()> {
+    let Some(fallbacks) = value.as_array() else {
+        return Err(unsupported_field(path));
+    };
+    for (index, fallback) in fallbacks.iter().enumerate() {
+        let item_path = format!("{path}[{index}]");
+        if let Some(model) = fallback.as_str() {
+            if model.trim().is_empty() {
+                return Err(unsupported_field(&item_path));
+            }
+            continue;
+        }
+        let Some(record) = fallback.as_object() else {
+            return Err(unsupported_field(&item_path));
+        };
+        let runtime = record
+            .get("agentRuntimeType")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .filter(|value| valid_runtime_type(value))
+            .ok_or_else(|| unsupported_field(&format!("{item_path}.agentRuntimeType")))?;
+        let _ = runtime;
+        if record
+            .get("model")
+            .and_then(Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(unsupported_field(&format!("{item_path}.model")));
+        }
+        if let Some(config) = record.get("config") {
+            if !config.is_object() {
+                return Err(unsupported_field(&format!("{item_path}.config")));
+            }
+            if let Some(env) = config.get("env") {
+                validate_env(env, &format!("{item_path}.config.env"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn reject_secret_like(value: &Value, path: &str) -> Result<()> {
     if let Some(array) = value.as_array() {
         for (index, child) in array.iter().enumerate() {
@@ -228,6 +286,10 @@ fn reject_secret_like(value: &Value, path: &str) -> Result<()> {
         }
         if key == "env" {
             validate_env(child, &child_path)?;
+            continue;
+        }
+        if key == "modelFallbacks" {
+            validate_model_fallbacks(child, &child_path)?;
             continue;
         }
         reject_secret_like(child, &child_path)?;
@@ -696,25 +758,21 @@ pub(super) async fn normalize_runtime_config(
         normalized.insert("env".into(), normalize_env(tx, org, env).await?);
     }
     if let Some(fallbacks_value) = object.get("modelFallbacks") {
-        let Some(fallbacks) = fallbacks_value.as_array() else {
-            return Err(unsupported_field("agentRuntimeConfig.modelFallbacks"));
-        };
+        validate_model_fallbacks(fallbacks_value, "agentRuntimeConfig.modelFallbacks")?;
+        let fallbacks = fallbacks_value
+            .as_array()
+            .expect("validated modelFallbacks array");
         let mut next = Vec::with_capacity(fallbacks.len());
-        for (index, fallback) in fallbacks.iter().enumerate() {
+        for fallback in fallbacks {
             let Some(record) = fallback.as_object() else {
-                return Err(unsupported_field(&format!(
-                    "agentRuntimeConfig.modelFallbacks[{index}]"
-                )));
+                // String model names are a valid Node fallback shorthand.
+                next.push(fallback.clone());
+                continue;
             };
             let Some(config) = record.get("config") else {
                 next.push(fallback.clone());
                 continue;
             };
-            if !config.is_object() {
-                return Err(unsupported_field(&format!(
-                    "agentRuntimeConfig.modelFallbacks[{index}].config"
-                )));
-            }
             let mut next_record = record.clone();
             next_record.insert(
                 "config".into(),
@@ -893,6 +951,27 @@ mod tests {
         }))
         .expect_err("nested secret runtime config");
         assert!(matches!(error, AgentCoreError::Http(422, _, _)));
+        parse_create(&json!({
+            "agentRuntimeConfig": {
+                "modelFallbacks": [
+                    "gpt-4o-mini",
+                    {"agentRuntimeType":"codex_local","model":"gpt-4o","config":{"env":{"MODE":"backup"}}}
+                ]
+            }
+        }))
+        .expect("valid model fallback shorthand and runtime object");
+        for malformed in [
+            json!({"agentRuntimeConfig":{"modelFallbacks":[{"foo":1}]}}),
+            json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":"bogus","model":"x"}]}}),
+            json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":"codex_local"}]}}),
+            json!({"agentRuntimeConfig":{"modelFallbacks":[""]}}),
+            json!({"agentRuntimeConfig":{"modelFallbacks":[{"agentRuntimeType":"codex_local","model":"x","config":{"env":[]}}]}}),
+        ] {
+            assert!(matches!(
+                parse_create(&malformed),
+                Err(AgentCoreError::Http(422, _, _))
+            ));
+        }
         for key in [
             "rudderSkillSync",
             "paperclipSkillSync",
