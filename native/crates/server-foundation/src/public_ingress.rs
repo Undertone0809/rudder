@@ -256,7 +256,7 @@ impl PublicIngressRuntime {
                         // host configuration and a reserved worker slot.
                         native_chat::configure(routes, true);
                     }
-                    if config.browser_auth.is_some() && config.session_auth.is_none() {
+                    if config.browser_auth.is_some() {
                         routes.route(
                             "/api/auth/get-session",
                             web::route().to(browser_session::get),
@@ -530,7 +530,9 @@ async fn proxy_request(
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
     // aliases are dispatched here so they remain native and never fall back.
-    if state.config.identity_auth.is_some() && agent_core::is_reserved_path(request.uri().path()) {
+    if state.config.identity_auth.is_some()
+        && agent_core::is_reserved_path(request.uri().path(), request.method())
+    {
         return agent_core::dispatch_alias(state, request, payload).await;
     }
     if let Some(endpoint) = crate::local_account_ingress::endpoint_for_path(request.uri().path()) {
