@@ -1988,7 +1988,7 @@ mod tests {
         postgres::{PgConnectOptions, PgPoolOptions},
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::{env, str::FromStr};
+    use std::{env, str::FromStr, time::Instant};
     use uuid::Uuid;
 
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
@@ -2309,6 +2309,45 @@ mod tests {
             .expect("connect to the migrated disposable test database")
     }
 
+    fn database_url_with_application_name(database_url: &str, application_name: &str) -> String {
+        let mut parsed = url::Url::parse(database_url).expect("test database URL must be valid");
+        let existing = parsed
+            .query_pairs()
+            .filter(|(key, _)| key != "application_name")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect::<Vec<_>>();
+        parsed.set_query(None);
+        {
+            let mut query = parsed.query_pairs_mut();
+            for (key, value) in existing {
+                query.append_pair(&key, &value);
+            }
+            query.append_pair("application_name", application_name);
+        }
+        parsed.to_string()
+    }
+
+    async fn wait_for_goal_read_relation_lock(pool: &PgPool, application_name: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let query = sqlx::query_scalar::<_, String>(
+                "SELECT query FROM pg_stat_activity WHERE application_name = $1 AND state = 'active' AND wait_event_type = 'Lock' AND query ILIKE '%FROM goals%' LIMIT 1",
+            )
+            .bind(application_name)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+            if let Some(query) = query {
+                return query;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native goal read did not reach its goals query while the table lock was held"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     #[actix_web::test]
     async fn native_session_database_disabled_fails_closed_without_node_fallback() {
         let config = ServerConfig {
@@ -2466,6 +2505,184 @@ mod tests {
         task.await.unwrap().unwrap();
         sqlx::query("DELETE FROM board_api_keys WHERE id = $1::uuid")
             .bind(&key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "DELETE FROM organization_memberships WHERE org_id = $1::uuid AND principal_id = $2",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(r#"DELETE FROM "user" WHERE id = $1"#)
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM organizations WHERE id = $1::uuid")
+            .bind(&org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    #[actix_web::test]
+    #[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL pointing at a migrated disposable DB"]
+    async fn native_goal_read_revalidates_and_reads_in_one_repeatable_read_transaction() {
+        let pool = disposable_native_auth_pool().await;
+        let suffix = Uuid::new_v4().simple().to_string();
+        let org_id: String = sqlx::query_scalar(
+            "INSERT INTO organizations (url_key, name, issue_prefix) VALUES ($1, $2, $3) RETURNING id::text",
+        )
+        .bind(format!("native-goal-read-{suffix}"))
+        .bind(format!("Native goal read {suffix}"))
+        .bind(format!("G{}", suffix[..7].to_ascii_uppercase()))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let user_id = format!("native-goal-read-user-{suffix}");
+        sqlx::query(
+            r#"INSERT INTO "user" (id, name, email, created_at, updated_at)
+               VALUES ($1, 'Native goal read user', $2, now(), now())"#,
+        )
+        .bind(&user_id)
+        .bind(format!("{user_id}@invalid.test"))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_memberships (org_id, principal_type, principal_id, status) VALUES ($1::uuid, 'user', $2, 'active')",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let agent_id: String = sqlx::query_scalar(
+            "INSERT INTO agents (org_id, name, status) VALUES ($1::uuid, 'Native goal read agent', 'idle') RETURNING id::text",
+        )
+        .bind(&org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let token = format!("pcp_native_goal_read_{suffix}");
+        let key_id: String = sqlx::query_scalar(
+            "INSERT INTO agent_api_keys (agent_id, org_id, name, key_hash) VALUES ($1::uuid, $2::uuid, 'Native goal read key', $3) RETURNING id::text",
+        )
+        .bind(&agent_id)
+        .bind(&org_id)
+        .bind(native_bearer_auth::hash_token(&token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let goal_id: String = sqlx::query_scalar(
+            "INSERT INTO goals (org_id, title) VALUES ($1::uuid, 'Goal title before auth snapshot') RETURNING id::text",
+        )
+        .bind(&org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let application_name = format!("rudder-native-goal-read-{}", &suffix[..12]);
+        let database_url = database_url_with_application_name(
+            &env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap(),
+            &application_name,
+        );
+        let foundation = Arc::new(
+            AppState::new(ServerConfig {
+                database_url: Some(database_url),
+                actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                workers: 1,
+                ..ServerConfig::default()
+            })
+            .unwrap(),
+        );
+        let mut blocker = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE goals IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE goals SET title = 'Goal title changed after auth snapshot' WHERE id = $1::uuid",
+        )
+        .bind(&goal_id)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+        let input = GoalReadRequest {
+            view: GoalReadView::List,
+            goal_id: None,
+            cursor: None,
+            limit: None,
+            agent_id: None,
+            lifecycle: None,
+            focus: None,
+            facet: None,
+        };
+        let actor = ActorIdentity::new("agent", &agent_id).unwrap();
+        let token_hash = native_bearer_auth::hash_token(&token);
+        let release_lock = tokio::spawn({
+            let pool = pool.clone();
+            let application_name = application_name.clone();
+            async move {
+                let blocked_query =
+                    wait_for_goal_read_relation_lock(&pool, &application_name).await;
+                blocker.commit().await.unwrap();
+                blocked_query
+            }
+        });
+        let response = foundation
+            .goal_read_with_native_bearer(
+                &org_id,
+                &input,
+                &actor,
+                &format!("agent-key:{key_id}"),
+                &token_hash,
+            )
+            .await;
+        let blocked_query = tokio::time::timeout(Duration::from_secs(5), release_lock)
+            .await
+            .expect("native goal read should reach its goals query")
+            .unwrap();
+        assert!(blocked_query.to_ascii_lowercase().contains("from goals"));
+
+        let status = response.status();
+        let body = actix_web::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::OK);
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let goal = payload
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|goal| goal["id"] == goal_id)
+            .expect("seeded goal should be visible to the authorized agent");
+        assert_eq!(goal["title"], "Goal title before auth snapshot");
+        let current_title: String =
+            sqlx::query_scalar("SELECT title FROM goals WHERE id = $1::uuid")
+                .bind(&goal_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(current_title, "Goal title changed after auth snapshot");
+
+        sqlx::query("DELETE FROM goals WHERE id = $1::uuid")
+            .bind(&goal_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM agent_api_keys WHERE id = $1::uuid")
+            .bind(&key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM agents WHERE id = $1::uuid")
+            .bind(&agent_id)
             .execute(&pool)
             .await
             .unwrap();
