@@ -60,6 +60,9 @@ impl NativeIdentityAuthConfig {
     ) -> Result<Self, PublicIngressConfigError> {
         validate_key(assertion_key)
             .map_err(|_| PublicIngressConfigError::InvalidIdentityAssertionKey)?;
+        if assertion_key == agent_jwt_secret {
+            return Err(PublicIngressConfigError::AssertionKeyReusedForCredentialSigning);
+        }
         Ok(Self {
             assertion_key: assertion_key.to_owned(),
             agent_jwt: NativeAgentJwtConfig {
@@ -84,6 +87,9 @@ impl NativeSessionAuthConfig {
         }
         validate_key(assertion_key)
             .map_err(|_| PublicIngressConfigError::InvalidSessionAssertionKey)?;
+        if assertion_key == secret {
+            return Err(PublicIngressConfigError::AssertionKeyReusedForCredentialSigning);
+        }
         Ok(Self {
             kind,
             secret: secret.to_owned(),
@@ -128,6 +134,8 @@ pub enum PublicIngressConfigError {
     LocalImplicitRequiresLoopback,
     #[error("native session and identity assertion keys must be identical")]
     AssertionKeyMismatch,
+    #[error("native transport assertion key must differ from credential signing secrets")]
+    AssertionKeyReusedForCredentialSigning,
 }
 
 impl PublicIngressConfig {
@@ -535,6 +543,51 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn transport_assertion_key_is_separate_from_cookie_and_agent_jwt_secrets() {
+        let cookie_secret = "distinct-cookie-session-signing-secret";
+        let agent_jwt_secret = "distinct-agent-jwt-signing-secret";
+        let rejected_cookie_secrets = [
+            NativeSessionAuthKind::BetterAuth,
+            NativeSessionAuthKind::LocalAccount,
+        ]
+        .into_iter()
+        .map(|kind| NativeSessionAuthConfig::new(kind, KEY, false, KEY));
+        for result in rejected_cookie_secrets {
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("cookie and transport keys must not be reused"),
+            };
+            assert!(matches!(
+                &error,
+                PublicIngressConfigError::AssertionKeyReusedForCredentialSigning
+            ));
+            assert!(!error.to_string().contains(KEY));
+        }
+
+        let error = match NativeIdentityAuthConfig::new(KEY, KEY, "rudder", "rudder-api", false) {
+            Err(error) => error,
+            Ok(_) => panic!("Agent JWT and transport keys must not be reused"),
+        };
+        assert!(matches!(
+            &error,
+            PublicIngressConfigError::AssertionKeyReusedForCredentialSigning
+        ));
+        assert!(!error.to_string().contains(KEY));
+
+        let session = NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::LocalAccount,
+            cookie_secret,
+            false,
+            KEY,
+        )
+        .expect("cookie signing key may be separate from the transport key");
+        let identity =
+            NativeIdentityAuthConfig::new(KEY, agent_jwt_secret, "rudder", "rudder-api", false)
+                .expect("Agent JWT signing key may be separate from the transport key");
+        assert_eq!(session.assertion_key, identity.assertion_key);
     }
 
     #[test]
