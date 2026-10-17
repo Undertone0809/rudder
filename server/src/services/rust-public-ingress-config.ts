@@ -31,6 +31,8 @@ export type RustPublicIngressOptions = {
   listenAddr: string;
   nodeUpstream: string;
   authorizationKey: string;
+  /** Runtime mode used by Rust-owned Agent capability projection. */
+  deploymentMode?: "local_trusted" | "authenticated";
   /** Effective Express private-host gate, copied to direct Rust public handlers. */
   privateHostGate?: {
     enabled: boolean;

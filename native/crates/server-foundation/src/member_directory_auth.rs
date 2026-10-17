@@ -3,6 +3,8 @@ use crate::native_bearer_auth;
 use crate::native_session_auth::{self, NativeSessionAccess, NativeSessionIdentity};
 use crate::public_ingress_config::NativeSessionAuthKind;
 use crate::{ActorIdentity, PgConnection};
+use rudder_d1_persistence::agent_core::{NativeAgentAccess, NativeAgentAuthorizer};
+use std::{future::Future, pin::Pin};
 
 pub(super) enum MemberDirectoryNativeAuth<'a> {
     Bearer {
@@ -96,5 +98,23 @@ impl MemberDirectoryNativeAuth<'_> {
             Self::LocalImplicit => MemberDirectoryNativeAccess::Authorized,
         };
         Ok(access)
+    }
+}
+
+impl NativeAgentAuthorizer for MemberDirectoryNativeAuth<'_> {
+    fn revalidate<'a>(
+        &'a self,
+        connection: &'a mut PgConnection,
+        org_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<NativeAgentAccess, sqlx::Error>> + Send + 'a>> {
+        Box::pin(async move {
+            self.revalidate(connection, org_id)
+                .await
+                .map(|access| match access {
+                    MemberDirectoryNativeAccess::Authorized => NativeAgentAccess::Authorized,
+                    MemberDirectoryNativeAccess::Unauthorized => NativeAgentAccess::Unauthorized,
+                    MemberDirectoryNativeAccess::Forbidden => NativeAgentAccess::Forbidden,
+                })
+        })
     }
 }

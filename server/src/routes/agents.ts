@@ -244,7 +244,12 @@ function buildFeishuIntegrationSetupUrl(input: {
   return setupUrl.toString();
 }
 
-export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBridge?: RustFoundationBridge) {
+export function agentRoutes(
+  db: Db,
+  storage?: StorageService,
+  rustFoundationBridge?: RustFoundationBridge,
+  nativeAgentCorePaths = false,
+) {
   function stripPersistedSkillSyncConfig(config: Record<string, unknown>) {
     const next = { ...config };
     delete next.rudderSkillSync;
@@ -286,7 +291,11 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
   ] as const;
 
   const router = Router();
-  router.use(agentCoreRoutes(rustFoundationBridge, resolveBrowserCapabilityDeployment(db)));
+  router.use(agentCoreRoutes(
+    rustFoundationBridge,
+    resolveBrowserCapabilityDeployment(db),
+    nativeAgentCorePaths,
+  ));
   const svc = agentService(db);
   const assets = assetService(db);
   const access = accessService(db);

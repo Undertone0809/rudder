@@ -12,6 +12,7 @@ use crate::native_agent_jwt::NativeAgentJwtConfig;
 #[derive(Clone)]
 pub struct PublicIngressConfig {
     pub listen_addr: SocketAddr,
+    pub(crate) deployment_mode: String,
     pub(crate) node_upstream: String,
     pub(crate) authorization_key: String,
     pub(crate) forwarding_policy: crate::public_ingress_forwarding::ForwardingPolicy,
@@ -156,6 +157,14 @@ impl PublicIngressConfig {
             crate::optional_env("RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG")?;
         let websocket_cookie_fallback =
             crate::optional_env("RUDDER_NATIVE_WEBSOCKET_COOKIE_FALLBACK")?;
+        let deployment_mode = crate::optional_env("RUDDER_NATIVE_DEPLOYMENT_MODE")?
+            .unwrap_or_else(|| "authenticated".to_owned());
+        if !matches!(deployment_mode.as_str(), "local_trusted" | "authenticated") {
+            return Err(crate::ConfigError::invalid(
+                "RUDDER_NATIVE_DEPLOYMENT_MODE",
+                "expected local_trusted or authenticated",
+            ));
+        }
         let private_host_gate_raw = crate::optional_env("RUDDER_NATIVE_PRIVATE_HOST_GATE")?;
         match (listen, upstream, key) {
             (None, None, None) => {
@@ -380,6 +389,7 @@ impl PublicIngressConfig {
                 }
                 Self::new(listen, &upstream, &key)
                     .map(|mut config| {
+                        config.deployment_mode = deployment_mode;
                         config.forwarding_policy = policy;
                         config.session_auth = session_auth;
                         config.local_account_auth = local_account_auth;
@@ -436,6 +446,7 @@ impl PublicIngressConfig {
         }
         Ok(Self {
             listen_addr,
+            deployment_mode: "authenticated".to_owned(),
             node_upstream: format!("http://{socket}"),
             authorization_key: authorization_key.to_owned(),
             forwarding_policy: Default::default(),

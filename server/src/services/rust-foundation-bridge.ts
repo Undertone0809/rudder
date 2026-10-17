@@ -3,6 +3,7 @@ import type { Request } from "express";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, existsSync, constants as fsConstants, statSync } from "node:fs";
+import { homedir, hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
@@ -348,12 +349,25 @@ function createFoundationChildEnvironment(input: {
     RUDDER_NATIVE_DATABASE_URL: input.databaseUrl,
     RUDDER_NATIVE_DATABASE_REQUIRED: "true",
     RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: input.actorEnvelopeKey,
+    RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
+    RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
+    RUDDER_NATIVE_HOST_HOSTNAME: hostname(),
+    ...(process.env.RUDDER_HOME !== undefined
+      ? { RUDDER_NATIVE_HOST_RUDDER_HOME: process.env.RUDDER_HOME }
+      : {}),
+    ...(process.env.RUDDER_INSTANCE_ID !== undefined
+      ? { RUDDER_NATIVE_HOST_INSTANCE_ID: process.env.RUDDER_INSTANCE_ID }
+      : {}),
+    ...(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME !== undefined
+      ? { RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME: process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME }
+      : {}),
     ...(input.secretsMasterKey ? { RUDDER_SECRETS_MASTER_KEY: input.secretsMasterKey } : {}),
     RUDDER_SECRETS_MASTER_KEY_FILE: input.secretsMasterKeyFile,
     ...(input.publicIngress ? {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      RUDDER_NATIVE_DEPLOYMENT_MODE: input.publicIngress.deploymentMode ?? "authenticated",
       ...(input.publicIngress.privateHostGate
         ? { RUDDER_NATIVE_PRIVATE_HOST_GATE: JSON.stringify(input.publicIngress.privateHostGate) }
         : {}),

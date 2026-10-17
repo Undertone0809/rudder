@@ -16,6 +16,7 @@ use actix_web::http::Method;
 use actix_web::http::header::HeaderMap;
 use uuid::Uuid;
 
+mod agent_core;
 mod runtime_bindings;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
@@ -200,6 +201,16 @@ impl PublicIngressRuntime {
             config: config.clone(),
             local_account,
         });
+        let max_request_bytes = foundation.config.max_request_bytes;
+        let workers = foundation.config.workers;
+        let shutdown_grace = foundation.config.shutdown_grace.as_secs();
+        let native_identity_enabled = config.identity_auth.is_some();
+        let session_auth_kind = config.session_auth.as_ref().map(|settings| settings.kind);
+        let local_account_lifecycle_enabled = config.local_account_auth.is_some();
+        let local_implicit_enabled = config
+            .identity_auth
+            .as_ref()
+            .is_some_and(|identity| identity.local_implicit_enabled);
         let http = HttpServer::new(move || {
             // Client state belongs to its Actix worker; no Send/Sync workaround.
             let proxy = PublicIngressProxy::new(&config.node_upstream)
@@ -208,10 +219,11 @@ impl PublicIngressRuntime {
             let websocket_proxy = PublicIngressWebSocketProxy::new(proxy.upstream_authority())
                 .expect("validated fixed loopback upstream")
                 .with_forwarding_policy(config.forwarding_policy.clone());
-            App::new()
+            let app = App::new()
                 .app_data(data.clone())
                 .app_data(web::Data::new(proxy))
                 .app_data(web::Data::new(websocket_proxy))
+                .app_data(web::PayloadConfig::new(max_request_bytes))
                 .wrap(middleware::from_fn(enforce_private_host_gate))
                 .wrap(middleware::from_fn(reject_unsupported_websocket_upgrade))
                 .route("/healthz", web::get().to(ingress_health))
@@ -261,12 +273,26 @@ impl PublicIngressRuntime {
                     web::route()
                         .guard(guard::Any(guard::Get()).or(guard::Head()))
                         .to(llm_adapter_configuration),
+                );
+            let app = if config.identity_auth.is_some() {
+                app.route(
+                    "/api/orgs/{org_id}/agents",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(agent_core::roster),
                 )
-                .default_service(web::to(proxy_request))
+                .route(
+                    "/api/agents/{agent_id}/permissions",
+                    web::patch().to(agent_core::permissions),
+                )
+            } else {
+                app
+            };
+            app.default_service(web::to(proxy_request))
         })
-        .workers(foundation.config.workers)
+        .workers(workers)
         .disable_signals()
-        .shutdown_timeout(foundation.config.shutdown_grace.as_secs())
+        .shutdown_timeout(shutdown_grace)
         .bind(listen_addr)?;
         let bound_addr = *http.addrs().first().ok_or(ServerError::NoBoundAddress)?;
         let server = http.run();
@@ -274,13 +300,10 @@ impl PublicIngressRuntime {
             handle: server.handle(),
             server,
             bound_addr,
-            session_auth_kind: config.session_auth.as_ref().map(|settings| settings.kind),
-            native_identity_enabled: config.identity_auth.is_some(),
-            local_account_lifecycle_enabled: config.local_account_auth.is_some(),
-            local_implicit_enabled: config
-                .identity_auth
-                .as_ref()
-                .is_some_and(|identity| identity.local_implicit_enabled),
+            session_auth_kind,
+            native_identity_enabled,
+            local_account_lifecycle_enabled,
+            local_implicit_enabled,
         })
     }
 
@@ -321,6 +344,12 @@ fn public_ingress_startup_receipt(
     local_implicit_enabled: bool,
 ) -> serde_json::Value {
     let mut direct_routes = vec!["/api/orgs/:org_id/members/directory"];
+    if native_identity_enabled {
+        direct_routes.extend([
+            "/api/orgs/:org_id/agents",
+            "/api/agents/:agent_id/permissions",
+        ]);
+    }
     if session_auth_kind.is_some() {
         direct_routes.push("/api/auth/get-session");
     }
@@ -429,6 +458,12 @@ async fn proxy_request(
     request: HttpRequest,
     payload: web::Payload,
 ) -> HttpResponse {
+    // Express matches route literals case-insensitively and permits a trailing
+    // slash. Actix's explicit routes above retain the common spelling; route
+    // aliases are dispatched here so they remain native and never fall back.
+    if state.config.identity_auth.is_some() && agent_core::is_reserved_path(request.uri().path()) {
+        return agent_core::dispatch_alias(state, request, payload).await;
+    }
     if let Some(endpoint) = crate::local_account_ingress::endpoint_for_path(request.uri().path()) {
         return crate::local_account_ingress::handle(state, request, payload, endpoint).await;
     }
@@ -1661,6 +1696,8 @@ mod tests {
             with_better_auth["nativeAuthentication"]["directRoutes"],
             serde_json::json!([
                 "/api/orgs/:org_id/members/directory",
+                "/api/orgs/:org_id/agents",
+                "/api/agents/:agent_id/permissions",
                 "/api/auth/get-session"
             ])
         );
