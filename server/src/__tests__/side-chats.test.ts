@@ -820,6 +820,9 @@ describe("sideChatService", () => {
       .rejects.toMatchObject({ status: 409 });
     const [rejectedKeep] = await db.select().from(chatConversations).where(eq(chatConversations.id, staleKeep.id));
     expect(rejectedKeep).toMatchObject({ sideChatState: "expired", messengerVisible: false });
+    const [rejectedKeepClaim] = await db.select().from(runtimeRetentionClaims)
+      .where(eq(runtimeRetentionClaims.resourceRef, `side_chat:${staleKeep.id}`));
+    expect(rejectedKeepClaim).toMatchObject({ status: "expired", expiresAt: expect.any(Date) });
   });
 
   it("rejects an assistant anchor that has not completed", async () => {
