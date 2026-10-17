@@ -20,6 +20,28 @@ fn complete() -> Completion {
         quiescent: true,
     }
 }
+
+#[test]
+fn pi_terminal_receipt_is_reported_as_unsupported_without_codex_projection() {
+    assert_eq!(
+        classify_pi_observation(true, true, true),
+        UnresolvedReason::ProviderTerminalUnsupported
+    );
+}
+
+#[test]
+fn pi_missing_cleanup_or_terminal_receipt_remains_unknown() {
+    for (provider_terminal, turn_receipt, cleanup_proven) in [
+        (false, false, false),
+        (true, false, true),
+        (true, true, false),
+    ] {
+        assert_eq!(
+            classify_pi_observation(provider_terminal, turn_receipt, cleanup_proven),
+            UnresolvedReason::ProviderCleanupUnknown
+        );
+    }
+}
 async fn settled(worker: &Supervisor) {
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {

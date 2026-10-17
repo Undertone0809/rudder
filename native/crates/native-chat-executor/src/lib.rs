@@ -159,6 +159,12 @@ pub struct ExecutionObservation {
 pub enum NativeExecutionObservation {
     Codex(ExecutionObservation),
     Hermes(HermesExecutionObservation),
+    /// Pi keeps its own session-tree identities and receipt shape. The shared
+    /// worker must consume this typed envelope instead of routing it through
+    /// the Codex Thread/Turn finalizer. The current D1 finalizer does not yet
+    /// have a Pi projection, so Foundation reports the observation as an
+    /// explicit unresolved state until that boundary is added.
+    Pi(PiNativeExecutionObservation),
 }
 
 pub struct HermesExecutionObservation {
@@ -167,6 +173,15 @@ pub struct HermesExecutionObservation {
     pub turn_receipt: HermesTurnReceipt,
     pub cleanup_receipt: Option<HermesCleanupReceipt>,
     pub stop: Option<execution::StopIntent>,
+}
+
+/// Provider-specific Pi observation paired with the exact D1 execution fence
+/// that admitted it. Pi session ids and leaf ids remain opaque provider data;
+/// this wrapper intentionally has no Codex thread/turn fields.
+pub struct PiNativeExecutionObservation {
+    pub execution_principal: NativeChatExecutionPrincipal,
+    pub fence: ExecutionFence,
+    pub observation: PiExecutionObservation,
 }
 
 fn db<T>(
@@ -429,9 +444,9 @@ where
         handle, pool, actor, host, paths, request, false,
     )? {
         NativeExecutionObservation::Codex(observation) => Ok(observation),
-        NativeExecutionObservation::Hermes(_) => Err(ExecutionFailure::not_launched(
-            Error::UnsupportedConfiguration,
-        )),
+        NativeExecutionObservation::Hermes(_) | NativeExecutionObservation::Pi(_) => Err(
+            ExecutionFailure::not_launched(Error::UnsupportedConfiguration),
+        ),
     }
 }
 
