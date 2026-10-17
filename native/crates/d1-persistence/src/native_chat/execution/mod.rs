@@ -22,7 +22,7 @@ pub use claim::{ClaimedExecution, claim, claim_with_preflight};
 pub use effect::{AuthorizedEffect, EffectDispatch, authorize_effect};
 pub use finalization::{
     finalize, finalize_failed, finalize_hermes, finalize_hermes_failed, finalize_hermes_stopped,
-    finalize_hermes_stopped_before_submission, finalize_stopped,
+    finalize_hermes_stopped_before_submission, finalize_pi, finalize_stopped,
     finalize_stopped_before_submission,
 };
 pub use lease::{LeaseReceipt, renew_lease};

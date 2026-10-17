@@ -10,18 +10,407 @@
 //! prove an idle, non-compacting state with an empty pending queue. If neither
 //! proof is available the adapter returns an explicit `Unknown` phase.
 
+use super::{Error, ExecutionFailure, HostPaths, PiNativeExecutionObservation, db};
+use rudder_d1_persistence::native_chat::{
+    NativeChatExecutionPrincipal,
+    config::{LocalHostContext, ResolvedCodexConfig},
+    execution::{self, CheckpointSnapshot, CheckpointTransition, EffectDispatch, ExecutionFence},
+};
 use rudder_pi_rpc::{
     ConnectionLaunchPermit, PiCleanupReceipt, PiCommand, PiEvent, PiResponse, PiRpcMessage,
     PiRpcTransport, PiSessionTree, PiSessionTreeError, PiTransportError, PiTurnReceipt,
     ProcessLaunch,
 };
+use rudder_runtime_core::native_chat::{
+    NativeChatProtocolPhase, NativeChatProvider, PiSessionSelector,
+};
 use serde_json::Value;
+use sqlx::PgPool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+use tokio::runtime::Handle;
 
 const MAX_SESSION_ID_BYTES: usize = 256;
+const RPC_TIMEOUT: Duration = Duration::from_secs(10);
+const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
+type ExecResult<T> = std::result::Result<T, Error>;
+
+pub(super) fn validate_config(
+    config: &ResolvedCodexConfig,
+    host: &LocalHostContext,
+    paths: &HostPaths,
+) -> ExecResult<()> {
+    let local = config.pi.as_ref().ok_or(Error::UnsupportedConfiguration)?;
+    let Some((node, entry, _profiles_root)) = host.pi_runtime() else {
+        return Err(Error::UnsupportedConfiguration);
+    };
+    if config.identity.runtime_type != "pi_local"
+        || !host.has_trusted_executable_search_path()
+        || local.node_executable != node
+        || local.pi_cli_entry != entry
+        || local.env_revision.is_empty()
+        || !paths.process_host.is_file()
+        || !paths.runtime_root.is_dir()
+        || !paths.isolated_home.is_dir()
+        || !local.home.is_dir()
+        || !local.agent_dir.is_dir()
+        || !local.session_dir.is_dir()
+        || !config.cwd.is_dir()
+        || !local.node_executable.is_file()
+        || !local.pi_cli_entry.is_file()
+        || local.home.canonicalize().as_ref().ok() != Some(&local.home)
+        || local.agent_dir.canonicalize().as_ref().ok() != Some(&local.agent_dir)
+        || local.session_dir.canonicalize().as_ref().ok() != Some(&local.session_dir)
+        || config.cwd.canonicalize().as_ref().ok() != Some(&config.cwd)
+    {
+        return Err(Error::UnsupportedConfiguration);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_claimed(
+    handle: &Handle,
+    pool: &PgPool,
+    execution_principal: NativeChatExecutionPrincipal,
+    fence: ExecutionFence,
+    config: ResolvedCodexConfig,
+    permit: rudder_codex_app_server::ConnectionLaunchPermit,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+    paths: &HostPaths,
+) -> std::result::Result<PiNativeExecutionObservation, ExecutionFailure> {
+    let prepared = (|| -> ExecResult<_> {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled);
+        }
+        let local = config.pi.as_ref().ok_or(Error::UnsupportedConfiguration)?;
+        db(
+            handle,
+            deadline,
+            execution::validate_submission_source(pool, &execution_principal, &fence),
+        )?;
+        let snapshot = db(
+            handle,
+            deadline,
+            execution::current_checkpoint(pool, &execution_principal, &fence),
+        )?;
+        if snapshot.provider != NativeChatProvider::PiLocal
+            || !matches!(
+                snapshot.phase,
+                NativeChatProtocolPhase::NoThreadRequest | NativeChatProtocolPhase::ThreadKnown
+            )
+        {
+            return Err(Error::ProviderRejected);
+        }
+        let resume_session_file = snapshot
+            .pi_session
+            .as_ref()
+            .map(|session| PathBuf::from(&session.session_file));
+        let launch = ProcessLaunch {
+            node_executable: local.node_executable.clone(),
+            pi_cli_entry: local.pi_cli_entry.clone(),
+            process_host: paths.process_host.clone(),
+            runtime_root: paths.runtime_root.clone(),
+            isolated_home: local.home.clone(),
+            session_dir: local.session_dir.clone(),
+            resume_session_file,
+            system_prompt_file: config.instruction_source_path.clone(),
+            cwd: config.cwd.clone(),
+            provider: local.provider.clone(),
+            model: local.model.clone(),
+            thinking: local.thinking.clone(),
+            run_id: fence.identity().run_id.to_owned(),
+            attempt_id: fence.identity().attempt_id.to_owned(),
+            owner_token: fence.run_execution_owner_token().to_owned(),
+            env: local.env.clone(),
+        };
+        Ok((snapshot, launch))
+    })();
+    let (snapshot, launch) = match prepared {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(ExecutionFailure::before_launch(
+                error,
+                execution_principal,
+                fence,
+            ));
+        }
+    };
+    let mut execution = match PiExecution::launch(
+        launch,
+        permit,
+        remaining_timeout(deadline, RPC_TIMEOUT).unwrap_or_default(),
+    ) {
+        Ok(execution) => execution,
+        Err(error) => {
+            return Err(ExecutionFailure::after_claim_pi(
+                Error::PiTransport(error),
+                execution_principal,
+                fence,
+                None,
+            ));
+        }
+    };
+    let result = execute_pi_turn(
+        handle,
+        pool,
+        &execution_principal,
+        &fence,
+        &config,
+        &mut execution,
+        snapshot,
+        cancelled,
+        deadline,
+    );
+    let _cleanup_phase =
+        execution.cleanup(remaining_timeout(deadline, CLEANUP_TIMEOUT).unwrap_or_default());
+    let observation = execution.into_observation();
+    if let Err(error) = result {
+        return Err(ExecutionFailure::after_claim_pi(
+            error,
+            execution_principal,
+            fence,
+            observation.cleanup_receipt,
+        ));
+    }
+    if observation.turn_receipt.is_none() || observation.cleanup_receipt.is_none() {
+        return Err(ExecutionFailure::after_claim_pi(
+            Error::InvalidProviderObservation,
+            execution_principal,
+            fence,
+            observation.cleanup_receipt,
+        ));
+    }
+    Ok(PiNativeExecutionObservation {
+        execution_principal,
+        fence,
+        observation,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_pi_turn(
+    handle: &Handle,
+    pool: &PgPool,
+    actor: &NativeChatExecutionPrincipal,
+    fence: &ExecutionFence,
+    _config: &ResolvedCodexConfig,
+    execution: &mut PiExecution,
+    mut snapshot: CheckpointSnapshot,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> ExecResult<()> {
+    if snapshot.phase == NativeChatProtocolPhase::NoThreadRequest {
+        let mut prepared = db(
+            handle,
+            deadline,
+            execution::advance_checkpoint(
+                pool,
+                actor,
+                fence,
+                snapshot.phase,
+                snapshot.revision,
+                CheckpointTransition::PreparePiSessionStart,
+            ),
+        )?;
+        snapshot = prepared.snapshot().clone();
+        let effect = db(
+            handle,
+            deadline,
+            execution::authorize_effect(
+                pool,
+                actor,
+                prepared
+                    .take_effect_permit()
+                    .ok_or(Error::InvalidProviderObservation)?,
+                None,
+            ),
+        )?;
+        let timeout = remaining_timeout(deadline, RPC_TIMEOUT)?;
+        effect
+            .dispatch(|payload| match payload {
+                EffectDispatch::StartPiSession => execution
+                    .new_session(timeout)
+                    .map(|_| ())
+                    .map_err(Error::PiTransport),
+                _ => Err(Error::InvalidProviderObservation),
+            })
+            .map_err(Error::Persistence)??;
+        let state = execution.state().ok_or(Error::InvalidProviderObservation)?;
+        let selector = PiSessionSelector {
+            session_id: state.session_id().to_owned(),
+            session_file: state.session_file().to_string_lossy().into_owned(),
+            leaf_id: None,
+        };
+        let recorded = db(
+            handle,
+            deadline,
+            execution::advance_checkpoint(
+                pool,
+                actor,
+                fence,
+                snapshot.phase,
+                snapshot.revision,
+                CheckpointTransition::RecordPiSession { selector },
+            ),
+        )?;
+        snapshot = recorded.snapshot().clone();
+    } else {
+        let stored = snapshot
+            .pi_session
+            .as_ref()
+            .ok_or(Error::InvalidProviderObservation)?;
+        execution
+            .resume_session(
+                Path::new(&stored.session_file),
+                remaining_timeout(deadline, RPC_TIMEOUT)?,
+            )
+            .map_err(Error::PiTransport)?;
+        let state = execution.state().ok_or(Error::InvalidProviderObservation)?;
+        if state.session_id() != stored.session_id
+            || state.session_file().to_string_lossy() != stored.session_file
+        {
+            return Err(Error::InvalidProviderObservation);
+        }
+    }
+    if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
+        return Err(if cancelled.load(Ordering::Acquire) {
+            Error::Cancelled
+        } else {
+            Error::Deadline
+        });
+    }
+    let prepared = db(
+        handle,
+        deadline,
+        execution::advance_checkpoint(
+            pool,
+            actor,
+            fence,
+            snapshot.phase,
+            snapshot.revision,
+            CheckpointTransition::PrepareInput,
+        ),
+    )?;
+    snapshot = prepared.snapshot().clone();
+    let input = db(
+        handle,
+        deadline,
+        execution::load_submission(pool, actor, fence),
+    )?;
+    let input_body = input.body().to_owned();
+    let mut marked = db(
+        handle,
+        deadline,
+        execution::advance_checkpoint(
+            pool,
+            actor,
+            fence,
+            snapshot.phase,
+            snapshot.revision,
+            CheckpointTransition::MarkPiInputIndeterminate,
+        ),
+    )?;
+    snapshot = marked.snapshot().clone();
+    let effect = db(
+        handle,
+        deadline,
+        execution::authorize_effect(
+            pool,
+            actor,
+            marked
+                .take_effect_permit()
+                .ok_or(Error::InvalidProviderObservation)?,
+            Some(input),
+        ),
+    )?;
+    let session_id = snapshot
+        .pi_session
+        .as_ref()
+        .ok_or(Error::InvalidProviderObservation)?
+        .session_id
+        .clone();
+    let prior_leaf_id = snapshot
+        .pi_session
+        .as_ref()
+        .and_then(|session| session.leaf_id.clone());
+    let timeout = remaining_timeout(deadline, RPC_TIMEOUT)?;
+    effect
+        .dispatch(|payload| match payload {
+            EffectDispatch::SubmitPiInput {
+                session_id: expected,
+                body,
+                ..
+            } if expected == session_id => execution
+                .submit_input(body, timeout)
+                .map(|_| ())
+                .map_err(Error::PiTransport),
+            _ => Err(Error::InvalidProviderObservation),
+        })
+        .map_err(Error::Persistence)??;
+    if !execution
+        .wait_until_settled(remaining_timeout(deadline, Duration::from_secs(3600))?)
+        .map_err(Error::PiTransport)?
+        .is_provider_terminal()
+    {
+        return Err(Error::InvalidProviderObservation);
+    }
+    execution
+        .take_turn_receipt(prior_leaf_id.as_deref(), &input_body)
+        .map_err(Error::PiTransport)?;
+    let receipt = execution
+        .turn_receipt()
+        .ok_or(Error::InvalidProviderObservation)?;
+    if receipt.session_id() != session_id || receipt.input_fingerprint().is_empty() {
+        return Err(Error::InvalidProviderObservation);
+    }
+    let recorded = db(
+        handle,
+        deadline,
+        execution::advance_checkpoint(
+            pool,
+            actor,
+            fence,
+            snapshot.phase,
+            snapshot.revision,
+            CheckpointTransition::RecordPiTurn {
+                session_id: receipt.session_id().to_owned(),
+                entry_id: receipt.input_entry_id().to_owned(),
+            },
+        ),
+    )?;
+    snapshot = recorded.snapshot().clone();
+    db(
+        handle,
+        deadline,
+        execution::advance_checkpoint(
+            pool,
+            actor,
+            fence,
+            snapshot.phase,
+            snapshot.revision,
+            CheckpointTransition::ObservePiProviderTerminal {
+                session_id: receipt.session_id().to_owned(),
+                entry_id: receipt.input_entry_id().to_owned(),
+                next_leaf_id: receipt.leaf_id().to_owned(),
+            },
+        ),
+    )?;
+    Ok(())
+}
+
+fn remaining_timeout(deadline: Instant, max: Duration) -> ExecResult<Duration> {
+    let remaining = deadline.saturating_duration_since(Instant::now()).min(max);
+    if remaining.is_zero() {
+        Err(Error::Deadline)
+    } else {
+        Ok(remaining)
+    }
+}
 
 /// Provider state that can be safely handed to the shared Native worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -206,6 +595,10 @@ impl PiExecution {
 
     pub fn input_request_id(&self) -> Option<&str> {
         self.input_request_id.as_deref()
+    }
+
+    pub fn turn_receipt(&self) -> Option<&PiTurnReceipt> {
+        self.turn_receipt.as_ref()
     }
 
     /// Read and validate the exact native state. A rejected command is an
