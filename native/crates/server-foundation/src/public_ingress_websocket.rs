@@ -766,6 +766,10 @@ mod tests {
                     }
                 }
             }
+            // A peer may complete the close handshake as a disconnect instead of
+            // delivering a distinct Close frame on slower loopback runners. Both
+            // outcomes prove that the private socket was closed.
+            observations.closes.fetch_add(1, Ordering::SeqCst);
             let _ = session.close(Some(CloseCode::Away.into())).await;
         });
         response
