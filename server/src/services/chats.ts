@@ -102,7 +102,7 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
-import { lockLegacyNativeChatQueueTarget, lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
@@ -153,68 +153,6 @@ export function chatService(
   });
 
   const ensureConversationUserStates = createConversationUserStateInitializer(db);
-
-  function legacyQueueConversationPredicate() {
-    return sql`not exists (
-      select 1 from chat_generations native_generation
-      where native_generation.org_id = ${chatQueuedMessages.orgId}
-        and native_generation.conversation_id = ${chatQueuedMessages.conversationId}
-        and native_generation.execution_authority = 'native_rust'
-    )`;
-  }
-
-  async function assertLegacyChatConversationAuthority(tx: any, orgId: string, conversationId: string) {
-    const authority = await lockLegacyNativeChatQueueTarget(tx, orgId, conversationId);
-    if (authority === "missing") throw notFound("Chat conversation not found");
-    if (authority === "native_owned") {
-      throw conflict("This chat is controlled by the Rust Native Chat runtime");
-    }
-  }
-
-  async function assertLegacyChatGenerationAuthority(tx: any, orgId: string, generationId: string) {
-    const hint = await tx
-      .select({ orgId: chatGenerations.orgId, conversationId: chatGenerations.conversationId })
-      .from(chatGenerations)
-      .where(and(
-        eq(chatGenerations.orgId, orgId),
-        eq(chatGenerations.id, generationId),
-      ))
-      .limit(1)
-      .then((rows: Array<{ orgId: string; conversationId: string }>) => rows[0] ?? null);
-    if (hint) await assertLegacyChatConversationAuthority(tx, hint.orgId, hint.conversationId);
-    return hint;
-  }
-
-  async function assertLegacyQueuedMessageAuthority(
-    tx: any,
-    itemId: string,
-    expected?: { orgId?: string; conversationId?: string },
-  ) {
-    const hint = await tx
-      .select({ orgId: chatQueuedMessages.orgId, conversationId: chatQueuedMessages.conversationId })
-      .from(chatQueuedMessages)
-      .where(and(
-        eq(chatQueuedMessages.id, itemId),
-        expected?.orgId ? eq(chatQueuedMessages.orgId, expected.orgId) : undefined,
-        expected?.conversationId ? eq(chatQueuedMessages.conversationId, expected.conversationId) : undefined,
-      ))
-      .limit(1)
-      .then((rows: Array<{ orgId: string; conversationId: string }>) => rows[0] ?? null);
-    if (hint) await assertLegacyChatConversationAuthority(tx, hint.orgId, hint.conversationId);
-    return hint;
-  }
-
-  async function assertLegacyChatConversationIdAuthority(tx: any, conversationId: string) {
-    const hint = await tx
-      .select({ orgId: chatConversations.orgId })
-      .from(chatConversations)
-      .where(eq(chatConversations.id, conversationId))
-      .limit(1)
-      .then((rows: Array<{ orgId: string }>) => rows[0] ?? null);
-    if (!hint) throw notFound("Chat conversation not found");
-    await assertLegacyChatConversationAuthority(tx, hint.orgId, conversationId);
-    return hint;
-  }
 
   async function listConversationUserStates(orgId: string, userId: string, conversationIds: string[]) {
     if (conversationIds.length === 0) return new Map<string, ConversationUserStateRow>();
@@ -717,47 +655,33 @@ export function chatService(
 
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
     const now = new Date();
-    return db.transaction(async (tx) => {
-      await assertLegacyChatConversationAuthority(tx, orgId, conversationId);
-      const [row] = await tx
-        .insert(chatGenerations)
-        .values({
-          orgId,
-          conversationId,
-          status: "active",
-          controlOwnerToken: null,
-          controlLeaseExpiresAt: null,
-          startedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
-      if (!row) throw new Error("Failed to create chat generation");
-      return row;
-    });
+    const [row] = await db
+      .insert(chatGenerations)
+      .values({
+        orgId,
+        conversationId,
+        status: "active",
+        controlOwnerToken: null,
+        controlLeaseExpiresAt: null,
+        startedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!row) throw new Error("Failed to create chat generation");
+    return row;
   }
 
   async function markGenerationTerminal(
-    orgId: string,
-    generationId: string | null | undefined,
-    status: "completed" | "failed" | "stopped" | "aborted",
+    first: string | null | undefined,
+    second: "completed" | "failed" | "stopped" | "aborted" | string,
+    third?: "completed" | "failed" | "stopped" | "aborted",
   ) {
+    const generationId = third === undefined ? first : second;
+    const status = third === undefined ? second as "completed" | "failed" | "stopped" | "aborted" : third;
     if (!generationId) return null;
     const now = new Date();
     return db.transaction(async (tx) => {
-      await assertLegacyChatGenerationAuthority(tx, orgId, generationId);
-      const generation = await tx
-        .select({ executionAuthority: chatGenerations.executionAuthority })
-        .from(chatGenerations)
-        .where(and(
-          eq(chatGenerations.orgId, orgId),
-          eq(chatGenerations.id, generationId),
-        ))
-        .for("update")
-        .then((rows) => rows[0] ?? null);
-      if (generation?.executionAuthority === "native_rust") {
-        throw conflict("Native Chat generations are controlled by the Rust runtime");
-      }
       const [row] = await tx
         .update(chatGenerations)
         .set({
@@ -770,7 +694,6 @@ export function chatService(
         })
         .where(
           and(
-            eq(chatGenerations.orgId, orgId),
             eq(chatGenerations.id, generationId),
             inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
           ),
@@ -965,7 +888,6 @@ export function chatService(
           eq(chatGenerations.id, input.generationId),
           eq(chatGenerations.orgId, input.orgId),
           eq(chatGenerations.conversationId, input.conversationId),
-          eq(chatGenerations.executionAuthority, "legacy_ts"),
           isNull(chatGenerations.runtimeTerminalAt),
           inArray(chatGenerations.status, ["active", "starting", "running", "tool_busy", "closing"]),
           sql`${chatGenerations.attemptEpoch} <= ${input.attemptEpoch}`,
@@ -1001,7 +923,6 @@ export function chatService(
           eq(chatGenerations.id, input.generationId),
           eq(chatGenerations.attemptEpoch, input.attemptEpoch),
           eq(chatGenerations.controlOwnerToken, input.ownerToken),
-          eq(chatGenerations.executionAuthority, "legacy_ts"),
           isNull(chatGenerations.runtimeTerminalAt),
           inArray(chatGenerations.status, ["active", "starting", "running", "tool_busy"]),
         ),
@@ -1028,7 +949,6 @@ export function chatService(
         eq(chatGenerations.id, input.generationId),
         eq(chatGenerations.attemptEpoch, input.attemptEpoch),
         eq(chatGenerations.controlOwnerToken, input.ownerToken),
-        eq(chatGenerations.executionAuthority, "legacy_ts"),
         isNull(chatGenerations.runtimeTerminalAt),
         inArray(chatGenerations.status, ["active", "starting", "running", "tool_busy", "closing"]),
       ))
@@ -1038,14 +958,13 @@ export function chatService(
   }
 
   async function markGenerationControlAttemptCompleted(input: {
-    orgId: string;
+    orgId?: string;
     generationId: string;
     attemptEpoch: number;
     ownerToken: string;
   }) {
     const now = new Date();
     return db.transaction(async (tx) => {
-      await assertLegacyChatGenerationAuthority(tx, input.orgId, input.generationId);
       const [row] = await tx
         .update(chatGenerations)
         .set({
@@ -1055,11 +974,9 @@ export function chatService(
         })
         .where(
           and(
-            eq(chatGenerations.orgId, input.orgId),
             eq(chatGenerations.id, input.generationId),
             eq(chatGenerations.attemptEpoch, input.attemptEpoch),
             eq(chatGenerations.controlOwnerToken, input.ownerToken),
-            eq(chatGenerations.executionAuthority, "legacy_ts"),
             inArray(chatGenerations.status, ["active", "starting", "running", "tool_busy", "closing"]),
           ),
         )
@@ -1224,18 +1141,12 @@ export function chatService(
         sql`select id from ${chatGenerations} where ${chatGenerations.id} = ${input.generationId} and ${chatGenerations.orgId} = ${input.orgId} for update`,
       );
       const generation = await tx
-        .select({ id: chatGenerations.id, executionAuthority: chatGenerations.executionAuthority })
+        .select({ id: chatGenerations.id })
         .from(chatGenerations)
-        .where(and(
-          eq(chatGenerations.id, input.generationId),
-          eq(chatGenerations.orgId, input.orgId),
-        ))
+        .where(and(eq(chatGenerations.id, input.generationId), eq(chatGenerations.orgId, input.orgId)))
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (!generation) throw notFound("Chat generation not found");
-      if (generation.executionAuthority === "native_rust") {
-        throw conflict("Native Chat generations are controlled by the Rust runtime");
-      }
       const nextSeq = await tx
         .select({ value: sql<number>`coalesce(max(${chatGenerationEvents.generationSeq}), 0) + 1` })
         .from(chatGenerationEvents)
@@ -1323,7 +1234,6 @@ export function chatService(
         };
       }
 
-      await assertLegacyChatConversationAuthority(tx, input.orgId, input.conversationId);
       await tx.execute(
         sql`select id from ${chatGenerations} where ${chatGenerations.id} = ${input.expectedGenerationId} for update`,
       );
@@ -1562,7 +1472,6 @@ export function chatService(
   }) {
     const now = new Date();
     return db.transaction(async (tx) => {
-      await assertLegacyChatConversationAuthority(tx, input.orgId, input.conversationId);
       await tx.execute(sql`
         select ${chatControlActions.id}
         from ${chatControlActions}
@@ -1725,28 +1634,6 @@ export function chatService(
         return null;
       }
 
-      const queuedHint = await tx
-        .select({ orgId: chatQueuedMessages.orgId, conversationId: chatQueuedMessages.conversationId })
-        .from(chatQueuedMessages)
-        .where(and(
-          eq(chatQueuedMessages.controlActionId, existingAction.id),
-          eq(chatQueuedMessages.orgId, input.orgId),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (queuedHint) {
-        await assertLegacyChatConversationAuthority(tx, queuedHint.orgId, queuedHint.conversationId);
-      } else if (existingAction.expectedGenerationId) {
-        const generationHint = await assertLegacyChatGenerationAuthority(
-          tx,
-          input.orgId,
-          existingAction.expectedGenerationId,
-        );
-        if (!generationHint) return null;
-      } else {
-        return null;
-      }
-
       const generation = existingAction.expectedGenerationId
         ? await tx
           .select()
@@ -1759,8 +1646,6 @@ export function chatService(
           .for("update")
           .then((rows) => rows[0] ?? null)
         : null;
-
-      if (generation?.executionAuthority === "native_rust") return null;
 
       const leaseIsCurrent = generation
         ? await tx
@@ -1886,36 +1771,6 @@ export function chatService(
   }) {
     const now = new Date();
     return db.transaction(async (tx) => {
-      const actionHint = await tx
-        .select({ expectedGenerationId: chatControlActions.expectedGenerationId })
-        .from(chatControlActions)
-        .where(and(
-          eq(chatControlActions.id, input.controlActionId),
-          eq(chatControlActions.orgId, input.orgId),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      const queuedHint = await tx
-        .select({ orgId: chatQueuedMessages.orgId, conversationId: chatQueuedMessages.conversationId })
-        .from(chatQueuedMessages)
-        .where(and(
-          eq(chatQueuedMessages.controlActionId, input.controlActionId),
-          eq(chatQueuedMessages.orgId, input.orgId),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (queuedHint) {
-        await assertLegacyChatConversationAuthority(tx, queuedHint.orgId, queuedHint.conversationId);
-      } else if (actionHint?.expectedGenerationId) {
-        const generationHint = await assertLegacyChatGenerationAuthority(
-          tx,
-          input.orgId,
-          actionHint.expectedGenerationId,
-        );
-        if (!generationHint) return null;
-      } else {
-        return null;
-      }
       await tx.execute(sql`
         select ${chatControlActions.id}
         from ${chatControlActions}
@@ -1940,18 +1795,6 @@ export function chatService(
       ) {
         return null;
       }
-      const nativeGeneration = existingAction.expectedGenerationId
-        ? await tx
-          .select({ id: chatGenerations.id })
-          .from(chatGenerations)
-          .where(and(
-            eq(chatGenerations.id, existingAction.expectedGenerationId),
-            eq(chatGenerations.executionAuthority, "native_rust"),
-          ))
-          .limit(1)
-          .then((rows) => rows[0] ?? null)
-        : null;
-      if (nativeGeneration) return null;
       await tx.execute(sql`
         select ${chatQueuedMessages.id}
         from ${chatQueuedMessages}
@@ -2067,7 +1910,6 @@ export function chatService(
     }
     return db.transaction(async (tx) => {
       await lockNodeMutationAuthority(tx, input.orgId);
-      await assertLegacyChatConversationAuthority(tx, input.orgId, input.conversationId);
       const current = await tx
         .select()
         .from(chatQueuedMessages)
@@ -2225,7 +2067,6 @@ export function chatService(
     version?: number | null;
   }) {
     return db.transaction(async (tx) => {
-      await assertLegacyChatConversationAuthority(tx, input.orgId, input.conversationId);
       const conditions = [
         eq(chatQueuedMessages.orgId, input.orgId),
         eq(chatQueuedMessages.conversationId, input.conversationId),
@@ -2351,7 +2192,6 @@ export function chatService(
         };
       }
 
-      await assertLegacyChatConversationAuthority(tx, input.orgId, input.conversationId);
       await tx.execute(
         sql`select id from ${chatQueuedMessages} where ${chatQueuedMessages.id} = ${input.itemId} for update`,
       );
@@ -2446,33 +2286,28 @@ export function chatService(
     activeGenerationId?: string | null;
   }) {
     const now = new Date();
-    return db.transaction(async (tx) => {
-      const target = await assertLegacyQueuedMessageAuthority(tx, input.itemId, {
-        conversationId: input.conversationId,
-      });
-      if (!target) throw conflict("Queued message was changed or is no longer steerable");
-      const [row] = await tx
-        .update(chatQueuedMessages)
-        .set({
-          status: "queued",
-          activeGenerationId: input.activeGenerationId ?? null,
-          deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
-          lastAttemptAt: now,
-          lastDeliveryReason: input.reason,
-          version: sql`${chatQueuedMessages.version} + 1`,
-          updatedAt: now,
-        })
-        .where(and(
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "queued",
+        activeGenerationId: input.activeGenerationId ?? null,
+        deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
+        lastAttemptAt: now,
+        lastDeliveryReason: input.reason,
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
           eq(chatQueuedMessages.conversationId, input.conversationId),
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.status, "queued"),
           isNull(chatQueuedMessages.cancelledAt),
-          legacyQueueConversationPredicate(),
-        ))
-        .returning();
-      if (!row) throw conflict("Queued message was changed or is no longer steerable");
-      return hydrateQueuedMessage(row);
-    });
+        ),
+      )
+      .returning();
+    if (!row) throw conflict("Queued message was changed or is no longer steerable");
+    return hydrateQueuedMessage(row);
   }
 
   async function claimNextServerQueuedMessage(input: {
@@ -2483,70 +2318,49 @@ export function chatService(
     await reconcileDeliveredQueuedMessages({ limit: 25 });
     const now = input.now ?? new Date();
     const leaseExpiresAt = new Date(now.getTime() + input.leaseMs);
-    const batchSize = 25;
-    let scanOffset = 0;
-    const claimableQueuePredicate = and(
-      inArray(chatQueuedMessages.status, ["continuation_pending", "steer_pending", "queued"]),
-      isNull(chatQueuedMessages.cancelledAt),
-      legacyQueueConversationPredicate(),
-      sql`jsonb_typeof(${chatQueuedMessages.requestActor}) = 'object'`,
-      or(
-        isNull(chatQueuedMessages.deliveryLeaseExpiresAt),
-        lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
-      ),
-      sql`(${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
-        select steer_action.provider_disposition
-        from ${chatControlActions} as steer_action
-        where steer_action.id = ${chatQueuedMessages.controlActionId}
-        limit 1
-      ), 'not_sent') in ('not_sent', 'rejected'))`,
-    );
-    const claimableQueuePriority = sql<number>`case
-      when ${chatQueuedMessages.status} = 'continuation_pending' then 0
-      when ${chatQueuedMessages.status} = 'steer_pending' then 1
-      else 2
-    end`;
-    while (true) {
-      const candidates = await db
-        .select()
-        .from(chatQueuedMessages)
-        .where(claimableQueuePredicate)
-        .orderBy(
-          claimableQueuePriority,
-          asc(chatQueuedMessages.position),
-          asc(chatQueuedMessages.createdAt),
-        )
-        .limit(batchSize)
-        .offset(scanOffset);
+    return db.transaction(async (tx) => {
+      const batchSize = 25;
+      let scanOffset = 0;
+      const claimableQueuePredicate = and(
+        inArray(chatQueuedMessages.status, ["continuation_pending", "steer_pending", "queued"]),
+        isNull(chatQueuedMessages.cancelledAt),
+        sql`jsonb_typeof(${chatQueuedMessages.requestActor}) = 'object'`,
+        or(
+          isNull(chatQueuedMessages.deliveryLeaseExpiresAt),
+          lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
+        ),
+        sql`(${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
+          select steer_action.provider_disposition
+          from ${chatControlActions} as steer_action
+          where steer_action.id = ${chatQueuedMessages.controlActionId}
+          limit 1
+        ), 'not_sent') in ('not_sent', 'rejected'))`,
+      );
+      const claimableQueuePriority = sql<number>`case
+        when ${chatQueuedMessages.status} = 'continuation_pending' then 0
+        when ${chatQueuedMessages.status} = 'steer_pending' then 1
+        else 2
+      end`;
+      while (true) {
+        const candidates = await tx
+          .select()
+          .from(chatQueuedMessages)
+          .where(claimableQueuePredicate)
+          .orderBy(
+            claimableQueuePriority,
+            asc(chatQueuedMessages.position),
+            asc(chatQueuedMessages.createdAt),
+          )
+          .limit(batchSize)
+          .offset(scanOffset)
+          .for("update", { skipLocked: true });
 
-      let retainedCandidateCount = 0;
-      for (const candidateHint of candidates) {
-        if (
-          !candidateHint.requestActor
-          || typeof candidateHint.requestActor !== "object"
-          || Array.isArray(candidateHint.requestActor)
-        ) {
-          retainedCandidateCount += 1;
-          continue;
-        }
-        const outcome = await db.transaction(async (tx) => {
-          const targetAuthority = await lockLegacyNativeChatQueueTarget(
-            tx,
-            candidateHint.orgId,
-            candidateHint.conversationId,
-          );
-          if (targetAuthority !== "available") return { kind: "consumed" as const };
-          const candidate = await tx
-            .select()
-            .from(chatQueuedMessages)
-            .where(and(
-              eq(chatQueuedMessages.id, candidateHint.id),
-              claimableQueuePredicate,
-            ))
-            .limit(1)
-            .for("update", { skipLocked: true })
-            .then((rows) => rows[0] ?? null);
-          if (!candidate) return { kind: "retained" as const };
+        let retainedCandidateCount = 0;
+        for (const candidate of candidates) {
+          if (!candidate.requestActor || typeof candidate.requestActor !== "object" || Array.isArray(candidate.requestActor)) {
+            retainedCandidateCount += 1;
+            continue;
+          }
           const [conversationHead] = await tx
             .select({ id: chatQueuedMessages.id })
             .from(chatQueuedMessages)
@@ -2562,7 +2376,8 @@ export function chatService(
             )
             .limit(1);
           if (!conversationHead || conversationHead.id !== candidate.id) {
-            return { kind: "retained" as const };
+            retainedCandidateCount += 1;
+            continue;
           }
           const latestGeneration = await tx
             .select()
@@ -2577,14 +2392,12 @@ export function chatService(
           const isSteer = candidate.deliveryIntent === "steer"
             || candidate.status === "steer_pending"
             || candidate.status === "continuation_pending";
-          if (latestGeneration?.executionAuthority === "native_rust") {
-            return { kind: "consumed" as const };
-          }
           if (
             latestGeneration
             && ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status)
           ) {
-            return { kind: "retained" as const };
+            retainedCandidateCount += 1;
+            continue;
           }
           if (
             candidate.status === "queued"
@@ -2602,7 +2415,8 @@ export function chatService(
               )
             )
           ) {
-            return { kind: "retained" as const };
+            retainedCandidateCount += 1;
+            continue;
           }
           if (
             isSteer
@@ -2631,7 +2445,7 @@ export function chatService(
                 })
                 .where(eq(chatControlActions.id, candidate.controlActionId));
             }
-            return { kind: "consumed" as const };
+            continue;
           }
 
           let materialized;
@@ -2687,7 +2501,7 @@ export function chatService(
                   eq(chatControlActions.orgId, candidate.orgId),
                 ));
             }
-            return { kind: "consumed" as const };
+            continue;
           }
 
           const materializedItem = materialized.item;
@@ -2755,22 +2569,17 @@ export function chatService(
               ));
           }
           return {
-            kind: "claimed" as const,
-            claim: {
-              item: hydrateQueuedMessage(claimed),
-              generationId,
-              userMessageId,
-              leaseToken,
-              leaseEpoch,
-            },
+            item: hydrateQueuedMessage(claimed),
+            generationId,
+            userMessageId,
+            leaseToken,
+            leaseEpoch,
           };
-        });
-        if (outcome.kind === "claimed") return outcome.claim;
-        if (outcome.kind === "retained") retainedCandidateCount += 1;
+        }
+        if (candidates.length < batchSize) return null;
+        scanOffset += retainedCandidateCount;
       }
-      if (candidates.length < batchSize) return null;
-      scanOffset += retainedCandidateCount;
-    }
+    });
   }
 
   async function renewServerQueuedMessageClaim(input: {
@@ -2782,26 +2591,22 @@ export function chatService(
     now?: Date;
   }) {
     const now = input.now ?? new Date();
-    return db.transaction(async (tx) => {
-      if (!await assertLegacyQueuedMessageAuthority(tx, input.itemId)) return false;
-      const [row] = await tx
-        .update(chatQueuedMessages)
-        .set({
-          deliveryLeaseExpiresAt: new Date(now.getTime() + input.leaseMs),
-          updatedAt: now,
-        })
-        .where(and(
-          eq(chatQueuedMessages.id, input.itemId),
-          eq(chatQueuedMessages.continuationGenerationId, input.generationId),
-          eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
-          eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
-          isNull(chatQueuedMessages.cancelledAt),
-          inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
-          legacyQueueConversationPredicate(),
-        ))
-        .returning({ id: chatQueuedMessages.id });
-      return Boolean(row);
-    });
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        deliveryLeaseExpiresAt: new Date(now.getTime() + input.leaseMs),
+        updatedAt: now,
+      })
+      .where(and(
+        eq(chatQueuedMessages.id, input.itemId),
+        eq(chatQueuedMessages.continuationGenerationId, input.generationId),
+        eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
+        eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
+        isNull(chatQueuedMessages.cancelledAt),
+        inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
+      ))
+      .returning({ id: chatQueuedMessages.id });
+    return Boolean(row);
   }
 
   async function acknowledgeServerQueuedMessageDelivery(input: {
@@ -2812,7 +2617,6 @@ export function chatService(
   }) {
     const now = new Date();
     return db.transaction(async (tx) => {
-      if (!await assertLegacyQueuedMessageAuthority(tx, input.itemId)) return null;
       const item = await tx
         .select()
         .from(chatQueuedMessages)
@@ -2823,7 +2627,6 @@ export function chatService(
           eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
           inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
           isNull(chatQueuedMessages.cancelledAt),
-          legacyQueueConversationPredicate(),
         ))
         .limit(1)
         .then((rows) => rows[0] ?? null);
@@ -2859,7 +2662,6 @@ export function chatService(
         .where(and(
           eq(chatQueuedMessages.id, item.id),
           eq(chatQueuedMessages.version, item.version),
-          legacyQueueConversationPredicate(),
         ))
         .returning();
       if (!updated) return null;
@@ -2895,7 +2697,6 @@ export function chatService(
   }) {
     const now = new Date();
     return db.transaction(async (tx) => {
-      if (!await assertLegacyQueuedMessageAuthority(tx, input.itemId)) return null;
       const item = await tx
         .select()
         .from(chatQueuedMessages)
@@ -2905,7 +2706,6 @@ export function chatService(
           eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
           eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
           inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
-          legacyQueueConversationPredicate(),
         ))
         .limit(1)
         .then((rows) => rows[0] ?? null);
@@ -2940,7 +2740,6 @@ export function chatService(
         .where(and(
           eq(chatQueuedMessages.id, item.id),
           eq(chatQueuedMessages.version, item.version),
-          legacyQueueConversationPredicate(),
         ))
         .returning();
       if (!updated) return null;
@@ -2968,7 +2767,6 @@ export function chatService(
   }) {
     const now = new Date();
     return db.transaction(async (tx) => {
-      if (!await assertLegacyQueuedMessageAuthority(tx, input.itemId)) return null;
       const item = await tx
         .select()
         .from(chatQueuedMessages)
@@ -2978,7 +2776,6 @@ export function chatService(
           eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
           eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
           inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
-          legacyQueueConversationPredicate(),
         ))
         .limit(1)
         .then((rows) => rows[0] ?? null);
@@ -2989,7 +2786,6 @@ export function chatService(
         .where(eq(chatGenerations.id, input.generationId))
         .limit(1)
         .then((rows) => rows[0] ?? null);
-      if (generation?.executionAuthority === "native_rust") return null;
       const providerMayHaveStarted = Boolean(generation && (
         generation.attemptEpoch > 0
         || generation.status === "starting"
@@ -3027,7 +2823,6 @@ export function chatService(
         .where(and(
           eq(chatQueuedMessages.id, item.id),
           eq(chatQueuedMessages.version, item.version),
-          legacyQueueConversationPredicate(),
         ))
         .returning();
       if (!updated) return null;
@@ -3076,7 +2871,6 @@ export function chatService(
       .where(and(
         inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
         lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
-        legacyQueueConversationPredicate(),
       ));
     let requeued = 0;
     let ambiguous = 0;
@@ -3100,7 +2894,6 @@ export function chatService(
     await reclaimStaleQueuedMessageClaims(conversationId);
     const now = new Date();
     return db.transaction(async (tx) => {
-      await assertLegacyChatConversationIdAuthority(tx, conversationId);
       const [candidate] = await tx
         .select()
         .from(chatQueuedMessages)
@@ -3109,12 +2902,10 @@ export function chatService(
             eq(chatQueuedMessages.conversationId, conversationId),
             eq(chatQueuedMessages.status, "queued"),
             isNull(chatQueuedMessages.cancelledAt),
-            legacyQueueConversationPredicate(),
           ),
         )
         .orderBy(asc(chatQueuedMessages.position), asc(chatQueuedMessages.createdAt))
-        .limit(1)
-        .for("update", { skipLocked: true });
+        .limit(1);
       if (!candidate) return null;
       const [row] = await tx
         .update(chatQueuedMessages)
@@ -3134,7 +2925,6 @@ export function chatService(
             eq(chatQueuedMessages.status, "queued"),
             eq(chatQueuedMessages.version, candidate.version),
             isNull(chatQueuedMessages.cancelledAt),
-            legacyQueueConversationPredicate(),
           ),
         )
         .returning();
@@ -3148,93 +2938,89 @@ export function chatService(
     reason: "delivery_failed" | "delivery_aborted" | "claim_expired";
   }) {
     const now = new Date();
-    return db.transaction(async (tx) => {
-      if (!await assertLegacyQueuedMessageAuthority(tx, input.itemId, {
-        conversationId: input.conversationId,
-      })) return null;
-      const [cancelledRow] = await tx
-        .update(chatQueuedMessages)
-        .set({
-          status: "cancelled",
-          deliveryDisposition: "cancelled",
-          lastDeliveryReason: "operator_cancelled",
-          version: sql`${chatQueuedMessages.version} + 1`,
-          updatedAt: now,
-        })
-        .where(and(
+    const [cancelledRow] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "cancelled",
+        deliveryDisposition: "cancelled",
+        lastDeliveryReason: "operator_cancelled",
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
           eq(chatQueuedMessages.conversationId, input.conversationId),
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.status, "dequeue_claimed"),
-          legacyQueueConversationPredicate(),
           isNotNull(chatQueuedMessages.cancelledAt),
           isNull(chatQueuedMessages.deliveryLeaseToken),
           isNull(chatQueuedMessages.continuationGenerationId),
-        ))
-        .returning();
-      if (cancelledRow) return hydrateQueuedMessage(cancelledRow);
-      const [row] = await tx
-        .update(chatQueuedMessages)
-        .set({
-          status: "queued",
-          lastDeliveryReason: input.reason,
-          version: sql`${chatQueuedMessages.version} + 1`,
-          updatedAt: now,
-        })
-        .where(and(
+        ),
+      )
+      .returning();
+    if (cancelledRow) return hydrateQueuedMessage(cancelledRow);
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "queued",
+        lastDeliveryReason: input.reason,
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
           eq(chatQueuedMessages.conversationId, input.conversationId),
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.status, "dequeue_claimed"),
-          legacyQueueConversationPredicate(),
           isNull(chatQueuedMessages.cancelledAt),
           isNull(chatQueuedMessages.deliveryLeaseToken),
           isNull(chatQueuedMessages.continuationGenerationId),
-        ))
-        .returning();
-      return row ? hydrateQueuedMessage(row) : null;
-    });
+        ),
+      )
+      .returning();
+    return row ? hydrateQueuedMessage(row) : null;
   }
 
   async function reclaimStaleQueuedMessageClaims(conversationId: string) {
     const cutoff = new Date(Date.now() - QUEUED_MESSAGE_CLAIM_LEASE_MS);
     const now = new Date();
-    await db.transaction(async (tx) => {
-      await assertLegacyChatConversationIdAuthority(tx, conversationId);
-      await tx
-        .update(chatQueuedMessages)
-        .set({
-          status: "cancelled",
-          deliveryDisposition: "cancelled",
-          lastDeliveryReason: "operator_cancelled",
-          version: sql`${chatQueuedMessages.version} + 1`,
-          updatedAt: now,
-        })
-        .where(and(
+    await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "cancelled",
+        deliveryDisposition: "cancelled",
+        lastDeliveryReason: "operator_cancelled",
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
           eq(chatQueuedMessages.conversationId, conversationId),
           eq(chatQueuedMessages.status, "dequeue_claimed"),
-          legacyQueueConversationPredicate(),
           isNotNull(chatQueuedMessages.cancelledAt),
           isNull(chatQueuedMessages.deliveryLeaseToken),
           isNull(chatQueuedMessages.continuationGenerationId),
           lt(chatQueuedMessages.updatedAt, cutoff),
-        ));
-      await tx
-        .update(chatQueuedMessages)
-        .set({
-          status: "queued",
-          lastDeliveryReason: "claim_expired",
-          version: sql`${chatQueuedMessages.version} + 1`,
-          updatedAt: now,
-        })
-        .where(and(
+        ),
+      );
+    await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "queued",
+        lastDeliveryReason: "claim_expired",
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
           eq(chatQueuedMessages.conversationId, conversationId),
           eq(chatQueuedMessages.status, "dequeue_claimed"),
-          legacyQueueConversationPredicate(),
           isNull(chatQueuedMessages.cancelledAt),
           isNull(chatQueuedMessages.deliveryLeaseToken),
           isNull(chatQueuedMessages.continuationGenerationId),
           lt(chatQueuedMessages.updatedAt, cutoff),
-        ));
-    });
+        ),
+      );
   }
 
   async function assertQueuedMessageClaimedForDelivery(input: {
@@ -3270,31 +3056,27 @@ export function chatService(
     sourceMessageId: string;
   }) {
     const now = new Date();
-    return db.transaction(async (tx) => {
-      if (!await assertLegacyQueuedMessageAuthority(tx, input.itemId, {
-        conversationId: input.conversationId,
-      })) throw conflict("Queued message is no longer deliverable");
-      const [row] = await tx
-        .update(chatQueuedMessages)
-        .set({
-          status: "completed",
-          sourceMessageId: input.sourceMessageId,
-          deliveredMessageId: input.sourceMessageId,
-          lastDeliveryReason: null,
-          reconciliationReason: null,
-          version: sql`${chatQueuedMessages.version} + 1`,
-          updatedAt: now,
-        })
-        .where(and(
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "completed",
+        sourceMessageId: input.sourceMessageId,
+        deliveredMessageId: input.sourceMessageId,
+        lastDeliveryReason: null,
+        reconciliationReason: null,
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
           eq(chatQueuedMessages.conversationId, input.conversationId),
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.status, "dequeue_claimed"),
-          legacyQueueConversationPredicate(),
-        ))
-        .returning();
-      if (!row) throw conflict("Queued message is no longer deliverable");
-      return hydrateQueuedMessage(row);
-    });
+        ),
+      )
+      .returning();
+    if (!row) throw conflict("Queued message is no longer deliverable");
+    return hydrateQueuedMessage(row);
   }
 
   async function reconcileDeliveredQueuedMessages(input: {
@@ -3314,7 +3096,6 @@ export function chatService(
           "failed_actionable",
         ]),
         isNull(chatQueuedMessages.cancelledAt),
-        legacyQueueConversationPredicate(),
         ...(input.orgId ? [eq(chatQueuedMessages.orgId, input.orgId)] : []),
         ...(input.conversationId ? [eq(chatQueuedMessages.conversationId, input.conversationId)] : []),
       ))
@@ -3380,9 +3161,6 @@ export function chatService(
       let reconciledItem: boolean;
       try {
         reconciledItem = await db.transaction(async (tx) => {
-          if ((await lockLegacyNativeChatQueueTarget(tx, item.orgId, item.conversationId)) !== "available") {
-            return false;
-          }
           const [updated] = await tx
             .update(chatQueuedMessages)
             .set({
@@ -3403,7 +3181,6 @@ export function chatService(
               eq(chatQueuedMessages.id, item.id),
               eq(chatQueuedMessages.version, item.version),
               isNull(chatQueuedMessages.cancelledAt),
-              legacyQueueConversationPredicate(),
             ))
             .returning({ id: chatQueuedMessages.id });
           if (!updated) return false;
@@ -3443,27 +3220,23 @@ export function chatService(
   }) {
     const now = new Date();
     const nextStatus = input.status === "completed" ? "completed" : "failed";
-    return db.transaction(async (tx) => {
-      if (!await assertLegacyQueuedMessageAuthority(tx, input.itemId, {
-        conversationId: input.conversationId,
-      })) return null;
-      const [row] = await tx
-        .update(chatQueuedMessages)
-        .set({
-          status: nextStatus,
-          lastDeliveryReason: input.status === "completed" ? null : input.status,
-          version: sql`${chatQueuedMessages.version} + 1`,
-          updatedAt: now,
-        })
-        .where(and(
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: nextStatus,
+        lastDeliveryReason: input.status === "completed" ? null : input.status,
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
           eq(chatQueuedMessages.conversationId, input.conversationId),
           eq(chatQueuedMessages.id, input.itemId),
           inArray(chatQueuedMessages.status, ["dequeue_claimed", "running"]),
-          legacyQueueConversationPredicate(),
-        ))
-        .returning();
-      return row ? hydrateQueuedMessage(row) : null;
-    });
+        ),
+      )
+      .returning();
+    return row ? hydrateQueuedMessage(row) : null;
   }
 
   async function hydrateMessages(rows: MessageHydrationRow[], options: { includeTranscript?: boolean } = {}) {
@@ -4585,7 +4358,6 @@ export function chatService(
       const transcriptFromPayload = chatTranscriptFromPayload(sanitizedPayload);
       const transcript = input.transcript ?? transcriptFromPayload;
       const { message, created } = await db.transaction(async (tx) => {
-        await assertLegacyChatConversationAuthority(tx, input.orgId, conversationId);
         const values = {
           orgId: input.orgId,
           conversationId,

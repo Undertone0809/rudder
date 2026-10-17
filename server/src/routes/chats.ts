@@ -138,7 +138,9 @@ export function chatRoutes(
   const automationsSvc = automationService(db);
   const goalsSvc = goalService(db);
   const access = accessService(db);
-  const assistantSvc = chatAssistantService(db, storage, { nativeLocalChatOwner });
+  const assistantSvc = chatAssistantService(db, storage, {
+    nativeLocalChatOwner: nativeLocalChatOwner ?? (rustFoundationBridge?.nativeChatHostEnabled ? "rust" : undefined),
+  });
   const chatRunsSvc = chatAgentRunService(db);
   const workManifestSvc = chatWorkManifestService(db);
   const operatorProfiles = operatorProfileService(db);
