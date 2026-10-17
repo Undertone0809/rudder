@@ -279,8 +279,9 @@ async fn revalidate_native_auth(
         return Ok(());
     };
     match native_auth.revalidate(tx, org_id).await? {
-        NativeAgentAccess::Authorized | NativeAgentAccess::Forbidden => Ok(()),
+        NativeAgentAccess::Authorized => Ok(()),
         NativeAgentAccess::Unauthorized => Err(common::http(401, "Unauthorized")),
+        NativeAgentAccess::Forbidden => Err(common::http(403, "Forbidden")),
     }
 }
 
