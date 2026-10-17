@@ -173,3 +173,11 @@ CI on `a495cfe5798cc4c4dfbb6372d7b1d778cd37e9fd` exposed stale Rust test catalog
 All 14 migration-core validation tests pass (`/tmp/rudder-pr316-migration-catalog-tests-fixed.log`). All four real PostgreSQL migration-service cases pass, including shipped bootstrap/legacy-index reconciliation/upgrade, concurrent advisory-lock exclusion, backup cancellation, and transactional rollback (`/tmp/rudder-pr316-migration-postgres-tests.log`). The owned disposable cluster at `/private/tmp/rudder-session-ci-migration-Lrswz5` stopped afterward with its data preserved. Strict all-target foundation Clippy also passes (`/tmp/rudder-pr316-clippy-fixed.log`). These test-only repairs preserve the product content covered by final review and packaged acceptance; CI must still pass on the updated commit.
 
 Windows Verify on the previous head completed 114 tests with 10 skips, then failed a Vitest `onTaskUpdate` RPC timeout. It is retained as a failed job, not a passing Windows qualification; the new-head run must resolve it.
+
+## JWT identity and local account integration candidate (2026-10-17)
+
+The source integration branch starts from PR #316's pushed head `367b44a0447f193d2d470a9e03eaec32da9c11df`. It layers the unique native JWT/identity changes and the native local-account lifecycle slice onto that session implementation. The old identity (`d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e`) and lifecycle (`902784cbd97cc7f89765e82304f9d31f36482f7d`) acceptance records remain historical and are not evidence for this combined candidate.
+
+The source inventory was regenerated from the combined tree. Its generated portion matches the source, while current `reviewed_node_changes` and `reviewed_transport_admissions` are empty pending candidate-specific review. The authority comparison is intentionally not accepted: the native identity-proof transport admission and its exact bootstrap surface need an independent review and a narrowly pinned rebind before the ratchet can pass. No ratchet policy was changed to admit this candidate.
+
+This candidate has not been compiled or tested. Cargo, Node product tests, PostgreSQL, Desktop/runtime verification, and protected CI remain outstanding. No completion, acceptance, merge, push, or release claim applies to this integration.
