@@ -572,8 +572,10 @@ impl LocalAccountAuthService {
         let last_trusted_time_ms = self.last_trusted_time_ms.load(Ordering::Acquire);
         let verified = offline_grant::verify_grant_and_proof(
             offline,
-            &self.config.expected_issuer,
-            &self.config.installation_id,
+            offline_grant::OfflineGrantTarget {
+                issuer: &self.config.expected_issuer,
+                installation_id: &self.config.installation_id,
+            },
             &input.grant,
             &input.device_public_key_spki,
             &input.proof,

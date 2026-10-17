@@ -48,6 +48,12 @@ async fn read(
     org_id: String,
     input: Request,
 ) -> HttpResponse {
+    if let Some(response) = malformed_public_json_response(&request, &body) {
+        return response;
+    }
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
     let foundation = &state.foundation;
     let canonical_path = match &input {
         Request::PublicCurrent { target } => format!(

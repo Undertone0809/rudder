@@ -91,7 +91,7 @@ impl NativeLocalAccountAuthConfig {
                 offline: self
                     .offline
                     .as_ref()
-                    .map(NativeOfflineGrantConfig::into_policy),
+                    .map(NativeOfflineGrantConfig::as_policy),
             },
             verifier,
         )
@@ -149,10 +149,6 @@ impl NativeOfflineGrantConfig {
             expected_account_auth_epoch: self.expected_account_auth_epoch,
             expected_device_auth_epoch: self.expected_device_auth_epoch,
         }
-    }
-
-    fn into_policy(&self) -> OfflineGrantConfig {
-        self.as_policy()
     }
 }
 

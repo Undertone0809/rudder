@@ -19,6 +19,7 @@ pub struct PublicIngressConfig {
     pub(crate) local_account_auth: Option<NativeLocalAccountAuthConfig>,
     pub(crate) identity_auth: Option<NativeIdentityAuthConfig>,
     pub(crate) websocket_cookie_fallback: NativeWebSocketCookieFallback,
+    pub(crate) private_host_gate: Option<crate::private_host_gate::NativePrivateHostGate>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +156,7 @@ impl PublicIngressConfig {
             crate::optional_env("RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG")?;
         let websocket_cookie_fallback =
             crate::optional_env("RUDDER_NATIVE_WEBSOCKET_COOKIE_FALLBACK")?;
+        let private_host_gate_raw = crate::optional_env("RUDDER_NATIVE_PRIVATE_HOST_GATE")?;
         match (listen, upstream, key) {
             (None, None, None) => {
                 if local_account_auth_raw.is_some() {
@@ -172,6 +174,7 @@ impl PublicIngressConfig {
                     || identity_assertion_key.is_some()
                     || local_implicit.is_some()
                     || websocket_cookie_fallback.is_some()
+                    || private_host_gate_raw.is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_SECRET").is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_ISSUER").is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_AUDIENCE").is_some()
@@ -198,6 +201,13 @@ impl PublicIngressConfig {
                             "RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES",
                             message,
                         )
+                    })?;
+                let private_host_gate = private_host_gate_raw
+                    .as_deref()
+                    .map(crate::private_host_gate::NativePrivateHostGate::parse)
+                    .transpose()
+                    .map_err(|message| {
+                        crate::ConfigError::invalid("RUDDER_NATIVE_PRIVATE_HOST_GATE", message)
                     })?;
                 let session_auth = match (
                     session_mode.as_deref(),
@@ -375,6 +385,7 @@ impl PublicIngressConfig {
                         config.local_account_auth = local_account_auth;
                         config.identity_auth = identity_auth;
                         config.websocket_cookie_fallback = websocket_cookie_fallback;
+                        config.private_host_gate = private_host_gate;
                         config
                     })
                     .map(Some)
@@ -432,6 +443,7 @@ impl PublicIngressConfig {
             local_account_auth: None,
             identity_auth: None,
             websocket_cookie_fallback: NativeWebSocketCookieFallback::SessionCookie,
+            private_host_gate: None,
         })
     }
 

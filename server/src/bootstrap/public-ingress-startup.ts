@@ -79,6 +79,11 @@ export async function preparePublicIngressStartup(
       listenAddr: `${config.host.includes(":") ? `[${config.host}]` : config.host}:${publicPort}`,
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
+      privateHostGate: {
+        enabled: config.deploymentMode === "authenticated" && config.deploymentExposure === "private",
+        allowedHostnames: config.allowedHostnames,
+        bindHost: config.host,
+      },
       trustedProxies: config.rustPublicIngressTrustedProxies,
       identityAuth: {
         assertionKey: identityAssertionKey,

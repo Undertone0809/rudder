@@ -84,6 +84,7 @@ pub use native_session_revocation::NativeSessionRevocationRegistry;
 use public_ingress_config::NativeSessionAuthKind;
 mod organization_catalog_reads;
 mod overview_reads;
+mod private_host_gate;
 mod project_reads;
 mod public_ingress;
 mod public_ingress_config;

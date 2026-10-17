@@ -152,10 +152,14 @@ impl GrantClaims {
     }
 }
 
+pub(super) struct OfflineGrantTarget<'a> {
+    pub(super) issuer: &'a str,
+    pub(super) installation_id: &'a str,
+}
+
 pub(super) fn verify_grant_and_proof(
     policy: &OfflineGrantConfig,
-    expected_issuer: &str,
-    expected_installation_id: &str,
+    target: OfflineGrantTarget<'_>,
     grant: &str,
     device_public_key_spki: &str,
     proof: &super::LocalOfflineGrantProof,
@@ -163,8 +167,7 @@ pub(super) fn verify_grant_and_proof(
     last_trusted_time_ms: u64,
 ) -> Result<VerifiedOfflineGrant, ()> {
     if grant.len() > MAX_TOKEN_BYTES
-        || now_ms < 0
-        || now_ms > MAX_SAFE_INTEGER
+        || !(0..=MAX_SAFE_INTEGER).contains(&now_ms)
         || last_trusted_time_ms > MAX_SAFE_INTEGER as u64
         || policy.local_sign_out_epoch > MAX_SAFE_INTEGER as u64
         || proof.payload.version != 1
@@ -197,8 +200,8 @@ pub(super) fn verify_grant_and_proof(
     let claims = parse_claims(parse_json_segment(claims_part)?)?;
     let (expected_auth_schema_epoch, expected_account_auth_epoch, expected_device_auth_epoch) =
         policy_epochs(policy)?;
-    if claims.issuer() != expected_issuer
-        || claims.installation_id() != expected_installation_id
+    if claims.issuer() != target.issuer
+        || claims.installation_id() != target.installation_id
         || claims.device_id() != policy.expected_device_id
         || claims.account_id() != policy.expected_account_id
         || claims.expires_at_ms() <= claims.issued_at_ms()
@@ -209,7 +212,7 @@ pub(super) fn verify_grant_and_proof(
             .is_none()
         || now_ms
             .checked_add(CLOCK_ROLLBACK_TOLERANCE_MS)
-            .map_or(true, |current| {
+            .is_none_or(|current| {
                 current < claims.trusted_time_ms().max(last_trusted_time_ms as i64)
             })
         || now_ms < claims.issued_at_ms().saturating_sub(PROOF_CLOCK_SKEW_MS)
@@ -224,13 +227,11 @@ pub(super) fn verify_grant_and_proof(
         device_auth_epoch,
         ..
     } = &claims
-    {
-        if expected_auth_schema_epoch.is_some_and(|expected| expected != *auth_schema_epoch)
+        && (expected_auth_schema_epoch.is_some_and(|expected| expected != *auth_schema_epoch)
             || expected_account_auth_epoch.is_some_and(|expected| expected != *account_auth_epoch)
-            || expected_device_auth_epoch.is_some_and(|expected| expected != *device_auth_epoch)
-        {
-            return Err(());
-        }
+            || expected_device_auth_epoch.is_some_and(|expected| expected != *device_auth_epoch))
+    {
+        return Err(());
     }
 
     let device_key = parse_ed25519_spki(device_public_key_spki)?;
@@ -287,9 +288,9 @@ pub(super) fn validate_policy(policy: &OfflineGrantConfig) -> Result<(), ()> {
     Ok(())
 }
 
-fn policy_epochs(
-    policy: &OfflineGrantConfig,
-) -> Result<(Option<i64>, Option<i64>, Option<i64>), ()> {
+type PolicyEpochs = (Option<i64>, Option<i64>, Option<i64>);
+
+fn policy_epochs(policy: &OfflineGrantConfig) -> Result<PolicyEpochs, ()> {
     let convert = |value: Option<u64>| -> Result<Option<i64>, ()> {
         match value {
             Some(value) if value <= MAX_SAFE_INTEGER as u64 => {
@@ -589,8 +590,10 @@ mod tests {
         let configuration = policy(&identity_spki);
         let verified = verify_grant_and_proof(
             &configuration,
-            "https://accounts.example",
-            "installation-1",
+            OfflineGrantTarget {
+                issuer: "https://accounts.example",
+                installation_id: "installation-1",
+            },
             &grant,
             &device_spki,
             &proof,

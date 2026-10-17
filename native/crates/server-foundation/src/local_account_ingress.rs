@@ -88,10 +88,6 @@ pub(super) async fn handle(
     payload: web::Payload,
     endpoint: LocalAccountEndpoint,
 ) -> HttpResponse {
-    if request.method() != Method::POST {
-        return method_not_allowed();
-    }
-
     let body = match read_limited_body(&request, payload).await {
         Ok(body) => body,
         Err(BodyReadError::TooLarge) => {
@@ -99,6 +95,16 @@ pub(super) async fn handle(
         }
         Err(BodyReadError::Invalid) => return validation_error(),
     };
+
+    if let Some(response) = crate::public_ingress::malformed_public_json_response(&request, &body) {
+        return response;
+    }
+    if let Some(response) = crate::public_ingress::private_host_rejection(&state, &request) {
+        return response;
+    }
+    if request.method() != Method::POST {
+        return method_not_allowed();
+    }
 
     let Some(service) = state.local_account.as_ref() else {
         return api_error(
@@ -870,9 +876,7 @@ fn has_trusted_board_origin(request: &HttpRequest) -> bool {
 
 fn normalized_origin(value: &str) -> Option<String> {
     let url = Url::parse(value.trim()).ok()?;
-    if url.host_str().is_none() {
-        return None;
-    }
+    url.host_str()?;
     Some(url.origin().ascii_serialization().to_ascii_lowercase())
 }
 

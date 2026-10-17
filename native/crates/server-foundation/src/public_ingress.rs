@@ -7,6 +7,7 @@ use crate::native_session_auth::{
     NativeIngressIdentity, NativeSessionIdentity, NativeSessionResolution, issue_assertion,
 };
 use crate::native_session_revocation::SessionRevocationUpgradeError;
+use crate::private_host_gate::NativePrivateHostGate;
 use crate::public_ingress_config::{NativeSessionAuthKind, NativeWebSocketCookieFallback};
 use crate::public_ingress_proxy::{PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH, PublicIngressProxy};
 use crate::public_ingress_websocket::PublicIngressWebSocketProxy;
@@ -27,6 +28,45 @@ pub(super) struct IngressState {
     pub(super) foundation: Arc<AppState>,
     pub(super) config: PublicIngressConfig,
     pub(super) local_account: Option<crate::local_account_auth::LocalAccountAuthService>,
+}
+
+/// Apply the effective private-host policy before a public request enters a
+/// Rust-owned handler. Node's middleware guards ordinary HTTP after JSON body
+/// parsing; its WebSocket upgrade listener is outside Express middleware, so
+/// the managed public ingress applies the same original-Host rule there too.
+pub(crate) fn private_host_rejection(
+    state: &IngressState,
+    request: &HttpRequest,
+) -> Option<HttpResponse> {
+    state
+        .config
+        .private_host_gate
+        .as_ref()
+        .and_then(|gate: &NativePrivateHostGate| gate.rejection(request))
+}
+
+/// `express.json()` runs before Node's private-host middleware. Actix's direct
+/// handlers accept raw bytes, so retain parser-error precedence for native
+/// handlers that otherwise would reject bodies or authorize first.
+pub(crate) fn malformed_public_json_response(
+    request: &HttpRequest,
+    body: &[u8],
+) -> Option<HttpResponse> {
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let media_type = content_type.split(';').next().unwrap_or_default().trim();
+    if !media_type.eq_ignore_ascii_case("application/json") || body.is_empty() {
+        return None;
+    }
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(value) if value.is_object() || value.is_array() => None,
+        _ => Some(HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "Internal server error"
+        }))),
+    }
 }
 
 pub struct PublicIngressRuntime {
@@ -364,6 +404,9 @@ async fn proxy_request(
 
     if has_websocket_upgrade(request.headers()) {
         if is_supported_websocket_upgrade_route(&request) {
+            if let Some(response) = private_host_rejection(&state, &request) {
+                return response;
+            }
             if let Some(session_auth) = state.config.session_auth.as_ref()
                 && selected_local_account_websocket_session(
                     &request,
@@ -766,6 +809,9 @@ fn selected_local_account_websocket_session(
 }
 
 async fn get_session(state: web::Data<IngressState>, request: HttpRequest) -> HttpResponse {
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
     let Some(session_auth) = state.config.session_auth.as_ref() else {
         return state
             .foundation
@@ -806,6 +852,12 @@ async fn member_directory(
     org_id: web::Path<String>,
     query: web::Query<MemberDirectoryQuery>,
 ) -> HttpResponse {
+    if let Some(response) = malformed_public_json_response(&request, &body) {
+        return response;
+    }
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
     if !body.is_empty() {
         return state
             .foundation
@@ -1188,6 +1240,9 @@ async fn llm_reflection(
     request: HttpRequest,
     document: LlmReflectionDocument<'_>,
 ) -> HttpResponse {
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
     let identity = match state.config.forwarding_policy.identity(&request) {
         Ok(identity) => identity,
         Err(_) => {

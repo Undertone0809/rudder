@@ -8,7 +8,7 @@ import type { Config } from "../config.js";
 
 vi.mock("../bootstrap/port-selection.js", () => ({ selectAvailablePort: vi.fn() }));
 const config = (overrides: Partial<Config> = {}) => ({
-  host: "127.0.0.1", deploymentMode: "local_trusted", rustPublicIngressMode: "required", ...overrides,
+  host: "127.0.0.1", deploymentMode: "local_trusted", deploymentExposure: "private", allowedHostnames: [], rustPublicIngressMode: "required", ...overrides,
 }) as Config;
 beforeEach(() => vi.mocked(selectAvailablePort).mockReset());
 afterEach(() => vi.unstubAllEnvs());
@@ -82,6 +82,11 @@ describe("explicit public ingress startup", () => {
 
     vi.stubEnv("BETTER_AUTH_SECRET", "exact-better-auth-secret");
     const ingress = await preparePublicIngressStartup(config({ deploymentMode: "authenticated" }), 3100);
+    expect(ingress.appOptions.rustPublicIngress?.privateHostGate).toMatchObject({
+      enabled: true,
+      allowedHostnames: [],
+      bindHost: "127.0.0.1",
+    });
     expect(ingress.appOptions.rustPublicIngress?.sessionAuth).toMatchObject({
       kind: "better_auth",
       secret: "exact-better-auth-secret",
@@ -90,6 +95,20 @@ describe("explicit public ingress startup", () => {
     expect(ingress.appOptions.rustPublicIngress?.identityAuth?.localImplicitEnabled).toBe(false);
     expect(ingress.appOptions.rustPublicIngress?.sessionAuth?.websocketCookieFallback).toBeUndefined();
     expect(ingress.appOptions.rustPublicIngress?.localAccountLifecycle).toBeUndefined();
+  });
+
+  it("keeps the native private-host gate disabled for authenticated public exposure", async () => {
+    vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    vi.stubEnv("BETTER_AUTH_SECRET", "exact-better-auth-secret");
+    const ingress = await preparePublicIngressStartup(
+      config({ deploymentMode: "authenticated", deploymentExposure: "public", allowedHostnames: ["board.example.test"] }),
+      3100,
+    );
+    expect(ingress.appOptions.rustPublicIngress?.privateHostGate).toMatchObject({
+      enabled: false,
+      allowedHostnames: ["board.example.test"],
+      bindHost: "127.0.0.1",
+    });
   });
 
   it("requires Desktop's separate session secret and passes the exact local-cookie mode", async () => {

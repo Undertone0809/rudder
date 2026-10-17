@@ -4343,7 +4343,7 @@
     },
     {
       "path": "server/src/bootstrap/public-ingress-startup.ts",
-      "sha256": "ea677e6cd38da58d28b63808646cdafd7debfcc624b3c28a1f2ec3fe4d730a56",
+      "sha256": "d0c613741c810d84f94307871ec61ca48f89e404c3e2d2d7fa6feab290581b66",
       "families": [
         "http_middleware_and_auth",
         "public_http_and_routes",
@@ -6887,14 +6887,14 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "f2df5c805459300d4dcb7c63118482a1af39daf56751e8882659bbc9666ddda8",
+      "sha256": "88b1c010871a375da9e11bdc12431bd8cd0099cebdba4e345062af4d9e253bc1",
       "families": [
         "server_lifecycle_and_workers"
       ]
     },
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
-      "sha256": "26d64385bc1d8ba89d325ef4a5f6831ab3d71f2326a4dbe747af5669600106c4",
+      "sha256": "ef732ed2ba6917cf282fd906b93f141ec5ba1e8572e7de4d24df5484dfc6b0bb",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -56856,7 +56856,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 402,
+      "line": 405,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => finish(false)",
       "receiver": null,
       "method": "setTimeout",
@@ -56866,7 +56866,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1158,
+      "line": 1161,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -58627,14 +58627,14 @@
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "base_sha256": "2ca28726d8cc2d63822eafcfec65613dafbd04c51124f8e129fca6412f58defc",
-      "head_sha256": "ea677e6cd38da58d28b63808646cdafd7debfcc624b3c28a1f2ec3fe4d730a56",
+      "head_sha256": "d0c613741c810d84f94307871ec61ca48f89e404c3e2d2d7fa6feab290581b66",
       "rust_authority": "native::http_gateway and native::server_foundation::public_ingress_config",
       "scope": "Builds private-loopback upstream and forwards existing session/JWT config, shared identity/session proof key, runtime-owner exposure policy and optional lifecycle config.",
       "compatibility_boundary": "Preserves listener constraints; Desktop local_trusted requires account auth; local implicit is non-Desktop and loopback; identity and session proofs share one generated key.",
       "retirement_criterion": "Retire Node-side config assembly when Rust ingress is no longer supervised/configured by this Node runtime.",
       "reviewer": "independent agent /root/auth_next_integration_review",
       "review_reference": "doc/plans/artifacts/2026-10-17-rust-identity-transport-stage-review.json",
-      "review_status": "reviewed"
+      "review_status": "pending_review"
     },
     {
       "path": "server/src/bootstrap/register-api-routes.ts",
@@ -58683,28 +58683,28 @@
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "base_sha256": "ef956cf33e856f108b5e5807a8466b9cfe463be3048aace356bbc3dfea3ea24f",
-      "head_sha256": "f2df5c805459300d4dcb7c63118482a1af39daf56751e8882659bbc9666ddda8",
+      "head_sha256": "88b1c010871a375da9e11bdc12431bd8cd0099cebdba4e345062af4d9e253bc1",
       "rust_authority": "native::server_foundation::public_ingress_config and native::server_foundation::local_account_auth",
       "scope": "Serializes identity/session/lifecycle env and requires startup receipt to confirm Rust lifecycle authority, protocol v1 and the four routes.",
       "compatibility_boundary": "Bridge/config only; startup fails closed if selected Rust route owner/route set is not attested.",
       "retirement_criterion": "Retire fields and receipt check when the Node bridge no longer supervises this Rust child.",
       "reviewer": "independent agent /root/auth_next_integration_review",
       "review_reference": "doc/plans/artifacts/2026-10-17-rust-identity-transport-stage-review.json",
-      "review_status": "reviewed"
+      "review_status": "pending_review"
     },
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "base_sha256": "7b49ebaa9a2701689de7075666591e6836eca9f51dc2a7f5826f15c23fecab70",
-      "head_sha256": "26d64385bc1d8ba89d325ef4a5f6831ab3d71f2326a4dbe747af5669600106c4",
+      "head_sha256": "ef732ed2ba6917cf282fd906b93f141ec5ba1e8572e7de4d24df5484dfc6b0bb",
       "rust_authority": "native::http_gateway::PublicIngressConfig and native server-foundation session/lifecycle config",
       "scope": "Defines/serializes existing identity/session/lifecycle settings; requires explicit websocket fallback for local-account session and local-account session for lifecycle config.",
       "compatibility_boundary": "Transport/config adapter only; it does not authenticate clients.",
       "retirement_criterion": "Retire serializers when Node no longer configures Rust public ingress.",
       "reviewer": "independent agent /root/auth_next_integration_review",
       "review_reference": "doc/plans/artifacts/2026-10-17-rust-identity-transport-stage-review.json",
-      "review_status": "reviewed"
+      "review_status": "pending_review"
     },
     {
       "path": "desktop/src/identity-runtime.ts",

@@ -31,6 +31,12 @@ export type RustPublicIngressOptions = {
   listenAddr: string;
   nodeUpstream: string;
   authorizationKey: string;
+  /** Effective Express private-host gate, copied to direct Rust public handlers. */
+  privateHostGate?: {
+    enabled: boolean;
+    allowedHostnames: string[];
+    bindHost: string;
+  };
   /** Explicit numeric proxy IP list; Rust validates and owns forwarding trust. */
   trustedProxies?: string;
   /** Existing session-cookie authority and distinct private-hop assertion key. */

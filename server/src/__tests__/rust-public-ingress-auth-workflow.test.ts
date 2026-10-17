@@ -337,7 +337,11 @@ function getPublicIngress(path: string, headers: Record<string, string> = {}, me
       port: publicPort,
       path,
       method,
-      headers: { connection: "close", ...headers },
+      headers: {
+        connection: "close",
+        host: `public.example:${publicPort}`,
+        ...headers,
+      },
     }, (res) => {
       let body = "";
       res.setEncoding("utf8");
@@ -462,6 +466,11 @@ describe("source-binary public Actix authentication workflow", () => {
         RUDDER_NATIVE_PUBLIC_LISTEN: "127.0.0.1:0",
         RUDDER_NATIVE_NODE_UPSTREAM: `http://127.0.0.1:${upstreamAddress.port}`,
         RUDDER_NATIVE_INGRESS_AUTH_KEY: ingressAuthKey,
+        RUDDER_NATIVE_PRIVATE_HOST_GATE: JSON.stringify({
+          enabled: true,
+          allowedHostnames: ["public.example"],
+          bindHost: "127.0.0.1",
+        }),
         RUDDER_NATIVE_IDENTITY_AUTH_MODE: "required",
         RUDDER_NATIVE_IDENTITY_ASSERTION_KEY: identityFixture.identityAuth.assertionKey,
         RUDDER_NATIVE_LOCAL_IMPLICIT: "false",
@@ -705,6 +714,53 @@ describe("source-binary public Actix authentication workflow", () => {
     expect(sessionResolverCalls).toBe(0);
     expect(boardKeyLookupCalls).toBe(0);
     expect(agentKeyLookupCalls).toBe(0);
+  });
+
+  it("rejects disallowed original Host on native member, local-account, and WebSocket entry points", async () => {
+    const port = publicPort;
+    if (port === undefined) throw new Error("Public Actix listener is not started");
+    const privateCallsBefore = privateRequestCalls;
+    const boardLookupsBefore = boardKeyLookupCalls;
+    const observationsBefore = authorizationObservations.length;
+    const hostileHost = `attacker.example.test:${port}`;
+    const allowedForwardedHost = `public.example:${port}`;
+
+    const memberResponse = await getPublicIngress(
+      `/api/orgs/${organizationId}/members/directory?type=agent`,
+      {
+        host: hostileHost,
+        "x-forwarded-host": allowedForwardedHost,
+        authorization: `Bearer ${boardToken}`,
+      },
+    );
+    expect(memberResponse.status).toBe(403);
+    expect(JSON.parse(memberResponse.body).error).toContain("attacker.example.test");
+
+    const localAccountResponse = await getPublicIngress(
+      "/api/auth/local-offline",
+      {
+        host: hostileHost,
+        "x-forwarded-host": allowedForwardedHost,
+      },
+      "POST",
+    );
+    expect(localAccountResponse.status).toBe(403);
+
+    const websocketResponse = await getPublicIngress(
+      `/api/orgs/${organizationId}/events/ws`,
+      {
+        host: hostileHost,
+        "x-forwarded-host": allowedForwardedHost,
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-version": "13",
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+      },
+    );
+    expect(websocketResponse.status).toBe(403);
+    expect(privateRequestCalls).toBe(privateCallsBefore);
+    expect(boardKeyLookupCalls).toBe(boardLookupsBefore);
+    expect(authorizationObservations).toHaveLength(observationsBefore);
   });
 
   it("resolves a persisted same-organization Agent key directly and preserves its CLI context", async () => {
