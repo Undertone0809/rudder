@@ -1,5 +1,5 @@
 import type { Db } from "@rudderhq/db";
-import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudderhq/db";
+import { applyPendingMigrations, createDb, createLocalPostgresInstance, ensurePostgresDatabase } from "@rudderhq/db";
 import { createOfflineGrantProof, generateOfflineDeviceKeyPair, issueOfflineGrant, offlineRequestBodyHash } from "@rudderhq/identity-core";
 import { localOfflineGrantSchema, localServerExchangeSchema } from "@rudderhq/shared";
 import express from "express";
@@ -110,8 +110,7 @@ async function startDisposableDatabase() {
 
   const dir = mkdtempSync(path.join(os.tmpdir(), "rudder-native-session-workflow-"));
   const port = await availablePort();
-  const { default: EmbeddedPostgres } = await import("embedded-postgres");
-  const instance = new EmbeddedPostgres({
+  const { instance } = await createLocalPostgresInstance({
     databaseDir: path.join(dir, "db"),
     user: "rudder",
     password: "rudder",
