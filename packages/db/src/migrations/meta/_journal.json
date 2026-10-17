@@ -1275,6 +1275,13 @@
       "when": 1792173562393,
       "tag": "0181_native_chat_finalization_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "7",
+      "when": 1792278000000,
+      "tag": "0182_runtime_retention_expiry_lifecycle",
+      "breakpoints": true
     }
   ]
 }
