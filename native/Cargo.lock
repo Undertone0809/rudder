@@ -2028,6 +2028,7 @@ dependencies = [
  "rudder-codex-app-server",
  "rudder-hermes-acp",
  "rudder-organization-mutation-core",
+ "rudder-pi-rpc",
  "rudder-project-goal-link-core",
  "rudder-runtime-core",
  "serde",

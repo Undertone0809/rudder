@@ -609,7 +609,7 @@ fn run(
             return finish_hermes_observation(handle, &pool, observation);
         }
         Ok(rudder_native_chat_executor::NativeExecutionObservation::Pi(observation)) => {
-            return finish_pi_observation(observation);
+            return finish_pi_observation(handle, &pool, observation);
         }
         Err(failure) => {
             let Some(execution_actor) = failure.execution_principal() else {
@@ -788,29 +788,56 @@ fn run(
 /// settled provider receipt is distinguishable from an unknown cleanup state;
 /// neither path fabricates Codex Thread/Turn identifiers or releases the hold.
 fn finish_pi_observation(
+    handle: &tokio::runtime::Handle,
+    pool: &PgPool,
     observation: rudder_native_chat_executor::PiNativeExecutionObservation,
 ) -> Completion {
-    let provider = observation.observation;
-    let cleanup_proven = provider
-        .turn_receipt
-        .as_ref()
-        .zip(provider.cleanup_receipt.as_ref())
-        .is_some_and(|(turn, cleanup)| cleanup.proves_quiescence_for(turn))
+    let rudder_native_chat_executor::PiNativeExecutionObservation {
+        execution_principal,
+        fence,
+        observation: provider,
+    } = observation;
+    let Some(turn) = provider.turn_receipt.as_ref() else {
+        return Completion {
+            status: Status::Unresolved(classify_pi_observation(
+                provider.phase.is_provider_terminal(),
+                false,
+                false,
+            )),
+            quiescent: false,
+        };
+    };
+    let Some(cleanup) = provider.cleanup_receipt.as_ref() else {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::MissingCleanupProof),
+            quiescent: false,
+        };
+    };
+    let cleanup_proven = cleanup.proves_quiescence_for(turn)
         && matches!(
             provider.phase,
             rudder_native_chat_executor::PiExecutionPhase::Cleaned
         );
-    let status = Status::Unresolved(classify_pi_observation(
-        provider.phase.is_provider_terminal(),
-        provider.turn_receipt.is_some(),
-        cleanup_proven,
-    ));
+    if !cleanup_proven {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::ProviderCleanupUnknown),
+            quiescent: false,
+        };
+    }
+    let status = handle.block_on(async {
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            execution::finalize_pi(pool, &execution_principal, &fence, turn, cleanup),
+        )
+        .await
+        {
+            Ok(Ok(_)) => Status::FinalizationCommitted,
+            _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+        }
+    });
     Completion {
         status,
-        // PiExecution::cleanup only reaches Cleaned after its owned host emits
-        // the matching cleanup receipt. Unknown observations retain capacity
-        // so the supervisor cannot silently forget their reconciliation.
-        quiescent: cleanup_proven,
+        quiescent: true,
     }
 }
 

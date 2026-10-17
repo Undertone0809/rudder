@@ -1,7 +1,8 @@
 use rudder_codex_app_server::CleanupReceipt;
 use rudder_hermes_acp::HermesCleanupReceipt;
+use rudder_pi_rpc::PiCleanupReceipt;
 use rudder_runtime_core::native_chat::{
-    HermesSessionSelector, NativeChatProtocolPhase, NativeChatProvider,
+    HermesSessionSelector, NativeChatProtocolPhase, NativeChatProvider, PiSessionSelector,
 };
 use std::fmt;
 
@@ -84,6 +85,17 @@ impl ExecutionFence {
             &self.connection_claim_id,
         )
     }
+
+    pub fn matches_pi_cleanup_receipt(&self, cleanup: &PiCleanupReceipt) -> bool {
+        let identity = self.identity();
+        cleanup.matches_connection_claim(
+            identity.run_id,
+            identity.attempt_id,
+            self.run_execution_owner_token(),
+            identity.connection_epoch,
+            &self.connection_claim_id,
+        )
+    }
 }
 
 impl fmt::Debug for ExecutionFence {
@@ -121,6 +133,8 @@ pub struct CheckpointSnapshot {
     pub revision: u64,
     pub thread_id: Option<String>,
     pub turn_id: Option<String>,
+    pub pi_session: Option<PiSessionSelector>,
+    pub pi_turn_entry_id: Option<String>,
     pub hermes_session: Option<HermesSessionSelector>,
     pub hermes_prompt_request_id: Option<u64>,
 }

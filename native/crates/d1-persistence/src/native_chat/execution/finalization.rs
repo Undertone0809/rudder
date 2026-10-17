@@ -8,6 +8,7 @@ use crate::{
 };
 use rudder_codex_app_server::{CleanupReceipt, TurnReceipt, TurnStatus};
 use rudder_hermes_acp::{HermesCleanupReceipt, HermesStopReason, HermesTurnReceipt};
+use rudder_pi_rpc::{PiCleanupReceipt, PiTurnReceipt, PiTurnStatus};
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -53,6 +54,28 @@ pub async fn finalize_hermes(
         fence,
         Some(ProviderTurn::Hermes(turn)),
         ProviderCleanup::Hermes(cleanup),
+        None,
+        false,
+    )
+    .await
+}
+
+/// Atomically project a terminal Pi session-tree answer and close the exact
+/// owned execution. Pi identities remain provider-native in the receipt and
+/// finalization selector; they are never mapped to Codex Thread/Turn fields.
+pub async fn finalize_pi(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    turn: &PiTurnReceipt,
+    cleanup: &PiCleanupReceipt,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Pi(turn)),
+        ProviderCleanup::Pi(cleanup),
         None,
         false,
     )
@@ -192,12 +215,14 @@ pub async fn finalize_hermes_stopped_before_submission(
 enum ProviderTurn<'a> {
     Codex(&'a TurnReceipt),
     Hermes(&'a HermesTurnReceipt),
+    Pi(&'a PiTurnReceipt),
 }
 
 #[derive(Clone, Copy)]
 enum ProviderCleanup<'a> {
     Codex(&'a CleanupReceipt),
     Hermes(&'a HermesCleanupReceipt),
+    Pi(&'a PiCleanupReceipt),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -220,6 +245,11 @@ impl<'a> ProviderTurn<'a> {
                 HermesStopReason::Cancelled => TerminalStatus::Interrupted,
                 HermesStopReason::ApprovalRequired => TerminalStatus::Failed,
             },
+            Self::Pi(turn) => match turn.status() {
+                PiTurnStatus::Completed => TerminalStatus::Completed,
+                PiTurnStatus::Failed => TerminalStatus::Failed,
+                PiTurnStatus::Interrupted => TerminalStatus::Interrupted,
+            },
         }
     }
 
@@ -227,6 +257,7 @@ impl<'a> ProviderTurn<'a> {
         match self {
             Self::Codex(turn) => turn.final_text(),
             Self::Hermes(turn) => Some(turn.final_text()),
+            Self::Pi(turn) => turn.final_text(),
         }
     }
 
@@ -243,6 +274,11 @@ impl<'a> ProviderTurn<'a> {
                 HermesStopReason::Refusal => "refusal",
                 HermesStopReason::ApprovalRequired => "approval_required",
             },
+            Self::Pi(turn) => match turn.status() {
+                PiTurnStatus::Completed => "completed",
+                PiTurnStatus::Failed => "failed",
+                PiTurnStatus::Interrupted => "interrupted",
+            },
         }
     }
 
@@ -257,6 +293,7 @@ impl<'a> ProviderTurn<'a> {
             // Hermes reports session-cumulative usage. Do not mislabel it as a
             // per-Run increment or use it to release a billed-cost hold.
             Self::Hermes(_) => None,
+            Self::Pi(_) => None,
         }
     }
 
@@ -269,6 +306,10 @@ impl<'a> ProviderTurn<'a> {
             Self::Hermes(turn) => ProviderRetryPredicate::Hermes {
                 session_id: turn.session().as_str(),
                 request_id: turn.request_id(),
+            },
+            Self::Pi(turn) => ProviderRetryPredicate::Pi {
+                session_id: turn.session_id(),
+                entry_id: turn.input_entry_id(),
             },
         }
     }
@@ -286,6 +327,14 @@ impl<'a> ProviderTurn<'a> {
                         == Some(turn.session().as_str())
                     && checkpoint.hermes_prompt_request_id() == Some(turn.request_id())
             }
+            Self::Pi(turn) => {
+                checkpoint.provider()
+                    == rudder_runtime_core::native_chat::NativeChatProvider::PiLocal
+                    && checkpoint
+                        .pi_session()
+                        .is_some_and(|session| session.session_id == turn.session_id())
+                    && checkpoint.pi_turn_entry_id() == Some(turn.input_entry_id())
+            }
         }
     }
 
@@ -297,6 +346,9 @@ impl<'a> ProviderTurn<'a> {
             Self::Hermes(turn) => {
                 json!({"kind":"hermes_acp_prompt","sessionDigest":hash(turn.session().as_str()),"requestId":turn.request_id()})
             }
+            Self::Pi(turn) => {
+                json!({"kind":"pi_turn","sessionDigest":hash(turn.session_id()),"sessionFileDigest":hash(turn.session_file()),"inputEntryId":turn.input_entry_id(),"assistantEntryId":turn.assistant_entry_id(),"leafId":turn.leaf_id()})
+            }
         }
     }
 
@@ -304,6 +356,7 @@ impl<'a> ProviderTurn<'a> {
         match self {
             Self::Codex(turn) => Some(turn.turn_id().to_owned()),
             Self::Hermes(turn) => Some(format!("hermes-acp-request:{}", turn.request_id())),
+            Self::Pi(turn) => Some(format!("pi-leaf:{}", turn.leaf_id())),
         }
     }
 
@@ -311,6 +364,7 @@ impl<'a> ProviderTurn<'a> {
         match self {
             Self::Codex(_) => None,
             Self::Hermes(turn) => Some(turn.user_message_id().to_owned()),
+            Self::Pi(turn) => Some(turn.input_entry_id().to_owned()),
         }
     }
 
@@ -324,6 +378,9 @@ impl<'a> ProviderTurn<'a> {
                 "userMessageId":turn.user_message_id(),"inputFingerprint":turn.input_fingerprint(),
                 "providerStatus":self.provider_status(),"finalTextDigest":hash(turn.final_text())})
             }
+            Self::Pi(turn) => {
+                json!({"provider":"pi_local","sessionId":turn.session_id(),"sessionFileDigest":hash(turn.session_file()),"inputEntryId":turn.input_entry_id(),"assistantEntryId":turn.assistant_entry_id(),"leafId":turn.leaf_id(),"inputFingerprint":turn.input_fingerprint(),"providerStatus":self.provider_status(),"finalTextDigest":turn.final_text().map(hash)})
+            }
         }
     }
 }
@@ -333,6 +390,7 @@ impl<'a> ProviderCleanup<'a> {
         match self {
             Self::Codex(cleanup) => fence.matches_cleanup_receipt(cleanup),
             Self::Hermes(cleanup) => fence.matches_hermes_cleanup_receipt(cleanup),
+            Self::Pi(cleanup) => fence.matches_pi_cleanup_receipt(cleanup),
         }
     }
 
@@ -344,6 +402,7 @@ impl<'a> ProviderCleanup<'a> {
             (Self::Hermes(cleanup), ProviderTurn::Hermes(turn)) => {
                 cleanup.proves_quiescence_for(turn)
             }
+            (Self::Pi(cleanup), ProviderTurn::Pi(turn)) => cleanup.proves_quiescence_for(turn),
             _ => false,
         }
     }
@@ -352,6 +411,7 @@ impl<'a> ProviderCleanup<'a> {
         match self {
             Self::Codex(cleanup) => cleanup.evidence_fingerprint(),
             Self::Hermes(cleanup) => cleanup.evidence_fingerprint(),
+            Self::Pi(cleanup) => cleanup.evidence_fingerprint(),
         }
     }
 }
@@ -364,6 +424,10 @@ enum ProviderRetryPredicate<'a> {
     Hermes {
         session_id: &'a str,
         request_id: u64,
+    },
+    Pi {
+        session_id: &'a str,
+        entry_id: &'a str,
     },
 }
 
@@ -390,6 +454,11 @@ async fn finalize_inner(
                     fence.run_execution_owner_token(),
                 ),
                 ProviderTurn::Hermes(turn) => turn.matches_execution(
+                    id.run_id,
+                    id.attempt_id,
+                    fence.run_execution_owner_token(),
+                ),
+                ProviderTurn::Pi(turn) => turn.matches_execution(
                     id.run_id,
                     id.attempt_id,
                     fence.run_execution_owner_token(),
@@ -561,6 +630,27 @@ async fn finalize_inner(
                 .bind(id.connection_epoch).bind(session_id).bind(request_id.to_string())
                 .fetch_optional(&mut *tx).await?.flatten()
             }
+            ProviderRetryPredicate::Pi { session_id, entry_id } => {
+                sqlx::query_scalar(
+                    "SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r
+                     JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
+                     JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id AND a.id=$7::uuid
+                     WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.execution_authority='native_rust'
+                       AND r.chat_conversation_id=$3::uuid AND r.chat_generation_id=$4::uuid
+                       AND r.execution_owner_token=$5 AND g.control_owner_token=$6 AND a.owner_token=$5
+                       AND g.attempt_epoch=$8 AND a.generation_attempt_epoch=$8 AND a.attempt_epoch=$9
+                       AND a.connection_epoch=$10 AND a.protocol_phase='execution_terminal_committed'
+                       AND a.provider_thread_id IS NULL AND a.provider_turn_id IS NULL
+                       AND a.checkpoint_json->>'provider'='pi_local'
+                       AND a.checkpoint_json->'piSession'->>'sessionId'=$11
+                       AND a.checkpoint_json->>'piTurnEntryId'=$12",
+                )
+                .bind(id.organization_id).bind(id.run_id).bind(id.conversation_id).bind(id.generation_id)
+                .bind(fence.run_execution_owner_token()).bind(fence.generation_control_owner_token())
+                .bind(id.attempt_id).bind(id.generation_attempt_epoch).bind(id.run_attempt_epoch)
+                .bind(id.connection_epoch).bind(session_id).bind(entry_id)
+                .fetch_optional(&mut *tx).await?.flatten()
+            }
         }
     };
     if let Some(existing) = existing {
@@ -717,6 +807,9 @@ async fn finalize_inner(
                 (Some(ProviderTurn::Hermes(_)), _) => {
                     return Err(http(409, "Hermes live output projection is unsupported"));
                 }
+                (Some(ProviderTurn::Pi(_)), _) => {
+                    return Err(http(409, "Pi live output projection is unsupported"));
+                }
                 _ => return Err(http(409, "Native Chat projection receipt is invalid")),
             }
             let status = match run_status {
@@ -868,6 +961,9 @@ async fn finalize_inner(
                     )
                     .await?;
                 }
+                ProviderCleanup::Pi(_) => {
+                    return Err(http(409, "Pi Stop finalization is unsupported"));
+                }
             }
         } else {
             let Some(turn) = turn else {
@@ -888,6 +984,9 @@ async fn finalize_inner(
                         &mut tx, actor, fence, stop, turn, cleanup, &result,
                     )
                     .await?;
+                }
+                (ProviderTurn::Pi(_), ProviderCleanup::Pi(_)) => {
+                    return Err(http(409, "Pi Stop finalization is unsupported"));
                 }
                 _ => return Err(http(409, "Provider Stop evidence does not match")),
             }

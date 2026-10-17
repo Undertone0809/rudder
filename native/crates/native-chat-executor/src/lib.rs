@@ -6,7 +6,8 @@ mod pi;
 mod profile;
 mod wire;
 pub use pi::{
-    PiExecution, PiExecutionObservation, PiExecutionPhase, PiStateSnapshot, PiUnknownReason,
+    PiAdapterError, PiExecution, PiExecutionObservation, PiExecutionPhase, PiStateSnapshot,
+    PiUnknownReason,
 };
 pub use profile::provision_profile;
 
@@ -55,6 +56,8 @@ pub enum Error {
     Transport(#[from] TransportError),
     #[error(transparent)]
     HermesTransport(#[from] HermesTransportError),
+    #[error(transparent)]
+    PiTransport(#[from] PiAdapterError),
     #[error("Native Chat operation deadline expired; reconcile the held attempt")]
     Deadline,
     #[error("Native Chat execution was cancelled; reconcile the held attempt")]
@@ -222,6 +225,7 @@ struct ExecutionFailureEvidence {
     execution_principal: Option<NativeChatExecutionPrincipal>,
     cleanup_receipt: Option<CleanupReceipt>,
     hermes_cleanup_receipt: Option<HermesCleanupReceipt>,
+    pi_cleanup_receipt: Option<rudder_pi_rpc::PiCleanupReceipt>,
 }
 
 impl fmt::Debug for ExecutionFailure {
@@ -240,6 +244,7 @@ impl fmt::Debug for ExecutionFailure {
                 "hasHermesCleanupReceipt",
                 &self.0.hermes_cleanup_receipt.is_some(),
             )
+            .field("hasPiCleanupReceipt", &self.0.pi_cleanup_receipt.is_some())
             .finish()
     }
 }
@@ -270,6 +275,9 @@ impl ExecutionFailure {
     pub fn hermes_cleanup_receipt(&self) -> Option<&HermesCleanupReceipt> {
         self.0.hermes_cleanup_receipt.as_ref()
     }
+    pub fn pi_cleanup_receipt(&self) -> Option<&rudder_pi_rpc::PiCleanupReceipt> {
+        self.0.pi_cleanup_receipt.as_ref()
+    }
     pub fn into_error(self) -> Error {
         self.0.error
     }
@@ -299,6 +307,7 @@ impl ExecutionFailure {
             execution_principal: None,
             cleanup_receipt: None,
             hermes_cleanup_receipt: None,
+            pi_cleanup_receipt: None,
         }))
     }
 
@@ -314,6 +323,7 @@ impl ExecutionFailure {
             execution_principal: Some(execution_principal),
             cleanup_receipt: None,
             hermes_cleanup_receipt: None,
+            pi_cleanup_receipt: None,
         }))
     }
 
@@ -337,6 +347,7 @@ impl ExecutionFailure {
             execution_principal: Some(execution_principal),
             cleanup_receipt,
             hermes_cleanup_receipt: None,
+            pi_cleanup_receipt: None,
         }))
     }
 
@@ -360,6 +371,31 @@ impl ExecutionFailure {
             execution_principal: Some(execution_principal),
             cleanup_receipt: None,
             hermes_cleanup_receipt: cleanup_receipt,
+            pi_cleanup_receipt: None,
+        }))
+    }
+
+    fn after_claim_pi(
+        error: Error,
+        execution_principal: NativeChatExecutionPrincipal,
+        fence: ExecutionFence,
+        cleanup_receipt: Option<rudder_pi_rpc::PiCleanupReceipt>,
+    ) -> Self {
+        let cleanup_receipt =
+            cleanup_receipt.filter(|cleanup| fence.matches_pi_cleanup_receipt(cleanup));
+        let process = if cleanup_receipt.is_some() {
+            ProcessDisposition::CleanupProven
+        } else {
+            ProcessDisposition::Unresolved
+        };
+        Self(Box::new(ExecutionFailureEvidence {
+            error,
+            process,
+            fence: Some(fence),
+            execution_principal: Some(execution_principal),
+            cleanup_receipt: None,
+            hermes_cleanup_receipt: None,
+            pi_cleanup_receipt: cleanup_receipt,
         }))
     }
 
@@ -383,6 +419,7 @@ impl ExecutionFailure {
             execution_principal: None,
             cleanup_receipt,
             hermes_cleanup_receipt: None,
+            pi_cleanup_receipt: None,
         }))
     }
 }
@@ -510,6 +547,7 @@ where
                 match config.identity.runtime_type.as_str() {
                     "codex_local" => profile::validate(config, paths),
                     "hermes_local" if allow_hermes => hermes::validate_config(config, host, paths),
+                    "pi_local" => pi::validate_config(config, host, paths),
                     _ => Err(Error::UnsupportedConfiguration),
                 }
                 .map_err(|_| {
@@ -540,6 +578,20 @@ where
             paths,
         )
         .map(NativeExecutionObservation::Hermes);
+    }
+    if claimed_config.identity.runtime_type == "pi_local" {
+        return pi::run_claimed(
+            handle,
+            pool,
+            execution_principal,
+            claimed_fence,
+            claimed_config,
+            connection_launch_permit,
+            request.cancelled,
+            deadline,
+            paths,
+        )
+        .map(NativeExecutionObservation::Pi);
     }
     let (launch, snapshot) = match (|| -> Result<_> {
         if request.cancelled.load(Ordering::Acquire) {

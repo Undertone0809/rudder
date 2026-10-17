@@ -419,7 +419,26 @@ async fn lock_execution(
             ("open", Some(stored), Some(selector)) => stored == selector.as_str(),
             _ => false,
         };
-    if !codex_identity_matches && !hermes_identity_matches {
+    let pi_identity_matches = checkpoint.provider() == NativeChatProvider::PiLocal
+        && fence.runtime_type() == "pi_local"
+        && attempt_thread.is_none()
+        && attempt_turn.is_none()
+        && generation_thread.is_none()
+        && generation_turn.is_none()
+        && match (
+            segment_state.as_str(),
+            native_session_id.as_deref(),
+            checkpoint.pi_session(),
+        ) {
+            ("pending", None, None) => matches!(
+                checkpoint.phase(),
+                NativeChatProtocolPhase::NoThreadRequest
+                    | NativeChatProtocolPhase::ThreadStartIndeterminate
+            ),
+            ("open", Some(stored), Some(selector)) => stored == selector.session_id.as_str(),
+            _ => false,
+        };
+    if !codex_identity_matches && !hermes_identity_matches && !pi_identity_matches {
         return Err(http(
             409,
             "Native Chat checkpoint does not match its provider and current segment",

@@ -158,7 +158,7 @@ impl LocalHostContext {
         self.hermes_profiles_root.as_deref()
     }
 
-    pub(super) fn pi_runtime(&self) -> Option<(&Path, &Path, &Path)> {
+    pub fn pi_runtime(&self) -> Option<(&Path, &Path, &Path)> {
         Some((
             self.pi_node_executable.as_deref()?,
             self.pi_cli_entry.as_deref()?,

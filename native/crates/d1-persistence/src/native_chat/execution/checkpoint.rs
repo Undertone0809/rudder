@@ -6,7 +6,7 @@ use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activ
 use crate::native_chat::NativeChatExecutionActor;
 use rudder_codex_app_server::EffectResponseReceipt;
 use rudder_hermes_acp::{HermesSessionStartReceipt, HermesTurnReceipt};
-use rudder_runtime_core::native_chat::HermesSessionSelector;
+use rudder_runtime_core::native_chat::{HermesSessionSelector, PiSessionSelector};
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::json;
 use sqlx::PgPool;
@@ -17,15 +17,44 @@ use sqlx::PgPool;
 pub enum CheckpointTransition {
     PrepareThreadStart,
     PrepareHermesSessionStart,
-    RecordThread { thread_id: String },
+    PreparePiSessionStart,
+    RecordThread {
+        thread_id: String,
+    },
     PrepareInput,
     MarkInputIndeterminate,
-    RecordTurn { thread_id: String, turn_id: String },
-    ObserveProviderTerminal { thread_id: String, turn_id: String },
-    RecordHermesSession { session_id: String },
-    MarkHermesInputIndeterminate { request_id: u64 },
+    RecordTurn {
+        thread_id: String,
+        turn_id: String,
+    },
+    ObserveProviderTerminal {
+        thread_id: String,
+        turn_id: String,
+    },
+    RecordHermesSession {
+        session_id: String,
+    },
+    RecordPiSession {
+        selector: PiSessionSelector,
+    },
+    MarkHermesInputIndeterminate {
+        request_id: u64,
+    },
+    MarkPiInputIndeterminate,
     RecordHermesTurn,
-    ObserveHermesProviderTerminal { session_id: String, request_id: u64 },
+    ObserveHermesProviderTerminal {
+        session_id: String,
+        request_id: u64,
+    },
+    RecordPiTurn {
+        session_id: String,
+        entry_id: String,
+    },
+    ObservePiProviderTerminal {
+        session_id: String,
+        entry_id: String,
+        next_leaf_id: String,
+    },
 }
 
 pub(super) enum StoppingObservation<'a> {
@@ -88,6 +117,7 @@ impl CheckpointTransition {
         let proposed = match self {
             Self::PrepareThreadStart => checkpoint.prepare_thread_start(expected_revision),
             Self::PrepareHermesSessionStart => checkpoint.prepare_thread_start(expected_revision),
+            Self::PreparePiSessionStart => checkpoint.prepare_thread_start(expected_revision),
             Self::RecordThread { thread_id } => {
                 checkpoint.record_thread(expected_revision, thread_id.clone())
             }
@@ -104,8 +134,14 @@ impl CheckpointTransition {
                     .map_err(|_| super::http(409, "Hermes session selector is invalid"))?;
                 checkpoint.record_hermes_session(expected_revision, selector)
             }
+            Self::RecordPiSession { selector } => {
+                checkpoint.record_pi_session(expected_revision, selector.clone())
+            }
             Self::MarkHermesInputIndeterminate { request_id } => {
                 checkpoint.mark_hermes_input_indeterminate(expected_revision, *request_id)
+            }
+            Self::MarkPiInputIndeterminate => {
+                checkpoint.mark_input_indeterminate(expected_revision)
             }
             Self::RecordHermesTurn => checkpoint.record_hermes_turn(expected_revision),
             Self::ObserveHermesProviderTerminal {
@@ -116,6 +152,20 @@ impl CheckpointTransition {
                 session_id,
                 *request_id,
             ),
+            Self::RecordPiTurn {
+                session_id,
+                entry_id,
+            } => checkpoint.record_pi_turn_entry(expected_revision, session_id, entry_id.clone()),
+            Self::ObservePiProviderTerminal {
+                session_id,
+                entry_id,
+                next_leaf_id,
+            } => checkpoint.record_pi_provider_terminal(
+                expected_revision,
+                session_id,
+                entry_id,
+                next_leaf_id.clone(),
+            ),
         };
         proposed
             .map_err(|_| super::http(409, "Native Chat checkpoint transition is stale or invalid"))
@@ -125,8 +175,10 @@ impl CheckpointTransition {
         match self {
             Self::PrepareThreadStart => Some(EffectKind::StartThread),
             Self::PrepareHermesSessionStart => Some(EffectKind::StartHermesSession),
+            Self::PreparePiSessionStart => Some(EffectKind::StartPiSession),
             Self::MarkInputIndeterminate => Some(EffectKind::SubmitInput),
             Self::MarkHermesInputIndeterminate { .. } => Some(EffectKind::SubmitHermesInput),
+            Self::MarkPiInputIndeterminate => Some(EffectKind::SubmitPiInput),
             _ => None,
         }
     }
@@ -170,6 +222,8 @@ pub enum EffectKind {
     SubmitInput,
     StartHermesSession,
     SubmitHermesInput,
+    StartPiSession,
+    SubmitPiInput,
 }
 
 pub struct CheckpointReceipt {
@@ -245,6 +299,7 @@ pub(super) async fn advance(
     let new_session_id = match &transition {
         CheckpointTransition::RecordThread { thread_id } => Some(thread_id.as_str()),
         CheckpointTransition::RecordHermesSession { session_id } => Some(session_id.as_str()),
+        CheckpointTransition::RecordPiSession { selector } => Some(selector.session_id.as_str()),
         _ => None,
     };
     if let Some(session_id) = new_session_id {
@@ -252,6 +307,7 @@ pub(super) async fn advance(
             || locked.native_session_id.is_some()
             || locked.checkpoint.thread_id().is_some()
             || locked.checkpoint.hermes_session().is_some()
+            || locked.checkpoint.pi_session().is_some()
         {
             return Err(super::http(
                 409,
@@ -459,7 +515,9 @@ pub(super) async fn advance(
     tx.commit().await?;
     let effect_permit = transition.effect_kind().map(|kind| {
         let (source_message_id, input_fingerprint, session_id) = match kind {
-            EffectKind::StartThread | EffectKind::StartHermesSession => (None, None, None),
+            EffectKind::StartThread
+            | EffectKind::StartHermesSession
+            | EffectKind::StartPiSession => (None, None, None),
             EffectKind::SubmitInput => (
                 locked.admitted_message_id.clone(),
                 locked.admitted_input_fingerprint.clone(),
@@ -472,6 +530,14 @@ pub(super) async fn advance(
                     .hermes_session
                     .as_ref()
                     .map(|session| session.as_str().to_owned()),
+            ),
+            EffectKind::SubmitPiInput => (
+                locked.admitted_message_id.clone(),
+                locked.admitted_input_fingerprint.clone(),
+                snapshot
+                    .pi_session
+                    .as_ref()
+                    .map(|session| session.session_id.clone()),
             ),
         };
         EffectPermit {
@@ -512,6 +578,8 @@ fn snapshot(checkpoint: &NativeChatProtocolCheckpoint) -> CheckpointSnapshot {
         revision: checkpoint.revision(),
         thread_id: checkpoint.thread_id().map(str::to_owned),
         turn_id: checkpoint.turn_id().map(str::to_owned),
+        pi_session: checkpoint.pi_session().cloned(),
+        pi_turn_entry_id: checkpoint.pi_turn_entry_id().map(str::to_owned),
         hermes_session: checkpoint.hermes_session().cloned(),
         hermes_prompt_request_id: checkpoint.hermes_prompt_request_id(),
     }
