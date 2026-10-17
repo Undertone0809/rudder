@@ -710,7 +710,12 @@ impl HermesAcpTransport {
             Some(session.as_str()),
             Instant::now() + timeout,
         )?;
-        if result.get("modelId").and_then(Value::as_str) != Some(model) {
+        // Hermes 0.21.0 applies the model successfully but returns an empty
+        // result object. Newer ACP builds may echo `modelId`; accept either
+        // shape while rejecting an explicit conflicting echo.
+        if let Some(echo) = result.get("modelId").and_then(Value::as_str)
+            && echo != model
+        {
             return Err(HermesTransportError::UnsupportedOutput);
         }
         Ok(())
