@@ -597,7 +597,7 @@ pub enum Part {
 }
 
 macro_rules! part_struct {
-    ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
+    ($name:ident { $( $(#[$attr:meta])* $field:ident : $ty:ty),* $(,)? }) => {
         #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
         #[serde(rename_all = "camelCase")]
         pub struct $name {
@@ -608,7 +608,7 @@ macro_rules! part_struct {
             #[serde(default)]
         #[serde(rename = "messageID")]
             pub message_id: Option<String>,
-            $(#[serde(default)] pub $field: $ty,)*
+            $($(#[$attr])* #[serde(default)] pub $field: $ty,)*
         }
     };
 }
@@ -616,7 +616,13 @@ macro_rules! part_struct {
 part_struct!(TextPart { text: String, synthetic: Option<bool>, ignored: Option<bool>, time: Option<PartTime>, metadata: Option<Value> });
 part_struct!(ReasoningPart { text: String, time: Option<PartTime>, metadata: Option<Value> });
 part_struct!(FilePart { mime: String, filename: Option<String>, url: String, source: Option<Value> });
-part_struct!(ToolPart { call_id: String, tool: String, state: Value, metadata: Option<Value> });
+part_struct!(ToolPart {
+    #[serde(rename = "callID")]
+    call_id: String,
+    tool: String,
+    state: Value,
+    metadata: Option<Value>
+});
 part_struct!(SubtaskPart { prompt: String, description: String, agent: String, model: Option<ModelSelection>, command: Option<String> });
 part_struct!(StepStartPart { snapshot: Option<String> });
 part_struct!(StepFinishPart { reason: String, snapshot: Option<String>, cost: Option<f64>, tokens: Option<TokenUsage> });
@@ -624,7 +630,12 @@ part_struct!(SnapshotPart { snapshot: String });
 part_struct!(PatchPart { hash: String, files: Vec<String> });
 part_struct!(AgentPart { name: String, source: Option<Value> });
 part_struct!(RetryPart { attempt: u64, error: Value, time: Option<PartTime> });
-part_struct!(CompactionPart { auto: bool, overflow: Option<bool>, tail_start_id: Option<String> });
+part_struct!(CompactionPart {
+    auto: bool,
+    overflow: Option<bool>,
+    #[serde(rename = "tail_start_id")]
+    tail_start_id: Option<String>
+});
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1038,6 +1049,7 @@ mod tests {
             },
             "parts": [
                 {"id":"prt_text","sessionID":"ses_native","messageID":"msg_user","type":"text","text":"hello"},
+                {"id":"prt_tool","sessionID":"ses_native","messageID":"msg_user","type":"tool","callID":"call_1","tool":"shell","state":{"status":"completed"}},
                 {"id":"prt_future","sessionID":"ses_native","messageID":"msg_user","type":"future-part","value":{"x":1}}
             ]
         })).expect("typed message envelope");
@@ -1046,7 +1058,10 @@ mod tests {
             matches!(envelope.parts[0], Part::Text(TextPart { ref text, .. }) if text == "hello")
         );
         assert!(
-            matches!(envelope.parts[1], Part::Unknown { ref kind, .. } if kind == "future-part")
+            matches!(envelope.parts[1], Part::Tool(ToolPart { ref call_id, .. }) if call_id == "call_1")
+        );
+        assert!(
+            matches!(envelope.parts[2], Part::Unknown { ref kind, .. } if kind == "future-part")
         );
     }
 
