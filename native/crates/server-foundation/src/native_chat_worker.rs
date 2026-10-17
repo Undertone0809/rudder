@@ -35,6 +35,13 @@ pub enum UnresolvedReason {
     MissingCleanupProof,
     FinalizationUnresolved,
     WorkerInterrupted,
+    /// A provider produced a terminal-shaped observation, but the shared D1
+    /// projection has no provider-native finalizer for it yet. This must stay
+    /// visible as unresolved rather than being coerced into Codex IDs.
+    ProviderTerminalUnsupported,
+    /// The provider adapter could not prove cleanup or settlement. The held
+    /// attempt requires reconciliation by its owning authority.
+    ProviderCleanupUnknown,
 }
 
 /// An observation of this process only. Durable Run state remains authoritative.
@@ -601,6 +608,9 @@ fn run(
         Ok(rudder_native_chat_executor::NativeExecutionObservation::Hermes(observation)) => {
             return finish_hermes_observation(handle, &pool, observation);
         }
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::Pi(observation)) => {
+            return finish_pi_observation(observation);
+        }
         Err(failure) => {
             let Some(execution_actor) = failure.execution_principal() else {
                 return Completion {
@@ -769,6 +779,46 @@ fn run(
     Completion {
         status,
         quiescent: true,
+    }
+}
+
+/// Pi has provider-native session/leaf receipts, while the current D1
+/// finalizer accepts only Codex and Hermes projections. Preserve the typed
+/// observation and report the exact missing boundary to the supervisor. A
+/// settled provider receipt is distinguishable from an unknown cleanup state;
+/// neither path fabricates Codex Thread/Turn identifiers or releases the hold.
+fn finish_pi_observation(
+    observation: rudder_native_chat_executor::PiNativeExecutionObservation,
+) -> Completion {
+    let provider = observation.observation;
+    let cleanup_proven = provider.cleanup_receipt.is_some()
+        && matches!(
+            provider.phase,
+            rudder_native_chat_executor::PiExecutionPhase::Cleaned
+        );
+    let status = Status::Unresolved(classify_pi_observation(
+        provider.phase.is_provider_terminal(),
+        provider.turn_receipt.is_some(),
+        cleanup_proven,
+    ));
+    Completion {
+        status,
+        // PiExecution::cleanup only reaches Cleaned after its owned host emits
+        // the matching cleanup receipt. Unknown observations retain capacity
+        // so the supervisor cannot silently forget their reconciliation.
+        quiescent: cleanup_proven,
+    }
+}
+
+fn classify_pi_observation(
+    provider_terminal: bool,
+    turn_receipt: bool,
+    cleanup_proven: bool,
+) -> UnresolvedReason {
+    if provider_terminal && turn_receipt && cleanup_proven {
+        UnresolvedReason::ProviderTerminalUnsupported
+    } else {
+        UnresolvedReason::ProviderCleanupUnknown
     }
 }
 
