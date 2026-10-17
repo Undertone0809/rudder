@@ -46,8 +46,8 @@ describe("unified delivery workflows", () => {
 
   it("binds Test and manual Release to one immutable source SHA", () => {
     expect(releaseWorkflow).toContain('workflows: ["Test"]');
-    expect(releaseWorkflow).toContain('description: "Full commit SHA to promote as stable"');
-    expect(releaseWorkflow).toContain("Require immutable stable source SHA");
+    expect(releaseWorkflow).toContain('description: "Full commit SHA from main history to release"');
+    expect(releaseWorkflow).toContain("Require immutable release source SHA");
     expect(releaseWorkflow).toContain("Resolve exact successful Test qualification");
     expect(releaseWorkflow).toContain("Qualification summary");
     expect(releaseWorkflow).toContain("Download exact Test impact plan");
@@ -98,6 +98,16 @@ describe("unified delivery workflows", () => {
     expect(desktop).toContain("runs-on: macos-14");
     expect(desktop).toContain("pnpm desktop:dist");
     expect(desktop).toContain("--mode=packaged --scenario=account-gate");
+  });
+
+  it("runs the real Node manifest CLI regression in the full Test matrix", () => {
+    const verify = workflowJob(testWorkflow, "verify");
+    const unitCondition = verify.match(/- name: Unit tests\n\s+if: ([^\n]+)/)?.[1];
+    const manifestStep = verify.match(/- name: Release candidate manifest CLI tests\n\s+if: ([^\n]+)\n\s+run: ([^\n]+)/);
+    expect(unitCondition).toBe("matrix.test == 'full'");
+    expect(manifestStep?.[1]).toBe(unitCondition);
+    expect(manifestStep?.[2]).toBe("node --test scripts/release-candidate-manifest.test.mjs");
+    expect(verify.indexOf("Release candidate manifest CLI tests")).toBeLessThan(verify.indexOf("Unit tests"));
   });
 
   it("builds npm and four Desktop candidates before either publish job", () => {
@@ -461,7 +471,7 @@ describe("unified delivery workflows", () => {
     expect(stablePublish).toContain("github.event_name == 'workflow_dispatch'");
     expect(stablePublish).toContain("github.event.inputs.mirror_recovery != 'true'");
     expect(stablePublish).toContain("github.event.inputs.dry_run == 'false'");
-    expect(stablePublish).not.toContain("needs.preflight.outputs.channel");
+    expect(stablePublish).toContain("github.event.inputs.release_channel == '' || github.event.inputs.release_channel == 'stable'");
     expect(stablePublish).not.toContain("needs.preflight.outputs.publish");
     expect(releaseResult).toContain("always()");
     expect(releaseResult).toContain("github.event.inputs.mirror_recovery != 'true'");

@@ -57,7 +57,7 @@ early.
 - On an explicit stable release request, resolve and freeze the immutable SHA
   before drafting notes or waiting on unrelated `main` work. Later commits are
   next-release candidates unless the user explicitly retargets the release.
-- Manual stable dispatch accepts the full 40-character commit SHA only. This
+- Manual release dispatch accepts the full 40-character commit SHA only. This
   gives automatic canary and manual stable runs the same concurrency identity;
   a real stable dispatch replaces duplicate automatic work for that source.
 - Canary and stable share the non-cancelling `release-publish` concurrency

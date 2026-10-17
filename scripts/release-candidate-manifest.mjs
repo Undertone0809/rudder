@@ -389,7 +389,7 @@ function main() {
       candidateRunId: args["candidate-run-id"],
       qualificationRunId: args["qualification-run-id"],
       sourceTreeSha: args["source-tree-sha"],
-      expectedWorkflowSourceSha: args["workflow-source-sha"],
+      workflowSourceSha: args["workflow-source-sha"],
       npmDir: requireValue(args["npm-dir"], "--npm-dir"),
       desktopDir: requireValue(args["desktop-dir"], "--desktop-dir"),
       runtimeFile: requireValue(args["runtime-file"], "--runtime-file"),

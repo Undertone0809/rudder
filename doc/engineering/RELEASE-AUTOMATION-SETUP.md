@@ -33,9 +33,10 @@ Note:
 
 - Release candidate jobs use `pnpm install --frozen-lockfile` because the exact
   source commit must already have passed Test dependency resolution
-- canary publishing begins from the successful `Test` workflow-run SHA; manual
-  stable dispatches query Test for the exact immutable source before installing
-  dependencies
+- automatic canary publishing begins from the successful `Test` workflow-run
+  SHA; manual dispatches query Test for the exact immutable source before
+  installing dependencies. `release_channel` defaults to `stable`; explicit
+  `canary` uses a fresh candidate with COS and stable recovery/reuse disabled
 - release-specific preflight rejects stale versions and missing notes before
   package installation or build work
 - stable preflight also rejects a missing English or Chinese public changelog
@@ -317,7 +318,7 @@ profile.
 The Release workflow owns candidate creation and promotion. Candidate artifacts
 are retained for seven days and include one manifest binding the source commit
 and tree, successful qualification run, candidate run, trusted workflow source,
-runtime identity, all 15 npm payloads, all seven fixed Desktop identities, and
+runtime identity, all 14 npm payloads, all seven fixed Desktop identities, and
 checksums. The same artifact contains the frozen `runtime.json`; consumers
 compare it with the manifest and the expected Node/pnpm/Rust/packaging runtime.
 Stable, canary, and COS mirror jobs must download artifacts from that candidate
