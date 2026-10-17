@@ -10,6 +10,7 @@ export type DesktopPackagedSmokeIdentityPolicyOptions = {
 
 export type DesktopPackagedSmokeIdentityPolicy = {
   packagedSmokeBypassRequested: boolean;
+  packagedSmokeLocalImplicitAuthRequested: boolean;
   packagedSmokeMemoryStorageRequested: boolean;
 };
 
@@ -23,6 +24,10 @@ export function resolveDesktopPackagedSmokeIdentityPolicy(
   return {
     // Keep the existing auth bypass contract independent from storage mode.
     packagedSmokeBypassRequested: markedPackagedSmoke && options.authBypassRequested,
+    // The Rust-first Desktop runtime still needs an explicit native identity
+    // during the marked packaged smoke. Keep this behind the same app-name,
+    // resource-marker, and opt-in gates as the smoke bypass itself.
+    packagedSmokeLocalImplicitAuthRequested: markedPackagedSmoke && options.authBypassRequested,
     packagedSmokeMemoryStorageRequested: markedPackagedSmoke
       && options.platform === "darwin"
       && options.storageMode === "memory"

@@ -17,9 +17,10 @@ export function assertPublicIngressExposure(
   config: Config,
   localAccountAuth: boolean,
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
+  localImplicitAuth = false,
 ): void {
   if (config.rustPublicIngressMode !== "required") return;
-  if (config.deploymentMode === "local_trusted" && runtimeOwnerKind === "desktop" && !localAccountAuth) {
+  if (config.deploymentMode === "local_trusted" && runtimeOwnerKind === "desktop" && !localAccountAuth && !localImplicitAuth) {
     throw new Error("Desktop local-trusted runtime requires Desktop account authentication");
   }
   if (!isIP(config.host)) throw new Error("Rust public ingress requires a numeric listener address");
@@ -33,12 +34,26 @@ export async function preparePublicIngressStartup(
   config: Config,
   publicPort: number,
   localAccountAuth?: { sessionSecret: string; secureCookie?: boolean },
-  runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
+  runtimeOwnerKind?: LocalRuntimeOwnerKind | RustBrowserSessionAuth | null,
   localAccountLifecycle?: RustLocalAccountLifecycleOptions,
   nativeChatHost?: RustNativeChatHost,
   browserSessionAuth?: RustBrowserSessionAuth,
+  localImplicitAuth = false,
 ) {
-  assertPublicIngressExposure(config, Boolean(localAccountAuth), runtimeOwnerKind);
+  // Older native-auth callers passed the constructed browser issuer in the
+  // fourth slot before runtime ownership was added. Accept that shape while
+  // keeping the current explicit argument order for managed Desktop startup.
+  const effectiveRuntimeOwnerKind = typeof runtimeOwnerKind === "string" ? runtimeOwnerKind : undefined;
+  const effectiveBrowserSessionAuth = browserSessionAuth
+    ?? (runtimeOwnerKind && typeof runtimeOwnerKind === "object" ? runtimeOwnerKind : undefined);
+  if (localAccountAuth && effectiveBrowserSessionAuth) {
+    if (effectiveBrowserSessionAuth.issuer !== "local_account"
+      || effectiveBrowserSessionAuth.secret !== localAccountAuth.sessionSecret
+      || effectiveBrowserSessionAuth.secureCookie !== (localAccountAuth.secureCookie ?? false)) {
+      throw new Error("issuer settings disagree");
+    }
+  }
+  assertPublicIngressExposure(config, Boolean(localAccountAuth), effectiveRuntimeOwnerKind, localImplicitAuth);
   const enabled = config.rustPublicIngressMode === "required";
   const nodeListenHost = enabled ? "127.0.0.1" : config.host;
   const nodeListenPort = enabled
@@ -64,7 +79,9 @@ export async function preparePublicIngressStartup(
         }
       : config.deploymentMode === "authenticated"
         ? (() => {
-            const settings = betterAuthSessionCookieSettings(config);
+            const settings = effectiveBrowserSessionAuth?.issuer === "better_auth"
+              ? effectiveBrowserSessionAuth
+              : betterAuthSessionCookieSettings(config);
             if (!settings.secret?.trim()) {
               throw new Error("Rust public ingress requires the configured Better Auth session secret");
             }
@@ -99,12 +116,12 @@ export async function preparePublicIngressStartup(
         agentJwtAudience: agentJwt.audience,
         localImplicitEnabled: config.deploymentMode === "local_trusted"
           && !localAccountAuth
-          && runtimeOwnerKind !== "desktop",
+          && (effectiveRuntimeOwnerKind !== "desktop" || localImplicitAuth),
       },
       ...(sessionAuth ? { sessionAuth } : {}),
       ...(localAccountLifecycle ? { localAccountLifecycle } : {}),
       ...(nativeChatHost ? { nativeChatHost } : {}),
-      ...(browserSessionAuth ? { browserSessionAuth } : {}),
+      ...(effectiveBrowserSessionAuth ? { browserSessionAuth: effectiveBrowserSessionAuth } : {}),
     };
   }
   return {

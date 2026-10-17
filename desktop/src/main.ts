@@ -2261,6 +2261,9 @@ async function startLocalRudder(): Promise<void> {
         ownerKind: "desktop",
         takeoverOnVersionMismatch: true,
         preferredOwner: shouldPreferDesktopRuntimeOwnership(app.isPackaged),
+        ...(identityRuntime.packagedSmokeLocalImplicitAuthRequested
+          ? { localImplicitAuth: true }
+          : {}),
         ...(localAccountSession.localAccountAuth
           ? { localAccountAuth: localAccountSession.localAccountAuth }
           : {}),
@@ -3300,6 +3303,9 @@ async function runAutomaticUpdateProbation(): Promise<void> {
       ownerKind: "desktop",
       takeoverOnVersionMismatch: true,
       preferredOwner: true,
+      ...(desktopIdentityRuntime?.packagedSmokeLocalImplicitAuthRequested
+        ? { localImplicitAuth: true }
+        : {}),
       ...serverRuntimeOptions(),
     });
     if (handle.runtime.mode !== "owned"

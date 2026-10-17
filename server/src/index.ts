@@ -171,6 +171,8 @@ export interface StartServerOptions {
   onEvent?: (event: ServerBootstrapEvent) => void;
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null;
   localAccountAuth?: LocalAccountAuthOptions;
+  /** Explicit test-only local identity for a marked packaged Desktop smoke. */
+  localImplicitAuth?: boolean;
 }
 
 export interface BootstrapCeoInviteOptions {
@@ -421,7 +423,12 @@ async function startServerRuntime(
     process.env.RUDDER_RUNTIME_OWNER_KIND = runtimeOwnerKind;
   }
   const config = mergeRuntimeConfig(loadConfig(), options.runtimeOverrides);
-  assertPublicIngressExposure(config, Boolean(options.localAccountAuth), runtimeOwnerKind);
+  assertPublicIngressExposure(
+    config,
+    Boolean(options.localAccountAuth),
+    runtimeOwnerKind,
+    options.localImplicitAuth === true,
+  );
   if (process.env.RUDDER_SECRETS_PROVIDER === undefined) {
     process.env.RUDDER_SECRETS_PROVIDER = config.secretsProvider;
   }
@@ -1130,6 +1137,7 @@ async function startServerRuntime(
       : undefined,
     nativeChatHost,
     browserSessionAuth,
+    options.localImplicitAuth === true,
   );
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
