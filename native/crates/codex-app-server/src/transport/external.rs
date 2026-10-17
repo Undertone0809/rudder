@@ -255,7 +255,9 @@ fn decode(frame: &[u8], request_id: &str, owner_token: &str) -> io::Result<Envel
             }
             let bytes = data
                 .as_bytes()
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| Ok(hex(pair[0])? * 16 + hex(pair[1])?))
                 .collect::<io::Result<Vec<u8>>>()?;
             Ok(if kind == "stdout" {
