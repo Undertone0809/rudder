@@ -184,6 +184,7 @@ pub(super) async fn read_message_transcript(
     request: &super::Request,
 ) -> Result<Value> {
     let super::Request::ReadMessageTranscript {
+        conversation_id: raw_conversation_id,
         message_id: raw_message_id,
         after_seq,
         limit,
@@ -195,6 +196,7 @@ pub(super) async fn read_message_transcript(
         return Err(http(400, "Invalid transcript cursor"));
     }
     let limit = (*limit).clamp(1, MAX_TRANSCRIPT_LIMIT);
+    let conversation_id = canonical_uuid(raw_conversation_id, "conversation id")?;
     let message_id = canonical_uuid(raw_message_id, "message id")?;
     let mut tx = pool.begin().await?;
     let row = sqlx::query(
@@ -210,9 +212,11 @@ pub(super) async fn read_message_transcript(
          JOIN run_runtime_spans s ON s.org_id=r.org_id AND s.run_id=r.id
            AND s.relation='primary'
          JOIN runtime_bindings b ON b.org_id=s.org_id AND b.id=s.binding_id
-         WHERE m.org_id=$1::uuid AND m.id=$2::uuid AND m.role='assistant'",
+         WHERE m.org_id=$1::uuid AND m.conversation_id=$2::uuid
+           AND m.id=$3::uuid AND m.role='assistant'",
     )
     .bind(organization_id)
+    .bind(&conversation_id)
     .bind(&message_id)
     .fetch_optional(&mut *tx)
     .await?

@@ -359,6 +359,7 @@ async fn message_transcript_reader_maps_events_paginates_and_fences_access() {
 
     let first_page: Request = serde_json::from_value(json!({
         "operation":"read_message_transcript",
+        "conversationId":CHAT,
         "messageId":ASSISTANT_MESSAGE,
         "afterSeq":0,
         "limit":1
@@ -386,6 +387,7 @@ async fn message_transcript_reader_maps_events_paginates_and_fences_access() {
 
     let second_page: Request = serde_json::from_value(json!({
         "operation":"read_message_transcript",
+        "conversationId":CHAT,
         "messageId":ASSISTANT_MESSAGE,
         "afterSeq":1,
         "limit":10
@@ -427,6 +429,7 @@ async fn message_transcript_reader_maps_events_paginates_and_fences_access() {
     .expect("seal native span");
     let complete_page: Request = serde_json::from_value(json!({
         "operation":"read_message_transcript",
+        "conversationId":CHAT,
         "messageId":ASSISTANT_MESSAGE,
         "afterSeq":3,
         "limit":10
@@ -439,6 +442,19 @@ async fn message_transcript_reader_maps_events_paginates_and_fences_access() {
     assert_eq!(complete["reader"]["availability"], "complete");
     assert_eq!(complete["reader"]["completeness"], "complete");
     assert_eq!(complete["reader"]["revision"], 3);
+
+    let wrong_conversation: Request = serde_json::from_value(json!({
+        "operation":"read_message_transcript",
+        "conversationId":CHAT_TWO,
+        "messageId":ASSISTANT_MESSAGE,
+        "afterSeq":0,
+        "limit":10
+    }))
+    .expect("wrong conversation transcript request");
+    assert!(matches!(
+        execute(&database.pool, &owner, ORG, &wrong_conversation).await,
+        Err(Error::Http(404, _))
+    ));
 
     let denied = actor(
         "message-transcript-denied",

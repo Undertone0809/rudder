@@ -18,6 +18,7 @@ const actor = {
 const orgId = "10000000-0000-4000-8000-000000000001";
 const input: NativeChatTranscriptInput = {
   operation: "read_message_transcript",
+  conversationId: "20000000-0000-4000-8000-000000000002",
   messageId: "20000000-0000-4000-8000-000000000001",
   afterSeq: 4,
   limit: 25,

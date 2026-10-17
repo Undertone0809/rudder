@@ -5,6 +5,7 @@ import type { RustFoundationBridge, RustFoundationResponse } from "./rust-founda
 
 export type NativeChatTranscriptInput = {
   operation: "read_message_transcript";
+  conversationId: string;
   messageId: string;
   afterSeq?: number;
   limit?: number;

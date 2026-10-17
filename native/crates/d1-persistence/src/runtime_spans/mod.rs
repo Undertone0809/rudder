@@ -63,6 +63,8 @@ pub enum Request {
         limit: i32,
     },
     ReadMessageTranscript {
+        #[serde(rename = "conversationId")]
+        conversation_id: String,
         #[serde(rename = "messageId")]
         message_id: String,
         #[serde(default, rename = "afterSeq")]
@@ -136,6 +138,7 @@ mod wire_tests {
         ));
         let message_transcript: Request = serde_json::from_value(json!({
             "operation":"read_message_transcript",
+            "conversationId":"60000000-0000-4000-8000-000000000002",
             "messageId":"60000000-0000-4000-8000-000000000001",
             "afterSeq":7,
             "limit":10
