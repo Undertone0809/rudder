@@ -32,6 +32,7 @@ pub async fn finalize(
         Some(ProviderTurn::Codex(turn)),
         ProviderCleanup::Codex(cleanup),
         None,
+        false,
     )
     .await
 }
@@ -53,6 +54,7 @@ pub async fn finalize_hermes(
         Some(ProviderTurn::Hermes(turn)),
         ProviderCleanup::Hermes(cleanup),
         None,
+        false,
     )
     .await
 }
@@ -74,6 +76,7 @@ pub async fn finalize_stopped(
         Some(ProviderTurn::Codex(turn)),
         ProviderCleanup::Codex(cleanup),
         Some(stop),
+        false,
     )
     .await
 }
@@ -95,6 +98,7 @@ pub async fn finalize_hermes_stopped(
         Some(ProviderTurn::Hermes(turn)),
         ProviderCleanup::Hermes(cleanup),
         Some(stop),
+        false,
     )
     .await
 }
@@ -117,6 +121,49 @@ pub async fn finalize_stopped_before_submission(
         None,
         ProviderCleanup::Codex(cleanup),
         Some(stop),
+        false,
+    )
+    .await
+}
+
+/// Close a claimed Native execution when the provider never produced a
+/// validated Turn receipt but the owned process cleanup is proven. This is a
+/// failure terminal, never a successful provider projection: it releases the
+/// Run/Generation hold, seals the primary span as partial, and leaves the
+/// assistant side absent so recovery cannot retry an ambiguous effect.
+pub async fn finalize_failed(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    cleanup: &CleanupReceipt,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Codex(cleanup),
+        None,
+        true,
+    )
+    .await
+}
+
+/// Hermes counterpart of [`finalize_failed`].
+pub async fn finalize_hermes_failed(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    cleanup: &HermesCleanupReceipt,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Hermes(cleanup),
+        None,
+        true,
     )
     .await
 }
@@ -136,6 +183,7 @@ pub async fn finalize_hermes_stopped_before_submission(
         None,
         ProviderCleanup::Hermes(cleanup),
         Some(stop),
+        false,
     )
     .await
 }
@@ -326,6 +374,7 @@ async fn finalize_inner(
     turn: Option<ProviderTurn<'_>>,
     cleanup: ProviderCleanup<'_>,
     stop: Option<&super::stopping::StopIntent>,
+    forced_failure: bool,
 ) -> Result<Value> {
     let id = fence.identity();
     if actor.organization_id() != id.organization_id {
@@ -348,7 +397,7 @@ async fn finalize_inner(
             }
     });
     let pre_submission_stop = stop.is_some() && turn.is_none();
-    if !cleanup_matches || !turn_matches || (turn.is_none() && stop.is_none()) {
+    if !cleanup_matches || !turn_matches || (turn.is_none() && stop.is_none() && !forced_failure) {
         return Err(http(
             409,
             "Native Chat receipts belong to another execution",
@@ -359,7 +408,9 @@ async fn finalize_inner(
             && turn.status() == TerminalStatus::Completed
             && turn.final_text().is_none_or(|text| text.trim().is_empty())
     });
-    let (run_status, generation_status) = if stop.is_some() {
+    let (run_status, generation_status) = if forced_failure {
+        ("failed", "failed")
+    } else if stop.is_some() {
         ("cancelled", "stopped")
     } else {
         let turn =
@@ -466,6 +517,8 @@ async fn finalize_inner(
         .fetch_optional(&mut *tx)
         .await?
         .flatten()
+    } else if forced_failure {
+        None
     } else {
         let turn = turn.ok_or_else(|| http(409, "Provider retry requires a Turn receipt"))?;
         match turn.retry_predicate() {
@@ -529,7 +582,9 @@ async fn finalize_inner(
     } else {
         lock_current_execution(&mut tx, actor, fence).await?
     };
-    let checkpoint_matches = if pre_submission_stop {
+    let checkpoint_matches = if forced_failure {
+        locked.checkpoint.phase() != NativeChatProtocolPhase::ExecutionTerminalCommitted
+    } else if pre_submission_stop {
         matches!(
             locked.checkpoint.phase(),
             NativeChatProtocolPhase::NoThreadRequest
@@ -557,7 +612,7 @@ async fn finalize_inner(
         super::super::budget::has_unsettleable_policy(&mut tx, id.organization_id, id.agent_id)
             .await?;
     let held = budget_held || unprojectable;
-    let (chat_turn_id, turn_variant, model) = if pre_submission_stop {
+    let (chat_turn_id, turn_variant, model) = if pre_submission_stop || forced_failure {
         (None, 0, None)
     } else {
         let source = sqlx::query(
@@ -606,7 +661,9 @@ async fn finalize_inner(
         .execute(&mut *tx)
         .await?;
 
-    let message_id: Option<String> = if let Some(stop) = stop {
+    let message_id: Option<String> = if forced_failure {
+        None
+    } else if let Some(stop) = stop {
         super::stopping::frozen_message(&mut tx, fence, stop).await?
     } else {
         let final_text = turn.and_then(ProviderTurn::final_text);
@@ -717,6 +774,12 @@ async fn finalize_inner(
                 .or(locked.admitted_message_id.clone()),
             turn.selector(),
         ),
+        None if forced_failure => (
+            "partial",
+            None,
+            None,
+            json!({"kind":"native_execution_failure","inputDisposition":"unknown"}),
+        ),
         None => (
             "partial",
             None,
@@ -758,7 +821,7 @@ async fn finalize_inner(
         "assistantMessageId":message_id,"spanId":span_id,"status":run_status,
         "generationStatus":generation_status,
         "cost":cost,"usage":usage,"nativeAdmissionHold":held,
-        "projectionDisposition":if stop.is_some() { "frozen_at_stop" } else if unprojectable { "unsupported_final_answer" } else { "projected" },
+        "projectionDisposition":if forced_failure { "failed_without_terminal_receipt" } else if stop.is_some() { "frozen_at_stop" } else if unprojectable { "unsupported_final_answer" } else { "projected" },
         "budgetDisposition":if budget_held { "reconciliation_required" } else { "unbudgeted_unknown_cost" }});
     if pre_submission_stop {
         result["inputDisposition"] = json!("not_submitted");

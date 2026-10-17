@@ -573,14 +573,11 @@ async fn real_prelaunch_rejections_do_not_exhaust_worker_capacity() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST, disposable PostgreSQL and synthetic provider"]
-async fn real_provider_failure_with_cleanup_releases_capacity_without_finalizing() {
+async fn real_provider_failure_with_cleanup_finalizes_failed_run() {
     let (db, host, actor, run, attempt) = fixture::database_and_admission("wrong-version").await;
     let worker = Supervisor::new(db.pool.clone());
     let ticket = worker.try_start(job(&host, actor, &run, &attempt)).unwrap();
-    assert_eq!(
-        ticket.wait().await,
-        Status::Unresolved(UnresolvedReason::ExecutionUnresolved)
-    );
+    assert_eq!(ticket.wait().await, Status::FinalizationCommitted);
     settled(&worker).await;
     assert!(host.provider_started());
     let pid = std::fs::read_to_string(host.probe_path("provider-pid")).unwrap();
@@ -594,7 +591,7 @@ async fn real_provider_failure_with_cleanup_releases_capacity_without_finalizing
             .success()
     );
     assert_eq!(worker.0.slots.available_permits(), MAX_ACTIVE);
-    assert!(run_state(&db.pool, &run).await.1);
+    assert_eq!(run_state(&db.pool, &run).await, ("failed".into(), false));
     assert!(
         !host
             .events()
