@@ -2540,10 +2540,19 @@
       "base_sha": "541748fb6870ee2360ec5d096d1f07838b12b433",
       "state": "open",
       "scope": "Private feature-gated Rust AgentCreate foundation; no public POST cutover.",
-      "stage_review": "pending exact-head re-review after numeric/skill-sync/instruction-key parity fixes",
+      "stage_review": "accept",
       "acceptance": {
-        "verdict": "pending fresh exact-head verifier",
-        "head": "cc86fd6df83f04f7767ac58bf2acc1084286741c"
+        "verdict": "PASS",
+        "head": "cc86fd6df83f04f7767ac58bf2acc1084286741c",
+        "binary_sha256": null,
+        "evidence": [
+          "cargo check locked workspace pass",
+          "AgentCore lib 22/22 pass",
+          "disposable PostgreSQL 17.10 integration 2/2 pass with migrations and side effects",
+          "feature gate/no public Rust POST assertions pass",
+          "public ingress auth receipt test 1/1 pass"
+        ],
+        "limits": "Node Vitest route test not required for this private Rust foundation; Node public POST and remaining semantics stay deferred."
       },
       "local_checks": [
         "cargo check locked d1 persistence pass",
@@ -2559,12 +2568,12 @@
         "avatar assets"
       ],
       "blockers": [
-        "fresh protected CI exact cc86",
-        "fresh independent verifier exact cc86",
-        "fresh stage review/final review",
+        "protected CI pending",
+        "final review pending",
         "public POST cutover requires remaining Node-owned semantics migration"
       ],
-      "limits": "This is an internal foundation slice, not full Agent API migration or no-Node acceptance; production deployment not included."
+      "limits": "Private feature-gated AgentCreate foundation only; no public route cutover, no full Agent API migration, no no-Node backend acceptance, production deployment not included.",
+      "final_review": "pending exact-head final handoff review"
     }
   }
 }
