@@ -73,8 +73,11 @@ pub(crate) fn configure(
     );
 
     // Reading already accepted Native work does not require an installed CLI.
-    // New admission is advertised only when the owned execution host exists.
-    let Some(codex) = executable("codex", &installation.executable_search_path) else {
+    // New admission is advertised when at least one supported native provider
+    // has an owned executable. Hermes must not be gated on Codex being present.
+    let codex = executable("codex", &installation.executable_search_path);
+    let hermes = executable("hermes", &installation.executable_search_path);
+    let Some(host_executable) = preferred_native_executable(codex.clone(), hermes.clone()) else {
         return Ok(config);
     };
     let current =
@@ -106,23 +109,28 @@ pub(crate) fn configure(
         installation.friendly_workspace_home,
         profiles,
         operator_home.clone(),
-        codex,
+        // LocalHostContext retains a Codex executable carrier for source
+        // compatibility. When only Hermes is installed, its path is an
+        // unavailable-Codex sentinel; Hermes resolution never consults it.
+        host_executable,
     )
     .map_err(|_| invalid_at("invalid native host paths or identity"))?
-    .with_native_codex_profile()
     .with_executable_search_path(installation.executable_search_path.clone())
     .map_err(|_| invalid_at("invalid executable search path"))?;
-    let operator_codex_home = installation
-        .codex_home
-        .unwrap_or_else(|| operator_home.join(".codex"));
-    if operator_codex_home.is_dir() {
-        host = host
-            .with_operator_codex_profile(operator_codex_home)
-            .map_err(|_| invalid_at("invalid operator Codex profile"))?;
+    if codex.is_some() {
+        host = host.with_native_codex_profile();
+        let operator_codex_home = installation
+            .codex_home
+            .unwrap_or_else(|| operator_home.join(".codex"));
+        if operator_codex_home.is_dir() {
+            host = host
+                .with_operator_codex_profile(operator_codex_home)
+                .map_err(|_| invalid_at("invalid operator Codex profile"))?;
+        }
     }
     let hermes_home = operator_home.join(".hermes");
     if hermes_home.is_dir()
-        && let Some(hermes) = executable("hermes", &installation.executable_search_path)
+        && let Some(hermes) = hermes
     {
         host = host
             .with_hermes_runtime(hermes, hermes_home)
@@ -147,6 +155,10 @@ fn executable(name: &str, search: &str) -> Option<PathBuf> {
     std::env::split_paths(search)
         .filter(|directory| directory.is_absolute())
         .find_map(|directory| canonical_executable(&directory.join(name)))
+}
+
+fn preferred_native_executable(codex: Option<PathBuf>, hermes: Option<PathBuf>) -> Option<PathBuf> {
+    codex.or(hermes)
 }
 
 fn canonical_executable(path: &Path) -> Option<PathBuf> {
@@ -204,6 +216,8 @@ fn loopback_origin(origin: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     #[test]
     fn implicit_local_board_never_trusts_a_remote_origin() {
         for value in [
@@ -221,5 +235,14 @@ mod tests {
         ] {
             assert!(!super::loopback_origin(value));
         }
+    }
+
+    #[test]
+    fn hermes_can_activate_native_host_without_codex() {
+        let hermes = PathBuf::from("/opt/rudder/bin/hermes");
+        assert_eq!(
+            super::preferred_native_executable(None, Some(hermes.clone())),
+            Some(hermes)
+        );
     }
 }
