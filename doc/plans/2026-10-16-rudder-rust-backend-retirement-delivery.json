@@ -2479,23 +2479,23 @@
       "number": 324,
       "url": "https://github.com/Undertone0809/rudder/pull/324",
       "branch": "codex/native-chat-main-refresh-integration-20261017",
-      "head": "efbc2ad080d205587aea924bd7b04f3a83b67c0d",
+      "head": "1a6d2d999",
       "state": "open",
       "merge_state": "unstable",
       "scope": "Native Chat Codex/Hermes Rust ingress, recovery, and compatibility fences, rebased onto merged Goal collection reads main.",
-      "stage_review": "fresh stage review pending exact rebased head",
+      "stage_review": "fresh review required exact head after desktop path-test repair",
       "ci": {
         "latest_run_ids": [],
-        "status": "not_started_after_rebase",
+        "status": "not_started_after_desktop_test_fix",
         "known_failures_before_latest_head": [
-          "Desktop packaged smoke local-apps config failure fixed via marked smoke local implicit identity; old CI was invalidated by rebase onto Goal merge"
+          "Linux/Windows native foundation failures from prior run pending log; desktop identity test /private/var alias failure fixed in 1a6d2d999"
         ]
       },
-      "limits": "No merge or independent packaged/installed-provider verifier PASS yet; targeted chat-generation-protocol suite was environment-blocked by embedded PostgreSQL SIGABRT; production deployment not included.",
+      "limits": "No merge or independent packaged/installed-provider verifier PASS yet; desktop:verify/package smoke still needs rerun after dependency/cache repair; production deployment not included.",
       "stage_blockers": [
-        "fresh protected CI on rebased exact head",
-        "independent packaged/installed-provider verifier",
-        "fresh stage and final review"
+        "fresh protected CI exact 1a6d2d999",
+        "independent packaged/installed-provider verifier exact 1a6d2d999",
+        "fresh stage/final review"
       ],
       "base_sha": "541748fb6870ee2360ec5d096d1f07838b12b433",
       "local_checks": [
@@ -2506,6 +2506,12 @@
         "server typecheck",
         "desktop typecheck",
         "chat-routes Vitest 191 passed",
+        "public ingress 4 passed",
+        "native_chat 19/19",
+        "native_chat_execution 78/78 + 1 ignored",
+        "native_chat_first_send 9/9",
+        "native_chat_send_authority 5/5",
+        "verify-app-identity-package Vitest 4/4 after realpath fix",
         "git diff --check"
       ]
     }
