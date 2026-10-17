@@ -132,7 +132,7 @@ jobs:
             # One-time policy bootstrap: the base checker predates the
             # reviewed legacy-fence record. Pin and test the candidate checker
             # before asking it to compare; never silently skip the compare.
-            expected_checker_sha256="cdf709c432cf54387485e8668274a3b4a16ce8fd258db1f9be4bdc59fc4eae80"
+            expected_checker_sha256="c890bc73c16067ea717b5af508add63a8594b5129b06474ad8921bed6ece2195"
             candidate_checker_sha256="$(sha256sum scripts/rust-backend-authority-inventory.mjs | awk '{print $1}')"
             if [[ "$candidate_checker_sha256" != "$expected_checker_sha256" ]]; then
               echo "Candidate authority checker digest does not match the reviewed bootstrap pin" >&2
