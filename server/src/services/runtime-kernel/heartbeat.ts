@@ -26,7 +26,7 @@ import type {
 } from "../../agent-runtimes/index.js";
 import { runningProcesses } from "../../agent-runtimes/index.js";
 import { killChildProcessTree, parseObject } from "../../agent-runtimes/utils.js";
-import { conflict, notFound } from "../../errors.js";
+import { notFound } from "../../errors.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
 import {
@@ -204,23 +204,6 @@ export function heartbeatService(
       .select()
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runId))
-      .then((rows) => rows[0] ?? null);
-  }
-
-  function assertLegacyRunAuthority(
-    run: Pick<typeof heartbeatRuns.$inferSelect, "executionAuthority"> | null,
-  ) {
-    if (run?.executionAuthority === "native_rust") {
-      throw conflict("Native Chat runs are controlled by the Rust runtime");
-    }
-  }
-
-  async function getRunAuthority(runId: string) {
-    return db
-      .select({ executionAuthority: heartbeatRuns.executionAuthority })
-      .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, runId))
-      .limit(1)
       .then((rows) => rows[0] ?? null);
   }
 
@@ -690,7 +673,6 @@ export function heartbeatService(
     if (["succeeded", "failed", "cancelled", "timed_out"].includes(status)) {
       throw new Error("Terminal heartbeat run updates must use transitionRunToTerminal");
     }
-    assertLegacyRunAuthority(await getRunAuthority(runId));
     const updated = await db
       .update(heartbeatRuns)
       .set({ status, ...patch, updatedAt: new Date() })
@@ -717,7 +699,6 @@ export function heartbeatService(
     },
   ) {
     const runBeforeTerminal = await getRun(runId);
-    assertLegacyRunAuthority(runBeforeTerminal);
     const agentIssueCreationSettlement = runBeforeTerminal
       ? await (async () => {
           const contextRequestId = getAgentIssueCreationRequestIdFromRunContext(runBeforeTerminal.contextSnapshot);
@@ -825,12 +806,10 @@ export function heartbeatService(
     runId: string,
     patch: Parameters<typeof reconcileHeartbeatRunEvidence>[2],
   ) {
-    assertLegacyRunAuthority(await getRunAuthority(runId));
     return reconcileHeartbeatRunEvidence(db, runId, patch);
   }
 
   async function reconcileTerminalEffectsIntent(runId: string, intent: TerminalEffectIntent) {
-    assertLegacyRunAuthority(await getRunAuthority(runId));
     return reconcileHeartbeatRunTerminalEffectsIntent(db, runId, intent);
   }
 
@@ -900,7 +879,6 @@ export function heartbeatService(
       idempotencyKey?: string | null;
     },
   ) {
-    assertLegacyRunAuthority(run);
     const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
     const sanitizedMessage = event.message
       ? redactCurrentUserText(event.message, currentUserRedactionOptions)
@@ -944,7 +922,6 @@ export function heartbeatService(
     runId: string,
     meta: { pid: number; startedAt: string },
   ) {
-    assertLegacyRunAuthority(await getRunAuthority(runId));
     const startedAt = new Date(meta.startedAt);
     const updated = await db
       .update(heartbeatRuns)
@@ -961,7 +938,6 @@ export function heartbeatService(
   }
 
   async function clearDetachedRunWarning(runId: string) {
-    assertLegacyRunAuthority(await getRunAuthority(runId));
     const updated = await db
       .update(heartbeatRuns)
       .set({
@@ -1007,7 +983,6 @@ export function heartbeatService(
   }
 
   async function acknowledgeRunProcessExit(runId: string) {
-    assertLegacyRunAuthority(await getRunAuthority(runId));
     return markHeartbeatRunProcessExited(db, runId);
   }
 
@@ -1028,7 +1003,6 @@ export function heartbeatService(
     now = new Date(),
     opts?: { observeSleep?: boolean; touchActivity?: boolean },
   ) {
-    assertLegacyRunAuthority(await getRunAuthority(runId));
     await testHooks?.beforeRunExecutionLeaseRenewal?.({ runId, ownerToken });
     const knownState = localExecutionLeaseStates.get(runId);
     if (knownState && knownState.executionOwnerToken !== null && knownState.executionOwnerToken !== ownerToken) {
@@ -1138,7 +1112,6 @@ export function heartbeatService(
   }
 
   async function claimQueuedRun(run: typeof heartbeatRuns.$inferSelect) {
-    if (run.executionAuthority !== "legacy_ts") return null;
     if (run.status !== "queued") return run;
     const initialContext = parseObject(run.contextSnapshot);
     const initialGoalContext = parseObject(initialContext.goal);
@@ -1231,6 +1204,7 @@ export function heartbeatService(
       return await cancelQueuedRunDuringClaim(budgetBlock.reason);
     }
 
+    if (run.executionAuthority === "native_rust") return null;
     const claimedAt = new Date();
     const claimed = await db.transaction(async (tx) => {
       // Wakeup/release transactions lock the Issue before the run advisory
@@ -1264,7 +1238,6 @@ export function heartbeatService(
         .from(heartbeatRuns)
         .where(and(
           eq(heartbeatRuns.agentId, run.agentId),
-          eq(heartbeatRuns.executionAuthority, "legacy_ts"),
           eq(heartbeatRuns.terminalEffectsPending, true),
         ))
         .limit(1)
@@ -1540,14 +1513,10 @@ export function heartbeatService(
         .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
         .where(or(
           and(
-            eq(heartbeatRuns.executionAuthority, "legacy_ts"),
             eq(heartbeatRuns.status, "running"),
             or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
           ),
-          and(
-            eq(heartbeatRuns.executionAuthority, "legacy_ts"),
-            eq(heartbeatRuns.terminalEffectsPending, true),
-          ),
+          eq(heartbeatRuns.terminalEffectsPending, true),
         ));
 
       for (const { run, agentRuntimeType } of activeRuns) {
@@ -1698,7 +1667,6 @@ export function heartbeatService(
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
       .leftJoin(heartbeatRunEvents, eq(heartbeatRunEvents.runId, heartbeatRuns.id))
       .where(and(
-        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
         eq(heartbeatRuns.status, "running"),
         or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
       ))
@@ -1796,7 +1764,6 @@ export function heartbeatService(
       .from(heartbeatRuns)
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
       .where(and(
-        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
         eq(heartbeatRuns.status, "running"),
         or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
       ));
@@ -1883,10 +1850,7 @@ export function heartbeatService(
     const queuedRuns = await db
       .select({ agentId: heartbeatRuns.agentId })
       .from(heartbeatRuns)
-      .where(and(
-        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
-        eq(heartbeatRuns.status, "queued"),
-      ));
+      .where(eq(heartbeatRuns.status, "queued"));
 
     const agentIds = [...new Set(queuedRuns.map((r) => r.agentId))];
     for (const agentId of agentIds) {
@@ -2204,7 +2168,6 @@ export function heartbeatService(
         .from(heartbeatRuns)
         .where(and(
           eq(heartbeatRuns.agentId, agentId),
-          eq(heartbeatRuns.executionAuthority, "legacy_ts"),
           eq(heartbeatRuns.terminalEffectsPending, true),
         ))
         .limit(1)
@@ -2267,7 +2230,6 @@ export function heartbeatService(
       .select()
       .from(heartbeatRuns)
       .where(and(
-        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
         eq(heartbeatRuns.status, "running"),
         eq(heartbeatRuns.runningSubstate, "waiting_for_network"),
         or(isNull(heartbeatRuns.networkWaitNextRetryAt), lte(heartbeatRuns.networkWaitNextRetryAt, now)),

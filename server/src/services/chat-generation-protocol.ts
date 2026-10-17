@@ -29,7 +29,6 @@ import {
   visibleGenerationProjectionThrough,
 } from "./chat-generation-provenance.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
-import { lockLegacyNativeChatQueueTarget } from "./organization-mutation-fence.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
 export { hashChatGenerationBody } from "./chat-generation-protocol.helpers.js";
@@ -66,37 +65,6 @@ const PROJECTABLE_TERMINAL_STATUSES = [
   "interrupted_unverified",
   "control_lost",
 ] as const satisfies readonly ChatGenerationStatus[];
-
-async function lockLegacyGeneration(
-  tx: ChatGenerationProtocolTransaction,
-  input: { orgId: string; generationId: string; conversationId?: string },
-): Promise<GenerationRow> {
-  const hint = await tx
-    .select({ conversationId: chatGenerations.conversationId })
-    .from(chatGenerations)
-    .where(and(
-      eq(chatGenerations.orgId, input.orgId),
-      eq(chatGenerations.id, input.generationId),
-    ))
-    .limit(1)
-    .then((rows) => rows[0] ?? null);
-  if (hint) {
-    const targetAuthority = await lockLegacyNativeChatQueueTarget(
-      tx,
-      input.orgId,
-      input.conversationId ?? hint.conversationId,
-    );
-    if (targetAuthority === "missing") throw notFound("Chat conversation not found");
-    if (targetAuthority === "native_owned") {
-      throw conflict("Native Chat generations are controlled by the Rust runtime");
-    }
-  }
-  const generation = await lockGeneration(tx, input);
-  if (generation.executionAuthority === "native_rust") {
-    throw conflict("Native Chat generations are controlled by the Rust runtime");
-  }
-  return generation;
-}
 
 async function appendEventLocked(
   tx: ChatGenerationProtocolTransaction,
@@ -241,7 +209,7 @@ export function chatGenerationProtocolService(db: Db) {
     lateBytes?: number;
   }) {
     return db.transaction(async (tx) => {
-      const generation = await lockLegacyGeneration(tx, input);
+      const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, {
         conversationId: input.conversationId,
         expectedAttemptEpoch: input.attemptEpoch,
@@ -306,7 +274,7 @@ export function chatGenerationProtocolService(db: Db) {
     const durableBody = await normalizeLocalLibraryPathMarkdown(input.body, input.orgId);
     const bodyHash = normalizeBodyHash(input.bodyHash);
     return db.transaction(async (tx) => {
-      const generation = await lockLegacyGeneration(tx, {
+      const generation = await lockGeneration(tx, {
         orgId: input.orgId,
         conversationId: input.conversationId,
         generationId: input.generationId,
@@ -428,7 +396,7 @@ export function chatGenerationProtocolService(db: Db) {
   }) {
     const renderedBodyHash = normalizeBodyHash(input.renderedBodyHash);
     return db.transaction(async (tx) => {
-      const generation = await lockLegacyGeneration(tx, input);
+      const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, input);
       if (!(OUTPUT_ADMITTING_GENERATION_STATUSES as readonly string[]).includes(generation.status)) {
         throw conflict("Chat generation checkpoint arrived after output admission closed");
@@ -502,7 +470,7 @@ export function chatGenerationProtocolService(db: Db) {
     const requestedBodyHash = normalizeBodyHash(input.requestedBodyHash);
     const admissionControlVersion = input.admissionControlVersion ?? input.expectedControlVersion;
     return db.transaction(async (tx) => {
-      const generation = await lockLegacyGeneration(tx, {
+      const generation = await lockGeneration(tx, {
         orgId: input.orgId,
         conversationId: input.conversationId,
         generationId: input.expectedGenerationId,
@@ -801,7 +769,7 @@ export function chatGenerationProtocolService(db: Db) {
     }
 
     return db.transaction(async (tx) => {
-      const generation = await lockLegacyGeneration(tx, {
+      const generation = await lockGeneration(tx, {
         orgId: input.orgId,
         conversationId: input.conversationId,
         generationId: input.generationId,
@@ -1123,7 +1091,7 @@ export function chatGenerationProtocolService(db: Db) {
     now?: Date;
   }) {
     return db.transaction(async (tx) => {
-      const generation = await lockLegacyGeneration(tx, input);
+      const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, input);
       if (generation.status === "stop_requested" || generation.status === "stopping" || generation.stopRequestedAt) {
         return { generation, event: null, stopped: true };
@@ -1172,7 +1140,7 @@ export function chatGenerationProtocolService(db: Db) {
     now?: Date;
   }) {
     return db.transaction(async (tx) => {
-      const generation = await lockLegacyGeneration(tx, input);
+      const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, input);
       if (generation.status !== "waiting_for_network") return generation;
       const now = input.now ?? new Date();
@@ -1211,7 +1179,7 @@ export function chatGenerationProtocolService(db: Db) {
     now?: Date;
   }) {
     return db.transaction(async (tx) => {
-      const generation = await lockLegacyGeneration(tx, input);
+      const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, input);
       const cutoffWon = generation.status === "stop_requested"
         || generation.status === "stopping"
@@ -1344,11 +1312,6 @@ export function chatGenerationProtocolService(db: Db) {
     return db.transaction(async (tx) => {
       const conditions = [
         lte(chatGenerationTerminalOutbox.availableAt, now),
-        sql`exists (
-          select 1 from chat_generations native_generation
-          where native_generation.id = ${chatGenerationTerminalOutbox.generationId}
-            and native_generation.execution_authority = 'legacy_ts'
-        )`,
         or(
           inArray(chatGenerationTerminalOutbox.status, ["pending", "retry_wait"]),
           and(
@@ -1397,11 +1360,6 @@ export function chatGenerationProtocolService(db: Db) {
   async function getNextTerminalProjectionWakeAt(input: { orgId?: string } = {}) {
     const conditions = [
       inArray(chatGenerationTerminalOutbox.status, ["pending", "retry_wait", "claimed"]),
-      sql`exists (
-        select 1 from chat_generations native_generation
-        where native_generation.id = ${chatGenerationTerminalOutbox.generationId}
-          and native_generation.execution_authority = 'legacy_ts'
-      )`,
     ];
     if (input.orgId) conditions.push(eq(chatGenerationTerminalOutbox.orgId, input.orgId));
     const next = await db
@@ -1461,7 +1419,7 @@ export function chatGenerationProtocolService(db: Db) {
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (!observedClaim) return null;
-      const generation = await lockLegacyGeneration(tx, {
+      const generation = await lockGeneration(tx, {
         orgId: observedClaim.orgId,
         generationId: observedClaim.generationId,
       });
@@ -1753,7 +1711,7 @@ export function chatGenerationProtocolService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!observedClaim) return null;
 
-      const generation = await lockLegacyGeneration(tx, observedClaim);
+      const generation = await lockGeneration(tx, observedClaim);
       await tx.execute(sql`
         select ${chatGenerationTerminalOutbox.id}
         from ${chatGenerationTerminalOutbox}
@@ -1969,7 +1927,6 @@ export function chatGenerationProtocolService(db: Db) {
       .select({ id: chatGenerations.id, orgId: chatGenerations.orgId })
       .from(chatGenerations)
       .where(and(
-        eq(chatGenerations.executionAuthority, "legacy_ts"),
         inArray(chatGenerations.status, RECOVERABLE_CONTROL_GENERATION_STATUSES),
         isNotNull(chatGenerations.controlOwnerToken),
         input.assumeAllOwnersStale
@@ -1989,7 +1946,7 @@ export function chatGenerationProtocolService(db: Db) {
     }> = [];
     for (const candidate of candidates) {
       const result = await db.transaction(async (tx) => {
-        const generation = await lockLegacyGeneration(tx, {
+        const generation = await lockGeneration(tx, {
           orgId: candidate.orgId,
           generationId: candidate.id,
         });

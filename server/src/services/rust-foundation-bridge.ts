@@ -80,6 +80,7 @@ export interface RustFoundationBridge {
   readonly projectGoalSetMode: RustFoundationMode;
   readonly requiresStartup: boolean;
   readonly publicIngressBaseUrl?: string | null;
+  readonly nativeChatHostEnabled: boolean;
   waitForPublicIngressReady?(): Promise<void>;
   start(): Promise<void>;
   calendar?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
@@ -713,6 +714,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     organizationBrandingMode,
     projectGoalSetMode,
     requiresStartup,
+    nativeChatHostEnabled: Boolean(options.publicIngress?.nativeChatHost),
     get publicIngressBaseUrl() { return publicIngressBaseUrl; },
     async waitForPublicIngressReady() {
       if (!options.publicIngress || !publicIngressBaseUrl || !child || childHasExited(child)) {

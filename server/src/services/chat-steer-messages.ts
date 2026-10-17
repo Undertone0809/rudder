@@ -12,7 +12,6 @@ import {
   hydrateQueuedMessage,
   materializeQueuedUserMessage,
 } from "./chat-queued-message-materialization.js";
-import { lockLegacyNativeChatQueueTarget } from "./organization-mutation-fence.js";
 
 type ActivityActor = {
   actorType: "agent" | "user" | "system";
@@ -127,11 +126,6 @@ export function chatSteerMessageService(db: Db) {
     actor: ActivityActor;
   }) {
     return db.transaction(async (tx) => {
-      const targetAuthority = await lockLegacyNativeChatQueueTarget(tx, input.orgId, input.conversationId);
-      if (targetAuthority === "missing") throw notFound("Chat conversation not found");
-      if (targetAuthority === "native_owned") {
-        throw conflict("This chat is controlled by the Rust Native Chat runtime");
-      }
       await tx.execute(sql`
         select ${chatQueuedMessages.id}
         from ${chatQueuedMessages}
@@ -272,11 +266,6 @@ export function chatSteerMessageService(db: Db) {
     actor: ActivityActor;
   }) {
     return db.transaction(async (tx) => {
-      const targetAuthority = await lockLegacyNativeChatQueueTarget(tx, input.orgId, input.conversationId);
-      if (targetAuthority === "missing") throw notFound("Chat conversation not found");
-      if (targetAuthority === "native_owned") {
-        throw conflict("This chat is controlled by the Rust Native Chat runtime");
-      }
       await tx.execute(sql`
         select ${chatGenerations.id}
         from ${chatGenerations}
