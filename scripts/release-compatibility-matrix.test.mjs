@@ -61,10 +61,10 @@ describe("release migration compatibility matrix", () => {
   ])("accepts %s with the current Rust authority migration fingerprint", (candidateVersion, channel) => {
     const result = runCompatibilityPreflight({ candidateVersion, channel });
     expect(result.candidateFingerprint).toBe(
-      "279503139d5d35d1f9b968aa1ddd1efaa74079a2ccb07912137b9f39809cecea",
+      "0b389744b97aa47461c178146362caa0d1558d04f2a0a2be7a36a4baae5ab7d0",
     );
-    expect(result.candidateMigrations).toBe(180);
-    expect(result.candidateSqlFiles).toBe(182);
+    expect(result.candidateMigrations).toBe(182);
+    expect(result.candidateSqlFiles).toBe(184);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.23",
       "0.7.22",

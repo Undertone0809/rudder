@@ -23,6 +23,7 @@ export async function claimAvailableQueuedRuns(input: {
       .where(
         and(
           eq(heartbeatRuns.agentId, input.agentId),
+          eq(heartbeatRuns.executionAuthority, "legacy_ts"),
           eq(heartbeatRuns.status, "queued"),
           sql`(
             ${heartbeatRuns.wakeupRequestId} is null

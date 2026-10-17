@@ -2,6 +2,7 @@ import type {
   ChatAttachment,
   ChatContextLink,
   ChatConversation,
+  ChatGenerationStatus,
   ChatInlineAnnotationInput,
   ChatIssueCreationMode,
   ChatMessage,
@@ -16,6 +17,7 @@ import type {
   ChatStreamEvent,
   ChatStreamTranscriptEntry,
   ChatWorkManifestResponse,
+  HeartbeatRunStatus,
   ForkChatConversation,
 } from "@rudderhq/shared";
 import {
@@ -70,6 +72,22 @@ export type ChatFirstMessageStreamOptions = ChatDraftRequest & {
   inlineAnnotations?: ChatInlineAnnotationInput[];
   onEvent: (event: ChatStreamEvent) => Promise<void> | void;
 };
+
+export type ChatMessageSendReconciliation =
+  | { outcome: "not_found"; clientMutationId: string }
+  | {
+    outcome: "accepted";
+    clientMutationId: string;
+    message: ChatMessage;
+    generationId: string;
+    runId: string;
+    attemptEpoch: number;
+    generationSeq: 0;
+    bodyHash: string;
+    generationStatus: ChatGenerationStatus;
+    runStatus: HeartbeatRunStatus;
+    runtimeTerminal: boolean;
+  };
 
 async function consumeChatStreamResponse(
   res: Response,
@@ -338,7 +356,7 @@ export const chatsApi = {
     body: string,
     options: {
       signal?: AbortSignal;
-      clientMutationId?: string;
+      clientMutationId: string;
       editUserMessageId?: string | null;
       queuedMessageId?: string | null;
       modelOverride?: string | null;
@@ -348,13 +366,16 @@ export const chatsApi = {
       onEvent: (event: ChatStreamEvent) => Promise<void> | void;
     },
   ) => {
+    if (!options.clientMutationId?.trim()) {
+      throw new Error("A stable chat submission identity is required. Retry from the composer.");
+    }
     const files = options.files ?? [];
     const inlineAnnotations = options.inlineAnnotations ?? [];
     const requestBody = files.length > 0
       ? (() => {
         const form = new FormData();
         form.append("body", body);
-        if (options.clientMutationId) form.append("clientMutationId", options.clientMutationId);
+        form.append("clientMutationId", options.clientMutationId);
         if (options.editUserMessageId) form.append("editUserMessageId", options.editUserMessageId);
         if (options.queuedMessageId) form.append("queuedMessageId", options.queuedMessageId);
         form.append("modelOverride", options.modelOverride ?? "__rudder_agent_default__");
@@ -369,7 +390,7 @@ export const chatsApi = {
       })()
       : JSON.stringify({
         body,
-        ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
+        clientMutationId: options.clientMutationId,
         ...(options.editUserMessageId ? { editUserMessageId: options.editUserMessageId } : {}),
         ...(options.queuedMessageId ? { queuedMessageId: options.queuedMessageId } : {}),
         modelOverride: options.modelOverride ?? null,
@@ -401,6 +422,14 @@ export const chatsApi = {
     }
 
   },
+  reconcilePendingMessageSend: (
+    chatId: string,
+    data: { clientMutationId: string; body: string },
+    options?: { signal?: AbortSignal },
+  ) => api.post<ChatMessageSendReconciliation>(`/chats/${chatId}/messages/stream/reconcile`, data, {
+    signal: options?.signal,
+    timeoutMs: CHAT_REQUEST_TIMEOUT_MS,
+  }),
   checkpointMessageStream: (chatId: string, data: ChatClientCheckpointRequest) =>
     api.post<{
       generationId: string;

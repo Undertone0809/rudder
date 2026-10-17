@@ -1,0 +1,16 @@
+[package]
+name = "rudder-codex-app-server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+rudder-native-protocol = { path = "../native-protocol" }
+rudder-native-process-transport = { path = "../native-process-transport" }
+
+[dev-dependencies]
+rudder-process-host = { path = "../../bins/rudder-process-host" }
+tempfile = "3.23"

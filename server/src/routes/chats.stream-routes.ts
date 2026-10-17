@@ -162,6 +162,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
 
     const actor = getActorInfo(req);
     if (actor.actorType === "agent") {
+      const latestGeneration = await svc.getLatestGeneration(conversation.id);
+      if (latestGeneration?.executionAuthority === "native_rust") {
+        throw conflict("This chat is controlled by the Rust Native Chat runtime");
+      }
       if (parsedBody.data.editUserMessageId) {
         res.status(422).json({ error: "Agent-authored chat messages cannot edit operator messages" });
         return;
@@ -195,6 +199,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       writeStreamEvent,
     });
     if (clientMutationFingerprint === undefined) return;
+    const latestGeneration = await svc.getLatestGeneration(conversation.id);
+    if (latestGeneration?.executionAuthority === "native_rust") {
+      throw conflict("This chat is controlled by the Rust Native Chat runtime");
+    }
     const preparedAnnotations = !atomicFirstTurn && inlineAnnotationsProvided
       ? await inlineAnnotations.prepare({
         orgId: conversation.orgId,
@@ -720,6 +728,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   },
                   onAttemptCompleted: async ({ generationId, attemptEpoch, ownerToken }) => {
                     await svc.markGenerationControlAttemptCompleted({
+                      orgId: conversation.orgId,
                       generationId,
                       attemptEpoch,
                       ownerToken,
@@ -1202,6 +1211,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+    const latestGeneration = await svc.getLatestGeneration(conversation.id);
+    if (latestGeneration?.executionAuthority === "native_rust") {
+      throw conflict("Client checkpoints for Native Chat must use the Rust control endpoint");
+    }
     const checkpoint = await svc.generationProtocol.recordClientCheckpoint({
       orgId: conversation.orgId,
       conversationId: conversation.id,

@@ -33,6 +33,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut server_task = tokio::spawn(async move { runtime.run().await });
     tokio::select! {
         result = &mut server_task => {
+            control.begin_shutdown();
             if let Some(public_control) = &public_control { public_control.stop(true).await; }
             if let Some(public_task) = &mut public_task { public_task.await??; }
             result??;
@@ -48,6 +49,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             result??;
         }
         reason = shutdown_signal(shutdown_signals) => {
+            control.begin_shutdown();
             if let Some(public_control) = &public_control { public_control.stop(true).await; }
             control.shutdown().await;
             server_task.await??;

@@ -1,4 +1,5 @@
 use super::{CanonicalIdentity, IdentityInput, Result, VerifiedActor, http};
+use crate::native_chat::NativeChatActor;
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
@@ -13,6 +14,30 @@ pub(super) async fn ensure(
     organization_id: &str,
     conversation_id: &str,
     input: &IdentityInput,
+) -> Result<Value> {
+    let mut tx = pool.begin().await?;
+    let result = ensure_tx(
+        &mut tx,
+        actor,
+        organization_id,
+        conversation_id,
+        input,
+        true,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+/// Borrow the caller transaction. The target advisory lock is acquired before
+/// Conversation; native admission must acquire it before any other row lock.
+pub(super) async fn ensure_tx(
+    tx: &mut super::Tx<'_>,
+    actor: &impl NativeChatActor,
+    organization_id: &str,
+    conversation_id: &str,
+    input: &IdentityInput,
+    create_if_missing: bool,
 ) -> Result<Value> {
     let agent_id = canonical_uuid(&input.agent_id, "agent id")?;
     let host_id = canonical_ref(input.host_id.as_deref(), "local", "host id")?;
@@ -32,13 +57,12 @@ pub(super) async fn ensure(
         "capability revision",
     )?;
 
-    let mut tx = pool.begin().await?;
-    lock_target(&mut tx, organization_id, conversation_id).await?;
-    authorize_org(&mut tx, actor, organization_id).await?;
+    lock_target(tx, organization_id, conversation_id).await?;
+    authorize_org(tx, actor, organization_id).await?;
 
     // Re-read and lock the target after waiting for concurrent ensures. The
     // owner and selected-agent facts below therefore belong to this transaction.
-    let conversation = conversation(&mut tx, organization_id, conversation_id, true)
+    let conversation = conversation(tx, organization_id, conversation_id, true)
         .await?
         .ok_or_else(|| http(404, "Chat conversation not found"))?;
     let principal_scope_ref =
@@ -58,7 +82,7 @@ pub(super) async fn ensure(
     )
     .bind(organization_id)
     .bind(&agent_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     .ok_or_else(|| http(404, "Agent not found"))?;
     let runtime_type: String = agent.try_get("agent_runtime_type")?;
@@ -90,12 +114,12 @@ pub(super) async fn ensure(
     )
     .bind(organization_id)
     .bind(conversation_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     if let Some(row) = current {
         let binding_id: String = row.try_get("id")?;
-        lock_binding(&mut tx, organization_id, &binding_id).await?;
+        lock_binding(tx, organization_id, &binding_id).await?;
         // Re-read after acquiring the binding lock so the returned canonical
         // state is current even if a future writer shares this lock protocol.
         let row = sqlx::query(
@@ -108,7 +132,7 @@ pub(super) async fn ensure(
         )
         .bind(organization_id)
         .bind(&binding_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?
         .ok_or_else(|| http(409, "Runtime binding changed while ensuring Chat"))?;
 
@@ -125,10 +149,13 @@ pub(super) async fn ensure(
                 "Active Chat runtime binding has no current segment",
             ));
         };
-        let binding = binding_json(&mut tx, organization_id, &binding_id).await?;
-        let segment = segment_json(&mut tx, organization_id, &binding_id, &segment_id).await?;
-        tx.commit().await?;
+        let binding = binding_json(tx, organization_id, &binding_id).await?;
+        let segment = segment_json(tx, organization_id, &binding_id, &segment_id).await?;
         return Ok(json!({"binding": binding, "segment": segment}));
+    }
+
+    if !create_if_missing {
+        return Err(http(409, "Current Native Chat binding is missing"));
     }
 
     let binding_id: String = sqlx::query_scalar(
@@ -150,9 +177,9 @@ pub(super) async fn ensure(
     .bind(&identity.workspace_binding_id)
     .bind(&identity.instructions_revision)
     .bind(&identity.capability_revision)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
-    lock_binding(&mut tx, organization_id, &binding_id).await?;
+    lock_binding(tx, organization_id, &binding_id).await?;
 
     let segment_id: String = sqlx::query_scalar(
         "INSERT INTO native_segments (org_id, binding_id, runtime_type, segment_ordinal, state)
@@ -162,7 +189,7 @@ pub(super) async fn ensure(
     .bind(organization_id)
     .bind(&binding_id)
     .bind(&identity.runtime_type)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     sqlx::query(
         "UPDATE runtime_bindings
@@ -172,7 +199,7 @@ pub(super) async fn ensure(
     .bind(organization_id)
     .bind(&binding_id)
     .bind(&segment_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     let audit = crate::activity::ActivityActor {
@@ -186,7 +213,7 @@ pub(super) async fn ensure(
     };
     let details = json!({"targetType":"chat_conversation","bindingId":binding_id});
     crate::activity::write_activity_options(
-        &mut tx,
+        tx,
         crate::activity::ActivityWrite {
             org: organization_id,
             audit: &audit,
@@ -203,8 +230,7 @@ pub(super) async fn ensure(
     )
     .await?;
 
-    let binding = binding_json(&mut tx, organization_id, &binding_id).await?;
-    let segment = segment_json(&mut tx, organization_id, &binding_id, &segment_id).await?;
-    tx.commit().await?;
+    let binding = binding_json(tx, organization_id, &binding_id).await?;
+    let segment = segment_json(tx, organization_id, &binding_id, &segment_id).await?;
     Ok(json!({"binding": binding, "segment": segment}))
 }

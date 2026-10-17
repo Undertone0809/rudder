@@ -1,4 +1,5 @@
 import type { Db } from "@rudderhq/db";
+import type { BetterAuthOptions } from "better-auth";
 import type { Request, RequestHandler } from "express";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { initializeBoardClaimChallenge } from "../board-claim.js";
@@ -13,6 +14,7 @@ import {
   createLocalAccountSessionRevocation,
   type LocalAccountSessionRevocation,
 } from "../services/local-account-session-revocation.js";
+import type { RustBrowserSessionAuth } from "../services/rust-foundation-bridge.js";
 
 export interface LocalAccountAuthOptions {
   identityOrigin: string;
@@ -36,12 +38,45 @@ export interface AuthRuntime {
   resolveSessionFromHeaders?: (headers: Headers) => Promise<BetterAuthSessionResult | null>;
   localAccountExchangePolicy?: LocalAccountExchangePolicy;
   localAccountSessionRevocation?: LocalAccountSessionRevocation;
+  /** Exact constructed issuer facts for the Rust startup transport; contains a secret. */
+  browserSessionAuth?: RustBrowserSessionAuth;
 }
 
 function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
+
+/** Validate exposure before constructing auth or opening the public listener. */
+export function assertAuthDeploymentConfig(config: Pick<Config,
+  "deploymentMode" | "deploymentExposure" | "host" | "authBaseUrlMode" | "authPublicBaseUrl"
+>): void {
+  if (config.deploymentMode === "local_trusted" && !isLoopbackHost(config.host)) {
+    throw new Error(
+      `local_trusted mode requires loopback host binding (received: ${config.host}). ` +
+        "Use authenticated mode for non-loopback deployments.",
+    );
+  }
+
+  if (config.deploymentMode === "local_trusted" && config.deploymentExposure !== "private") {
+    throw new Error("local_trusted mode only supports private exposure");
+  }
+
+  if (config.deploymentMode === "authenticated") {
+    if (config.authBaseUrlMode === "explicit" && !config.authPublicBaseUrl) {
+      throw new Error("auth.baseUrlMode=explicit requires auth.publicBaseUrl");
+    }
+    if (config.deploymentExposure === "public") {
+      if (config.authBaseUrlMode !== "explicit") {
+        throw new Error("authenticated public exposure requires auth.baseUrlMode=explicit");
+      }
+      if (!config.authPublicBaseUrl) {
+        throw new Error("authenticated public exposure requires auth.publicBaseUrl");
+      }
+    }
+  }
+}
+
 
 export async function createAuthRuntime(options: {
   db: Db;
@@ -83,6 +118,11 @@ export async function createAuthRuntime(options: {
     };
     const resolveLocalSession = createLocalAccountSessionResolver(db, {
       sessionSecret: localAccountAuth.sessionSecret,
+      secureCookie: localAccountAuth.secureCookie ?? false,
+    });
+    runtime.browserSessionAuth = Object.freeze({
+      issuer: "local_account",
+      secret: localAccountAuth.sessionSecret,
       secureCookie: localAccountAuth.secureCookie ?? false,
     });
     runtime.resolveSession = (req) => resolveLocalSession(req.headers);
@@ -132,6 +172,20 @@ export async function createAuthRuntime(options: {
       "Authenticated mode auth origin configuration",
     );
     const auth = createBetterAuthInstance(db, config, effectiveTrustedOrigins);
+    // Read the constructed issuer, including its effective current signing key.
+    // Do not reread environment defaults or resolve any per-request identity here.
+    const context = await auth.$context;
+    const issuerOptions: BetterAuthOptions = context.options;
+    runtime.browserSessionAuth = Object.freeze({
+      issuer: "better_auth",
+      secret: context.secret,
+      secureCookie: context.authCookies.sessionToken.attributes.secure === true,
+      sessionCookieName: context.authCookies.sessionToken.name,
+      dontRememberCookieName: context.authCookies.dontRememberToken.name,
+      expiresIn: context.sessionConfig.expiresIn,
+      updateAge: context.sessionConfig.updateAge,
+      disableSessionRefresh: issuerOptions.session?.disableSessionRefresh ?? false,
+    });
     runtime.betterAuthHandler = createBetterAuthHandler(auth);
     runtime.resolveSession = (req) => resolveBetterAuthSession(auth, req);
     runtime.resolveSessionFromHeaders = (headers) =>

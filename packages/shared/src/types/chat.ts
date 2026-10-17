@@ -1,6 +1,7 @@
 import type { ChatWorkManifestCategory } from "../chat-work-manifest.js";
 import type { ChatConversationMutability } from "../constants.js";
 import type { Approval } from "./approval.js";
+import type { NativeChatExecutionAuthority } from "./heartbeat.js";
 
 export interface ChatLinkedEntity {
   type: "issue" | "project" | "agent" | "goal";
@@ -381,6 +382,10 @@ export interface ChatGeneration {
   orgId: string;
   conversationId: string;
   status: ChatGenerationStatus;
+  executionAuthority?: NativeChatExecutionAuthority;
+  sourceMessageId?: string | null;
+  sourceTurnVariant?: number | null;
+  nativeAdmissionHold?: boolean;
   terminalReason: string | null;
   attemptEpoch: number;
   controlVersion: number;
@@ -402,6 +407,27 @@ export interface ChatGeneration {
   completedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Private Rust admission DTO for a new ordinary Chat text turn. */
+export interface NativeChatTurnAdmissionRequest {
+  conversationId: string;
+  clientMutationId: string;
+  body: string;
+}
+
+/** Safe durable receipt; owner tokens and provider credentials are excluded. */
+export interface NativeChatTurnAdmissionReceipt {
+  conversationId: string;
+  userMessageId: string;
+  generationId: string;
+  generationStatus: ChatGenerationStatus;
+  runId: string;
+  runStatus: string;
+  attemptId: string;
+  executionAuthority: "native_rust";
+  nativeAdmissionHold: boolean;
+  idempotentReplay: boolean;
 }
 
 export interface ChatControlAction {
@@ -749,6 +775,21 @@ export interface ChatStreamAssistantDeltaEvent {
   bodyHash?: string;
 }
 
+/**
+ * Replaces the visible streamed assistant text with an authoritative persisted
+ * snapshot. Unlike assistant_delta, body is the complete text through this
+ * generation sequence.
+ */
+export interface ChatStreamAssistantSnapshotEvent {
+  type: "assistant_snapshot";
+  body: string;
+  generationId: string;
+  attemptEpoch: number;
+  generationSeq: number;
+  /** Lowercase hexadecimal SHA-256 of the complete body snapshot. */
+  bodyHash: string;
+}
+
 export interface ChatStreamAssistantStateEvent {
   type: "assistant_state";
   state: "streaming" | "tool_busy" | "finalizing" | "waiting_for_network" | "stopped";
@@ -785,10 +826,14 @@ export interface ChatStreamFinalEvent {
 export interface ChatStreamErrorEvent {
   type: "error";
   error: string;
+  /** True only when the server has verified the exact persisted terminal state.
+   * Missing on legacy streams; absence must not settle an uncertain send.
+   */
+  terminal?: boolean;
   /**
-   * Durable message associated with the failure. Before the stream's ack event,
-   * this is the committed user message receipt; after ack it identifies the
-   * persisted failed assistant message.
+   * Durable message associated with the failure. Recovery errors can identify
+   * the accepted user input; terminal projection errors can identify an assistant
+   * message. This identifier alone does not prove execution has finished.
    */
   messageId?: string | null;
 }
@@ -801,6 +846,7 @@ export interface ChatStreamQueuedEvent {
 export type ChatStreamEvent =
   | ChatStreamAckEvent
   | ChatStreamAssistantDeltaEvent
+  | ChatStreamAssistantSnapshotEvent
   | ChatStreamAssistantStateEvent
   | ChatStreamWaitingForNetworkEvent
   | ChatStreamTranscriptEntryEvent

@@ -1,8 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+pub mod lines;
+
 pub const PROTOCOL_MAJOR: u16 = 1;
 pub const PROTOCOL_MINOR: u16 = 0;
 pub const PROTOCOL_VERSION: &str = "1.0";
+pub const MAX_INTERACTIVE_STDIN_WRITE_BYTES: usize = 64 * 1024;
+pub const MAX_INTERACTIVE_STDIN_QUEUE_WRITES: usize = 16;
+pub const MAX_INTERACTIVE_STDIN_WRITE_IDS: usize = 4_096;
 #[cfg(unix)]
 pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
@@ -16,6 +21,7 @@ pub const CAPABILITIES: &[&str] = &[
     "pty_resize",
     "stdout_relay",
     "stderr_relay",
+    "interactive_process_stdin",
 ];
 #[cfg(windows)]
 pub const CAPABILITIES: &[&str] = &[
@@ -30,6 +36,7 @@ pub const CAPABILITIES: &[&str] = &[
     "pty_resize",
     "stdout_relay",
     "stderr_relay",
+    "interactive_process_stdin",
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -48,7 +55,7 @@ impl Default for ProtocolVersion {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Command {
     Start {
@@ -88,8 +95,31 @@ pub enum Command {
         runtime_root: Option<String>,
         #[serde(default)]
         stdin: Option<String>,
+        #[serde(rename = "interactiveStdin", default)]
+        interactive_stdin: bool,
         #[serde(rename = "graceMs", default)]
         grace_ms: Option<u64>,
+    },
+    WriteStdin {
+        #[serde(rename = "protocolVersion", default)]
+        protocol_version: Option<ProtocolVersion>,
+        #[serde(rename = "requestId", default)]
+        request_id: Option<String>,
+        #[serde(rename = "ownerToken", default)]
+        owner_token: Option<String>,
+        #[serde(rename = "writeId", default)]
+        write_id: Option<String>,
+        data: String,
+    },
+    CloseStdin {
+        #[serde(rename = "protocolVersion", default)]
+        protocol_version: Option<ProtocolVersion>,
+        #[serde(rename = "requestId", default)]
+        request_id: Option<String>,
+        #[serde(rename = "ownerToken", default)]
+        owner_token: Option<String>,
+        #[serde(rename = "closeId", default)]
+        close_id: Option<String>,
     },
     Stop {
         #[serde(rename = "protocolVersion", default)]
@@ -243,6 +273,7 @@ impl Command {
                 owner_token,
                 runtime_root,
                 stdin,
+                interactive_stdin,
                 grace_ms,
             } => {
                 validate_protocol_identity(protocol_version, request_id)?;
@@ -262,10 +293,41 @@ impl Command {
                 {
                     return Err("stdin_too_large");
                 }
+                if *interactive_stdin && stdin.is_some() {
+                    return Err("interactive_stdin_with_one_shot_payload");
+                }
+                if *interactive_stdin {
+                    validate_owner_token(owner_token)?;
+                }
                 if grace_ms.is_some_and(|value| value > 60_000) {
                     return Err("invalid_grace_ms");
                 }
                 Ok(())
+            }
+            Self::WriteStdin {
+                protocol_version,
+                request_id,
+                owner_token,
+                write_id,
+                data,
+            } => {
+                validate_protocol_identity(protocol_version, request_id)?;
+                validate_owner_token(owner_token)?;
+                validate_operation_id(write_id, "write_id")?;
+                if data.is_empty() || data.len() > MAX_INTERACTIVE_STDIN_WRITE_BYTES {
+                    return Err("invalid_stdin_write_size");
+                }
+                Ok(())
+            }
+            Self::CloseStdin {
+                protocol_version,
+                request_id,
+                owner_token,
+                close_id,
+            } => {
+                validate_protocol_identity(protocol_version, request_id)?;
+                validate_owner_token(owner_token)?;
+                validate_operation_id(close_id, "close_id")
             }
             Self::Stop {
                 protocol_version,
@@ -374,6 +436,39 @@ fn validate_launch(
     };
     if owner_token.is_empty() || owner_token.len() > 256 {
         return Err("invalid_owner_token");
+    }
+    Ok(())
+}
+
+fn validate_owner_token(owner_token: &Option<String>) -> Result<(), &'static str> {
+    let Some(owner_token) = owner_token.as_ref() else {
+        return Err("owner_token_required");
+    };
+    if owner_token.is_empty()
+        || owner_token.len() > 256
+        || owner_token == "."
+        || owner_token == ".."
+        || owner_token.contains('/')
+        || owner_token.contains('\\')
+        || owner_token.contains('\0')
+    {
+        return Err("invalid_owner_token");
+    }
+    Ok(())
+}
+
+fn validate_operation_id(value: &Option<String>, kind: &'static str) -> Result<(), &'static str> {
+    let Some(value) = value.as_ref() else {
+        return Err(match kind {
+            "write_id" => "write_id_required",
+            _ => "close_id_required",
+        });
+    };
+    if value.is_empty() || value.len() > 128 {
+        return Err(match kind {
+            "write_id" => "invalid_write_id",
+            _ => "invalid_close_id",
+        });
     }
     Ok(())
 }
@@ -555,6 +650,7 @@ mod tests {
             owner_token: Some("opaque".into()),
             runtime_root: Some(fixture_runtime_root().into()),
             stdin: None,
+            interactive_stdin: false,
             grace_ms: None,
         };
         assert_eq!(base("x".repeat(70_000)).validate(), Ok(()));
@@ -562,5 +658,121 @@ mod tests {
             base("x".repeat(256 * 1024 + 1)).validate(),
             Err("invalid_arguments")
         );
+    }
+
+    #[test]
+    fn interactive_stdin_is_explicit_additive_and_bounded() {
+        assert!(CAPABILITIES.contains(&"interactive_process_stdin"));
+        assert_eq!(
+            PROTOCOL_MINOR, 0,
+            "existing clients reject newer minor versions"
+        );
+
+        let legacy: Command = serde_json::from_value(serde_json::json!({
+            "type": "startProcess",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "run-1",
+            "executable": fixture_executable(),
+            "argv": ["-c", "cat"],
+            "cwd": fixture_cwd(),
+            "env": {},
+            "ownerToken": "owner-1",
+            "runtimeRoot": fixture_runtime_root(),
+            "stdin": "legacy one-shot"
+        }))
+        .unwrap();
+        assert_eq!(legacy.validate(), Ok(()));
+
+        let interactive: Command = serde_json::from_value(serde_json::json!({
+            "type": "startProcess",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "run-1",
+            "executable": fixture_executable(),
+            "argv": ["-c", "cat"],
+            "cwd": fixture_cwd(),
+            "env": {},
+            "ownerToken": "owner-1",
+            "runtimeRoot": fixture_runtime_root(),
+            "interactiveStdin": true
+        }))
+        .unwrap();
+        assert_eq!(interactive.validate(), Ok(()));
+
+        let unsafe_interactive_owner: Command = serde_json::from_value(serde_json::json!({
+            "type": "startProcess",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "run-1",
+            "executable": fixture_executable(),
+            "argv": ["-c", "cat"],
+            "cwd": fixture_cwd(),
+            "env": {},
+            "ownerToken": "invalid/token",
+            "runtimeRoot": fixture_runtime_root(),
+            "interactiveStdin": true
+        }))
+        .unwrap();
+        assert_eq!(
+            unsafe_interactive_owner.validate(),
+            Err("invalid_owner_token")
+        );
+
+        let mixed = Command::StartProcess {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some("run-1".into()),
+            executable: fixture_executable().into(),
+            argv: vec![],
+            cwd: fixture_cwd().into(),
+            env: Default::default(),
+            owner_token: Some("owner-1".into()),
+            runtime_root: Some(fixture_runtime_root().into()),
+            stdin: Some("one-shot".into()),
+            interactive_stdin: true,
+            grace_ms: None,
+        };
+        assert_eq!(
+            mixed.validate(),
+            Err("interactive_stdin_with_one_shot_payload")
+        );
+    }
+
+    #[test]
+    fn validates_write_and_close_stdin_identity_and_limits() {
+        let write: Command = serde_json::from_value(serde_json::json!({
+            "type": "writeStdin",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "run-1",
+            "ownerToken": "owner-1",
+            "writeId": "w1",
+            "data": "你好\\n"
+        }))
+        .unwrap();
+        assert_eq!(write.validate(), Ok(()));
+
+        let oversized = Command::WriteStdin {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some("run-1".into()),
+            owner_token: Some("owner-1".into()),
+            write_id: Some("w2".into()),
+            data: "x".repeat(MAX_INTERACTIVE_STDIN_WRITE_BYTES + 1),
+        };
+        assert_eq!(oversized.validate(), Err("invalid_stdin_write_size"));
+
+        let missing_owner = Command::CloseStdin {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some("run-1".into()),
+            owner_token: None,
+            close_id: Some("close-1".into()),
+        };
+        assert_eq!(missing_owner.validate(), Err("owner_token_required"));
+
+        let close: Command = serde_json::from_value(serde_json::json!({
+            "type": "closeStdin",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "run-1",
+            "ownerToken": "owner-1",
+            "closeId": "close-1"
+        }))
+        .unwrap();
+        assert_eq!(close.validate(), Ok(()));
     }
 }

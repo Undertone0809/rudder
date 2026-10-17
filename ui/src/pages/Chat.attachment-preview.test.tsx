@@ -11,20 +11,22 @@ import {
 } from "@/context/LiveSurfaceRuntimeContext";
 import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
-import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
+import { readChatAskUserDraft, readChatComposerDraft } from "@/lib/chat-draft-storage";
 import { requestChatFileAnnotation } from "@/lib/chat-file-annotation-events";
 import { FirstChatTurnStore } from "@/lib/chat-first-turn-store";
 import {
+  readChatPendingAttachmentsForScope,
   resetChatPendingAttachmentsForTests,
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
+import type { ChatSendReconciliationResult } from "@/lib/chat-send-mutation-storage";
 import {
   readPendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
 import type { DesktopBrowserShortcutRequest } from "@/lib/desktop-shell";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -78,7 +80,8 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
-const mockState = vi.hoisted(() => ({
+const mockState = vi.hoisted(() => {
+  const state = {
   abortChatStream: vi.fn(),
   conversationId: "chat-1" as string | null,
   conversations: [] as ChatConversation[],
@@ -147,6 +150,7 @@ const mockState = vi.hoisted(() => ({
   preflightDraft: vi.fn(),
   sendFirstMessageStream: vi.fn(),
   sendMessageStream: vi.fn(),
+  reconcilePendingMessageSend: vi.fn(),
   setStreamDraftForChat: vi.fn(),
   setQueriesData: vi.fn(),
   setQueryData: vi.fn(),
@@ -172,7 +176,17 @@ const mockState = vi.hoisted(() => ({
       this.name = "ChatGenerationCloseSupersededError";
     }
   },
-}));
+    queryClient: null as unknown,
+  };
+  state.queryClient = {
+    getQueryData: state.getQueryData,
+    invalidateQueries: state.invalidateQueries,
+    removeQueries: state.removeQueries,
+    setQueryData: state.setQueryData,
+    setQueriesData: state.setQueriesData,
+  };
+  return state;
+});
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled = true }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
@@ -476,13 +490,7 @@ vi.mock("@tanstack/react-query", () => ({
       }
     },
   }),
-  useQueryClient: () => ({
-    getQueryData: mockState.getQueryData,
-    invalidateQueries: mockState.invalidateQueries,
-    removeQueries: mockState.removeQueries,
-    setQueryData: mockState.setQueryData,
-    setQueriesData: mockState.setQueriesData,
-  }),
+  useQueryClient: () => mockState.queryClient,
   skipToken: Symbol("skipToken"),
 }));
 
@@ -649,6 +657,7 @@ vi.mock("@/api/chats", () => ({
     checkpointMessageStream: mockState.checkpointMessageStream,
     stopMessageStream: mockState.stopMessageStream,
     sendMessageStream: mockState.sendMessageStream,
+    reconcilePendingMessageSend: mockState.reconcilePendingMessageSend,
     destroySideChat: mockState.destroySideChat,
     keepSideChat: mockState.keepSideChat,
     listQueue: vi.fn(async () => mockState.queueSnapshot),
@@ -1342,6 +1351,72 @@ function installLocalStorageMock() {
   });
 }
 
+function installWebLocksMock() {
+  const locks = {
+    request: async <T,>(name: string, _options: LockOptions, callback: (lock: Lock) => T | Promise<T>) => (
+      callback({ name, mode: "exclusive" } as Lock)
+    ),
+  } as LockManager;
+  const navigatorStub = Object.create(globalThis.navigator) as Navigator;
+  Object.defineProperty(navigatorStub, "locks", { configurable: true, value: locks });
+  vi.stubGlobal("navigator", navigatorStub);
+}
+
+function seedUnknownChatSend(orgId: string, conversationId: string, body: string) {
+  const clientMutationId = "mutation-from-previous-page";
+  const scopeKey = `${orgId}:${conversationId}:new`;
+  const fingerprint = JSON.stringify({
+    body,
+    editUserMessageId: null,
+    files: [],
+    inlineAnnotations: [],
+    modelOverride: null,
+    effortOverride: null,
+  });
+  localStorage.setItem(`rudder:chat-send-mutations:v2:scope:${encodeURIComponent(scopeKey)}`, JSON.stringify({
+    version: 2,
+    nextOrdinal: 2,
+    settledThrough: 0,
+    settledRanges: [],
+    mutations: {
+      [clientMutationId]: {
+        id: clientMutationId,
+        fingerprint,
+        ordinal: 1,
+        status: "unknown",
+      },
+    },
+  }));
+  return clientMutationId;
+}
+
+function acceptedSendReceipt(
+  clientMutationId: string,
+  body: string,
+  terminal: boolean,
+): Extract<ChatSendReconciliationResult, { outcome: "accepted" }> {
+  return {
+    outcome: "accepted",
+    clientMutationId,
+    message: message({
+      id: "persisted-prior-user-message",
+      orgId: "org-1",
+      conversationId: "chat-1",
+      runId: "run-prior-send",
+      role: "user",
+      body,
+    }),
+    generationId: "generation-prior-send",
+    runId: "run-prior-send",
+    attemptEpoch: 1,
+    generationSeq: 0,
+    bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    generationStatus: terminal ? "completed" : "running",
+    runStatus: terminal ? "succeeded" : "running",
+    runtimeTerminal: terminal,
+  };
+}
+
 function renderChat({
   expanded = false,
   stableRuntime = false,
@@ -1449,27 +1524,38 @@ function dispatchComposerDrag(
 }
 
 async function clickEnabledButton(container: Element, label: string) {
-  await act(async () => {
-    await Promise.resolve();
+  let button: HTMLButtonElement | undefined;
+  await vi.waitFor(() => {
+    button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+      candidate.textContent?.includes(label)
+    );
+    expect(button).not.toBeUndefined();
+    expect(button?.disabled).toBe(false);
   });
-  const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-    candidate.textContent?.includes(label)
-  );
-  expect(button).not.toBeUndefined();
-  expect(button?.disabled).toBe(false);
   await act(async () => {
     button?.click();
     await Promise.resolve();
   });
 }
 
-async function clickEnabledButtonByAriaLabel(container: Element, label: string) {
+async function waitForInitialChatSendRecoveryCheck(container: Element) {
   await act(async () => {
-    await Promise.resolve();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
   });
-  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-  expect(button).not.toBeNull();
-  expect(button?.disabled).toBe(false);
+  await vi.waitFor(() => {
+    const checking = Array.from(container.querySelectorAll('[role="status"]'))
+      .some((status) => status.textContent?.includes("Checking the previous message before sending"));
+    expect(checking).toBe(false);
+  });
+}
+
+async function clickEnabledButtonByAriaLabel(container: Element, label: string) {
+  let button: HTMLButtonElement | null = null;
+  await vi.waitFor(() => {
+    button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    expect(button).not.toBeNull();
+    expect(button?.disabled).toBe(false);
+  });
   await act(async () => {
     button?.click();
     await Promise.resolve();
@@ -1592,6 +1678,7 @@ beforeEach(() => {
   mockState.chatGenerationScopes.clear();
   mockState.sitesEnabled = false;
   installLocalStorageMock();
+  installWebLocksMock();
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
     value: vi.fn(() => "blob:chat-attachment-preview"),
@@ -1717,6 +1804,7 @@ beforeEach(() => {
   mockState.preflightDraft.mockResolvedValue(mockState.draftPreflight);
   mockState.sendFirstMessageStream.mockReset();
   mockState.sendMessageStream.mockReset();
+  mockState.reconcilePendingMessageSend.mockReset();
   mockState.setStreamDraftForChat.mockReset();
   mockState.setQueriesData.mockReset();
   mockState.setQueryData.mockReset();
@@ -6057,6 +6145,7 @@ describe("Chat streaming controls", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     await clickEnabledButtonByAriaLabel(container, "Edit message");
     const inlineEditor = container.querySelector<HTMLElement>(
       "[data-testid='chat-inline-message-editor']",
@@ -6128,6 +6217,7 @@ describe("Chat streaming controls", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     await clickEnabledButtonByAriaLabel(container, "Edit message");
     const inlineEditor = container.querySelector<HTMLElement>(
       "[data-testid='chat-inline-message-editor']",
@@ -6149,6 +6239,7 @@ describe("Chat streaming controls", () => {
 
     mockState.sendMessageStream.mockClear();
     const retried = renderChat();
+    await waitForInitialChatSendRecoveryCheck(retried.container);
     await clickEnabledButton(retried.container, "Retry");
     await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     expect(mockState.sendMessageStream).toHaveBeenLastCalledWith(
@@ -6215,6 +6306,7 @@ describe("Chat streaming controls", () => {
     });
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     await clickEnabledButton(container, "Retry");
 
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
@@ -7755,6 +7847,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
     expect(panel?.textContent).toContain("Narrow path");
@@ -7777,7 +7870,7 @@ describe("Chat ask_user panel", () => {
     expect(submit?.disabled).toBe(false);
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Use the custom compatibility path");
   });
 
@@ -7929,6 +8022,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -7947,7 +8041,7 @@ describe("Chat ask_user panel", () => {
 
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     expect(mockState.sendMessageStream.mock.calls[0]?.[2]).toMatchObject({
       files: [attachment],
     });
@@ -7968,14 +8062,21 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
     await clickEnabledButton(container, "Other");
 
-    const imageButton = panel?.querySelector<HTMLButtonElement>(
+    let imageButton = panel?.querySelector<HTMLButtonElement>(
       "[data-testid='chat-pending-image-attachment'] button",
     );
+    await vi.waitFor(() => {
+      imageButton = container.querySelector<HTMLButtonElement>(
+        "[data-testid='chat-pending-image-attachment'] button",
+      ) ?? undefined;
+      expect(imageButton).not.toBeUndefined();
+    });
     expect(imageButton).not.toBeNull();
 
     act(() => {
@@ -7996,6 +8097,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -8014,7 +8116,7 @@ describe("Chat ask_user panel", () => {
 
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
     expect(sentFiles).toHaveLength(1);
     expect(sentFiles?.[0]?.name).toBe("receipt.txt");
@@ -8030,6 +8132,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -8052,6 +8155,47 @@ describe("Chat ask_user panel", () => {
     expect(panel?.textContent).toContain("answer-notes.txt");
   });
 
+  it("keeps Ask User editing and attachments available while disabling submit during recovery discovery", async () => {
+    const previousMutationId = seedUnknownChatSend("org-1", "chat-1", "Earlier accepted input");
+    const reconciliation = deferred<ChatSendReconciliationResult>();
+    mockState.reconcilePendingMessageSend.mockReturnValue(reconciliation.promise);
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(mockState.reconcilePendingMessageSend).toHaveBeenCalledWith(
+      "chat-1",
+      { clientMutationId: previousMutationId, body: "Earlier accepted input" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel?.textContent).toContain("Checking the previous message before sending");
+    const submit = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.includes("Submit answer"));
+    expect(submit?.disabled).toBe(true);
+
+    await clickEnabledButton(container, "Other");
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    const attachment = new File(["still stageable"], "while-checking.txt", { type: "text/plain" });
+    await act(async () => {
+      dispatchPasteFiles(textarea!, [attachment]);
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Keep editing while the old send is checked.");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")?.textContent)
+      .toContain("while-checking.txt");
+    expect(submit?.disabled).toBe(true);
+    act(() => submit?.click());
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+  });
+
   it("dedupes pasted attachments exposed through both clipboard items and files", async () => {
     mockState.messagesByChatId = {
       "chat-1": [
@@ -8061,6 +8205,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -8085,7 +8230,7 @@ describe("Chat ask_user panel", () => {
 
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
     expect(sentFiles).toHaveLength(1);
     expect(sentFiles?.[0]?.name).toBe("receipt.png");
@@ -8220,6 +8365,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container, rerender } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     let panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -8242,6 +8388,7 @@ describe("Chat ask_user panel", () => {
 
     mockState.conversationId = "chat-1";
     rerender();
+    await waitForInitialChatSendRecoveryCheck(container);
     panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
     expect(panel?.textContent).toContain("Review answers");
@@ -8251,7 +8398,7 @@ describe("Chat ask_user panel", () => {
 
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Broad path");
     expect(readChatAskUserDraft("org-1", "ask-user-multi-1")).toBeNull();
   });
@@ -8471,6 +8618,163 @@ describe("Atomic new-chat drafts", () => {
     expect(mockState.navigate).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { label: "an accepted response", outcome: "accepted_active" as const, notice: "Resume response" },
+    { label: "a confirmed missing message", outcome: "not_found" as const, notice: "Retry previous message" },
+    { label: "a terminal accepted message", outcome: "accepted_terminal" as const, notice: "The earlier message already finished" },
+  ])("keeps the newer composer untouched while recovery checks $label", async ({ outcome, notice }) => {
+    installWebLocksMock();
+    const previousBody = "Original request from the earlier page.";
+    const pendingMutationId = seedUnknownChatSend("org-1", "chat-1", previousBody);
+    const reconciliation = deferred<ChatSendReconciliationResult>();
+    mockState.reconcilePendingMessageSend.mockReturnValue(reconciliation.promise);
+
+    const attachment = new File(["new draft attachment"], "new-draft.txt", { type: "text/plain" });
+    const annotation: ChatInlineAnnotationInput = {
+      id: "30000000-0000-4000-8000-000000000091",
+      selectedText: "Source excerpt",
+      comment: null,
+      sourceConversationId: "chat-1",
+      sourceMessageId: "recovery-annotation-source",
+      surface: "assistant_body",
+      sourceHash: "a".repeat(64),
+      start: 0,
+      end: 14,
+      prefix: "",
+      suffix: "",
+      attachmentIds: [],
+    };
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "recovery-annotation-source",
+        role: "assistant",
+        body: "Source excerpt for the draft annotation.",
+      })],
+    };
+
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(mockState.reconcilePendingMessageSend).toHaveBeenCalledWith(
+      "chat-1",
+      { clientMutationId: pendingMutationId, body: previousBody },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(editor).not.toBeNull();
+
+    await act(async () => {
+      requestChatFileAnnotation({
+        action: "add_to_chat",
+        annotation,
+        anchorRect: { left: 10, right: 60, top: 20, bottom: 40, width: 50, height: 20 },
+        boundaryRect: null,
+      });
+      await Promise.resolve();
+    });
+    await clickEnabledButton(document.body, "Save");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "New message that must remain a draft.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      dispatchPasteFiles(editor!, [attachment]);
+      await Promise.resolve();
+    });
+
+    const sendButton = container.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
+    expect(sendButton?.disabled).toBe(true);
+    expect(container.textContent).toContain("Checking the previous message before sending");
+    expect(container.textContent).toContain("new-draft.txt");
+    expect(readChatComposerDraft("org-1", "chat-1")).toMatchObject({
+      body: "New message that must remain a draft.",
+    });
+    expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
+    expect(readChatPendingAttachmentsForScope(resolveChatPendingAttachmentScopeKey("org-1", "chat-1")))
+      .toEqual([attachment]);
+
+    mockState.setChatSendInFlight.mockClear();
+    mockState.setStreamDraftForChat.mockClear();
+    await act(async () => {
+      editor!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
+    expect(mockState.setStreamDraftForChat).not.toHaveBeenCalled();
+
+    const receipt: ChatSendReconciliationResult = outcome === "not_found"
+      ? { outcome: "not_found", clientMutationId: pendingMutationId }
+      : acceptedSendReceipt(pendingMutationId, previousBody, outcome === "accepted_terminal");
+    await act(async () => {
+      reconciliation.resolve(receipt);
+      await reconciliation.promise;
+    });
+    await vi.waitFor(() => expect(container.textContent).toContain(notice));
+
+    expect(editor?.value).toBe("New message that must remain a draft.");
+    expect(container.textContent).toContain("new-draft.txt");
+    expect(readChatComposerDraft("org-1", "chat-1")).toMatchObject({
+      body: "New message that must remain a draft.",
+    });
+    expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
+    expect(readChatPendingAttachmentsForScope(resolveChatPendingAttachmentScopeKey("org-1", "chat-1")))
+      .toEqual([attachment]);
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
+    expect(mockState.setStreamDraftForChat.mock.calls.some((call) => (
+      Boolean(call[1]) && typeof call[1] === "object" && "streamKey" in call[1]
+    ))).toBe(false);
+  });
+
+  it.each([
+    { label: "a recovered send", outcome: "accepted_terminal" as const },
+    { label: "an accepted send", outcome: "accepted_active" as const },
+    { label: "a send that was not admitted", outcome: "not_found" as const },
+  ])("does not create a phantom stream when send preflight returns $label", async ({ outcome }) => {
+    installWebLocksMock();
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "existing-user-message", body: "Existing chat history." })],
+    };
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(container.textContent).not.toContain("Checking the previous message before sending"));
+
+    const previousBody = "Earlier content that needs reconciliation.";
+    const pendingMutationId = seedUnknownChatSend("org-1", "chat-1", previousBody);
+    mockState.reconcilePendingMessageSend.mockResolvedValue(outcome === "not_found"
+      ? { outcome: "not_found", clientMutationId: pendingMutationId }
+      : acceptedSendReceipt(pendingMutationId, previousBody, outcome === "accepted_terminal"));
+    const attachment = new File(["current composer attachment"], "current-draft.txt", { type: "text/plain" });
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(editor).not.toBeNull();
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "New composer text remains unsent.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      dispatchPasteFiles(editor!, [attachment]);
+      await Promise.resolve();
+    });
+    mockState.setChatSendInFlight.mockClear();
+    mockState.setStreamDraftForChat.mockClear();
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    if (outcome === "accepted_terminal") {
+      await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Previous message recovered",
+      })));
+    } else {
+      await vi.waitFor(() => expect(container.textContent).toContain(
+        outcome === "accepted_active" ? "Resume response" : "Retry previous message",
+      ));
+    }
+
+    expect(editor?.value).toBe("New composer text remains unsent.");
+    expect(container.textContent).toContain("current-draft.txt");
+    expect(readChatPendingAttachmentsForScope(resolveChatPendingAttachmentScopeKey("org-1", "chat-1")))
+      .toEqual([attachment]);
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
+    expect(mockState.setStreamDraftForChat.mock.calls.some((call) => (
+      Boolean(call[1]) && typeof call[1] === "object" && "streamKey" in call[1]
+    ))).toBe(false);
+  });
+
   it("restores an existing-chat draft before slow failure reconciliation finishes", async () => {
     const attachment = new File(["recovery context"], "recovery-context.txt", {
       type: "text/plain",
@@ -8560,6 +8864,12 @@ describe("Atomic new-chat drafts", () => {
     await clickEnabledButtonByAriaLabel(container, "Send");
     await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(editor?.value).toBe("Retry without duplication."));
+    const firstOptions = mockState.sendMessageStream.mock.calls[0]?.[2];
+    expect(firstOptions?.clientMutationId).toEqual(expect.any(String));
+    mockState.reconcilePendingMessageSend.mockResolvedValue({
+      outcome: "not_found",
+      clientMutationId: firstOptions!.clientMutationId,
+    });
     cleanupFn?.();
     cleanupFn = null;
 
@@ -8568,14 +8878,12 @@ describe("Atomic new-chat drafts", () => {
       "textarea[aria-label='Composer draft']",
     );
     await vi.waitFor(() => expect(remountedEditor?.value).toBe("Retry without duplication."));
-    await clickEnabledButtonByAriaLabel(remounted.container, "Send");
+    await clickEnabledButton(remounted.container, "Retry previous message");
     await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(2));
 
-    const firstOptions = mockState.sendMessageStream.mock.calls[0]?.[2];
     const retryOptions = mockState.sendMessageStream.mock.calls[1]?.[2];
-    expect(firstOptions?.clientMutationId).toEqual(expect.any(String));
     expect(retryOptions?.clientMutationId).toBe(firstOptions?.clientMutationId);
-    expect(remountedEditor?.value).toBe("");
+    expect(remountedEditor?.value).toBe("Retry without duplication.");
   });
 
   it("does not restore an existing-chat draft when a pre-ack stream error identifies the committed user message", async () => {
