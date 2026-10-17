@@ -47,6 +47,19 @@ occurrence identity, Run/session binding, sequence, source update name, and
 explicit reason. Supplements are a display/recovery aid and do not claim that
 Cursor history is complete or lossless.
 
+# Local protocol observation
+
+On 2026-10-18 the installed `/Users/zeeland/.local/bin/agent` reported
+`2026.06.19-20-24-33-653a7fb`. A disposable `/tmp` project completed
+`initialize` (protocol version 1), `authenticate` with `methodId:
+cursor_login`, and `session/new`; the response exposed `loadSession: true`,
+`agent/plan/ask` modes, model/config options, and MCP HTTP/SSE capability. A
+real nested `session/update` notification (`available_commands_update`) was
+also observed. No prompt or project mutation was sent during this probe.
+This is `observed` evidence only. `session/load`, a real prompt, permission
+decisions, plan/question extension responses, restart recovery, complete
+history, and precise Fork/Steer remain unverified.
+
 # Remaining integration and acceptance gates
 
 The shared Host/process transport, D1 binding/segment/span persistence, and
