@@ -49,6 +49,8 @@ import {
   projects,
   projectWorkspaces,
   requests,
+  runtimeRetentionClaims,
+  runtimeSourceAliases,
   workspaceOperations,
   workspaceRuntimeServices,
 } from "@rudderhq/db";
@@ -509,6 +511,12 @@ export function organizationService(db: Db) {
         await tx.delete(issueBlockAuditAttempts).where(eq(issueBlockAuditAttempts.orgId, id));
         await tx.delete(requests).where(eq(requests.orgId, id));
         await tx.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.orgId, id));
+        // Retention references intentionally use NO ACTION FKs so direct
+        // parent deletes cannot silently discard runtime lineage. Organization
+        // deletion is the authorized boundary, so remove those references
+        // before deleting runs, conversations, and their runtime bindings.
+        await tx.delete(runtimeSourceAliases).where(eq(runtimeSourceAliases.orgId, id));
+        await tx.delete(runtimeRetentionClaims).where(eq(runtimeRetentionClaims.orgId, id));
         await tx.delete(activityLog).where(eq(activityLog.orgId, id));
         await tx.delete(workspaceOperations).where(eq(workspaceOperations.orgId, id));
         await tx.delete(workspaceRuntimeServices).where(eq(workspaceRuntimeServices.orgId, id));
