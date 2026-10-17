@@ -121,12 +121,12 @@ pub(crate) fn configure(
             .map_err(|_| invalid_at("invalid operator Codex profile"))?;
     }
     let hermes_home = operator_home.join(".hermes");
-    if hermes_home.is_dir() {
-        if let Some(hermes) = executable("hermes", &installation.executable_search_path) {
-            host = host
-                .with_hermes_runtime(hermes, hermes_home)
-                .map_err(|_| invalid_at("invalid installed Hermes paths"))?;
-        }
+    if hermes_home.is_dir()
+        && let Some(hermes) = executable("hermes", &installation.executable_search_path)
+    {
+        host = host
+            .with_hermes_runtime(hermes, hermes_home)
+            .map_err(|_| invalid_at("invalid installed Hermes paths"))?;
     }
     config.native_chat_runtime = Some(
         NativeChatPublicRuntime::new(

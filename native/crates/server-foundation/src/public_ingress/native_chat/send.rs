@@ -53,7 +53,7 @@ struct AdmissionReceipt {
 }
 
 enum AdmissionAcknowledgement {
-    Committed(AdmissionReceipt),
+    Committed(Box<AdmissionReceipt>),
     Failed(PersistenceError),
     InvalidReceipt,
 }
@@ -567,7 +567,7 @@ async fn send_admission(
         // is only an acknowledgment channel and is never execution authority.
         drop(receiver);
         match ack_receiver.await {
-            Ok(AdmissionAcknowledgement::Committed(receipt)) => (receipt, Some(ticket_receiver)),
+            Ok(AdmissionAcknowledgement::Committed(receipt)) => (*receipt, Some(ticket_receiver)),
             Ok(AdmissionAcknowledgement::Failed(error_)) => {
                 return result::<Value>(Err(error_));
             }
@@ -943,7 +943,9 @@ async fn run_admission_and_dispatch(
     // launch. This lets the caller acknowledge the durable input even if its
     // cookie expires before the executor's first claim or the task panics
     // during the commit-to-dispatch gap.
-    let _ = ack_sender.send(AdmissionAcknowledgement::Committed(receipt.clone()));
+    let _ = ack_sender.send(AdmissionAcknowledgement::Committed(Box::new(
+        receipt.clone(),
+    )));
     if receipt.idempotent_replay {
         drop(reservation);
         return;
