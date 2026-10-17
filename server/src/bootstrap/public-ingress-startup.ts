@@ -5,7 +5,11 @@ import type { RudderAppHandle } from "../app.js";
 import { betterAuthSessionCookieSettings } from "../auth/better-auth.js";
 import type { Config } from "../config.js";
 import type { LocalRuntimeOwnerKind } from "../local-runtime.js";
-import type { RustLocalAccountLifecycleOptions } from "../services/rust-public-ingress-config.js";
+import type {
+  RustBrowserSessionAuth,
+  RustLocalAccountLifecycleOptions,
+  RustNativeChatHost,
+} from "../services/rust-public-ingress-config.js";
 import { selectAvailablePort } from "./port-selection.js";
 import type { RudderAppOptions } from "./types.js";
 
@@ -31,6 +35,8 @@ export async function preparePublicIngressStartup(
   localAccountAuth?: { sessionSecret: string; secureCookie?: boolean },
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
   localAccountLifecycle?: RustLocalAccountLifecycleOptions,
+  nativeChatHost?: RustNativeChatHost,
+  browserSessionAuth?: RustBrowserSessionAuth,
 ) {
   assertPublicIngressExposure(config, Boolean(localAccountAuth), runtimeOwnerKind);
   const enabled = config.rustPublicIngressMode === "required";
@@ -97,6 +103,8 @@ export async function preparePublicIngressStartup(
       },
       ...(sessionAuth ? { sessionAuth } : {}),
       ...(localAccountLifecycle ? { localAccountLifecycle } : {}),
+      ...(nativeChatHost ? { nativeChatHost } : {}),
+      ...(browserSessionAuth ? { browserSessionAuth } : {}),
     };
   }
   return {

@@ -1,5 +1,20 @@
 import type { LocalAccountAuthOptions } from "../bootstrap/auth-runtime.js";
 
+export type RustBrowserSessionAuth = Readonly<{
+  issuer: "local_account";
+  secret: string;
+  secureCookie: boolean;
+} | {
+  issuer: "better_auth";
+  secret: string;
+  secureCookie: boolean;
+  sessionCookieName: string;
+  dontRememberCookieName: string;
+  expiresIn: number;
+  updateAge: number;
+  disableSessionRefresh: boolean;
+}>;
+
 export type RustLocalAccountLifecycleOptions = {
   installationId: string;
   expectedIssuer: string;
@@ -27,7 +42,24 @@ export type RustNativeIdentityAuthOptions = {
   localImplicitEnabled: boolean;
 };
 
+/** Installation facts only. Rust resolves Agents, Profiles and execution policy. */
+export type RustNativeChatHost = Readonly<{
+  instanceId: string;
+  instanceRoot: string;
+  workspaceHome: string;
+  operatorHome: string;
+  codexHome?: string;
+  executableSearchPath: string;
+  friendlyWorkspaceHome: boolean;
+  deploymentMode: string;
+  deploymentExposure: string;
+  authRequirement: string;
+  trustedOrigins: readonly string[];
+}>;
+
 export type RustPublicIngressOptions = {
+  browserSessionAuth?: RustBrowserSessionAuth;
+  nativeChatHost?: RustNativeChatHost;
   listenAddr: string;
   nodeUpstream: string;
   authorizationKey: string;
