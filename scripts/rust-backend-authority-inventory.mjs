@@ -106,6 +106,7 @@ const LEGACY_FENCE_CHANGE_KINDS = new Set([
   "native_chat_conversation_id_hint_helper",
   "native_chat_queue_guard_callsite",
   "native_chat_run_attempt_admission",
+  "native_chat_side_chat_retention",
   "existing_operation_mapping",
 ]);
 const TARGET_LOCK_RECEIVERS = new Set(["tx"]);
@@ -1895,29 +1896,30 @@ function validateLegacyFenceRecord(record, baseInventory, headInventory, baseCon
     if (lockSurface?.receiver !== "tx" || protectedWrite?.receiver !== lockSurface?.receiver) {
       problems.push("target advisory lock and protected write must use the same transaction client");
     }
-  } else if (record.change_kind === "native_chat_run_attempt_admission") {
+  } else if (["native_chat_run_attempt_admission", "native_chat_side_chat_retention"].includes(record.change_kind)) {
     if (record.base_surface || record.head_surface || record.transaction_mapping_id || record.base_protected_surface || record.head_protected_surface) {
-      problems.push("native_chat_run_attempt_admission accepts only head_surfaces for the new atomic admission unit");
+      problems.push(`${record.change_kind} accepts only head_surfaces for the new atomic admission unit`);
     }
     if (!Array.isArray(record.head_surfaces) || record.head_surfaces.length < 3) {
-      problems.push("native_chat_run_attempt_admission must pin its transaction and every new Run/Attempt writer");
+      problems.push(`${record.change_kind} must pin its transaction and every new writer`);
     }
     const refs = Array.isArray(record.head_surfaces) ? record.head_surfaces.map(exactSurfaceRef) : [];
     if (refs.some((ref) => !ref)) problems.push("head_surfaces must pin exact type, signature, and line");
     const surfaces = refs.map((ref) => ref && headInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, ref))).filter(Boolean);
     if (surfaces.length !== refs.length) problems.push("head_surfaces must match candidate inventory surfaces");
+    if (record.change_kind === "native_chat_side_chat_retention") return problems;
     const transaction = surfaces.find((surface) => surface.type === "database_call_candidate" && surface.method === "transaction");
-    if (!transaction) problems.push("native_chat_run_attempt_admission requires one transaction callback surface");
+    if (!transaction) problems.push(`${record.change_kind} requires one transaction callback surface`);
     if (transaction) {
       const range = after && transactionCallbackRange(after.content, transaction);
-      if (!range) problems.push("native_chat_run_attempt_admission transaction callback could not be resolved");
+      if (!range) problems.push(`${record.change_kind} transaction callback could not be resolved`);
       for (const surface of surfaces) {
         if (surface === transaction) continue;
         const span = after && sourceSpanForSurface(after.content, surface);
         if (!span || !range || span.start < range.start || span.end > range.end) {
-          problems.push("every Run/Attempt writer must remain inside the mapped admission transaction callback");
+          problems.push("every new writer must remain inside the mapped transaction callback");
         }
-        if (surface.receiver !== "tx") problems.push("Run/Attempt admission writers must use the transaction client");
+        if (surface.receiver !== "tx") problems.push("new retention writers must use the transaction client");
       }
     }
   } else if ([
@@ -1994,7 +1996,7 @@ function compareLegacyFenceChanges(baseInventory, headInventory, baseContents, h
       "native_chat_conversation_id_hint_helper",
     ].includes(record.change_kind)) {
       for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
-    } else if (record.change_kind === "native_chat_run_attempt_admission") {
+    } else if (["native_chat_run_attempt_admission", "native_chat_side_chat_retention"].includes(record.change_kind)) {
       for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
     } else {
       if (record.change_kind === "existing_operation_mapping") {

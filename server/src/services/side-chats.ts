@@ -4,12 +4,14 @@ import {
   chatContextLinks,
   chatConversations,
   chatMessages,
+  runtimeRetentionClaims,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   type ChatConversation,
 } from "@rudderhq/shared";
-import { and, asc, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
@@ -35,6 +37,23 @@ function sideChatTitleFromSource(sourceTitle: string) {
 }
 
 export function sideChatService(db: Db) {
+  async function markRuntimeRetentionExpired(tx: any, conversationId: string, at: Date) {
+    await tx.update(runtimeRetentionClaims).set({
+      status: "expired", expiresAt: at, updatedAt: at,
+      cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
+    }).where(and(
+      eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversationId}`),
+      eq(runtimeRetentionClaims.status, "active"),
+    ));
+    await tx.update(runtimeSourceAliases).set({
+      expiresAt: at, updatedAt: at,
+      cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`,
+    }).where(and(
+      eq(runtimeSourceAliases.conversationId, conversationId),
+      isNull(runtimeSourceAliases.releasedAt),
+    ));
+  }
+
   function assertOwner(conversation: Pick<ConversationRow, "conversationKind" | "createdByUserId">, userId: string | null) {
     if (conversation.conversationKind !== "side_chat") return;
     if (!userId || conversation.createdByUserId !== userId) {
@@ -119,6 +138,7 @@ export function sideChatService(db: Db) {
           eq(chatConversations.conversationKind, "side_chat"),
           eq(chatConversations.sideChatState, "active"),
         ));
+      await markRuntimeRetentionExpired(tx, conversationId, now);
     });
   }
 
@@ -154,6 +174,10 @@ export function sideChatService(db: Db) {
           eq(chatConversations.id, conversation.id),
           eq(chatConversations.sideChatState, "active"),
         ));
+      await tx.update(runtimeRetentionClaims).set({ expiresAt: expiresAtFrom(at), updatedAt: at })
+        .where(and(eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversation.id}`), eq(runtimeRetentionClaims.status, "active")));
+      await tx.update(runtimeSourceAliases).set({ expiresAt: expiresAtFrom(at), updatedAt: at })
+        .where(and(eq(runtimeSourceAliases.conversationId, conversation.id), isNull(runtimeSourceAliases.releasedAt)));
     });
     return hydrated(conversation.id, userId!);
   }
@@ -292,6 +316,30 @@ export function sideChatService(db: Db) {
         creationPath: "side_chat",
         planMode: child.planMode,
         initialRole: "system",
+      });
+
+      await tx.insert(runtimeRetentionClaims).values({
+        orgId: input.orgId,
+        resourceRef: `side_chat:${child.id}`,
+        purpose: "side_chat_ttl",
+        principalScopeRef: input.userId,
+        readOnly: true,
+        expiresAt: child.sideChatExpiresAt,
+      }).onConflictDoNothing();
+      await tx.insert(runtimeSourceAliases).values({
+        orgId: input.orgId,
+        conversationId: child.id,
+        sourceKind: "side_chat_branch",
+        sourceRef: source.id,
+        sourceRangeJson: {
+          sourceConversationId: source.id,
+          sourceMessageId: anchor.id,
+          forkRootConversationId: rootConversationId,
+          selectedBranchEndMessageId: anchor.id,
+        },
+        principalScopeRef: input.userId,
+        readOnly: true,
+        expiresAt: child.sideChatExpiresAt,
       });
 
       const contextLinks = await tx
@@ -452,6 +500,18 @@ export function sideChatService(db: Db) {
     }
     const deleted = await db.transaction(async (tx) => {
       await lockNodeMutationAuthority(tx, conversation.orgId);
+      const now = new Date();
+      await tx.update(runtimeRetentionClaims).set({
+        status: "released", releasedAt: now, updatedAt: now,
+        cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
+      }).where(and(
+        eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversation.id}`),
+        eq(runtimeRetentionClaims.status, "active"),
+      ));
+      await tx.update(runtimeSourceAliases).set({
+        releasedAt: now, updatedAt: now,
+        cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`,
+      }).where(and(eq(runtimeSourceAliases.conversationId, conversation.id), isNull(runtimeSourceAliases.releasedAt)));
       return tx
         .delete(chatConversations)
         .where(and(
@@ -523,6 +583,17 @@ export function sideChatService(db: Db) {
         if (latest?.sideChatState === "kept" && latest.messengerVisible) return "kept" as const;
         throw conflict("Only an active Side Chat can be kept in Messenger");
       }
+      await tx.update(runtimeRetentionClaims).set({
+        expiresAt: null, updatedAt: now,
+        lifecycleVersion: sql`${runtimeRetentionClaims.lifecycleVersion} + 1`,
+      }).where(and(
+        eq(runtimeRetentionClaims.resourceRef, `side_chat:${conversation.id}`),
+        eq(runtimeRetentionClaims.status, "active"),
+      ));
+      await tx.update(runtimeSourceAliases).set({
+        expiresAt: null, updatedAt: now,
+        lifecycleVersion: sql`${runtimeSourceAliases.lifecycleVersion} + 1`,
+      }).where(and(eq(runtimeSourceAliases.conversationId, conversation.id), isNull(runtimeSourceAliases.releasedAt)));
 
       const sourceConversationId = conversation.forkedFromConversationId;
       if (!sourceConversationId) {
