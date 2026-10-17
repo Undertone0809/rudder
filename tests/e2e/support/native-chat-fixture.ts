@@ -20,6 +20,7 @@ type FixtureOptions = {
   foundationBinary: string;
   postgresBinDir: string;
   mode?: "complete" | "visible_checkpoint";
+  runtimeType?: "codex_local" | "hermes_local";
 };
 
 async function freePort() {
@@ -145,7 +146,7 @@ export async function startNativeChatFixture(options: FixtureOptions) {
       "isolated-home", "runtime-root", "agent-cwd", "bin"]) await mkdir(path.join(root, directory));
     const python = await command("python3", ["-I", "-S", "-c", "import sys; print(sys.executable)"], env);
     const provider = path.join(root, "bin/provider");
-    const source = await readFile(path.join(REPO, "native/crates/native-chat-executor/tests/fixtures/fake_codex.py"));
+    const source = await readFile(path.join(REPO, options.runtimeType === "hermes_local" ? "tests/e2e/fixtures/fake-hermes.py" : "native/crates/native-chat-executor/tests/fixtures/fake_codex.py"));
     await writeFile(provider, Buffer.concat([Buffer.from(`#!${await realpath(python)}\n`), source]));
     await chmod(provider, 0o700);
     await writeFile(path.join(root, "isolated-home/mode.txt"), options.mode ?? "complete");
@@ -165,8 +166,8 @@ export async function startNativeChatFixture(options: FixtureOptions) {
       await db.$client.unsafe("CREATE TABLE rudder_native_chat_browser_fixture(fixture_root text NOT NULL)");
       await db.$client`INSERT INTO rudder_native_chat_browser_fixture VALUES(${root})`;
       await db.insert(organizations).values({ id: orgId, name: "Native Chat Recovery", urlKey: `native-${orgId}`, issuePrefix: "NCE" });
-      await db.insert(agents).values({ id: agentId, orgId, name: "Native Chat Fixture", workspaceKey: "codex-agent", role: "engineer", status: "idle", agentRuntimeType: "codex_local",
-        agentRuntimeConfig: { command: provider, cwd: path.join(root, "agent-cwd"), profileId: "default", model: MODEL, instructionsBundleMode: "managed", search: false },
+      await db.insert(agents).values({ id: agentId, orgId, name: "Native Chat Fixture", workspaceKey: "codex-agent", role: "engineer", status: "idle", agentRuntimeType: options.runtimeType ?? "codex_local",
+        agentRuntimeConfig: options.runtimeType === "hermes_local" ? {} : { command: provider, cwd: path.join(root, "agent-cwd"), profileId: "default", model: MODEL, instructionsBundleMode: "managed", search: false },
         runtimeConfig: { heartbeat: { enabled: false } },
       });
       await db.insert(chatConversations).values({ id: chatId, orgId, title: "Native recovery", preferredAgentId: agentId });
@@ -182,7 +183,8 @@ export async function startNativeChatFixture(options: FixtureOptions) {
     await writeFile(path.join(profile, ".rudder-native-chat-profile"), "rudder-native-chat-profile-v1\n", { mode: 0o600 });
     const instructions = path.join(root, "workspaces", orgId.replaceAll("-", "").slice(0, 12), "workspaces/agents/codex-agent/instructions");
     await mkdir(instructions, { recursive: true });
-    await writeFile(path.join(instructions, "SOUL.md"), "Synthetic native browser fixture instructions.\n");
+    if (options.runtimeType !== "hermes_local") await writeFile(path.join(instructions, "SOUL.md"), "Synthetic native browser fixture instructions.\n");
+    await mkdir(path.join(root, "operator-home/hermes-profile"), { recursive: true });
     const instanceRoot = path.join(root, "rudder-home/instances/browser-fixture");
     await mkdir(instanceRoot, { recursive: true });
     const configPath = path.join(instanceRoot, "config.json");
@@ -206,7 +208,7 @@ export async function startNativeChatFixture(options: FixtureOptions) {
     await waitForHealth(nodeUrl, node);
     const fixtureConfigPath = path.join(root, "native-fixture.json");
     await writeFile(fixtureConfigPath, JSON.stringify({ fixtureRoot: root, databaseUrl, nodeUpstream: nodeUrl,
-      listenAddr: `127.0.0.1:${publicPort}`, processHost: options.processHost }));
+      listenAddr: `127.0.0.1:${publicPort}`, processHost: options.processHost, runtimeType: options.runtimeType }));
     rust = launch(options.exampleBinary, [fixtureConfigPath], root, "rust-authority", env);
     const lines = createInterface({ input: rust.child.stdout! });
     const startup = await new Promise<{ publicUrl: string; providerFixtureSha256: string }>((resolve, reject) => {
@@ -220,8 +222,13 @@ export async function startNativeChatFixture(options: FixtureOptions) {
       rust!.child.once("exit", () => { clearTimeout(timer); reject(new Error("Rust browser fixture exited before readiness")); });
       rust!.child.once("error", (error) => { clearTimeout(timer); reject(error); });
     }).finally(() => lines.close());
-    return { root, databaseUrl, orgId, agentId, chatId, issuePrefix: "NCE", publicUrl: startup.publicUrl,
-      providerFixtureSha256: startup.providerFixtureSha256, providerEventsPath: path.join(root, "isolated-home/provider-events.jsonl"), stop };
+    const restartRust = async () => {
+      await stopChild(rust?.child);
+      rust = launch(options.exampleBinary, [fixtureConfigPath], root, "rust-authority-restarted", env);
+      await waitForHealth(startup.publicUrl, rust);
+    };
+    return { root, databaseUrl, orgId, agentId, chatId, restartRust, issuePrefix: "NCE", publicUrl: startup.publicUrl,
+      providerFixtureSha256: startup.providerFixtureSha256, providerEventsPath: options.runtimeType === "hermes_local" ? path.join(root, "operator-home/hermes-profile/provider-events.jsonl") : path.join(root, "isolated-home/provider-events.jsonl"), stop };
   } catch (error) {
     await stop().catch(() => { /* Preserve the root and logs for owned cleanup diagnosis. */ });
     throw new Error(`Native Chat fixture failed; logs preserved at ${root}`, { cause: error });

@@ -584,18 +584,23 @@ fn run(
     };
     let observation = match actor {
         RequestActor::Verified(actor) => {
-            rudder_native_chat_executor::run_observed_with_request_actor_on_blocking_thread(
+            rudder_native_chat_executor::run_observed_native_with_request_actor_on_blocking_thread(
                 handle, &pool, actor, &host, &paths, request,
             )
         }
         RequestActor::Browser(actor) => {
-            rudder_native_chat_executor::run_observed_with_request_actor_on_blocking_thread(
+            rudder_native_chat_executor::run_observed_native_with_request_actor_on_blocking_thread(
                 handle, &pool, actor, &host, &paths, request,
             )
         }
     };
     let observation = match observation {
-        Ok(observation) => observation,
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::Codex(observation)) => {
+            observation
+        }
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::Hermes(observation)) => {
+            return finish_hermes_observation(handle, &pool, observation);
+        }
         Err(failure) => {
             let Some(execution_actor) = failure.execution_principal() else {
                 return Completion {
@@ -603,6 +608,46 @@ fn run(
                     quiescent: failure.process_quiescent(),
                 };
             };
+            if failure.process_disposition()
+                == rudder_native_chat_executor::ProcessDisposition::CleanupProven
+                && let (Some(fence), Some(cleanup)) =
+                    (failure.fence(), failure.hermes_cleanup_receipt())
+            {
+                let status =
+                    match handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
+                        let Some(stop) =
+                            execution::observe_stop(&pool, execution_actor, fence).await?
+                        else {
+                            return Ok(None);
+                        };
+                        let connection = cleanup.connection_receipt();
+                        execution::bind_stopping_connection(
+                            &pool,
+                            execution_actor,
+                            fence,
+                            &stop,
+                            &connection,
+                        )
+                        .await?;
+                        execution::finalize_hermes_stopped_before_submission(
+                            &pool,
+                            execution_actor,
+                            fence,
+                            cleanup,
+                            &stop,
+                        )
+                        .await
+                        .map(Some)
+                    })) {
+                        Ok(Ok(Some(_))) => Status::FinalizationCommitted,
+                        Ok(Ok(None)) => Status::Unresolved(UnresolvedReason::ExecutionUnresolved),
+                        _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+                    };
+                return Completion {
+                    status,
+                    quiescent: failure.process_quiescent(),
+                };
+            }
             let cleanup = failure.cleanup_receipt();
             let status = if failure.process_disposition()
                 == rudder_native_chat_executor::ProcessDisposition::CleanupProven
@@ -688,6 +733,72 @@ fn run(
             {
                 return execution::finalize_stopped(
                     &pool,
+                    &observation.execution_principal,
+                    &observation.fence,
+                    &observation.turn_receipt,
+                    &cleanup,
+                    &stop,
+                )
+                .await;
+            }
+            result
+        })
+        .await
+        {
+            Ok(Ok(_)) => Status::FinalizationCommitted,
+            _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+        }
+    });
+    Completion {
+        status,
+        quiescent: true,
+    }
+}
+
+fn finish_hermes_observation(
+    handle: &tokio::runtime::Handle,
+    pool: &PgPool,
+    observation: rudder_native_chat_executor::HermesExecutionObservation,
+) -> Completion {
+    let Some(cleanup) = observation
+        .cleanup_receipt
+        .filter(|cleanup| cleanup.proves_quiescence_for(&observation.turn_receipt))
+    else {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::MissingCleanupProof),
+            quiescent: false,
+        };
+    };
+    let status = handle.block_on(async {
+        match tokio::time::timeout(Duration::from_secs(5), async {
+            if let Some(stop) = &observation.stop {
+                return execution::finalize_hermes_stopped(
+                    pool,
+                    &observation.execution_principal,
+                    &observation.fence,
+                    &observation.turn_receipt,
+                    &cleanup,
+                    stop,
+                )
+                .await;
+            }
+            let result = execution::finalize_hermes(
+                pool,
+                &observation.execution_principal,
+                &observation.fence,
+                &observation.turn_receipt,
+                &cleanup,
+            )
+            .await;
+            if matches!(
+                &result,
+                Err(rudder_d1_persistence::runtime_bindings::Error::Http(409, _))
+            ) && let Some(stop) =
+                execution::observe_stop(pool, &observation.execution_principal, &observation.fence)
+                    .await?
+            {
+                return execution::finalize_hermes_stopped(
+                    pool,
                     &observation.execution_principal,
                     &observation.fence,
                     &observation.turn_receipt,

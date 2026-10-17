@@ -1,5 +1,6 @@
 //! Rust-owned Chat control and recovery reads. Activation is explicit in the
-//! host config; these handlers never authorize, execute, or retry through Node.
+//! host config. Native turns never authorize, execute, or retry through Node.
+//! Exact, positively identified legacy Stop targets retain compatibility transport.
 use super::*;
 use crate::browser_auth::{self, BrowserActor, BrowserAuthError};
 use rudder_d1_persistence::native_chat::{BrowserPrincipal, control};
@@ -14,22 +15,37 @@ pub(super) fn reserved_path(path: &str) -> bool {
     paths::reserved_path(path)
 }
 
+pub(super) fn capability_path(path: &str) -> bool {
+    paths::capability_path(path)
+}
+
 pub(super) fn configure(routes: &mut web::ServiceConfig, send_enabled: bool) {
+    routes
+        .service(web::resource("/api/native-chat/capabilities").route(web::get().to(capabilities)));
+    // Recovery reads remain available when new provider dispatch is disabled.
+    routes.service(
+        web::resource("/api/orgs/{org_id}/chats/messages/stream/reconcile")
+            .app_data(web::PayloadConfig::new(128 * 1024))
+            .route(web::post().to(reconcile::first_send_reconcile)),
+    );
+    routes.service(
+        web::resource("/api/chats/{chat_id}/messages/stream/reconcile")
+            .app_data(web::PayloadConfig::new(128 * 1024))
+            .route(web::post().to(reconcile::reconcile)),
+    );
     if send_enabled {
         routes.service(
             web::resource("/api/orgs/{org_id}/chats/messages/stream")
-                .app_data(web::PayloadConfig::new(128 * 1024))
+                // Legacy Agent requests are relayed byte-for-byte and retain
+                // the Node ingress's bounded 10 MiB request envelope. Native
+                // Chat applies its smaller JSON limit after authority routing.
+                .app_data(web::PayloadConfig::new(10 * 1024 * 1024))
                 .route(web::post().to(send::first_send)),
         );
         routes.service(
             web::resource("/api/chats/{chat_id}/messages/stream")
-                .app_data(web::PayloadConfig::new(128 * 1024))
+                .app_data(web::PayloadConfig::new(10 * 1024 * 1024))
                 .route(web::post().to(send::send)),
-        );
-        routes.service(
-            web::resource("/api/chats/{chat_id}/messages/stream/reconcile")
-                .app_data(web::PayloadConfig::new(128 * 1024))
-                .route(web::post().to(reconcile::reconcile)),
         );
     }
     routes
@@ -49,7 +65,32 @@ pub(super) fn configure(routes: &mut web::ServiceConfig, send_enabled: bool) {
         )
         .service(
             web::resource("/api/chats/{chat_id}/messages/stream/turn").route(web::get().to(turn)),
+        )
+        .service(
+            web::resource("/api/chats/{chat_id}/messages/stream/control")
+                .app_data(web::PayloadConfig::new(8192))
+                .route(web::get().to(control_state)),
         );
+}
+
+async fn capabilities(state: web::Data<IngressState>, request: HttpRequest) -> HttpResponse {
+    if request.uri().path() != "/api/native-chat/capabilities" {
+        return error(StatusCode::NOT_FOUND, "route_not_found");
+    }
+    if !request.query_string().is_empty() {
+        return error(StatusCode::BAD_REQUEST, "query_not_allowed");
+    }
+    let enabled = state.config.native_chat_mutations.is_some();
+    HttpResponse::Ok()
+        .insert_header((header::CACHE_CONTROL, "no-store"))
+        .json(serde_json::json!({
+            "executionAuthority":"native_rust",
+            "firstSend": enabled
+                && state.config.native_chat_runtime.is_some()
+                && state.foundation.native_chat_worker.is_some(),
+            "readTurn": enabled,
+            "nativeControls": enabled,
+        }))
 }
 
 fn error(status: StatusCode, message: &str) -> HttpResponse {
@@ -241,8 +282,21 @@ struct StopInput {
     rendered_body_hash: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StopTargetInput {
+    expected_generation_id: String,
+    // Required even though the existing authority-specific writer owns CAS and
+    // idempotency. A partial request must not pick an implicit current target.
+    #[serde(rename = "expectedAttemptEpoch")]
+    _expected_attempt_epoch: i32,
+    #[serde(rename = "expectedControlVersion")]
+    _expected_control_version: i32,
+}
+
 async fn stop(
     state: web::Data<IngressState>,
+    proxy: web::Data<PublicIngressProxy>,
     request: HttpRequest,
     chat: web::Path<String>,
     body: web::Bytes,
@@ -253,7 +307,7 @@ async fn stop(
     if !request.query_string().is_empty() {
         return error(StatusCode::BAD_REQUEST, "query_not_allowed");
     }
-    let input: StopInput = match serde_json::from_slice(&body) {
+    let target_input: StopTargetInput = match serde_json::from_slice(&body) {
         Ok(input) => input,
         Err(_) => return error(StatusCode::BAD_REQUEST, "complete_stop_fence_required"),
     };
@@ -264,6 +318,35 @@ async fn stop(
     let (pool, actor) = match principal(&state, &request, &chat, true).await {
         Ok(value) => value,
         Err(response) => return response,
+    };
+    let authority = match control::read_stop_target_authority(
+        &pool,
+        &actor,
+        &control::ReadTurn {
+            conversation_id: chat.to_string(),
+            generation_id: target_input.expected_generation_id,
+        },
+    )
+    .await
+    {
+        Ok(authority) => authority,
+        Err(error) => return result::<serde_json::Value>(Err(error)),
+    };
+    if authority == control::StopTargetAuthority::LegacyTs {
+        // This branch requires a positive, authorized exact legacy target.
+        // The existing Node handler rechecks the target under its mutation
+        // fence. Never route a failed Native control operation through Node.
+        use actix_web::FromRequest;
+        let mut buffered = actix_web::dev::Payload::from(body);
+        let payload = match web::Payload::from_request(&request, &mut buffered).await {
+            Ok(payload) => payload,
+            Err(_) => return unavailable(),
+        };
+        return forward_compatibility(state, proxy, request, payload).await;
+    }
+    let input: StopInput = match serde_json::from_slice(&body) {
+        Ok(input) => input,
+        Err(_) => return error(StatusCode::BAD_REQUEST, "complete_stop_fence_required"),
     };
     let stop_request = control::StopRequest {
         conversation_id: chat.into_inner(),
@@ -307,20 +390,26 @@ async fn stop(
 // A persisted cutoff is not proof that a provider has stopped. Preserve the
 // UI contract without inventing a terminal acknowledgement.
 fn stop_response(receipt: control::StopReceipt) -> serde_json::Value {
-    let disposition = match receipt.outcome {
+    let stopped = receipt.outcome == control::StopOutcome::Stopped;
+    let disposition = match &receipt.outcome {
         control::StopOutcome::StopIntentRecorded | control::StopOutcome::StopInProgress => {
             "stopping"
         }
+        control::StopOutcome::Stopped => "stopped",
         control::StopOutcome::CompletionCommitted => "completion_committed",
         control::StopOutcome::AlreadyTerminal => "no_active_generation",
     };
-    serde_json::json!({
-        "stopped": false, "disposition": disposition,
+    let mut response = serde_json::json!({
+        "stopped": stopped, "disposition": disposition,
         "controlActionId": receipt.control_action_id, "generationId": receipt.generation_id,
         "idempotent": receipt.idempotent,
         "appliedControlVersion": receipt.applied_control_version,
         "acceptedThroughSeq": receipt.accepted_through_seq, "frozenBodyHash": receipt.frozen_body_hash,
-    })
+    });
+    if let Some(input_disposition) = receipt.input_disposition {
+        response["inputDisposition"] = serde_json::json!(input_disposition);
+    }
+    response
 }
 
 #[derive(Deserialize)]
@@ -374,6 +463,40 @@ struct TurnQuery {
     generation_id: String,
 }
 
+async fn control_state(
+    state: web::Data<IngressState>,
+    request: HttpRequest,
+    chat: web::Path<String>,
+    body: web::Bytes,
+    query: web::Query<TurnQuery>,
+) -> HttpResponse {
+    if let Err(response) = canonical(&request, &chat, "control") {
+        return response;
+    }
+    if !body.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "body_not_allowed");
+    }
+    let _permit = match state.foundation.admission.acquire().await {
+        Ok(permit) => permit,
+        Err(_) => return unavailable(),
+    };
+    let (pool, actor) = match principal(&state, &request, &chat, false).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    result(
+        control::read_control_state(
+            &pool,
+            &actor,
+            &control::ReadTurn {
+                conversation_id: chat.into_inner(),
+                generation_id: query.generation_id.clone(),
+            },
+        )
+        .await,
+    )
+}
+
 async fn turn(
     state: web::Data<IngressState>,
     request: HttpRequest,
@@ -396,7 +519,7 @@ async fn turn(
         Err(response) => return response,
     };
     result(
-        control::read_turn(
+        control::read_turn_for_control(
             &pool,
             &actor,
             &control::ReadTurn {
@@ -531,11 +654,31 @@ mod tests {
             applied_control_version: Some(1),
             accepted_through_seq: Some(7),
             frozen_body_hash: Some("hash".into()),
+            input_disposition: None,
         });
         assert_eq!(response["stopped"], false);
         assert_eq!(response["disposition"], "stopping");
         assert_eq!(response["acceptedThroughSeq"], 7);
         assert_eq!(response["controlActionId"], "action");
+    }
+
+    #[actix_web::test]
+    async fn persisted_stop_terminal_is_explicitly_reported() {
+        let response = stop_response(control::StopReceipt {
+            control_action_id: "action".into(),
+            generation_id: "generation".into(),
+            outcome: control::StopOutcome::Stopped,
+            idempotent: true,
+            applied_control_version: Some(1),
+            accepted_through_seq: Some(0),
+            frozen_body_hash: Some(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
+            ),
+            input_disposition: None,
+        });
+        assert_eq!(response["stopped"], true);
+        assert_eq!(response["disposition"], "stopped");
+        assert_eq!(response["idempotent"], true);
     }
 }
 

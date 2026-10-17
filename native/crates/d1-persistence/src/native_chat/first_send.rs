@@ -69,6 +69,29 @@ struct InitialDraftProof {
     effort_override: Option<String>,
     issue_creation_mode: String,
     plan_mode: bool,
+    safe_runtime_descriptor: SafeRuntimeDescriptor,
+    safe_chat_runtime: SafeChatRuntime,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SafeRuntimeDescriptor {
+    version: u8,
+    runtime_type: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SafeChatRuntime {
+    version: u8,
+    source_type: String,
+    runtime_type: String,
+    source_label: String,
+    runtime_agent_id: String,
+    model: Option<String>,
+    effort: Option<String>,
+    available: bool,
+    error: Option<String>,
 }
 
 pub(super) async fn lookup_submission(
@@ -213,7 +236,7 @@ pub(super) async fn submit(
     };
     let conversation_id: String = inserted.try_get("id")?;
 
-    let (tx, receipt) = admission::submit_in_transaction(
+    let (mut tx, receipt) = admission::submit_in_transaction(
         tx,
         actor,
         admission::AdmissionInput {
@@ -227,6 +250,30 @@ pub(super) async fn submit(
         },
     )
     .await?;
+    // Admission augments this immutable draft proof with the resolved safe
+    // runtime descriptor in the same transaction. Read the durable value back
+    // instead of projecting from the request-side draft snapshot.
+    let proof = initial_draft_proof(
+        &mut tx,
+        organization_id,
+        &conversation_id,
+        client_mutation_id,
+    )
+    .await?
+    .ok_or_else(|| http(409, "Initial Native Chat draft proof is unavailable"))?;
+    let public_conversation = public_conversation_projection(
+        &mut tx,
+        organization_id,
+        &conversation_id,
+        client_mutation_id,
+        &proof,
+    )
+    .await?;
+    let mut receipt = receipt;
+    receipt
+        .as_object_mut()
+        .ok_or_else(|| http(500, "Native Chat admission receipt is malformed"))?
+        .insert("conversation".into(), public_conversation);
     tx.commit().await?;
     Ok(receipt)
 }
@@ -279,7 +326,215 @@ async fn exact_existing_receipt(
     )
     .await?;
     auth::authorize_org(tx, actor, organization_id).await?;
-    Ok(receipt.json())
+    let mut receipt = receipt.json();
+    let public_conversation = public_conversation_projection(
+        tx,
+        organization_id,
+        conversation_id,
+        client_mutation_id,
+        &proof,
+    )
+    .await?;
+    receipt
+        .as_object_mut()
+        .ok_or_else(|| http(500, "Native Chat admission receipt is malformed"))?
+        .insert("conversation".into(), public_conversation);
+    Ok(receipt)
+}
+
+async fn public_conversation_projection(
+    tx: &mut auth::Tx<'_>,
+    organization_id: &str,
+    conversation_id: &str,
+    client_mutation_id: &str,
+    proof: &InitialDraftProof,
+) -> Result<Value> {
+    validate_public_runtime_snapshot(proof)?;
+    let row = sqlx::query(
+        "SELECT c.id::text AS id,c.org_id::text AS org_id,c.status,c.title,c.summary,
+                c.preferred_agent_id::text AS preferred_agent_id,
+                c.model_override,c.effort_override,c.issue_creation_mode,c.plan_mode,
+                c.routed_agent_id::text AS routed_agent_id,c.primary_issue_id::text AS primary_issue_id,
+                c.forked_from_conversation_id::text AS forked_from_conversation_id,
+                c.forked_from_message_id::text AS forked_from_message_id,
+                c.fork_root_conversation_id::text AS fork_root_conversation_id,
+                c.created_by_user_id,c.resolved_at::text AS resolved_at,
+                c.created_at::text AS created_at,c.updated_at::text AS updated_at,
+                COALESCE(c.last_message_at,m.created_at)::text AS last_message_at,
+                (SELECT count(*)::int FROM chat_messages u
+                 WHERE u.org_id=c.org_id AND u.conversation_id=c.id
+                   AND u.role='user' AND u.kind='message' AND u.status='completed'
+                   AND u.superseded_at IS NULL) AS user_message_count,
+                (SELECT left(u.body,200) FROM chat_messages u
+                 WHERE u.org_id=c.org_id AND u.conversation_id=c.id
+                   AND u.role='user' AND u.kind='message' AND u.status='completed'
+                   AND u.superseded_at IS NULL
+                 ORDER BY u.created_at DESC,u.id DESC LIMIT 1) AS latest_user_message_preview
+         FROM chat_conversations c
+         JOIN chat_messages m
+           ON m.org_id=c.org_id AND m.conversation_id=c.id
+          AND m.client_mutation_id=$3 AND m.role='user' AND m.kind='message'
+          AND m.status='completed'
+         WHERE c.org_id=$1::uuid AND c.id=$2::uuid
+           AND c.conversation_kind='chat' AND c.initial_client_mutation_id=$3
+         LIMIT 1",
+    )
+    .bind(organization_id)
+    .bind(conversation_id)
+    .bind(client_mutation_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| http(409, "Initial Native Chat conversation projection is unavailable"))?;
+
+    let id: String = row.try_get("id")?;
+    let org_id: String = row.try_get("org_id")?;
+    let status: String = row.try_get("status")?;
+    let title: String = row.try_get("title")?;
+    let preferred_agent_id: Option<String> = row.try_get("preferred_agent_id")?;
+    if id != conversation_id
+        || org_id != organization_id
+        || !matches!(status.as_str(), "active" | "resolved" | "archived")
+    {
+        return Err(http(409, "Initial Native Chat conversation changed"));
+    }
+
+    let summary: Option<String> = row.try_get("summary")?;
+    let model_override: Option<String> = row.try_get("model_override")?;
+    let effort_override: Option<String> = row.try_get("effort_override")?;
+    let issue_creation_mode: String = row.try_get("issue_creation_mode")?;
+    let plan_mode: bool = row.try_get("plan_mode")?;
+    let routed_agent_id: Option<String> = row.try_get("routed_agent_id")?;
+    let primary_issue_id: Option<String> = row.try_get("primary_issue_id")?;
+    let forked_from_conversation_id: Option<String> = row.try_get("forked_from_conversation_id")?;
+    let forked_from_message_id: Option<String> = row.try_get("forked_from_message_id")?;
+    let fork_root_conversation_id: Option<String> = row.try_get("fork_root_conversation_id")?;
+    let created_by_user_id: Option<String> = row.try_get("created_by_user_id")?;
+    let resolved_at: Option<String> = row.try_get("resolved_at")?;
+    let created_at: String = row.try_get("created_at")?;
+    let updated_at: String = row.try_get("updated_at")?;
+    let last_message_at: String = row.try_get("last_message_at")?;
+    let latest_user_message_preview: String = row.try_get("latest_user_message_preview")?;
+    let user_message_count: i32 = row.try_get("user_message_count")?;
+
+    // The accepted Run remains bound to its immutable Agent proof. Current
+    // Conversation preferences are display state, not part of that proof.
+    // Do not present the original runtime as the newly selected Agent or
+    // resolve mutable configuration merely to recover an accepted message.
+    let chat_runtime = if preferred_agent_id.as_deref() == Some(proof.selected_agent_id.as_str()) {
+        serde_json::json!({
+        "sourceType":proof.safe_chat_runtime.source_type,
+        "sourceLabel":proof.safe_chat_runtime.source_label,
+        "runtimeAgentId":proof.safe_chat_runtime.runtime_agent_id,
+        "agentRuntimeType":proof.safe_chat_runtime.runtime_type,
+        "model":proof.safe_chat_runtime.model,
+        "effort":proof.safe_chat_runtime.effort,
+        "available":proof.safe_chat_runtime.available,
+        "error":proof.safe_chat_runtime.error,
+        })
+    } else {
+        serde_json::json!({
+            "sourceType":"agent",
+            "sourceLabel":"Agent",
+            "runtimeAgentId":preferred_agent_id,
+            "agentRuntimeType":null,
+            "model":null,
+            "effort":null,
+            "available":false,
+            "error":"Refresh this chat to load its current Agent.",
+        })
+    };
+    let mut projection = serde_json::Map::new();
+    for (key, value) in [
+        ("id", serde_json::json!(id)),
+        ("orgId", serde_json::json!(org_id)),
+        ("status", serde_json::json!(status)),
+        ("conversationKind", serde_json::json!("chat")),
+        ("messengerVisible", serde_json::json!(true)),
+        ("sideChatState", serde_json::json!(null)),
+        ("sideChatExpiresAt", serde_json::json!(null)),
+        ("sideChatCompletedAt", serde_json::json!(null)),
+        ("sideChatKeptAt", serde_json::json!(null)),
+        ("sideChatClientMutationId", serde_json::json!(null)),
+        (
+            "initialClientMutationId",
+            serde_json::json!(client_mutation_id),
+        ),
+        ("mutability", serde_json::json!("native_chat")),
+        ("title", serde_json::json!(title)),
+        ("summary", serde_json::json!(summary)),
+        ("latestReplyPreview", serde_json::json!(null)),
+        (
+            "latestUserMessagePreview",
+            serde_json::json!(latest_user_message_preview),
+        ),
+        ("userMessageCount", serde_json::json!(user_message_count)),
+        ("preferredAgentId", serde_json::json!(preferred_agent_id)),
+        ("modelOverride", serde_json::json!(model_override)),
+        ("effortOverride", serde_json::json!(effort_override)),
+        ("routedAgentId", serde_json::json!(routed_agent_id)),
+        ("primaryIssueId", serde_json::json!(primary_issue_id)),
+        (
+            "forkedFromConversationId",
+            serde_json::json!(forked_from_conversation_id),
+        ),
+        (
+            "forkedFromMessageId",
+            serde_json::json!(forked_from_message_id),
+        ),
+        (
+            "forkRootConversationId",
+            serde_json::json!(fork_root_conversation_id),
+        ),
+        ("primaryIssue", serde_json::json!(null)),
+        ("issueCreationMode", serde_json::json!(issue_creation_mode)),
+        ("planMode", serde_json::json!(plan_mode)),
+        ("createdByUserId", serde_json::json!(created_by_user_id)),
+        ("lastMessageAt", serde_json::json!(last_message_at)),
+        ("lastReadAt", serde_json::json!(null)),
+        ("isPinned", serde_json::json!(false)),
+        ("isUnread", serde_json::json!(false)),
+        ("unreadCount", serde_json::json!(0)),
+        ("needsAttention", serde_json::json!(false)),
+        ("resolvedAt", serde_json::json!(resolved_at)),
+        ("contextLinks", serde_json::json!([])),
+        ("sourceMetadata", serde_json::json!(null)),
+        ("chatRuntime", serde_json::json!(chat_runtime)),
+        ("createdAt", serde_json::json!(created_at)),
+        ("updatedAt", serde_json::json!(updated_at)),
+    ] {
+        projection.insert(key.to_owned(), value);
+    }
+    Ok(Value::Object(projection))
+}
+
+fn validate_public_runtime_snapshot(proof: &InitialDraftProof) -> Result<()> {
+    let runtime_type = proof.safe_runtime_descriptor.runtime_type.as_str();
+    let runtime = &proof.safe_chat_runtime;
+    if proof.safe_runtime_descriptor.version != 1
+        || runtime.version != 1
+        || !matches!(runtime_type, "codex_local" | "pi_local" | "hermes_local")
+        || runtime.source_type != "agent"
+        || runtime.runtime_type != runtime_type
+        || runtime.source_label.trim().is_empty()
+        || runtime.source_label.chars().count() > 200
+        || runtime.runtime_agent_id != proof.selected_agent_id
+        || runtime
+            .model
+            .as_ref()
+            .is_some_and(|model| model.len() > 256)
+        || runtime
+            .effort
+            .as_ref()
+            .is_some_and(|effort| effort.len() > 64)
+        || !runtime.available
+        || runtime.error.is_some()
+    {
+        return Err(http(
+            409,
+            "Initial Native Chat runtime projection is malformed",
+        ));
+    }
+    Ok(())
 }
 
 async fn find_initial_conversation(

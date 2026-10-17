@@ -196,7 +196,29 @@ async fn public_turn_messages_are_scoped_bounded_and_never_expose_execution_prov
     assert_eq!(admitted.source_message["attachments"], json!([]));
     assert!(admitted.assistant_message.is_none());
     assert!(!admitted.runtime_terminal);
+    assert_eq!(admitted.last_client_checkpoint_seq, None);
+    assert_eq!(admitted.last_client_checkpoint_hash, None);
     let message = seed_text(&database.pool, &stop, &run).await;
+    let empty_hash = hash("");
+    rudder_d1_persistence::native_chat::control::record_client_checkpoint(
+        &database.pool,
+        &actor,
+        &rudder_d1_persistence::native_chat::control::ClientCheckpointRequest {
+            conversation_id: CHAT.into(),
+            generation_id: stop.generation_id.clone(),
+            attempt_epoch: 1,
+            generation_seq: 0,
+            rendered_body_hash: empty_hash.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let checkpointed = read_turn(&database.pool, &actor, &request).await.unwrap();
+    assert_eq!(checkpointed.last_client_checkpoint_seq, Some(0));
+    assert_eq!(
+        checkpointed.last_client_checkpoint_hash.as_deref(),
+        Some(empty_hash.as_str())
+    );
     let projected = read_turn(&database.pool, &actor, &request).await.unwrap();
     assert_eq!(projected.assistant_message.as_ref().unwrap()["id"], message);
     assert_eq!(projected.assistant_message.as_ref().unwrap()["body"], "ab");
@@ -224,4 +246,51 @@ async fn public_turn_messages_are_scoped_bounded_and_never_expose_execution_prov
         .bind(&message).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
     assert_conflict(read_turn(&database.pool, &actor, &request).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn control_turn_read_reports_legacy_only_for_the_exact_authorized_legacy_generation() {
+    use rudder_d1_persistence::native_chat::control::{ReadTurn, read_turn_for_control};
+
+    let database = Database::start().await;
+    let (actor, _, _, _) = seed_execution(&database).await;
+    let generation = "71000000-0000-4000-8000-000000000019";
+    sqlx::query(
+        "INSERT INTO chat_generations(id,org_id,conversation_id,status)
+         VALUES($1::uuid,$2::uuid,$3::uuid,'completed')",
+    )
+    .bind(generation)
+    .bind(ORG)
+    .bind(CHAT)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
+    let request = ReadTurn {
+        conversation_id: CHAT.into(),
+        generation_id: generation.into(),
+    };
+    let result = read_turn_for_control(&database.pool, &actor, &request)
+        .await
+        .unwrap();
+    assert_eq!(result["executionAuthority"], "legacy_ts");
+    assert_eq!(result["generationId"], generation);
+    assert_eq!(result["attemptEpoch"], 1);
+    assert_eq!(result["controlVersion"], 0);
+    assert!(result.get("sourceMessage").is_none());
+    assert!(result.get("runId").is_none());
+
+    let missing = ReadTurn {
+        conversation_id: CHAT.into(),
+        generation_id: "71000000-0000-4000-8000-000000000020".into(),
+    };
+    assert!(matches!(
+        read_turn_for_control(&database.pool, &actor, &missing).await,
+        Err(Error::Http(404, _))
+    ));
+    let foreign = verified_actor(OTHER, USER, "foreign-legacy-turn-read");
+    assert!(matches!(
+        read_turn_for_control(&database.pool, &foreign, &request).await,
+        Err(Error::Http(403 | 404, _))
+    ));
 }

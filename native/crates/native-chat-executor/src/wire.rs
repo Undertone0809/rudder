@@ -14,15 +14,20 @@ pub(crate) fn locator(value: &Value) -> Result<String> {
 }
 
 pub(crate) fn thread_params(config: &ResolvedCodexConfig) -> Value {
-    json!({
-        "model": config.model,
+    let mut params = json!({
         "ephemeral": false,
         "cwd": config.cwd.to_string_lossy(),
-        "approvalPolicy": "on-request",
-        "sandbox": "read-only",
-        "developerInstructions": config.instruction_content,
-        "config": {"web_search": "disabled"},
-    })
+        "config": {
+            "web_search": if config.search_enabled { "live" } else { "disabled" }
+        },
+    });
+    if let Some(model) = &config.model {
+        params["model"] = json!(model);
+    }
+    if let Some(instructions) = &config.instruction_content {
+        params["developerInstructions"] = json!(instructions);
+    }
+    params
 }
 
 pub(crate) fn turn_params(
@@ -31,16 +36,19 @@ pub(crate) fn turn_params(
     body: &str,
     config: &ResolvedCodexConfig,
 ) -> Value {
-    json!({
+    let mut params = json!({
         "threadId": thread,
         "clientUserMessageId": source_message,
         "cwd": config.cwd.to_string_lossy(),
         "input": [{"type": "text", "text": body, "text_elements": []}],
-        "model": config.model,
-        "effort": config.reasoning_effort,
-        "approvalPolicy": "on-request",
-        "sandboxPolicy": {"type": "readOnly", "networkAccess": false},
-    })
+    });
+    if let Some(model) = &config.model {
+        params["model"] = json!(model);
+    }
+    if let Some(effort) = &config.reasoning_effort {
+        params["effort"] = json!(effort);
+    }
+    params
 }
 
 pub(crate) type ProviderStatus = TurnStatus;
@@ -74,6 +82,38 @@ pub(crate) fn terminal(params: Value, thread: &str, turn: &str) -> Result<Provid
 mod tests {
     use super::*;
 
+    fn config() -> ResolvedCodexConfig {
+        ResolvedCodexConfig {
+            identity: rudder_d1_persistence::native_chat::config::RuntimeBindingIdentity {
+                agent_id: "agent".into(),
+                runtime_type: "codex_local".into(),
+                host_id: "host".into(),
+                profile_id: "managed-codex:agent:work".into(),
+                workspace_binding_id: None,
+                instructions_revision: "sha256:instructions".into(),
+                capability_revision: "sha256:capabilities".into(),
+            },
+            executable: "/opt/codex".into(),
+            cwd: "/workspace/project".into(),
+            model: Some("custom/provider-model".into()),
+            reasoning_effort: Some("high".into()),
+            plan_mode: false,
+            search_enabled: false,
+            bypass_approvals_and_sandbox: false,
+            profile: rudder_d1_persistence::native_chat::config::ManagedCodexProfile {
+                id: "managed-codex:agent:work".into(),
+                home: "/managed/codex-home".into(),
+                native_managed: true,
+            },
+            operator_home: "/operator".into(),
+            executable_search_path: "/usr/bin:/bin".into(),
+            instruction_source_path: None,
+            instruction_entry_file: "AGENTS.md".into(),
+            instruction_content: Some("Use the selected profile.".into()),
+            hermes: None,
+        }
+    }
+
     #[test]
     fn terminal_requires_exact_thread_turn_and_terminal_status() {
         let valid = json!({"threadId":" opaque thread ","turn":{"id":"turn/1","status":"completed","items":[]}});
@@ -93,5 +133,47 @@ mod tests {
         assert!(terminal(summary, "t", "u").is_ok());
         assert!(locator(&json!("x".repeat(4097))).is_err());
         assert!(locator(&json!(" ")).is_ok());
+    }
+
+    #[test]
+    fn requests_inherit_selected_codex_profile_policy_and_extensions() {
+        let config = config();
+        let thread = thread_params(&config);
+        assert_eq!(thread["model"], "custom/provider-model");
+        assert_eq!(thread["developerInstructions"], "Use the selected profile.");
+        assert!(thread.get("approvalPolicy").is_none());
+        assert!(thread.get("sandbox").is_none());
+        assert_eq!(thread["config"]["web_search"], "disabled");
+
+        let turn = turn_params("thread", "message", "hello", &config);
+        assert_eq!(turn["effort"], "high");
+        assert!(turn.get("approvalPolicy").is_none());
+        assert!(turn.get("sandboxPolicy").is_none());
+    }
+
+    #[test]
+    fn thread_request_preserves_enabled_agent_search_setting() {
+        let mut config = config();
+        config.search_enabled = true;
+        let thread = thread_params(&config);
+        assert_eq!(thread["config"]["web_search"], "live");
+        assert!(thread["config"].get("mcp_servers").is_none());
+        assert!(thread["config"].get("skills").is_none());
+    }
+
+    #[test]
+    fn requests_omit_unset_model_and_effort_to_inherit_selected_profile() {
+        let mut config = config();
+        config.model = None;
+        config.reasoning_effort = None;
+        config.instruction_content = None;
+
+        let thread = thread_params(&config);
+        assert!(thread.get("model").is_none());
+        assert!(thread.get("developerInstructions").is_none());
+
+        let turn = turn_params("thread", "message", "hello", &config);
+        assert!(turn.get("model").is_none());
+        assert!(turn.get("effort").is_none());
     }
 }

@@ -4,6 +4,9 @@ use super::{
 };
 use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activity_options};
 use crate::native_chat::NativeChatExecutionActor;
+use rudder_codex_app_server::EffectResponseReceipt;
+use rudder_hermes_acp::{HermesSessionStartReceipt, HermesTurnReceipt};
+use rudder_runtime_core::native_chat::HermesSessionSelector;
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::json;
 use sqlx::PgPool;
@@ -13,11 +16,67 @@ use sqlx::PgPool;
 #[derive(Clone, Eq, PartialEq)]
 pub enum CheckpointTransition {
     PrepareThreadStart,
+    PrepareHermesSessionStart,
     RecordThread { thread_id: String },
     PrepareInput,
     MarkInputIndeterminate,
     RecordTurn { thread_id: String, turn_id: String },
     ObserveProviderTerminal { thread_id: String, turn_id: String },
+    RecordHermesSession { session_id: String },
+    MarkHermesInputIndeterminate { request_id: u64 },
+    RecordHermesTurn,
+    ObserveHermesProviderTerminal { session_id: String, request_id: u64 },
+}
+
+pub(super) enum StoppingObservation<'a> {
+    Codex(&'a EffectResponseReceipt),
+    HermesSession(&'a HermesSessionStartReceipt),
+    HermesTurn(&'a HermesTurnReceipt),
+}
+
+impl StoppingObservation<'_> {
+    pub(super) fn connection_receipt_id(&self) -> &str {
+        match self {
+            Self::Codex(value) => value.connection_receipt_id(),
+            Self::HermesSession(value) => value.connection_receipt_id(),
+            Self::HermesTurn(value) => value.connection_receipt_id(),
+        }
+    }
+
+    pub(super) fn correlation(&self) -> String {
+        match self {
+            Self::Codex(value) => value.correlation(),
+            Self::HermesSession(value) => value.correlation(),
+            Self::HermesTurn(value) => value.correlation(),
+        }
+    }
+
+    pub(super) fn matches_claim(&self, fence: &ExecutionFence) -> bool {
+        let id = fence.identity();
+        match self {
+            Self::Codex(value) => value.matches_connection_claim(
+                id.run_id,
+                id.attempt_id,
+                fence.run_execution_owner_token(),
+                id.connection_epoch,
+                &fence.connection_claim_id,
+            ),
+            Self::HermesSession(value) => value.matches_connection_claim(
+                id.run_id,
+                id.attempt_id,
+                fence.run_execution_owner_token(),
+                id.connection_epoch,
+                &fence.connection_claim_id,
+            ),
+            Self::HermesTurn(value) => value.matches_connection_claim(
+                id.run_id,
+                id.attempt_id,
+                fence.run_execution_owner_token(),
+                id.connection_epoch,
+                &fence.connection_claim_id,
+            ),
+        }
+    }
 }
 
 impl CheckpointTransition {
@@ -28,6 +87,7 @@ impl CheckpointTransition {
     ) -> Result<NativeChatProtocolCheckpoint> {
         let proposed = match self {
             Self::PrepareThreadStart => checkpoint.prepare_thread_start(expected_revision),
+            Self::PrepareHermesSessionStart => checkpoint.prepare_thread_start(expected_revision),
             Self::RecordThread { thread_id } => {
                 checkpoint.record_thread(expected_revision, thread_id.clone())
             }
@@ -39,6 +99,23 @@ impl CheckpointTransition {
             Self::ObserveProviderTerminal { thread_id, turn_id } => {
                 checkpoint.record_provider_terminal(expected_revision, thread_id, turn_id)
             }
+            Self::RecordHermesSession { session_id } => {
+                let selector = HermesSessionSelector::from_persisted(session_id)
+                    .map_err(|_| super::http(409, "Hermes session selector is invalid"))?;
+                checkpoint.record_hermes_session(expected_revision, selector)
+            }
+            Self::MarkHermesInputIndeterminate { request_id } => {
+                checkpoint.mark_hermes_input_indeterminate(expected_revision, *request_id)
+            }
+            Self::RecordHermesTurn => checkpoint.record_hermes_turn(expected_revision),
+            Self::ObserveHermesProviderTerminal {
+                session_id,
+                request_id,
+            } => checkpoint.record_hermes_provider_terminal(
+                expected_revision,
+                session_id,
+                *request_id,
+            ),
         };
         proposed
             .map_err(|_| super::http(409, "Native Chat checkpoint transition is stale or invalid"))
@@ -47,7 +124,9 @@ impl CheckpointTransition {
     fn effect_kind(&self) -> Option<EffectKind> {
         match self {
             Self::PrepareThreadStart => Some(EffectKind::StartThread),
+            Self::PrepareHermesSessionStart => Some(EffectKind::StartHermesSession),
             Self::MarkInputIndeterminate => Some(EffectKind::SubmitInput),
+            Self::MarkHermesInputIndeterminate { .. } => Some(EffectKind::SubmitHermesInput),
             _ => None,
         }
     }
@@ -64,6 +143,7 @@ pub struct EffectPermit {
     pub(super) thread_id: Option<String>,
     pub(super) source_message_id: Option<String>,
     pub(super) input_fingerprint: Option<String>,
+    pub(super) session_id: Option<String>,
 }
 
 impl EffectPermit {
@@ -88,6 +168,8 @@ impl EffectPermit {
 pub enum EffectKind {
     StartThread,
     SubmitInput,
+    StartHermesSession,
+    SubmitHermesInput,
 }
 
 pub struct CheckpointReceipt {
@@ -134,10 +216,7 @@ pub(super) async fn advance(
     expected_phase: NativeChatProtocolPhase,
     expected_revision: u64,
     transition: CheckpointTransition,
-    stop: Option<(
-        &super::stopping::StopIntent,
-        &rudder_codex_app_server::EffectResponseReceipt,
-    )>,
+    stop: Option<(&super::stopping::StopIntent, StoppingObservation<'_>)>,
 ) -> Result<CheckpointReceipt> {
     let mut tx = pool.begin().await?;
     let locked = if let Some((stop, _)) = stop {
@@ -163,10 +242,16 @@ pub(super) async fn advance(
     // The exact Thread locator and its protocol checkpoint form one durable
     // transition. Write the Segment first so any later CAS/audit failure proves
     // transaction rollback also leaves the locator pending.
-    if let CheckpointTransition::RecordThread { thread_id } = &transition {
+    let new_session_id = match &transition {
+        CheckpointTransition::RecordThread { thread_id } => Some(thread_id.as_str()),
+        CheckpointTransition::RecordHermesSession { session_id } => Some(session_id.as_str()),
+        _ => None,
+    };
+    if let Some(session_id) = new_session_id {
         if locked.segment_state != "pending"
             || locked.native_session_id.is_some()
             || locked.checkpoint.thread_id().is_some()
+            || locked.checkpoint.hermes_session().is_some()
         {
             return Err(super::http(
                 409,
@@ -187,7 +272,7 @@ pub(super) async fn advance(
         .bind(&fence.organization_id)
         .bind(&locked.binding_id)
         .bind(&locked.segment_id)
-        .bind(thread_id)
+        .bind(session_id)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -364,7 +449,7 @@ pub(super) async fn advance(
             stop,
             current,
             &next,
-            observation,
+            &observation,
         )
         .await?;
         // The new checkpoint and chain now agree; recheck leases and current
@@ -373,11 +458,20 @@ pub(super) async fn advance(
     }
     tx.commit().await?;
     let effect_permit = transition.effect_kind().map(|kind| {
-        let (source_message_id, input_fingerprint) = match kind {
-            EffectKind::StartThread => (None, None),
+        let (source_message_id, input_fingerprint, session_id) = match kind {
+            EffectKind::StartThread | EffectKind::StartHermesSession => (None, None, None),
             EffectKind::SubmitInput => (
                 locked.admitted_message_id.clone(),
                 locked.admitted_input_fingerprint.clone(),
+                None,
+            ),
+            EffectKind::SubmitHermesInput => (
+                locked.admitted_message_id.clone(),
+                locked.admitted_input_fingerprint.clone(),
+                snapshot
+                    .hermes_session
+                    .as_ref()
+                    .map(|session| session.as_str().to_owned()),
             ),
         };
         EffectPermit {
@@ -388,6 +482,7 @@ pub(super) async fn advance(
             thread_id: snapshot.thread_id.clone(),
             source_message_id,
             input_fingerprint,
+            session_id,
         }
     });
     Ok(CheckpointReceipt {
@@ -412,9 +507,12 @@ pub async fn current_checkpoint(
 
 fn snapshot(checkpoint: &NativeChatProtocolCheckpoint) -> CheckpointSnapshot {
     CheckpointSnapshot {
+        provider: checkpoint.provider(),
         phase: checkpoint.phase(),
         revision: checkpoint.revision(),
         thread_id: checkpoint.thread_id().map(str::to_owned),
         turn_id: checkpoint.turn_id().map(str::to_owned),
+        hermes_session: checkpoint.hermes_session().cloned(),
+        hermes_prompt_request_id: checkpoint.hermes_prompt_request_id(),
     }
 }

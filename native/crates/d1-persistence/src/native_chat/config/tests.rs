@@ -73,6 +73,189 @@ fn parser_preserves_persisted_model_and_chat_overrides_with_safe_defaults() {
 }
 
 #[test]
+fn parser_inherits_native_codex_profile_defaults_without_overriding_explicit_choices() {
+    let inherited = runtime::parse_agent_config_with_profile_defaults(
+        json!({}),
+        None,
+        None,
+        false,
+        Path::new("/operator"),
+        true,
+    )
+    .expect("native profile defaults remain authoritative when no override exists");
+    assert_eq!(inherited.model, None);
+    assert_eq!(inherited.effort, None);
+
+    let configured = runtime::parse_agent_config_with_profile_defaults(
+        json!({"model":"profile-agent-model","modelReasoningEffort":"xhigh"}),
+        None,
+        None,
+        false,
+        Path::new("/operator"),
+        true,
+    )
+    .expect("explicit Agent choices override the profile");
+    assert_eq!(configured.model.as_deref(), Some("profile-agent-model"));
+    assert_eq!(configured.effort.as_deref(), Some("xhigh"));
+
+    let chat_override = runtime::parse_agent_config_with_profile_defaults(
+        json!({"model":"profile-agent-model","modelReasoningEffort":"xhigh"}),
+        Some("chat-model".into()),
+        Some("high".into()),
+        false,
+        Path::new("/operator"),
+        true,
+    )
+    .expect("explicit Chat choices retain their established precedence");
+    assert_eq!(chat_override.model.as_deref(), Some("chat-model"));
+    assert_eq!(chat_override.effort.as_deref(), Some("high"));
+}
+
+#[test]
+fn parser_excludes_legacy_heartbeat_scheduler_policy_from_direct_chat_identity() {
+    let defaults = parsed(json!({}), None, None, false);
+    let with_heartbeat = parsed(
+        json!({
+            "heartbeat": {
+                "enabled": true,
+                "intervalSec": 300,
+                "cooldownSec": 10,
+                "maxConcurrentRuns": 2,
+                "preflightEnabled": true,
+                "wakeOnDemand": true,
+            }
+        }),
+        None,
+        None,
+        false,
+    );
+
+    assert_eq!(with_heartbeat.model, defaults.model);
+    assert_eq!(with_heartbeat.effort, defaults.effort);
+    assert_eq!(
+        with_heartbeat.capability_revision_input, defaults.capability_revision_input,
+        "heartbeat scheduling policy must not change a direct Chat request identity"
+    );
+
+    assert_http_error(
+        runtime::parse_agent_config(
+            json!({"heartbeat": "not-an-object"}),
+            None,
+            None,
+            false,
+            Path::new("/operator"),
+        ),
+        409,
+        None,
+    );
+}
+
+#[test]
+fn native_profile_parser_preserves_supported_selected_agent_codex_settings() {
+    let settings = runtime::parse_agent_config_with_profile_defaults(
+        json!({
+            "model": "gpt-6-luna",
+            "modelReasoningEffort": "xhigh",
+            "modelFallbacks": [],
+            "timeoutSec": 0,
+            "graceSec": 20,
+            "search": true,
+            "dangerouslyBypassApprovalsAndSandbox": true,
+            "instructionsBundleMode": "external",
+            "instructionsRootPath": "/workspace/agent/instructions",
+            "instructionsEntryFile": "AGENTS.md",
+            "instructionsFilePath": "/workspace/agent/INSTRUCTIONS.md",
+            "heartbeat": {"enabled": true}
+        }),
+        None,
+        None,
+        false,
+        Path::new("/operator"),
+        true,
+    )
+    .expect("supported Agent settings for the installed native Codex profile");
+
+    assert_eq!(settings.model.as_deref(), Some("gpt-6-luna"));
+    assert_eq!(settings.effort.as_deref(), Some("xhigh"));
+    assert!(settings.search_enabled);
+    assert!(settings.bypass_approvals_and_sandbox);
+    assert_eq!(settings.capability_revision_input["searchEnabled"], true);
+    assert_eq!(
+        settings.capability_revision_input["bypassApprovalsAndSandbox"],
+        true
+    );
+}
+
+#[test]
+fn native_profile_parser_fails_closed_on_unsupported_codex_agent_settings() {
+    for config in [
+        json!({"modelFallbacks":[{"agentRuntimeType":"claude_local","model":"x"}]}),
+        json!({"timeoutSec":30}),
+        json!({"timeoutSec":"0"}),
+    ] {
+        assert_http_error(
+            runtime::parse_agent_config_with_profile_defaults(
+                config,
+                None,
+                None,
+                false,
+                Path::new("/operator"),
+                true,
+            ),
+            409,
+            None,
+        );
+    }
+
+    assert_http_error(
+        runtime::parse_agent_config_with_profile_defaults(
+            json!({"dangerouslyBypassApprovalsAndSandbox":true}),
+            None,
+            None,
+            false,
+            Path::new("/operator"),
+            false,
+        ),
+        409,
+        None,
+    );
+    assert_http_error(
+        runtime::parse_agent_config_with_profile_defaults(
+            json!({"search":true}),
+            None,
+            None,
+            false,
+            Path::new("/operator"),
+            false,
+        ),
+        409,
+        None,
+    );
+}
+
+#[test]
+fn native_profile_parser_rejects_nonempty_model_fallbacks() {
+    for config in [
+        json!({"modelFallbacks":[{"agentRuntimeType":"codex_local","model":"gpt-5.6-luna"}]}),
+        json!({"modelFallbacks":null}),
+        json!({"modelFallbacks":"none"}),
+    ] {
+        assert_http_error(
+            runtime::parse_agent_config_with_profile_defaults(
+                config,
+                None,
+                None,
+                false,
+                Path::new("/operator"),
+                true,
+            ),
+            409,
+            None,
+        );
+    }
+}
+
+#[test]
 fn parser_rejects_plan_mode_until_native_protocol_mapping_is_verified() {
     for config in [json!({}), json!({"planMode": true})] {
         assert_http_error(
@@ -204,12 +387,12 @@ async fn resolver_uses_locked_chat_agent_exact_issue_workspace_and_read_only_man
 
     let host = LocalHostContext::from_rust_host(
         "test-host".into(),
-        instance,
+        instance.clone(),
         workspace_home,
         previous_documents,
         false,
         profiles,
-        operator_home,
+        operator_home.clone(),
         executable.clone(),
     )
     .expect("construct trusted isolated host context");
@@ -331,6 +514,248 @@ async fn resolver_uses_locked_chat_agent_exact_issue_workspace_and_read_only_man
         1,
         "resolution must not create or migrate instruction files"
     );
+
+    // Native profile mode binds the already-provisioned per-Agent Codex home
+    // without creating it, copying auth, or falling back to the synthetic
+    // fixture profile. The profile config affects the opaque capability
+    // revision but its content is never returned.
+    let native_host_without_path = host.clone().with_native_codex_profile();
+    let native_home = instance
+        .join("organizations/100000000000/codex-home/agents")
+        .join(CEO);
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin missing trusted PATH resolution");
+    let missing_path = resolve_codex_config(&mut tx, ORG, CHAT, &native_host_without_path).await;
+    assert_http_error(missing_path, 409, None);
+    tx.rollback()
+        .await
+        .expect("rollback missing trusted PATH resolution");
+
+    let native_host = host
+        .clone()
+        .with_native_codex_profile()
+        .with_executable_search_path("/opt/homebrew/bin:/usr/bin:/bin".into())
+        .expect("bind trusted executable search path");
+    assert!(
+        host.clone()
+            .with_executable_search_path("relative/path:/bin".into())
+            .is_err(),
+        "trusted executable search path must not contain relative entries"
+    );
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin missing native profile resolution");
+    let missing_profile = resolve_codex_config(&mut tx, ORG, CHAT, &native_host).await;
+    assert_http_error(missing_profile, 409, None);
+    tx.rollback()
+        .await
+        .expect("rollback missing native profile resolution");
+    assert!(!native_home.exists(), "resolver must not create a profile");
+
+    fs::create_dir_all(&native_home).expect("create test-owned existing Codex home");
+    fs::write(
+        native_home.join("config.toml"),
+        "approval_policy = \"on-request\"\nsandbox_mode = \"read-only\"\n[features]\nplugins = true\n[mcp_servers.local_tools]\ncommand = \"/opt/tools/mcp-server\"\n",
+    )
+    .expect("write test-owned selected Codex config");
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(
+        json!({
+            "heartbeat": {
+                "enabled": true,
+                "intervalSec": 300,
+                "maxConcurrentRuns": 2,
+                "preflightEnabled": true,
+                "wakeOnDemand": true,
+            }
+        })
+        .to_string(),
+    )
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .expect("seed scheduler-only Agent settings");
+    sqlx::query("UPDATE chat_conversations SET model_override=NULL, effort_override=NULL WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(ORG)
+        .bind(CHAT)
+        .execute(&database.pool)
+        .await
+        .expect("remove explicit Chat model and effort for profile inheritance");
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin native profile resolution");
+    let native = resolve_codex_config(&mut tx, ORG, CHAT, &native_host)
+        .await
+        .expect("resolve selected native Codex profile");
+    tx.commit().await.expect("commit native profile resolution");
+    assert!(native.profile.native_managed);
+    assert_eq!(native.profile.home, native_home.canonicalize().unwrap());
+    assert_eq!(
+        native.model, None,
+        "no synthetic model may override the selected profile"
+    );
+    assert_eq!(
+        native.reasoning_effort, None,
+        "no synthetic effort may override the selected profile"
+    );
+    assert_eq!(native.operator_home, operator_home);
+    assert_eq!(
+        native.executable_search_path,
+        "/opt/homebrew/bin:/usr/bin:/bin"
+    );
+    assert!(!native.identity.capability_revision.contains("mcp-server"));
+    let native_profile_revision = native.identity.capability_revision;
+
+    fs::write(
+        native_home.join("config.toml"),
+        "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n[features]\nplugins = true\n[mcp_servers.local_tools]\ncommand = \"/opt/tools/mcp-server\"\n",
+    )
+    .expect("seed test-owned selected Codex policy and extensions");
+    let selected_agent_settings = json!({
+        "model": "gpt-6-luna",
+        "modelReasoningEffort": "xhigh",
+        "modelFallbacks": [],
+        "timeoutSec": 0,
+        "graceSec": 20,
+        "search": true,
+        "dangerouslyBypassApprovalsAndSandbox": true,
+        "instructionsBundleMode": "managed",
+        "heartbeat": {"enabled": true},
+    });
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(selected_agent_settings.to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .expect("seed supported selected Codex Agent settings");
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin configured native profile resolution");
+    let configured_native = resolve_codex_config(&mut tx, ORG, CHAT, &native_host)
+        .await
+        .expect("resolve supported selected Agent settings");
+    tx.commit()
+        .await
+        .expect("commit configured native profile resolution");
+    assert_eq!(configured_native.model.as_deref(), Some("gpt-6-luna"));
+    assert_eq!(configured_native.reasoning_effort.as_deref(), Some("xhigh"));
+    assert!(configured_native.search_enabled);
+    assert!(configured_native.bypass_approvals_and_sandbox);
+    assert_ne!(
+        configured_native.identity.capability_revision, native_profile_revision,
+        "explicit profile and Agent policy must be bound into runtime identity"
+    );
+
+    fs::write(
+        native_home.join("config.toml"),
+        "approval_policy = \"on-request\"\nsandbox_mode = \"read-only\"\n[features]\nplugins = true\n",
+    )
+    .expect("update test-owned selected Codex config");
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin changed native profile resolution");
+    let changed_native = resolve_codex_config(&mut tx, ORG, CHAT, &native_host)
+        .await
+        .expect("resolve changed selected native Codex profile");
+    tx.commit()
+        .await
+        .expect("commit changed native profile resolution");
+    assert_ne!(
+        changed_native.identity.capability_revision, native_profile_revision,
+        "selected Codex config changes must alter the effective capability revision"
+    );
+
+    // An explicit operator profile uses its existing native credentials in
+    // place; neither absence nor selection can provision/copy authentication.
+    let operator_profile = operator_home.join(".codex");
+    fs::create_dir(&operator_profile).expect("create test-owned operator profile");
+    fs::write(
+        operator_profile.join("config.toml"),
+        "approval_policy = \"on-request\"\nsandbox_mode = \"read-only\"\n",
+    )
+    .unwrap();
+    let auth_marker = b"test-owned native auth marker, never a real credential";
+    fs::write(operator_profile.join("auth.json"), auth_marker).unwrap();
+    sqlx::query("UPDATE agents SET agent_runtime_config='{\"profileId\":\"operator-default\"}'::jsonb WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(ORG).bind(CEO).execute(&database.pool).await.unwrap();
+    let mut tx = database.pool.begin().await.unwrap();
+    assert_http_error(
+        resolve_codex_config(&mut tx, ORG, CHAT, &native_host).await,
+        409,
+        None,
+    );
+    tx.rollback().await.unwrap();
+    let operator_host = native_host
+        .clone()
+        .with_operator_codex_profile(operator_profile.clone())
+        .unwrap();
+    let mut tx = database.pool.begin().await.unwrap();
+    let operator_native = resolve_codex_config(&mut tx, ORG, CHAT, &operator_host)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        operator_native.profile.home,
+        operator_profile.canonicalize().unwrap()
+    );
+    assert_eq!(
+        operator_native.identity.profile_id,
+        format!("managed-codex:{CEO}:operator-default")
+    );
+    assert_ne!(
+        operator_native.identity.capability_revision,
+        changed_native.identity.capability_revision
+    );
+    assert_eq!(
+        fs::read(operator_profile.join("auth.json")).unwrap(),
+        auth_marker
+    );
+    assert!(
+        !native_home.join("auth.json").exists(),
+        "operator auth must not be copied into the Agent profile"
+    );
+    sqlx::query("UPDATE agents SET agent_runtime_config='{\"profileId\":\"unknown-native\"}'::jsonb WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(ORG).bind(CEO).execute(&database.pool).await.unwrap();
+    let mut tx = database.pool.begin().await.unwrap();
+    assert_http_error(
+        resolve_codex_config(&mut tx, ORG, CHAT, &operator_host).await,
+        409,
+        None,
+    );
+    tx.rollback().await.unwrap();
+
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(config.to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .expect("restore explicit Agent settings for remaining resolver assertions");
+    sqlx::query("UPDATE chat_conversations SET model_override='vendor/custom-text-model', effort_override='ultra' WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(ORG)
+        .bind(CHAT)
+        .execute(&database.pool)
+        .await
+        .expect("restore explicit Chat overrides");
 
     let before_revision = resolved.identity.instructions_revision.clone();
     fs::write(

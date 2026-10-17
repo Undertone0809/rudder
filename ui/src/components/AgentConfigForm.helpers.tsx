@@ -184,6 +184,7 @@ export function createValuesForRuntime(agentRuntimeType: string): CreateConfigVa
     values.search = DEFAULT_CODEX_LOCAL_SEARCH;
     values.countSubscriptionUsageAsCost = DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST;
     values.dangerouslyBypassSandbox = DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
+    values.codexProfileId = "operator-default";
   }
   if (agentRuntimeType === "claude_local") {
     values.dangerouslySkipPermissions = false;

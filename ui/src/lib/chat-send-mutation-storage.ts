@@ -1,6 +1,6 @@
-import { resolveChatDraftScopeKey } from "./chat-draft-storage";
-import { HEARTBEAT_RUN_STATUSES } from "@rudderhq/shared";
 import type { ChatGenerationStatus, ChatMessage, HeartbeatRunStatus } from "@rudderhq/shared";
+import { HEARTBEAT_RUN_STATUSES } from "@rudderhq/shared";
+import { resolveChatDraftScopeKey } from "./chat-draft-storage";
 
 const LEGACY_CHAT_SEND_MUTATIONS_STORAGE_KEY = "rudder:chat-send-mutations:v1";
 const CHAT_SEND_MUTATIONS_STORAGE_PREFIX = "rudder:chat-send-mutations:v2:scope:";
@@ -18,6 +18,14 @@ export type PendingChatSendMutation = {
   pageInstanceId?: string;
   /** Missing status is treated as pending for records written by older builds. */
   status?: "pending" | "unknown" | "accepted" | "recoverable" | "settled";
+};
+
+/** Exact locally persisted identity captured by a control action. */
+export type ChatSendMutationIdentity = {
+  clientMutationId: string;
+  fingerprint: string;
+  ordinal: number;
+  editUserMessageId: string | null;
 };
 
 export type ChatSendReconciliationResult =
@@ -612,6 +620,108 @@ export function readPendingChatSendMutation(
   return [...mutations].reverse().find((mutation) => mutation.status !== "settled")
     ?? [...mutations].reverse()[0]
     ?? null;
+}
+
+/**
+ * Capture a uniquely matching unresolved send under the same scope lock used
+ * for send allocation and settlement. Callers must provide the immutable
+ * submitted body, never the current composer contents.
+ */
+export async function capturePendingChatSendMutationIdentity(input: {
+  orgId: string;
+  conversationId: string;
+  body: string;
+  editUserMessageId?: string | null;
+}): Promise<ChatSendMutationIdentity | null> {
+  const editUserMessageId = input.editUserMessageId ?? null;
+  const scopeKey = mutationScopeKey(input.orgId, input.conversationId, editUserMessageId);
+  return withScopeLock(scopeKey, () => {
+    const document = readScopeDocument(scopeKey);
+    const unresolved = Object.values(document.mutations).filter((mutation) => mutation.status !== "settled");
+    if (unresolved.length !== 1) return null;
+    const mutation = unresolved[0]!;
+    if (mutation.id.length === 0 || mutation.fingerprint.length > 512 * 1024
+      || !Number.isSafeInteger(mutation.ordinal) || (mutation.ordinal ?? 0) < 1) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(mutation.fingerprint);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const fingerprint = parsed as Record<string, unknown>;
+    if (fingerprint.body !== input.body || fingerprint.editUserMessageId !== editUserMessageId) return null;
+    const identity: BlockedMutationIdentity = {
+      version: 1,
+      clientMutationId: mutation.id,
+      fingerprint: mutation.fingerprint,
+      ordinal: mutation.ordinal!,
+    };
+    const blocked = readBlockedScope(scopeKey);
+    if (blocked && !sameMutationIdentity(blocked, identity)) return null;
+    return {
+      clientMutationId: identity.clientMutationId,
+      fingerprint: identity.fingerprint,
+      ordinal: identity.ordinal,
+      editUserMessageId,
+    };
+  });
+}
+
+/**
+ * Settle only the exact captured send identity. Scope, mutation ID, fingerprint,
+ * and monotonic ordinal are rechecked while holding the allocation lock.
+ */
+export async function settlePendingChatSendMutationIdentity(input: {
+  orgId: string;
+  conversationId: string;
+  identity: ChatSendMutationIdentity;
+}): Promise<boolean> {
+  const { identity } = input;
+  const scopeKey = mutationScopeKey(input.orgId, input.conversationId, identity.editUserMessageId);
+  if (!identity.clientMutationId || identity.fingerprint.length > 512 * 1024
+    || !Number.isSafeInteger(identity.ordinal) || identity.ordinal < 1) return false;
+  try {
+    return await withScopeLock(scopeKey, () => {
+      try {
+        const document = readScopeDocument(scopeKey);
+        const current = document.mutations[identity.clientMutationId];
+        if (current) {
+          if (!sameMutationIdentity({
+            clientMutationId: current.id,
+            fingerprint: current.fingerprint,
+            ordinal: current.ordinal ?? 0,
+          }, identity)) return false;
+          if (current.status !== "settled") {
+            const next = { ...current, status: "settled" as const };
+            recordSettledOrdinal(document, identity.ordinal);
+            document.mutations[identity.clientMutationId] = next;
+            writeScopeDocument(scopeKey, document);
+          } else if (!isSettledOrdinal(document, identity.ordinal)) {
+            return false;
+          }
+        } else if (!isSettledOrdinal(document, identity.ordinal)) {
+          return false;
+        }
+
+        const exactIdentity: BlockedMutationIdentity = {
+          version: 1,
+          clientMutationId: identity.clientMutationId,
+          fingerprint: identity.fingerprint,
+          ordinal: identity.ordinal,
+          status: "settled",
+        };
+        const blocked = readBlockedScope(scopeKey);
+        if (blocked && !sameMutationIdentity(blocked, exactIdentity)) return false;
+        if (blocked) clearBlockedScope(scopeKey, exactIdentity);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
 }
 
 export type DiscoveredChatSendRecovery = {

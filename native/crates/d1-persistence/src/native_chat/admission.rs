@@ -1,9 +1,11 @@
 use super::NativeChatActor;
 use super::{Error, Result, auth, binding_identity, budget, http, locks, validation};
 use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activity_options};
-use crate::native_chat::config::{LocalHostContext, resolve_codex_config};
+use crate::native_chat::config::{LocalHostContext, resolve_native_config};
 use crate::runtime_bindings;
-use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolStart};
+use rudder_runtime_core::native_chat::{
+    HermesSessionSelector, NativeChatProtocolCheckpoint, NativeChatProtocolStart,
+};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
@@ -609,7 +611,7 @@ pub(super) async fn submit_in_transaction<'a>(
         ));
     }
 
-    let config = resolve_codex_config(&mut tx, organization_id, conversation_id, host).await?;
+    let config = resolve_native_config(&mut tx, organization_id, conversation_id, host).await?;
     if config.identity.agent_id != selected_agent_id {
         return Err(http(409, "Resolved Native Chat Agent changed"));
     }
@@ -635,34 +637,44 @@ pub(super) async fn submit_in_transaction<'a>(
         &identity,
     )
     .await?;
-    let (protocol_start, reuse_scope, session_intent) =
-        match (binding.state.as_str(), binding.native_session_id.as_deref()) {
-            ("pending", None) => (
-                NativeChatProtocolStart::FreshThread,
-                "none",
-                json!({
-                    "kind": "fresh",
-                    "reuseScope": "none",
-                    "sourceRunId": null,
-                    "sessionId": null,
-                    "sessionParams": null,
-                }),
-            ),
-            ("open", Some(thread_id)) => (
-                NativeChatProtocolStart::ExistingThread {
-                    thread_id: thread_id.to_owned(),
-                },
+    let runtime_type = config.identity.runtime_type.as_str();
+    let (checkpoint, reuse_scope, resume_source, session_intent) = match (
+        runtime_type,
+        binding.state.as_str(),
+        binding.native_session_id.as_deref(),
+    ) {
+        ("codex_local", "pending", None) => (
+            NativeChatProtocolCheckpoint::new(NativeChatProtocolStart::FreshThread),
+            "none",
+            "fresh",
+            json!({"kind":"fresh","reuseScope":"none","sourceRunId":null,"sessionId":null,"sessionParams":null}),
+        ),
+        ("codex_local", "open", Some(thread_id)) => (
+            NativeChatProtocolCheckpoint::new(NativeChatProtocolStart::ExistingThread {
+                thread_id: thread_id.to_owned(),
+            }),
+            "explicit",
+            "fresh",
+            json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":thread_id,"sessionParams":null}),
+        ),
+        ("hermes_local", "pending", None) => (
+            NativeChatProtocolCheckpoint::new_hermes_fresh_session(),
+            "none",
+            "fresh",
+            json!({"kind":"fresh","reuseScope":"none","sourceRunId":null,"sessionId":null,"sessionParams":null}),
+        ),
+        ("hermes_local", "open", Some(session_id)) => {
+            let selector = HermesSessionSelector::from_persisted(session_id)
+                .map_err(|_| http(409, "Native Chat Hermes session locator is invalid"))?;
+            (
+                NativeChatProtocolCheckpoint::new_hermes_existing_session(selector),
                 "explicit",
-                json!({
-                    "kind": "resume",
-                    "reuseScope": "explicit",
-                    "sourceRunId": null,
-                    "sessionId": thread_id,
-                    "sessionParams": null,
-                }),
-            ),
-            _ => return Err(http(409, "Native Chat segment cannot admit new input")),
-        };
+                "same_session",
+                json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":session_id,"sessionParams":null}),
+            )
+        }
+        _ => return Err(http(409, "Native Chat segment cannot admit new input")),
+    };
 
     let message = sqlx::query(
         "INSERT INTO chat_messages
@@ -687,13 +699,14 @@ pub(super) async fn submit_in_transaction<'a>(
             source_turn_variant, native_admission_hold, status, attempt_epoch,
             control_state, control_runtime_type)
          VALUES ($1::uuid, $2::uuid, 'native_rust', $3::uuid, $4, false,
-                 'starting', 1, 'unregistered', 'codex_local')
+                 'starting', 1, 'unregistered', $5)
          RETURNING id::text",
     )
     .bind(organization_id)
     .bind(conversation_id)
     .bind(&message_id)
     .bind(turn_variant)
+    .bind(runtime_type)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -714,13 +727,31 @@ pub(super) async fn submit_in_transaction<'a>(
         "stream": true,
     });
     if let Some(initial_draft_snapshot) = initial_draft_snapshot {
+        let mut snapshot = initial_draft_snapshot.clone();
+        let object = snapshot
+            .as_object_mut()
+            .ok_or_else(|| http(409, "Initial Native Chat draft proof is invalid"))?;
+        // Safe immutable projection facts from the configuration resolved and
+        // admitted in this transaction, never from a later mutable Agent row.
+        object.insert(
+            "safeRuntimeDescriptor".into(),
+            json!({
+                "version":1, "runtimeType":runtime_type,
+            }),
+        );
+        object.insert(
+            "safeChatRuntime".into(),
+            json!({
+                "version":1, "sourceType":"agent", "runtimeType":runtime_type,
+                "sourceLabel":if runtime_type == "hermes_local" { "Hermes Agent" } else { "Codex Agent" }, "runtimeAgentId":config.identity.agent_id,
+                "model":config.model, "effort":config.reasoning_effort,
+                "available":true, "error":null,
+            }),
+        );
         context_snapshot
             .as_object_mut()
             .expect("context snapshot is an object")
-            .insert(
-                "nativeChatInitialDraft".into(),
-                initial_draft_snapshot.clone(),
-            );
+            .insert("nativeChatInitialDraft".into(), snapshot);
     }
     let run_id: String = sqlx::query_scalar(
         "INSERT INTO heartbeat_runs
@@ -748,7 +779,7 @@ pub(super) async fn submit_in_transaction<'a>(
     .fetch_one(&mut *tx)
     .await?;
 
-    let checkpoint = NativeChatProtocolCheckpoint::new(protocol_start).map_err(|error| {
+    let checkpoint = checkpoint.map_err(|error| {
         http(
             409,
             format!("Invalid initial Native Chat checkpoint: {error}"),
@@ -762,17 +793,23 @@ pub(super) async fn submit_in_transaction<'a>(
            (org_id, run_id, agent_id, attempt_index, runtime_type, resume_source,
             status, owner_token, attempt_epoch, generation_attempt_epoch,
             connection_epoch, protocol_phase, checkpoint_json, provider_thread_id)
-         VALUES ($1::uuid, $2::uuid, $3::uuid, 1, 'codex_local', 'fresh',
-                 'started', $4, 1, 1, 1, $5, $6::jsonb, $7)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 1, $4, $5,
+                 'started', $6, 1, 1, 1, $7, $8::jsonb, $9)
          RETURNING id::text",
     )
     .bind(organization_id)
     .bind(&run_id)
     .bind(selected_agent_id)
+    .bind(runtime_type)
+    .bind(resume_source)
     .bind(&owner_token)
     .bind(protocol_phase)
     .bind(checkpoint.to_string())
-    .bind(binding.native_session_id.as_deref())
+    .bind(if runtime_type == "codex_local" {
+        binding.native_session_id.as_deref()
+    } else {
+        None
+    })
     .fetch_one(&mut *tx)
     .await?;
 

@@ -36,6 +36,12 @@ impl SubmissionInput {
         &self.attempt_id
     }
 
+    /// Stable digest of the exact admitted UTF-8 body. This is safe to compare
+    /// against provider-owned receipts; it does not expose the body itself.
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
+    }
+
     pub fn checkpoint_revision(&self) -> u64 {
         self.checkpoint_revision
     }

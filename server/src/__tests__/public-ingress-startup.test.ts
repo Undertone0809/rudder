@@ -76,6 +76,20 @@ describe("explicit public ingress startup", () => {
     expect(disabled.appOptions).toEqual({});
   });
 
+  it("uses the constructed issuer for both Rust resolvers and rejects conflicting local handoffs", async () => {
+    vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    vi.stubEnv("BETTER_AUTH_SECRET", "changed-after-issuer-construction");
+    const descriptor = Object.freeze({ issuer: "better_auth" as const, secret: "original-issuer-secret", secureCookie: true,
+      sessionCookieName: "better-auth.session_token", dontRememberCookieName: "better-auth.dont_remember",
+      expiresIn: 604800, updateAge: 86400, disableSessionRefresh: false });
+    const ingress = await preparePublicIngressStartup(config({ deploymentMode: "authenticated" }), 3100, undefined, descriptor);
+    expect(ingress.appOptions.rustPublicIngress?.sessionAuth).toMatchObject({
+      kind: descriptor.issuer, secret: descriptor.secret, secureCookie: true,
+    });
+    await expect(preparePublicIngressStartup(config(), 3100, { sessionSecret: "different" }, descriptor))
+      .rejects.toThrow("issuer settings disagree");
+  });
+
   it("fails closed if private port selection collides with the public port", async () => {
     vi.mocked(selectAvailablePort).mockResolvedValue(65535);
     await expect(preparePublicIngressStartup(config(), 65535)).rejects.toThrow("distinct ports");

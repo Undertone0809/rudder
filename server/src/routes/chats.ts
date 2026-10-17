@@ -127,6 +127,7 @@ export function chatRoutes(
   backgroundRuntime: ChatBackgroundRuntime = createChatBackgroundRuntime(),
   registerNetworkWaitingRunHandler?: (handler: (run: NetworkWaitingRun) => Promise<boolean>) => void,
   rustFoundationBridge?: Parameters<typeof chatService>[2],
+  nativeLocalChatOwner?: "rust",
 ) {
   const router = Router();
   const svc = chatService(db, storage, rustFoundationBridge);
@@ -137,7 +138,7 @@ export function chatRoutes(
   const automationsSvc = automationService(db);
   const goalsSvc = goalService(db);
   const access = accessService(db);
-  const assistantSvc = chatAssistantService(db, storage);
+  const assistantSvc = chatAssistantService(db, storage, { nativeLocalChatOwner });
   const chatRunsSvc = chatAgentRunService(db);
   const workManifestSvc = chatWorkManifestService(db);
   const operatorProfiles = operatorProfileService(db);

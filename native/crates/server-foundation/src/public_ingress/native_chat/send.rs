@@ -5,6 +5,7 @@ use super::input::{FirstSendInput, InputError, SendInput};
 use super::*;
 use crate::browser_auth::BrowserActor;
 use crate::native_chat_worker::{AdmissionReservation, Job, Status as WorkerStatus, Ticket};
+use actix_web::FromRequest;
 use futures_util::{StreamExt, stream};
 use rudder_d1_persistence::native_chat::{
     self, BrowserPrincipal, FirstSendRequest, Request, control,
@@ -23,6 +24,7 @@ const CLAIMLESS_REPLAY_GRACE: Duration = Duration::from_secs(10);
 const OWNER_LEASE_RECHECK_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_STREAM_LIFETIME: Duration = Duration::from_secs(5 * 60);
 const MAX_STREAM_ERROR: &str = "recovery_required";
+const NATIVE_SEND_BODY_LIMIT: usize = 128 * 1024;
 
 #[derive(Clone)]
 enum AdmissionOperation {
@@ -34,6 +36,7 @@ enum AdmissionOperation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AdmissionReceipt {
     conversation_id: String,
+    conversation: Option<Value>,
     user_message_id: String,
     user_message: Value,
     generation_id: String,
@@ -57,6 +60,7 @@ enum AdmissionAcknowledgement {
 
 pub(super) async fn send(
     state: web::Data<IngressState>,
+    proxy: web::Data<crate::public_ingress_proxy::PublicIngressProxy>,
     request: HttpRequest,
     chat: web::Path<String>,
     body: web::Bytes,
@@ -72,20 +76,29 @@ pub(super) async fn send(
     if !request.query_string().is_empty() {
         return error(StatusCode::BAD_REQUEST, "query_not_allowed");
     }
-    if body.len() > 128 * 1024 {
+    if body.len() > 10 * 1024 * 1024 {
         return error(StatusCode::PAYLOAD_TOO_LARGE, "chat_send_too_large");
     }
-    if !request
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(';')
-                .next()
-                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
-        })
-    {
+    let (pool, authenticated, organization_id) =
+        match browser_actor(&state, &request, &chat, true).await {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+    let actor = match native_principal(&authenticated, &organization_id) {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match native_chat::classify_existing_send(&pool, &actor, &organization_id, &chat).await {
+        Ok(native_chat::SendAuthority::Legacy) => {
+            return forward_legacy_body(state, proxy, request, body).await;
+        }
+        Ok(native_chat::SendAuthority::Native) => (),
+        Err(error_) => return result::<Value>(Err(error_)),
+    }
+    if body.len() > NATIVE_SEND_BODY_LIMIT {
+        return error(StatusCode::PAYLOAD_TOO_LARGE, "chat_send_too_large");
+    }
+    if !is_json_content_type(&request) {
         return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "json_required");
     }
     let input: SendInput = match serde_json::from_slice(&body) {
@@ -100,11 +113,6 @@ pub(super) async fn send(
         Ok(permit) => permit,
         Err(_) => return unavailable(),
     };
-    let (pool, authenticated, organization_id) =
-        match browser_actor(&state, &request, &chat, true).await {
-            Ok(value) => value,
-            Err(response) => return response,
-        };
     send_admission(
         state,
         pool,
@@ -118,6 +126,7 @@ pub(super) async fn send(
 
 pub(super) async fn first_send(
     state: web::Data<IngressState>,
+    proxy: web::Data<crate::public_ingress_proxy::PublicIngressProxy>,
     request: HttpRequest,
     organization: web::Path<String>,
     body: web::Bytes,
@@ -134,21 +143,52 @@ pub(super) async fn first_send(
     if !request.query_string().is_empty() {
         return error(StatusCode::BAD_REQUEST, "query_not_allowed");
     }
-    if body.len() > 128 * 1024 {
+    if body.len() > 10 * 1024 * 1024 {
         return error(StatusCode::PAYLOAD_TOO_LARGE, "chat_send_too_large");
     }
-    if !request
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(';')
-                .next()
-                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
-        })
+    let (pool, authenticated, organization_id) =
+        match browser_actor_for_org(&state, &request, &organization_id, true).await {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+    let actor = match native_principal(&authenticated, &organization_id) {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let routing = match first_send_routing_fields(&request, &body) {
+        Ok(fields) => fields,
+        Err(status) => {
+            let code = if status == StatusCode::UNSUPPORTED_MEDIA_TYPE {
+                "json_or_multipart_required"
+            } else {
+                "invalid_chat_send"
+            };
+            return error(status, code);
+        }
+    };
+    match native_chat::classify_first_send(
+        &pool,
+        &actor,
+        &organization_id,
+        routing.client_mutation_id.as_deref(),
+        routing.preferred_agent_id.as_deref(),
+    )
+    .await
     {
-        return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "json_required");
+        Ok(native_chat::SendAuthority::Legacy) => {
+            return forward_legacy_body(state, proxy, request, body).await;
+        }
+        Ok(native_chat::SendAuthority::Native) => (),
+        Err(error_) => return result::<Value>(Err(error_)),
+    }
+    if body.len() > NATIVE_SEND_BODY_LIMIT {
+        return error(StatusCode::PAYLOAD_TOO_LARGE, "chat_send_too_large");
+    }
+    if routing.multipart {
+        return error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "native_chat_multipart_unsupported",
+        );
     }
     let input: FirstSendInput = match serde_json::from_slice(&body) {
         Ok(input) => input,
@@ -162,11 +202,6 @@ pub(super) async fn first_send(
         Ok(permit) => permit,
         Err(_) => return unavailable(),
     };
-    let (pool, authenticated, organization_id) =
-        match browser_actor_for_org(&state, &request, &organization_id, true).await {
-            Ok(value) => value,
-            Err(response) => return response,
-        };
     send_admission(
         state,
         pool,
@@ -176,6 +211,272 @@ pub(super) async fn first_send(
         AdmissionOperation::FirstSend(command),
     )
     .await
+}
+
+fn is_json_content_type(request: &HttpRequest) -> bool {
+    request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
+        })
+}
+
+#[derive(Default)]
+struct FirstSendRoutingFields {
+    client_mutation_id: Option<String>,
+    preferred_agent_id: Option<String>,
+    multipart: bool,
+}
+
+fn first_send_routing_fields(
+    request: &HttpRequest,
+    body: &[u8],
+) -> std::result::Result<FirstSendRoutingFields, StatusCode> {
+    if is_json_content_type(request) {
+        let value: Value = serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let Some(object) = value.as_object() else {
+            return Err(StatusCode::BAD_REQUEST);
+        };
+        let routing_field = |name: &str| -> std::result::Result<Option<String>, StatusCode> {
+            match object.get(name) {
+                None | Some(Value::Null) => Ok(None),
+                Some(Value::String(value)) => Ok(Some(value.clone())),
+                Some(_) => Err(StatusCode::BAD_REQUEST),
+            }
+        };
+        return Ok(FirstSendRoutingFields {
+            client_mutation_id: routing_field("clientMutationId")?,
+            preferred_agent_id: routing_field("preferredAgentId")?,
+            multipart: false,
+        });
+    }
+
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .ok_or(StatusCode::UNSUPPORTED_MEDIA_TYPE)?;
+    let content_type: actix_web::mime::Mime = content_type
+        .to_str()
+        .map_err(|_| StatusCode::UNSUPPORTED_MEDIA_TYPE)?
+        .parse()
+        .map_err(|_| StatusCode::UNSUPPORTED_MEDIA_TYPE)?;
+    if !content_type
+        .essence_str()
+        .eq_ignore_ascii_case("multipart/form-data")
+    {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let boundary = content_type
+        .get_param("boundary")
+        .map(|value| value.as_str())
+        .filter(|value| valid_multipart_boundary(value))
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    parse_first_send_multipart_fields(body, boundary)
+        .ok_or(StatusCode::BAD_REQUEST)
+        .map(|mut fields| {
+            fields.multipart = true;
+            fields
+        })
+}
+
+fn valid_multipart_boundary(boundary: &str) -> bool {
+    if boundary.is_empty() || boundary.len() > 70 {
+        return false;
+    }
+    let bytes = boundary.as_bytes();
+    let valid = |byte: u8| {
+        byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'\'' | b'(' | b')' | b'+' | b'_' | b',' | b'-' | b'.' | b'/' | b':' | b'=' | b'?'
+            )
+            || byte == b' '
+    };
+    bytes.iter().all(|byte| valid(*byte)) && bytes.last().is_some_and(|byte| *byte != b' ')
+}
+
+fn parse_first_send_multipart_fields(
+    body: &[u8],
+    boundary: &str,
+) -> Option<FirstSendRoutingFields> {
+    const MAX_PARTS: usize = 256;
+    const MAX_PART_HEADER_BYTES: usize = 8 * 1024;
+    const MAX_ROUTING_FIELD_BYTES: usize = 512;
+
+    let mut delimiter = b"--".to_vec();
+    delimiter.extend_from_slice(boundary.as_bytes());
+    if !body.starts_with(&delimiter) {
+        return None;
+    }
+    let mut cursor = delimiter.len();
+    if body.get(cursor..cursor + 2)? != b"\r\n" {
+        return None;
+    }
+    cursor += 2;
+    let mut fields = FirstSendRoutingFields::default();
+
+    for _ in 0..MAX_PARTS {
+        let header_tail = body.get(cursor..)?;
+        let header_end = find_bytes(header_tail, b"\r\n\r\n")?;
+        if header_end > MAX_PART_HEADER_BYTES {
+            return None;
+        }
+        let (field_name, is_file) = parse_multipart_disposition(&header_tail[..header_end])?;
+        let content_start = cursor + header_end + 4;
+        let (content_end, delimiter_start) =
+            find_multipart_boundary(body, content_start, &delimiter)?;
+        if matches!(field_name.as_str(), "clientMutationId" | "preferredAgentId") {
+            if is_file {
+                return None;
+            }
+            let value = body.get(content_start..content_end)?;
+            if value.len() > MAX_ROUTING_FIELD_BYTES {
+                return None;
+            }
+            let value = std::str::from_utf8(value).ok()?.to_owned();
+            let destination = if field_name == "clientMutationId" {
+                &mut fields.client_mutation_id
+            } else {
+                &mut fields.preferred_agent_id
+            };
+            if destination.replace(value).is_some() {
+                return None;
+            }
+        }
+
+        cursor = delimiter_start + 2 + delimiter.len();
+        let suffix = body.get(cursor..)?;
+        if suffix.starts_with(b"--") {
+            cursor += 2;
+            if body.get(cursor..).is_some_and(|tail| tail == b"\r\n") {
+                cursor += 2;
+            }
+            return (cursor == body.len()).then_some(fields);
+        }
+        if !suffix.starts_with(b"\r\n") {
+            return None;
+        }
+        cursor += 2;
+    }
+    None
+}
+
+fn parse_multipart_disposition(headers: &[u8]) -> Option<(String, bool)> {
+    use actix_web::http::header::{ContentDisposition, DispositionParam, DispositionType};
+
+    let mut disposition = None;
+    let mut header_count = 0;
+    let mut lines = headers.split(|byte| *byte == b'\n').peekable();
+    while let Some(raw_line) = lines.next() {
+        // The header block ends immediately before the CRLFCRLF separator,
+        // so only intermediate lines carry a trailing CR in this slice.
+        // Require CRLF between headers while accepting the unterminated final
+        // line from the bounded header-block extraction above.
+        let line = if lines.peek().is_some() {
+            raw_line.strip_suffix(b"\r")?
+        } else {
+            raw_line
+        };
+        if line.contains(&b'\r') || line.is_empty() || line[0].is_ascii_whitespace() {
+            return None;
+        }
+        header_count += 1;
+        if header_count > 16 {
+            return None;
+        }
+        let colon = line.iter().position(|byte| *byte == b':')?;
+        let header_name = actix_web::http::header::HeaderName::from_bytes(&line[..colon]).ok()?;
+        if header_name == header::CONTENT_DISPOSITION {
+            if disposition.is_some() {
+                return None;
+            }
+            let value =
+                actix_web::http::header::HeaderValue::from_bytes(line[colon + 1..].trim_ascii())
+                    .ok()?;
+            let parsed = ContentDisposition::from_raw(&value).ok()?;
+            if parsed.disposition != DispositionType::FormData {
+                return None;
+            }
+            let mut name = None;
+            let mut is_file = false;
+            for parameter in parsed.parameters {
+                match parameter {
+                    DispositionParam::Name(value) => {
+                        if name.replace(value).is_some() {
+                            return None;
+                        }
+                    }
+                    DispositionParam::Filename(_) | DispositionParam::FilenameExt(_) => {
+                        is_file = true;
+                    }
+                    DispositionParam::Unknown(parameter, _)
+                    | DispositionParam::UnknownExt(parameter, _)
+                        if parameter.eq_ignore_ascii_case("filename") =>
+                    {
+                        is_file = true;
+                    }
+                    _ => (),
+                }
+            }
+            disposition = Some((name?, is_file));
+        } else {
+            let _ =
+                actix_web::http::header::HeaderValue::from_bytes(line[colon + 1..].trim_ascii())
+                    .ok()?;
+        }
+    }
+    disposition
+}
+
+fn find_multipart_boundary(body: &[u8], start: usize, delimiter: &[u8]) -> Option<(usize, usize)> {
+    let boundary = delimiter.strip_prefix(b"--")?;
+    let mut marker = b"\r\n--".to_vec();
+    marker.extend_from_slice(boundary);
+    let mut cursor = start;
+    while cursor.checked_add(marker.len())? <= body.len() {
+        if body.get(cursor..)?.starts_with(&marker) {
+            let suffix_start = cursor + marker.len();
+            let suffix = body.get(suffix_start..)?;
+            if suffix.starts_with(b"\r\n") || suffix.starts_with(b"--") {
+                return Some((cursor, cursor));
+            }
+            // A boundary-looking byte sequence inside a file is data unless
+            // the delimiter has a legal line ending. Its marker cannot
+            // contain another CRLF, so skip the whole candidate in O(n).
+            cursor = suffix_start;
+        } else {
+            cursor += 1;
+        }
+    }
+    None
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+async fn forward_legacy_body(
+    state: web::Data<IngressState>,
+    proxy: web::Data<crate::public_ingress_proxy::PublicIngressProxy>,
+    request: HttpRequest,
+    body: web::Bytes,
+) -> HttpResponse {
+    let mut buffered = actix_web::dev::Payload::from(body);
+    let payload = match web::Payload::from_request(&request, &mut buffered).await {
+        Ok(payload) => payload,
+        Err(_) => return unavailable(),
+    };
+    super::super::forward_compatibility(state, proxy, request, payload).await
 }
 
 async fn send_admission(
@@ -299,6 +600,7 @@ async fn send_admission(
     let ack = json!({
         "type":"ack",
         "userMessage":receipt.user_message,
+        "conversation":expected_conversation.is_none().then(|| receipt.conversation.clone()).flatten(),
         "generationId":receipt.generation_id,
         "attemptEpoch":attempt_epoch,
         "generationSeq":0,
@@ -382,7 +684,16 @@ fn parse_receipt(
         ];
         object.len() == ALLOWED.len() && object.keys().all(|key| ALLOWED.contains(&key.as_str()))
     });
+    let conversation_valid = match receipt.conversation.as_ref() {
+        Some(conversation) => validate_first_send_conversation(
+            conversation,
+            expected_organization,
+            &receipt.conversation_id,
+        ),
+        None => expected_conversation.is_some(),
+    };
     (canonical_uuid(&receipt.conversation_id)
+        && conversation_valid
         && expected_conversation.is_none_or(|expected| receipt.conversation_id == expected)
         && canonical_uuid(&receipt.user_message_id)
         && canonical_uuid(&receipt.generation_id)
@@ -455,6 +766,144 @@ pub(super) fn reconciliation_projection(
         "runStatus":receipt.run_status,
         "runtimeTerminal":receipt.runtime_terminal,
     }))
+}
+
+pub(super) fn first_send_reconciliation_projection(
+    value: Value,
+    expected_organization: &str,
+    client_mutation_id: &str,
+) -> Option<Value> {
+    let receipt = parse_receipt(value, expected_organization, None)?;
+    if !receipt.idempotent_replay {
+        return None;
+    }
+    Some(json!({
+        "outcome":"accepted",
+        "clientMutationId":client_mutation_id,
+        "conversation":receipt.conversation?,
+        "message":receipt.user_message,
+        "generationId":receipt.generation_id,
+        "runId":receipt.run_id,
+        "attemptEpoch":receipt.attempt_epoch,
+        "generationSeq":0,
+        "bodyHash":EMPTY_SHA256,
+        "generationStatus":receipt.generation_status,
+        "runStatus":receipt.run_status,
+        "runtimeTerminal":receipt.runtime_terminal,
+    }))
+}
+
+fn validate_first_send_conversation(value: &Value, expected_org: &str, expected_id: &str) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    const CONVERSATION_KEYS: &[&str] = &[
+        "id",
+        "orgId",
+        "status",
+        "conversationKind",
+        "messengerVisible",
+        "sideChatState",
+        "sideChatExpiresAt",
+        "sideChatCompletedAt",
+        "sideChatKeptAt",
+        "sideChatClientMutationId",
+        "initialClientMutationId",
+        "mutability",
+        "title",
+        "summary",
+        "latestReplyPreview",
+        "latestUserMessagePreview",
+        "userMessageCount",
+        "preferredAgentId",
+        "modelOverride",
+        "effortOverride",
+        "routedAgentId",
+        "primaryIssueId",
+        "forkedFromConversationId",
+        "forkedFromMessageId",
+        "forkRootConversationId",
+        "primaryIssue",
+        "issueCreationMode",
+        "planMode",
+        "createdByUserId",
+        "lastMessageAt",
+        "lastReadAt",
+        "isPinned",
+        "isUnread",
+        "unreadCount",
+        "needsAttention",
+        "resolvedAt",
+        "contextLinks",
+        "sourceMetadata",
+        "chatRuntime",
+        "createdAt",
+        "updatedAt",
+    ];
+    if object.len() != CONVERSATION_KEYS.len()
+        || object
+            .keys()
+            .any(|key| !CONVERSATION_KEYS.contains(&key.as_str()))
+        || value["id"].as_str() != Some(expected_id)
+        || value["orgId"].as_str() != Some(expected_org)
+        || value["conversationKind"].as_str() != Some("chat")
+        || value["mutability"].as_str() != Some("native_chat")
+        || !(value["preferredAgentId"].is_null()
+            || value["preferredAgentId"].as_str().is_some_and(|value| {
+                Uuid::parse_str(value).is_ok_and(|id| id.to_string() == value)
+            }))
+        || value["planMode"].as_bool().is_none()
+        || !matches!(
+            value["status"].as_str(),
+            Some("active" | "resolved" | "archived")
+        )
+        || !value["contextLinks"].as_array().is_some_and(Vec::is_empty)
+    {
+        return false;
+    }
+    let Some(runtime) = value["chatRuntime"].as_object() else {
+        return false;
+    };
+    const RUNTIME_KEYS: &[&str] = &[
+        "sourceType",
+        "sourceLabel",
+        "runtimeAgentId",
+        "agentRuntimeType",
+        "model",
+        "effort",
+        "available",
+        "error",
+    ];
+    runtime.len() == RUNTIME_KEYS.len()
+        && runtime
+            .keys()
+            .all(|key| RUNTIME_KEYS.contains(&key.as_str()))
+        && runtime["sourceType"].as_str() == Some("agent")
+        && runtime["sourceLabel"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty() && value.chars().count() <= 200)
+        && runtime["runtimeAgentId"].as_str() == value["preferredAgentId"].as_str()
+        && (runtime["model"].is_null()
+            || runtime["model"]
+                .as_str()
+                .is_some_and(|value| value.len() <= 256))
+        && (runtime["effort"].is_null()
+            || runtime["effort"]
+                .as_str()
+                .is_some_and(|value| value.len() <= 64))
+        && ((runtime["available"].as_bool() == Some(true)
+            && runtime["runtimeAgentId"].as_str().is_some()
+            && matches!(
+                runtime["agentRuntimeType"].as_str(),
+                Some("codex_local" | "pi_local")
+            )
+            && runtime["error"].is_null())
+            || (runtime["available"].as_bool() == Some(false)
+                && runtime["agentRuntimeType"].is_null()
+                && runtime["model"].is_null()
+                && runtime["effort"].is_null()
+                && runtime["error"].as_str()
+                    == Some("Refresh this chat to load its current Agent.")))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1017,6 +1466,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn multipart_first_send_router_reads_unique_bounded_fields_and_ignores_file_content() {
+        let body = b"--boundary\r\n\
+Content-Disposition: form-data; name=\"clientMutationId\"\r\n\r\n\
+mutation-1\r\n\
+--boundary\r\n\
+Content-Disposition: form-data; name=\"preferredAgentId\"\r\n\r\n\
+agent-1\r\n\
+--boundary\r\n\
+Content-Disposition: form-data; name=\"files\"; filename=\"note.txt\"\r\n\
+Content-Type: application/octet-stream\r\n\r\n\
+binary\r\n--boundaryx\r\n\
+--boundary--\r\n";
+        let fields = parse_first_send_multipart_fields(body, "boundary")
+            .expect("well-formed bounded multipart envelope");
+        assert_eq!(fields.client_mutation_id.as_deref(), Some("mutation-1"));
+        assert_eq!(fields.preferred_agent_id.as_deref(), Some("agent-1"));
+        assert!(!fields.multipart, "the caller sets the media-kind marker");
+    }
+
+    #[test]
+    fn multipart_first_send_router_rejects_duplicate_or_oversized_routing_fields() {
+        let duplicate = b"--b\r\n\
+Content-Disposition: form-data; name=\"preferredAgentId\"\r\n\r\n\
+agent-1\r\n\
+--b\r\n\
+Content-Disposition: form-data; name=\"preferredAgentId\"\r\n\r\n\
+agent-2\r\n\
+--b--\r\n";
+        assert!(parse_first_send_multipart_fields(duplicate, "b").is_none());
+
+        let oversized = format!(
+            "--b\r\nContent-Disposition: form-data; name=\"clientMutationId\"\r\n\r\n{}\r\n--b--\r\n",
+            "x".repeat(513)
+        );
+        assert!(parse_first_send_multipart_fields(oversized.as_bytes(), "b").is_none());
+        assert!(!valid_multipart_boundary(&"x".repeat(71)));
+        assert!(!valid_multipart_boundary("ends-in-space "));
+    }
+
+    #[test]
     fn durable_event_adapter_never_copies_private_source_fields() {
         let event = control::Event {
             generation_seq: 7,
@@ -1108,7 +1597,9 @@ mod tests {
         let org = "11000000-0000-4000-8000-000000000001";
         let chat = "21000000-0000-4000-8000-000000000001";
         assert!(parse_receipt(valid.clone(), org, Some(chat)).is_some());
-        assert!(parse_receipt(valid.clone(), org, None).is_some());
+        // First-send acknowledgements require the complete conversation DTO;
+        // existing-conversation receipts cannot masquerade as first sends.
+        assert!(parse_receipt(valid.clone(), org, None).is_none());
         assert!(
             parse_receipt(
                 valid.clone(),
@@ -1185,6 +1676,8 @@ mod tests {
             runtime_terminal: true,
             native_admission_hold: false,
             last_sequence: 9,
+            last_client_checkpoint_seq: None,
+            last_client_checkpoint_hash: None,
         };
         assert_eq!(
             terminal_projection("succeeded", turn, "user", Some("assistant"), 3)["type"],
@@ -1206,6 +1699,8 @@ mod tests {
             runtime_terminal: true,
             native_admission_hold: false,
             last_sequence: 9,
+            last_client_checkpoint_seq: None,
+            last_client_checkpoint_hash: None,
         };
         let stale_projection =
             terminal_projection("succeeded", stale, "user", Some("assistant"), 3);
@@ -1227,6 +1722,8 @@ mod tests {
             runtime_terminal: false,
             native_admission_hold: false,
             last_sequence: 9,
+            last_client_checkpoint_seq: None,
+            last_client_checkpoint_hash: None,
         };
         let uncommitted_projection =
             terminal_projection("succeeded", uncommitted, "user", Some("assistant"), 3);
@@ -1248,6 +1745,8 @@ mod tests {
             runtime_terminal: true,
             native_admission_hold: false,
             last_sequence: 10,
+            last_client_checkpoint_seq: None,
+            last_client_checkpoint_hash: None,
         };
         let final_event = terminal_projection("cancelled", stopped, "user", Some("assistant"), 3);
         assert_eq!(final_event["type"], "final");
@@ -1268,6 +1767,8 @@ mod tests {
             runtime_terminal: true,
             native_admission_hold: true,
             last_sequence: 10,
+            last_client_checkpoint_seq: None,
+            last_client_checkpoint_hash: None,
         };
         let failure = terminal_projection("failed", failed, "user", Some("assistant"), 3);
         assert_eq!(failure["type"], "error");
@@ -1287,6 +1788,8 @@ mod tests {
             runtime_terminal: false,
             native_admission_hold: true,
             last_sequence: 10,
+            last_client_checkpoint_seq: None,
+            last_client_checkpoint_hash: None,
         };
         let malformed = terminal_projection("failed", malformed_terminal, "user", None, 3);
         assert_eq!(malformed["error"], "native_chat_projection_unavailable");
@@ -1305,6 +1808,8 @@ mod tests {
             runtime_terminal: true,
             native_admission_hold: true,
             last_sequence: 10,
+            last_client_checkpoint_seq: None,
+            last_client_checkpoint_hash: None,
         };
         let terminal_projection_error =
             terminal_projection("failed", inconsistent, "user", None, 3);
@@ -1324,6 +1829,8 @@ mod tests {
             runtime_terminal: true,
             native_admission_hold: false,
             last_sequence: 4,
+            last_client_checkpoint_seq: None,
+            last_client_checkpoint_hash: None,
         };
         assert_eq!(
             terminal_projection("cancelled", preclaim_stopped, "user", None, 1)["messages"],

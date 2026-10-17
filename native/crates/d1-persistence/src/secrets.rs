@@ -276,7 +276,6 @@ fn encrypt_value(value: &str) -> Result<(Value, String), SecretsError> {
     encrypt_value_with_key(value, &load_master_key()?)
 }
 
-#[cfg(test)]
 fn decrypt_material_with_key(
     material: &Value,
     key_bytes: &[u8; 32],
@@ -312,6 +311,27 @@ fn decrypt_material_with_key(
         .map_err(|_| http(400, "Invalid local_encrypted secret material"))?;
     String::from_utf8(plaintext.to_vec())
         .map_err(|_| http(400, "Invalid local_encrypted secret material"))
+}
+
+/// Decrypt an already stored local secret for an in-process native runtime.
+/// This is deliberately read-only: unlike secret creation it never creates a
+/// master key, and it returns no diagnostic containing secret material.
+pub(crate) fn decrypt_runtime_secret(material: &Value, expected_sha256: &str) -> Option<String> {
+    let key = if let Ok(raw) = env::var("RUDDER_SECRETS_MASTER_KEY") {
+        decode_master_key(&raw)?
+    } else {
+        let path = key_file_path().ok()?;
+        if !path.is_file() {
+            return None;
+        }
+        read_key_file(&path).ok()?
+    };
+    let value = decrypt_material_with_key(material, &key).ok()?;
+    let actual = Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    (actual == expected_sha256).then_some(value)
 }
 
 fn provider_list() -> Value {

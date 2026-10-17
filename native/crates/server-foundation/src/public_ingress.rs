@@ -227,6 +227,17 @@ impl PublicIngressRuntime {
                 .app_data(web::PayloadConfig::new(max_request_bytes))
                 .wrap(middleware::from_fn(enforce_private_host_gate))
                 .wrap(middleware::from_fn(reject_unsupported_websocket_upgrade))
+                .configure(|routes| {
+                    if config.native_chat_mutations.is_some() {
+                        // Send routes also serve exact, read-only replay after
+                        // restart. Fresh admission separately requires trusted
+                        // host configuration and a reserved worker slot.
+                        native_chat::configure(routes, true);
+                    }
+                    if config.browser_auth.is_some() && config.session_auth.is_none() {
+                        routes.route("/api/auth/get-session", web::get().to(browser_session::get));
+                    }
+                })
                 .route("/healthz", web::get().to(ingress_health))
                 .route("/readyz", web::get().to(ingress_readiness))
                 .route(
@@ -943,7 +954,7 @@ async fn get_session(state: web::Data<IngressState>, request: HttpRequest) -> Ht
             .foundation
             .json_error(StatusCode::NOT_FOUND, "route_not_found");
     };
-    match state
+    let mut response = match state
         .foundation
         .resolve_public_session(session_auth, request.headers())
         .await
@@ -961,7 +972,12 @@ async fn get_session(state: web::Data<IngressState>, request: HttpRequest) -> Ht
             StatusCode::SERVICE_UNAVAILABLE,
             "native_session_unavailable",
         ),
-    }
+    };
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 fn goal_query_value(request: &HttpRequest, key: &str) -> Option<String> {
@@ -2180,6 +2196,27 @@ mod tests {
         assert_eq!(
             with_better_auth["compatibilityAuthentication"]["nodeOwnedRoutes"],
             serde_json::json!(["auth_lifecycle_routes", "websocket_session_resolution"])
+        );
+        assert_eq!(
+            with_better_auth["browserSessionAuthentication"],
+            serde_json::json!({
+                "enabled":true,"authority":"native-existing-session-cookie-resolver",
+                "route":"GET /api/auth/get-session","nativeFailureFallback":false,
+                "scope":"public_ingress_non_lifecycle_http_without_bearer",
+            })
+        );
+        assert_eq!(
+            bearer_only["browserSessionAuthentication"]["enabled"],
+            false
+        );
+        let browser_only = public_ingress_startup_receipt(address, None, true);
+        assert_eq!(
+            browser_only["browserSessionAuthentication"]["authority"],
+            "native-browser-session-resolver"
+        );
+        assert_eq!(
+            browser_only["browserSessionAuthentication"]["enabled"],
+            true
         );
         let rendered = with_better_auth.to_string();
         assert!(!rendered.contains("session-secret"));

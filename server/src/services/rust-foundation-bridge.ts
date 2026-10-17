@@ -14,7 +14,6 @@ import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
 export { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 export { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
-export type { RustPublicIngressOptions } from "./rust-public-ingress-config.js";
 
 import { requestActivityLinkRead, type ActivityLinkReadInput } from "./activity-link-read-bridge.js";
 import { requestActivityRead, type ActivityReadInput } from "./activity-read-bridge.js";

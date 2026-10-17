@@ -2,6 +2,7 @@ import type {
   ChatStreamDraft,
   ChatStreamDraftState,
 } from "@/context/ChatGenerationContext";
+import type { ChatSendMutationIdentity } from "./chat-send-mutation-storage";
 
 const CHAT_STOP_RECOVERY_STORAGE_PREFIX = "rudder:chat-stop-recovery:v1";
 const CHAT_STOP_RECOVERY_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
@@ -24,7 +25,15 @@ export type PendingChatStopRecovery = {
   frozenDraft: ChatStreamDraft | null;
   previousStreamState: ChatStreamDraftState | null;
   requestedAt: string;
+  /** Absent only for Stop records created by older clients or legacy servers. */
+  executionAuthority?: "native_rust" | "legacy_ts";
+  /** Exact send identity associated with this Stop action; never inferred later. */
+  sendMutationIdentity?: NativeChatStopInputIdentity;
 };
+
+export type NativeChatStopInputIdentity =
+  | { kind: "chat_send"; mutation: ChatSendMutationIdentity }
+  | { kind: "native_first_send"; clientMutationId: string; userId: string };
 
 type SerializedChatStreamDraft = Omit<
   ChatStreamDraft,
@@ -112,6 +121,33 @@ function normalizeRequest(value: unknown): ChatStopRequest | null {
   };
 }
 
+function normalizeSendMutationIdentity(value: unknown): NativeChatStopInputIdentity | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "native_first_send"
+    && typeof value.clientMutationId === "string" && value.clientMutationId.trim()
+    && typeof value.userId === "string" && value.userId.trim()) {
+    return {
+      kind: "native_first_send",
+      clientMutationId: value.clientMutationId,
+      userId: value.userId,
+    };
+  }
+  if (value.kind !== "chat_send" || !isRecord(value.mutation)
+    || typeof value.mutation.clientMutationId !== "string" || !value.mutation.clientMutationId.trim()
+    || typeof value.mutation.fingerprint !== "string" || value.mutation.fingerprint.length > 512 * 1024
+    || !Number.isSafeInteger(value.mutation.ordinal) || Number(value.mutation.ordinal) < 1
+    || !(value.mutation.editUserMessageId === null || typeof value.mutation.editUserMessageId === "string")) return null;
+  return {
+    kind: "chat_send",
+    mutation: {
+      clientMutationId: value.mutation.clientMutationId,
+      fingerprint: value.mutation.fingerprint,
+      ordinal: Number(value.mutation.ordinal),
+      editUserMessageId: value.mutation.editUserMessageId as string | null,
+    },
+  };
+}
+
 const STREAM_STATES = new Set<ChatStreamDraftState>([
   "streaming",
   "tool_busy",
@@ -179,6 +215,8 @@ export function createPendingChatStopRecovery(input: {
   chatId: string;
   request: ChatStopRequest;
   frozenDraft: ChatStreamDraft | null;
+  executionAuthority?: "native_rust" | "legacy_ts";
+  sendMutationIdentity?: NativeChatStopInputIdentity;
   now?: Date;
 }): PendingChatStopRecovery {
   return {
@@ -189,6 +227,8 @@ export function createPendingChatStopRecovery(input: {
     frozenDraft: input.frozenDraft,
     previousStreamState: input.frozenDraft?.state ?? null,
     requestedAt: (input.now ?? new Date()).toISOString(),
+    ...(input.executionAuthority ? { executionAuthority: input.executionAuthority } : {}),
+    ...(input.sendMutationIdentity ? { sendMutationIdentity: input.sendMutationIdentity } : {}),
   };
 }
 
@@ -198,12 +238,14 @@ export function savePendingChatStopRecovery(recovery: PendingChatStopRecovery) {
       ...recovery,
       frozenDraft: serializeFrozenDraft(recovery.frozenDraft),
     };
-    stopRecoveryStorage()?.setItem(
-      storageKey(recovery.orgId, recovery.chatId),
-      JSON.stringify(serialized),
-    );
+    const storage = stopRecoveryStorage();
+    if (!storage) return false;
+    const key = storageKey(recovery.orgId, recovery.chatId);
+    const value = JSON.stringify(serialized);
+    storage.setItem(key, value);
+    return storage.getItem(key) === value;
   } catch {
-    // Stop remains usable when browser storage is unavailable.
+    return false;
   }
 }
 
@@ -221,6 +263,14 @@ export function readPendingChatStopRecovery(
       return null;
     }
     const request = normalizeRequest(value.request);
+    const executionAuthority = value.executionAuthority === undefined
+      ? undefined
+      : value.executionAuthority === "native_rust" || value.executionAuthority === "legacy_ts"
+        ? value.executionAuthority
+        : null;
+    const sendMutationIdentity = value.sendMutationIdentity === undefined
+      ? undefined
+      : normalizeSendMutationIdentity(value.sendMutationIdentity);
     const requestedAt = parseDate(value.requestedAt);
     const previousStreamState = value.previousStreamState === null
       ? null
@@ -230,9 +280,12 @@ export function readPendingChatStopRecovery(
         : undefined;
     if (
       !request
+      || executionAuthority === null
+      || (value.sendMutationIdentity !== undefined && !sendMutationIdentity)
       || !requestedAt
       || previousStreamState === undefined
-      || now.getTime() - requestedAt.getTime() > CHAT_STOP_RECOVERY_MAX_AGE_MS
+      || (executionAuthority === "legacy_ts"
+        && now.getTime() - requestedAt.getTime() > CHAT_STOP_RECOVERY_MAX_AGE_MS)
     ) {
       clearPendingChatStopRecovery(orgId, chatId);
       return null;
@@ -250,6 +303,8 @@ export function readPendingChatStopRecovery(
       frozenDraft,
       previousStreamState,
       requestedAt: requestedAt.toISOString(),
+      ...(executionAuthority ? { executionAuthority } : {}),
+      ...(sendMutationIdentity ? { sendMutationIdentity } : {}),
     };
   } catch {
     clearPendingChatStopRecovery(orgId, chatId);

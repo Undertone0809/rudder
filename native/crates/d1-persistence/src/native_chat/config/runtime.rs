@@ -11,12 +11,14 @@ pub(super) struct RuntimeSettings {
     pub effort: Option<String>,
     pub plan_mode: bool,
     pub search_enabled: bool,
+    pub bypass_approvals_and_sandbox: bool,
     pub cwd_override: Option<PathBuf>,
     pub profile_id: String,
     pub command: Option<PathBuf>,
     pub capability_revision_input: Value,
 }
 
+#[cfg(test)]
 pub(super) fn parse_agent_config(
     config: Value,
     chat_model: Option<String>,
@@ -24,12 +26,31 @@ pub(super) fn parse_agent_config(
     chat_plan_mode: bool,
     operator_home: &Path,
 ) -> Result<RuntimeSettings> {
+    parse_agent_config_with_profile_defaults(
+        config,
+        chat_model,
+        chat_effort,
+        chat_plan_mode,
+        operator_home,
+        false,
+    )
+}
+
+pub(super) fn parse_agent_config_with_profile_defaults(
+    config: Value,
+    chat_model: Option<String>,
+    chat_effort: Option<String>,
+    chat_plan_mode: bool,
+    operator_home: &Path,
+    inherit_profile_defaults: bool,
+) -> Result<RuntimeSettings> {
     let object = config
         .as_object()
         .ok_or_else(|| invalid("Agent runtime configuration must be an object"))?;
 
     const SUPPORTED: &[&str] = &[
         "model",
+        "modelFallbacks",
         "modelReasoningEffort",
         "reasoningEffort",
         "planMode",
@@ -52,15 +73,58 @@ pub(super) fn parse_agent_config(
         "browser",
         "computer",
         "search",
+        "timeoutSec",
+        "graceSec",
         "dangerouslyBypassApprovalsAndSandbox",
         "approvalPolicy",
         "sandboxMode",
         "workspacePolicy",
+        // Heartbeat scheduling policy is persisted beside Agent runtime
+        // configuration for legacy scheduler consumers. Direct Chat does not
+        // apply it to a provider request, so it is intentionally excluded
+        // from the resolved Codex capability fingerprint below.
+        "heartbeat",
     ];
     if object.keys().any(|key| !SUPPORTED.contains(&key.as_str())) {
         return Err(unsupported(
             "an unrecognized Agent runtime setting is present",
         ));
+    }
+
+    if let Some(heartbeat) = object.get("heartbeat")
+        && !matches!(heartbeat, Value::Null | Value::Object(_))
+    {
+        return Err(invalid("Agent heartbeat policy must be an object"));
+    }
+
+    if let Some(fallbacks) = object.get("modelFallbacks")
+        && !fallbacks.as_array().is_some_and(Vec::is_empty)
+    {
+        return Err(unsupported(
+            "configured model fallbacks are not enabled for native Codex Chat",
+        ));
+    }
+
+    if let Some(timeout) = object.get("timeoutSec") {
+        let seconds = timeout
+            .as_f64()
+            .ok_or_else(|| invalid("Agent Chat timeout must be numeric"))?;
+        if seconds != 0.0 {
+            return Err(unsupported(
+                "custom per-Agent Codex Chat timeouts are not enabled",
+            ));
+        }
+    }
+
+    if let Some(grace) = object.get("graceSec") {
+        let seconds = grace
+            .as_f64()
+            .filter(|seconds| (0.0..=3_600.0).contains(seconds))
+            .ok_or_else(|| invalid("Agent process grace period is invalid"))?;
+        // The direct Chat path uses Codex App Server's interrupt/cleanup
+        // lifecycle. graceSec belongs to the legacy one-shot child-process
+        // path, which is not used for Native Chat.
+        let _legacy_process_grace_seconds = seconds;
     }
 
     for key in ["env", "environment"] {
@@ -82,18 +146,22 @@ pub(super) fn parse_agent_config(
             ));
         }
     }
-    for key in ["browser", "computer", "search"] {
+    for key in ["browser", "computer"] {
         if let Some(value) = object.get(key)
-            && !(if key == "search" {
-                matches!(value, Value::Null | Value::Bool(false))
-            } else {
-                is_disabled(value)
-            })
+            && !is_disabled(value)
         {
             return Err(unsupported(
-                "configured browser, computer, or search capability is not enabled",
+                "configured browser or computer capability is not enabled",
             ));
         }
+    }
+    if let Some(search) = object.get("search")
+        && !matches!(search, Value::Null | Value::Bool(false))
+        && !(inherit_profile_defaults && search == &Value::Bool(true))
+    {
+        return Err(unsupported(
+            "configured search is available only with the selected native Codex profile",
+        ));
     }
     if optional_string(object, "promptTemplate")?.is_some() {
         return Err(unsupported(
@@ -107,13 +175,14 @@ pub(super) fn parse_agent_config(
             ));
         }
     }
-    match object.get("dangerouslyBypassApprovalsAndSandbox") {
-        None | Some(Value::Bool(false)) => (),
+    let bypass_approvals_and_sandbox = match object.get("dangerouslyBypassApprovalsAndSandbox") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) if inherit_profile_defaults => true,
         Some(Value::Bool(true)) => {
             return Err(unsupported("approval or sandbox bypass is not enabled"));
         }
         Some(_) => return Err(invalid("approval bypass setting must be boolean")),
-    }
+    };
     for key in ["args", "extraArgs"] {
         if let Some(value) = object.get(key)
             && !value.as_array().is_some_and(Vec::is_empty)
@@ -128,8 +197,10 @@ pub(super) fn parse_agent_config(
     let model = chat_model
         .filter(|value| !value.trim().is_empty())
         .or(configured_model)
-        .unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_owned());
-    validate_model(&model)?;
+        .or_else(|| (!inherit_profile_defaults).then(|| DEFAULT_CODEX_MODEL.to_owned()));
+    if let Some(model) = &model {
+        validate_model(model)?;
+    }
 
     let model_effort = optional_string(object, "modelReasoningEffort")?;
     let legacy_effort = optional_string(object, "reasoningEffort")?;
@@ -141,8 +212,10 @@ pub(super) fn parse_agent_config(
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.trim().to_owned())
         .or(configured_effort)
-        .unwrap_or_else(|| DEFAULT_CODEX_EFFORT.to_owned());
-    validate_effort(&effort)?;
+        .or_else(|| (!inherit_profile_defaults).then(|| DEFAULT_CODEX_EFFORT.to_owned()));
+    if let Some(effort) = &effort {
+        validate_effort(effort)?;
+    }
 
     if let Some(value) = object.get("planMode")
         && value.as_bool() != Some(chat_plan_mode)
@@ -183,6 +256,7 @@ pub(super) fn parse_agent_config(
         "model": model,
         "effort": effort,
         "planMode": chat_plan_mode,
+        "bypassApprovalsAndSandbox": bypass_approvals_and_sandbox,
         "cwd": cwd_override.as_ref().map(|path| path.to_string_lossy().to_string()),
         "profileId": profile_id,
         "command": command.as_ref().map(|path| path.to_string_lossy().to_string()),
@@ -190,10 +264,11 @@ pub(super) fn parse_agent_config(
     });
 
     Ok(RuntimeSettings {
-        model: Some(model),
-        effort: Some(effort),
+        model,
+        effort,
         plan_mode: chat_plan_mode,
         search_enabled,
+        bypass_approvals_and_sandbox,
         cwd_override,
         profile_id,
         command,

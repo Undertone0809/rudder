@@ -62,6 +62,10 @@ impl SendInput {
 }
 
 impl FirstSendInput {
+    pub(super) fn client_mutation_id(&self) -> &str {
+        &self.client_mutation_id
+    }
+
     pub(super) fn into_command(self) -> Result<FirstSendRequest, InputError> {
         if self.plan_mode == Some(true) || !self.context_links.is_empty() {
             return Err(InputError::UnsupportedInput);

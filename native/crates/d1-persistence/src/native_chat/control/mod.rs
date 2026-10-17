@@ -7,6 +7,7 @@ use crate::runtime_bindings;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 
+mod authority;
 mod checkpoint;
 mod messages;
 pub(super) mod pin;
@@ -15,8 +16,11 @@ mod projection;
 mod reads;
 mod stop;
 
+pub use authority::{
+    ControlState, StopTargetAuthority, read_control_state, read_stop_target_authority,
+};
 pub use checkpoint::{ClientCheckpointReceipt, ClientCheckpointRequest, record_client_checkpoint};
-pub use messages::{ReadTurn, TurnView, read_turn};
+pub use messages::{ReadTurn, TurnView, read_turn, read_turn_for_control};
 pub use preclaim::{FinalizeUnclaimedStop, UnclaimedStopReceipt, finalize_unclaimed_stop};
 pub use reads::{Event, EventPage, ReadEvents, read_events};
 pub use stop::request_stop;
@@ -38,6 +42,7 @@ pub struct StopRequest {
 pub enum StopOutcome {
     StopIntentRecorded,
     StopInProgress,
+    Stopped,
     CompletionCommitted,
     AlreadyTerminal,
 }
@@ -52,6 +57,8 @@ pub struct StopReceipt {
     pub applied_control_version: Option<i32>,
     pub accepted_through_seq: Option<i32>,
     pub frozen_body_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_disposition: Option<String>,
 }
 
 struct Target {

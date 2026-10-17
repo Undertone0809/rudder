@@ -1,5 +1,8 @@
 use rudder_codex_app_server::CleanupReceipt;
-use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
+use rudder_hermes_acp::HermesCleanupReceipt;
+use rudder_runtime_core::native_chat::{
+    HermesSessionSelector, NativeChatProtocolPhase, NativeChatProvider,
+};
 use std::fmt;
 
 /// Stable database identity and non-serializable owner capabilities for one
@@ -13,6 +16,7 @@ pub struct ExecutionFence {
     pub(super) run_id: String,
     pub(super) attempt_id: String,
     pub(super) agent_id: String,
+    pub(super) runtime_type: String,
     pub(super) binding_id: String,
     pub(super) segment_id: String,
     pub(super) selected_model: Option<String>,
@@ -41,6 +45,10 @@ impl ExecutionFence {
         }
     }
 
+    pub fn runtime_type(&self) -> &str {
+        &self.runtime_type
+    }
+
     /// The generation-control capability is used only by the trusted local
     /// supervisor. Never place it in JSON, logs, or user-facing activity.
     pub fn generation_control_owner_token(&self) -> &str {
@@ -56,6 +64,17 @@ impl ExecutionFence {
     /// Check the full private launch identity without exposing the random
     /// claim ID. A Run/Attempt/owner/epoch match alone is not cleanup proof.
     pub fn matches_cleanup_receipt(&self, cleanup: &CleanupReceipt) -> bool {
+        let identity = self.identity();
+        cleanup.matches_connection_claim(
+            identity.run_id,
+            identity.attempt_id,
+            self.run_execution_owner_token(),
+            identity.connection_epoch,
+            &self.connection_claim_id,
+        )
+    }
+
+    pub fn matches_hermes_cleanup_receipt(&self, cleanup: &HermesCleanupReceipt) -> bool {
         let identity = self.identity();
         cleanup.matches_connection_claim(
             identity.run_id,
@@ -97,10 +116,13 @@ pub struct ExecutionIdentity<'a> {
 /// are preserved exactly; credentials and owner tokens are not represented.
 #[derive(Clone, Eq, PartialEq)]
 pub struct CheckpointSnapshot {
+    pub provider: NativeChatProvider,
     pub phase: NativeChatProtocolPhase,
     pub revision: u64,
     pub thread_id: Option<String>,
     pub turn_id: Option<String>,
+    pub hermes_session: Option<HermesSessionSelector>,
+    pub hermes_prompt_request_id: Option<u64>,
 }
 
 impl fmt::Debug for CheckpointSnapshot {
@@ -108,9 +130,15 @@ impl fmt::Debug for CheckpointSnapshot {
         formatter
             .debug_struct("CheckpointSnapshot")
             .field("phase", &self.phase)
+            .field("provider", &self.provider)
             .field("revision", &self.revision)
             .field("has_thread_id", &self.thread_id.is_some())
             .field("has_turn_id", &self.turn_id.is_some())
+            .field("has_hermes_session", &self.hermes_session.is_some())
+            .field(
+                "has_hermes_prompt_request",
+                &self.hermes_prompt_request_id.is_some(),
+            )
             .finish()
     }
 }

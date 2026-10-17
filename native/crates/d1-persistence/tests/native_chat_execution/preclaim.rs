@@ -158,7 +158,8 @@ async fn preclaim_fresh_stop_is_atomic_idempotent_and_accepts_expired_admission_
         .await
         .unwrap();
     assert!(retry.idempotent);
-    assert_eq!(retry.outcome, StopOutcome::StopIntentRecorded);
+    assert_eq!(retry.outcome, StopOutcome::Stopped);
+    assert_eq!(retry.input_disposition.as_deref(), Some("not_submitted"));
     assert_conflict(claim(&database.pool, &actor, ORG, &run, &attempt, host.context()).await);
     let page = read_events(
         &database.pool,
@@ -192,6 +193,54 @@ async fn preclaim_fresh_stop_is_atomic_idempotent_and_accepts_expired_admission_
         send(&database, &actor, &host, "native-execution-1").await["runId"],
         run
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopped_retry_requires_exact_terminal_receipt_and_other_action_is_already_terminal() {
+    let database = Database::start().await;
+    let host = ExecutionHost::new();
+    let (actor, run, _) = prepare(&database, &host).await;
+    let request = stop_request(&database.pool, &run).await;
+    request_stop(&database.pool, &actor, &request)
+        .await
+        .unwrap();
+    finalize_unclaimed_stop(&database.pool, &actor, &finalize_request(&request))
+        .await
+        .unwrap();
+
+    let retry = request_stop(&database.pool, &actor, &request)
+        .await
+        .unwrap();
+    assert!(retry.idempotent);
+    assert_eq!(retry.outcome, StopOutcome::Stopped);
+
+    let mut different_action = request.clone();
+    different_action.control_action_id = "71000000-0000-4000-8000-000000000099".into();
+    let already_terminal = request_stop(&database.pool, &actor, &different_action)
+        .await
+        .unwrap();
+    assert!(!already_terminal.idempotent);
+    assert_eq!(already_terminal.outcome, StopOutcome::AlreadyTerminal);
+
+    // Corrupting the exact action's terminal event link must make its retry
+    // fail closed; it cannot turn terminal generation state into a Stop ack.
+    let mut tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test_preclaim',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "DELETE FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid
+           AND control_action_id=$3::uuid AND event_kind='terminal_projected'",
+    )
+    .bind(ORG)
+    .bind(&request.generation_id)
+    .bind(&request.control_action_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_conflict(request_stop(&database.pool, &actor, &request).await);
 }
 
 #[tokio::test(flavor = "multi_thread")]

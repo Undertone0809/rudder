@@ -2,7 +2,7 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
 import { authApi } from "@/api/auth";
-import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
+import { chatsApi, type ChatSteerQueuedMessageRequest, type ChatStopMessageStreamRequest, type NativeFirstSendInput } from "@/api/chats";
 import { ApiError } from "@/api/client";
 import type { HealthStatus } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
@@ -38,6 +38,7 @@ import {
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import { useChatSendRecoveryDiscovery } from "@/components/chat/useChatSendRecoveryDiscovery";
+import { useNativeFirstSendRecovery } from "@/components/chat/useNativeFirstSendRecovery";
 import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
@@ -133,7 +134,9 @@ import {
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import {
   PendingChatSendAlreadyAcceptedError,
+  capturePendingChatSendMutationIdentity,
   preparePendingChatSendMutation,
+  settlePendingChatSendMutationIdentity
 } from "@/lib/chat-send-mutation-storage";
 import {
   buildChatSkillOptions,
@@ -174,6 +177,11 @@ import {
   renameMessengerChatInCache,
   upsertMessengerThreadSummaryQueries,
 } from "@/lib/messenger-query-cache";
+import {
+  nativeFirstSendDraftMatches,
+  readNativeFirstSendIntent,
+  updateNativeFirstSendIntent,
+} from "@/lib/native-chat-first-send-storage";
 import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
@@ -193,7 +201,9 @@ import {
   type ChatInlineAnnotationInput,
   type ChatMessage,
   type ChatOperationProposalDecisionAction,
+  type ChatQueueSnapshot,
   type ChatQueuedMessage,
+  type ChatStreamEvent,
   type ChatWorkManifestItem
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -249,10 +259,48 @@ export * from "./Chat.messages";
 export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
 
+async function settleStoppedChatInput(recovery: PendingChatStopRecovery): Promise<boolean> {
+  const identity = recovery.sendMutationIdentity;
+  if (!identity) return true;
+  if (identity.kind === "chat_send") {
+    return settlePendingChatSendMutationIdentity({
+      orgId: recovery.orgId,
+      conversationId: recovery.chatId,
+      identity: identity.mutation,
+    });
+  }
+
+  try {
+    const current = readNativeFirstSendIntent(recovery.orgId, identity.userId);
+    if (!current
+      || current.clientMutationId !== identity.clientMutationId
+      || current.conversationId !== recovery.chatId) {
+      return false;
+    }
+    if (current.status === "settled") return true;
+    if (current.status !== "accepted") return false;
+    await updateNativeFirstSendIntent(
+      recovery.orgId,
+      identity.userId,
+      identity.clientMutationId,
+      "settled",
+      recovery.chatId,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
-function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm, openNewProject } = useDialog();
+function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast, dismissToast } = useToast(); const { confirm, openNewProject } = useDialog();
   const firstTurnStore = useFirstChatTurnStore();
   const firstTurnOwner = firstTurnStore.getOwner() ?? firstChatTurnOwner(selectedOrganizationId, location.key); const latestLocationKeyRef = useRef(location.key); latestLocationKeyRef.current = location.key;
+  const stopPreflightScopeRef = useRef<string | null>(null);
+  stopPreflightScopeRef.current = selectedOrganizationId && conversationId
+    ? `${selectedOrganizationId}\u0000${conversationId}\u0000${location.key}`
+    : null;
+  const stopPreflightChatIdsRef = useRef(new Set<string>());
   const firstTurnState = useSyncExternalStore(firstTurnStore.subscribe, firstTurnStore.getSnapshot);
   const pendingFirstTurn = firstTurnState.pending;
   const newConversationSendInFlight = Boolean(pendingFirstTurn);
@@ -298,6 +346,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     value: initialComposerDraftRef.current?.body ?? "",
   }));
   const [chatSendRecovery, setChatSendRecovery] = useState<(ChatSendRecovery & { orgId: string; conversationId: string }) | null>(null);
+  const [confirmedStoppedChat, setConfirmedStoppedChat] = useState<{ orgId: string; chatId: string } | null>(null);
   const [responseAnnotationState, dispatchResponseAnnotation] = useReducer(
     responseAnnotationReducer,
     initialComposerDraftRef.current?.inlineAnnotations ?? [],
@@ -519,6 +568,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const nativeFirstSend = useNativeFirstSendRecovery(
+    selectedOrganizationId,
+    currentUserId,
+    !conversationId,
+  );
   const currentUserAvatarUrl = useCurrentUserAvatar();
   const intelligenceProfilesQuery = useQuery({
     queryKey: queryKeys.organizations.intelligenceProfiles(selectedOrganizationId ?? "__none__"),
@@ -1099,6 +1153,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   ) => {
     const { chatId, frozenDraft, orgId, request } = recovery;
     const actionKey = chatStopRecoveryActionKey(recovery);
+    const stopToastId = `chat-stop:${actionKey}`;
     if (stoppingChatIdsRef.current.has(chatId)) {
       stopRecoveryImmediateRetryKeysRef.current.add(actionKey);
       return;
@@ -1133,18 +1188,22 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     void (async () => {
       try {
         const result = await chatsApi.stopMessageStream(chatId, request);
-        const acknowledgedActionId = result.controlActionId ?? request.controlActionId;
-        if (acknowledgedActionId !== request.controlActionId) {
+        const nativeStop = recovery.executionAuthority !== "legacy_ts";
+        const acknowledgedActionId = nativeStop ? result.controlActionId : result.controlActionId ?? request.controlActionId;
+        if (acknowledgedActionId !== request.controlActionId
+          || (nativeStop && (!request.expectedGenerationId || result.generationId !== request.expectedGenerationId))) {
           stopRecoveryRetrier.schedule(recovery);
           pushToast({
             title: "Stop confirmation pending",
-            body: "Rudder returned a different Stop action; the original action will be retried.",
+            id: stopToastId,
+            body: "Rudder did not confirm this exact Stop action and response; the original action will be retried.",
             tone: "warn",
           });
           return;
         }
-        stopRecoveryRetrier.resolve(recovery);
-        stopActionSettled = true;
+        // Old persisted recovery records have no authority marker. Treat them
+        // fail-closed like Native Stop: a cutoff ACK alone cannot prove that
+        // an earlier provider actually stopped.
         const cutoffAccepted = result.stopped || [
           "stopping",
           "stop_requested",
@@ -1152,47 +1211,109 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           "interrupted_unverified",
         ].includes(result.disposition ?? "");
         const completionCommitted = !result.stopped && result.disposition === "completion_committed";
-        if (cutoffAccepted && stopRecoveryMatchesCurrentStream(recovery)) {
+        const stopped = result.stopped
+          && (!nativeStop || result.disposition === "stopped");
+        const alreadyTerminal = !result.stopped && result.disposition === "no_active_generation";
+        const terminalConfirmed = nativeStop
+          ? stopped || completionCommitted || alreadyTerminal
+          : result.stopped || completionCommitted || alreadyTerminal || cutoffAccepted;
+
+        if (nativeStop && !terminalConfirmed) {
+          if (cutoffAccepted && stopRecoveryMatchesCurrentStream(recovery)) {
+            abortChatStream(streamScopeKey);
+            setStreamDraftForChat(streamScopeKey, (current) => (
+              current?.streamKey === streamKey ? { ...current, state: "stopping" } : current
+            ));
+          }
+          stopRecoveryRetrier.schedule(recovery);
+          if (!result.idempotent) {
+            pushToast({
+              title: "Stop confirmation pending",
+              id: stopToastId,
+              body: "Rudder recorded the Stop request. The response stays frozen until its terminal state is confirmed.",
+              tone: "warn",
+            });
+          }
+          return;
+        }
+
+        if (nativeStop && !await settleStoppedChatInput(recovery)) {
+          stopRecoveryRetrier.schedule(recovery);
+          pushToast({
+            title: "Stop confirmed; send recovery is still pending",
+            body: "The stopped response is confirmed, but the exact send identity could not be settled in browser storage. Rudder will retry safely.",
+            tone: "warn",
+          });
+          return;
+        }
+
+        if (nativeStop) {
+          const mutationId = recovery.sendMutationIdentity?.kind === "chat_send"
+            ? recovery.sendMutationIdentity.mutation.clientMutationId : null;
+          setChatSendRecovery((current) => current?.orgId === orgId
+            && current.conversationId === chatId
+            && current.clientMutationId === mutationId ? null : current);
+          if (selectedOrganizationId === orgId && selectedConversation?.id === chatId) {
+            recoveryDiscovery.clearRecovery();
+            recoveryDiscovery.retry();
+          }
+          if (stopped) setConfirmedStoppedChat({ orgId, chatId });
+        }
+        stopRecoveryRetrier.resolve(recovery);
+        stopActionSettled = true;
+        if ((cutoffAccepted || alreadyTerminal) && stopRecoveryMatchesCurrentStream(recovery)) {
           abortChatStream(streamScopeKey);
         } else if (streamKey && stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
           delete stopRecoveryStreamKeysRef.current[chatId];
         }
-        await Promise.allSettled([
-          Promise.resolve().then(() => queryClient.invalidateQueries({
-            queryKey: queryKeys.chats.messages(orgId, chatId),
-          })),
-          Promise.resolve().then(() => queryClient.invalidateQueries({
-            queryKey: queryKeys.chats.queue(orgId, chatId),
-          })),
-        ]);
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.chats.messages(orgId, chatId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.chats.queue(orgId, chatId),
+        });
         if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
           setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
           setChatSendInFlight(streamScopeKey, false);
         }
-        clearPendingChatStopRecovery(orgId, chatId, request.controlActionId);
+        const cleared = clearPendingChatStopRecovery(orgId, chatId, request.controlActionId);
+        const remainingRecovery = readPendingChatStopRecovery(orgId, chatId);
+        if (!cleared && remainingRecovery?.request.controlActionId === request.controlActionId) {
+          stopActionSettled = false;
+          stopRecoveryRetrier.schedule(recovery);
+          return;
+        }
 
+        dismissToast(stopToastId);
         pushToast({
           title: completionCommitted
             ? "Response completed"
-            : result.stopped
+            : stopped
             ? "Response stopped"
-            : cutoffAccepted
-              ? "Response frozen"
+            : alreadyTerminal
+              ? "Response already ended"
+              : cutoffAccepted
+                ? "Response frozen"
               : "No active response",
           body: completionCommitted
             ? "The final response committed before Stop reached the cutoff."
-            : result.stopped
-            ? "Rudder interrupted the current reply."
-            : cutoffAccepted
-              ? "Visible output is frozen; runtime termination could not be independently confirmed."
-              : "The response had already reached a terminal state.",
-          tone: result.stopped || completionCommitted ? "info" : "warn",
+            : stopped
+              ? nativeStop
+                ? "Rudder confirmed that the response stopped."
+                : "Rudder interrupted the current reply."
+              : alreadyTerminal
+                ? "The response had already reached a terminal state."
+              : cutoffAccepted
+                ? "Visible output is frozen; runtime termination could not be independently confirmed."
+                : "No active response was found.",
+          tone: stopped || completionCommitted ? "info" : "warn",
         });
       } catch (error) {
         const definitivelyRejected = error instanceof ApiError
           && error.status >= 400
           && error.status < 500;
-        if (definitivelyRejected) {
+        const nativeStop = recovery.executionAuthority !== "legacy_ts";
+        if (definitivelyRejected && !nativeStop) {
           stopRecoveryRetrier.resolve(recovery);
           stopActionSettled = true;
           if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
@@ -1208,9 +1329,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           stopRecoveryRetrier.schedule(recovery);
         }
         pushToast({
-          title: definitivelyRejected ? "Stop was rejected" : "Stop confirmation pending",
+          title: definitivelyRejected && !nativeStop ? "Stop was rejected" : "Stop confirmation pending",
+          id: stopToastId,
           body: error instanceof Error ? error.message : "Rudder will retry automatically.",
-          tone: definitivelyRejected ? "error" : "warn",
+          tone: definitivelyRejected && !nativeStop ? "error" : "warn",
         });
       } finally {
         setStoppingChatIds((current) => {
@@ -1230,14 +1352,24 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         }
       }
     })();
-  }, [abortChatStream, pushToast, queryClient, setChatSendInFlight, setStreamDraftForChat, stopRecoveryMatchesCurrentStream, stopRecoveryRetrier, streamScopeKeyForChatId]); submitStopRecoveryRef.current = submitStopRecovery; const stopStreaming = useCallback((chatId: string) => {
-    if (!selectedOrganizationId || stoppingChatIdsRef.current.has(chatId)) return;
+  }, [abortChatStream, dismissToast, pushToast, queryClient, selectedConversation?.id, selectedOrganizationId, recoveryDiscovery.clearRecovery, recoveryDiscovery.retry, setChatSendInFlight, setStreamDraftForChat, stopRecoveryMatchesCurrentStream, stopRecoveryRetrier, streamScopeKeyForChatId]); submitStopRecoveryRef.current = submitStopRecovery; const stopStreaming = useCallback((chatId: string) => {
+    if (
+      !selectedOrganizationId
+      || stoppingChatIdsRef.current.has(chatId)
+      || stopPreflightChatIdsRef.current.has(chatId)
+    ) return;
     const existingRecovery = readPendingChatStopRecovery(selectedOrganizationId, chatId);
     if (existingRecovery) {
       stopRecoveryRetrier.retryNow(existingRecovery);
       return;
     }
-    const streamDraft = streamDrafts[streamScopeKeyForChatId(chatId)] ?? null;
+
+    const orgId = selectedOrganizationId;
+    const locationKey = location.key;
+    const scopeKey = `${orgId}\u0000${chatId}\u0000${locationKey}`;
+    const isCurrentScope = () => stopPreflightScopeRef.current === scopeKey;
+    const streamScopeKey = streamScopeKeyForChatId(chatId);
+    const streamDraft = streamDrafts[streamScopeKey] ?? null;
     const serverGenerationFence = serverActiveGenerationId
       && queueQuery.data?.activeAttemptEpoch !== null
       && queueQuery.data?.activeAttemptEpoch !== undefined
@@ -1249,28 +1381,214 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           controlVersion: queueQuery.data.activeControlVersion,
         }
       : null;
-    const recovery = createPendingChatStopRecovery({
-      orgId: selectedOrganizationId,
-      chatId,
-      request: {
-        controlActionId: globalThis.crypto.randomUUID(),
-        ...(serverGenerationFence ? {
-          expectedGenerationId: serverGenerationFence.generationId,
-          expectedAttemptEpoch: serverGenerationFence.attemptEpoch,
-          expectedControlVersion: serverGenerationFence.controlVersion,
-        } : {}),
-        ...(streamDraft ? {
-          lastCommittedRenderSeq: streamDraft.lastCommittedRenderSeq ?? 0,
-          renderedBodyHash: streamDraft.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
-        } : {}),
-      },
-      frozenDraft: streamDraft,
-    });
-    savePendingChatStopRecovery(recovery);
-    submitStopRecovery(recovery);
-  }, [queueQuery.data, selectedOrganizationId, stopRecoveryRetrier, streamDrafts, streamScopeKeyForChatId, submitStopRecovery]);
+
+    stopPreflightChatIdsRef.current.add(chatId);
+    setStoppingChatIds((current) => new Set(current).add(chatId));
+    let handedOffToStop = false;
+    void (async () => {
+      try {
+        const capabilities = await chatsApi.getNativeChatCapabilities();
+        if (!isCurrentScope()) return;
+
+        let stopRequest: ChatStopMessageStreamRequest;
+        let executionAuthority: "native_rust" | "legacy_ts";
+        let sendMutationIdentity: PendingChatStopRecovery["sendMutationIdentity"];
+        if (capabilities === null) {
+          // A missing capability route is the only signal that this is an
+          // older server. Keep its existing queue-based Stop behavior.
+          executionAuthority = "legacy_ts";
+          stopRequest = {
+            controlActionId: globalThis.crypto.randomUUID(),
+            ...(serverGenerationFence ? {
+              expectedGenerationId: serverGenerationFence.generationId,
+              expectedAttemptEpoch: serverGenerationFence.attemptEpoch,
+              expectedControlVersion: serverGenerationFence.controlVersion,
+            } : {}),
+            ...(streamDraft ? {
+              lastCommittedRenderSeq: streamDraft.lastCommittedRenderSeq ?? 0,
+              renderedBodyHash: streamDraft.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
+            } : {}),
+          };
+        } else {
+          if (!capabilities.readTurn) {
+            throw new Error("This server cannot safely verify the active response before Stop.");
+          }
+          const generationId = serverGenerationFence?.generationId ?? streamDraft?.generationId ?? null;
+          if (!generationId) {
+            throw new Error("Rudder could not identify the active response. Refresh and try Stop again.");
+          }
+          if (streamDraft?.generationId && streamDraft.generationId !== generationId) {
+            throw new Error("The visible response changed before Stop could be verified. Refresh and try again.");
+          }
+
+          const control = await chatsApi.readNativeChatControl(chatId, orgId, generationId);
+          if (!isCurrentScope()) return;
+          if (control.generationId !== generationId
+            || control.orgId !== orgId
+            || control.conversationId !== chatId) {
+            throw new Error("Rudder returned a different response while verifying Stop.");
+          }
+          executionAuthority = control.executionAuthority;
+          if (control.executionAuthority === "native_rust" && streamDraft?.userBody) {
+            const firstSend = currentUserId
+              ? readNativeFirstSendIntent(orgId, currentUserId)
+              : null;
+            if (firstSend
+              && firstSend.status !== "settled"
+              && firstSend.conversationId === chatId
+              && firstSend.draft.body === streamDraft.userBody) {
+              sendMutationIdentity = {
+                kind: "native_first_send",
+                clientMutationId: firstSend.clientMutationId,
+                userId: firstSend.userId,
+              };
+            } else if (streamDraft.userMessageId) {
+              const mutation = await capturePendingChatSendMutationIdentity({
+                orgId,
+                conversationId: chatId,
+                body: streamDraft.userBody,
+              });
+              if (mutation) sendMutationIdentity = { kind: "chat_send", mutation };
+            }
+          }
+          if (control.runtimeTerminal) {
+            throw new Error("This response has already finished. Refresh before stopping it again.");
+          }
+          if (serverGenerationFence && (
+            control.attemptEpoch !== serverGenerationFence.attemptEpoch
+            || control.controlVersion !== serverGenerationFence.controlVersion
+          )) {
+            throw new Error("The active response attempt changed before Stop could be verified. Refresh and try again.");
+          }
+          const latestQueue = queryClient.getQueryData<ChatQueueSnapshot>(
+            queryKeys.chats.queue(orgId, chatId),
+          );
+          const latestActiveGenerationId = activeGenerationIdFromSnapshot(latestQueue);
+          if (serverGenerationFence && latestQueue && (
+            latestActiveGenerationId !== generationId
+            || latestQueue.activeAttemptEpoch !== serverGenerationFence.attemptEpoch
+            || latestQueue.activeControlVersion !== serverGenerationFence.controlVersion
+          )) {
+            throw new Error("The active response changed before Stop could be submitted. Refresh and try again.");
+          }
+          if (latestActiveGenerationId && latestActiveGenerationId !== generationId) {
+            throw new Error("A newer response is active. Refresh before stopping it.");
+          }
+          if (latestActiveGenerationId === generationId && (
+            (latestQueue?.activeAttemptEpoch != null && latestQueue.activeAttemptEpoch !== control.attemptEpoch)
+            || (latestQueue?.activeControlVersion != null
+              && latestQueue.activeControlVersion !== control.controlVersion)
+          )) {
+            throw new Error("The active response attempt changed before Stop could be verified. Refresh and try again.");
+          }
+          if (streamDraft?.attemptEpoch != null && streamDraft.attemptEpoch !== control.attemptEpoch) {
+            throw new Error("The response attempt changed before Stop could be verified. Refresh and try again.");
+          }
+
+          const cutoffFromDraft = streamDraft?.generationId === generationId
+            && streamDraft.lastCommittedRenderSeq !== undefined
+            && streamDraft.renderedBodyHash !== undefined
+            ? {
+                sequence: streamDraft.lastCommittedRenderSeq,
+                hash: streamDraft.renderedBodyHash,
+              }
+            : null;
+          if (streamDraft?.generationId === generationId && !cutoffFromDraft
+            && streamDraft.body.length > 0) {
+            throw new Error("Rudder could not verify the visible response cutoff. Refresh before stopping it.");
+          }
+          if (cutoffFromDraft && (
+            !Number.isSafeInteger(cutoffFromDraft.sequence)
+            || cutoffFromDraft.sequence < 0
+            || cutoffFromDraft.sequence > control.lastSequence
+            || !/^[0-9a-f]{64}$/u.test(cutoffFromDraft.hash)
+          )) {
+            throw new Error("Rudder returned an invalid visible response cutoff.");
+          }
+
+          const nativeCutoff = control.executionAuthority === "native_rust"
+            ? cutoffFromDraft ?? (control.lastClientCheckpointSeq !== null
+              && control.lastClientCheckpointHash !== null
+              ? {
+                  sequence: control.lastClientCheckpointSeq,
+                  hash: control.lastClientCheckpointHash,
+                }
+              : { sequence: 0, hash: EMPTY_CHAT_BODY_SHA256 })
+            : cutoffFromDraft;
+          if (control.executionAuthority === "native_rust" && !capabilities.nativeControls) {
+            throw new Error("Native Chat Stop is not enabled on this server.");
+          }
+          stopRequest = {
+            controlActionId: globalThis.crypto.randomUUID(),
+            expectedGenerationId: control.generationId,
+            expectedAttemptEpoch: control.attemptEpoch,
+            expectedControlVersion: control.controlVersion,
+            ...(nativeCutoff ? {
+              lastCommittedRenderSeq: nativeCutoff.sequence,
+              renderedBodyHash: nativeCutoff.hash,
+            } : {}),
+          };
+        }
+
+        if (!isCurrentScope()) return;
+        const racedRecovery = readPendingChatStopRecovery(orgId, chatId);
+        if (racedRecovery) {
+          handedOffToStop = true;
+          stopRecoveryRetrier.retryNow(racedRecovery);
+          return;
+        }
+        const recovery = createPendingChatStopRecovery({
+          orgId,
+          chatId,
+          request: stopRequest,
+          frozenDraft: streamDraft,
+          executionAuthority,
+          sendMutationIdentity,
+        });
+        if (!savePendingChatStopRecovery(recovery)) {
+          throw new Error("Browser storage could not preserve the Stop action. No Stop request was sent.");
+        }
+        handedOffToStop = true;
+        submitStopRecovery(recovery);
+      } catch (error) {
+        if (isCurrentScope()) {
+          pushToast({
+            title: "Stop target could not be verified",
+            body: error instanceof Error ? error.message : "Refresh the conversation and try Stop again.",
+            tone: "error",
+          });
+        }
+      } finally {
+        stopPreflightChatIdsRef.current.delete(chatId);
+        if (!handedOffToStop) {
+          setStoppingChatIds((current) => {
+            if (!current.has(chatId)) return current;
+            const next = new Set(current);
+            next.delete(chatId);
+            return next;
+          });
+        }
+      }
+    })();
+  }, [
+    conversationId,
+    currentUserId,
+    location.key,
+    pushToast,
+    queryClient,
+    queueQuery.data,
+    selectedOrganizationId,
+    serverActiveGenerationId,
+    setStoppingChatIds,
+    stopRecoveryRetrier,
+    streamDrafts,
+    streamScopeKeyForChatId,
+    submitStopRecovery,
+  ]);
   useEffect(() => () => {
     stopRecoveryRetrierRef.current?.dispose();
+    stopPreflightScopeRef.current = null;
+    stopPreflightChatIdsRef.current.clear();
     for (const pending of steerRetryStatesRef.current.values()) {
       if (pending.timer) clearTimeout(pending.timer);
     }
@@ -1346,14 +1664,25 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, conversation.id) });
     return true;
   };
+  const nativeFirstSendDraftRef = useRef<Omit<NativeFirstSendInput, "clientMutationId"> | null>(null);
+  nativeFirstSendDraftRef.current = {
+    body: readComposerDraft().trim(),
+    preferredAgentId: draftPreferredAgentId === NO_CHAT_AGENT_ID ? null : draftPreferredAgentId,
+    title: null,
+    issueCreationMode: "manual_approval",
+    modelOverride: draftRuntimeOverrides.modelOverride,
+    effortOverride: draftRuntimeOverrides.effortOverride,
+  };
   const sendMessage = async (
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
       inlineAnnotationsOverride?: ChatInlineAnnotationInput[];
       annotationDraftPersistence?: AnnotationDraftPersistence;
-      editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; forceImmediateSend?: boolean; resumeClientMutationId?: string; },
+      editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; forceImmediateSend?: boolean; resumeClientMutationId?: string; nativeFirstSendInput?: NativeFirstSendInput; },
   ) => {
     const isResume = Boolean(options?.resumeClientMutationId);
-    if (!isResume && (recoveryDiscovery.checking || recoveryDiscovery.problem || activeChatSendRecovery)) return;
+    if (!isResume && (recoveryDiscovery.checking || recoveryDiscovery.problem || activeChatSendRecovery
+      || (!conversationId && !options?.nativeFirstSendInput
+        && (nativeFirstSend.capabilityState !== "ready" || nativeFirstSend.recovery.kind !== "idle")))) return;
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined && options?.inlineAnnotationsOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
     const editUserMessageId = options?.editUserMessageIdOverride ?? null;
@@ -1392,6 +1721,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           inlineAnnotations: chatResponseAnnotationsForDraft(responseAnnotationState),
           orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamScopeKey: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false; let mutationAcknowledged = false; let mutationTerminal = false; let pendingSendMutation: Awaited<ReturnType<typeof preparePendingChatSendMutation>> | null = null; let networkWaiting = false;
     let requestDispatched = false;
+    let firstTurnTerminalSeen = false;
+    let firstTurnNeedsRecovery = false;
+    let activeNativeFirstSend: NativeFirstSendInput | null = options?.nativeFirstSendInput ?? null;
     try {
       if (!conversation && conversationId) { conversation = await chatsApi.get(conversationId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
@@ -1402,7 +1734,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       if (!conversation) {
         if (isResume) throw new Error("The original chat is no longer selected. Your accepted response was not replayed.");
         if (firstTurnStore.getSnapshot().pending) return;
-        const selectedDraftAgentId = draftPreferredAgentId === NO_CHAT_AGENT_ID ? null : draftPreferredAgentId;
+        const selectedDraftAgentId = options?.nativeFirstSendInput?.preferredAgentId
+          ?? (draftPreferredAgentId === NO_CHAT_AGENT_ID ? null : draftPreferredAgentId);
         if (!selectedDraftAgentId) {
           pushToast({
             title: "No chat agent available",
@@ -1411,7 +1744,50 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           newConversationLockAcquired = false;
           return;
         }
-        if (!draftPreflightQuery.data?.available) {
+        const nativeCapabilities = await nativeFirstSend.ensureCapabilities();
+        const selectedDraftAgent = agents?.find((agent) => agent.id === selectedDraftAgentId);
+        const selectedNativeRuntime = selectedDraftAgent?.agentRuntimeType === "codex_local"
+          || selectedDraftAgent?.agentRuntimeType === "hermes_local";
+        const nativeFirstSendSelected = Boolean(activeNativeFirstSend)
+          || (selectedNativeRuntime && nativeCapabilities?.firstSend === true);
+        if (selectedNativeRuntime && nativeCapabilities && !nativeCapabilities.firstSend) {
+          throw new Error("The selected native runtime is unavailable. Check its local installation and Profile before sending. Your draft is preserved.");
+        }
+        if (activeNativeFirstSend && !nativeFirstSendSelected) {
+          throw new Error("Native Chat first-send capability is unavailable. The saved message was not sent through another path.");
+        }
+        const nativeContextLinks = buildDraftChatContextLinks(
+          draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
+          draftIssueContextId,
+        );
+        if (nativeFirstSendSelected && !activeNativeFirstSend) {
+          const unsupported: string[] = [];
+          if (filesToUpload.length > 0) unsupported.push("attachments");
+          if (serializedAnnotations.inlineAnnotations.length > 0) unsupported.push("inline annotations");
+          if (pendingGroupId) unsupported.push("Messenger groups");
+          if (nativeContextLinks.length > 0) unsupported.push("project or Issue context");
+          if (draftPlanMode) unsupported.push("Plan mode");
+          if (unsupported.length > 0) {
+            pushToast({
+              title: "Native Chat cannot send this draft yet",
+              body: `No message was sent. This Native Chat first-send route does not support ${unsupported.join(", ")}. Your draft is preserved.`,
+              tone: "error",
+            });
+            return;
+          }
+          activeNativeFirstSend = await nativeFirstSend.prepare({
+            body,
+            preferredAgentId: selectedDraftAgentId,
+            title: null,
+            issueCreationMode: "manual_approval",
+            modelOverride: draftRuntimeOverrides.modelOverride,
+            effortOverride: draftRuntimeOverrides.effortOverride,
+          }) ?? null;
+          if (!activeNativeFirstSend) {
+            throw new Error("Native Chat could not preserve this first message before sending. No message was sent.");
+          }
+        }
+        if (!nativeFirstSendSelected && !draftPreflightQuery.data?.available) {
           pushToast({
             title: "Chat is not ready",
             body: draftPreflightQuery.data?.error ?? "Check the selected agent configuration and try again.",
@@ -1434,7 +1810,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           createdAt: startedAt,
         }, draftStorageScopeKey)) return;
         newConversationLockAcquired = true;
-        if (usesComposerState) {
+        if (usesComposerState && !activeNativeFirstSend) {
           setBranchPreview(null);
           setDraft("");
           setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
@@ -1443,21 +1819,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           setResponseAnnotationsExpanded(false);
           responseAnnotationEditor.close();
         }
-        await chatsApi.sendFirstMessageStream(selectedOrganizationId, body, {
-          preferredAgentId: selectedDraftAgentId,
-          groupId: pendingGroupId || undefined,
-          modelOverride: draftRuntimeOverrides.modelOverride,
-          effortOverride: draftRuntimeOverrides.effortOverride,
-          issueCreationMode: "manual_approval",
-          planMode: draftPlanMode,
-          contextLinks: buildDraftChatContextLinks(
-            draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
-            draftIssueContextId,
-          ),
-          signal: abortController.signal,
-          files: filesToUpload,
-          inlineAnnotations: serializedAnnotations.inlineAnnotations,
-          onEvent: async (event) => {
+        const onFirstMessageEvent = async (event: ChatStreamEvent) => {
             if (event.type === "ack") {
               if (!event.conversation) {
                 throw new Error("First chat acknowledgement did not include the accepted conversation");
@@ -1476,19 +1838,41 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               streamOwnershipRef.current[conversation.id] = { streamKey, controller: abortController };
               setStreamAbortController(streamScopeKey, abortController);
               setChatSendInFlight(streamScopeKey, true);
+              if (activeNativeFirstSend) streamSetupComplete = true;
               upsertConversation(conversation);
               upsertMessengerThreadSummary(conversation, {
                 latestActivityAt: new Date(event.userMessage.createdAt),
                 preview: event.userMessage.body,
               });
               upsertMessages(conversation.id, [event.userMessage]);
+              if (activeNativeFirstSend) {
+                await nativeFirstSend.markAccepted(
+                  activeNativeFirstSend.clientMutationId,
+                  conversation.id,
+                ).catch((error: unknown) => {
+                  pushToast({
+                    title: "First message accepted; browser recovery could not be updated",
+                    body: error instanceof Error ? error.message : undefined,
+                    tone: "warn",
+                  });
+                });
+              }
               rememberChatAgentId(selectedOrganizationId, selectedDraftAgentId);
               rememberChatProjectIdForAgent(
                 selectedOrganizationId,
                 selectedDraftAgentId,
                 draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
               );
-              if (usesComposerState && ownsFirstTurn) {
+              const liveDraftStillMatches = !activeNativeFirstSend
+                || nativeFirstSendDraftMatches(activeNativeFirstSend, nativeFirstSendDraftRef.current ?? {
+                  body: "",
+                  preferredAgentId: null,
+                  title: null,
+                  issueCreationMode: "manual_approval",
+                  modelOverride: null,
+                  effortOverride: null,
+                });
+              if (usesComposerState && ownsFirstTurn && liveDraftStillMatches) {
                 setBranchPreview(null);
                 setDraft("");
                 setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
@@ -1544,6 +1928,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               ]).catch(() => undefined);
               return;
             }
+            if (event.type === "error") {
+              if (event.terminal === true && activeNativeFirstSend && conversation) {
+                firstTurnTerminalSeen = true;
+                await nativeFirstSend.markSettled(
+                  activeNativeFirstSend.clientMutationId,
+                  conversation.id,
+                ).catch(() => undefined);
+              }
+              throw new Error(event.error);
+            }
             if (!conversation) {
               throw new Error("Chat stream emitted output before accepting the first message");
             }
@@ -1554,6 +1948,19 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               return;
             }
             if (event.type === "final") {
+              firstTurnTerminalSeen = true;
+              if (activeNativeFirstSend) {
+                await nativeFirstSend.markSettled(
+                  activeNativeFirstSend.clientMutationId,
+                  conversation.id,
+                ).catch((error: unknown) => {
+                  pushToast({
+                    title: "Response finished; browser recovery still needs checking",
+                    body: error instanceof Error ? error.message : undefined,
+                    tone: "warn",
+                  });
+                });
+              }
               const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, conversation.id);
               if (stopRecoveryStreamKeysRef.current[conversation.id] === streamKey) {
                 if (pendingStop?.frozenDraft?.streamKey === streamKey) {
@@ -1577,16 +1984,54 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 }
               }
             }
-          },
-        });
+        };
+        if (activeNativeFirstSend) {
+          requestDispatched = true;
+          await chatsApi.sendNativeFirstMessageStream(selectedOrganizationId, activeNativeFirstSend, {
+            signal: abortController.signal,
+            onEvent: onFirstMessageEvent,
+          });
+        } else {
+          await chatsApi.sendFirstMessageStream(selectedOrganizationId, body, {
+            preferredAgentId: selectedDraftAgentId,
+            groupId: pendingGroupId || undefined,
+            modelOverride: draftRuntimeOverrides.modelOverride,
+            effortOverride: draftRuntimeOverrides.effortOverride,
+            issueCreationMode: "manual_approval",
+            planMode: draftPlanMode,
+            contextLinks: buildDraftChatContextLinks(
+              draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
+              draftIssueContextId,
+            ),
+            signal: abortController.signal,
+            files: filesToUpload,
+            inlineAnnotations: serializedAnnotations.inlineAnnotations,
+            onEvent: onFirstMessageEvent,
+          });
+        }
         const createdConversation = acceptedConversation.current;
         if (!createdConversation) {
           throw new Error("Chat stream ended before accepting the first message");
         }
+        if (activeNativeFirstSend && !firstTurnTerminalSeen) {
+          firstTurnNeedsRecovery = true;
+          networkWaiting = false;
+          setStreamDraftForChat(
+            activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, createdConversation),
+            (current) => current?.streamKey === streamKey
+              ? { ...current, state: "waiting_for_network" }
+              : current,
+          );
+          pushToast({
+            title: "First message accepted; response status needs checking",
+            body: "The accepted message was not sent again. Reopen the chat or check its response status before continuing.",
+            tone: "warn",
+          });
+        }
         if (options?.clearPendingFilesOnSuccess) clearPendingFilesForCurrentScope();
         await refreshChat(createdConversation.id);
         await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, createdConversation.id) });
-        if (!networkWaiting) {
+        if (!networkWaiting && !firstTurnNeedsRecovery) {
           setStreamDraftForChat(activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, createdConversation), (current) => current?.streamKey === streamKey ? null : current);
         }
         firstTurnStore.finish(firstTurnOwner, streamKey);
@@ -1713,6 +2158,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setChatSendRecovery((current) => current?.clientMutationId === pendingSend.clientMutationId ? null : current);
       };
       const { clientMutationId } = pendingSend;
+      setConfirmedStoppedChat(null);
       requestDispatched = true;
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
@@ -1851,6 +2297,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
       }
     } catch (error) {
+      if (activeNativeFirstSend && requestDispatched && !userMessageAcknowledged) {
+        await nativeFirstSend.markUnknown(activeNativeFirstSend.clientMutationId).catch(() => undefined);
+      }
       if (pendingSendMutation && requestDispatched && !mutationAcknowledged && !mutationTerminal) {
         await pendingSendMutation.markUnknown();
       }
@@ -1892,6 +2341,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         });
         return;
       }
+      if (activeNativeFirstSend && userMessageAcknowledged && !firstTurnTerminalSeen && conversation) {
+        firstTurnNeedsRecovery = true;
+        networkWaiting = false;
+        if (streamScopeKey) {
+          setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === activeStreamKey
+            ? { ...current, state: "waiting_for_network" }
+            : current);
+        }
+        pushToast({
+          title: "First message accepted; response status needs checking",
+          body: error instanceof Error ? error.message : "The response did not reach a verified terminal state. Do not send the first message again.",
+          tone: "warn",
+        });
+        return;
+      }
       const isAbort = error instanceof DOMException ? error.name === "AbortError" : error instanceof Error && error.name === "AbortError";
       if (options?.queuedMessageId && conversation && !userMessageAcknowledged) {
         await chatsApi.releaseQueuedMessageClaim(conversation.id, options.queuedMessageId).catch(() => null);
@@ -1907,7 +2371,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (!streamScopeKey) return;
         setStreamDraftForChat(
           streamScopeKey, (current) => (current?.streamKey === activeStreamKey ? null : current), ); }
-      const firstTurnRecovery = isFirstTurn && activeStreamKey && submittedComposerDraft && !userMessageAcknowledged
+      const firstTurnRecovery = isFirstTurn && !activeNativeFirstSend && activeStreamKey && submittedComposerDraft && !userMessageAcknowledged
         ? firstTurnStore.recoverDraft(firstTurnOwner, activeStreamKey, submittedComposerDraft.orgId, submittedComposerDraft.conversationId)
         : null;
       if (submittedComposerDraft && composerClearedForSubmission && !userMessageAcknowledged && !isFirstTurn) { const restoreConversationId = conversation?.id ?? submittedComposerDraft.conversationId; const restoreScopeKey = resolveChatPendingAttachmentScopeKey(
@@ -2658,13 +3122,31 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     || draftPreflightQuery.isPending
     || Boolean(draftPreflightError)
     || !draftPreflightQuery.data?.available;
+  const selectedNativeRuntime = activeSkillAgent?.agentRuntimeType === "codex_local"
+    || activeSkillAgent?.agentRuntimeType === "hermes_local";
+  const nativeFirstSendUnavailable = selectedNativeRuntime
+    && nativeFirstSend.capabilities !== null
+    && !nativeFirstSend.capabilities.firstSend;
+  const nativeFirstSendAvailable = selectedNativeRuntime
+    && nativeFirstSend.capabilityState === "ready"
+    && nativeFirstSend.capabilities?.firstSend === true;
+  const nativeFirstSendGate = !selectedConversation && (
+    nativeFirstSend.capabilityState !== "ready"
+    || nativeFirstSend.recovery.kind !== "idle"
+  );
   const composerUnavailable = selectedConversation
     ? !selectedConversation.chatRuntime.available && !canPersistSelectedAgentForConversation
-    : draftPreflightUnavailable;
+    : nativeFirstSendGate || nativeFirstSendUnavailable || (!nativeFirstSendAvailable && draftPreflightUnavailable);
   const composerUnavailableMessage = !activeSelectedAgentId
     ? "Create or activate an agent before sending messages."
     : selectedConversation
       ? selectedConversation.chatRuntime.error ?? "Selected chat agent is unavailable."
+      : nativeFirstSend.capabilityState === "error"
+        ? nativeFirstSend.capabilityError ?? "Native Chat ownership could not be confirmed. Sending is paused."
+      : nativeFirstSend.recovery.kind === "blocked"
+        ? nativeFirstSend.recovery.message
+      : nativeFirstSendUnavailable
+        ? "The selected native runtime is unavailable. Check its local installation and Profile. Your draft is preserved."
       : draftPreflightQuery.isPending
         ? null
       : draftPreflightError
@@ -3101,7 +3583,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     composerUnavailable,
     sendButtonMode,
     hasDraft: hasSubmittableComposerDraft,
-  }) || recoveryCheckBlocksSubmit || Boolean(recoveryDiscovery.problem) || Boolean(activeChatSendRecovery);
+  }) || recoveryCheckBlocksSubmit || nativeFirstSendGate || Boolean(recoveryDiscovery.problem) || Boolean(activeChatSendRecovery);
   const canSteerQueuedMessages = Boolean(
     (
       serverActiveGenerationId
@@ -3460,6 +3942,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       fileDragActive={composerFileDragActive}
       fileDropTargetProps={composerFileDropTargetProps}
     >
+      {confirmedStoppedChat?.orgId === selectedOrganizationId && confirmedStoppedChat.chatId === selectedConversation?.id
+        && !serverActiveGenerationId && !activeSendInFlight ? (
+        <p role="status" className="mt-2 text-sm text-muted-foreground">Stopped</p>
+      ) : null}
       {chatSendRecovery && selectedConversation?.id === chatSendRecovery.conversationId
         && selectedOrganizationId === chatSendRecovery.orgId ? (
         <ChatSendRecoveryNotice
@@ -3676,7 +4162,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           )}
           placeholder={composerPlaceholder}
           onSubmit={() => {
-            if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending || recoveryDiscovery.checking) return;
+            if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending || recoveryDiscovery.checking || nativeFirstSendGate) return;
             if (selectedConversationHasActiveReply && selectedConversation) {
               void queueComposerMessage(selectedConversation);
               return;
@@ -3697,6 +4183,86 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         {responseAnnotationAnnouncement}
       </div>
       {renderSideChatSlashCommandMenu()}
+      {!selectedConversation && nativeFirstSend.capabilityState === "checking" ? (
+        <div className="mt-2.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] px-3 py-2.5 text-sm text-muted-foreground" role="status">
+          Checking Native Chat availability and the status of any saved first message…
+        </div>
+      ) : null}
+      {!selectedConversation && nativeFirstSend.recovery.kind === "checking" && nativeFirstSend.capabilityState === "ready" ? (
+        <div className="mt-2.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] px-3 py-2.5 text-sm text-muted-foreground" role="status">
+          Checking whether the saved first message was accepted…
+        </div>
+      ) : null}
+      {!selectedConversation && nativeFirstSend.recovery.kind === "blocked" ? (
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] px-3 py-2.5 text-sm" role="status">
+          <span>{nativeFirstSend.recovery.message}</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={newConversationSendInFlight}
+            onClick={() => void nativeFirstSend.retry().catch((error: unknown) => pushToast({
+              title: "Could not check first-message status",
+              body: error instanceof Error ? error.message : undefined,
+              tone: "error",
+            }))}
+          >
+            Check status
+          </Button>
+        </div>
+      ) : null}
+      {!selectedConversation && nativeFirstSend.recovery.kind === "not_found" ? (
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] px-3 py-2.5 text-sm" role="status">
+          <span>The server confirmed this first message was not admitted. Retry the exact saved message?</span>
+          <Button
+            type="button"
+            size="sm"
+            disabled={newConversationSendInFlight}
+            onClick={() => void nativeFirstSend.retryOriginal().then((input) => {
+              if (!input) return;
+              return sendMessage({
+                bodyOverride: input.body,
+                filesOverride: [],
+                inlineAnnotationsOverride: [],
+                nativeFirstSendInput: input,
+              });
+            }).catch((error: unknown) => pushToast({
+              title: "Could not retry the saved first message",
+              body: error instanceof Error ? error.message : undefined,
+              tone: "error",
+            }))}
+          >
+            Retry exact message
+          </Button>
+        </div>
+      ) : null}
+      {!selectedConversation && nativeFirstSend.recovery.kind === "accepted" ? (
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] px-3 py-2.5 text-sm" role="status">
+          <span>The first message was accepted. Open the saved chat; it will not be sent again.</span>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => void nativeFirstSend.openAccepted().then((opened) => {
+              if (!opened) return;
+              const { conversation, message } = opened.receipt;
+              upsertConversation(conversation);
+              upsertMessages(conversation.id, [message]);
+              upsertMessengerThreadSummary(conversation, {
+                latestActivityAt: new Date(message.createdAt),
+                preview: message.body,
+              });
+              navigate(chatConversationPath(conversation.id));
+              void refreshChat(conversation.id).catch(() => null);
+            }).catch((error: unknown) => pushToast({
+              title: "Could not open the accepted chat",
+              body: error instanceof Error ? error.message : undefined,
+              tone: "error",
+            }))}
+          >
+            Open accepted chat
+          </Button>
+        </div>
+      ) : null}
       {composerUnavailable && composerUnavailableMessage ? (
         <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
           {composerUnavailableMessage}{" "}

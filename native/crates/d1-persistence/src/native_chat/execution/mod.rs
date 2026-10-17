@@ -20,12 +20,16 @@ pub use checkpoint::{
 };
 pub use claim::{ClaimedExecution, claim, claim_with_preflight};
 pub use effect::{AuthorizedEffect, EffectDispatch, authorize_effect};
-pub use finalization::{finalize, finalize_stopped, finalize_stopped_before_submission};
+pub use finalization::{
+    finalize, finalize_hermes, finalize_hermes_stopped, finalize_hermes_stopped_before_submission,
+    finalize_stopped, finalize_stopped_before_submission,
+};
 pub use lease::{LeaseReceipt, renew_lease};
 pub use output::{OutputCommit, record_visible_output};
 pub use stopping::{
-    InterruptPermit, StopIntent, advance_stopping_checkpoint, bind_stopping_connection,
-    observe_stop, renew_stopping_lease, reserve_interrupt,
+    InterruptPermit, StopIntent, advance_stopping_checkpoint, advance_stopping_hermes_session,
+    advance_stopping_hermes_turn, bind_stopping_connection, observe_stop, renew_stopping_lease,
+    reserve_interrupt,
 };
 pub use submission::{SubmissionInput, load_submission, validate_submission_source};
 pub use types::{CheckpointSnapshot, ExecutionFence, ExecutionIdentity};
