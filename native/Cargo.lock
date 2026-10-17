@@ -1736,6 +1736,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-cursor-acp-adapter"
+version = "0.7.24"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
 name = "rudder-d1-persistence"
 version = "0.7.24"
 dependencies = [
