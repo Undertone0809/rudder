@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/agent-request-planner",
+  "crates/cursor-acp-adapter",
   "crates/agent-contract-core",
   "crates/agent-cli-core",
   "crates/archive-core",
