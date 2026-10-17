@@ -387,14 +387,16 @@
           "head_sha": "c6b0ccd97051b61f0ca108e4d4c7279d58d29950",
           "base_sha": "c43c0ada9e4064b271b9be00af4c4459dd284415",
           "scope": "private feature-gated managed MCP inheritance foundation for Agent create: canonical organization connections, provider defaults, active tools, idempotent binding/activity writes; public POST remains Node-owned and gate defaults off",
-          "stage_review": "pending exact-head independent review",
+          "stage_review": "ACCEPT exact c6b0ccd97051b61f0ca108e4d4c7279d58d29950",
           "validation": [
             "cargo fmt --all -- --check",
             "cargo check -p rudder-d1-persistence",
             "managed_mcp PG unit tests 2/2",
             "Agent create managed MCP PG integration test"
           ],
-          "mergeability": "MERGEABLE at observation; protected CI pending; do not merge yet"
+          "mergeability": "MERGEABLE at observation; protected CI pending; do not merge yet",
+          "stage_review_limits": "Nonblocking parity follow-up: Node activeToolIdsForConnection does not filter removed_at; Rust does. Rollback-trigger failure and github/read_only branch not independently exercised.",
+          "final_review": "pending protected CI and final handoff review"
         }
       ],
       "managed_migration": {
