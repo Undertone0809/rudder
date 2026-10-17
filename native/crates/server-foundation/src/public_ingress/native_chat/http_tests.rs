@@ -671,16 +671,40 @@ async fn public_send_stream_is_durable_and_exact_retry_never_dispatches_twice() 
     // binding is the durable authority evidence that permits another Native
     // turn; an unbound Chat with legacy history must remain a 409 import
     // conflict.
+    let binding_id = Uuid::new_v4();
+    let segment_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO runtime_bindings
-           (org_id,conversation_id,target_type,target_id,principal_scope_ref,agent_id,
+           (id,org_id,conversation_id,target_type,target_id,principal_scope_ref,agent_id,
             runtime_type,host_id,profile_id,instructions_revision,capability_revision,continuity)
-         VALUES($1::uuid,$2::uuid,'chat_conversation',$2,'org:' || $1::text,$3::uuid,
+         VALUES($1::uuid,$2::uuid,$3::uuid,'chat_conversation',$3,'org:' || $2::text,$4::uuid,
                 'codex_local','host-test','default','instructions-v1','capabilities-v1','native')",
     )
+    .bind(binding_id)
     .bind(fixture::ORG)
     .bind(SEND_CHAT)
     .bind(fixture::CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO native_segments
+           (id,org_id,binding_id,runtime_type,segment_ordinal,state)
+         VALUES($1::uuid,$2::uuid,$3::uuid,'codex_local',0,'pending')",
+    )
+    .bind(segment_id)
+    .bind(fixture::ORG)
+    .bind(binding_id)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE runtime_bindings SET current_segment_id=$1::uuid
+         WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(segment_id)
+    .bind(fixture::ORG)
+    .bind(binding_id)
     .execute(&database.pool)
     .await
     .unwrap();
