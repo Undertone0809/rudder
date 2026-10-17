@@ -18,6 +18,8 @@ use rudder_d1_persistence::goal_reads::{GoalReadRequest, GoalReadView};
 use uuid::Uuid;
 
 mod agent_core;
+mod browser_session;
+mod native_chat;
 mod runtime_bindings;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
