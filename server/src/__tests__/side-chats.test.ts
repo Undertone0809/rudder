@@ -870,16 +870,17 @@ describe("sideChatService", () => {
       `chat:${sideChat.id}`,
     ]);
     await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).rejects.toMatchObject({ status: 409 });
+    await expect(chats.remove(sideChat.id)).resolves.toMatchObject({ id: sideChat.id });
     const [claim] = await db
-      .select({ status: runtimeRetentionClaims.status, expiresAt: runtimeRetentionClaims.expiresAt })
+      .select({ status: runtimeRetentionClaims.status, expiresAt: runtimeRetentionClaims.expiresAt, releasedAt: runtimeRetentionClaims.releasedAt })
       .from(runtimeRetentionClaims)
       .where(eq(runtimeRetentionClaims.resourceRef, `side_chat:${sideChat.id}`));
-    expect(claim).toMatchObject({ status: "active", expiresAt: null });
+    expect(claim).toMatchObject({ status: "released", releasedAt: expect.any(Date) });
     const [alias] = await db
       .select({ conversationId: runtimeSourceAliases.conversationId, releasedAt: runtimeSourceAliases.releasedAt })
       .from(runtimeSourceAliases)
-      .where(eq(runtimeSourceAliases.conversationId, sideChat.id));
-    expect(alias).toMatchObject({ conversationId: sideChat.id, releasedAt: null });
+      .where(eq(runtimeSourceAliases.sourceRef, source.sourceConversationId));
+    expect(alias).toMatchObject({ conversationId: null, releasedAt: expect.any(Date) });
   });
 
   it("creates a fork-family Messenger group when the source is not grouped", async () => {

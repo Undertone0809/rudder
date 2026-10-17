@@ -13,7 +13,9 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
-  chatQueuedMessages
+  chatQueuedMessages,
+  runtimeRetentionClaims,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import { parseShortRef, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
@@ -4053,6 +4055,28 @@ export function chatService(
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
         .where(eq(chatAttachments.conversationId, id));
+      const now = new Date();
+      // Authorized Messenger deletion must release Side Chat lineage before
+      // the conversation's runtime bindings cascade. Direct SQL deletes remain
+      // protected by the NO ACTION lineage FKs.
+      await tx.update(runtimeSourceAliases).set({
+        conversationId: null,
+        releasedAt: now,
+        updatedAt: now,
+        cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`,
+      }).where(and(
+        eq(runtimeSourceAliases.conversationId, id),
+        isNull(runtimeSourceAliases.releasedAt),
+      ));
+      await tx.update(runtimeRetentionClaims).set({
+        status: "released",
+        releasedAt: now,
+        updatedAt: now,
+        cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
+      }).where(and(
+        eq(runtimeRetentionClaims.resourceRef, `side_chat:${id}`),
+        eq(runtimeRetentionClaims.status, "active"),
+      ));
       const [deleted] = await tx
         .delete(chatConversations)
         .where(eq(chatConversations.id, id))
