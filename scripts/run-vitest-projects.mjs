@@ -71,8 +71,8 @@ export function runProject(project, testFiles = [], { spawnChild = spawn } = {})
         "--testTimeout",
         "15000",
         ...testFiles,
-        "--passWithNoTests",
         ...forwardedArgs,
+        "--passWithNoTests=false",
       ],
       {
         cwd: repoRoot,
@@ -123,12 +123,18 @@ export async function runProjects(
     write = (text) => process.stdout.write(text),
   } = {},
 ) {
+  if (projects.length === 0) throw new Error("No test projects selected; verification did not run.");
   const failures = [];
   for (const project of projects) {
     throwIfInterrupted();
     write(`\n[test:run] ${project}\n`);
     if (project === "server") {
       const testFiles = await listFiles(project);
+      if (testFiles.length === 0) {
+        write(`[test:run] ${project}: no test files discovered; verification did not run.\n`);
+        failures.push({ project, code: 1 });
+        continue;
+      }
       for (const testFile of testFiles) {
         throwIfInterrupted();
         write(`\n[test:run] ${project}/${testFile}\n`);

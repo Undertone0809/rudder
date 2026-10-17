@@ -11,7 +11,7 @@
  * available. If username detection fails, the check degrades gracefully.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import { resolve } from "node:path";
@@ -52,7 +52,7 @@ export function resolveForbiddenTokens(tokensFile, env = process.env, osModule =
 export function runForbiddenTokenCheck({
   repoRoot,
   tokens,
-  exec = execSync,
+  exec = execFileSync,
   log = console.log,
   error = console.error,
 }) {
@@ -65,22 +65,35 @@ export function runForbiddenTokenCheck({
 
   for (const token of tokens) {
     try {
+      // Tokens are data, never shell source or regular expressions. Return only
+      // filenames so a privacy check cannot leak matching content into CI logs.
       const result = exec(
-        `git grep -in --no-color -- ${JSON.stringify(token)} -- ':!pnpm-lock.yaml' ':!.git'`,
-        { encoding: "utf8", cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] },
+        "git",
+        ["grep", "--fixed-strings", "--ignore-case", "--files-with-matches", "-z", "--no-color", "-e", token, "--", ":!pnpm-lock.yaml", ":!.git"],
+        {
+          encoding: "utf8",
+          cwd: repoRoot,
+          shell: false,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30000,
+          maxBuffer: 16 * 1024 * 1024,
+        },
       );
-      if (result.trim()) {
+      if (result.length > 0) {
         if (!found) {
           error("ERROR: Forbidden tokens found in tracked files:\n");
         }
         found = true;
-        const lines = result.trim().split("\n");
-        for (const line of lines) {
-          error(`  ${line}`);
+        for (const file of result.split("\0").filter(Boolean)) {
+          error(`  ${JSON.stringify(file)}`);
         }
       }
-    } catch {
-      // git grep returns exit code 1 when no matches — that's fine
+    } catch (failure) {
+      // Only Git's ordinary no-match status is safe. Missing Git, invalid
+      // repositories, signals, timeouts and truncated output must block release.
+      if (failure?.status === 1 && !failure.signal && !failure.code) continue;
+      error("ERROR: Forbidden-token scan failed; publishing is blocked. Check Git availability and repository access.");
+      return 1;
     }
   }
 
@@ -93,9 +106,9 @@ export function runForbiddenTokenCheck({
   return 0;
 }
 
-function resolveRepoPaths(exec = execSync) {
-  const repoRoot = exec("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
-  const gitDir = exec("git rev-parse --git-dir", { encoding: "utf8", cwd: repoRoot }).trim();
+function resolveRepoPaths(exec = execFileSync) {
+  const repoRoot = exec("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", shell: false }).trim();
+  const gitDir = exec("git", ["rev-parse", "--git-dir"], { encoding: "utf8", cwd: repoRoot, shell: false }).trim();
   return {
     repoRoot,
     tokensFile: resolve(repoRoot, gitDir, "hooks/forbidden-tokens.txt"),
