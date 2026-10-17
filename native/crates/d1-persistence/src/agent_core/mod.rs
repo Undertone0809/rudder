@@ -5,6 +5,7 @@ mod constants;
 mod detail;
 mod instructions;
 mod json_boundary;
+mod managed_mcp;
 mod reads;
 mod redaction;
 mod validation;
