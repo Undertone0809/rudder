@@ -13,6 +13,7 @@ import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
 export { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 export { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
+export type { RustPublicIngressOptions } from "./rust-public-ingress-config.js";
 
 import { requestActivityLinkRead, type ActivityLinkReadInput } from "./activity-link-read-bridge.js";
 import { requestActivityRead, type ActivityReadInput } from "./activity-read-bridge.js";
@@ -30,7 +31,6 @@ import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
 import { nativeSessionAuthEnvironment, type RustPublicIngressOptions } from "./rust-public-ingress-config.js";
-export type { RustPublicIngressOptions } from "./rust-public-ingress-config.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 

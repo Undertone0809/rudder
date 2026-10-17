@@ -6887,7 +6887,7 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "4c1e41a1557d391f306fc3ca30a73a0af610438094b2b3b4edb0d413a6c83a45",
+      "sha256": "ef956cf33e856f108b5e5807a8466b9cfe463be3048aace356bbc3dfea3ea24f",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -58663,7 +58663,7 @@
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "base_sha256": "0ef6d83edc0180dc861e58c8854d5d9443e4ccd03e5c6ee99097bb3c19f70b70",
-      "head_sha256": "4c1e41a1557d391f306fc3ca30a73a0af610438094b2b3b4edb0d413a6c83a45",
+      "head_sha256": "ef956cf33e856f108b5e5807a8466b9cfe463be3048aace356bbc3dfea3ea24f",
       "rust_authority": "native/crates/server-foundation/src/native_session_auth.rs owns existing-cookie identity resolution for managed no-Bearer HTTP requests.",
       "compatibility_boundary": "Launch native child and pass session transport configuration.",
       "retirement_criterion": "Remove the private Node proof bridge when Rust owns all business routes and their current permission checks; lifecycle and WebSocket migration remain separate required items.",
