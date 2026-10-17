@@ -1511,12 +1511,15 @@ export function heartbeatService(
         })
         .from(heartbeatRuns)
         .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-        .where(or(
-          and(
-            eq(heartbeatRuns.status, "running"),
-            or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
+        .where(and(
+          eq(heartbeatRuns.executionAuthority, "legacy_ts"),
+          or(
+            and(
+              eq(heartbeatRuns.status, "running"),
+              or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
+            ),
+            eq(heartbeatRuns.terminalEffectsPending, true),
           ),
-          eq(heartbeatRuns.terminalEffectsPending, true),
         ));
 
       for (const { run, agentRuntimeType } of activeRuns) {
@@ -1667,6 +1670,7 @@ export function heartbeatService(
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
       .leftJoin(heartbeatRunEvents, eq(heartbeatRunEvents.runId, heartbeatRuns.id))
       .where(and(
+        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
         eq(heartbeatRuns.status, "running"),
         or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
       ))

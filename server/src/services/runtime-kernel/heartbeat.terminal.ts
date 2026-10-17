@@ -509,6 +509,10 @@ export async function renewHeartbeatRunExecutionLease(
     })
     .where(and(
       eq(heartbeatRuns.id, runId),
+      // Native Rust owns recovery and terminal projection for its runs. The
+      // legacy heartbeat worker must fail closed before it can claim a Rust
+      // execution lease or issue a Node-owned write.
+      eq(heartbeatRuns.executionAuthority, "legacy_ts"),
       eq(heartbeatRuns.status, "running"),
       eq(heartbeatRuns.executionOwnerToken, ownerToken),
     ))
@@ -532,6 +536,7 @@ export async function claimExpiredHeartbeatRunExecution(
     })
     .where(and(
       eq(heartbeatRuns.id, runId),
+      eq(heartbeatRuns.executionAuthority, "legacy_ts"),
       eq(heartbeatRuns.status, "running"),
       lt(heartbeatRuns.createdAt, recoveryCutoff),
       or(

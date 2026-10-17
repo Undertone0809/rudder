@@ -695,6 +695,7 @@ export function chatService(
         .where(
           and(
             eq(chatGenerations.id, generationId),
+            eq(chatGenerations.executionAuthority, "legacy_ts"),
             inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
           ),
         )
