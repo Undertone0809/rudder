@@ -24,6 +24,7 @@ import { createLocalAgentJwt, localAgentJwtAuthSettings } from "../agent-auth-jw
 import { accountSessionRequired } from "../middleware/account-session-required.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/index.js";
+import { privateHostnameGuard } from "../middleware/private-hostname-guard.js";
 import {
   PUBLIC_INGRESS_AUTH_ENDPOINT,
   PUBLIC_INGRESS_LLM_REFLECTION_AUTH_ENDPOINT,
@@ -229,6 +230,11 @@ function createPrivateAuthApp(sourceDb: Db) {
     verify: (req, _res, body) => {
       (req as Request).rawBody = Buffer.from(body);
     },
+  }));
+  app.use(privateHostnameGuard({
+    enabled: true,
+    allowedHostnames: ["public.example"],
+    bindHost: "127.0.0.1",
   }));
   app.use(actorMiddleware(observedDb, {
     deploymentMode: "authenticated",
@@ -817,6 +823,19 @@ describe("source-binary public Actix authentication workflow", () => {
   });
 
   it.each([
+    "zstd", "unknown", "gzip, br",
+  ])("retains parser errors for unsupported denied-host encoding: %s", async (encoding) => {
+    const response = await getPublicIngress("/api/auth/get-session", {
+      host: "attacker.example.test",
+      "content-type": "application/json",
+      "content-encoding": encoding,
+      "content-length": "2",
+    }, "POST", "{}");
+    expect(response.status).toBe(500);
+    expect(JSON.parse(response.body)).toEqual({ error: "Internal server error" });
+  });
+
+  it.each([
     { encoding: "br", compress: brotliCompressSync },
     { encoding: "deflate", compress: deflateSync },
   ])("retains valid denied-host JSON inflation: $encoding", async ({ encoding, compress }) => {
@@ -854,8 +873,11 @@ describe("source-binary public Actix authentication workflow", () => {
   it("keeps health and readiness probes outside the public Host gate", async () => {
     const health = await getPublicIngress("/healthz", { host: "attacker.example.test" });
     expect(health.status).toBe(200);
-    const readiness = await getPublicIngress("/readyz", { host: "attacker.example.test" });
-    expect(readiness.status).not.toBe(403);
+    const readiness = await getPublicIngress("/readyz");
+    expect(readiness.status).toBe(200);
+    const deniedProbe = await getPublicIngress("/readyz", { host: "attacker.example.test" });
+    expect(deniedProbe.status).toBe(503);
+    expect(JSON.parse(deniedProbe.body).reason).toBe("private_node_not_ready");
   });
 
   it("resolves a persisted same-organization Agent key directly and preserves its CLI context", async () => {

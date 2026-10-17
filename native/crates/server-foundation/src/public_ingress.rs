@@ -94,6 +94,26 @@ async fn enforce_private_host_gate(
                     .eq_ignore_ascii_case("application/json")
             });
         let response = if is_json {
+            let supported_encoding = {
+                let mut values = request.headers().get_all(header::CONTENT_ENCODING);
+                let first = values.next();
+                values.next().is_none()
+                    && first.is_none_or(|value| {
+                        value.to_str().is_ok_and(|value| {
+                            matches!(
+                                value.trim().to_ascii_lowercase().as_str(),
+                                "" | "identity" | "gzip" | "deflate" | "br"
+                            )
+                        })
+                    })
+            };
+            if !supported_encoding {
+                return Ok(request
+                    .into_response(HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": "Internal server error"
+                    })))
+                    .map_into_right_body());
+            }
             let stream = actix_web::body::BodyStream::new(
                 actix_web::dev::Decompress::from_headers(payload.into_inner(), request.headers()),
             );
