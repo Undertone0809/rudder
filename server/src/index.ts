@@ -1073,16 +1073,7 @@ async function startServerRuntime(
   });
   
   const listenPort = await selectAvailablePort(config.port, config.host);
-  const ingress = await preparePublicIngressStartup(
-    config, listenPort, options.localAccountAuth, runtimeOwnerKind,
-    options.localAccountAuth ? {
-      installationId: instanceId,
-      expectedIssuer: new URL(options.localAccountAuth.identityOrigin).origin,
-      audience: options.localAccountAuth.audience,
-      identityOrigin: options.localAccountAuth.identityOrigin,
-      offline: options.localAccountAuth.offline,
-    } : undefined,
-  );
+  const ingress = await preparePublicIngressStartup(config, listenPort, options.localAccountAuth, runtimeOwnerKind, options.localAccountAuth ? { installationId: instanceId, expectedIssuer: new URL(options.localAccountAuth.identityOrigin).origin, audience: options.localAccountAuth.audience, identityOrigin: options.localAccountAuth.identityOrigin, offline: options.localAccountAuth.offline } : undefined);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
