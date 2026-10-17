@@ -185,8 +185,9 @@ pub async fn claim_with_preflight(
         return Err(http(409, "Resolved Native Chat Agent changed"));
     }
     let runtime_type = config.identity.runtime_type.as_str();
-    if !matches!(runtime_type, "codex_local" | "hermes_local")
+    if !matches!(runtime_type, "codex_local" | "hermes_local" | "pi_local")
         || (runtime_type == "hermes_local") != config.hermes.is_some()
+        || (runtime_type == "pi_local") != config.pi.is_some()
     {
         return Err(http(409, "Resolved Native Chat runtime is unsupported"));
     }
@@ -480,6 +481,62 @@ pub async fn claim_with_preflight(
                     .map(HermesSessionSelector::as_str)
                     == Some(session_id)
                 && checkpoint.hermes_prompt_request_id().is_none()
+                && phase.as_deref() == Some(checkpoint.phase().as_str())
+                && session_reuse_scope == "explicit"
+                && session_id_before.is_none()
+                && session_intent
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("resume")
+                && session_intent
+                    .get("reuseScope")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("explicit")
+                && session_intent
+                    .get("sessionId")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(session_id)
+                && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                && attempt_thread.is_none()
+                && attempt_turn.is_none()
+        }
+        ("pi_local", "pending", None) => {
+            checkpoint.provider() == NativeChatProvider::PiLocal
+                && checkpoint.phase() == NativeChatProtocolPhase::NoThreadRequest
+                && checkpoint.thread_id().is_none()
+                && checkpoint.turn_id().is_none()
+                && checkpoint.pi_session().is_none()
+                && checkpoint.pi_turn_entry_id().is_none()
+                && phase.as_deref() == Some(checkpoint.phase().as_str())
+                && session_reuse_scope == "none"
+                && session_id_before.is_none()
+                && session_intent
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("fresh")
+                && session_intent
+                    .get("reuseScope")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("none")
+                && session_intent.get("sessionId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                && attempt_thread.is_none()
+                && attempt_turn.is_none()
+        }
+        ("pi_local", "open", Some(session_id)) => {
+            let valid_session = checkpoint.pi_session().is_some_and(|selector| {
+                selector.session_id == session_id
+                    && selector.leaf_id.is_some()
+                    && selector.validate().is_ok()
+            });
+            valid_session
+                && checkpoint.provider() == NativeChatProvider::PiLocal
+                && checkpoint.phase() == NativeChatProtocolPhase::ThreadKnown
+                && checkpoint.thread_id().is_none()
+                && checkpoint.turn_id().is_none()
+                && checkpoint.pi_turn_entry_id().is_none()
                 && phase.as_deref() == Some(checkpoint.phase().as_str())
                 && session_reuse_scope == "explicit"
                 && session_id_before.is_none()

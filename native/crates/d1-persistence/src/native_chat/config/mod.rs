@@ -4,12 +4,15 @@
 mod fingerprint;
 mod hermes;
 mod host;
+mod pi;
 mod resolve;
 mod runtime;
 
 pub use hermes::HermesLocalConfig;
 pub(crate) use hermes::resolve_hermes_config;
 pub use host::LocalHostContext;
+pub use pi::PiLocalConfig;
+pub(crate) use pi::resolve_pi_config;
 pub(crate) use resolve::resolve_codex_config;
 pub use resolve::{ManagedCodexProfile, ResolvedCodexConfig, RuntimeBindingIdentity};
 
@@ -36,8 +39,8 @@ fn invalid(detail: &'static str) -> Error {
 
 /// Resolve the provider from the selected Agent row, then use that provider's
 /// strict configuration reader. The result remains in the historical carrier
-/// for source compatibility; `identity.runtime_type` and `hermes` select the
-/// closed execution branch.
+/// for source compatibility; `identity.runtime_type` and the provider
+/// extension select the closed execution branch.
 pub(crate) async fn resolve_native_config(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     organization_id: &str,
@@ -61,6 +64,7 @@ pub(crate) async fn resolve_native_config(
     match runtime_type.as_str() {
         "codex_local" => resolve_codex_config(tx, organization_id, conversation_id, host).await,
         "hermes_local" => resolve_hermes_config(tx, organization_id, conversation_id, host).await,
+        "pi_local" => resolve_pi_config(tx, organization_id, conversation_id, host).await,
         _ => Err(unsupported(
             "selected local runtime is not supported by Native Chat",
         )),

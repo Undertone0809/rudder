@@ -298,6 +298,7 @@ pub(crate) async fn resolve_hermes_config(
             profile_config_revision,
             env_revision: fingerprint::json_revision(&json!(env_facts)),
         }),
+        pi: None,
     })
 }
 
@@ -470,7 +471,7 @@ fn hermes_profile_revision(home: &Path) -> Result<String> {
     Ok(fingerprint::json_revision(&json!(facts)))
 }
 
-async fn resolve_agent_env(
+pub(super) async fn resolve_agent_env(
     tx: &mut Transaction<'_, Postgres>,
     org: &str,
     raw: Option<&Value>,
