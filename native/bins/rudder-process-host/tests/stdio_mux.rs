@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use serde_json::{Value, json};
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -15,6 +16,7 @@ use rudder_process_host::{MUX_MAX_FRAME_BYTES, MUX_VERSION};
 struct Host {
     child: Child,
     frames: Receiver<Value>,
+    pending_frames: VecDeque<Value>,
     reader: Option<JoinHandle<()>>,
     root: PathBuf,
     process_group: Option<i32>,
@@ -64,26 +66,43 @@ impl Host {
         Self {
             child,
             frames,
+            pending_frames: VecDeque::new(),
             reader: Some(reader),
             root,
             process_group: None,
         }
     }
 
-    fn next_frame(&self) -> Value {
+    fn receive_frame(&self) -> Value {
         self.frames
             .recv_timeout(Duration::from_secs(8))
             .expect("mux frame should arrive")
     }
 
-    fn wait_lifecycle(&self, kind: &str) -> Value {
+    fn next_frame(&mut self) -> Value {
+        if let Some(frame) = self.pending_frames.pop_front() {
+            frame
+        } else {
+            self.receive_frame()
+        }
+    }
+
+    fn wait_lifecycle(&mut self, kind: &str) -> Value {
         let deadline = Instant::now() + Duration::from_secs(8);
+        let mut deferred = VecDeque::new();
         loop {
-            let event = self.next_frame();
+            let event = if let Some(frame) = self.pending_frames.pop_front() {
+                frame
+            } else {
+                self.receive_frame()
+            };
             assert_eq!(event["muxVersion"], MUX_VERSION);
             if event["type"] == "lifecycle" && event["event"]["type"] == kind {
+                deferred.append(&mut self.pending_frames);
+                self.pending_frames = deferred;
                 return event["event"].clone();
             }
+            deferred.push_back(event);
             assert!(Instant::now() < deadline, "timed out waiting for {kind}");
         }
     }
@@ -206,12 +225,37 @@ fn stdio_mux_frames_keep_lifecycle_and_binary_streams_discriminated_and_eof_reap
         r"printf 'out\000\377\n'; printf 'err\200\n' >&2; exec sleep 30",
     );
     let process_group = spawned["pgid"].as_i64().unwrap() as i32;
+    let expected_stdout: &[u8] = b"out\0\xff\n";
+    let expected_stderr: &[u8] = b"err\x80\n";
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
+
+    // Spawn is reported after the child starts, so capture both known writes
+    // before closing the host command pipe. Otherwise EOF cleanup can win the
+    // scheduling race and legitimately kill the child before it writes.
+    while stdout_bytes.as_slice() != expected_stdout || stderr_bytes.as_slice() != expected_stderr {
+        let frame = host.next_frame();
+        assert_eq!(frame["muxVersion"], MUX_VERSION);
+        match frame["type"].as_str().expect("mux frame type") {
+            "stdout" => {
+                stdout_bytes.extend(decode_hex(&frame));
+                assert!(expected_stdout.starts_with(&stdout_bytes));
+            }
+            "stderr" => {
+                stderr_bytes.extend(decode_hex(&frame));
+                assert!(expected_stderr.starts_with(&stderr_bytes));
+            }
+            "lifecycle" if frame["event"]["type"] == "terminal" => {
+                panic!("child terminalized before the test closed command stdin")
+            }
+            "lifecycle" => {}
+            other => panic!("unexpected mux frame kind {other}"),
+        }
+    }
 
     // This is the kernel EOF a Rust caller receives at the host when its own
     // process is killed and the last command-pipe writer closes.
     host.child.stdin.take();
-    let mut stdout_bytes = Vec::new();
-    let mut stderr_bytes = Vec::new();
     let terminal = loop {
         let frame = host.next_frame();
         assert_eq!(frame["muxVersion"], MUX_VERSION);
@@ -225,8 +269,8 @@ fn stdio_mux_frames_keep_lifecycle_and_binary_streams_discriminated_and_eof_reap
             other => panic!("unexpected mux frame kind {other}"),
         }
     };
-    assert_eq!(stdout_bytes, b"out\0\xff\n");
-    assert_eq!(stderr_bytes, b"err\x80\n");
+    assert_eq!(stdout_bytes.as_slice(), expected_stdout);
+    assert_eq!(stderr_bytes.as_slice(), expected_stderr);
     assert_eq!(terminal["status"], "succeeded");
     assert!(host.wait_for_exit(Duration::from_secs(5)).success());
     assert_process_group_gone(process_group);
