@@ -225,7 +225,7 @@ fn organization_storage_key(org_id: &str) -> Result<String, ()> {
 
 #[cfg(unix)]
 fn system_hostname() -> Option<String> {
-    let mut buffer = [0i8; 256];
+    let mut buffer = [0 as libc::c_char; 256];
     // SAFETY: the buffer is writable and its length is bounded and explicit.
     let status = unsafe { libc::gethostname(buffer.as_mut_ptr(), buffer.len()) };
     if status != 0 {
