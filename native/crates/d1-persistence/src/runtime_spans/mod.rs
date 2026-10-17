@@ -54,6 +54,18 @@ pub enum Request {
         #[serde(rename = "spanId")]
         span_id: String,
     },
+    ReadTranscript {
+        #[serde(rename = "spanId")]
+        span_id: String,
+        #[serde(default, rename = "afterSeq")]
+        after_seq: i32,
+        #[serde(default = "default_transcript_limit")]
+        limit: i32,
+    },
+}
+
+fn default_transcript_limit() -> i32 {
+    100
 }
 
 /// Execute a Run-span operation in Rust with fresh actor and organization checks.
@@ -72,6 +84,9 @@ pub async fn execute(
         Request::Open { .. } => admission::open(pool, actor, &organization_id, request).await,
         Request::BindLocator { .. } => locator::bind(pool, actor, &organization_id, request).await,
         Request::Read { span_id } => reads::read(pool, actor, &organization_id, span_id).await,
+        Request::ReadTranscript { .. } => {
+            reads::read_transcript(pool, actor, &organization_id, request).await
+        }
     }
 }
 
@@ -93,11 +108,27 @@ mod wire_tests {
         }))
         .unwrap();
         assert!(matches!(parsed, Request::Open { .. }));
+        let transcript: Request = serde_json::from_value(json!({
+            "operation":"read_transcript",
+            "spanId":"60000000-0000-4000-8000-000000000001",
+            "afterSeq":4,
+            "limit":25
+        }))
+        .unwrap();
+        assert!(matches!(
+            transcript,
+            Request::ReadTranscript {
+                after_seq: 4,
+                limit: 25,
+                ..
+            }
+        ));
 
         for invalid in [
             json!({"operation":"open","runId":"x","attemptId":"x","attemptEpoch":0,"ownerToken":"x","bindingId":"x","segmentId":"x","ordinal":5}),
             json!({"operation":"bind_locator","spanId":"x","attemptId":"x","attemptEpoch":1,"ownerToken":"x","nativeSessionId":"session","providerState":{"token":"secret"}}),
             json!({"operation":"read","spanId":"x","ownerToken":"must-not-be-accepted"}),
+            json!({"operation":"read_transcript","spanId":"x","afterSeq":0,"limit":100,"ownerToken":"must-not-be-accepted"}),
             json!({"operation":"delete","spanId":"x"}),
         ] {
             assert!(serde_json::from_value::<Request>(invalid).is_err());
