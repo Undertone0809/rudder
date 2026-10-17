@@ -33,11 +33,13 @@ fn input(view: GoalReadView, id: Option<&str>) -> GoalReadRequest {
 async fn goal_read_can_share_the_auth_repeatable_read_snapshot() {
     let db = Database::start().await;
     let user_id = "goal-read-snapshot-user";
+    let agent_key_id = "60000000-0000-4000-8000-000000000002";
+    let agent_key_hash = "goal-read-snapshot-agent-key-hash";
     sqlx::query(
         r#"INSERT INTO "user"(id,name,email,created_at,updated_at)
            VALUES ($1,'Goal snapshot user',$2,now(),now())"#,
     )
-    .bind(&user_id)
+    .bind(user_id)
     .bind(format!("{user_id}@invalid.test"))
     .execute(&db.pool)
     .await
@@ -46,7 +48,17 @@ async fn goal_read_can_share_the_auth_repeatable_read_snapshot() {
         "INSERT INTO organization_memberships(org_id,principal_type,principal_id,status) VALUES ($1::uuid,'user',$2,'active')",
     )
     .bind(ORG)
-    .bind(&user_id)
+    .bind(user_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agent_api_keys(id,agent_id,org_id,name,key_hash) VALUES ($1::uuid,$2::uuid,$3::uuid,'Goal snapshot key',$4)",
+    )
+    .bind(agent_key_id)
+    .bind(CEO)
+    .bind(ORG)
+    .bind(agent_key_hash)
     .execute(&db.pool)
     .await
     .unwrap();
@@ -60,37 +72,114 @@ async fn goal_read_can_share_the_auth_repeatable_read_snapshot() {
         "SELECT EXISTS(SELECT 1 FROM organization_memberships WHERE org_id=$1::uuid AND principal_id=$2 AND status='active')",
     )
     .bind(ORG)
-    .bind(&user_id)
+    .bind(user_id)
     .fetch_one(&mut *tx)
     .await
     .unwrap();
     assert!(active_before);
+    let key_active_before: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agent_api_keys k JOIN agents a ON a.id=k.agent_id AND a.org_id=k.org_id WHERE k.id=$1::uuid AND k.org_id=$2::uuid AND k.key_hash=$3 AND k.revoked_at IS NULL AND a.status NOT IN ('terminated','pending_approval'))",
+    )
+    .bind(agent_key_id)
+    .bind(ORG)
+    .bind(agent_key_hash)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert!(key_active_before);
+    let auth_backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let auth_snapshot: String = sqlx::query_scalar("SELECT txid_current_snapshot()::text")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
 
-    // Commit the revocation after the auth query established the snapshot.
-    // A read routed through the same transaction must observe that exact
-    // snapshot rather than opening a second connection after the revoke.
+    // Commit the revocation and a Goal mutation from a second connection after
+    // both auth checks established the snapshot. The changed title makes a
+    // read opened after the revoke observably different from one using the
+    // auth transaction's snapshot.
+    let mut external_tx = db.pool.begin().await.unwrap();
+    let external_backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *external_tx)
+        .await
+        .unwrap();
+    assert_ne!(auth_backend_pid, external_backend_pid);
     sqlx::query(
         "UPDATE organization_memberships SET status='revoked' WHERE org_id=$1::uuid AND principal_id=$2",
     )
     .bind(ORG)
-    .bind(&user_id)
-    .execute(&db.pool)
+    .bind(user_id)
+    .execute(&mut *external_tx)
     .await
     .unwrap();
+    sqlx::query("UPDATE agent_api_keys SET revoked_at=now() WHERE id=$1::uuid")
+        .bind(agent_key_id)
+        .execute(&mut *external_tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE goals SET title='Changed after auth snapshot' WHERE id=$1::uuid")
+        .bind(GOAL)
+        .execute(&mut *external_tx)
+        .await
+        .unwrap();
+    external_tx.commit().await.unwrap();
+    let revoked_membership: bool = sqlx::query_scalar(
+        "SELECT NOT EXISTS(SELECT 1 FROM organization_memberships WHERE org_id=$1::uuid AND principal_id=$2 AND status='active')",
+    )
+    .bind(ORG)
+    .bind(user_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let revoked_key: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agent_api_keys WHERE id=$1::uuid AND revoked_at IS NOT NULL)",
+    )
+    .bind(agent_key_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(revoked_membership);
+    assert!(revoked_key);
+    let changed_title: String = sqlx::query_scalar("SELECT title FROM goals WHERE id=$1::uuid")
+        .bind(GOAL)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(changed_title, "Changed after auth snapshot");
     let response = rudder_d1_persistence::goal_reads::read_goals_for_actor_in_transaction(
         &mut tx,
         ORG,
         &input(GoalReadView::List, None),
-        Some(&user_id),
+        Some(user_id),
     )
     .await
     .unwrap();
+    let read_backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let read_snapshot: String = sqlx::query_scalar("SELECT txid_current_snapshot()::text")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(read_backend_pid, auth_backend_pid);
+    assert_eq!(read_snapshot, auth_snapshot);
     tx.commit().await.unwrap();
     let goals: Value = serde_json::from_str(&response).unwrap();
-    assert_eq!(goals.as_array().unwrap().len(), 2);
+    assert_eq!(
+        goals
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|goal| goal["id"] == GOAL)
+            .and_then(|goal| goal["title"].as_str()),
+        Some("Synthetic goal")
+    );
 
     db.sql(&format!(
-        "DELETE FROM organization_memberships WHERE org_id='{ORG}'::uuid AND principal_id='{user_id}'; DELETE FROM \"user\" WHERE id='{user_id}';"
+        "DELETE FROM agent_api_keys WHERE id='{agent_key_id}'::uuid; DELETE FROM organization_memberships WHERE org_id='{ORG}'::uuid AND principal_id='{user_id}'; DELETE FROM \"user\" WHERE id='{user_id}'; UPDATE goals SET title='Synthetic goal' WHERE id='{GOAL}'::uuid;"
     ))
     .await;
 }
