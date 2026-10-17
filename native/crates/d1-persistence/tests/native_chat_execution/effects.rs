@@ -225,6 +225,12 @@ async fn submit_effect_dispatch_contains_exact_thread_message_and_admitted_body(
             EffectDispatch::SubmitHermesInput { .. } => {
                 panic!("Submit permit produced Hermes input")
             }
+            EffectDispatch::StartPiSession => {
+                panic!("Submit permit produced Pi session start")
+            }
+            EffectDispatch::SubmitPiInput { .. } => {
+                panic!("Submit permit produced Pi input")
+            }
         })
         .expect("dispatch exact Submit request");
     assert_eq!(dispatch.0, OPAQUE_THREAD);
