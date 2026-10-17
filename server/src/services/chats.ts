@@ -104,7 +104,6 @@ import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { lockLegacyNativeChatQueueTarget, lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { organizationService } from "./orgs.js";
-import { isPostgresError } from "./postgres-errors.js";
 import { releaseSideChatLineage } from "./side-chats.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
@@ -657,28 +656,11 @@ export function chatService(
 
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
     const now = new Date();
-    let row: ChatGenerationRow | undefined;
-    try {
-      [row] = await db
-        .insert(chatGenerations)
-        .values({
-          orgId,
-          conversationId,
-          status: "active",
-          controlOwnerToken: null,
-          controlLeaseExpiresAt: null,
-          startedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
-    } catch (error) {
-      if (isPostgresError(error, "23505")) {
-        throw conflict("Native Chat owns this conversation");
-      }
-      throw error;
-    }
-    if (!row) throw new Error("Failed to create chat generation");
+    const [row] = await db.insert(chatGenerations).values({
+      orgId, conversationId, status: "active", controlOwnerToken: null,
+      controlLeaseExpiresAt: null, startedAt: now, createdAt: now, updatedAt: now,
+    }).onConflictDoNothing().returning();
+    if (!row) throw conflict("Native Chat owns this conversation");
     return row;
   }
 
@@ -4065,11 +4047,7 @@ export function chatService(
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
         .where(eq(chatAttachments.conversationId, id));
-      const now = new Date();
-      // Authorized Messenger deletion must release Side Chat lineage before
-      // the conversation's runtime bindings cascade. Direct SQL deletes remain
-      // protected by the NO ACTION lineage FKs.
-      await releaseSideChatLineage(tx, id, now);
+      const now = new Date(); await releaseSideChatLineage(tx, id, now);
       const [deleted] = await tx
         .delete(chatConversations)
         .where(eq(chatConversations.id, id))
