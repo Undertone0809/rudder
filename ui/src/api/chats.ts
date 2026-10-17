@@ -353,7 +353,7 @@ function isNativeFirstSendConversation(
     && (runtime.model === null || typeof runtime.model === "string")
     && (runtime.effort == null || typeof runtime.effort === "string")
     && ((runtime.available === true
-      && (runtime.agentRuntimeType === "codex_local" || runtime.agentRuntimeType === "pi_local" || runtime.agentRuntimeType === "hermes_local")
+      && (runtime.agentRuntimeType === "codex_local" || runtime.agentRuntimeType === "hermes_local")
       && typeof runtime.runtimeAgentId === "string"
       && runtime.error === null)
       || (runtime.available === false
