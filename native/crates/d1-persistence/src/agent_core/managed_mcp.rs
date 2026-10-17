@@ -181,31 +181,32 @@ mod tests {
         run_for(pool, CEO).await
     }
 
-    async fn seed_connection(
-        database: &Database,
-        id: &str,
-        provider: &str,
-        access_mode: &str,
-        transport: &str,
-        canonical_state: &str,
-        status: &str,
+    struct SeedConnection {
+        id: &'static str,
+        provider: &'static str,
+        access_mode: &'static str,
+        transport: &'static str,
+        canonical_state: &'static str,
+        status: &'static str,
         enabled: bool,
-    ) {
+    }
+
+    async fn seed_connection(database: &Database, connection: SeedConnection) {
         sqlx::query(
             "INSERT INTO mcp_connections
                (id, org_id, name, display_name, provider, transport, access_mode,
                 status, canonical_state, safe_config, enabled)
              VALUES ($1::uuid, $2::uuid, $3, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9)",
         )
-        .bind(id)
+        .bind(connection.id)
         .bind(ORG)
-        .bind(format!("mcp-{id}"))
-        .bind(provider)
-        .bind(transport)
-        .bind(access_mode)
-        .bind(status)
-        .bind(canonical_state)
-        .bind(enabled)
+        .bind(format!("mcp-{}", connection.id))
+        .bind(connection.provider)
+        .bind(connection.transport)
+        .bind(connection.access_mode)
+        .bind(connection.status)
+        .bind(connection.canonical_state)
+        .bind(connection.enabled)
         .execute(&database.pool)
         .await
         .expect("seed MCP connection");
@@ -223,46 +224,54 @@ mod tests {
         let removed_tool = "61000000-0000-4000-8000-000000000003";
         seed_connection(
             &database,
-            linear,
-            "linear",
-            "read_write",
-            "streamable_http",
-            "canonical",
-            "active",
-            true,
+            SeedConnection {
+                id: linear,
+                provider: "linear",
+                access_mode: "read_write",
+                transport: "streamable_http",
+                canonical_state: "canonical",
+                status: "active",
+                enabled: true,
+            },
         )
         .await;
         seed_connection(
             &database,
-            notion,
-            "notion",
-            "provider_default",
-            "streamable_http",
-            "canonical",
-            "active",
-            true,
+            SeedConnection {
+                id: notion,
+                provider: "notion",
+                access_mode: "provider_default",
+                transport: "streamable_http",
+                canonical_state: "canonical",
+                status: "active",
+                enabled: true,
+            },
         )
         .await;
         seed_connection(
             &database,
-            ignored,
-            "custom",
-            "provider_default",
-            "legacy_manual",
-            "canonical",
-            "disabled",
-            false,
+            SeedConnection {
+                id: ignored,
+                provider: "custom",
+                access_mode: "provider_default",
+                transport: "legacy_manual",
+                canonical_state: "canonical",
+                status: "disabled",
+                enabled: false,
+            },
         )
         .await;
         seed_connection(
             &database,
-            custom,
-            "custom",
-            "provider_default",
-            "streamable_http",
-            "canonical",
-            "active",
-            true,
+            SeedConnection {
+                id: custom,
+                provider: "custom",
+                access_mode: "provider_default",
+                transport: "streamable_http",
+                canonical_state: "canonical",
+                status: "active",
+                enabled: true,
+            },
         )
         .await;
         sqlx::query(
@@ -379,13 +388,15 @@ mod tests {
         let connection = "62000000-0000-4000-8000-000000000001";
         seed_connection(
             &database,
-            connection,
-            "linear",
-            "read_write",
-            "streamable_http",
-            "canonical",
-            "active",
-            true,
+            SeedConnection {
+                id: connection,
+                provider: "linear",
+                access_mode: "read_write",
+                transport: "streamable_http",
+                canonical_state: "canonical",
+                status: "active",
+                enabled: true,
+            },
         )
         .await;
         sqlx::query(
