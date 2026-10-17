@@ -1,13 +1,30 @@
 use rudder_runtime_core::native_chat::{
     MAX_NATIVE_CHAT_PROVIDER_ID_BYTES, NativeChatProtocolCheckpoint as Checkpoint,
     NativeChatProtocolPhase as Phase, NativeChatProtocolStart as Start, NativeChatProvider,
-    PiSessionSelector,
+    HermesSessionSelector, PiSessionSelector,
 };
 
 fn restored(state: &Checkpoint) -> Checkpoint {
     let result: Checkpoint = serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
     result.validate().unwrap();
     result
+}
+
+#[test]
+fn hermes_session_start_records_provider_locator_before_phase_validation() {
+    let session = "550e8400-e29b-41d4-a716-446655440000";
+    let state = Checkpoint::new_hermes_fresh_session()
+        .unwrap()
+        .prepare_thread_start(0)
+        .unwrap();
+    let next = state
+        .record_hermes_session(1, HermesSessionSelector::from_persisted(session).unwrap())
+        .unwrap();
+    assert_eq!(next.phase(), Phase::ThreadKnown);
+    assert_eq!(next.hermes_session().unwrap().as_str(), session);
+    assert_eq!(next.revision(), 2);
+    let next = next.prepare_input(2).unwrap();
+    next.mark_hermes_input_indeterminate(3, 2).unwrap();
 }
 
 #[test]

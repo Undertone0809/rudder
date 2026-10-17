@@ -524,12 +524,24 @@ impl NativeChatProtocolCheckpoint {
             ));
         }
         selector.validate()?;
-        let mut next = self.advance(
-            expected_revision,
-            NativeChatProtocolPhase::ThreadKnown,
-            None,
-            None,
-        )?;
+        self.validate()?;
+        if self.revision != expected_revision
+            || !self
+                .phase
+                .permits_transition(NativeChatProtocolPhase::ThreadKnown)
+        {
+            return Err(RuntimeError::fence("stale Hermes session checkpoint"));
+        }
+        // Hermes carries its session selector in a provider-specific field.
+        // Populate it before validation of the ThreadKnown phase; routing it
+        // through the generic Codex advance helper would validate an invalid
+        // intermediate state with no thread locator.
+        let mut next = self.clone();
+        next.phase = NativeChatProtocolPhase::ThreadKnown;
+        next.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::invalid("provider checkpoint revision exhausted"))?;
         next.hermes_session = Some(selector);
         next.validate()?;
         Ok(next)
@@ -548,12 +560,23 @@ impl NativeChatProtocolCheckpoint {
                 "Hermes ACP prompt does not match the current session",
             ));
         }
-        let mut next = self.advance(
-            expected_revision,
-            NativeChatProtocolPhase::InputIndeterminate,
-            None,
-            None,
-        )?;
+        self.validate()?;
+        if self.revision != expected_revision
+            || !self
+                .phase
+                .permits_transition(NativeChatProtocolPhase::InputIndeterminate)
+        {
+            return Err(RuntimeError::fence("stale Hermes prompt checkpoint"));
+        }
+        // The request id is part of the valid InputIndeterminate identity, so
+        // set it before the phase validator runs instead of validating an
+        // impossible intermediate state with a missing prompt locator.
+        let mut next = self.clone();
+        next.phase = NativeChatProtocolPhase::InputIndeterminate;
+        next.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::invalid("provider checkpoint revision exhausted"))?;
         next.hermes_prompt_request_id = Some(request_id);
         next.validate()?;
         Ok(next)

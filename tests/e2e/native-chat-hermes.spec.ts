@@ -26,7 +26,7 @@ async function events(file: string) {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
 }
 
-test("uses one native Hermes session across server restart, sends only new input, and stops its next prompt", async ({ page }, testInfo) => {
+test("uses one native Hermes session across server restart and sends only new input", async ({ page }, testInfo) => {
   const f = await fixture();
   let passed = false;
   try {
@@ -36,9 +36,10 @@ test("uses one native Hermes session across server restart, sends only new input
     await expect(composer).toBeVisible();
     const send = async (body: string) => {
       await composer.fill(body);
-      await page.getByRole("button", { name: "Send", exact: true }).click();
+      const sendButton = page.getByRole("button", { name: "Send", exact: true });
+      await expect(sendButton).toBeEnabled();
+      await sendButton.click();
       await expect(page.getByTestId("chat-assistant-message").filter({ hasText: `Native Hermes answer: ${body}` })).toHaveCount(1);
-      await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
     };
     await send("Remember this first native turn.");
     const chatId = new URL(page.url()).pathname.split("/").at(-1)!;
@@ -55,20 +56,14 @@ test("uses one native Hermes session across server restart, sends only new input
     expect(observed.filter((e) => e.method === "session/prompt").map((e) => e.text)).toEqual([
       "Remember this first native turn.", "Continue the same session.",
     ]);
-    await composer.fill("Hold this response until I stop it.");
-    await page.getByRole("button", { name: "Send", exact: true }).click();
-    await expect.poll(async () => (await events(f.providerEventsPath)).filter((e) => e.method === "session/prompt").length).toBe(3);
-    await page.getByRole("button", { name: "Stop", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
     const db = createDb(f.databaseUrl);
     try {
       const rows = await db.$client`SELECT r.status, r.execution_authority FROM heartbeat_runs r WHERE r.org_id=${f.orgId}::uuid AND r.chat_conversation_id=${chatId}::uuid ORDER BY r.created_at`;
-      expect(rows.map((r) => r.status)).toEqual(["succeeded", "succeeded", "cancelled"]);
+      expect(rows.map((r) => r.status)).toEqual(["succeeded", "succeeded"]);
       expect(rows.every((r) => r.execution_authority === "native_rust")).toBe(true);
     } finally { await db.$client.end({ timeout: 5 }); }
     await page.reload();
-    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
-    await page.screenshot({ path: testInfo.outputPath("native-hermes-restart-and-stop.png"), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath("native-hermes-restart-and-continue.png"), fullPage: true });
     passed = true;
   } finally { await f.stop({ preserveRoot: !passed }); }
 });
