@@ -894,13 +894,27 @@ mod tests {
     use crate::{PiSessionTree, PiSessionTreeError, PiTurnStatus};
     use serde_json::json;
 
+    fn fixture_session_header() -> String {
+        json!({
+            "type": "session",
+            "version": 3,
+            "id": "session-uuid",
+            "cwd": std::env::current_dir()
+                .expect("test working directory")
+                .to_string_lossy()
+                .into_owned(),
+        })
+        .to_string()
+    }
+
     fn assistant_entry(content: &str, stop_reason: &str) -> (tempfile::TempDir, PiSessionTree) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.jsonl");
+        let header = fixture_session_header();
         std::fs::write(
             &path,
             format!(
-                "{{\"type\":\"session\",\"version\":3,\"id\":\"session-uuid\",\"cwd\":\"/tmp\"}}\n{{\"type\":\"message\",\"id\":\"aaaaaaaa\",\"parentId\":null,\"message\":{{\"role\":\"assistant\",\"content\":{content},\"stopReason\":\"{stop_reason}\"}}}}\n"
+                "{header}\n{{\"type\":\"message\",\"id\":\"aaaaaaaa\",\"parentId\":null,\"message\":{{\"role\":\"assistant\",\"content\":{content},\"stopReason\":\"{stop_reason}\"}}}}\n"
             ),
         )
         .unwrap();
@@ -941,17 +955,15 @@ mod tests {
     fn tool_call_and_tool_result_on_the_submitted_turn_cannot_be_flattened_to_text() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"type\":\"session\",\"version\":3,\"id\":\"session-uuid\",\"cwd\":\"/tmp\"}\n",
-                "{\"type\":\"message\",\"id\":\"bbbbbbbb\",\"parentId\":null,\"message\":{\"role\":\"user\",\"content\":\"x\"}}\n",
-                "{\"type\":\"message\",\"id\":\"cccccccc\",\"parentId\":\"bbbbbbbb\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"c1\",\"name\":\"read\",\"arguments\":{}}],\"stopReason\":\"toolUse\"}}\n",
-                "{\"type\":\"message\",\"id\":\"dddddddd\",\"parentId\":\"cccccccc\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"c1\",\"content\":[{\"type\":\"text\",\"text\":\"result\"}],\"isError\":false}}\n",
-                "{\"type\":\"message\",\"id\":\"eeeeeeee\",\"parentId\":\"dddddddd\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"answer\"}],\"stopReason\":\"stop\"}}\n"
-            ),
-        )
-        .unwrap();
+        let mut fixture = fixture_session_header();
+        fixture.push('\n');
+        fixture.push_str(concat!(
+            "{\"type\":\"message\",\"id\":\"bbbbbbbb\",\"parentId\":null,\"message\":{\"role\":\"user\",\"content\":\"x\"}}\n",
+            "{\"type\":\"message\",\"id\":\"cccccccc\",\"parentId\":\"bbbbbbbb\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"c1\",\"name\":\"read\",\"arguments\":{}}],\"stopReason\":\"toolUse\"}}\n",
+            "{\"type\":\"message\",\"id\":\"dddddddd\",\"parentId\":\"cccccccc\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"c1\",\"content\":[{\"type\":\"text\",\"text\":\"result\"}],\"isError\":false}}\n",
+            "{\"type\":\"message\",\"id\":\"eeeeeeee\",\"parentId\":\"dddddddd\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"answer\"}],\"stopReason\":\"stop\"}}\n"
+        ));
+        std::fs::write(&path, fixture).unwrap();
         let tree = PiSessionTree::read(&path, directory.path()).unwrap();
         assert_eq!(
             project_exact_turn(&tree, None, "x").map(|(_, _, status, text)| (status, text)),
@@ -963,14 +975,12 @@ mod tests {
     fn unknown_content_blocks_fail_closed_before_terminal_projection() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"type\":\"session\",\"version\":3,\"id\":\"session-uuid\",\"cwd\":\"/tmp\"}\n",
-                "{\"type\":\"message\",\"id\":\"aaaaaaaa\",\"parentId\":null,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"visible\"},{\"type\":\"future_audio\",\"data\":\"hidden\"}],\"stopReason\":\"stop\"}}\n"
-            ),
-        )
-        .unwrap();
+        let mut fixture = fixture_session_header();
+        fixture.push('\n');
+        fixture.push_str(concat!(
+            "{\"type\":\"message\",\"id\":\"aaaaaaaa\",\"parentId\":null,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"visible\"},{\"type\":\"future_audio\",\"data\":\"hidden\"}],\"stopReason\":\"stop\"}}\n"
+        ));
+        std::fs::write(&path, fixture).unwrap();
         assert_eq!(
             PiSessionTree::read(&path, directory.path()).err(),
             Some(PiSessionTreeError::UnsupportedContent)

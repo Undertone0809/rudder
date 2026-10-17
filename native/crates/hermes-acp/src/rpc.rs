@@ -1470,6 +1470,13 @@ mod tests {
     use serde_json::json;
     use std::fs;
 
+    fn fixture_search_path() -> String {
+        std::env::join_paths([std::env::current_dir().expect("test working directory")])
+            .expect("encode test executable search path")
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn parses_acp_method_names_and_correlation_fields() {
         match parse_message(json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}})).unwrap()
@@ -1527,7 +1534,7 @@ mod tests {
             run_id: "run".into(),
             attempt_id: "attempt".into(),
             owner_token: "owner".into(),
-            executable_search_path: "/usr/bin:/bin".into(),
+            executable_search_path: fixture_search_path(),
             env: [("HERMES_HOME".into(), "/attacker".into())]
                 .into_iter()
                 .collect(),
@@ -1616,7 +1623,7 @@ mod tests {
             run_id: "00000000-0000-4000-8000-000000000001".into(),
             attempt_id: attempt.into(),
             owner_token: format!("owner-{attempt}"),
-            executable_search_path: "/usr/bin:/bin".into(),
+            executable_search_path: fixture_search_path(),
             env: Default::default(),
         };
         let permit = |attempt: &str| {
@@ -1710,8 +1717,7 @@ mod tests {
             run_id: run_id.into(),
             attempt_id: attempt.into(),
             owner_token: format!("owned-{attempt}"),
-            executable_search_path: std::env::var("PATH")
-                .unwrap_or_else(|_| "/usr/bin:/bin".into()),
+            executable_search_path: std::env::var("PATH").unwrap_or_else(|_| fixture_search_path()),
             env: Default::default(),
         };
         let permit = |attempt: &str| {
