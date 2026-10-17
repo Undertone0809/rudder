@@ -289,6 +289,10 @@ pub(crate) fn validate_selected_layers(
 
 fn known_approval_policy(value: &Value) -> bool {
     match value {
+        // Codex omits the effective policy when the selected profile relies on
+        // its provider default. Preserve that native default; only explicit
+        // unknown values are rejected below.
+        Value::Null => true,
         Value::String(policy) => matches!(policy.as_str(), "untrusted" | "on-request" | "never"),
         Value::Object(policy) if policy.len() == 1 => {
             let Some(granular) = policy.get("granular").and_then(Value::as_object) else {
@@ -314,10 +318,11 @@ fn known_approval_policy(value: &Value) -> bool {
 }
 
 fn known_sandbox_mode(value: &Value) -> bool {
-    matches!(
-        value.as_str(),
-        Some("read-only" | "workspace-write" | "danger-full-access")
-    )
+    value.is_null()
+        || matches!(
+            value.as_str(),
+            Some("read-only" | "workspace-write" | "danger-full-access")
+        )
 }
 
 fn project_config_is_in_cwd_ancestry(folder: &Path, cwd: &Path) -> bool {
@@ -428,6 +433,21 @@ mod tests {
     }
 
     #[test]
+    fn selected_profile_accepts_provider_default_policy_values() {
+        let home = Path::new("/native-profile");
+        let mut effective = observed(home);
+        effective["config"]["approval_policy"] = Value::Null;
+        effective["config"]["sandbox_mode"] = Value::Null;
+        assert!(validate_selected_layers(
+            &effective,
+            home,
+            Path::new("/workspace"),
+            false,
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn selected_profile_inherits_known_codex_policy_values_and_rejects_unknown_values() {
         let root = tempfile::tempdir().expect("isolated profile and workspace");
         let home = root.path().join("codex-home");
@@ -483,12 +503,12 @@ mod tests {
         }});
         assert!(validate_selected_layers(&granular, &home, &cwd, false).is_ok());
 
-        for unknown in [serde_json::json!("auto-approve"), serde_json::json!(null)] {
+        for unknown in [serde_json::json!("auto-approve")] {
             let mut effective = base.clone();
             effective["config"]["approval_policy"] = unknown;
             assert!(validate_selected_layers(&effective, &home, &cwd, false).is_err());
         }
-        for unknown in [serde_json::json!("unrestricted"), serde_json::json!(null)] {
+        for unknown in [serde_json::json!("unrestricted")] {
             let mut effective = base.clone();
             effective["config"]["sandbox_mode"] = unknown;
             assert!(validate_selected_layers(&effective, &home, &cwd, false).is_err());
