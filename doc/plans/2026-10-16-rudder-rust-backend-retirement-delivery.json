@@ -81,6 +81,55 @@
       "runtime_id": "replace-with-runtime-id",
       "data_id": "replace-with-data",
       "packet_version": "root-v1"
+    },
+    "agent_core_slice_20261017": {
+      "branch": "codex/agent-core-main-slice-20261017",
+      "source_sha": "d12f39766e42ddf1ba47980c12350ae0e59e8293",
+      "source_tree": "1f50213a104a6a745134a2a0ce0fe68e1f8f2ca2",
+      "working_tree": "clean",
+      "stage_review": {
+        "verdict": "accept",
+        "path": "/private/tmp/rudder-agent-core-stage-review-20261017/stage-review-d12f.md",
+        "sha256": "d9cdb64fec5c8339b1b177a3fa14ab2144101b7043a32a74a3cee64059a3703d"
+      },
+      "verifier": {
+        "verdict": "question",
+        "path": "/private/tmp/rudder-agent-core-native-ingress-acceptance-20261017.md",
+        "sha256": "50729c33b6d55b0cf5b69efce47363643f69440d08b5fc04d7a14163961fff40",
+        "limits": "Initial independent run lacked Vitest dependencies; subsequent local supplemental focused public HTTP run passed 3/3 after temporary known-worktree symlinks, but no new independent receipt was completed."
+      },
+      "checks": [
+        "cargo fmt --all -- --check",
+        "cargo clippy -p rudder-server-foundation-core --lib -- -D warnings",
+        "d1 agent_core integration 1/1",
+        "server-foundation member-directory black-box 1/1",
+        "d1 postgres integration 49/49",
+        "host_paths 4/4"
+      ],
+      "scope": "Native roster and permissions ingress only; no full backend retirement claim; not pushed or merged."
+    },
+    "lifecycle_slice_20261017": {
+      "branch": "codex/rust-lifecycle-auth-integration-20261017",
+      "source_sha": "15376ed8d5efbb1a11574021dfe118708b8c2659",
+      "source_tree": "85f5e872f7e000cc623d13a3dfd164d4be942e9e",
+      "working_tree": "clean",
+      "stage_review": {
+        "verdict": "needs_more_evidence",
+        "path": "/private/tmp/rudder-migration-lifecycle-stage-review-20261017/stage-review-15376.md",
+        "sha256": "d999b1f2896f4217f46403557e7631985c6068a5f327326b7567cbff36a5ef73"
+      },
+      "boundary_review": {
+        "path": "/private/tmp/rudder-lifecycle-owner-boundary-review-20261017/receipt.json",
+        "sha256": "5fde5ce28de030e3083b86e2de79dc9db898fbabceb9014f60cc9dbef6cf71c6"
+      },
+      "checks": [
+        "cargo test -p rudder-postgres-lifecycle passed",
+        "cargo test -p rudder-migration-service 52 runnable passed",
+        "rust:inventory:check passed",
+        "rust:authority:check passed after inventory review"
+      ],
+      "limits": "Disposable PostgreSQL apply/cancellation tests are ignored without explicit cluster; server TypeScript typecheck could not be completed in the temporary dependency topology; no independent exact-candidate real startup/migration/owner recovery workflow.",
+      "scope": "Rust PostgreSQL owner, migration apply/preflight, startup/shutdown coordination; no full backend retirement claim; not pushed or merged."
     }
   },
   "drift": {
