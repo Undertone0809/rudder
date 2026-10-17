@@ -69,7 +69,7 @@ pub(super) async fn reconcile(
     let (pool, authenticated, organization_id) =
         match browser_actor(&state, &request, &chat, true).await {
             Ok(value) => value,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
     let actor = match authenticated.native_chat_principal(&organization_id) {
         Ok(actor) => actor,
@@ -154,7 +154,7 @@ pub(super) async fn first_send_reconcile(
     let (pool, authenticated, organization_id) =
         match browser_actor_for_org(&state, &request, &organization_id, true).await {
             Ok(value) => value,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
     let actor = match authenticated.native_chat_principal(&organization_id) {
         Ok(actor) => actor,

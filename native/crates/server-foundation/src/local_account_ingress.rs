@@ -177,7 +177,7 @@ pub(super) async fn handle(
             let (user_id, requires_origin) =
                 match require_local_board_identity(&state, &request).await {
                     Ok(identity) => identity,
-                    Err(response) => return response,
+                    Err(response) => return *response,
                 };
             if requires_origin && !has_trusted_board_origin(&request) {
                 return api_error(StatusCode::FORBIDDEN, BOARD_ORIGIN_ERROR);
@@ -194,7 +194,7 @@ pub(super) async fn handle(
             let (user_id, requires_origin) =
                 match require_local_board_identity(&state, &request).await {
                     Ok(identity) => identity,
-                    Err(response) => return response,
+                    Err(response) => return *response,
                 };
             if requires_origin && !has_trusted_board_origin(&request) {
                 return api_error(StatusCode::FORBIDDEN, BOARD_ORIGIN_ERROR);
@@ -764,44 +764,44 @@ async fn enforce_selected_session_origin(
 async fn require_local_board_identity(
     state: &IngressState,
     request: &HttpRequest,
-) -> Result<(String, bool), HttpResponse> {
+) -> Result<(String, bool), Box<HttpResponse>> {
     if authorization_selects_bearer(request) {
         let identity =
             match crate::public_ingress::resolve_public_http_identity(state, request).await {
                 Ok(identity) => identity,
                 Err((status, _)) if status == StatusCode::SERVICE_UNAVAILABLE => {
-                    return Err(api_error(
+                    return Err(Box::new(api_error(
                         StatusCode::SERVICE_UNAVAILABLE,
                         "Service temporarily unavailable",
-                    ));
+                    )));
                 }
-                Err(_) => return Err(session_required()),
+                Err(_) => return Err(Box::new(session_required())),
             };
         return match identity {
             NativeIngressIdentity::BoardKey { user_id, .. } => Ok((user_id, false)),
             NativeIngressIdentity::AgentKey { .. } | NativeIngressIdentity::AgentJwt(_) => {
-                Err(api_error(
+                Err(Box::new(api_error(
                     StatusCode::UNAUTHORIZED,
                     "A local Rudder user session is required",
-                ))
+                )))
             }
-            _ => Err(session_required()),
+            _ => Err(Box::new(session_required())),
         };
     }
     if !has_session_cookie(request.headers()) {
-        return Err(session_required());
+        return Err(Box::new(session_required()));
     }
     let Some(session_auth) = state.config.session_auth.as_ref() else {
-        return Err(api_error(
+        return Err(Box::new(api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Service temporarily unavailable",
-        ));
+        )));
     };
     if session_auth.kind != NativeSessionAuthKind::LocalAccount {
-        return Err(api_error(
+        return Err(Box::new(api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Service temporarily unavailable",
-        ));
+        )));
     }
     match state
         .foundation
@@ -809,12 +809,12 @@ async fn require_local_board_identity(
         .await
     {
         NativeSessionResolution::Authenticated(identity) => Ok((identity.user_id, true)),
-        NativeSessionResolution::Anonymous => Err(session_required()),
+        NativeSessionResolution::Anonymous => Err(Box::new(session_required())),
         NativeSessionResolution::DatabaseDisabled | NativeSessionResolution::Unavailable => {
-            Err(api_error(
+            Err(Box::new(api_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Service temporarily unavailable",
-            ))
+            )))
         }
     }
 }
