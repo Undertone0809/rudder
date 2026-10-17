@@ -11,13 +11,35 @@ use std::path::Path;
 #[path = "../../../tests/support/mod.rs"]
 mod support;
 
+fn fixture_operator_home() -> &'static Path {
+    #[cfg(windows)]
+    {
+        Path::new(r"C:\operator")
+    }
+    #[cfg(not(windows))]
+    {
+        Path::new("/operator")
+    }
+}
+
+fn fixture_absolute_path(tail: &str) -> String {
+    #[cfg(windows)]
+    {
+        format!(r"C:\{tail}")
+    }
+    #[cfg(not(windows))]
+    {
+        format!("/{tail}")
+    }
+}
+
 fn parsed(
     config: Value,
     model: Option<String>,
     effort: Option<String>,
     plan: bool,
 ) -> runtime::RuntimeSettings {
-    match runtime::parse_agent_config(config, model, effort, plan, Path::new("/operator")) {
+    match runtime::parse_agent_config(config, model, effort, plan, fixture_operator_home()) {
         Ok(settings) => settings,
         Err(_) => panic!("valid Codex runtime settings were rejected"),
     }
@@ -88,7 +110,7 @@ fn parser_preserves_subscription_usage_billing_preference() {
         None,
         None,
         false,
-        Path::new("/operator"),
+        fixture_operator_home(),
     );
     assert_http_error(invalid, 409, None);
 }
@@ -100,7 +122,7 @@ fn parser_inherits_native_codex_profile_defaults_without_overriding_explicit_cho
         None,
         None,
         false,
-        Path::new("/operator"),
+        fixture_operator_home(),
         true,
     )
     .expect("native profile defaults remain authoritative when no override exists");
@@ -112,7 +134,7 @@ fn parser_inherits_native_codex_profile_defaults_without_overriding_explicit_cho
         None,
         None,
         false,
-        Path::new("/operator"),
+        fixture_operator_home(),
         true,
     )
     .expect("explicit Agent choices override the profile");
@@ -124,7 +146,7 @@ fn parser_inherits_native_codex_profile_defaults_without_overriding_explicit_cho
         Some("chat-model".into()),
         Some("high".into()),
         false,
-        Path::new("/operator"),
+        fixture_operator_home(),
         true,
     )
     .expect("explicit Chat choices retain their established precedence");
@@ -164,7 +186,7 @@ fn parser_excludes_legacy_heartbeat_scheduler_policy_from_direct_chat_identity()
             None,
             None,
             false,
-            Path::new("/operator"),
+            fixture_operator_home(),
         ),
         409,
         None,
@@ -173,6 +195,11 @@ fn parser_excludes_legacy_heartbeat_scheduler_policy_from_direct_chat_identity()
 
 #[test]
 fn native_profile_parser_preserves_supported_selected_agent_codex_settings() {
+    let instructions_root = fixture_absolute_path("workspace/agent/instructions");
+    let instructions_file = Path::new(&instructions_root)
+        .join("INSTRUCTIONS.md")
+        .to_string_lossy()
+        .into_owned();
     let settings = runtime::parse_agent_config_with_profile_defaults(
         json!({
             "model": "gpt-6-luna",
@@ -183,15 +210,15 @@ fn native_profile_parser_preserves_supported_selected_agent_codex_settings() {
             "search": true,
             "dangerouslyBypassApprovalsAndSandbox": true,
             "instructionsBundleMode": "external",
-            "instructionsRootPath": "/workspace/agent/instructions",
+            "instructionsRootPath": instructions_root,
             "instructionsEntryFile": "AGENTS.md",
-            "instructionsFilePath": "/workspace/agent/INSTRUCTIONS.md",
+            "instructionsFilePath": instructions_file,
             "heartbeat": {"enabled": true}
         }),
         None,
         None,
         false,
-        Path::new("/operator"),
+        fixture_operator_home(),
         true,
     )
     .expect("supported Agent settings for the installed native Codex profile");
@@ -220,7 +247,7 @@ fn native_profile_parser_fails_closed_on_unsupported_codex_agent_settings() {
                 None,
                 None,
                 false,
-                Path::new("/operator"),
+                fixture_operator_home(),
                 true,
             ),
             409,
@@ -234,7 +261,7 @@ fn native_profile_parser_fails_closed_on_unsupported_codex_agent_settings() {
             None,
             None,
             false,
-            Path::new("/operator"),
+            fixture_operator_home(),
             false,
         ),
         409,
@@ -246,7 +273,7 @@ fn native_profile_parser_fails_closed_on_unsupported_codex_agent_settings() {
             None,
             None,
             false,
-            Path::new("/operator"),
+            fixture_operator_home(),
             false,
         ),
         409,
@@ -267,7 +294,7 @@ fn native_profile_parser_rejects_nonempty_model_fallbacks() {
                 None,
                 None,
                 false,
-                Path::new("/operator"),
+                fixture_operator_home(),
                 true,
             ),
             409,
@@ -280,7 +307,7 @@ fn native_profile_parser_rejects_nonempty_model_fallbacks() {
 fn parser_rejects_plan_mode_until_native_protocol_mapping_is_verified() {
     for config in [json!({}), json!({"planMode": true})] {
         assert_http_error(
-            runtime::parse_agent_config(config, None, None, true, Path::new("/operator")),
+            runtime::parse_agent_config(config, None, None, true, fixture_operator_home()),
             409,
             None,
         );
@@ -294,7 +321,8 @@ fn parser_rejects_invalid_effort_and_non_text_or_unbounded_model_values() {
         json!({"search":false,"model":"  \n ","modelReasoningEffort":"high"}),
         json!({"search":false,"model":"x".repeat(257)}),
     ] {
-        let result = runtime::parse_agent_config(config, None, None, false, Path::new("/operator"));
+        let result =
+            runtime::parse_agent_config(config, None, None, false, fixture_operator_home());
         assert_http_error(result, 409, None);
     }
 }
@@ -319,7 +347,8 @@ fn parser_fails_closed_on_secret_refs_capabilities_and_unknown_policy() {
         (json!({"unrecognizedSetting":"value"}), None),
         (json!({"promptTemplate":"private prompt"}), None),
     ] {
-        let result = runtime::parse_agent_config(config, None, None, false, Path::new("/operator"));
+        let result =
+            runtime::parse_agent_config(config, None, None, false, fixture_operator_home());
         assert_http_error(result, 409, expected_secret);
     }
 
@@ -340,7 +369,8 @@ fn parser_rejects_instruction_path_values_that_the_legacy_resolver_would_fallbac
         json!({"search":false,"instructionsEntryFile":"folder\\..\\outside.md"}),
         json!({"search":false,"instructionsFilePath":"legacy.md"}),
     ] {
-        let result = runtime::parse_agent_config(config, None, None, false, Path::new("/operator"));
+        let result =
+            runtime::parse_agent_config(config, None, None, false, fixture_operator_home());
         assert_http_error(result, 409, None);
     }
 }

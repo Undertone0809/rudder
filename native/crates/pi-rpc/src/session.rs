@@ -409,12 +409,24 @@ mod tests {
     use super::{PiSessionTree, PiSessionTreeError};
     use std::fs;
 
+    fn fixture_session_header() -> String {
+        serde_json::json!({
+            "type": "session",
+            "version": 3,
+            "id": "session-uuid",
+            "cwd": std::env::current_dir()
+                .expect("test working directory")
+                .to_string_lossy()
+                .into_owned(),
+        })
+        .to_string()
+    }
+
     fn session(lines: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pi-session.jsonl");
-        let mut content = String::from(
-            "{\"type\":\"session\",\"version\":3,\"id\":\"session-uuid\",\"cwd\":\"/tmp\"}\n",
-        );
+        let mut content = fixture_session_header();
+        content.push('\n');
         for line in lines {
             content.push_str(line);
             content.push('\n');
