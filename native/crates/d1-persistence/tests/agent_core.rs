@@ -346,7 +346,7 @@ async fn rust_create_normalizes_secret_refs_and_fallback_configs_with_org_isolat
                 "name":"Secret Ref",
                 "agentRuntimeConfig":{
                     "env":{"MODEL":"fast","RUDDER_TOKEN":{"type":"secret_ref","secretId":SECRET_ID}},
-                    "modelFallbacks":["gpt-4o-mini",{"agentRuntimeType":"codex_local","model":"gpt-4o","config":{"env":{"MODE":"backup"}}}]
+                    "modelFallbacks":["gpt-4o-mini",{"agentRuntimeType":"gemini_local","model":"gemini-2.5-pro","config":{"env":{"MODE":"backup"}}}]
                 }
             }
         }),

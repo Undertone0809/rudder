@@ -204,6 +204,7 @@ fn valid_runtime_type(value: &str) -> bool {
             | "http"
             | "claude_local"
             | "codex_local"
+            | "gemini_local"
             | "opencode_local"
             | "pi_local"
             | "cursor"
@@ -374,6 +375,7 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
         "http",
         "claude_local",
         "codex_local",
+        "gemini_local",
         "opencode_local",
         "pi_local",
         "cursor",
@@ -874,10 +876,14 @@ mod tests {
         .expect_err("nested secret runtime config");
         assert!(matches!(error, AgentCoreError::Http(422, _, _)));
         parse_create(&json!({
+            "agentRuntimeType": "gemini_local",
+        }))
+        .expect("gemini runtime type remains accepted");
+        parse_create(&json!({
             "agentRuntimeConfig": {
                 "modelFallbacks": [
                     "gpt-4o-mini",
-                    {"agentRuntimeType":"codex_local","model":"gpt-4o","config":{"env":{"MODE":"backup"}}}
+                    {"agentRuntimeType":"gemini_local","model":"gemini-2.5-pro","config":{"env":{"MODE":"backup"}}}
                 ]
             }
         }))
