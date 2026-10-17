@@ -100,6 +100,7 @@ mod tests {
             plan_mode: false,
             search_enabled: false,
             bypass_approvals_and_sandbox: false,
+            count_subscription_usage_as_cost: true,
             profile: rudder_d1_persistence::native_chat::config::ManagedCodexProfile {
                 id: "managed-codex:agent:work".into(),
                 home: "/managed/codex-home".into(),

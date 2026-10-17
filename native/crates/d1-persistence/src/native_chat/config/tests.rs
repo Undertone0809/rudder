@@ -54,6 +54,7 @@ fn parser_preserves_persisted_model_and_chat_overrides_with_safe_defaults() {
     assert_eq!(settings.effort.as_deref(), Some("ultra"));
     assert!(!settings.plan_mode);
     assert!(!settings.search_enabled);
+    assert!(settings.count_subscription_usage_as_cost);
 
     let defaults = parsed(json!({"search": false}), None, None, false);
     assert_eq!(defaults.model.as_deref(), Some("gpt-5.6-luna"));
@@ -70,6 +71,26 @@ fn parser_preserves_persisted_model_and_chat_overrides_with_safe_defaults() {
         exact_model.model.as_deref(),
         Some(" vendor/custom-text-model ")
     );
+}
+
+#[test]
+fn parser_preserves_subscription_usage_billing_preference() {
+    let disabled = parsed(
+        json!({"countSubscriptionUsageAsCost": false}),
+        None,
+        None,
+        false,
+    );
+    assert!(!disabled.count_subscription_usage_as_cost);
+
+    let invalid = runtime::parse_agent_config(
+        json!({"countSubscriptionUsageAsCost": "yes"}),
+        None,
+        None,
+        false,
+        Path::new("/operator"),
+    );
+    assert_http_error(invalid, 409, None);
 }
 
 #[test]

@@ -12,6 +12,10 @@ pub(super) struct RuntimeSettings {
     pub plan_mode: bool,
     pub search_enabled: bool,
     pub bypass_approvals_and_sandbox: bool,
+    /// Preserve the established Codex billing preference in the capability
+    /// snapshot. Native Chat only settles provider-reported usage/cost; it
+    /// must not invent an estimate when the provider does not report one.
+    pub count_subscription_usage_as_cost: bool,
     pub cwd_override: Option<PathBuf>,
     pub profile_id: String,
     pub command: Option<PathBuf>,
@@ -76,6 +80,7 @@ pub(super) fn parse_agent_config_with_profile_defaults(
         "timeoutSec",
         "graceSec",
         "dangerouslyBypassApprovalsAndSandbox",
+        "countSubscriptionUsageAsCost",
         "approvalPolicy",
         "sandboxMode",
         "workspacePolicy",
@@ -183,6 +188,11 @@ pub(super) fn parse_agent_config_with_profile_defaults(
         }
         Some(_) => return Err(invalid("approval bypass setting must be boolean")),
     };
+    let count_subscription_usage_as_cost = match object.get("countSubscriptionUsageAsCost") {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => return Err(invalid("subscription usage billing setting must be boolean")),
+    };
     for key in ["args", "extraArgs"] {
         if let Some(value) = object.get(key)
             && !value.as_array().is_some_and(Vec::is_empty)
@@ -257,6 +267,7 @@ pub(super) fn parse_agent_config_with_profile_defaults(
         "effort": effort,
         "planMode": chat_plan_mode,
         "bypassApprovalsAndSandbox": bypass_approvals_and_sandbox,
+        "countSubscriptionUsageAsCost": count_subscription_usage_as_cost,
         "cwd": cwd_override.as_ref().map(|path| path.to_string_lossy().to_string()),
         "profileId": profile_id,
         "command": command.as_ref().map(|path| path.to_string_lossy().to_string()),
@@ -269,6 +280,7 @@ pub(super) fn parse_agent_config_with_profile_defaults(
         plan_mode: chat_plan_mode,
         search_enabled,
         bypass_approvals_and_sandbox,
+        count_subscription_usage_as_cost,
         cwd_override,
         profile_id,
         command,
