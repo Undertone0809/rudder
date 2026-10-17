@@ -24,6 +24,22 @@ Do not make Pi, Claude, OpenCode, Cursor, a new policy framework, or all 97 fina
 
 The delay came from coupling all runtime and storage work to extensive foundation and evidence machinery before proving the installed user journey. Correct the execution order: finish the real Codex/Hermes path, run the focused workflow and failure cases, resolve the necessary independent review findings, and publish a reviewable PR. Additional infrastructure must have a concrete dependency on that milestone.
 
+### October 17 closure evidence
+
+The refreshed integration branch now has a public Native Reader bridge for native
+Chat message transcripts, with a real PostgreSQL test covering event projection,
+bounded pagination, partial-to-sealed availability, organization fencing, and
+actor membership. The installed Codex `app-server` probes passed without a model
+call: initialization in an empty profile and an unknown-thread error remained
+owned by the Rust transport. The installed Hermes ACP process also started and
+completed initialization through the Rust process host, but its empty-home
+`session/new` probe returned an ACP error before a session could be persisted;
+this is recorded as an open Hermes installation/protocol compatibility issue, not
+as successful native session acceptance. The first public bridge slice therefore
+has stronger storage evidence, while the Codex/Hermes product milestone still
+requires a real selected-profile browser journey, restart/recovery, and exact
+Hermes session creation/resume proof.
+
 ## 1. Deliverable: Both Goals Must Be Completed Together
 
 This change has two equally important, interdependent workstreams. Neither may be completed on its own, and the work must not be reduced to adding a Session ID to the database.
