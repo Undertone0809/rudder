@@ -64,6 +64,10 @@ pub(super) fn validate_config(
     Ok(())
 }
 
+// The executor boundary keeps the launch permit, fence, cancellation, deadline,
+// and isolated host paths explicit so the provider cannot silently borrow a
+// different session or workspace.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_claimed(
     handle: &Handle,
     pool: &PgPool,
