@@ -577,7 +577,10 @@ export function sideChatService(db: Db) {
           ),
         ))
         .returning({ id: chatConversations.id });
-      if (expired.length > 0) return "expired" as const;
+      if (expired.length > 0) {
+        await markRuntimeRetentionExpired(tx, conversation.id, now);
+        return "expired" as const;
+      }
 
       const transitioned = await tx
         .update(chatConversations)
