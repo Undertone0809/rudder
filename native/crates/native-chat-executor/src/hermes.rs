@@ -235,6 +235,14 @@ impl Driver<'_> {
                 &self.config.cwd,
                 self.remaining_timeout(RPC_TIMEOUT)?,
             )?;
+            if let Some(model) = self.config.model.as_deref() {
+                // Hermes 0.21.0 restores the session transcript but resets
+                // the active model to its profile default. Re-apply the
+                // trusted Rust configuration before the resumed prompt so a
+                // continuation cannot silently use a different provider.
+                self.transport
+                    .set_model(model, self.remaining_timeout(RPC_TIMEOUT)?)?;
+            }
         }
 
         self.poll_owner(true)?;
@@ -316,11 +324,9 @@ impl Driver<'_> {
                     if session_id != expected_session {
                         return Err(Error::InvalidProviderObservation);
                     }
-                    // A resumed ACP session already carries the model selected
-                    // when it was created. Do not issue `session/set_model`
-                    // here: that would consume the JSON-RPC request id already
-                    // committed for the one-shot prompt effect. The D1 binding
-                    // fence rejects configuration drift before this point.
+                    // The request id was reserved after session/load and the
+                    // trusted model re-application above. The D1 binding fence
+                    // rejects configuration drift before this point.
                     transport
                         .prompt_with_expected_request_id_and_poll(
                             body,
@@ -653,6 +659,7 @@ fn hermes_launch(
             .cloned(),
         process_host: paths.process_host.clone(),
         runtime_root: paths.runtime_root.clone(),
+        operator_home: config.operator_home.clone(),
         hermes_home: local.home.clone(),
         cwd: config.cwd.clone(),
         run_id: fence.identity().run_id.to_owned(),
