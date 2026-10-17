@@ -615,29 +615,36 @@ fn run(
             {
                 let status =
                     match handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
-                        let Some(stop) =
-                            execution::observe_stop(&pool, execution_actor, fence).await?
-                        else {
-                            return Ok(None);
-                        };
-                        let connection = cleanup.connection_receipt();
-                        execution::bind_stopping_connection(
-                            &pool,
-                            execution_actor,
-                            fence,
-                            &stop,
-                            &connection,
-                        )
-                        .await?;
-                        execution::finalize_hermes_stopped_before_submission(
-                            &pool,
-                            execution_actor,
-                            fence,
-                            cleanup,
-                            &stop,
-                        )
-                        .await
-                        .map(Some)
+                        let stop = execution::observe_stop(&pool, execution_actor, fence).await?;
+                        if let Some(stop) = stop {
+                            let connection = cleanup.connection_receipt();
+                            execution::bind_stopping_connection(
+                                &pool,
+                                execution_actor,
+                                fence,
+                                &stop,
+                                &connection,
+                            )
+                            .await?;
+                            execution::finalize_hermes_stopped_before_submission(
+                                &pool,
+                                execution_actor,
+                                fence,
+                                cleanup,
+                                &stop,
+                            )
+                            .await
+                            .map(Some)
+                        } else {
+                            execution::finalize_hermes_failed(
+                                &pool,
+                                execution_actor,
+                                fence,
+                                cleanup,
+                            )
+                            .await
+                            .map(Some)
+                        }
                     })) {
                         Ok(Ok(Some(_))) => Status::FinalizationCommitted,
                         Ok(Ok(None)) => Status::Unresolved(UnresolvedReason::ExecutionUnresolved),
@@ -654,28 +661,31 @@ fn run(
                 && let (Some(fence), Some(cleanup)) = (failure.fence(), cleanup)
             {
                 match handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
-                    let Some(stop) = execution::observe_stop(&pool, execution_actor, fence).await?
-                    else {
-                        return Ok(None);
-                    };
+                    let stop = execution::observe_stop(&pool, execution_actor, fence).await?;
                     let connection = cleanup.connection_receipt();
-                    execution::bind_stopping_connection(
-                        &pool,
-                        execution_actor,
-                        fence,
-                        &stop,
-                        &connection,
-                    )
-                    .await?;
-                    execution::finalize_stopped_before_submission(
-                        &pool,
-                        execution_actor,
-                        fence,
-                        cleanup,
-                        &stop,
-                    )
-                    .await
-                    .map(Some)
+                    if let Some(stop) = stop {
+                        execution::bind_stopping_connection(
+                            &pool,
+                            execution_actor,
+                            fence,
+                            &stop,
+                            &connection,
+                        )
+                        .await?;
+                        execution::finalize_stopped_before_submission(
+                            &pool,
+                            execution_actor,
+                            fence,
+                            cleanup,
+                            &stop,
+                        )
+                        .await
+                        .map(Some)
+                    } else {
+                        execution::finalize_failed(&pool, execution_actor, fence, cleanup)
+                            .await
+                            .map(Some)
+                    }
                 })) {
                     Ok(Ok(Some(_))) => Status::FinalizationCommitted,
                     Ok(Ok(None)) => Status::Unresolved(UnresolvedReason::ExecutionUnresolved),
