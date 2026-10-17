@@ -14,8 +14,6 @@ import {
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
-  runtimeRetentionClaims,
-  runtimeSourceAliases,
 } from "@rudderhq/db";
 import { parseShortRef, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
@@ -106,6 +104,8 @@ import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { lockLegacyNativeChatQueueTarget, lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { organizationService } from "./orgs.js";
+import { isPostgresError } from "./postgres-errors.js";
+import { releaseSideChatLineage } from "./side-chats.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
   completeProductAnalyticsWorkCycle,
@@ -657,13 +657,9 @@ export function chatService(
 
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
     const now = new Date();
-    const [row] = await db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, orgId);
-      const ownership = await lockLegacyNativeChatQueueTarget(tx, orgId, conversationId);
-      if (ownership === "native_owned") {
-        throw conflict("Native Chat owns this conversation");
-      }
-      return tx
+    let row: ChatGenerationRow | undefined;
+    try {
+      [row] = await db
         .insert(chatGenerations)
         .values({
           orgId,
@@ -676,7 +672,12 @@ export function chatService(
           updatedAt: now,
         })
         .returning();
-    });
+    } catch (error) {
+      if (isPostgresError(error, "23505")) {
+        throw conflict("Native Chat owns this conversation");
+      }
+      throw error;
+    }
     if (!row) throw new Error("Failed to create chat generation");
     return row;
   }
@@ -4068,24 +4069,7 @@ export function chatService(
       // Authorized Messenger deletion must release Side Chat lineage before
       // the conversation's runtime bindings cascade. Direct SQL deletes remain
       // protected by the NO ACTION lineage FKs.
-      await tx.update(runtimeSourceAliases).set({
-        conversationId: null,
-        releasedAt: now,
-        updatedAt: now,
-        cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`,
-      }).where(and(
-        eq(runtimeSourceAliases.conversationId, id),
-        isNull(runtimeSourceAliases.releasedAt),
-      ));
-      await tx.update(runtimeRetentionClaims).set({
-        status: "released",
-        releasedAt: now,
-        updatedAt: now,
-        cleanupEpoch: sql`${runtimeRetentionClaims.cleanupEpoch} + 1`,
-      }).where(and(
-        eq(runtimeRetentionClaims.resourceRef, `side_chat:${id}`),
-        eq(runtimeRetentionClaims.status, "active"),
-      ));
+      await releaseSideChatLineage(tx, id, now);
       const [deleted] = await tx
         .delete(chatConversations)
         .where(eq(chatConversations.id, id))
