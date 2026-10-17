@@ -69,6 +69,26 @@ describe("Desktop Identity safe storage policy", () => {
     expect(nativeStorage.getSelectedStorageBackend).not.toHaveBeenCalled();
   });
 
+  it("uses memory-only storage for the explicitly opted-in packaged Darwin fixture", () => {
+    const nativeStorage = poisonSafeStorage();
+    const selectedStorage = resolveDesktopIdentitySafeStorage({
+      safeStorage: nativeStorage,
+      isPackaged: true,
+      platform: "darwin",
+      packagedSmokeMemoryStorageRequested: true,
+    });
+
+    expect(identityCredentialVaultStatus(selectedStorage, "darwin")).toEqual({
+      available: false,
+      backend: "mac_memory_only",
+      reason: "encryption_unavailable",
+    });
+    expect(nativeStorage.isEncryptionAvailable).not.toHaveBeenCalled();
+    expect(nativeStorage.getSelectedStorageBackend).not.toHaveBeenCalled();
+    expect(nativeStorage.encryptString).not.toHaveBeenCalled();
+    expect(nativeStorage.decryptString).not.toHaveBeenCalled();
+  });
+
   it.each(["linux", "win32"] as const)(
     "does not weaken packaged smoke storage on %s",
     (platform) => {

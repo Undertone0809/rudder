@@ -53,6 +53,23 @@ function boundaryRecord(sourcePath, baseHash, headHash, overrides = {}) {
   };
 }
 
+function retainedClientRecord(sourcePath, baseHash, headHash, overrides = {}) {
+  return {
+    path: sourcePath,
+    change_kind: "modified_retained_client",
+    node_role: "retained_client",
+    base_sha256: baseHash,
+    head_sha256: headHash,
+    client_responsibility: "Electron owns client-side account-gate and credential-storage policy; it does not own server account lifecycle.",
+    associated_backend_authority: "native::server_foundation::local_account_auth",
+    compatibility_boundary: "This is retained Electron client policy/storage code; the related Rust owner applies only to server-side local-account lifecycle.",
+    reviewer: "maintainer@example.test",
+    review_reference: "Reviewed retained Electron client boundary fixture",
+    review_status: "reviewed",
+    ...overrides,
+  };
+}
+
 const SESSION_ADMISSION_ID = "rust-native-session-proof-v1";
 const IDENTITY_ADMISSION_ID = "rust-native-identity-proof-v1";
 const sessionAdmissionFixtureFactory = `export function nativeSessionAssertionMiddleware(options) {
@@ -345,6 +362,116 @@ test("existing Node edits require trusted hash-bound reviewer and Rust retiremen
   const head = buildInventory(headRoot, [record]);
   const accepted = compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
   assert.deepEqual(accepted.failures, []);
+});
+
+test("an existing identity policy module accepts a reviewed retained-client record without inventing Rust ownership", (t) => {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const sourcePath = "desktop/src/identity-startup-policy.ts";
+  const original = "export const bypassAllowed = false;\n";
+  const changed = "export const bypassAllowed = true;\n";
+  put(baseRoot, sourcePath, original);
+  put(headRoot, sourcePath, changed);
+  const base = buildInventory(baseRoot);
+  const headWithoutRecord = buildInventory(headRoot);
+  const missing = compareInventories(base, headWithoutRecord, contentsFor(baseRoot, base), contentsFor(headRoot, headWithoutRecord));
+  assert(missing.failures.some((failure) => failure.includes("missing reviewed_node_changes record")));
+
+  const head = buildInventory(headRoot, [retainedClientRecord(sourcePath, sha256(original), sha256(changed))]);
+  const clientEntry = head.source_manifest.find((entry) => entry.path === sourcePath);
+  assert.deepEqual(clientEntry?.families, ["electron_process_graph"]);
+  const accepted = compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
+  assert.deepEqual(accepted.failures, []);
+  assert.deepEqual(accepted.changed_files, [sourcePath]);
+});
+
+test("retained-client reviews keep hash, reviewer, and client-responsibility gates", (t) => {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const sourcePath = "desktop/src/identity-safe-storage-policy.ts";
+  const original = "export const storageMode = 'native';\n";
+  const changed = "export const storageMode = 'fixture';\n";
+  put(baseRoot, sourcePath, original);
+  put(headRoot, sourcePath, changed);
+  const base = buildInventory(baseRoot);
+  const baseHash = sha256(original);
+  const headHash = sha256(changed);
+  const compareRecord = (overrides) => {
+    const head = buildInventory(headRoot, [retainedClientRecord(sourcePath, baseHash, headHash, overrides)]);
+    return compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
+  };
+
+  assert(compareRecord({ head_sha256: "0".repeat(64) }).failures.some((failure) => failure.includes("head_sha256 does not match")));
+  assert(compareRecord({ review_status: "pending" }).failures.some((failure) => failure.includes('review_status must be "reviewed"')));
+  assert(compareRecord({ reviewer: " " }).failures.some((failure) => failure.includes("reviewer is required")));
+  assert(compareRecord({ client_responsibility: "" }).failures.some((failure) => failure.includes("client_responsibility is required")));
+  assert(compareRecord({ rust_authority: "native::server_foundation::local_account_auth" }).failures.some((failure) => failure.includes("must not claim rust_authority")));
+  assert(compareRecord({ associated_backend_authority: "" }).failures.some((failure) => failure.includes("associated_backend_authority must be a nonempty")));
+});
+
+test("retained-client role cannot masquerade as backend or escape its exact existing path scope", (t) => {
+  const compareChangedSource = (sourcePath, record) => {
+    const baseRoot = temporaryTree(t);
+    const headRoot = temporaryTree(t);
+    const original = "export const mode = 'old';\n";
+    const changed = "export const mode = 'new';\n";
+    put(baseRoot, sourcePath, original);
+    put(headRoot, sourcePath, changed);
+    const base = buildInventory(baseRoot);
+    const head = buildInventory(headRoot, [record(sourcePath, sha256(original), sha256(changed))]);
+    return compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
+  };
+
+  const backend = compareChangedSource("server/src/services/account-auth.ts", (pathValue, baseHash, headHash) =>
+    boundaryRecord(pathValue, baseHash, headHash, {
+      change_kind: "modified_retained_client",
+      node_role: "retained_client",
+      rust_authority: undefined,
+      client_responsibility: "client policy",
+      associated_backend_authority: "native::server_foundation::local_account_auth",
+    }));
+  assert(backend.failures.some((failure) => failure.includes('change_kind must be "modified_node_compatibility"')));
+  assert(backend.failures.some((failure) => failure.includes("rust_authority is required")));
+  assert(backend.failures.some((failure) => failure.includes('node_role must be "compatibility_adapter" or "transport_adapter"')));
+
+  const otherDesktopClient = compareChangedSource("desktop/src/other-client.ts", retainedClientRecord);
+  assert(otherDesktopClient.failures.some((failure) => failure.includes('change_kind must be "modified_node_compatibility"')));
+  assert(otherDesktopClient.failures.some((failure) => failure.includes('node_role must be "compatibility_adapter" or "transport_adapter"')));
+});
+
+test("new Electron source and new runtime admissions remain forbidden under retained-client review", (t) => {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const newPath = "desktop/src/new-identity-runtime.ts";
+  const content = "export const client = true;\n";
+  const base = buildInventory(baseRoot);
+  put(headRoot, newPath, content);
+  const head = buildInventory(headRoot, [retainedClientRecord(newPath, null, sha256(content))]);
+  const added = compareInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
+  assert(added.failures.some((failure) => failure.includes("new production Node source is forbidden by the ratchet")));
+
+  const routeBaseRoot = temporaryTree(t);
+  const routeHeadRoot = temporaryTree(t);
+  const sourcePath = "server/src/routes/account-auth.ts";
+  const original = "export const routeMode = 'legacy';\n";
+  const changed = `export const routeMode = 'new';\nconst router = Router();\nrouter.post("/api/new-client-runtime", handler);\n`;
+  put(routeBaseRoot, sourcePath, original);
+  put(routeHeadRoot, sourcePath, changed);
+  const routeBase = buildInventory(routeBaseRoot);
+  const routeHead = buildInventory(routeHeadRoot, [retainedClientRecord(sourcePath, sha256(original), sha256(changed))]);
+  const routeChange = compareInventories(routeBase, routeHead, contentsFor(routeBaseRoot, routeBase), contentsFor(routeHeadRoot, routeHead));
+  assert(routeChange.failures.some((failure) => failure.includes("new Node authority surface is forbidden by the ratchet")));
+});
+
+test("retained-client review records are stale when their source is unchanged", (t) => {
+  const root = temporaryTree(t);
+  const sourcePath = "desktop/src/identity-runtime.ts";
+  const content = "export const runtime = true;\n";
+  put(root, sourcePath, content);
+  const base = buildInventory(root);
+  const head = buildInventory(root, [retainedClientRecord(sourcePath, sha256(content), sha256(content))]);
+  const result = compareInventories(base, head, contentsFor(root, base), contentsFor(root, head));
+  assert(result.failures.some((failure) => failure.includes(`stale or unrelated reviewed_node_changes record: ${sourcePath}`)));
 });
 
 test("CLI retires diff-local Node reviews after their source changes enter the comparison base", (t) => {

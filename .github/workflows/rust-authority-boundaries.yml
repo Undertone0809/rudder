@@ -7,6 +7,22 @@ on:
       - "packages/db/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/rust-authority-boundaries.yml"
+      - "server/src/agent-auth-jwt.ts"
+      - "server/src/auth/**"
+      - "server/src/middleware/auth.ts"
+      - "server/src/bootstrap/**"
+      - "server/src/index.ts"
+      - "server/src/services/rust-foundation-bridge*"
+      - "server/src/services/rust-public-ingress-config*"
+      - "server/src/__tests__/helpers/native-identity-ingress.ts"
+      - "server/src/__tests__/native-session-assertion.test.ts"
+      - "server/src/__tests__/public-ingress-startup.test.ts"
+      - "server/src/__tests__/rust-native-session-workflow.test.ts"
+      - "server/src/__tests__/rust-public-ingress-auth-workflow.test.ts"
+      - "server/src/__tests__/runtime-bindings-rust.integration.test.ts"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,8 +45,20 @@ jobs:
         with:
           node-version: 24
       - uses: dtolnay/rust-toolchain@stable
+      - name: Capture candidate identity
+        run: |
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/rudder-native-auth-boundaries"
+          mkdir -p "$log_dir"
+          {
+            printf 'commit='
+            git rev-parse HEAD
+            printf 'tree='
+            git rev-parse 'HEAD^{tree}'
+          } | tee "$log_dir/source-identity.txt"
       - name: Install fixture prerequisites
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y postgresql-16 postgresql-client-16
           corepack enable
@@ -38,32 +66,109 @@ jobs:
           pnpm install --frozen-lockfile
       - name: Start isolated loopback PostgreSQL
         run: |
-          /usr/lib/postgresql/16/bin/initdb -D "$RUNNER_TEMP/rudder-native-boundaries-pg" --username=postgres --auth=trust --no-locale
-          /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/rudder-native-boundaries-pg" -l "$RUNNER_TEMP/rudder-native-boundaries-pg.log" -o "-h 127.0.0.1 -p 54329 -k $RUNNER_TEMP" -w start
-          /usr/lib/postgresql/16/bin/createdb -h 127.0.0.1 -p 54329 -U postgres native_auth_test
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/rudder-native-auth-boundaries"
+          mkdir -p "$log_dir"
+          /usr/lib/postgresql/16/bin/initdb -D "$RUNNER_TEMP/rudder-native-boundaries-pg" --username=postgres --auth=trust --no-locale 2>&1 | tee "$log_dir/initdb.log"
+          /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/rudder-native-boundaries-pg" -l "$log_dir/postgres.log" -o "-h 127.0.0.1 -p 54329 -k $RUNNER_TEMP" -w start 2>&1 | tee "$log_dir/start-postgres.log"
+          /usr/lib/postgresql/16/bin/createdb -h 127.0.0.1 -p 54329 -U postgres native_auth_test 2>&1 | tee "$log_dir/create-db.log"
       - name: Prepare legacy auth fixture
         working-directory: packages/db
         env:
           DATABASE_URL: ${{ env.RUDDER_NATIVE_AUTH_TEST_DATABASE_URL }}
-        run: pnpm exec tsx src/migrate.ts
-      - name: Verify native credentials and real public entry
         run: |
-          for test in \
-            postgres_bearer_resolution_preserves_scope_status_expiry_and_touch_contracts \
-            committed_revocation_or_expiry_wins_a_concurrent_last_used_touch \
-            native_pcp_member_directory_works_without_node_auth_and_fails_closed_after_revocation; do
-            cargo test --locked --manifest-path native/Cargo.toml \
-              -p rudder-server-foundation-core --lib "$test" -- --ignored --nocapture
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/rudder-native-auth-boundaries"
+          pnpm exec tsx src/migrate.ts 2>&1 | tee "$log_dir/fixture-migrate.log"
+      - name: Verify exact ignored native auth contracts
+        run: |
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/rudder-native-auth-boundaries"
+          aggregate_log="$log_dir/native-auth-ignored-tests.log"
+          mkdir -p "$log_dir"
+          : > "$aggregate_log"
+
+          check_case_log() {
+            local test_name="$1"
+            local log_file="$2"
+            local running_count
+            local pass_count
+            local expected_pass_count
+
+            running_count="$(grep -Fxc 'running 1 test' "$log_file" || true)"
+            pass_count="$(grep -Ecx 'test [^[:space:]]+ \.\.\. ok' "$log_file" || true)"
+            expected_pass_count="$(grep -Fxc "test $test_name ... ok" "$log_file" || true)"
+            if [[ "$running_count" == "1" && "$pass_count" == "1" && "$expected_pass_count" == "1" ]]; then
+              return 0
+            fi
+
+            printf 'Expected exactly one selected test and one matching PASS for %s; running=%s passing=%s matching=%s\n' \
+              "$test_name" "$running_count" "$pass_count" "$expected_pass_count" >&2
+            return 1
+          }
+
+          tests=(
+            "native_bearer_auth::tests::postgres_bearer_resolution_preserves_scope_status_expiry_and_touch_contracts"
+            "native_bearer_auth::tests::committed_revocation_or_expiry_wins_a_concurrent_last_used_touch"
+            "public_ingress::tests::native_pcp_member_directory_works_without_node_auth_and_fails_closed_after_revocation"
+            "public_ingress::tests::native_cookie_session_get_session_and_member_directory_use_current_database_authority"
+          )
+          overall_status=0
+
+          for test_name in "${tests[@]}"; do
+            case_name="${test_name//::/_}"
+            case_log="$log_dir/${case_name}.log"
+            printf '=== %s ===\n' "$test_name" | tee -a "$aggregate_log"
+
+            if cargo test --locked --manifest-path native/Cargo.toml \
+              -p rudder-server-foundation-core --lib "$test_name" -- \
+              --exact --ignored --test-threads=1 --nocapture 2>&1 | tee "$case_log" | tee -a "$aggregate_log"; then
+              cargo_status=0
+            else
+              cargo_status=$?
+              overall_status=1
+            fi
+
+            if [[ "$cargo_status" -ne 0 ]]; then
+              printf 'Cargo exited %s for %s\n' "$cargo_status" "$test_name" | tee -a "$aggregate_log"
+            fi
+            if ! check_case_log "$test_name" "$case_log"; then
+              overall_status=1
+            fi
           done
+
+          exit "$overall_status"
       - name: Verify migration locking, historical upgrade, and real backup restore
         run: |
-          cargo test --locked --manifest-path native/Cargo.toml \
-            -p rudder-migration-service --test postgres_apply -- --ignored --nocapture
-          cargo test --locked --manifest-path native/Cargo.toml \
-            -p rudder-migration-service --test apply_cli -- --ignored --nocapture
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/rudder-native-auth-boundaries"
+          aggregate_log="$log_dir/migration-tests.log"
+          : > "$aggregate_log"
+          if cargo test --locked --manifest-path native/Cargo.toml \
+            -p rudder-migration-service --test postgres_apply -- --ignored --nocapture 2>&1 | tee "$log_dir/migration-postgres-apply.log" | tee -a "$aggregate_log"; then
+            :
+          else
+            exit $?
+          fi
+          if cargo test --locked --manifest-path native/Cargo.toml \
+            -p rudder-migration-service --test apply_cli -- --ignored --nocapture 2>&1 | tee "$log_dir/migration-apply-cli.log" | tee -a "$aggregate_log"; then
+            :
+          else
+            exit $?
+          fi
       - name: Stop isolated PostgreSQL
         if: always()
         run: |
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/rudder-native-auth-boundaries"
           if [ -f "$RUNNER_TEMP/rudder-native-boundaries-pg/postmaster.pid" ]; then
-            /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/rudder-native-boundaries-pg" -m fast -w stop
+            /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/rudder-native-boundaries-pg" -m fast -w stop 2>&1 | tee "$log_dir/stop-postgres.log"
           fi
+      - name: Upload authority boundary evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-authority-boundaries-${{ github.sha }}
+          path: ${{ runner.temp }}/rudder-native-auth-boundaries/
+          if-no-files-found: warn
+          retention-days: 14

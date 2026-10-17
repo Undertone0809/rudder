@@ -25,11 +25,12 @@ import {
   type DesktopOfflineGrantCredential,
 } from "./identity-offline-grant.js";
 import { resolveDesktopIdentitySafeStorage } from "./identity-safe-storage-policy.js";
+import { createDesktopIdentitySessionStore } from "./identity-session-store.js";
 import {
-  createDesktopIdentitySessionStore,
-  desktopIdentityMemoryFallbackAllowed,
-} from "./identity-session-store.js";
-import { desktopAccountBypassAllowed } from "./identity-startup-policy.js";
+  desktopAccountBypassAllowed,
+  desktopIdentityProcessMemoryFallbackAllowed,
+  resolveDesktopPackagedSmokeIdentityPolicy,
+} from "./identity-startup-policy.js";
 import { loadOrCreateDesktopTelemetryState } from "./product-analytics-telemetry.js";
 
 export type DesktopLocalAccountAuth = {
@@ -123,15 +124,26 @@ export function createDesktopIdentityRuntime(options: {
     override: process.env.RUDDER_IDENTITY_ORIGIN,
     packagedTestMarkerPath: path.join(process.resourcesPath, "native", "packaged-test-identity.marker"),
   });
-  const packagedSmokeBypassRequested = app.isPackaged
-    && app.getName().startsWith("Rudder-smoke-")
-    && booleanFlagEnabled(process.env.RUDDER_DESKTOP_SMOKE_AUTH_BYPASS)
-    && isPackagedTestIdentityMarker(path.join(process.resourcesPath, "native", "packaged-test-identity.marker"));
+  const packagedSmokePolicy = resolveDesktopPackagedSmokeIdentityPolicy({
+    isPackaged: app.isPackaged,
+    appName: app.getName(),
+    packagedTestIdentityMarkerValid: isPackagedTestIdentityMarker(
+      path.join(process.resourcesPath, "native", "packaged-test-identity.marker"),
+    ),
+    platform: process.platform,
+    authBypassRequested: booleanFlagEnabled(process.env.RUDDER_DESKTOP_SMOKE_AUTH_BYPASS),
+    storageMode: process.env.RUDDER_DESKTOP_SMOKE_STORAGE_MODE,
+    memoryOnlyStorageOptInRequested: booleanFlagEnabled(
+      process.env.RUDDER_DESKTOP_SMOKE_MEMORY_ONLY_STORAGE,
+    ),
+  });
+  const packagedSmokeBypassRequested = packagedSmokePolicy.packagedSmokeBypassRequested;
   const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,
     isPackaged: app.isPackaged,
     platform: process.platform,
     packagedSmokeBypassRequested,
+    packagedSmokeMemoryStorageRequested: packagedSmokePolicy.packagedSmokeMemoryStorageRequested,
   });
   const credentialVault = createIdentityCredentialVault({
     safeStorage,
@@ -139,12 +151,11 @@ export function createDesktopIdentityRuntime(options: {
     credentialPath: path.join(app.getPath("userData"), "identity", "device-credential.bin"),
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-session-store");
-  const credentialVaultStatus = credentialVault.status();
   const vault = createDesktopIdentitySessionStore(credentialVault, {
-    allowMemoryFallback: desktopIdentityMemoryFallbackAllowed({
+    allowMemoryFallback: desktopIdentityProcessMemoryFallbackAllowed({
       isPackaged: app.isPackaged,
       platform: process.platform,
-      storageBackend: credentialVaultStatus.backend,
+      packagedSmokeMemoryStorageRequested: packagedSmokePolicy.packagedSmokeMemoryStorageRequested,
     }),
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-offline-store");

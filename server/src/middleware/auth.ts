@@ -18,6 +18,28 @@ function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+async function applyBoardKeyActor(
+  req: Request,
+  boardAuth: ReturnType<typeof boardAuthService>,
+  identity: { userId: string; keyId: string; sessionId: string; runId?: string },
+): Promise<boolean> {
+  const access = await boardAuth.resolveBoardAccess(identity.userId);
+  if (!access.user) return false;
+
+  req.actor = {
+    type: "board",
+    userId: identity.userId,
+    orgIds: access.orgIds,
+    isInstanceAdmin: access.isInstanceAdmin,
+    keyId: identity.keyId,
+    sessionId: identity.sessionId,
+    authEpoch: 1,
+    runId: identity.runId,
+    source: "board_key",
+  };
+  return true;
+}
+
 interface ActorMiddlewareOptions {
   deploymentMode: DeploymentMode;
   authRequirement?: AuthRequirement;
@@ -37,17 +59,64 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
     const agentContextHeader = req.header("x-rudder-agent-id")?.trim() || undefined;
 
     const authHeader = req.header("authorization");
+    const nativeAssertion = getVerifiedNativeSessionAssertion(req);
+    if (nativeAssertion && nativeAssertion.kind !== "session") {
+      if (nativeAssertion.kind === "none") {
+        req.actor = { type: "none", source: "none", runId: runIdHeader };
+      } else if (nativeAssertion.kind === "local_implicit") {
+        req.actor = {
+          type: "board",
+          userId: "local-board",
+          isInstanceAdmin: true,
+          source: "local_implicit",
+          sessionId: "local-implicit",
+          authEpoch: 1,
+        };
+      } else if (nativeAssertion.kind === "board_key") {
+        const applied = await applyBoardKeyActor(req, boardAuth, {
+          userId: nativeAssertion.user_id,
+          keyId: nativeAssertion.key_id,
+          sessionId: nativeAssertion.session_id,
+          runId: runIdHeader || undefined,
+        });
+        if (!applied) {
+          req.actor = { type: "none", source: "none", runId: runIdHeader };
+        }
+      } else if (nativeAssertion.kind === "agent_key") {
+        req.actor = {
+          type: "agent",
+          agentId: nativeAssertion.agent_id,
+          orgId: nativeAssertion.org_id,
+          keyId: nativeAssertion.key_id,
+          sessionId: nativeAssertion.session_id,
+          authEpoch: 1,
+          runId: runIdHeader || undefined,
+          source: "agent_key",
+        };
+      } else {
+        req.actor = {
+          type: "agent",
+          agentId: nativeAssertion.agent_id,
+          orgId: nativeAssertion.org_id,
+          keyId: undefined,
+          sessionId: nativeAssertion.session_id,
+          credentialExpiresAt: nativeAssertion.expires_at,
+          authEpoch: 1,
+          runId: nativeAssertion.run_id,
+          adapterType: nativeAssertion.adapter_type,
+          source: "agent_jwt",
+        };
+      }
+      if (runIdHeader && req.actor.type === "none") req.actor.runId = runIdHeader;
+      if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
+      next();
+      return;
+    }
+
     if (!authHeader?.toLowerCase().startsWith("bearer ")) {
-      const nativeAssertion = getVerifiedNativeSessionAssertion(req);
       let sessionIdentity = nativeAssertion?.kind === "session"
         ? { userId: nativeAssertion.user_id, sessionId: nativeAssertion.session_id }
         : null;
-      if (nativeAssertion?.kind === "none") {
-        if (runIdHeader) req.actor.runId = runIdHeader;
-        if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
-        next();
-        return;
-      }
       if (!nativeAssertion && authRequirement === "required" && opts.resolveSession) {
         let session: BetterAuthSessionResult | null = null;
         try {
@@ -112,20 +181,14 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
 
     const boardKey = await boardAuth.findBoardApiKeyByToken(token);
     if (boardKey) {
-      const access = await boardAuth.resolveBoardAccess(boardKey.userId);
-      if (access.user) {
+      const applied = await applyBoardKeyActor(req, boardAuth, {
+        userId: boardKey.userId,
+        keyId: boardKey.id,
+        sessionId: `board-key:${boardKey.id}`,
+        runId: runIdHeader || undefined,
+      });
+      if (applied) {
         await boardAuth.touchBoardApiKey(boardKey.id);
-        req.actor = {
-          type: "board",
-          userId: boardKey.userId,
-          orgIds: access.orgIds,
-          isInstanceAdmin: access.isInstanceAdmin,
-          keyId: boardKey.id,
-          sessionId: `board-key:${boardKey.id}`,
-          authEpoch: 1,
-          runId: runIdHeader || undefined,
-          source: "board_key",
-        };
         if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;
         next();
         return;

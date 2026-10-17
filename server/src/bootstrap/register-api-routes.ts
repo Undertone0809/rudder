@@ -63,7 +63,9 @@ export function registerApiRoutes(
   const pluginProjectionService = rudderPluginService(db, pluginMcpOptions);
 
   api.use(boardMutationGuard());
-  if (opts.localAccountExchangePolicy && opts.instanceId) {
+  // A configured native lifecycle is the sole writer for these four routes.
+  // Do not retain a private Node fallback if Rust rejects or loses a request.
+  if (opts.localAccountExchangePolicy && opts.instanceId && !opts.rustPublicIngress?.localAccountLifecycle) {
     api.use(localAccountAuthRoutes(db, {
       installationId: opts.instanceId,
       exchangePolicy: opts.localAccountExchangePolicy,

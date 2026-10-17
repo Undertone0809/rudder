@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-actix-web = { version = "4.11", default-features = false, features = ["macros"] }
+actix-web = { version = "4.11", default-features = false, features = ["macros", "compress-gzip", "compress-brotli"] }
 actix-ws = { version = "0.4.0", default-features = false }
 awc = { version = "3.8.2", default-features = false }
 base64 = "0.22"
@@ -13,6 +13,8 @@ crc32fast = "1.4"
 futures-util = "0.3"
 hmac = "0.12"
 percent-encoding = "2.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+ring = "0.17.14"
 rudder-archive-core = { path = "../archive-core" }
 rudder-auth-core = { path = "../auth-core" }
 rudder-d1-persistence = { path = "../d1-persistence" }
@@ -23,7 +25,7 @@ serde_json = "1.0"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2.0"
-time = { version = "0.3", features = ["local-offset", "parsing"] }
+time = { version = "0.3", features = ["formatting", "local-offset", "parsing"] }
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"

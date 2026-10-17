@@ -23,6 +23,7 @@ import { agentService } from "../services/agents.js";
 import { configureBrowserCapabilityDeployment } from "../services/browser-capability.js";
 import { startOrganizationMutationOutboxPublisher } from "../services/organization-mutation-outbox.js";
 import { createRustFoundationBridge, type RustFoundationActor, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 type Pg = {
     initialise(): Promise<void>;
     start(): Promise<void>;
@@ -115,6 +116,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     let databaseUrl = "";
     let nodeUrl = "";
     let publicUrl = "";
+    const nativeIdentity = nativeIdentityIngressFixture();
     const org = randomUUID(), otherOrg = randomUUID(), agent = randomUUID(), peer = randomUUID(), foreignAgent = randomUUID(), revision = randomUUID();
     const owner = `agent-core-owner-${randomUUID()}`, other = `agent-core-peer-${randomUUID()}`, outsider = `agent-core-outsider-${randomUUID()}`;
     const ownerToken = `synthetic-board-${randomUUID()}`, otherToken = `synthetic-board-${randomUUID()}`, outsiderToken = `synthetic-board-${randomUUID()}`, agentToken = `synthetic-agent-${randomUUID()}`;
@@ -155,13 +157,14 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         await db.execute(sql `INSERT INTO heartbeat_runs(id,org_id,agent_id,status,context_snapshot,chat_conversation_id) VALUES(${publicRun}::uuid,${org}::uuid,${agent}::uuid,'succeeded','{}',NULL),(${privateRun}::uuid,${org}::uuid,${agent}::uuid,'running','{"scene":"side_chat"}',${privateChat}::uuid)`);
         await db.execute(sql `INSERT INTO issues(org_id,title,status,priority,assignee_agent_id,execution_run_id) VALUES(${org}::uuid,'Synthetic inbox issue','todo','high',${agent}::uuid,${privateRun}::uuid)`);
         const app = express();
+        app.use(nativeIdentity.middleware());
         app.use(express.json({ limit: "10mb" }));
         app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
         app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
         server = app.listen(0, "127.0.0.1");
         await once(server, "listening");
         nodeUrl = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
-        bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes", publicIngress: { listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl, authorizationKey: "synthetic-public-ingress-key-32-bytes" } });
+        bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes", publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl, authorizationKey: "synthetic-public-ingress-key-32-bytes" } });
         configureBrowserCapabilityDeployment(db, "local_trusted");
         app.use("/api", agentRoutes(db, undefined, bridge));
         app.use(errorHandler);
@@ -178,8 +181,18 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         if (root)
             fs.rmSync(root, { recursive: true, force: true });
     } }, 30000);
-    it("executes all fifteen contracts through Node and Actix ingress", async () => {
-        for (const base of [nodeUrl, publicUrl]) {
+    it("requires native identity proof on direct private Node requests", async () => {
+        const unsigned = await request(nodeUrl).get("/api/agents/" + agent).set("authorization", "Bearer " + ownerToken);
+        expect(unsigned.status, unsigned.text).toBe(401);
+        expect(unsigned.body.code).toBe("native_session_proof_required");
+        const forged = await request(nodeUrl).get("/api/agents/" + agent)
+            .set("authorization", "Bearer " + ownerToken)
+            .set("x-rudder-native-session-proof", "forged");
+        expect(forged.status, forged.text).toBe(401);
+        expect(forged.body.code).toBe("native_session_proof_invalid");
+    });
+    it("executes all fifteen contracts through the managed Rust public ingress", async () => {
+        for (const base of [publicUrl]) {
             const list = await call(base, "get", `/api/orgs/${org}/agents`);
             expect(list.status, list.text).toBe(200);
             expect(list.body).toHaveLength(2);
@@ -248,7 +261,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
     });
     it("owns schema errors, aliases, auth priority and principal/org isolation", async () => {
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             for (const [endpoint, schema, key] of [["keys", createAgentKeySchema, "name"], ["runtime-state/reset-session", resetAgentSessionSchema, "taskKey"]] as const) {
                 for (const input of [{}, { [key]: null }, { [key]: "" }, { [key]: [] }, { [key]: false }, { [key]: 1 }, { [key]: {} }, { [key]: " \uFEFF " }]) {
                     const expected = schema.safeParse(input);
@@ -277,14 +290,14 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
     });
     it("keeps key identity bound to the selected agent and rolls mutation/audit/outbox back together", async () => {
-        const created = await call(nodeUrl, "post", `/api/agents/${peer}/keys`, ownerToken, {});
+        const created = await call(publicUrl, "post", `/api/agents/${peer}/keys`, ownerToken, {});
         expect(created.status).toBe(201);
-        expect((await call(nodeUrl, "delete", `/api/agents/${agent}/keys/${created.body.id}`)).status).toBe(404);
+        expect((await call(publicUrl, "delete", `/api/agents/${agent}/keys/${created.body.id}`)).status).toBe(404);
         expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE id=${created.body.id}::uuid AND revoked_at IS NULL`)).toBe(1);
         const before = await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE agent_id=${agent}::uuid`);
         await db.execute(sql.raw("CREATE FUNCTION synthetic_agent_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='agent.key_created' THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_agent_audit_failure BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION synthetic_agent_audit_failure()"));
         try {
-            expect((await call(nodeUrl, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(500);
+            expect((await call(publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(500);
             expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE agent_id=${agent}::uuid`)).toBe(before);
         }
         finally {
@@ -301,7 +314,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
     });
     it("protects reset-session responses with the same private Run policy as reads", async () => {
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             await db.execute(sql `UPDATE agent_runtime_state SET last_run_id=${privateRun}::uuid,last_run_status='running',state_json='{"private":"RESET_PRIVATE_SENTINEL"}',session_id='private-session' WHERE agent_id=${agent}::uuid`);
             const peerResponse = await call(base, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, { taskKey: "not-present" });
             expect(peerResponse.status, peerResponse.text).toBe(200);
@@ -327,19 +340,19 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         finally {
             await db.execute(sql `UPDATE board_api_keys SET revoked_at=NULL,expires_at=NULL WHERE id=${ownerKey}::uuid`);
         }
-        const key = await call(nodeUrl, "post", `/api/agents/${agent}/keys`, ownerToken, { name: "Revocation check" });
+        const key = await call(publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, { name: "Revocation check" });
         expect(key.status).toBe(201);
         const agentFact: RustFoundationActor = { type: "agent", agentId: agent, orgId: org, source: "agent_key", sessionId: `agent-key:${key.body.id}` };
         expect((await bridge!.agentCore!(agentFact, { operation: "list", orgId: org })).status).toBe(200);
-        await call(nodeUrl, "delete", `/api/agents/${agent}/keys/${key.body.id}`);
+        await call(publicUrl, "delete", `/api/agents/${agent}/keys/${key.body.id}`);
         expect((await bridge!.agentCore!(agentFact, { operation: "list", orgId: org })).status).toBe(401);
         const foreignRun = randomUUID();
         await db.execute(sql `INSERT INTO heartbeat_runs(id,org_id,agent_id,status) VALUES(${foreignRun}::uuid,${otherOrg}::uuid,${foreignAgent}::uuid,'succeeded')`);
-        const linked = await request(nodeUrl).post(`/api/agents/${agent}/keys`).set("authorization", `Bearer ${ownerToken}`).set("x-rudder-run-id", foreignRun).send({ name: "Cross-org Run fact" });
+        const linked = await request(publicUrl).post(`/api/agents/${agent}/keys`).set("authorization", `Bearer ${ownerToken}`).set("x-rudder-run-id", foreignRun).send({ name: "Cross-org Run fact" });
         expect(linked.status, linked.text).toBe(201);
         const audit = (await db.execute(sql `SELECT run_id FROM activity_log WHERE action='agent.key_created' AND details->>'keyId'=${linked.body.id}`))[0]!;
         expect(audit.run_id).toBeNull();
-        for(const base of [nodeUrl,publicUrl]){
+        for(const base of [publicUrl]){
             for(const [token,run,expected] of [[ownerToken,privateRun,null],[otherToken,privateRun,privateRun],[ownerToken,publicRun,publicRun]] as const){
                 const result=await request(base).post(`/api/agents/${agent}/keys`).set("authorization",`Bearer ${token}`).set("x-rudder-run-id",run).send({name:"Run visibility binding"});
                 expect(result.status,result.text).toBe(201);
@@ -349,7 +362,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
     });
     it("preserves parser, query, opaque JSON and scheduler coercion boundaries", async () => {
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             const originalName = (await db.execute(sql `SELECT name FROM agents WHERE id=${agent}::uuid`))[0]!.name as string;
             const alias = originalName.toLowerCase().replaceAll(" ", "-");
             expect((await call(base, "get", `/api/agents/${encodeURIComponent("\uFEFF" + alias + "\uFEFF")}/configuration?orgId=${org}`)).status).toBe(200);
@@ -381,27 +394,27 @@ describe("Agent core fifteen-route real HTTP authority", () => {
       const workspaceAgent=randomUUID();
       const legacyPath=path.join(resolveOrganizationAgentsDir(org),"legacy-preserved","instructions");
       await db.execute(sql`INSERT INTO agents(id,org_id,name,role,status,agent_runtime_config,workspace_key) VALUES(${workspaceAgent}::uuid,${org}::uuid,'Legacy agent','engineer','idle',${JSON.stringify({instructionsRootPath:legacyPath})}::jsonb,NULL)`);
-      const results=await Promise.all([call(nodeUrl,"get",`/api/agents/${workspaceAgent}/configuration`),call(publicUrl,"get",`/api/agents/${workspaceAgent}/configuration`)]);
+      const results=await Promise.all([call(publicUrl,"get",`/api/agents/${workspaceAgent}/configuration`),call(publicUrl,"get",`/api/agents/${workspaceAgent}/configuration`)]);
       expect(results.map(r=>r.status)).toEqual([200,200]);
       expect((await db.execute(sql`SELECT workspace_key FROM agents WHERE id=${workspaceAgent}::uuid`))[0]!.workspace_key).toBe("legacy-preserved");
       await db.execute(sql`UPDATE agents SET workspace_key='' WHERE id=${workspaceAgent}::uuid`);
-      expect((await call(nodeUrl,"get",`/api/agents/${workspaceAgent}/configuration`)).status).toBe(200);
+      expect((await call(publicUrl,"get",`/api/agents/${workspaceAgent}/configuration`)).status).toBe(200);
       expect((await db.execute(sql`SELECT workspace_key FROM agents WHERE id=${workspaceAgent}::uuid`))[0]!.workspace_key).toBe("");
       for(const status of ["pending_approval","terminated"]){
         await db.execute(sql`UPDATE agents SET status=${status} WHERE id=${workspaceAgent}::uuid`);
-        for(const base of [nodeUrl,publicUrl]) expect((await call(base,"post",`/api/agents/${workspaceAgent}/keys`,ownerToken,{})).status).toBe(409);
+        for(const base of [publicUrl]) expect((await call(base,"post",`/api/agents/${workspaceAgent}/keys`,ownerToken,{})).status).toBe(409);
       }
       for(const invalid of [null,[],{}, {...snapshot,name:""},{...snapshot,budgetMonthlyCents:"1"},{...snapshot,agentRuntimeConfig:{password:"***REDACTED***"}}]){
         const id=randomUUID();await db.execute(sql`INSERT INTO agent_config_revisions(id,org_id,agent_id,before_config,after_config) VALUES(${id}::uuid,${org}::uuid,${agent}::uuid,'[]'::jsonb,${JSON.stringify(invalid)}::jsonb)`);
-        const projection=await call(nodeUrl,"get",`/api/agents/${agent}/config-revisions/${id}`);expect(projection.status,projection.text).toBe(200);expect(projection.body.beforeConfig).toEqual({});
-        for(const base of [nodeUrl,publicUrl]) expect((await call(base,"post",`/api/agents/${agent}/config-revisions/${id}/rollback`)).status).toBe(422);
+        const projection=await call(publicUrl,"get",`/api/agents/${agent}/config-revisions/${id}`);expect(projection.status,projection.text).toBe(200);expect(projection.body.beforeConfig).toEqual({});
+        for(const base of [publicUrl]) expect((await call(base,"post",`/api/agents/${agent}/config-revisions/${id}/rollback`)).status).toBe(422);
       }
-      expect((await call(nodeUrl,"post",`/api/agents/${peer}/config-revisions/${revision}/rollback`)).status).toBe(404);
+      expect((await call(publicUrl,"post",`/api/agents/${peer}/config-revisions/${revision}/rollback`)).status).toBe(404);
       const fencedAgent=randomUUID();await db.execute(sql`INSERT INTO agents(id,org_id,name,role,status,workspace_key) VALUES(${fencedAgent}::uuid,${org}::uuid,'Concurrent termination','engineer','idle','concurrent-termination')`);
       let pending:Promise<{status:number}>|undefined;
       await db.$client.begin(async transaction=>{
         await transaction`UPDATE agents SET status='terminated' WHERE id=${fencedAgent}::uuid`;
-        pending=call(nodeUrl,"post",`/api/agents/${fencedAgent}/keys`,ownerToken,{}).then(value=>value);
+        pending=call(publicUrl,"post",`/api/agents/${fencedAgent}/keys`,ownerToken,{}).then(value=>value);
         const deadline=Date.now()+3000;
         while(Date.now()<deadline){
           if(await scalar(sql`SELECT count(*) AS value FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT id FROM agents WHERE org_id=%'`))return;
@@ -417,24 +430,24 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const concurrencyRevision = randomUUID();
         await db.execute(sql `INSERT INTO agent_config_revisions(id,org_id,agent_id,before_config,after_config,changed_keys) VALUES(${concurrencyRevision}::uuid,${org}::uuid,${agent}::uuid,${JSON.stringify(snapshot)}::jsonb,${JSON.stringify({ ...snapshot, name: "Concurrent restore", agentRuntimeConfig: { plain: "safe" } })}::jsonb,'["name"]')`);
         const before = await scalar(sql `SELECT count(*) AS value FROM agent_config_revisions WHERE agent_id=${agent}::uuid`);
-        const responses = await Promise.all(Array.from({ length: 4 }, (_, index) => call(index % 2 ? nodeUrl : publicUrl, "post", `/api/agents/${agent}/config-revisions/${concurrencyRevision}/rollback`)));
+        const responses = await Promise.all(Array.from({ length: 4 }, (_, index) => call(publicUrl, "post", `/api/agents/${agent}/config-revisions/${concurrencyRevision}/rollback`)));
         expect(responses.map(r => r.status)).toEqual([200, 200, 200, 200]);
         expect(await scalar(sql `SELECT count(*) AS value FROM agent_config_revisions WHERE agent_id=${agent}::uuid`)).toBe(before + 1);
-        const keys = await Promise.all(Array.from({ length: 4 }, (_, index) => call(index % 2 ? nodeUrl : publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, { name: `Concurrent ${index}` })));
+        const keys = await Promise.all(Array.from({ length: 4 }, (_, index) => call(publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, { name: `Concurrent ${index}` })));
         expect(keys.map(r => r.status)).toEqual([201, 201, 201, 201]);
         expect(new Set(keys.map(r => r.body.token)).size).toBe(4);
-        const revoked = await Promise.all(keys.map((key, index) => call(index % 2 ? nodeUrl : publicUrl, "delete", `/api/agents/${agent}/keys/${key.body.id}`)));
+        const revoked = await Promise.all(keys.map((key, index) => call(publicUrl, "delete", `/api/agents/${agent}/keys/${key.body.id}`)));
         expect(revoked.map(r => r.status)).toEqual([200, 200, 200, 200]);
-        const resets = await Promise.all([call(nodeUrl, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, {}), call(publicUrl, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, { taskKey: " \uFEFF " })]);
+        const resets = await Promise.all([call(publicUrl, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, {}), call(publicUrl, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, { taskKey: " \uFEFF " })]);
         expect(resets.map(r => r.status)).toEqual([200, 200]);
     });
-    it("returns 503 through both ingress paths with no Node fallback, then survives native restart", async () => {
+    it("returns 503 through the managed public ingress with no Node fallback, then survives native restart", async () => {
         const count = await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`);
         const unavailable = createRustFoundationBridge({ databaseUrl, binaryPath: path.join(root, "missing-foundation"), mode: "required", actorEnvelopeKey: "synthetic-unavailable-bridge-key-32bytes" });
         const original = bridge!.agentCore;
         bridge!.agentCore = unavailable.agentCore;
         try {
-            for (const base of [nodeUrl, publicUrl]) {
+            for (const base of [publicUrl]) {
                 expect((await call(base, "get", `/api/orgs/${org}/agents`)).status).toBe(503);
                 expect((await call(base, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(503);
             }
@@ -447,7 +460,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         await bridge!.close();
         await bridge!.start();
         publicUrl = bridge!.publicIngressBaseUrl!;
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             const keys = await call(base, "get", `/api/agents/${agent}/keys`);
             expect(keys.status, keys.text).toBe(200);
             expect(keys.body.filter((key: {
@@ -494,7 +507,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             { id: reviewerOnly, relationship: "reviewer", status: "blocked" },
         ];
         async function assertInbox(rows: typeof expected) {
-            for (const base of [nodeUrl, publicUrl]) {
+            for (const base of [publicUrl]) {
                 const response = await call(base, "get", "/api/agents/me/inbox-lite", inboxToken);
                 expect(response.status, response.text).toBe(200);
                 expect(response.body.map(({ id, relationship, status }: typeof expected[number]) => ({ id, relationship, status }))).toEqual(rows);
@@ -517,7 +530,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         for (const [id, name, metadata, interval] of [[visible, "Scheduler Builder", {}, 300], [copilot, "Rudder Copilot (system)", { systemManaged: "rudder_copilot" }, 0]] as const) {
             await db.execute(sql `INSERT INTO agents(id,org_id,name,role,status,agent_runtime_type,runtime_config,metadata,workspace_key) VALUES(${id}::uuid,${org}::uuid,${name},'engineer','idle','codex_local',${JSON.stringify({ heartbeat: { enabled: true, intervalSec: interval } })}::jsonb,${JSON.stringify(metadata)}::jsonb,${id})`);
         }
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             const response = await call(base, "get", "/api/instance/scheduler-heartbeats");
             expect(response.status, response.text).toBe(200);
             expect(response.body.filter((row: { id: string }) => [visible, copilot].includes(row.id))).toEqual([
@@ -531,14 +544,14 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         await db.execute(sql `INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${deniedAgent}::uuid,'synthetic denied',${hash(deniedToken)})`);
         await db.execute(sql `INSERT INTO organization_memberships(org_id,principal_type,principal_id,status,membership_role) VALUES(${org}::uuid,'agent',${deniedAgent},'active','member')`);
         await db.execute(sql `INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key) VALUES(${org}::uuid,'agent',${deniedAgent},'agents:create')`);
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             const response = await call(base, "get", `/api/orgs/${org}/agent-configurations`, deniedToken);
             expect(response.status, response.text).toBe(403);
             expect(response.body).toEqual({ error: "Missing permission: can create agents" });
         }
         expect(await scalar(sql `SELECT count(*) AS value FROM principal_permission_grants WHERE org_id=${org}::uuid AND principal_id=${deniedAgent} AND permission_key='agents:create'`)).toBe(1);
         await db.execute(sql `UPDATE agents SET permissions='{"canCreateAgents":true}' WHERE id=${deniedAgent}::uuid`);
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             const response = await call(base, "get", `/api/orgs/${org}/agent-configurations`, deniedToken);
             expect(response.status, response.text).toBe(200);
             expect(response.body.some((row: { id: string }) => row.id === deniedAgent)).toBe(true);
@@ -558,7 +571,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         await db.execute(sql`INSERT INTO organization_memberships(org_id,principal_type,principal_id,status,membership_role) VALUES(${org}::uuid,'agent',${subject.id},'suspended','member')`);
         await db.execute(sql`INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key,scope) VALUES(${org}::uuid,'agent',${subject.id},'tasks:assign','{"opaque":"keep"}')`);
         await db.execute(sql`UPDATE agents SET spent_monthly_cents=999,agent_runtime_config='{"opaque":"literal","password":"synthetic-hidden"}' WHERE id=${subject.id}::uuid`);
-        for (const base of [nodeUrl, publicUrl]) for (const [url, token] of [[`/api/agents/${subject.id}`, ownerToken], ["/api/agents/me", subject.token]]) {
+        for (const base of [publicUrl]) for (const [url, token] of [[`/api/agents/${subject.id}`, ownerToken], ["/api/agents/me", subject.token]]) {
             const response = await call(base, "get", url!, token!);
             expect(response.status, response.text).toBe(200);
             expect(response.body).toMatchObject({ id: subject.id, spentMonthlyCents: 0, access: { canAssignTasks: true, taskAssignSource: "explicit_grant", membership: { status: "suspended" }, grants: [{ permissionKey: "tasks:assign", scope: { opaque: "keep" } }] }, instructionsLibraryPath: null });
@@ -574,7 +587,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         for (const [runtime, browser, available] of [["codex_local", { enabled: true }, true], ["codex_local", { enabled: false }, false], ["process", { enabled: true }, false], ["claude_local", { enabled: false, unknown: 1 }, true]] as const) {
             await db.execute(sql`UPDATE agents SET agent_runtime_type=${runtime} WHERE id=${subject.id}::uuid`);
             await db.execute(sql`INSERT INTO instance_settings(singleton_key,browser) VALUES('default',${JSON.stringify(browser)}::jsonb) ON CONFLICT(singleton_key) DO UPDATE SET browser=excluded.browser`);
-            for (const base of [nodeUrl, publicUrl]) {
+            for (const base of [publicUrl]) {
                 const response = await call(base, "get", `/api/agents/${subject.id}`);
                 expect(response.status, response.text).toBe(200);
                 expect(response.body.rudderTools[0]).toMatchObject({ id: "rudder-tools", kind: "rudder_mcp", status: "available", serverName: "rudder-tools", contract: "agent-v1", authMode: "runtime_managed", toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length });
@@ -588,7 +601,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const friendly = path.join(root, "corrupt-friendly-map"); fs.mkdirSync(friendly); fs.writeFileSync(path.join(friendly, ".rudder-organizations.json"), "invalid JSON");
         process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = friendly;
         try {
-            for (const base of [nodeUrl, publicUrl]) {
+            for (const base of [publicUrl]) {
                 const response = await call(base, "get", `/api/agents/${subject.id}`, caller.token);
                 expect(response.status, response.text).toBe(200);
                 expect(response.body).toMatchObject({ agentRuntimeConfig: {}, runtimeConfig: {}, instructionsLibraryPath: null });
@@ -613,7 +626,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const external = path.join(root, "external-instructions"); fs.mkdirSync(external); fs.writeFileSync(path.join(external, "SOUL.md"), "External content");
         for (const [config, expected] of [[{}, `agents/${subject.workspace}/instructions`], [{ instructionsBundleMode: "external", instructionsRootPath: external }, null], [{ instructionsFilePath: path.join(external, "SOUL.md") }, null]] as const) {
             await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify(config)}::jsonb WHERE id=${subject.id}::uuid`);
-            for (const base of [nodeUrl, publicUrl]) { const response = await call(base, "get", `/api/agents/${subject.id}`); expect(response.status, response.text).toBe(200); expect(response.body.instructionsLibraryPath).toBe(expected); }
+            for (const base of [publicUrl]) { const response = await call(base, "get", `/api/agents/${subject.id}`); expect(response.status, response.text).toBe(200); expect(response.body.instructionsLibraryPath).toBe(expected); }
         }
         expect(fs.readFileSync(path.join(directory, "USER.md"), "utf8")).toBe("Do not replace my instructions");
     });
@@ -621,15 +634,15 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const subject=await detailSubject();const legacy=path.join(path.dirname(resolveRudderInstanceRoot()),"historical-fixture","organizations",org.replaceAll("-","").slice(0,12),"workspaces","agents",subject.workspace,"instructions");
         fs.mkdirSync(path.join(legacy,"folder"),{recursive:true});const body="synthetic-large-file\n".repeat(70000);fs.writeFileSync(path.join(legacy,"SOUL.md"),body);
         await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify({instructionsFilePath:path.join(legacy,"folder")+"/../SOUL.md"})}::jsonb WHERE id=${subject.id}::uuid`);
-        for(const base of [nodeUrl,publicUrl]) {const response=await call(base,"get",`/api/agents/${subject.id}`);expect(response.status,response.text).toBe(200);expect(response.body.instructionsLibraryPath).toBe(`agents/${subject.workspace}/instructions`);}
+        for(const base of [publicUrl]) {const response=await call(base,"get",`/api/agents/${subject.id}`);expect(response.status,response.text).toBe(200);expect(response.body.instructionsLibraryPath).toBe(`agents/${subject.workspace}/instructions`);}
         const directory=path.join(resolveOrganizationAgentsDir(org),subject.workspace,"instructions");expect(fs.readFileSync(path.join(directory,"SOUL.md"),"utf8")).toBe(body);
         for(const name of ["MEMORY.md","TOOLS.md"]) expect(fs.readFileSync(path.join(directory,name),"utf8")).toBe(fs.readFileSync(path.resolve("server/src/onboarding-assets/default",name),"utf8"));
         const opaque="synthetic-large-response".repeat(60000);await db.execute(sql`UPDATE agents SET runtime_config=${JSON.stringify({opaque})}::jsonb WHERE id=${subject.id}::uuid`);
-        for(const base of [nodeUrl,publicUrl]) {const response=await call(base,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,{canCreateAgents:false,canAssignTasks:false,ignored:"x".repeat(150000)});expect(response.status,response.text.slice(0,200)).toBe(200);expect(response.body.runtimeConfig.opaque).toBe(opaque);}
+        for(const base of [publicUrl]) {const response=await call(base,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,{canCreateAgents:false,canAssignTasks:false,ignored:"x".repeat(150000)});expect(response.status,response.text.slice(0,200)).toBe(200);expect(response.body.runtimeConfig.opaque).toBe(opaque);}
     });
     it("Agent detail default bridge survives a real Node helper holding the shared filesystem lock beyond three seconds", async () => {
         const subject=await detailSubject();const workspace=path.dirname(resolveOrganizationAgentsDir(org));
-        for(const base of [nodeUrl,publicUrl]) {
+        for(const base of [publicUrl]) {
             let acquired!:()=>void,release!:()=>void;const ready=new Promise<void>(resolve=>{acquired=resolve}),hold=new Promise<void>(resolve=>{release=resolve});
             const mkdir=fs.promises.mkdir.bind(fs.promises);let stopped=false;
             const spy=vi.spyOn(fs.promises,"mkdir").mockImplementation((async(target:Parameters<typeof mkdir>[0],options:Parameters<typeof mkdir>[1])=>{
@@ -648,7 +661,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         for (const value of [null, false, 0, "", true, 3, "opaque", [0, { literal: "keep" }]]) {
             await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify(value)}::jsonb,runtime_config=${JSON.stringify(value)}::jsonb WHERE id=${subject.id}::uuid`);
             const expected = omitSecretPayloadFields(redactEventPayload((value ?? {}) as Record<string, unknown>) ?? {});
-            for (const base of [nodeUrl, publicUrl]) for (const [method, url, token, input] of [["get", `/api/agents/${subject.id}`, ownerToken, undefined], ["get", "/api/agents/me", subject.token, undefined], ["patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: false, canAssignTasks: false }]] as const) {
+            for (const base of [publicUrl]) for (const [method, url, token, input] of [["get", `/api/agents/${subject.id}`, ownerToken, undefined], ["get", "/api/agents/me", subject.token, undefined], ["patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: false, canAssignTasks: false }]] as const) {
                 const response = await call(base, method, url, token, input);
                 expect(response.status, response.text).toBe(200); expect(response.body.agentRuntimeConfig).toEqual(expected); expect(response.body.runtimeConfig).toEqual(expected);
             }
@@ -656,7 +669,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     },30000);
     it("Agent detail permissions preserve creator assignment, optional skills, current CEO authority and private audit references", async () => {
         const subject = await detailSubject(), ceo = await detailSubject("ceo");
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             let response = await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: true, canAssignTasks: false });
             expect(response.status, response.text).toBe(200); expect(response.body.permissions).toEqual({ canCreateAgents: true, canManageSkills: false }); expect(response.body.access.taskAssignSource).toBe("agent_creator");
             expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id} AND permission_key='tasks:assign' AND granted_by_user_id=${owner}`)).toBe(1);
@@ -679,15 +692,15 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const before = await snapshot();
         await db.execute(sql`CREATE FUNCTION agent_detail_reject_outbox() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic rollback'; END $$`);
         await db.execute(sql`CREATE TRIGGER agent_detail_reject_outbox BEFORE INSERT ON organization_mutation_outbox FOR EACH ROW EXECUTE FUNCTION agent_detail_reject_outbox()`);
-        try { for (const base of [nodeUrl, publicUrl]) {expect((await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: true, canAssignTasks: true })).status).toBe(500);expect(await snapshot()).toBe(before);} }
+        try { for (const base of [publicUrl]) {expect((await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: true, canAssignTasks: true })).status).toBe(500);expect(await snapshot()).toBe(before);} }
         finally {await db.execute(sql`DROP TRIGGER agent_detail_reject_outbox ON organization_mutation_outbox`);await db.execute(sql`DROP FUNCTION agent_detail_reject_outbox()`);}
-        const response = await call(nodeUrl, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: true, canAssignTasks: true });expect(response.status,response.text).toBe(200);
+        const response = await call(publicUrl, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, { canCreateAgents: true, canAssignTasks: true });expect(response.status,response.text).toBe(200);
         expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id AND a.org_id=o.org_id WHERE a.entity_id=${subject.id}`)).toBe(1);
     });
     it("Agent detail enforces request and reference boundaries without Node fallback", async () => {
         const subject = await detailSubject();
         const valid = { canCreateAgents: false, canAssignTasks: false };
-        for (const base of [nodeUrl, publicUrl]) {
+        for (const base of [publicUrl]) {
             expect((await call(base, "get", "/api/agents/me", ownerToken)).status).toBe(401);
             expect((await call(base, "get", `/api/agents/${foreignAgent}`, otherToken)).status).toBe(403);
             for (const ref of [subject.id.toUpperCase(), `agt_${subject.id.replaceAll("-", "").slice(0,8)}`, `agt_${subject.id.replaceAll("-", "").slice(0,12)}`, `agt_${subject.id.replaceAll("-", "")}`]) {const response=await call(base,"get",`/api/agents/${ref}?orgId=${org}`);expect(response.status,response.text).toBe(200);expect(response.body.id).toBe(subject.id);}
@@ -699,7 +712,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             }
         }
         const original=bridge!.agentCore;bridge!.agentCore=async()=>{throw new Error("synthetic native outage")};
-        try {for(const base of [nodeUrl,publicUrl])for(const [method,url,token,input] of [["get",`/api/agents/${subject.id}`,ownerToken,undefined],["get","/api/agents/me",subject.token,undefined],["patch",`/api/agents/${subject.id}/permissions`,ownerToken,valid]] as const){expect((await call(base,method,url,token,input)).status).toBe(503);}}
+        try {for(const base of [publicUrl])for(const [method,url,token,input] of [["get",`/api/agents/${subject.id}`,ownerToken,undefined],["get","/api/agents/me",subject.token,undefined],["patch",`/api/agents/${subject.id}/permissions`,ownerToken,valid]] as const){expect((await call(base,method,url,token,input)).status).toBe(503);}}
         finally{bridge!.agentCore=original;}
     });
     async function waitFor(check: () => Promise<boolean> | boolean, label: string) {
@@ -708,7 +721,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     }
     it("Agent detail permissions recheck a revoked administrator while blocked on actual Agent locks", async () => {
         const subject=await detailSubject();const valid={canCreateAgents:true,canAssignTasks:true};
-        for(const base of [nodeUrl,publicUrl]) {
+        for(const base of [publicUrl]) {
             await db.execute(sql`INSERT INTO instance_user_roles(user_id,role) VALUES(${outsider},'instance_admin') ON CONFLICT DO NOTHING`);
             const connection=await db.$client.reserve();await connection.unsafe("BEGIN");await connection`SELECT id FROM agents WHERE org_id=${org}::uuid ORDER BY id FOR UPDATE`;
             const pending=call(base,"patch",`/api/agents/${subject.id}/permissions`,outsiderToken,valid).then(response=>response);
@@ -721,9 +734,9 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             } finally {await connection.unsafe("ROLLBACK").catch(()=>{});connection.release();await db.execute(sql`DELETE FROM instance_user_roles WHERE user_id=${outsider} AND role='instance_admin'`);await pending;}
         }
     },30000);
-    it.each(["node", "required"] as const)("Agent detail permissions reject a board key expiring during an actual Agent lock wait (%s)", async (ingress) => {
+    it("Agent detail permissions reject a board key expiring during an actual Agent lock wait through public ingress", async () => {
         const subject = await detailSubject();
-        const base = ingress === "node" ? nodeUrl : publicUrl;
+        const base = publicUrl;
         const input = { canCreateAgents: true, canAssignTasks: true };
         const connection = await db.$client.reserve();
         let pending: Promise<{ status: number; text: string; body: unknown }> | undefined;
@@ -761,7 +774,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     }, 30000);
     it("Agent detail permissions recheck current CEO role after an actual transaction lock wait", async () => {
         const subject=await detailSubject(),ceo=await detailSubject("ceo");
-        for(const base of [nodeUrl,publicUrl]) {
+        for(const base of [publicUrl]) {
             await db.execute(sql`UPDATE agents SET role='ceo' WHERE id=${ceo.id}::uuid`);
             const connection=await db.$client.reserve();await connection.unsafe("BEGIN");await connection`SELECT id FROM agents WHERE org_id=${org}::uuid ORDER BY id FOR UPDATE`;
             const pending=call(base,"patch",`/api/agents/${subject.id}/permissions`,ceo.token,{canCreateAgents:true,canAssignTasks:true}).then(response=>response);
@@ -775,11 +788,11 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const subject=await detailSubject(),workspaceHome=resolveOrganizationWorkspaceHomeDir(),lock=path.join(workspaceHome,".rudder-organizations.lock"),token=randomUUID();
         fs.mkdirSync(lock,{mode:0o700});fs.writeFileSync(path.join(lock,`.rudder-lock-owner-${token}.json`),JSON.stringify({kind:"rudder-organization-workspace-map-lock",version:1,token,pid:process.pid,hostname:os.hostname(),createdAt:new Date().toISOString()}),{flag:"wx",mode:0o600});
         const input={canCreateAgents:true,canAssignTasks:true};
-        try {const started=Date.now();const response=await call(nodeUrl,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);expect(response.status,response.text).toBe(500);expect(Date.now()-started).toBeGreaterThanOrEqual(9900);
+        try {const started=Date.now();const response=await call(publicUrl,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);expect(response.status,response.text).toBe(500);expect(Date.now()-started).toBeGreaterThanOrEqual(9900);
             expect(fs.existsSync(path.join(lock,`.rudder-lock-owner-${token}.json`))).toBe(true);expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE principal_id=${subject.id}`)).toBe(0);
             expect((await db.execute(sql`SELECT permissions FROM agents WHERE id=${subject.id}::uuid`))[0]?.permissions).toEqual({canCreateAgents:false,canManageSkills:false});
         } finally {fs.rmSync(lock,{recursive:true,force:true});}
-        const retry=await call(nodeUrl,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);expect(retry.status,retry.text).toBe(200);expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(1);
+        const retry=await call(publicUrl,"patch",`/api/agents/${subject.id}/permissions`,ownerToken,input);expect(retry.status,retry.text).toBe(200);expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(1);
     },20000);
     it.each(["configured", "unset"])("Agent detail file-lock wait rechecks credentials and preserves transaction rollback with %s RUDDER_HOME", async (homeMode) => {
         const originalHome = process.env.RUDDER_HOME;
@@ -794,7 +807,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const workspaceHome=resolveOrganizationWorkspaceHomeDir();
         fs.mkdirSync(workspaceHome,{recursive:true});const lock=path.join(workspaceHome,".rudder-organizations.lock");const token=randomUUID();fs.mkdirSync(lock,{mode:0o700});
         fs.writeFileSync(path.join(lock,`.rudder-lock-owner-${token}.json`),JSON.stringify({kind:"rudder-organization-workspace-map-lock",version:1,token,pid:process.pid,hostname:os.hostname(),createdAt:new Date().toISOString()}),{flag:"wx",mode:0o600});
-        const pending=call(nodeUrl,"patch",`/api/agents/${subject.id}/permissions`,otherToken,{canCreateAgents:true,canAssignTasks:true}).then(response=>response);
+        const pending=call(publicUrl,"patch",`/api/agents/${subject.id}/permissions`,otherToken,{canCreateAgents:true,canAssignTasks:true}).then(response=>response);
         try {
             await waitFor(()=>fs.readdirSync(workspaceHome).some(name=>name.startsWith(".rudder-organizations.lock.acquire-")),"native filesystem lock acquisition");
             await db.execute(sql`UPDATE board_api_keys SET revoked_at=now() WHERE key_hash=${hash(otherToken)}`);

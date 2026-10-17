@@ -21,6 +21,7 @@ import { costRoutes } from "../routes/costs.js";
 import { costService } from "../services/costs.js";
 import { financeService } from "../services/finance.js";
 import { createRustFoundationBridge, type CostReadOperation, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 
 // The legacy services are oracle-only. Public route construction gets throwing
 // read stubs, proving successful public responses cannot silently use Node SQL.
@@ -87,6 +88,7 @@ async function close(server?: Server) {
 // Real Express actor authentication -> signed private Rust capability -> SQLx
 // PostgreSQL, with both default ingress and actual Rust public ingress.
 describe.each(["off", "required"] as const)("Cost read real public workflow (ingress %s)", (ingressMode) => {
+  const nativeIdentity = nativeIdentityIngressFixture();
   let db: ReturnType<typeof createDb>;
   let database: EmbeddedPostgresInstance | undefined;
   let dataDir = "";
@@ -103,7 +105,9 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
   const from = new Date("2024-02-29T00:00:00.000Z"), to = new Date("2024-03-01T00:00:00.000Z");
 
   async function startApp(selectedBridge?: RustFoundationBridge, listenPort = 0) {
-    const app = express(); app.use(express.json());
+    const app = express();
+    if (ingressMode === "required" && selectedBridge) app.use(nativeIdentity.middleware());
+    app.use(express.json());
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
     app.use("/api", costRoutes(db, selectedBridge)); app.use(errorHandler);
@@ -209,7 +213,7 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
     baseline = await snapshot();
     const listenPort = ingressMode === "required" ? await port() : 0;
     bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10000,
-      ...(ingressMode === "required" ? { publicIngress: { listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "cost-read-test-ingress-authorization-key-32bytes" } } : {}),
+      ...(ingressMode === "required" ? { publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "cost-read-test-ingress-authorization-key-32bytes" } } : {}),
     });
     server = await startApp(bridge, listenPort); await bridge.start(); target = server;
     if (ingressMode === "required") { await bridge.waitForPublicIngressReady!(); target = bridge.publicIngressBaseUrl!; }
@@ -219,6 +223,15 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
     try { await close(server); await bridge?.close(); await db?.$client.end({ timeout: 5 }); await database?.stop(); }
     finally { if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true }); }
   });
+
+  if (ingressMode === "required") {
+    it("authenticates identity-only readiness without admitting unsigned private health", async () => {
+      expect((await request(server).get("/api/health")).status).toBe(401);
+      expect((await request(server).get("/api/health").set("x-rudder-native-session-proof", "forged")).status).toBe(401);
+      await bridge!.waitForPublicIngressReady!();
+      await bridge!.waitForPublicIngressReady!();
+    });
+  }
 
   it.each(operations)("preserves %s legacy JSON through the native authority", async (operation) => {
     const expected = await oracle(operation);

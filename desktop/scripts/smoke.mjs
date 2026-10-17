@@ -2791,6 +2791,19 @@ async function runAccountGateScenario(mode) {
     await runPackagedLifecycleScenario(mode);
     return;
   }
+  const requestedStorageMode = process.env.RUDDER_DESKTOP_SMOKE_STORAGE_MODE?.trim().toLowerCase();
+  const accountGateStorageMode = requestedStorageMode || "native";
+  assert.ok(
+    accountGateStorageMode === "native" || accountGateStorageMode === "memory",
+    "RUDDER_DESKTOP_SMOKE_STORAGE_MODE must be native or memory",
+  );
+  const memoryStorageFixture = accountGateStorageMode === "memory";
+  if (memoryStorageFixture) {
+    assert.equal(process.platform, "darwin", "the memory-only account-gate fixture is macOS-only");
+    console.log(
+      "[desktop-smoke] memory-only account-gate fixture enabled; native encrypted-vault persistence NOT EXECUTED in memory fixture mode",
+    );
+  }
   const scenarioRoot = path.join(tmpRoot, "account-gate");
   const residentStatusPath = path.join(scenarioRoot, "resident-shell-status.json");
   const secureStorageProbePath = path.join(scenarioRoot, "secure-storage-probe.bin");
@@ -2924,14 +2937,30 @@ async function runAccountGateScenario(mode) {
         ...(process.platform === "darwin" && process.env.HOME
           ? { HOME: process.env.HOME }
           : {}),
+        ...(memoryStorageFixture ? {
+          // A blank override resolves to the production origin; the copy is
+          // marked only so this smoke can opt into memory-backed storage.
+          RUDDER_IDENTITY_ORIGIN: "",
+          RUDDER_DESKTOP_AUTH_BYPASS: "0",
+          RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "0",
+          RUDDER_DESKTOP_SMOKE_STORAGE_MODE: "memory",
+          RUDDER_DESKTOP_SMOKE_MEMORY_ONLY_STORAGE: "1",
+        } : {}),
         RUDDER_DESKTOP_SMOKE_IDENTITY_HANDOFF_PATH: handoffPath,
       },
+      packagedSmokeExecutable,
     );
     try {
       await providerPage.waitForFunction(
         () => document.body.dataset.bootView === "account_required",
         undefined,
         { timeout: 30_000 },
+      );
+      const providerHealthProbe = await fetch(`http://127.0.0.1:${providerPorts.appPort}/api/health`).catch(() => null);
+      assert.equal(
+        providerHealthProbe,
+        null,
+        `packaged Desktop must not start the Local Workspace server before ${provider} sign-in`,
       );
       await providerPage.getByRole("button", { name: `Continue with ${provider}` }).click();
       const handoff = await waitForSmokeCondition(
@@ -2961,20 +2990,27 @@ async function runAccountGateScenario(mode) {
     }
   };
 
+  const packagedSmokeExecutable = memoryStorageFixture
+    ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+    : null;
   await verifyProviderHandoff("Google");
   await verifyProviderHandoff("GitHub");
 
   const degradedIdentity = await createDegradedIdentitySmokeServer();
-  const degradedExecutable = await createPackagedIdentitySmokeExecutable(scenarioRoot);
+  const degradedExecutable = packagedSmokeExecutable
+    ?? await createPackagedIdentitySmokeExecutable(scenarioRoot);
   const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
-    // Electron safeStorage must use the active macOS login keychain. A synthetic
-    // HOME can leave the synchronous keychain probe waiting for a keychain that
-    // does not exist; Rudder and Electron data paths remain scenario-isolated.
     ...(process.platform === "darwin" && process.env.HOME
       ? { HOME: process.env.HOME }
       : {}),
-    // A packaged release must ignore this development-only escape hatch.
-    RUDDER_DESKTOP_AUTH_BYPASS: "1",
+    // Keep the signed-out account gate explicit even though this executable copy
+    // has the identity test marker required for the local Identity origin.
+    RUDDER_DESKTOP_AUTH_BYPASS: memoryStorageFixture ? "0" : "1",
+    ...(memoryStorageFixture ? {
+      RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "0",
+      RUDDER_DESKTOP_SMOKE_STORAGE_MODE: "memory",
+      RUDDER_DESKTOP_SMOKE_MEMORY_ONLY_STORAGE: "1",
+    } : {}),
     RUDDER_IDENTITY_ORIGIN: degradedIdentity.origin,
     RUDDER_DESKTOP_SMOKE_RESIDENT_STATUS_PATH: residentStatusPath,
   }, degradedExecutable);
@@ -2987,7 +3023,7 @@ async function runAccountGateScenario(mode) {
     await page.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
     await page.getByRole("textbox", { name: "Email address" }).waitFor();
     await page.getByRole("button", { name: "Continue with email" }).waitFor();
-    if (process.platform === "darwin") {
+    if (process.platform === "darwin" && !memoryStorageFixture) {
       const secureStorage = await electronApp.evaluate(({ safeStorage }) => {
         const available = safeStorage.isEncryptionAvailable();
         return {
@@ -3024,7 +3060,9 @@ async function runAccountGateScenario(mode) {
     assert.equal(
       await page.getByText("Secure credential storage is unavailable on this device.", { exact: true }).count(),
       0,
-      "packaged Desktop must keep secure identity storage available",
+      memoryStorageFixture
+        ? "the memory fixture must provide its isolated process-only session store"
+        : "packaged Desktop must keep secure identity storage available",
     );
     assert.equal(
       await page.getByText(/Sign in or create an account/i).count(),
@@ -3113,13 +3151,18 @@ async function runAccountGateScenario(mode) {
   } finally {
     await closeDesktop(electronApp);
     if (process.platform === "darwin") {
-      const encryptedProbe = await readFile(secureStorageProbePath);
       const { electronApp: restartedApp, page: restartedPage } = await launchDesktopWindow(
         scenarioRoot,
         mode,
         ports,
         {
           ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+          ...(memoryStorageFixture ? {
+            RUDDER_DESKTOP_AUTH_BYPASS: "0",
+            RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "0",
+            RUDDER_DESKTOP_SMOKE_STORAGE_MODE: "memory",
+            RUDDER_DESKTOP_SMOKE_MEMORY_ONLY_STORAGE: "1",
+          } : {}),
           RUDDER_IDENTITY_ORIGIN: degradedIdentity.origin,
           RUDDER_DESKTOP_SMOKE_RESIDENT_STATUS_PATH: residentStatusPath,
         },
@@ -3131,15 +3174,33 @@ async function runAccountGateScenario(mode) {
           undefined,
           { timeout: 30_000 },
         );
-        const decryptedProbe = await restartedApp.evaluate(
-          ({ safeStorage }, encrypted) => safeStorage.decryptString(Buffer.from(encrypted, "base64")),
-          encryptedProbe.toString("base64"),
-        );
         assert.equal(
-          decryptedProbe,
-          "rudder-packaged-restart-probe",
-          "packaged macOS secure storage must survive a full process restart",
+          await restartedPage.locator("body").getAttribute("data-stage"),
+          "account_required",
+          "packaged macOS Desktop must remain account-gated after a full process restart",
         );
+        const restartedHealthProbe = await fetch(`http://127.0.0.1:${ports.appPort}/api/health`).catch(() => null);
+        assert.equal(
+          restartedHealthProbe,
+          null,
+          "packaged Desktop must not start the Local Workspace server after a signed-out restart",
+        );
+        if (memoryStorageFixture) {
+          console.log(
+            "[desktop-smoke] memory fixture restart remained account_required; native encrypted-vault persistence NOT EXECUTED in memory fixture mode",
+          );
+        } else {
+          const encryptedProbe = await readFile(secureStorageProbePath);
+          const decryptedProbe = await restartedApp.evaluate(
+            ({ safeStorage }, encrypted) => safeStorage.decryptString(Buffer.from(encrypted, "base64")),
+            encryptedProbe.toString("base64"),
+          );
+          assert.equal(
+            decryptedProbe,
+            "rudder-packaged-restart-probe",
+            "packaged macOS secure storage must survive a full process restart",
+          );
+        }
       } finally {
         await closeDesktop(restartedApp);
       }

@@ -16,6 +16,7 @@ use std::{
 
 const ACTOR_ENVELOPE_KEY: &str = "actor-envelope-test-key-0123456789abcdef";
 const INGRESS_AUTH_KEY: &str = "private-ingress-test-key-0123456789abcdef";
+const IDENTITY_ASSERTION_KEY: &str = "identity-assertion-test-key-0123456789abcdef";
 const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -24,11 +25,13 @@ fn dual_listener_receipt_and_readiness_use_the_loopback_node_health_upstream() {
     let _serial = process_test_lock();
     let node = MockHealthServer::start();
     let upstream = format!("http://{}", node.addr());
-    let child = ServerChild::spawn(&[
+    let mut env = vec![
         ("RUDDER_NATIVE_PUBLIC_LISTEN", "127.0.0.1:0"),
         ("RUDDER_NATIVE_NODE_UPSTREAM", &upstream),
         ("RUDDER_NATIVE_INGRESS_AUTH_KEY", INGRESS_AUTH_KEY),
-    ]);
+    ];
+    env.extend(identity_auth_env());
+    let child = ServerChild::spawn(&env);
     let startup = child.next_json_line("startup receipt");
 
     let private_addr = receipt_addr(&startup, "boundAddr");
@@ -99,13 +102,17 @@ fn occupied_public_socket_fails_startup_and_releases_the_private_listener() {
     let private_addr = private_socket.local_addr().expect("private socket address");
     drop(private_socket);
 
+    let private_addr_env = private_addr.to_string();
+    let public_addr_env = public_addr.to_string();
     let upstream = format!("http://{}", node.addr());
-    let mut child = ServerChild::spawn(&[
-        ("RUDDER_NATIVE_LISTEN", &private_addr.to_string()),
-        ("RUDDER_NATIVE_PUBLIC_LISTEN", &public_addr.to_string()),
+    let mut env = vec![
+        ("RUDDER_NATIVE_LISTEN", private_addr_env.as_str()),
+        ("RUDDER_NATIVE_PUBLIC_LISTEN", public_addr_env.as_str()),
         ("RUDDER_NATIVE_NODE_UPSTREAM", &upstream),
         ("RUDDER_NATIVE_INGRESS_AUTH_KEY", INGRESS_AUTH_KEY),
-    ]);
+    ];
+    env.extend(identity_auth_env());
+    let mut child = ServerChild::spawn(&env);
 
     let status = child
         .wait_for_exit(CHILD_EXIT_TIMEOUT)
@@ -123,11 +130,13 @@ fn sigterm_stops_both_listeners_emits_receipt_and_releases_both_ports() {
     let _serial = process_test_lock();
     let node = MockHealthServer::start();
     let upstream = format!("http://{}", node.addr());
-    let mut child = ServerChild::spawn(&[
+    let mut env = vec![
         ("RUDDER_NATIVE_PUBLIC_LISTEN", "127.0.0.1:0"),
         ("RUDDER_NATIVE_NODE_UPSTREAM", &upstream),
         ("RUDDER_NATIVE_INGRESS_AUTH_KEY", INGRESS_AUTH_KEY),
-    ]);
+    ];
+    env.extend(identity_auth_env());
+    let mut child = ServerChild::spawn(&env);
     let startup = child.next_json_line("startup receipt");
     let private_addr = receipt_addr(&startup, "boundAddr");
     let public_addr = receipt_addr(&startup["publicIngress"], "boundAddr");
@@ -156,6 +165,23 @@ fn process_test_lock() -> std::sync::MutexGuard<'static, ()> {
     PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn identity_auth_env() -> [(&'static str, &'static str); 6] {
+    [
+        ("RUDDER_NATIVE_IDENTITY_AUTH_MODE", "required"),
+        (
+            "RUDDER_NATIVE_IDENTITY_ASSERTION_KEY",
+            IDENTITY_ASSERTION_KEY,
+        ),
+        (
+            "RUDDER_NATIVE_AGENT_JWT_SECRET",
+            "legacy-agent-jwt-test-secret",
+        ),
+        ("RUDDER_NATIVE_AGENT_JWT_ISSUER", "rudder"),
+        ("RUDDER_NATIVE_AGENT_JWT_AUDIENCE", "rudder-api"),
+        ("RUDDER_NATIVE_LOCAL_IMPLICIT", "false"),
+    ]
 }
 
 fn receipt_addr(receipt: &Value, field: &str) -> SocketAddr {

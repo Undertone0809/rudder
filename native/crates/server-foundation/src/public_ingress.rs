@@ -3,8 +3,12 @@
 
 use super::*;
 use crate::llm_reflection::{LlmReflectionDocument, LlmReflectionSnapshot};
-use crate::native_session_auth::{NativeSessionIdentity, NativeSessionResolution, issue_assertion};
-use crate::public_ingress_config::NativeSessionAuthKind;
+use crate::native_session_auth::{
+    NativeIngressIdentity, NativeSessionIdentity, NativeSessionResolution, issue_assertion,
+};
+use crate::native_session_revocation::SessionRevocationUpgradeError;
+use crate::private_host_gate::NativePrivateHostGate;
+use crate::public_ingress_config::{NativeSessionAuthKind, NativeWebSocketCookieFallback};
 use crate::public_ingress_proxy::{PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH, PublicIngressProxy};
 use crate::public_ingress_websocket::PublicIngressWebSocketProxy;
 use actix_web::guard;
@@ -20,9 +24,114 @@ const LLM_REFLECTION_ACTION: &str = "llm.reflection.read";
 const LLM_REFLECTION_SCOPE: &str = "instance";
 
 #[derive(Clone)]
-struct IngressState {
-    foundation: Arc<AppState>,
-    config: PublicIngressConfig,
+pub(super) struct IngressState {
+    pub(super) foundation: Arc<AppState>,
+    pub(super) config: PublicIngressConfig,
+    pub(super) local_account: Option<crate::local_account_auth::LocalAccountAuthService>,
+}
+
+/// Apply the effective private-host policy before a public request enters a
+/// Rust-owned handler. Node's middleware guards ordinary HTTP after JSON body
+/// parsing; its WebSocket upgrade listener is outside Express middleware, so
+/// the managed public ingress applies the same original-Host rule there too.
+pub(crate) fn private_host_rejection(
+    state: &IngressState,
+    request: &HttpRequest,
+) -> Option<HttpResponse> {
+    state
+        .config
+        .private_host_gate
+        .as_ref()
+        .and_then(|gate: &NativePrivateHostGate| gate.rejection(request))
+}
+
+/// `express.json()` runs before Node's private-host middleware. Actix's direct
+/// handlers accept raw bytes, so retain parser-error precedence for native
+/// handlers that otherwise would reject bodies or authorize first.
+pub(crate) fn malformed_public_json_response(
+    request: &HttpRequest,
+    body: &[u8],
+) -> Option<HttpResponse> {
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let media_type = content_type.split(';').next().unwrap_or_default().trim();
+    if !media_type.eq_ignore_ascii_case("application/json") || body.is_empty() {
+        return None;
+    }
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(value) if value.is_object() || value.is_array() => None,
+        _ => Some(HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "Internal server error"
+        }))),
+    }
+}
+
+/// Guard the public boundary before Actix chooses a route or returns 405.
+/// For denied hosts retain Express's strict JSON-parser error precedence.
+/// Accepted requests keep their original payload and existing parser owner.
+async fn enforce_private_host_gate(
+    state: web::Data<IngressState>,
+    payload: web::Payload,
+    mut request: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<actix_web::dev::ServiceResponse<impl MessageBody>, Error> {
+    if !matches!(request.path(), "/healthz" | "/readyz")
+        && let Some(rejection) = private_host_rejection(&state, request.request())
+    {
+        let is_json = request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .eq_ignore_ascii_case("application/json")
+            });
+        let response = if is_json {
+            let supported_encoding = {
+                let mut values = request.headers().get_all(header::CONTENT_ENCODING);
+                let first = values.next();
+                values.next().is_none()
+                    && first.is_none_or(|value| {
+                        value.to_str().is_ok_and(|value| {
+                            matches!(
+                                value.trim().to_ascii_lowercase().as_str(),
+                                "" | "identity" | "gzip" | "deflate" | "br"
+                            )
+                        })
+                    })
+            };
+            if !supported_encoding {
+                return Ok(request
+                    .into_response(HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": "Internal server error"
+                    })))
+                    .map_into_right_body());
+            }
+            let stream = actix_web::body::BodyStream::new(
+                actix_web::dev::Decompress::from_headers(payload.into_inner(), request.headers()),
+            );
+            match actix_web::body::to_bytes_limited(stream, 10 * 1024 * 1024).await {
+                Ok(Ok(body)) => {
+                    malformed_public_json_response(request.request(), &body).unwrap_or(rejection)
+                }
+                _ => HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": "Internal server error"
+                })),
+            }
+        } else {
+            rejection
+        };
+        return Ok(request.into_response(response).map_into_right_body());
+    }
+    request.set_payload(payload.into_inner());
+    Ok(next.call(request).await?.map_into_left_body())
 }
 
 pub struct PublicIngressRuntime {
@@ -30,6 +139,9 @@ pub struct PublicIngressRuntime {
     handle: actix_web::dev::ServerHandle,
     bound_addr: SocketAddr,
     session_auth_kind: Option<NativeSessionAuthKind>,
+    native_identity_enabled: bool,
+    local_implicit_enabled: bool,
+    local_account_lifecycle_enabled: bool,
 }
 
 impl PublicIngressRuntime {
@@ -45,9 +157,48 @@ impl PublicIngressRuntime {
             .into());
         }
         let listen_addr = config.listen_addr;
+        if config.identity_auth.as_ref().is_some_and(|identity| {
+            identity.local_implicit_enabled && !listen_addr.ip().is_loopback()
+        }) {
+            return Err(ConfigError::invalid(
+                "RUDDER_NATIVE_LOCAL_IMPLICIT",
+                "local implicit authentication requires a numeric loopback listener",
+            )
+            .into());
+        }
+        if let (Some(identity), Some(session)) =
+            (config.identity_auth.as_ref(), config.session_auth.as_ref())
+            && identity.assertion_key != session.assertion_key
+        {
+            return Err(ConfigError::invalid(
+                "RUDDER_NATIVE_IDENTITY_ASSERTION_KEY",
+                "must match RUDDER_NATIVE_SESSION_ASSERTION_KEY",
+            )
+            .into());
+        }
+        let local_account = if config.local_account_auth.is_some() {
+            let DatabaseState::Configured(pool) = &foundation.database else {
+                return Err(ConfigError::invalid(
+                    "RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG",
+                    "local account lifecycle requires a configured database",
+                )
+                .into());
+            };
+            config
+                .build_local_account_auth_service(pool.clone())
+                .map_err(|_| {
+                    ConfigError::invalid(
+                        "RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG",
+                        "local account lifecycle could not be initialized",
+                    )
+                })?
+        } else {
+            None
+        };
         let data = web::Data::new(IngressState {
             foundation: foundation.clone(),
             config: config.clone(),
+            local_account,
         });
         let http = HttpServer::new(move || {
             // Client state belongs to its Actix worker; no Send/Sync workaround.
@@ -61,9 +212,26 @@ impl PublicIngressRuntime {
                 .app_data(data.clone())
                 .app_data(web::Data::new(proxy))
                 .app_data(web::Data::new(websocket_proxy))
+                .wrap(middleware::from_fn(enforce_private_host_gate))
                 .wrap(middleware::from_fn(reject_unsupported_websocket_upgrade))
                 .route("/healthz", web::get().to(ingress_health))
                 .route("/readyz", web::get().to(ingress_readiness))
+                .route(
+                    "/api/auth/local-exchange",
+                    web::route().to(crate::local_account_ingress::local_exchange),
+                )
+                .route(
+                    "/api/auth/local-offline",
+                    web::route().to(crate::local_account_ingress::local_offline),
+                )
+                .route(
+                    "/api/auth/local-claim",
+                    web::route().to(crate::local_account_ingress::local_claim),
+                )
+                .route(
+                    "/api/auth/local-signout-all",
+                    web::route().to(crate::local_account_ingress::local_signout_all),
+                )
                 .route(
                     "/api/orgs/{org_id}/members/directory",
                     web::get().to(member_directory),
@@ -107,6 +275,12 @@ impl PublicIngressRuntime {
             server,
             bound_addr,
             session_auth_kind: config.session_auth.as_ref().map(|settings| settings.kind),
+            native_identity_enabled: config.identity_auth.is_some(),
+            local_account_lifecycle_enabled: config.local_account_auth.is_some(),
+            local_implicit_enabled: config
+                .identity_auth
+                .as_ref()
+                .is_some_and(|identity| identity.local_implicit_enabled),
         })
     }
 
@@ -114,7 +288,23 @@ impl PublicIngressRuntime {
         self.bound_addr
     }
     pub fn startup_receipt(&self) -> serde_json::Value {
-        public_ingress_startup_receipt(self.bound_addr, self.session_auth_kind)
+        let mut receipt = public_ingress_startup_receipt(
+            self.bound_addr,
+            self.session_auth_kind,
+            self.native_identity_enabled,
+            self.local_implicit_enabled,
+        );
+        if self.local_account_lifecycle_enabled {
+            receipt["localAccountLifecycle"] = serde_json::json!({
+                "authority": "rust",
+                "protocolVersion": 1,
+                "routes": [
+                    "/api/auth/local-exchange", "/api/auth/local-offline",
+                    "/api/auth/local-claim", "/api/auth/local-signout-all",
+                ],
+            });
+        }
+        receipt
     }
     pub fn control(&self) -> actix_web::dev::ServerHandle {
         self.handle.clone()
@@ -127,17 +317,24 @@ impl PublicIngressRuntime {
 fn public_ingress_startup_receipt(
     bound_addr: SocketAddr,
     session_auth_kind: Option<NativeSessionAuthKind>,
+    native_identity_enabled: bool,
+    local_implicit_enabled: bool,
 ) -> serde_json::Value {
     let mut direct_routes = vec!["/api/orgs/:org_id/members/directory"];
     if session_auth_kind.is_some() {
         direct_routes.push("/api/auth/get-session");
     }
     let mut native_authentication = serde_json::json!({
-        "authority": "native-pcp-bearer-resolver",
-        "recognizedBearerPrefix": "pcp_",
-        "supportedCredentialStores": ["board_api_keys", "agent_api_keys"],
+        "authority": if native_identity_enabled { "native-managed-http-identity-resolver" } else { "native-pcp-bearer-resolver" },
+        "recognizedBearerPrefix": if native_identity_enabled { serde_json::Value::Null } else { serde_json::json!("pcp_") },
+        "supportedCredentialStores": if native_identity_enabled { vec!["board_api_keys", "agent_api_keys", "agent_jwt"] } else { vec!["board_api_keys", "agent_api_keys"] },
         "directRoutes": direct_routes,
         "recognizedInvalidCredentialsFailClosed": true,
+        "localImplicitEnabled": native_identity_enabled && local_implicit_enabled,
+        "localImplicitConstraint": if native_identity_enabled && local_implicit_enabled { "numeric_loopback_listener_and_actual_peer" } else { "disabled" },
+        "identityAssertionTransport": if native_identity_enabled { "one_time_method_target_bound_loopback_hmac" } else { "disabled" },
+        "nodeRechecksCurrentOrganizationRolesAndMemberships": true,
+        "unmigrated": ["auth_lifecycle_routes", "websocket_session_resolution"],
     });
     if let Some(kind) = session_auth_kind {
         native_authentication["sessionCookieAuthority"] = serde_json::json!({
@@ -155,20 +352,17 @@ fn public_ingress_startup_receipt(
     serde_json::json!({
         "boundAddr": bound_addr,
         "publicListener": true,
-        "directAuthorities": if session_auth_kind.is_some() {
+        "directAuthorities": if native_identity_enabled {
+            vec!["native_managed_http_identity_resolver", "native_session_cookie_resolver", "native_agent_jwt_resolver", "native_local_implicit_policy"]
+        } else if session_auth_kind.is_some() {
             vec!["native_pcp_bearer_resolver", "native_session_cookie_resolver"]
         } else {
             vec!["native_pcp_bearer_resolver"]
         },
         "nativeAuthentication": native_authentication,
         "compatibilityAuthentication": {
-            "authority": "private-node-adapter",
-            "credentialForms": [
-                "local Agent JWTs",
-                "local-trusted and local-implicit identities",
-                "non-pcp_ bearer credentials",
-                "Bearer-authenticated HTTP requests",
-            ],
+            "authority": if native_identity_enabled { "none_for_managed_http_identity" } else { "private-node-adapter" },
+            "credentialForms": if native_identity_enabled { vec!["auth lifecycle routes", "websocket session resolution"] } else { vec!["local Agent JWTs", "local-trusted and local-implicit identities", "non-pcp_ bearer credentials", "Bearer-authenticated HTTP requests"] },
             "nodeOwnedRoutes": ["auth_lifecycle_routes", "websocket_session_resolution"],
         },
         "unmigratedHttpAuthority": "explicit-private-node-proxy",
@@ -192,10 +386,24 @@ async fn ingress_readiness(state: web::Data<IngressState>, request: HttpRequest)
     if let Some(host) = request.headers().get(header::HOST) {
         probe = probe.insert_header((header::HOST, host.clone()));
     }
-    if let Some(session_auth) = state.config.session_auth.as_ref() {
+    let assertion_key = state
+        .config
+        .identity_auth
+        .as_ref()
+        .map(|auth| auth.assertion_key.as_str())
+        .or_else(|| {
+            state
+                .config
+                .session_auth
+                .as_ref()
+                .map(|auth| auth.assertion_key.as_str())
+        });
+    if let Some(assertion_key) = assertion_key {
         // Readiness is an internal anonymous request, subject to the same
-        // private-hop proof guard as public requests. Never bypass that guard.
-        let proof = match issue_assertion(session_auth, "GET", "/api/health", None) {
+        // private-hop proof guard as public requests, including identity-only
+        // configurations without Cookie session authority.
+        let anonymous = NativeIngressIdentity::None;
+        let proof = match issue_assertion(assertion_key, "GET", "/api/health", &anonymous) {
             Ok(proof) => proof,
             Err(_) => {
                 return state.foundation.json_error(
@@ -221,6 +429,10 @@ async fn proxy_request(
     request: HttpRequest,
     payload: web::Payload,
 ) -> HttpResponse {
+    if let Some(endpoint) = crate::local_account_ingress::endpoint_for_path(request.uri().path()) {
+        return crate::local_account_ingress::handle(state, request, payload, endpoint).await;
+    }
+
     if is_get_session_path(&request) {
         if !matches!(*request.method(), Method::GET | Method::HEAD) {
             let mut response = state
@@ -231,7 +443,10 @@ async fn proxy_request(
                 .insert(header::ALLOW, header::HeaderValue::from_static("GET, HEAD"));
             return response;
         }
-        if !has_bearer_header(&request) && state.config.session_auth.is_some() {
+        if !request.headers().contains_key(header::AUTHORIZATION)
+            && state.config.session_auth.is_some()
+            && crate::native_session_auth::has_session_cookie(request.headers())
+        {
             return get_session(state, request).await;
         }
     }
@@ -255,11 +470,121 @@ async fn proxy_request(
 
     if has_websocket_upgrade(request.headers()) {
         if is_supported_websocket_upgrade_route(&request) {
+            if let Some(response) = private_host_rejection(&state, &request) {
+                return response;
+            }
+            if let Some(session_auth) = state.config.session_auth.as_ref()
+                && selected_local_account_websocket_session(
+                    &request,
+                    session_auth,
+                    state.config.websocket_cookie_fallback,
+                )
+            {
+                // Capture the registry cursor before resolving the cookie. A
+                // sign-out that commits during this database await is then
+                // observed by bind(), which either rejects this upgrade or
+                // atomically registers it for close-on-revocation.
+                let pending = match state.foundation.session_revocation.begin_upgrade() {
+                    Ok(pending) => pending,
+                    Err(_) => {
+                        return state.foundation.json_error(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "websocket_session_revocation_capacity_exhausted",
+                        );
+                    }
+                };
+                match state
+                    .foundation
+                    .resolve_public_session(session_auth, request.headers())
+                    .await
+                {
+                    NativeSessionResolution::Authenticated(identity) => {
+                        let registration = match pending.bind(&identity.user_id) {
+                            Ok(registration) => registration,
+                            Err(SessionRevocationUpgradeError::RevokedDuringAuthorization) => {
+                                return state
+                                    .foundation
+                                    .json_error(StatusCode::FORBIDDEN, "account_session_changed");
+                            }
+                            Err(SessionRevocationUpgradeError::RevocationHistoryExpired) => {
+                                return state.foundation.json_error(
+                                    StatusCode::SERVICE_UNAVAILABLE,
+                                    "websocket_session_revocation_history_exhausted",
+                                );
+                            }
+                            Err(SessionRevocationUpgradeError::CapacityExceeded) => {
+                                return state.foundation.json_error(
+                                    StatusCode::SERVICE_UNAVAILABLE,
+                                    "websocket_session_revocation_capacity_exhausted",
+                                );
+                            }
+                        };
+                        return websocket_proxy
+                            .forward_with_session_revocation(request, payload, registration)
+                            .await;
+                    }
+                    NativeSessionResolution::Anonymous => {
+                        // Keep Node's existing WebSocket authorizer decisive
+                        // for invalid or expired cookies.
+                        drop(pending);
+                    }
+                    NativeSessionResolution::DatabaseDisabled => {
+                        return state
+                            .foundation
+                            .json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+                    }
+                    NativeSessionResolution::Unavailable => {
+                        return state.foundation.json_error(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "native_session_unavailable",
+                        );
+                    }
+                }
+            }
             return websocket_proxy.forward(request, payload).await;
         }
         return state
             .foundation
             .json_error(StatusCode::NOT_FOUND, "route_not_found");
+    }
+    if is_node_owned_lifecycle_route(&request) {
+        return proxy.forward(request, payload).await;
+    }
+    if let Some(identity_auth) = state.config.identity_auth.as_ref() {
+        let identity = match resolve_public_http_identity(&state, &request).await {
+            Ok(identity) => identity,
+            Err((status, code)) => return state.foundation.json_error(status, code),
+        };
+        if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
+            return response;
+        }
+        let Some(path_and_query) = request.uri().path_and_query() else {
+            return state
+                .foundation
+                .json_error(StatusCode::BAD_REQUEST, "invalid_request_target");
+        };
+        let proof = match issue_assertion(
+            &identity_auth.assertion_key,
+            request.method().as_str(),
+            path_and_query.as_str(),
+            &identity,
+        ) {
+            Ok(proof) => proof,
+            Err(_) => {
+                return state.foundation.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "native_identity_assertion_unavailable",
+                );
+            }
+        };
+        return proxy
+            .forward_with_session_assertion(
+                request,
+                payload,
+                Some(&proof),
+                state.config.session_auth.as_ref(),
+            )
+            .await;
     }
     let Some(session_auth) = state.config.session_auth.as_ref() else {
         return proxy.forward(request, payload).await;
@@ -291,11 +616,14 @@ async fn proxy_request(
             .foundation
             .json_error(StatusCode::BAD_REQUEST, "invalid_request_target");
     };
+    let assertion_identity = identity
+        .map(NativeIngressIdentity::Session)
+        .unwrap_or(NativeIngressIdentity::None);
     let proof = match issue_assertion(
-        session_auth,
+        &session_auth.assertion_key,
         request.method().as_str(),
         path_and_query.as_str(),
-        identity.as_ref(),
+        &assertion_identity,
     ) {
         Ok(proof) => proof,
         Err(_) => {
@@ -308,6 +636,113 @@ async fn proxy_request(
     proxy
         .forward_with_session_assertion(request, payload, Some(&proof), Some(session_auth))
         .await
+}
+
+pub(super) async fn resolve_public_http_identity(
+    state: &IngressState,
+    request: &HttpRequest,
+) -> Result<NativeIngressIdentity, (StatusCode, &'static str)> {
+    let identity_auth = state.config.identity_auth.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "native_identity_unavailable",
+    ))?;
+
+    if let Some(token) =
+        authorization_bearer(request).map_err(|_| (StatusCode::UNAUTHORIZED, "unauthorized"))?
+    {
+        return match state
+            .foundation
+            .resolve_public_bearer(token, None, &identity_auth.agent_jwt)
+            .await
+        {
+            native_bearer_auth::NativeBearerResolution::Authorized { proof_identity, .. } => {
+                Ok(*proof_identity)
+            }
+            native_bearer_auth::NativeBearerResolution::Forbidden => {
+                Err((StatusCode::FORBIDDEN, "forbidden"))
+            }
+            native_bearer_auth::NativeBearerResolution::Unauthorized
+            | native_bearer_auth::NativeBearerResolution::Compatibility => {
+                Err((StatusCode::UNAUTHORIZED, "unauthorized"))
+            }
+            native_bearer_auth::NativeBearerResolution::DatabaseDisabled => {
+                Err((StatusCode::SERVICE_UNAVAILABLE, "database_disabled"))
+            }
+            native_bearer_auth::NativeBearerResolution::Unavailable => Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "native_identity_unavailable",
+            )),
+        };
+    }
+
+    if crate::native_session_auth::has_session_cookie(request.headers()) {
+        let Some(session_auth) = state.config.session_auth.as_ref() else {
+            return Err((StatusCode::UNAUTHORIZED, "unauthorized"));
+        };
+        return match state
+            .foundation
+            .resolve_public_session(session_auth, request.headers())
+            .await
+        {
+            NativeSessionResolution::Authenticated(identity) => {
+                Ok(NativeIngressIdentity::Session(identity))
+            }
+            // A supplied but invalid, expired, duplicated or revoked session
+            // cookie is never reinterpreted as a local-trusted request.
+            NativeSessionResolution::Anonymous => Err((StatusCode::UNAUTHORIZED, "unauthorized")),
+            NativeSessionResolution::DatabaseDisabled => {
+                Err((StatusCode::SERVICE_UNAVAILABLE, "database_disabled"))
+            }
+            NativeSessionResolution::Unavailable => Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "native_session_unavailable",
+            )),
+        };
+    }
+
+    if identity_auth.local_implicit_enabled
+        && state.config.listen_addr.ip().is_loopback()
+        && request
+            .peer_addr()
+            .is_some_and(|peer| peer.ip().is_loopback())
+    {
+        return Ok(NativeIngressIdentity::LocalImplicit);
+    }
+
+    Ok(NativeIngressIdentity::None)
+}
+
+fn agent_run_id_header(request: &HttpRequest) -> Option<String> {
+    let mut values = request.headers().get_all("x-rudder-run-id");
+    let value = values.next()?;
+    // Node's legacy auth compares one normalized header value with the signed
+    // JWT run id. Reject ambiguous duplicate values and trim HTTP optional
+    // whitespace before the same comparison.
+    if values.next().is_some() {
+        return Some(String::new());
+    }
+    let normalized = value.to_str().map(str::trim).unwrap_or_default();
+    (!normalized.is_empty()).then(|| normalized.to_owned())
+}
+
+pub(super) fn agent_run_context_mismatch_response(
+    request: &HttpRequest,
+    identity: &NativeIngressIdentity,
+) -> Option<HttpResponse> {
+    let NativeIngressIdentity::AgentJwt(identity) = identity else {
+        return None;
+    };
+    let requested_run_id = agent_run_id_header(request)?;
+    (requested_run_id != identity.run_id).then(|| {
+        HttpResponse::Forbidden().json(serde_json::json!({
+            "error": "Agent run header does not match the signed runtime context",
+            "code": "agent_run_context_mismatch",
+            "details": {
+                "signedRunId": identity.run_id,
+                "requestedRunId": requested_run_id,
+            },
+        }))
+    })
 }
 
 async fn reject_unsupported_websocket_upgrade(
@@ -346,6 +781,9 @@ fn is_get_session_path(request: &HttpRequest) -> bool {
 }
 
 fn is_node_owned_lifecycle_route(request: &HttpRequest) -> bool {
+    if is_get_session_path(request) {
+        return false;
+    }
     let path = request
         .uri()
         .path()
@@ -354,12 +792,32 @@ fn is_node_owned_lifecycle_route(request: &HttpRequest) -> bool {
     path == "/api/auth" || path.starts_with("/api/auth/")
 }
 
-fn has_bearer_header(request: &HttpRequest) -> bool {
-    request
+fn authorization_bearer(request: &HttpRequest) -> Result<Option<&str>, ()> {
+    let mut values = request.headers().get_all(header::AUTHORIZATION);
+    if values.next().is_none() {
+        return Ok(None);
+    }
+    if request.headers().get_all(header::AUTHORIZATION).count() != 1 {
+        return Err(());
+    }
+    let value = request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.to_ascii_lowercase().starts_with("bearer "))
+        .ok_or(())?;
+    let (scheme, token) = value.split_once(' ').ok_or(())?;
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return Err(());
+    }
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(());
+    }
+    Ok(Some(token))
+}
+
+fn has_bearer_header(request: &HttpRequest) -> bool {
+    authorization_bearer(request).ok().flatten().is_some()
 }
 
 fn is_supported_websocket_upgrade_route(request: &HttpRequest) -> bool {
@@ -382,7 +840,44 @@ fn is_supported_websocket_upgrade_route(request: &HttpRequest) -> bool {
     )
 }
 
+fn selected_local_account_websocket_session(
+    request: &HttpRequest,
+    session_auth: &crate::public_ingress_config::NativeSessionAuthConfig,
+    cookie_fallback: NativeWebSocketCookieFallback,
+) -> bool {
+    if session_auth.kind != NativeSessionAuthKind::LocalAccount
+        || cookie_fallback == NativeWebSocketCookieFallback::LocalTrustedImplicit
+        || !crate::native_session_auth::has_session_cookie(request.headers())
+    {
+        return false;
+    }
+
+    let authorization = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    let has_bearer = authorization.is_some_and(|value| {
+        value
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("bearer "))
+            && value.get(7..).is_some_and(|token| !token.trim().is_empty())
+    });
+    if has_bearer {
+        return false;
+    }
+
+    let has_query_token = request.uri().query().is_some_and(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .find(|(key, _)| key == "token")
+            .is_some_and(|(_, token)| !token.trim().is_empty())
+    });
+    !has_query_token
+}
+
 async fn get_session(state: web::Data<IngressState>, request: HttpRequest) -> HttpResponse {
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
     let Some(session_auth) = state.config.session_auth.as_ref() else {
         return state
             .foundation
@@ -423,6 +918,12 @@ async fn member_directory(
     org_id: web::Path<String>,
     query: web::Query<MemberDirectoryQuery>,
 ) -> HttpResponse {
+    if let Some(response) = malformed_public_json_response(&request, &body) {
+        return response;
+    }
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
     if !body.is_empty() {
         return state
             .foundation
@@ -444,6 +945,101 @@ async fn member_directory(
                 .json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full");
         }
     };
+    if state.config.identity_auth.is_some() {
+        let identity = match resolve_public_http_identity(&state, &request).await {
+            Ok(identity) => identity,
+            Err((status, code)) => return state.foundation.json_error(status, code),
+        };
+        if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
+            return response;
+        }
+        return match identity {
+            NativeIngressIdentity::Session(identity) => {
+                state
+                    .foundation
+                    .organization_member_directory_with_native_session(
+                        org_id.as_str(),
+                        query.into_inner(),
+                        &identity,
+                        state
+                            .config
+                            .session_auth
+                            .as_ref()
+                            .map_or(NativeSessionAuthKind::BetterAuth, |config| config.kind),
+                    )
+                    .await
+            }
+            NativeIngressIdentity::BoardKey {
+                user_id,
+                key_id,
+                token_hash,
+            } => {
+                let actor = match ActorIdentity::new("user", &user_id) {
+                    Ok(actor) => actor,
+                    Err(_) => {
+                        return state
+                            .foundation
+                            .json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+                    }
+                };
+                let session_id = format!("board-key:{key_id}");
+                state
+                    .foundation
+                    .organization_member_directory_with_native_auth(
+                        org_id.as_str(),
+                        query.into_inner(),
+                        Some((&actor, &session_id, &token_hash)),
+                    )
+                    .await
+            }
+            NativeIngressIdentity::AgentKey {
+                agent_id,
+                key_id,
+                token_hash,
+                ..
+            } => {
+                let actor = match ActorIdentity::new("agent", &agent_id) {
+                    Ok(actor) => actor,
+                    Err(_) => {
+                        return state
+                            .foundation
+                            .json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+                    }
+                };
+                let session_id = format!("agent-key:{key_id}");
+                state
+                    .foundation
+                    .organization_member_directory_with_native_auth(
+                        org_id.as_str(),
+                        query.into_inner(),
+                        Some((&actor, &session_id, &token_hash)),
+                    )
+                    .await
+            }
+            NativeIngressIdentity::AgentJwt(identity) => {
+                state
+                    .foundation
+                    .organization_member_directory_with_native_agent_jwt(
+                        org_id.as_str(),
+                        query.into_inner(),
+                        &identity,
+                    )
+                    .await
+            }
+            NativeIngressIdentity::LocalImplicit => {
+                state
+                    .foundation
+                    .organization_member_directory_with_native_implicit_board(
+                        org_id.as_str(),
+                        query.into_inner(),
+                    )
+                    .await
+            }
+            NativeIngressIdentity::None => state
+                .foundation
+                .json_error(StatusCode::UNAUTHORIZED, "unauthorized"),
+        };
+    }
     if let Some(token) =
         bearer_token(&request).filter(|token| native_bearer_auth::is_native_bearer(token))
     {
@@ -456,6 +1052,7 @@ async fn member_directory(
                 actor,
                 session_id,
                 token_hash,
+                ..
             } => {
                 state
                     .foundation
@@ -709,6 +1306,9 @@ async fn llm_reflection(
     request: HttpRequest,
     document: LlmReflectionDocument<'_>,
 ) -> HttpResponse {
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
     let identity = match state.config.forwarding_policy.identity(&request) {
         Ok(identity) => identity,
         Err(_) => {
@@ -732,33 +1332,67 @@ async fn llm_reflection(
     let public_method = request.method().as_str();
     let mut session_proof = None;
     let mut strip_auth_cookies = None;
-    if !has_bearer_header(&request)
-        && let Some(session_auth) = state.config.session_auth.as_ref()
-    {
-        let identity = match state
-            .foundation
-            .resolve_public_session(session_auth, request.headers())
-            .await
-        {
-            NativeSessionResolution::Authenticated(identity) => Some(identity),
-            NativeSessionResolution::Anonymous => None,
-            NativeSessionResolution::DatabaseDisabled => {
-                return state
-                    .foundation
-                    .json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
-            }
-            NativeSessionResolution::Unavailable => {
+    if let Some(identity_auth) = state.config.identity_auth.as_ref() {
+        let identity = match resolve_public_http_identity(&state, &request).await {
+            Ok(identity) => identity,
+            Err((status, code)) => return state.foundation.json_error(status, code),
+        };
+        if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
+            return response;
+        }
+        session_proof = match issue_assertion(
+            &identity_auth.assertion_key,
+            Method::GET.as_str(),
+            LLM_REFLECTION_AUTH_PATH,
+            &identity,
+        ) {
+            Ok(proof) => Some(proof),
+            Err(_) => {
                 return state.foundation.json_error(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    "native_session_unavailable",
+                    "native_identity_assertion_unavailable",
                 );
             }
         };
+        strip_auth_cookies = state.config.session_auth.as_ref();
+    } else if !has_bearer_header(&request)
+        && let Some(session_auth) = state.config.session_auth.as_ref()
+    {
+        let identity = if crate::native_session_auth::has_session_cookie(request.headers()) {
+            match state
+                .foundation
+                .resolve_public_session(session_auth, request.headers())
+                .await
+            {
+                NativeSessionResolution::Authenticated(identity) => Some(identity),
+                NativeSessionResolution::Anonymous => {
+                    return state
+                        .foundation
+                        .json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+                }
+                NativeSessionResolution::DatabaseDisabled => {
+                    return state
+                        .foundation
+                        .json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+                }
+                NativeSessionResolution::Unavailable => {
+                    return state.foundation.json_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "native_session_unavailable",
+                    );
+                }
+            }
+        } else {
+            None
+        };
+        let assertion_identity = identity
+            .map(NativeIngressIdentity::Session)
+            .unwrap_or(NativeIngressIdentity::None);
         session_proof = match issue_assertion(
-            session_auth,
+            &session_auth.assertion_key,
             Method::GET.as_str(),
             LLM_REFLECTION_AUTH_PATH,
-            identity.as_ref(),
+            &assertion_identity,
         ) {
             Ok(proof) => Some(proof),
             Err(_) => {
@@ -793,6 +1427,9 @@ async fn llm_reflection(
         "x-rudder-agent-id",
         "x-rudder-run-id",
     ] {
+        if name == "authorization" && session_proof.is_some() {
+            continue;
+        }
         if name == "cookie" && session_proof.is_some() {
             continue;
         }
@@ -913,6 +1550,77 @@ mod tests {
     const INTERNAL: &str = "fedcba9876543210fedcba9876543210";
     type HmacSha256 = Hmac<Sha256>;
 
+    #[actix_web::test]
+    async fn websocket_revocation_binds_only_when_node_selects_local_account_cookie() {
+        let local_account = NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::LocalAccount,
+            "local-account-session-secret",
+            false,
+            INTERNAL,
+        )
+        .unwrap();
+        let better_auth = NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::BetterAuth,
+            "better-auth-session-secret",
+            false,
+            INTERNAL,
+        )
+        .unwrap();
+        let cookie = (header::COOKIE, "better-auth.session_token=signed-session");
+
+        let cookie_only = test::TestRequest::get()
+            .uri("/api/orgs/org-1/events/ws")
+            .insert_header(cookie.clone())
+            .to_http_request();
+        assert!(selected_local_account_websocket_session(
+            &cookie_only,
+            &local_account,
+            NativeWebSocketCookieFallback::SessionCookie
+        ));
+
+        let bearer_and_cookie = test::TestRequest::get()
+            .uri("/api/orgs/org-1/events/ws")
+            .insert_header(cookie.clone())
+            .insert_header((header::AUTHORIZATION, "Bearer agent-api-key"))
+            .to_http_request();
+        assert!(!selected_local_account_websocket_session(
+            &bearer_and_cookie,
+            &local_account,
+            NativeWebSocketCookieFallback::SessionCookie
+        ));
+
+        let query_token_and_cookie = test::TestRequest::get()
+            .uri("/api/orgs/org-1/events/ws?token=agent-api-key")
+            .insert_header(cookie.clone())
+            .to_http_request();
+        assert!(!selected_local_account_websocket_session(
+            &query_token_and_cookie,
+            &local_account,
+            NativeWebSocketCookieFallback::SessionCookie
+        ));
+
+        let empty_first_query_token_and_cookie = test::TestRequest::get()
+            .uri("/api/orgs/org-1/events/ws?token=%20&token=agent-api-key")
+            .insert_header(cookie.clone())
+            .to_http_request();
+        assert!(selected_local_account_websocket_session(
+            &empty_first_query_token_and_cookie,
+            &local_account,
+            NativeWebSocketCookieFallback::SessionCookie
+        ));
+
+        assert!(!selected_local_account_websocket_session(
+            &cookie_only,
+            &local_account,
+            NativeWebSocketCookieFallback::LocalTrustedImplicit
+        ));
+        assert!(!selected_local_account_websocket_session(
+            &cookie_only,
+            &better_auth,
+            NativeWebSocketCookieFallback::SessionCookie
+        ));
+    }
+
     fn signed_cookie(name: &str, token: &str, secret: &str) -> String {
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(token.as_bytes());
@@ -925,7 +1633,7 @@ mod tests {
     #[actix_web::test]
     async fn startup_receipt_reports_only_the_configured_public_auth_authorities() {
         let address = "127.0.0.1:3100".parse().unwrap();
-        let bearer_only = public_ingress_startup_receipt(address, None);
+        let bearer_only = public_ingress_startup_receipt(address, None, false, false);
         assert_eq!(bearer_only["publicListener"], true);
         assert_eq!(
             bearer_only["nativeAuthentication"]["directRoutes"],
@@ -933,8 +1641,22 @@ mod tests {
         );
         assert!(bearer_only["nativeAuthentication"]["sessionCookieAuthority"].is_null());
 
-        let with_better_auth =
-            public_ingress_startup_receipt(address, Some(NativeSessionAuthKind::BetterAuth));
+        let managed_http = public_ingress_startup_receipt(address, None, true, true);
+        assert_eq!(
+            managed_http["nativeAuthentication"]["supportedCredentialStores"],
+            serde_json::json!(["board_api_keys", "agent_api_keys", "agent_jwt"])
+        );
+        assert_eq!(
+            managed_http["nativeAuthentication"]["localImplicitConstraint"],
+            "numeric_loopback_listener_and_actual_peer"
+        );
+
+        let with_better_auth = public_ingress_startup_receipt(
+            address,
+            Some(NativeSessionAuthKind::BetterAuth),
+            true,
+            false,
+        );
         assert_eq!(
             with_better_auth["nativeAuthentication"]["directRoutes"],
             serde_json::json!([
@@ -1613,6 +2335,7 @@ mod tests {
             ),
             config: PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL)
                 .unwrap(),
+            local_account: None,
         });
         let app = test::init_service(App::new().app_data(state).route(
             "/api/orgs/{org_id}/members/directory",
@@ -1645,6 +2368,7 @@ mod tests {
                 INTERNAL,
             )
             .unwrap(),
+            local_account: None,
         });
         let app = test::init_service(App::new().app_data(state).route(
             "/api/orgs/{org_id}/members/directory",

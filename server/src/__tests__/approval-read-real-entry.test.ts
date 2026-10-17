@@ -22,6 +22,7 @@ import { issueApprovalService } from "../services/issue-approvals.js";
 import { issueService } from "../services/issues.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 vi.mock("../services/index.js", async (original) => {
     const services = await original<typeof import("../services/index.js")>();
     const forbidden = () => { throw new Error("Node Approval/association/label business read must not execute"); };
@@ -59,6 +60,7 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
     const userId = randomUUID(), boardToken = `approval-board-${randomUUID()}`;
     const org = randomUUID(), other = randomUUID(), agent = randomUUID(), token = `oracle-${randomUUID()}`;
     const ownIssue = randomUUID(), foreignIssue = randomUUID(), goodIssue = randomUUID();
+    const nativeIdentity = nativeIdentityIngressFixture();
     const ownApproval = randomUUID(), foreignApproval = randomUUID(), goodApproval = randomUUID();
     const ownLabel = randomUUID(), foreignLabel = randomUUID(), badLinkLabel = randomUUID();
     const get = (path: string) => request(target).get(`/api${path}`).set("authorization", `Bearer ${token}`);
@@ -97,7 +99,7 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
         await db.insert(authUsers).values({ id: userId, name: "Approval reader", email: "approval-reader@example.test", createdAt: new Date(), updatedAt: new Date() });
         await db.insert(organizationMemberships).values({ orgId: org, principalType: "user", principalId: userId, status: "active", membershipRole: "member" });
         await db.insert(boardApiKeys).values({ userId, name: "Approval reader", keyHash: createHash("sha256").update(boardToken).digest("hex") });
-        function app(oracle: boolean, selected = bridge) { const app = express(); app.get("/api/health", (_req, res) => res.json({ status: "ok" })); app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" })); app.use("/api", oracle ? legacyRoutes(db) : [approvalRoutes(db, selected), issueRoutes(db, {} as StorageService, selected)]); app.use(errorHandler); return app; }
+        function app(oracle: boolean, selected = bridge) { const app = express(); if (!oracle && mode === "required") app.use(nativeIdentity.middleware()); app.get("/api/health", (_req, res) => res.json({ status: "ok" })); app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" })); app.use("/api", oracle ? legacyRoutes(db) : [approvalRoutes(db, selected), issueRoutes(db, {} as StorageService, selected)]); app.use(errorHandler); return app; }
         oracleServer = app(true).listen(0, "127.0.0.1");
         await once(oracleServer, "listening");
         if (mode === "node") {
@@ -118,7 +120,7 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
         } }) ?? candidates[0]!;
         fs.accessSync(binary, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
         const listenPort = await freePort();
-        bridge = createRustFoundationBridge({ databaseUrl: url, binaryPath: binary, mode: "off", projectGoalSetMode: "off", organizationBrandingMode: "off", requestTimeoutMs: 10000, ...(mode === "required" ? { publicIngress: { listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "approval-ingress-synthetic-key-32-bytes" } } : {}) });
+        bridge = createRustFoundationBridge({ databaseUrl: url, binaryPath: binary, mode: "off", projectGoalSetMode: "off", organizationBrandingMode: "off", requestTimeoutMs: 10000, ...(mode === "required" ? { publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "approval-ingress-synthetic-key-32-bytes" } } : {}) });
         server = app(false).listen(listenPort, "127.0.0.1");
         await once(server, "listening");
         await bridge.start();
@@ -295,6 +297,7 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
             server.closeAllConnections();
             await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
             const app = express();
+            if (mode === "required") app.use(nativeIdentity.middleware());
             app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
             app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
             app.use("/api", approvalRoutes(db, selected), issueRoutes(db, {} as StorageService, selected));

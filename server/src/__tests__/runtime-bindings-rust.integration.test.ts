@@ -85,6 +85,12 @@ describe("Native binding public reads through Rust", () => {
         RUDDER_NATIVE_PUBLIC_LISTEN: "127.0.0.1:0",
         RUDDER_NATIVE_NODE_UPSTREAM: `http://127.0.0.1:${address.port}`,
         RUDDER_NATIVE_INGRESS_AUTH_KEY: "11".repeat(32),
+        RUDDER_NATIVE_IDENTITY_AUTH_MODE: "required",
+        RUDDER_NATIVE_IDENTITY_ASSERTION_KEY: "33".repeat(32),
+        RUDDER_NATIVE_LOCAL_IMPLICIT: "false",
+        RUDDER_NATIVE_AGENT_JWT_SECRET: "binding-agent-jwt-fixture-secret",
+        RUDDER_NATIVE_AGENT_JWT_ISSUER: "rudder",
+        RUDDER_NATIVE_AGENT_JWT_AUDIENCE: "rudder-api",
         ...(withSessionAuth ? {
           RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
           RUDDER_NATIVE_SESSION_AUTH_KIND: "better_auth",

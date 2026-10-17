@@ -1,3 +1,4 @@
+use crate::native_agent_jwt::NativeAgentJwtIdentity;
 use crate::native_bearer_auth;
 use crate::native_session_auth::{self, NativeSessionAccess, NativeSessionIdentity};
 use crate::public_ingress_config::NativeSessionAuthKind;
@@ -13,6 +14,10 @@ pub(super) enum MemberDirectoryNativeAuth<'a> {
         identity: &'a NativeSessionIdentity,
         kind: NativeSessionAuthKind,
     },
+    AgentJwt {
+        identity: &'a NativeAgentJwtIdentity,
+    },
+    LocalImplicit,
 }
 
 #[derive(Clone, Copy)]
@@ -35,7 +40,11 @@ impl MemberDirectoryNativeAuth<'_> {
                 token_hash,
             } => {
                 match native_bearer_auth::revalidate_native_bearer_in_snapshot(
-                    connection, token_hash, org_id, actor, session_id,
+                    connection,
+                    token_hash,
+                    Some(org_id),
+                    actor,
+                    session_id,
                 )
                 .await?
                 {
@@ -61,6 +70,30 @@ impl MemberDirectoryNativeAuth<'_> {
                     NativeSessionAccess::Forbidden => MemberDirectoryNativeAccess::Forbidden,
                 }
             }
+            Self::AgentJwt { identity } => {
+                match native_bearer_auth::revalidate_native_agent_jwt_in_snapshot(
+                    connection,
+                    identity,
+                    Some(org_id),
+                )
+                .await?
+                {
+                    native_bearer_auth::NativeBearerAccess::Authorized => {
+                        MemberDirectoryNativeAccess::Authorized
+                    }
+                    native_bearer_auth::NativeBearerAccess::Unauthorized => {
+                        MemberDirectoryNativeAccess::Unauthorized
+                    }
+                    native_bearer_auth::NativeBearerAccess::Forbidden => {
+                        MemberDirectoryNativeAccess::Forbidden
+                    }
+                }
+            }
+            // This identity is issued only by the public ingress after both
+            // the configured listener bind and the actual socket peer are
+            // verified as numeric loopback. It is the existing local-trusted
+            // full-control Board actor and has no user row to revalidate.
+            Self::LocalImplicit => MemberDirectoryNativeAccess::Authorized,
         };
         Ok(access)
     }

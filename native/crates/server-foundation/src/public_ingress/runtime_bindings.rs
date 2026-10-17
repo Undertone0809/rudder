@@ -48,6 +48,12 @@ async fn read(
     org_id: String,
     input: Request,
 ) -> HttpResponse {
+    if let Some(response) = malformed_public_json_response(&request, &body) {
+        return response;
+    }
+    if let Some(response) = private_host_rejection(&state, &request) {
+        return response;
+    }
     let foundation = &state.foundation;
     let canonical_path = match &input {
         Request::PublicCurrent { target } => format!(
@@ -94,6 +100,9 @@ async fn read(
                 actor,
                 session_id,
                 token_hash,
+                // This route performs the read in Rust; proxying ingress
+                // handlers are the consumers of the transport proof identity.
+                proof_identity: _,
             } => (actor, session_id, token_hash),
             NativeBearerResolution::Unauthorized | NativeBearerResolution::Compatibility => {
                 return error(StatusCode::UNAUTHORIZED, "unauthorized");
@@ -123,7 +132,7 @@ async fn read(
     match native_bearer_auth::revalidate_native_bearer_in_snapshot(
         &mut tx,
         &token_hash,
-        &org_id,
+        Some(org_id.as_str()),
         &identity,
         &session_id,
     )

@@ -7,6 +7,7 @@
 //! expires at `expires_at < now` and refreshes an active remembered session;
 //! Desktop account sessions expire at `<= now` and are read-only.
 
+use crate::native_agent_jwt::NativeAgentJwtIdentity;
 use crate::public_ingress_config::{NativeSessionAuthConfig, NativeSessionAuthKind};
 use crate::{AppState, DatabaseState};
 use actix_web::http::header::{COOKIE, HeaderMap};
@@ -25,6 +26,25 @@ pub(super) struct NativeSessionIdentity {
     token: String,
 }
 
+#[derive(Clone)]
+pub(super) enum NativeIngressIdentity {
+    None,
+    LocalImplicit,
+    Session(NativeSessionIdentity),
+    BoardKey {
+        user_id: String,
+        key_id: String,
+        token_hash: String,
+    },
+    AgentKey {
+        agent_id: String,
+        org_id: String,
+        key_id: String,
+        token_hash: String,
+    },
+    AgentJwt(NativeAgentJwtIdentity),
+}
+
 pub(super) enum NativeSessionResolution {
     Anonymous,
     Authenticated(NativeSessionIdentity),
@@ -33,7 +53,7 @@ pub(super) enum NativeSessionResolution {
 }
 
 #[derive(Serialize)]
-struct NativeSessionAssertion<'a> {
+struct NativeIdentityAssertion<'a> {
     schema: &'static str,
     audience: &'static str,
     method: &'a str,
@@ -49,21 +69,41 @@ struct NativeSessionAssertion<'a> {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum AssertionIdentity<'a> {
     None,
+    LocalImplicit,
     Session {
         session_id: &'a str,
         user_id: &'a str,
     },
+    BoardKey {
+        key_id: &'a str,
+        session_id: String,
+        user_id: &'a str,
+    },
+    AgentKey {
+        agent_id: &'a str,
+        key_id: &'a str,
+        org_id: &'a str,
+        session_id: String,
+    },
+    AgentJwt {
+        adapter_type: &'a str,
+        agent_id: &'a str,
+        expires_at: f64,
+        org_id: &'a str,
+        run_id: &'a str,
+        session_id: String,
+    },
 }
 
 pub(super) fn issue_assertion(
-    config: &NativeSessionAuthConfig,
+    assertion_key: &str,
     method: &str,
     target: &str,
-    identity: Option<&NativeSessionIdentity>,
+    identity: &NativeIngressIdentity,
 ) -> Result<String, ()> {
     let now = i64::try_from(crate::unix_time_seconds()).map_err(|_| ())?;
-    let payload = NativeSessionAssertion {
-        schema: "rudder.native-session-assertion.v1",
+    let payload = NativeIdentityAssertion {
+        schema: "rudder.native-identity-assertion.v1",
         audience: "rudder-node-private-ingress",
         method,
         target,
@@ -72,16 +112,43 @@ pub(super) fn issue_assertion(
         request_id: uuid::Uuid::new_v4().to_string(),
         nonce: uuid::Uuid::new_v4().to_string(),
         identity: match identity {
-            Some(identity) => AssertionIdentity::Session {
+            NativeIngressIdentity::None => AssertionIdentity::None,
+            NativeIngressIdentity::LocalImplicit => AssertionIdentity::LocalImplicit,
+            NativeIngressIdentity::Session(identity) => AssertionIdentity::Session {
                 session_id: &identity.session_id,
                 user_id: &identity.user_id,
             },
-            None => AssertionIdentity::None,
+            NativeIngressIdentity::BoardKey {
+                user_id, key_id, ..
+            } => AssertionIdentity::BoardKey {
+                key_id,
+                session_id: format!("board-key:{key_id}"),
+                user_id,
+            },
+            NativeIngressIdentity::AgentKey {
+                agent_id,
+                org_id,
+                key_id,
+                ..
+            } => AssertionIdentity::AgentKey {
+                agent_id,
+                key_id,
+                org_id,
+                session_id: format!("agent-key:{key_id}"),
+            },
+            NativeIngressIdentity::AgentJwt(identity) => AssertionIdentity::AgentJwt {
+                adapter_type: &identity.adapter_type,
+                agent_id: &identity.agent_id,
+                expires_at: identity.expires_at,
+                org_id: &identity.org_id,
+                run_id: &identity.run_id,
+                session_id: format!("agent-jwt:{}", identity.agent_id),
+            },
         },
     };
     let bytes = serde_json::to_vec(&payload).map_err(|_| ())?;
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes);
-    let mut mac = HmacSha256::new_from_slice(config.assertion_key.as_bytes()).map_err(|_| ())?;
+    let mut mac = HmacSha256::new_from_slice(assertion_key.as_bytes()).map_err(|_| ())?;
     mac.update(encoded.as_bytes());
     let signature =
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
@@ -114,6 +181,26 @@ impl AppState {
             Err(_) => NativeSessionResolution::Unavailable,
         }
     }
+}
+
+pub(super) fn has_session_cookie(headers: &HeaderMap) -> bool {
+    let cookie = headers
+        .get_all(COOKIE)
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>()
+        .join(";");
+    cookie.split(';').any(|part| {
+        part.trim()
+            .split_once('=')
+            .is_some_and(|(name, _)| is_session_cookie_name(name.trim()))
+    })
+}
+
+fn is_session_cookie_name(name: &str) -> bool {
+    matches!(
+        name,
+        "better-auth.session_token" | "__Secure-better-auth.session_token"
+    )
 }
 
 fn session_token(config: &NativeSessionAuthConfig, headers: &HeaderMap) -> Option<(String, bool)> {
@@ -213,6 +300,17 @@ fn verify_signed_cookie(value: &str, secret: &str) -> Option<String> {
     mac.update(token.as_bytes());
     mac.verify_slice(&supplied).ok()?;
     Some(token.to_owned())
+}
+
+/// Sign the Better Auth session token using the same padded standard-Base64
+/// HMAC representation accepted by `verify_signed_cookie` above. Local
+/// account lifecycle issuance uses this helper so the public cookie reader
+/// and writer cannot drift apart.
+pub(super) fn sign_session_token(token: &str, secret: &str) -> Result<String, ()> {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).map_err(|_| ())?;
+    mac.update(token.as_bytes());
+    let signature = STANDARD.encode(mac.finalize().into_bytes());
+    Ok(format!("{token}.{signature}"))
 }
 
 async fn resolve(
@@ -414,6 +512,16 @@ mod tests {
         assert_eq!(
             verify_signed_cookie("token.not-a-signature", ba_secret),
             None
+        );
+    }
+
+    #[test]
+    fn issued_local_session_cookie_uses_the_reader_hmac_representation() {
+        let secret = "test-local-account-secret";
+        let issued = sign_session_token("new-session-token", secret).unwrap();
+        assert_eq!(
+            verify_signed_cookie(&issued, secret).as_deref(),
+            Some("new-session-token")
         );
     }
 

@@ -1,0 +1,67 @@
+{
+  "task": "Rudder packaged account-gate memory-only storage implementation and retained-client inventory policy",
+  "reviewer": "independent reviewer /root/auth_final_review",
+  "review_level": "implementation stage",
+  "verdict": "accept",
+  "candidate": {
+    "base_commit": "5952972d5d364a9a9c3cc03617c097ebf06abfaa",
+    "base_tree": "228700c2e8b5d0edc125f1c7d9eb00db7d784216",
+    "worktree_state": "dirty review candidate; no source or inventory records have been applied by reviewer",
+    "reviewed_policy_patch_sha256": "297275c45dd951b5180a9f500daf48437a708e7cb17cab7989009fc2a470c386",
+    "policy_file_sha256": {
+      "scripts/rust-backend-authority-inventory.mjs": "a0dff473108dbb4ce47a8a0e83319f52384a92dc8f5c4b6b43d5f6f880a7ff25",
+      "scripts/rust-backend-authority-inventory.test.mjs": "c1f10527282ec015af1479eb092d69680e520e782d6f0783107b27f7ccadd467"
+    },
+    "reviewed_source_file_sha256": {
+      "desktop/src/identity-runtime.ts": "0b5e16bb9e8e52ab3f450d3ba582d990ced23a5121338ee5130de40bca08852d",
+      "desktop/src/identity-safe-storage-policy.ts": "c5265b36a16a1841508be22686c51e715496cdd7049701c7b4e38ff51297741d",
+      "desktop/src/identity-startup-policy.ts": "da53db74303d88e736c44a713039926696591e5095c8e8d95d96b41bdd909ef1"
+    }
+  },
+  "review_findings": [
+    {
+      "severity": "resolved-from-prior-review",
+      "detail": "The retained-client schema now permits only the exact three existing Desktop identity policy files, only when both generated manifests classify each solely as electron_process_graph. It requires client_responsibility, exact base/head hashes, reviewer/reference/status, and compatibility boundary; it rejects rust_authority on retained_client records and confines associated_backend_authority to this role. New Desktop runtime files and backend authority changes remain denied by the original ratchet."
+    },
+    {
+      "severity": "none-blocking",
+      "detail": "Source review confirms the old packaged auth-bypass truth table is unchanged and independent of memory storage. The memory-store output requires packaged app, Rudder-smoke name, valid packaged test marker, Darwin, memory mode, and the explicit storage-only flag. Default packaged safeStorage remains native; packaged Darwin process-memory fallback remains false without the scoped mode; existing unpackaged/Linux fallback behavior is preserved."
+    },
+    {
+      "severity": "none-blocking",
+      "detail": "The memory account-gate smoke explicitly sets both auth-bypass flags to 0 for provider, degraded-Identity, and restart launches; it stays signed out at account_required, checks no local server, retains production Identity handoff for Google/GitHub, skips Electron safeStorage probes/decrypt, and logs native vault persistence NOT EXECUTED. Native mode remains default and keeps its native encrypted-storage/restart-decrypt assertions. The single marked test copy is reused across the local profiles."
+    },
+    {
+      "severity": "documentation-follow-up",
+      "detail": "The current acceptance document was authored before this review and still describes the schema repair and renewed stage review as pending. Refresh that status when archiving this receipt and the three reviewed_node_changes records; preserve the earlier native packaged Desktop FAIL and keep exact-candidate black-box acceptance and native CI pending until their own evidence is available."
+    }
+  ],
+  "retained_client_record_boundary": {
+    "role": "retained_client",
+    "change_kind": "modified_retained_client",
+    "client_responsibility": "Electron owns account-gate startup/session orchestration and local device credential storage; the retained-client record is not an assertion of Rust ownership.",
+    "associated_backend_authority": "Optional, only where directly related; native::server_foundation::local_account_auth identifies server-side account lifecycle consumed by the client and does not own Electron safeStorage.",
+    "test_only_retirement_criterion": "Remove only the smoke memory-storage override when a deterministic packaged native-keychain fixture can test the signed-out account gate without touching a developer's Keychain. Retain Electron runtime and native client vault policy while Desktop continues to hold credentials."
+  },
+  "evidence_boundary": {
+    "independently_inspected": [
+      "Candidate commit/tree, clean-versus-dirty status, and exact diff paths",
+      "Retained-client validator, allowlist, hash gates, field semantics, and rejection paths",
+      "Desktop source policy and packaged smoke wiring from the prior exact source review; these source hashes are unchanged",
+      "CI authority workflow's four exact ignored PostgreSQL auth/ingress selectors and one-test/one-pass guard; workflow unchanged in this review",
+      "Current acceptance document and archived earlier needs-more-evidence receipt"
+    ],
+    "author_claimed_not_rerun": [
+      "28/28 focused inventory tests plus script syntax checks: /private/tmp/rudder-auth-retained-client-policy-20261017/receipt.json (SHA-256 1d58aa52e8d3cc4ff87e603f3d60891ce6fce0d4d5d01acfa44d1b57a703ae9c)",
+      "Earlier 36/36 Desktop policy/session-store tests, Desktop typecheck, and smoke syntax check: /private/tmp/rudder-auth-desktop-storage-author-20261017/author-receipt.json (SHA-256 bd809d74d39e71ac72fa8c7deb77ee40eadb400f1d3b9a1080bed5ded6cc636c)"
+    ],
+    "not_run_by_reviewer": [
+      "Packaged memory-fixture black-box account-gate acceptance",
+      "Native Keychain vault persistence or decrypt acceptance",
+      "Desktop build/package, runtime/UI, PostgreSQL, Cargo, or native CI"
+    ]
+  },
+  "handoff_gate": "This is an implementation-stage accept, not a final handoff or merge approval. A pre-publication scoped acceptance may support opening/updating the PR while CI is pending, but final merge/completion still requires a PASS from the independent verifier for the exact packaged account-gate candidate and same-candidate required native CI PASS. A memory-fixture PASS cannot establish native vault persistence, Keychain access, absence of native dialogs, or full Desktop acceptance. The original native desktop:verify FAIL remains preserved.",
+  "migration_boundary": "The change preserves retained Electron client ownership and does not claim full Rust migration. The completion inventory still reports 794 backend Node files and 10 unknown sources; hosted Identity/OAuth, private Node WebSocket auth, and dynamic offline-policy epoch refresh remain outside this acceptance.",
+  "read_only": true
+}

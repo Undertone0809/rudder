@@ -1,13 +1,23 @@
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
+import { localAgentJwtAuthSettings } from "../agent-auth-jwt.js";
 import type { RudderAppHandle } from "../app.js";
 import { betterAuthSessionCookieSettings } from "../auth/better-auth.js";
 import type { Config } from "../config.js";
+import type { LocalRuntimeOwnerKind } from "../local-runtime.js";
+import type { RustLocalAccountLifecycleOptions } from "../services/rust-public-ingress-config.js";
 import { selectAvailablePort } from "./port-selection.js";
 import type { RudderAppOptions } from "./types.js";
 
-export function assertPublicIngressExposure(config: Config, localAccountAuth: boolean): void {
+export function assertPublicIngressExposure(
+  config: Config,
+  localAccountAuth: boolean,
+  runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
+): void {
   if (config.rustPublicIngressMode !== "required") return;
+  if (config.deploymentMode === "local_trusted" && runtimeOwnerKind === "desktop" && !localAccountAuth) {
+    throw new Error("Desktop local-trusted runtime requires Desktop account authentication");
+  }
   if (!isIP(config.host)) throw new Error("Rust public ingress requires a numeric listener address");
   if (config.deploymentMode === "local_trusted" && !localAccountAuth
     && config.host !== "127.0.0.1" && config.host !== "::1") {
@@ -19,7 +29,10 @@ export async function preparePublicIngressStartup(
   config: Config,
   publicPort: number,
   localAccountAuth?: { sessionSecret: string; secureCookie?: boolean },
+  runtimeOwnerKind?: LocalRuntimeOwnerKind | null,
+  localAccountLifecycle?: RustLocalAccountLifecycleOptions,
 ) {
+  assertPublicIngressExposure(config, Boolean(localAccountAuth), runtimeOwnerKind);
   const enabled = config.rustPublicIngressMode === "required";
   const nodeListenHost = enabled ? "127.0.0.1" : config.host;
   const nodeListenPort = enabled
@@ -31,13 +44,17 @@ export async function preparePublicIngressStartup(
   const appOptions: Pick<RudderAppOptions, "rustFoundationActorEnvelopeKey" | "rustPublicIngressAuthKey" | "rustPublicIngress"> = {};
   if (enabled) {
     const authorizationKey = randomBytes(32).toString("hex");
-    const sessionAssertionKey = randomBytes(32).toString("hex");
+    const identityAssertionKey = randomBytes(32).toString("hex");
+    const agentJwt = localAgentJwtAuthSettings();
     const sessionAuth = localAccountAuth
       ? {
           kind: "local_account" as const,
+          // index.ts passes required auth to the private WebSocket resolver whenever
+          // localAccountAuth is configured, including local_trusted deployments.
+          websocketCookieFallback: "session" as const,
           secret: localAccountAuth.sessionSecret,
           secureCookie: localAccountAuth.secureCookie ?? false,
-          assertionKey: sessionAssertionKey,
+          assertionKey: identityAssertionKey,
         }
       : config.deploymentMode === "authenticated"
         ? (() => {
@@ -49,7 +66,7 @@ export async function preparePublicIngressStartup(
               kind: "better_auth" as const,
               secret: settings.secret,
               secureCookie: settings.secureCookie,
-              assertionKey: sessionAssertionKey,
+              assertionKey: identityAssertionKey,
             };
           })()
         : undefined;
@@ -62,8 +79,23 @@ export async function preparePublicIngressStartup(
       listenAddr: `${config.host.includes(":") ? `[${config.host}]` : config.host}:${publicPort}`,
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
+      privateHostGate: {
+        enabled: config.deploymentMode === "authenticated" && config.deploymentExposure === "private",
+        allowedHostnames: config.allowedHostnames,
+        bindHost: config.host,
+      },
       trustedProxies: config.rustPublicIngressTrustedProxies,
+      identityAuth: {
+        assertionKey: identityAssertionKey,
+        agentJwtSecret: agentJwt.secret,
+        agentJwtIssuer: agentJwt.issuer,
+        agentJwtAudience: agentJwt.audience,
+        localImplicitEnabled: config.deploymentMode === "local_trusted"
+          && !localAccountAuth
+          && runtimeOwnerKind !== "desktop",
+      },
       ...(sessionAuth ? { sessionAuth } : {}),
+      ...(localAccountLifecycle ? { localAccountLifecycle } : {}),
     };
   }
   return {

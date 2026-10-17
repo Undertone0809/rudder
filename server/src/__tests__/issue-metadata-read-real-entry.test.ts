@@ -31,6 +31,7 @@ import { resourceCatalogService } from "../services/resource-catalog.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { workProductService } from "../services/work-products.js";
 import type { StorageService } from "../storage/types.js";
+import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 
 const interception = vi.hoisted(() => ({ afterIdentity: undefined as undefined | ((id: string) => Promise<void>) }));
 vi.mock("../services/index.js", async (original) => {
@@ -92,6 +93,7 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
   const ownAttachment = randomUUID(), foreignLinkAttachment = randomUUID(), foreignAssetAttachment = randomUUID();
   const ownProduct = randomUUID(), foreignProduct = randomUUID();
   const ownFollow = randomUUID(), dirtyFollow = randomUUID();
+  const nativeIdentity = nativeIdentityIngressFixture();
   const get = (path: string, credential = token) => request(target).get(`/api${path}`).set("authorization", `Bearer ${credential}`);
   const observe = (name: string, value: unknown) => process.env.RUDDER_METADATA_OBSERVATIONS_PATH ? fs.appendFileSync(process.env.RUDDER_METADATA_OBSERVATIONS_PATH, JSON.stringify({ name, value }) + "\n") : undefined;
   const assetValue = (id: string, orgId: string) => ({ id, orgId, provider: "synthetic", objectKey: `kept/${id}`, contentType: "text/plain", byteSize: 17, sha256: "synthetic-sha" });
@@ -131,7 +133,7 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
     ]);
     await db.insert(organizationResources).values([{ orgId: org, name: "Release evidence", kind: "file", locator: "synthetic://proof", metadata: { password: "unredacted fixture", nested: [1, null] } }, { orgId: other, name: "Foreign resource", kind: "file", locator: "synthetic://foreign" }]);
     function app(oracle: boolean, selected = bridge) {
-      const app = express(); app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+      const app = express(); if (!oracle && mode === "required") app.use(nativeIdentity.middleware()); app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
       app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
       app.use((req, _res, next) => { if (req.header("x-oracle-missing-user") === "1" && req.actor.type === "board") delete req.actor.userId; next(); });
       if (oracle) app.use("/api", legacyRoutes(db));
@@ -149,7 +151,7 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
     fs.accessSync(binary, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
     const listenPort = await freePort();
     bridge = createRustFoundationBridge({ databaseUrl: url, binaryPath: binary, mode: "off", projectGoalSetMode: "off", organizationBrandingMode: "off", requestTimeoutMs: 10000,
-      ...(mode === "required" ? { publicIngress: { listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "metadata-ingress-synthetic-key-32-bytes" } } : {}) });
+      ...(mode === "required" ? { publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${listenPort}`, authorizationKey: "metadata-ingress-synthetic-key-32-bytes" } } : {}) });
     const original = bridge.issueMetadataRead!.bind(bridge);
     vi.spyOn(bridge, "issueMetadataRead").mockImplementation(async (actor, orgId, input) => { if (input.issueId) await afterIdentity(input.issueId); return original(actor, orgId, input); });
     server = app(false).listen(listenPort, "127.0.0.1"); await once(server, "listening"); await bridge.start(); target = server;
@@ -327,7 +329,7 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
     const upstreamPort = (server.address() as net.AddressInfo).port;
     for (const selected of [undefined, unavailable]) {
       server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-      const app = express(); app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+      const app = express(); if (mode === "required") app.use(nativeIdentity.middleware()); app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
       app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
       app.use("/api", issueRoutes(db, {} as StorageService, selected)); app.use("/api/orgs", organizationRoutes(db, undefined, undefined, selected)); app.use(errorHandler);
       server = app.listen(upstreamPort, "127.0.0.1"); await once(server, "listening");

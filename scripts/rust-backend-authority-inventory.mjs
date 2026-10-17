@@ -62,6 +62,15 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
   }),
 });
 
+// These existing Electron identity-policy modules are retained client code,
+// not Node backend adapters. Keep this allowlist explicit so new Desktop
+// runtime files cannot enter through the retained-client review path.
+const RETAINED_ELECTRON_CLIENT_PATHS = new Set([
+  "desktop/src/identity-runtime.ts",
+  "desktop/src/identity-safe-storage-policy.ts",
+  "desktop/src/identity-startup-policy.ts",
+]);
+
 const FAMILY_DEFINITIONS = [
   { id: "public_http_and_routes", owner: "Node/Express", roots: ["server/src/bootstrap", "server/src/routes", "server/src/app.ts"] },
   { id: "http_middleware_and_auth", owner: "Node/Express", roots: ["server/src/middleware", "server/src/auth", "server/src/bootstrap"] },
@@ -996,19 +1005,57 @@ function recordMap(records) {
   return new Map((Array.isArray(records) ? records : []).map((record) => [record.path, record]));
 }
 
-function validateBoundaryRecord(record, pathValue, baseHash, headHash, expectedChangeKind) {
+function validateBoundaryRecord(record, pathValue, baseHash, headHash, expectedChangeKind, options = {}) {
   const problems = [];
   if (!record) return ["missing reviewed_node_changes record"];
   if (record.path !== pathValue) problems.push("record path does not match source path");
   if (record.change_kind !== expectedChangeKind) problems.push(`change_kind must be ${JSON.stringify(expectedChangeKind)}`);
   if (record.base_sha256 !== baseHash) problems.push("base_sha256 does not match trusted base source");
   if (record.head_sha256 !== headHash) problems.push("head_sha256 does not match candidate source");
-  if (typeof record.rust_authority !== "string" || !record.rust_authority.trim()) problems.push("rust_authority is required");
+  if (options.requireRustAuthority !== false
+    && (typeof record.rust_authority !== "string" || !record.rust_authority.trim())) {
+    problems.push("rust_authority is required");
+  }
   if (typeof record.compatibility_boundary !== "string" || !record.compatibility_boundary.trim()) problems.push("compatibility_boundary is required");
-  if (typeof record.retirement_criterion !== "string" || !record.retirement_criterion.trim()) problems.push("retirement_criterion is required");
+  if (options.requireRetirementCriterion !== false
+    && (typeof record.retirement_criterion !== "string" || !record.retirement_criterion.trim())) {
+    problems.push("retirement_criterion is required");
+  }
   if (typeof record.reviewer !== "string" || !record.reviewer.trim()) problems.push("reviewer is required");
   if (typeof record.review_reference !== "string" || !record.review_reference.trim()) problems.push("review_reference is required");
   if (record.review_status !== "reviewed") problems.push('review_status must be "reviewed"');
+  return problems;
+}
+
+function isRetainedElectronClientSource(sourcePath, baseEntry, headEntry) {
+  const eligibleManifestEntry = (entry) => entry?.families?.length === 1
+    && entry.families[0] === "electron_process_graph";
+  return RETAINED_ELECTRON_CLIENT_PATHS.has(sourcePath)
+    && /^desktop\/src\/[^/]+\.ts$/.test(sourcePath)
+    && eligibleManifestEntry(baseEntry)
+    && eligibleManifestEntry(headEntry);
+}
+
+function validateRetainedClientRecord(record, sourcePath, baseHash, headHash) {
+  const problems = validateBoundaryRecord(
+    record,
+    sourcePath,
+    baseHash,
+    headHash,
+    "modified_retained_client",
+    { requireRustAuthority: false, requireRetirementCriterion: false },
+  );
+  if (record?.node_role !== "retained_client") problems.push('node_role must be "retained_client"');
+  if (record && Object.hasOwn(record, "rust_authority")) {
+    problems.push("retained_client records must not claim rust_authority; use associated_backend_authority only for a related backend owner");
+  }
+  if (typeof record?.client_responsibility !== "string" || !record.client_responsibility.trim()) {
+    problems.push("client_responsibility is required for retained client changes");
+  }
+  if (record && Object.hasOwn(record, "associated_backend_authority")
+    && (typeof record.associated_backend_authority !== "string" || !record.associated_backend_authority.trim())) {
+    problems.push("associated_backend_authority must be a nonempty related backend owner when provided");
+  }
   return problems;
 }
 
@@ -1126,8 +1173,16 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
     changedFiles.push(sourcePath);
     consumedRecords.add(sourcePath);
     const record = records.get(sourcePath);
-    const problems = validateBoundaryRecord(record, sourcePath, before.sha256, after.sha256, "modified_node_compatibility");
-    if (record && !["compatibility_adapter", "transport_adapter"].includes(record.node_role)) {
+    const baseEntry = baseInventory.source_manifest.find((entry) => entry.path === sourcePath);
+    const headEntry = headInventory.source_manifest.find((entry) => entry.path === sourcePath);
+    const retainedClientChange = isRetainedElectronClientSource(sourcePath, baseEntry, headEntry);
+    const problems = retainedClientChange
+      ? validateRetainedClientRecord(record, sourcePath, before.sha256, after.sha256)
+      : validateBoundaryRecord(record, sourcePath, before.sha256, after.sha256, "modified_node_compatibility");
+    if (!retainedClientChange && record && Object.hasOwn(record, "associated_backend_authority")) {
+      problems.push("associated_backend_authority is only valid for retained_client records");
+    }
+    if (!retainedClientChange && record && !["compatibility_adapter", "transport_adapter"].includes(record.node_role)) {
       problems.push('node_role must be "compatibility_adapter" or "transport_adapter"');
     }
     if (problems.length) failures.push(`${sourcePath}: ${problems.join("; ")}`);

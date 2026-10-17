@@ -51,6 +51,7 @@ mod runtime_spans;
 pub use messenger_state::MESSENGER_STATE_ACTION;
 
 mod live_run_reads;
+mod native_agent_jwt;
 mod run_reads;
 mod run_visibility;
 pub use live_run_reads::LIVE_RUN_READ_ACTION;
@@ -70,14 +71,20 @@ mod cost_reads;
 mod goal_reads;
 mod issue_metadata_reads;
 mod llm_reflection;
+pub mod local_account_auth;
+mod local_account_ingress;
 mod member_directory_auth;
 mod native_bearer_auth;
 mod native_session_auth;
+mod native_session_revocation;
 use member_directory_auth::{MemberDirectoryNativeAccess, MemberDirectoryNativeAuth};
+use native_agent_jwt::NativeAgentJwtIdentity;
 use native_session_auth::NativeSessionIdentity;
+pub use native_session_revocation::NativeSessionRevocationRegistry;
 use public_ingress_config::NativeSessionAuthKind;
 mod organization_catalog_reads;
 mod overview_reads;
+mod private_host_gate;
 mod project_reads;
 mod public_ingress;
 mod public_ingress_config;
@@ -976,6 +983,7 @@ enum DatabaseState {
 struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
+    session_revocation: NativeSessionRevocationRegistry,
     d1_mutations: Option<MutationStore>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
@@ -1155,6 +1163,7 @@ impl AppState {
             actor_envelope_replay: Arc::new(Mutex::new(NonceReplayGuard::new())),
             config: Arc::new(config),
             database,
+            session_revocation: NativeSessionRevocationRegistry::default(),
             d1_mutations,
             started_at: Instant::now(),
         })
@@ -1444,6 +1453,33 @@ impl AppState {
         });
         self.organization_member_directory_with_native_identity(org_id, query, native_auth)
             .await
+    }
+
+    async fn organization_member_directory_with_native_agent_jwt(
+        &self,
+        org_id: &str,
+        query: MemberDirectoryQuery,
+        identity: &NativeAgentJwtIdentity,
+    ) -> HttpResponse {
+        self.organization_member_directory_with_native_identity(
+            org_id,
+            query,
+            Some(MemberDirectoryNativeAuth::AgentJwt { identity }),
+        )
+        .await
+    }
+
+    async fn organization_member_directory_with_native_implicit_board(
+        &self,
+        org_id: &str,
+        query: MemberDirectoryQuery,
+    ) -> HttpResponse {
+        self.organization_member_directory_with_native_identity(
+            org_id,
+            query,
+            Some(MemberDirectoryNativeAuth::LocalImplicit),
+        )
+        .await
     }
 
     async fn organization_member_directory_with_native_session(

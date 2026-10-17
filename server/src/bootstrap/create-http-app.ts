@@ -134,9 +134,12 @@ export async function createHttpApp(
   // Validate and consume the private Rust session proof before body parsing.
   // This anchors proof freshness at Node ingress while retaining streaming
   // request bodies and the existing Express JSON limit.
-  if (opts.rustPublicIngress?.sessionAuth) {
+  const nativeIdentityAssertionKey =
+    opts.rustPublicIngress?.identityAuth?.assertionKey
+      ?? opts.rustPublicIngress?.sessionAuth?.assertionKey;
+  if (nativeIdentityAssertionKey) {
     app.use(nativeSessionAssertionMiddleware({
-      key: opts.rustPublicIngress.sessionAuth.assertionKey,
+      key: nativeIdentityAssertionKey,
     }));
   }
 
@@ -156,15 +159,20 @@ export async function createHttpApp(
       bindHost: opts.bindHost,
     }),
   );
+  // When the managed Rust public listener is enabled, Node never grants its
+  // local-trusted implicit Board actor to direct/private requests. The only
+  // implicit identity is an explicit proof issued by Rust after loopback
+  // listener and peer checks.
+  const authRequirement = opts.rustPublicIngress
+    ? "required"
+    : opts.authRequirement ?? authRequirementForDeploymentMode(opts.deploymentMode);
   app.use(
     actorMiddleware(db, {
       deploymentMode: opts.deploymentMode,
-      authRequirement: opts.authRequirement,
+      authRequirement,
       resolveSession: opts.resolveSession,
     }),
   );
-  const authRequirement =
-    opts.authRequirement ?? authRequirementForDeploymentMode(opts.deploymentMode);
   app.use(accountSessionRequired(authRequirement));
   if (ingressAuthorization) app.use("/api", ingressAuthorization);
   app.get("/api/auth/get-session", (req, res) => {

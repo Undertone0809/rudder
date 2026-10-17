@@ -2,6 +2,7 @@
 
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 
+use crate::native_session_revocation::SessionRevocationRegistration;
 use crate::public_ingress_forwarding::{FORWARDING_HEADERS, ForwardingPolicy};
 use crate::public_ingress_proxy::is_private_auth_adapter_path;
 use actix_web::{
@@ -71,6 +72,28 @@ impl PublicIngressWebSocketProxy {
 
     /// Opens the private Node websocket before accepting the public handshake.
     pub async fn forward(&self, request: HttpRequest, payload: web::Payload) -> HttpResponse {
+        self.forward_inner(request, payload, None).await
+    }
+
+    /// Forwards a local-account websocket whose identity was resolved by the
+    /// existing native session authenticator. Node remains the organization
+    /// and actor authorizer; this registration only applies sign-out effects.
+    pub(crate) async fn forward_with_session_revocation(
+        &self,
+        request: HttpRequest,
+        payload: web::Payload,
+        registration: SessionRevocationRegistration,
+    ) -> HttpResponse {
+        self.forward_inner(request, payload, Some(registration))
+            .await
+    }
+
+    async fn forward_inner(
+        &self,
+        request: HttpRequest,
+        payload: web::Payload,
+        mut revocation: Option<SessionRevocationRegistration>,
+    ) -> HttpResponse {
         if is_private_auth_adapter_path(request.uri().path()) {
             return proxy_error(StatusCode::NOT_FOUND, "not_found");
         }
@@ -136,7 +159,19 @@ impl PublicIngressWebSocketProxy {
             upstream_request = upstream_request.protocols(protocols.iter());
         }
 
-        let (upstream_response, upstream_socket) = match upstream_request.connect().await {
+        let connect = upstream_request.connect();
+        tokio::pin!(connect);
+        let connection = if let Some(registration) = revocation.as_mut() {
+            tokio::select! {
+                _ = registration.cancelled() => {
+                    return proxy_error(StatusCode::FORBIDDEN, "account_session_changed");
+                }
+                result = &mut connect => result,
+            }
+        } else {
+            connect.await
+        };
+        let (upstream_response, upstream_socket) = match connection {
             Ok(connection) => connection,
             Err(error) => return upstream_handshake_error(error),
         };
@@ -149,6 +184,12 @@ impl PublicIngressWebSocketProxy {
                 .headers_mut()
                 .insert(header::SEC_WEBSOCKET_PROTOCOL, protocol);
         }
+        if revocation
+            .as_mut()
+            .is_some_and(SessionRevocationRegistration::is_cancelled)
+        {
+            return proxy_error(StatusCode::FORBIDDEN, "account_session_changed");
+        }
 
         let downstream_stream = downstream_stream.max_frame_size(MAX_WEBSOCKET_FRAME_BYTES);
         let (upstream_sink, upstream_stream) = upstream_socket.split();
@@ -158,6 +199,7 @@ impl PublicIngressWebSocketProxy {
             upstream_sink,
             upstream_stream,
             upstream_permit,
+            revocation,
         ));
         downstream_response
     }
@@ -183,6 +225,7 @@ enum RelayEnd {
     UpstreamInvalidText,
     UpstreamWriteFailed,
     ClientWriteFailed,
+    SessionRevoked,
 }
 
 async fn relay<SinkType, StreamType, StreamError>(
@@ -191,6 +234,7 @@ async fn relay<SinkType, StreamType, StreamError>(
     mut upstream_sink: SinkType,
     mut upstream_stream: StreamType,
     _upstream_permit: OwnedSemaphorePermit,
+    mut revocation: Option<SessionRevocationRegistration>,
 ) where
     SinkType: Sink<Message> + Unpin,
     SinkType::Error: Send + 'static,
@@ -202,10 +246,12 @@ async fn relay<SinkType, StreamType, StreamError>(
             pump_client_to_upstream(&mut downstream_stream, &mut upstream_sink);
         let upstream_to_client =
             pump_upstream_to_client(&mut upstream_stream, &mut downstream_session);
-        tokio::pin!(client_to_upstream, upstream_to_client);
+        let session_revoked = wait_for_session_revocation(&mut revocation);
+        tokio::pin!(client_to_upstream, upstream_to_client, session_revoked);
         tokio::select! {
             end = &mut client_to_upstream => end,
             end = &mut upstream_to_client => end,
+            _ = &mut session_revoked => RelayEnd::SessionRevoked,
         }
     };
 
@@ -250,6 +296,24 @@ async fn relay<SinkType, StreamType, StreamError>(
                 .send(Message::Close(Some(CloseCode::Away.into())))
                 .await;
         }
+        RelayEnd::SessionRevoked => {
+            close_both(
+                &mut upstream_sink,
+                downstream_session,
+                Some(CloseReason {
+                    code: CloseCode::Policy,
+                    description: Some("account signed out".to_owned()),
+                }),
+            )
+            .await;
+        }
+    }
+}
+
+async fn wait_for_session_revocation(registration: &mut Option<SessionRevocationRegistration>) {
+    match registration {
+        Some(registration) => registration.cancelled().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -470,6 +534,9 @@ mod tests {
         ws::{Frame, Message as ClientMessage},
     };
     use futures_util::{SinkExt, StreamExt};
+    use tokio::sync::Notify;
+
+    use crate::native_session_revocation::NativeSessionRevocationRegistry;
 
     use super::{
         MAX_WEBSOCKET_FRAME_BYTES, PublicIngressWebSocketConfigError, PublicIngressWebSocketProxy,
@@ -520,6 +587,27 @@ mod tests {
         (address, handle, task)
     }
 
+    fn start_revocable_proxy(
+        upstream: SocketAddr,
+        registry: NativeSessionRevocationRegistry,
+    ) -> RunningServer {
+        let proxy = web::Data::new(PublicIngressWebSocketProxy::new(upstream).unwrap());
+        let registry = web::Data::new(registry);
+        let server = HttpServer::new(move || {
+            App::new()
+                .app_data(proxy.clone())
+                .app_data(registry.clone())
+                .default_service(web::to(revocable_websocket_proxy_handler))
+        })
+        .bind(("127.0.0.1", 0))
+        .expect("loopback proxy binds");
+        let address = server.addrs()[0];
+        let server = server.run();
+        let handle = server.handle();
+        let task = actix_web::rt::spawn(server);
+        (address, handle, task)
+    }
+
     fn start_upstream(observations: Arc<Observations>) -> RunningServer {
         let observations = web::Data::new(observations);
         start_server(move |config| {
@@ -531,11 +619,43 @@ mod tests {
         })
     }
 
+    fn start_delayed_upstream(
+        observations: Arc<Observations>,
+        handshake_started: Arc<Notify>,
+    ) -> RunningServer {
+        let observations = web::Data::new(observations);
+        let handshake_started = web::Data::new(handshake_started);
+        start_server(move |config| {
+            config.app_data(observations.clone());
+            config.app_data(handshake_started.clone());
+            config.route("/events", web::get().to(delayed_echo_websocket));
+        })
+    }
+
     async fn stop_server((_, handle, task): RunningServer) {
         handle.stop(true).await;
         task.await
             .expect("fixture task joins")
             .expect("fixture stops cleanly");
+    }
+
+    async fn revocable_websocket_proxy_handler(
+        request: HttpRequest,
+        payload: web::Payload,
+        proxy: web::Data<PublicIngressWebSocketProxy>,
+        registry: web::Data<NativeSessionRevocationRegistry>,
+    ) -> HttpResponse {
+        let pending = match registry.begin_upgrade() {
+            Ok(pending) => pending,
+            Err(_) => return HttpResponse::ServiceUnavailable().finish(),
+        };
+        let registration = match pending.bind("signed-out-user") {
+            Ok(registration) => registration,
+            Err(_) => return HttpResponse::Forbidden().finish(),
+        };
+        proxy
+            .forward_with_session_revocation(request, payload, registration)
+            .await
     }
 
     fn websocket_request(
@@ -581,13 +701,25 @@ mod tests {
         payload: web::Payload,
         observations: web::Data<Arc<Observations>>,
     ) -> HttpResponse {
-        let Some(authorization) = request.headers().get(header::AUTHORIZATION) else {
-            return HttpResponse::Unauthorized().finish();
-        };
-        if !authorization
-            .to_str()
-            .is_ok_and(|value| value.starts_with("Bearer "))
-        {
+        let has_bearer =
+            request
+                .headers()
+                .get(header::AUTHORIZATION)
+                .is_some_and(|authorization| {
+                    authorization
+                        .to_str()
+                        .is_ok_and(|value| value.starts_with("Bearer "))
+                });
+        let has_local_session_cookie = request
+            .headers()
+            .get(header::COOKIE)
+            .and_then(|cookie| cookie.to_str().ok())
+            .is_some_and(|cookie| {
+                cookie
+                    .split(';')
+                    .any(|part| part.trim() == "better-auth.session_token=local-session")
+            });
+        if !has_bearer && !has_local_session_cookie {
             return HttpResponse::Unauthorized().finish();
         }
         observations
@@ -637,6 +769,17 @@ mod tests {
             let _ = session.close(Some(CloseCode::Away.into())).await;
         });
         response
+    }
+
+    async fn delayed_echo_websocket(
+        request: HttpRequest,
+        payload: web::Payload,
+        observations: web::Data<Arc<Observations>>,
+        handshake_started: web::Data<Arc<Notify>>,
+    ) -> HttpResponse {
+        handshake_started.notify_one();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        echo_websocket(request, payload, observations).await
     }
 
     async fn close_websocket(request: HttpRequest, payload: web::Payload) -> HttpResponse {
@@ -956,6 +1099,92 @@ mod tests {
         assert!(matches!(
             error,
             awc::error::WsClientError::InvalidResponseStatus(StatusCode::UNAUTHORIZED)
+        ));
+
+        stop_server(proxy).await;
+        stop_server(upstream).await;
+    }
+
+    #[actix_web::test]
+    async fn committed_session_revocation_closes_public_and_private_sockets() {
+        let observations = Arc::new(Observations::default());
+        let registry = NativeSessionRevocationRegistry::new();
+        let upstream = start_upstream(observations.clone());
+        let proxy = start_revocable_proxy(upstream.0, registry.clone());
+        let client = ClientBuilder::new()
+            .disable_redirects()
+            .no_default_headers()
+            .finish();
+
+        let (_, mut socket) = websocket_request(
+            &client,
+            proxy.0,
+            "/events",
+            "Basic ignored",
+            "better-auth.session_token=local-session",
+            "agent-one",
+            "run-one",
+        )
+        .connect()
+        .await
+        .expect("upstream authorization succeeds");
+
+        assert_eq!(registry.publish_user_revocation("signed-out-user"), 1);
+        let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("revocation closes the public websocket")
+            .expect("public websocket remains readable until close")
+            .expect("public websocket close frame is valid");
+        let Frame::Close(Some(reason)) = frame else {
+            panic!("expected a policy close, received {frame:?}");
+        };
+        assert_eq!(reason.code, CloseCode::Policy);
+        assert_eq!(reason.description.as_deref(), Some("account signed out"));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while observations.closes.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("revocation close reaches the private Node websocket");
+
+        drop(socket);
+        stop_server(proxy).await;
+        stop_server(upstream).await;
+    }
+
+    #[actix_web::test]
+    async fn revocation_during_private_handshake_rejects_the_public_upgrade() {
+        let observations = Arc::new(Observations::default());
+        let handshake_started = Arc::new(Notify::new());
+        let registry = NativeSessionRevocationRegistry::new();
+        let upstream = start_delayed_upstream(observations, handshake_started.clone());
+        let proxy = start_revocable_proxy(upstream.0, registry.clone());
+        let client = ClientBuilder::new()
+            .disable_redirects()
+            .no_default_headers()
+            .finish();
+        let connect = websocket_request(
+            &client,
+            proxy.0,
+            "/events",
+            "Basic ignored",
+            "better-auth.session_token=local-session",
+            "agent-one",
+            "run-one",
+        )
+        .connect();
+        let revoke_during_handshake = async {
+            handshake_started.notified().await;
+            assert_eq!(registry.publish_user_revocation("signed-out-user"), 1);
+        };
+
+        let (result, ()) = tokio::join!(connect, revoke_during_handshake);
+        assert!(matches!(
+            result,
+            Err(awc::error::WsClientError::InvalidResponseStatus(
+                StatusCode::FORBIDDEN
+            ))
         ));
 
         stop_server(proxy).await;

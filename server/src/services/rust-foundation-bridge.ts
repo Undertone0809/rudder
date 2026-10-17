@@ -30,7 +30,12 @@ import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
-import { nativeSessionAuthEnvironment, type RustPublicIngressOptions } from "./rust-public-ingress-config.js";
+import {
+  nativeIdentityAuthEnvironment,
+  nativeLocalAccountLifecycleEnvironment,
+  nativeSessionAuthEnvironment,
+  type RustPublicIngressOptions,
+} from "./rust-public-ingress-config.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -165,7 +170,7 @@ type StartupReceipt = {
   boundAddr?: unknown;
   publicListener?: unknown;
   productWriteAuthority?: unknown;
-  publicIngress?: { boundAddr?: unknown; publicListener?: unknown };
+  publicIngress?: { boundAddr?: unknown; publicListener?: unknown; localAccountLifecycle?: { authority?: unknown; protocolVersion?: unknown; routes?: unknown } };
 };
 
 type RustFoundationChild = ChildProcessByStdio<null, Readable, Readable>;
@@ -349,7 +354,12 @@ function createFoundationChildEnvironment(input: {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      ...(input.publicIngress.privateHostGate
+        ? { RUDDER_NATIVE_PRIVATE_HOST_GATE: JSON.stringify(input.publicIngress.privateHostGate) }
+        : {}),
+      ...nativeIdentityAuthEnvironment(input.publicIngress.identityAuth),
       ...nativeSessionAuthEnvironment(input.publicIngress.sessionAuth),
+      ...nativeLocalAccountLifecycleEnvironment(input.publicIngress),
       ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
     } : {}),
   };
@@ -548,6 +558,16 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
           || Number(publicAddr.slice(publicAddr.lastIndexOf(":") + 1)) > 65535
           || publicAddr === boundAddr) {
           throw new RustFoundationBridgeError("startup_failed", "Rust public ingress binding did not match the requested listener");
+        }
+        if (options.publicIngress.localAccountLifecycle) {
+          const lifecycle = receipt.publicIngress?.localAccountLifecycle;
+          const routes = lifecycle?.routes;
+          const requiredRoutes = ["/api/auth/local-exchange", "/api/auth/local-offline", "/api/auth/local-claim", "/api/auth/local-signout-all"];
+          if (lifecycle?.authority !== "rust" || lifecycle.protocolVersion !== 1
+            || !Array.isArray(routes)
+            || !requiredRoutes.every((route) => routes.includes(route))) {
+            throw new RustFoundationBridgeError("startup_failed", "Rust local-account lifecycle authority was not confirmed");
+          }
         }
         publicIngressBaseUrl = `http://${publicAddr}`;
       } else if (receipt.publicIngress !== undefined) {
