@@ -8,7 +8,7 @@ mod storage;
 mod tests;
 #[cfg(windows)]
 mod windows;
-use super::common::*;
+use super::{AgentCreateInstructionsBundle, common::*};
 use fs::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -17,6 +17,15 @@ use std::{
     fs as disk, io,
     path::{Path, PathBuf},
 };
+
+/// Files created by the private AgentCreate preparation step. The SQL
+/// transaction can call `compensate_create_bundle` if a later mutation fails;
+/// pre-existing files are never removed.
+#[derive(Debug)]
+pub(super) struct MaterializedCreateBundle {
+    root: PathBuf,
+    created_files: Vec<PathBuf>,
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -186,6 +195,60 @@ fn write_missing(root: &Path, relative_path: &str, body: &str) -> io::Result<()>
     })();
     let _ = disk::remove_file(temporary);
     result
+}
+
+pub(super) fn materialize_create_bundle(
+    host: &Host,
+    org: &str,
+    workspace_key: &str,
+    bundle: &AgentCreateInstructionsBundle,
+    cwd: &Path,
+) -> io::Result<MaterializedCreateBundle> {
+    let _guard = lock::Guard::acquire(Path::new(&host.workspace_home), &host.hostname)
+        .map_err(|_| invalid("Instruction workspace lock unavailable"))?;
+    let workspace = storage::ensure(host, org, cwd)?
+        .join("agents")
+        .join(workspace_key);
+    let root = workspace.join("instructions");
+    disk::create_dir_all(&root)?;
+    let mut created_files = Vec::new();
+    for (relative_path, body) in &bundle.files {
+        let normalized = relative(relative_path)?;
+        let target = root.join(&normalized);
+        if stat(&target).is_some_and(|metadata| metadata.is_file()) {
+            continue;
+        }
+        write_missing(&root, &normalized, body)?;
+        if stat(&target).is_some_and(|metadata| metadata.is_file()) {
+            created_files.push(target);
+        }
+    }
+    let entry = relative(&bundle.entry_file)?;
+    let entry_path = root.join(entry);
+    if !stat(&entry_path).is_some_and(|metadata| metadata.is_file()) {
+        write_missing(&root, &bundle.entry_file, "")?;
+        if stat(&entry_path).is_some_and(|metadata| metadata.is_file()) {
+            created_files.push(entry_path);
+        }
+    }
+    Ok(MaterializedCreateBundle {
+        root,
+        created_files,
+    })
+}
+
+pub(super) fn compensate_create_bundle(bundle: MaterializedCreateBundle) -> io::Result<()> {
+    for path in bundle.created_files.iter().rev() {
+        match disk::remove_file(path) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
+    }
+    // Only remove empty directories under the bundle root; the workspace and
+    // organization roots may predate this create attempt.
+    let _ = disk::remove_dir(&bundle.root);
+    Ok(())
 }
 fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value> {
     let org = text(row, "orgId");
