@@ -331,7 +331,14 @@ impl OwnedTransport {
         }
         let deadline = Instant::now() + timeout;
         loop {
-            if let Some(message) = self.messages.pop_front() {
+            // The child can write protocol frames before the host publishes its
+            // `spawned` lifecycle event. Keep those frames queued until the
+            // lifecycle proof has been observed; callers commonly consume the
+            // first events only to establish that the connection is writable,
+            // and must not be able to drop an early resumed-turn notification.
+            if self.spawned
+                && let Some(message) = self.messages.pop_front()
+            {
                 let observation = self.session.observe(message)?;
                 if let SessionObservation::Incoming(Message::Notification { method, params }) =
                     &observation
