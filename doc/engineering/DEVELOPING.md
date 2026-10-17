@@ -473,6 +473,37 @@ and CLI use the isolated `RUDDER_HOME`, instance id, server port, and database p
 If the server has to bind a fallback port because the configured port is busy, the dev runner follows the
 runtime descriptor instead of polling only the requested port.
 
+### Parallel Verification Resources
+
+Before concurrent build or acceptance runs, assign each run its own runtime home,
+PostgreSQL data directory, ports, logs, and build output directory. Resolve paths
+with `realpath` before comparing ownership; macOS `/tmp` and `/private/tmp` may
+refer to the same directory. Keep one writer per build output directory, then
+copy and hash the candidate artifacts before starting acceptance against them.
+
+Cleanup must target the exact processes and data directory created by that run.
+Record spawned PIDs or process groups and confirm their ownership before stopping
+them. Never select PostgreSQL processes by a shared temporary-directory prefix.
+Preserve other runs, existing instances, and user data.
+
+Give each test run a short, canonical `TMPDIR` when its cleanup hook scans
+temporary PostgreSQL directories. Confirm the resulting prefix contains only
+that run's data and that Unix socket paths fit the platform limit.
+
+Preflight the working directory and required executables, including the actual
+Playwright browser and PostgreSQL payload, before starting expensive checks.
+Use `--workspace-built` only after confirming the required workspace build
+outputs exist. A previous successful build does not prove its outputs remain.
+
+Record command arguments, working directory, exit status, and candidate identity
+for each stage. If an external driver or environment fails, preserve that failure,
+repair it, and resume at the failed stage using verified unchanged inputs and
+relevant build outputs. Do not
+repeat passing builds or full suites for a working-directory or metadata-only
+correction. Source changes require the affected checks and acceptance to run
+again. Every driver must write a terminal receipt and clean up its own processes
+even when a build fails before producing an artifact.
+
 ### Agent Git Identity
 
 Local agent runtimes must not rely on Git's hostname fallback identity. Codex local runs preserve the

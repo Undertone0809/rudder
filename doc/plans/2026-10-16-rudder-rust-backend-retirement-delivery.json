@@ -18,18 +18,18 @@
     "authorization": "Implementation, working-branch publication, protected-PR merging of existing needed qualified PRs, and closure of superseded PRs explicitly authorized; production release/deployment not included."
   },
   "candidate": {
-    "branch": "codex/rust-backend-completion-20261016",
-    "source_ref": "HEAD",
-    "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
-    "dirty_fingerprint": "unknown_in_progress",
+    "branch": "replace-with-final-candidate-branch",
+    "source_ref": "not_frozen; current independent slice candidates are in progress_snapshot.follow_up_2026_10_17",
+    "source_sha": "replace-with-final-candidate-sha",
+    "dirty_fingerprint": "not_frozen_workstream_in_progress",
     "changed_paths": [],
     "build": {
       "id": "replace-with-build-id",
-      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab"
+      "source_sha": "replace-with-final-candidate-sha"
     },
     "runtime": {
       "id": "replace-with-runtime-id",
-      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab"
+      "source_sha": "replace-with-final-candidate-sha"
     },
     "organization_data": {
       "organization_id": "replace-with-org",
@@ -57,8 +57,8 @@
   "receipts": {
     "reviewer": {
       "verdict": "pending",
-      "candidate_fingerprint": "unknown_in_progress",
-      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+      "candidate_fingerprint": "not_frozen_workstream_in_progress",
+      "source_sha": "replace-with-final-candidate-sha",
       "build_id": "replace-with-build-id",
       "runtime_id": "replace-with-runtime-id",
       "data_id": "replace-with-data",
@@ -66,8 +66,8 @@
     },
     "verifier": {
       "verdict": "pending",
-      "candidate_fingerprint": "unknown_in_progress",
-      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+      "candidate_fingerprint": "not_frozen_workstream_in_progress",
+      "source_sha": "replace-with-final-candidate-sha",
       "build_id": "replace-with-build-id",
       "runtime_id": "replace-with-runtime-id",
       "data_id": "replace-with-data",
@@ -75,8 +75,8 @@
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "unknown_in_progress",
-      "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+      "candidate_fingerprint": "not_frozen_workstream_in_progress",
+      "source_sha": "replace-with-final-candidate-sha",
       "build_id": "replace-with-build-id",
       "runtime_id": "replace-with-runtime-id",
       "data_id": "replace-with-data",
@@ -92,14 +92,14 @@
     "authorized": true,
     "mode": "isolated_risk",
     "target_ref": "refs/heads/main",
-    "base_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+    "base_sha": "d0410bab3f4a88af04351ebc4c447824b94e87e8",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "1021d5c5ba7d0b758fae42fd6569810c1a456a77",
+    "observed_remote_sha": "d0410bab3f4a88af04351ebc4c447824b94e87e8",
     "branch_refs": [],
     "isolation_trigger": "concurrent_write_risk",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rust-backend-completion-20261016/rudder-oss",
     "patch_tree_sha": "replace-with-patch-tree-sha",
-    "expected_old_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+    "expected_old_sha": "d0410bab3f4a88af04351ebc4c447824b94e87e8",
     "cas": {
       "attempted": false,
       "succeeded": false,
@@ -255,6 +255,1922 @@
       "ci": "not published yet",
       "migration_clippy_cleanup": "Reviewer ACCEPT semantic equivalence; full-workspace Clippy/rustfmt PASS, 30 default tests PASS, supplemental isolated PostgreSQL 4 apply tests and 1 real CLI backup/restore PASS",
       "content_rebase": "Native tree byte-identical to reviewed 86271a131 checkpoint; no replay required per independent reviewer; inventory regenerated for #292 main sources; final PR CI pending"
+    },
+    "follow_up_2026_10_17": {
+      "scope": "Current bounded follow-up; historical receipts above retain their original scope. Overall migration remains incomplete.",
+      "pr_actions": [
+        {
+          "number": 264,
+          "state": "merged",
+          "merge_sha": "9c5787d6b830342fda3aca906dcba229b98dd30e"
+        },
+        {
+          "number": 312,
+          "state": "merged",
+          "merge_sha": "3ba55411638643b49b905373342f3d71adb4ac79"
+        },
+        {
+          "number": 313,
+          "state": "open_ci_pending",
+          "head_sha": "48d6dba069013b56ea7c5720d36aae14b31de7e1"
+        },
+        {
+          "number": 316,
+          "state": "open_ci_pending_after_test_format_correction",
+          "head_sha": "4f657726bc2d0b939168f712aea8e5b6fc9a26e0",
+          "packaged_ci": "Desktop packaged smoke macOS arm64 SUCCESS on current head; other CI still pending.",
+          "ubuntu_ci": "SUCCESS: job 117066112067 on head 4f657726bc2d0b939168f712aea8e5b6fc9a26e0",
+          "remaining_ci": "Native foundations x86_64-apple-darwin running; macOS aarch64/x86_64 server artifacts queued at observation. No current failures."
+        },
+        {
+          "number": 309,
+          "state": "merged",
+          "head_sha": "34468dd780a874c9cba90923b4d4694af4961c30",
+          "merge_sha": "d8c393235d5ac1d7670bc48c4c791d67751e0369",
+          "merged_at": "2026-10-16T17:00:49Z",
+          "scope": "Bounded native Chat binding/span authority and direct read APIs; not full Chat workflow",
+          "gates": "Independent final handoff ACCEPT; 21 success checks and intentional affected-qualification skip; no protection override used."
+        }
+      ],
+      "managed_migration": {
+        "source_sha": "e93a9f59cd9c4e97aca025a890e12a9e7a8b7259",
+        "verdict": "FAIL",
+        "receipt": "/private/tmp/rudder-managed-migration-terminal-e93a9f5-20261016/managed-gap-matrix/active-cancel-failure-receipt.json",
+        "sha256": "d915aec3b57c5d9562c0e1bdcf3963a0c14b0e758ddcd04dde895304997b86f2",
+        "finding": "After managed starter close, active migration statement retained PostgreSQL backend, transaction and advisory lock. Exact owned fixture cleanup completed; source lease released; Rust cancellation repair in progress.",
+        "repair_stage": {
+          "candidate_sha": "a07c5418e3ba3c82b142c0eb0057a49ed68b47eb",
+          "verdict": "REJECT",
+          "finding": "Windows migration-apply calls ParentProcessMonitor.has_exited(), but the selected Windows implementation lacks that method. Source repair assigned; no Windows compile or runtime acceptance yet.",
+          "author_evidence": "Active SQL cancellation passed; backup-barrier test compiled but not executed. Historical e93 FAIL remains applicable only to e93.",
+          "corrective_candidate_sha": "c97078817928f2f3c7562f09c227b706ca6f7cda",
+          "correction": "Added fallible synchronous Windows parent-handle poll and fail-closed completion branch, plus Windows regression assertions. Formatting/diff checks PASS; cross-target compilation and independent re-review pending.",
+          "corrective_source_review": {
+            "candidate_sha": "c97078817928f2f3c7562f09c227b706ca6f7cda",
+            "verdict": "ACCEPT",
+            "scope": "Source-correction stage only; no Windows build/runtime and no final acceptance."
+          }
+        }
+      },
+      "identity": {
+        "diagnostic_baseline": "/private/tmp/rudder-jwt-integrated-baseline-20261016/results.json",
+        "results": {
+          "lint": 1,
+          "typecheck": 0,
+          "test_run": 1,
+          "build": 0
+        },
+        "qualification": "Mixed-source diagnostic, not frozen final acceptance. Required-ingress fixture corrections and independent readiness acceptance pending.",
+        "auxiliary_rerun": "/private/tmp/rudder-jwt-aux-checks-2tqhtxdq/result.json",
+        "auxiliary_tests": {
+          "passed": 115,
+          "skipped": 1,
+          "files_passed": 7
+        },
+        "candidate_sha": "d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e",
+        "author_focused": {
+          "real_entry_passed": 407,
+          "auth_workflow_passed": 21,
+          "auth_log": "/private/tmp/rudder-jwt-auth-workflow-focused-20261017/auth-workflow-rerun.log",
+          "qualification": "Author evidence only; d8 independent stage ACCEPT, independent terminal acceptance still running."
+        },
+        "desktop_verification": {
+          "exit_code": 1,
+          "receipt": "/private/tmp/rudder-jwt-desktop-verify-5drjchui/receipt.json",
+          "log": "/private/tmp/rudder-jwt-desktop-verify-5drjchui/desktop-verify.log",
+          "passed": [
+            "dev desktop smoke",
+            "update session fetch",
+            "package dependency/runtime verification",
+            "Computer Use runtime verification",
+            "packaged account gate"
+          ],
+          "failure": "Packaged auto-update-public timed out waiting for helper journal committed after helper handoff; no journal recorded.",
+          "environment": "Disk available fell to 137 MiB. Separate PostgreSQL owner recovery reported ENOSPC, but desktop failure has no direct ENOSPC evidence yet.",
+          "status": "Not PASS; preserve failed fixture and investigate after restoring disk headroom."
+        },
+        "portability_correction": {
+          "change": "Removed test-only hard-coded macOS Cargo target; inherited caller environment and default Cargo target retain source-built artifact discovery.",
+          "receipt": "/private/tmp/rudder-auth-portable-mhq3wdse/receipt.json",
+          "passed": 21,
+          "independent_stage": "ACCEPT at d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e; terminal acceptance and desktop failure remain outstanding.",
+          "ubuntu_evidence": "pending PR CI"
+        },
+        "independent_readiness_followup": {
+          "candidate_sha": "d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e",
+          "binary_sha256": "7d23492701561f819516c471cba6cf4b407eb7c6ebb4d773331e51a851537d9e",
+          "verdict": "QUESTION",
+          "observed": "Verifier reported identity-only readiness twice and missing/forged private health proof denial passed: 1 test passed, 56 skipped.",
+          "missing": [
+            "captured-proof replay",
+            "upstream-unavailable 503",
+            "session-only fallback",
+            "organization isolation and revocation follow-up"
+          ],
+          "reason": "Disk headroom dropped below reserved limit; no further runtime started. Verifier confirmed own PG/bridge processes gone and released resource lease.",
+          "evidence_limitation": "Verifier accidentally deleted its temporary log during cleanup. Prior tool transcript exists, but no retained log or durable standalone receipt; do not treat this as completed independent acceptance."
+        },
+        "prepared_acceptance": {
+          "path": "/private/tmp/rudder-identity-readiness-prepared-20261017",
+          "status": "Prepared only; runtime not executed",
+          "candidate_sha": "d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e",
+          "scope": "Repeated signed readiness; missing/forged/replayed proof denial; upstream503; existing session compatibility with required identity enabled; absent identity tuple rejects startup; org isolation/revocation tests. No unsupported standalone session-only claim.",
+          "resource_gate": "Each PG scenario requires2GiB free before start; preserve1.5GiB reserve; keep logs/receipts; exact owned cleanup.",
+          "static_checks": "bash -n, node --check and in-memory TypeScript syntax transpilation reported PASS; no product/acceptance PASS",
+          "files_sha256": {
+            "run-readiness-auth.ts": "fc24379904695660fc05cb792ac0ccf29ae1ee0c3f1339f7998442acf3120276",
+            "finalize-receipt.mjs": "5c05df882853cdaa323cc0a1ce9706e91708de73c3c1dde6c0871b8be20602dc",
+            "package.json": "dffeee6c4294e39a7b67de396408bbcda70995a7be70889e4b645c1c58078c80",
+            "run-acceptance.sh": "3de9fcb946fecf27c2410e94a3b59739162ac105d3006740fe89d082e22aee51",
+            "ACCEPTANCE-PACKET.md": "b13c69d2a81c0a4b7f1eaca49cb365468b79e453d2ceef092aae4a7d2c0d405a"
+          }
+        }
+      },
+      "deployment": "not performed",
+      "postgres_owner_recovery": {
+        "candidate_sha": "0230fee47088cb711e3fb94027c0236972e9b8be",
+        "author_focused": {
+          "unit": 10,
+          "real_lifecycle": 2,
+          "protocol": 5,
+          "result": "PASS",
+          "log": "/private/tmp/rudder-pgowner-build-20261016/postgres-lifecycle-focused.log"
+        },
+        "binary_sha256": "67f738b17f458eda0a36604c297dd3e5ea656ecb01dbcc1674640d517c50c2f7",
+        "runtime": "PostgreSQL 18.4",
+        "qualification": "Independent updated stage review in progress; Windows compilation/runtime and terminal acceptance pending. No push or PR yet.",
+        "independent_stage": {
+          "candidate_sha": "0230fee47088cb711e3fb94027c0236972e9b8be",
+          "verdict": "REJECT",
+          "finding": "Windows process PID check imported nonexistent Threading::SYNCHRONIZE; PROCESS_SYNCHRONIZE is the proper pinned API."
+        },
+        "corrective_candidate_sha": "a92ac5d94ac5bfa9c7a7593054fdcb9169d9de45",
+        "correction": "Two-line process synchronization access-right fix, formatting and diff checks PASS. Independent source re-review requested; Windows compilation/runtime not run.",
+        "corrective_source_review": {
+          "candidate_sha": "a92ac5d94ac5bfa9c7a7593054fdcb9169d9de45",
+          "verdict": "REJECT",
+          "finding": "Recovery integration test still called Unix-only libc::kill on Windows."
+        },
+        "latest_candidate_sha": "b516b0039cc2ab36fafb6d8a7812585f08c00c2c",
+        "latest_correction": "Portable crash fixture retains Windows coverage with exact owned PID OpenProcess/TerminateProcess/WaitForSingleObject and closes handle before assertions. Unix SIGKILL semantics unchanged; formatting and diff checks PASS. Source re-review pending; no build/runtime claim.",
+        "latest_source_review": {
+          "candidate_sha": "b516b0039cc2ab36fafb6d8a7812585f08c00c2c",
+          "verdict": "ACCEPT",
+          "scope": "Independent full Windows-cfg source pass only. Pinned API imports/features and Unix guards reviewed; no builds or PG runs.",
+          "remaining": [
+            "Windows library/binary/integration-test compilation",
+            "Windows packaged PostgreSQL first start and crash recovery preserving committed marker",
+            "Windows foreign PID/file/reparse safety",
+            "Windows initdb cancellation coverage; existing real EOF fixture is Unix-only",
+            "independent current-candidate runtime acceptance"
+          ],
+          "rebind": "Independent import-only review ACCEPT; production content unchanged from prior source-stage candidate. No new runtime or compile evidence."
+        },
+        "post_review_test_only_change": "Scoped Unix-only protocol test imports behind cfg(unix), preventing unused-import failures under Windows warnings-as-errors. Formatting/diff checks PASS; independent bounded re-review requested. Production Rust content unchanged since 9488639."
+      },
+      "execution_constraints": {
+        "runtime_slots": 1,
+        "reason": "Avoid PG cleanup/build interference under limited disk headroom. Independent source reviews proceed concurrently.",
+        "acceptance_artifacts": "Use frozen binaries and hash-bound receipts; cleanup exact owned PIDs and PGDATA only.",
+        "retesting": "Recheck affected behavior; retain valid unchanged evidence and preserve diagnostic failures.",
+        "disk_hold": "New PG/runtime/build work paused after free space dropped to 1,532,048 KiB. Source review continues; no unrelated caches or user data deleted."
+      },
+      "native_chat_stack_observed": {
+        "source": "GitHub live PR metadata and descriptions; author assertions not independently re-accepted here",
+        "decision": "retain_needed_drafts",
+        "stack": [
+          {
+            "number": 317,
+            "base_pr": 314,
+            "head_sha": "e41777ac8568ccde837633c50aadb2c16d8e9f32",
+            "scope": "Private Rust execution claims and Codex transport"
+          },
+          {
+            "number": 318,
+            "base_pr": 317,
+            "head_sha": "2b9055a26c9b48cf1b11391b4eced070afe1548b",
+            "scope": "Trusted binding and segment admission"
+          },
+          {
+            "number": 319,
+            "base_pr": 318,
+            "head_sha": "fe9b3fe0719b3b2716650c87c3bcd3916a5bd300",
+            "scope": "Immutable admitted input and fenced provider Thread association"
+          }
+        ],
+        "remaining": "Public send/control, provider dispatch and finalization, billing, UI activation and full workflow acceptance remain open. Preserve stack order; recheck migration journal collision between #314 and #316 before integration.",
+        "ci_findings": [
+          {
+            "pr": 318,
+            "job_id": 117073341708,
+            "platform": "Windows MSVC",
+            "result": "FAIL",
+            "test": "native_chat_execution/deletions.rs assert_binding_restrict_error",
+            "observed": "agent_delete_lock_conflict and run_lock_conflict expect SQLSTATE23503, receive23001; 8 pass2fail. Constraint-name assertion follows but was not reached.",
+            "status": "Diagnosis only. Same assertion present in #319. Need verify expected restrictive-FK semantics and rollback before correcting compatibility assertion; no edits or merge."
+          }
+        ],
+        "pr309": {
+          "head_sha": "34468dd780a874c9cba90923b4d4694af4961c30",
+          "ci": "All live checks SUCCESS or intentionally SKIPPED; qualification summary SUCCESS",
+          "merge_gate": "Completed: independent final handoff ACCEPT, rebase merged via protected PR, exact main SHA verified."
+        },
+        "pr314_rebase": {
+          "remote_head": "24af73f2c163ee7303b5808fbe942f7352289056",
+          "remote_base": "main",
+          "local_head": "8ff81258257dd63cef0958b1dbdb789cc95e06f2",
+          "onto": "d8c393235d5ac1d7670bc48c4c791d67751e0369",
+          "worktree": "/Users/zeeland/.codex/worktrees/native-chat-rust-run/rudder-oss",
+          "status": "Local rebase completed, not pushed; independent conflict-resolution review pending",
+          "resolution": "Retained modular process-host layout and ported main #312 one-shot BrokenPipe handling plus two regression cases into moved modules. Interactive write error semantics unchanged.",
+          "checks": "rustfmt/diff and current authority inventory checks PASS; runtime/build not rerun under disk constraint.",
+          "remaining": "Targeted process-host verification and acceptance rebind; migration0179 collision with #316 before combined integration.",
+          "source_stage": {
+            "verdict": "REJECT at8ff81258257dd63cef0958b1dbdb789cc95e06f2",
+            "finding": "Moved one-shot test helper retained stdin_write_failed/failed assertions despite BrokenPipe now preserving child exit.",
+            "correction_sha": "47402f347e555f97af4d25d36cbb2b96e4f57724",
+            "correction": "Explicit one-shot outcomes for exit0 success, exit23 child_exit and stop cleanup success; stdin_error must be absent. Formatting/diff PASS; focused runtime stillpending."
+          }
+        }
+      },
+      "remaining_identity_authority": {
+        "source_candidate": "d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e",
+        "evidence": "Independent read-only implementation inventory; no runtime acceptance",
+        "boundaries": [
+          {
+            "owner": "Rudder API Node auth lifecycle",
+            "entrypoints": [
+              "server/src/bootstrap/create-http-app.ts",
+              "server/src/routes/local-account-auth.ts",
+              "server/src/services/local-account-auth.ts"
+            ],
+            "responsibilities": [
+              "Better Auth lifecycle wildcard",
+              "local-exchange",
+              "local-offline",
+              "local-claim",
+              "local-signout-all"
+            ]
+          },
+          {
+            "owner": "Hosted Node Identity service",
+            "entrypoints": [
+              "identity/api/index.ts",
+              "identity/src/handler.ts",
+              "identity/src/supabase-root-identity-adapter.ts"
+            ],
+            "database": "Separate IDENTITY_DATABASE_URL / rudder_identity schema; no Rust schema reference found",
+            "responsibilities": [
+              "browser OAuth start and callback with stable-user binding",
+              "email OTP and password lifecycle",
+              "Desktop PKCE and Device Code",
+              "refresh rotation and server exchange",
+              "device/account mutation and revocation",
+              "durable cross-system credential revocation",
+              "Offline Grant signing",
+              "telemetry identity/consent"
+            ]
+          }
+        ],
+        "native_scope_limit": "Existing native session/key/JWT resolution and proof transport do not retire these issuance/lifecycle authorities.",
+        "next_proposed_workflow": "Hosted browser OAuth start + callback + atomic stable-user binding, preserving PKCE/continuation/cookies/verified identity and no Node fallback. Requires architecture stage review and real entry acceptance; not implemented.",
+        "next_proposal_review": {
+          "verdict": "REJECT hosted-OAuth-first as local cutover slice",
+          "selected_next_scope": "Local account session lifecycle: local-exchange, local-offline, local-claim, local-signout-all with Rust public entry, transactions, durable replay prevention, cookie compatibility, claim/membership/operator state/audit and WebSocket revocation side effects.",
+          "remaining_dependency": "Hosted server/exchange/verify remains explicit Identity-service migration debt; no full auth retirement claim."
+        }
+      },
+      "local_account_lifecycle_work": {
+        "worktree": "/Users/zeeland/.codex/worktrees/rust-local-account-lifecycle-20261017/rudder-oss",
+        "branch": "codex/rust-local-account-lifecycle-20261017",
+        "base_sha": "d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e",
+        "status": "Source design and implementation active in isolated worktree; no build/runtime verification yet",
+        "isolation": "Sparse source checkout, no build outputs or dependencies copied; original d8 candidate preserved clean",
+        "scope": [
+          "local-exchange",
+          "local-offline",
+          "local-claim",
+          "local-signout-all"
+        ],
+        "constraints": "No builds/runtime/PG while disk below preflight. Preserve hosted verifier dependency as explicit debt and retain websocket revocation effects; activation only after required verification.",
+        "implementation_split": {
+          "domain": "SQLx local-account transactions, Offline Grant/device proof/replay, cookie compatibility, legacy claim/membership/operator-state/audit, explicit revoke effect",
+          "websocket": "Rust public relay revocation and in-flight handshake protection; preserve unrelated users and non-session actors",
+          "integration": "Public route/config/default activation follows reviewed implementations and acceptance; not switched yet"
+        }
+      },
+      "session_rebase_after_chat": {
+        "remote_head": "4f657726bc2d0b939168f712aea8e5b6fc9a26e0",
+        "local_head": "5eeeb8ef554f3c4abfa80efb76cb8fb5f164d0f1",
+        "onto": "d8c393235d5ac1d7670bc48c4c791d67751e0369",
+        "status": "Local rebase complete, not pushed. Generated inventory dirty.",
+        "resolution": "Combined main runtime-binding bridge import with native session configuration import; retained singleCostReadexport. Generated source inventory refreshed.",
+        "remaining_gate": "Authority ratchet reports only rust-foundation-bridge.ts base/head review hash mismatch. Needs independent content review before rebind, then source-equivalence/runtime impact determination and current CI."
+      },
+      "identity_readiness_independent_v2": {
+        "verdict": "PASS",
+        "receipt": "/private/tmp/rudder-identity-readiness-prepared-20261017/runs/20261016T170825Z-82079/final-receipt.json",
+        "receipt_sha256": "7cd6e567fbd1a4a92f11aa0f18d5cef2e24aaf7991703a58e2626d92e0f02c54",
+        "candidate": "d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e",
+        "scope": "Eight local readiness/auth criteria only; not desktop, CI, full migration or Node retirement.",
+        "prior_failure": "V1 receipt retained. Filter skipped prerequisite that restores the agent alias. V2 includes prerequisite and both target tests: 3 passed, 33 skipped.",
+        "runtime_slot": "released; exact owned processes absent and PGDATA removed"
+      },
+      "efficiency_correction": {
+        "user_request": "反思优化执行效率",
+        "accountability": "Avoidable environment, fixture and artifact coordination failures are execution defects, not inherent Rust migration cost.",
+        "execution_rules": [
+          "Keep source work parallel; serialize heavyweight builds, PostgreSQL and runtime acceptance under one owner while disk is constrained.",
+          "Preflight exact cwd, canonical paths, browser availability when needed, disk budget and fixture prerequisites before expensive work.",
+          "Use task-owned PID and PGDATA identities for cleanup; never broad temporary-directory-prefix process termination.",
+          "Run acceptance against frozen artifacts; preserve receipt and logs outside cleanup targets.",
+          "For filtered tests, inspect fixture writes and include required setup cases; rerun only affected cases after diagnosis.",
+          "Reuse passing checks when relevant content is unchanged; bind source-equivalent receipts with issuer rather than rerunning unrelated workflows.",
+          "Prioritize qualified PR integration and dependent stack rebases; do not expand concurrent branches faster than they can be reviewed and merged.",
+          "Give each active source worktree its own Cargo target directory. If reusing a copy-on-write cache fork, rebuild own workspace crates before candidate acceptance; a frozen executable alone does not prevent stale dependency rlib reuse across worktrees.",
+          "Run scoped TypeScript import organization, rustfmt and inventory/hash preflights before the first verification freeze; include newly tracked files so style-only changes do not cause repeated checkpoint/rebind cycles."
+        ],
+        "measurement": [
+          "Time from candidate ready to protected merge",
+          "Environment or fixture induced reruns",
+          "Invalidated acceptance runs caused by artifact drift",
+          "Time waiting for exclusive runtime slot"
+        ],
+        "independent_review": "identity_readiness_acceptance confirmed the 3-case minimum and advised avoiding duplicate hashes, full suite replay, and deletion of completed evidence.",
+        "limitations": "No quantified speedup is claimed; future runs must supply timings.",
+        "latest_execution_check": {
+          "observed_at": "2026-10-16T17:41:53.783816+00:00",
+          "available_disk_kib": 991380,
+          "action": "Do not start heavyweight build or PG acceptance below preflight threshold; continue bounded source and independent review. Existing implementer and reviewer notified.",
+          "scope_control": "Finish current local-account compatibility slice before opening another implementation slice.",
+          "reporting": "Distinguish productive test duration from avoidable environment reruns; no measured speedup claimed.",
+          "build_output_precondition_correction": "When cache eviction is observed, verify all prerequisite dist outputs before workspace-built; use official standalone build when missing. Generated-output existence is not an approval gate. Environment prerequisites/recoverable install/build steps are already authorized; do not repeatedly ask root or user."
+        },
+        "build_cache_incident": {
+          "source": "PR316c3a8",
+          "observation": "cargo check PASS but build6missingD1exports with sharedtarget; sourceexports present.",
+          "correction": "OwnedAPFStargetcopy, clean4workspacepackagesonlyinthatcopy. No sourcechanges.",
+          "result": "7realPG/HTTPcasesPASS afterisolation; failurelogs retained."
+        }
+      },
+      "policy_pr313_delivery": {
+        "state": "MERGED",
+        "url": "https://github.com/Undertone0809/rudder/pull/313",
+        "head_sha": "48d6dba069013b56ea7c5720d36aae14b31de7e1",
+        "merged_sha": "f52f9a14d8f682ca2cd39e33c50cd5ab63d11bd0",
+        "merged_at": "2026-10-16T17:12:55Z",
+        "base_observed": "d8c393235d5ac1d7670bc48c4c791d67751e0369",
+        "integration_tree": "65b7054fbe55dc9b3b57281c6eca83fe7ae5300a",
+        "review": "Existing independent migration_final_review ACCEPT for exact head; all three changed files byte-identical in combined tree.",
+        "checks": "19 successful checks and one intentional skip; 22 policy regressions passed on local exact head. Combined tree changes only policy script, its tests, architecture doc versus main.",
+        "method": "Protected PR rebase with exact --match-head-commit; no protection bypass.",
+        "scope": "Policy guard only; no runtime switch or deployment."
+      },
+      "local_account_integration_update": {
+        "worktree": "/Users/zeeland/.codex/worktrees/rust-local-account-lifecycle-20261017/rudder-oss",
+        "state": "source_in_progress_not_compiled",
+        "domain": "Exchange, offline grant, claim and owned post-commit signout source added; public handlers/config bootstrap remain outstanding.",
+        "websocket": "Bounded revocation registry and typed fallback source added. Root startup transport supplies session for local-account because private WS effective auth is required.",
+        "root_checks": "Direct Node strip-types assertions passed for missing fallback rejection, explicit modes, BetterAuth and disabled compatibility; diff check passed. Vitest startup tests and Rust runtime not yet run.",
+        "review_finding": "Potential awc Client Send/Sync incompatibility with verifier trait and owned Tokio task sent to implementer for correction before build.",
+        "remaining": "Rust compilation/tests, real DB/WS public workflows, offline policy refresh, private WS authority retirement, independent final review and PR delivery. No total-migration completion claim.",
+        "transport": "Added explicit Rust lifecycle config JSON environment from existing installation/identity/audience/offline options; session secret remains in existing dedicated transport. Direct Node strip-types assertions pass for serialization, required local session mode and no duplicate secret.",
+        "send_sync_fix": "Implementer replaced non-Send awc verifier with async reqwest, bounded body, timeout and no redirects. Source only; not compiled.",
+        "in_progress": "Worker adding strict Rust config parsing/service builder; another worker adding four public handlers and no-fallback routes. Root owns service injection and TS transport.",
+        "native_configuration": "Strict lifecycle JSON parser and service builder complete; root bind constructs service from shared DB pool or fails startup, reuses existing session secret. Public handler source still in progress.",
+        "single_writer": "registerApiRoutes omits legacy Node localAccountAuthRoutes when native lifecycle config is present; no private Node writer fallback.",
+        "unit_evidence": "/private/tmp/rudder-local-account-unit-20261017/tests.log: 19 tests passed in configuration, public startup and route registration. Explicit temporary unit-only config used because sparse checkout lacks root workspace projects; no PostgreSQL setup hooks ran.",
+        "metadata": "Full cargo metadata --locked --offline succeeded without building; dependency resolution is valid, compile is unproven.",
+        "workspace_preservation": "Temporary dependency symlinks to original auth candidate were removed by exact target check after tests; underlying dependency trees unchanged.",
+        "disk": "1893308 KiB observed; no Cargo build or PG started.",
+        "public_handlers": "Four local-account lifecycle paths now registered at native ingress, with case/trailing-slash handling before proxy. Direct domain service injected from native config/DB. Handler author completing origin, credential-priority and error compatibility checks.",
+        "startup_identity_gate": "Native startup receipt includes rust authority, protocol version 1 and four paths only when lifecycle configured; Node starter requires this receipt before readiness, preventing old binary silent acceptance after private Node routes retire.",
+        "receipt_gate_test": "/private/tmp/rudder-local-account-unit-20261017/lifecycle-receipt-test.log: 1 passed, 52 skipped; rejects missing lifecycle receipt and accepts matching four-path receipt. Fixture test only, not native runtime acceptance.",
+        "review": "Independent domain transaction/crypto/claim source review dispatched to pg_cancel_stage_review; no verdict yet.",
+        "compatibility": "Handler worker preserving native board_key principal precedence; invalid bearer does not fall through to cookie. Cookie resolver unavailability now fail-closed 503; session mutations retain Origin guard.",
+        "online_workflow_test_source": {
+          "path": "server/src/__tests__/rust-native-session-workflow.test.ts",
+          "state": "added_not_run",
+          "coverage": "Controlled HTTP Identity verifier; exact startup lifecycle receipt; public exchange + cookie + stored session; repeated JTI conflict; claim retry; signout durable deletion; revoked cookie denied; all local lifecycle Node hits counted independently. Case owns new subject/installation and does not rely on earlier it mutation. Extended with signed offline grant/device proof, copied device denial, successful offline session, durable proof replay denial and signout count covering two issued sessions. Added competing account exchange and claim denial, verifying durable installation owner remains original. Same-JTI concurrent HTTP redemption asserts exactly 200/409; concurrent same-account claim asserts one claimed and one already_claimed, both tied to same user.",
+          "checks": "Extended concurrency scenario transpile syntax and diff check passed; not executed.",
+          "missing": "Runtime execution of all assertions; concurrent claim and nontrivial operator-state copy; full database-to-WS cancellation; offline refresh/signout epoch persistence; full typecheck/final review."
+        },
+        "offline_source_correction": "Corrected ten verified.claims field accesses to the flat VerifiedOfflineGrant result; rustfmt/diff checks passed, compilation still not run.",
+        "compile_and_units": {
+          "compile": "cargo check --locked --offline -p rudder-server-foundation-core --lib --tests PASS, no warnings, v3 log",
+          "unit_tests": "22 local_account filtered Rust unit tests PASS; 146 filtered out; no PostgreSQL or end-to-end claim",
+          "logs": "/private/tmp/rudder-local-account-unit-20261017/",
+          "disk_guard": "Exclusive Cargo slot used existing target cache; no frozen runtime binaries overwritten; >=1.5GiB reserve guard never triggered. Post-test freeBytes 2022182912.",
+          "fixes": "HeaderMap iterator misuse, registry mutable borrow conflict, test macro shadowing and missing fixture field fixed before successful check.",
+          "freshness": "Subsequent error-response compatibility edits require affected unit rechecks."
+        },
+        "domain_review_receipt": "/private/tmp/rudder-local-account-unit-20261017/domain-stage-review.json",
+        "compatibility_followups": "First correction batch authored: legacy404 for wrong methods and typed Forbidden reasons, including claim ordering. Schema issue mapper still in progress. Earlier test passes predate these changes; affected tests require rerun and domain review rebind.",
+        "revocation_unit_validation": {
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/revocation-unit-receipt.json",
+          "sha256": "b6ea286e25a4aa6086c7788ee8c8ea129b89d960e3b2eb68cf84b6db95eaeed6",
+          "results": "4 revocation registry tests PASS; 7 WebSocket loopback relay tests PASS. Exact cached unit binary and two source hashes retained in receipt.",
+          "scope": "No Cargo rebuild; actual loopback sockets, mock private peer. Does not prove database signout-to-public-WS full workflow.",
+          "preservation": "Existing frozen runtime artifacts untouched; no PostgreSQL or user profile accessed."
+        },
+        "handler_review": "Independent read-only startup/handler security review dispatched; response compatibility patches still author-owned and pending recheck.",
+        "acceptance_harness_correction": {
+          "file": "server/src/__tests__/rust-native-session-workflow.test.ts",
+          "changes": [
+            "Removed hard-coded /private/tmp CARGO_TARGET_DIR; honor caller environment or Cargo platform defaults.",
+            "Build before PostgreSQL startup so compiler failure leaves no DB fixture running.",
+            "Copy compiler artifact into canonical task-owned temporary directory, using copy-on-write where supported, before starting listener.",
+            "Clean only exact suite-owned artifact directory after runtime stop.",
+            "Require owned disposable PostgreSQL for installation-wide lifecycle/claim acceptance; external test URL cannot execute this case."
+          ],
+          "checks": "TypeScript transpile syntax and git diff --check passed; full workflow not run."
+        },
+        "review_notes_pending": [
+          "Origin/Referer any-match matches old Node policy; reviewer flagged possible hardening but no migration regression verdict yet.",
+          "SQLx i64 timestamp parameter cast concern under review; executor passes arguments.types to prepare, so no speculative SQL edit made."
+        ],
+        "disk_latest": "1630096 KiB free observed; below build/PG preflight, no heavy process started."
+      },
+      "session_rebase_after_chat_update": {
+        "head": "71631f24c86fb9cef2e9c2509c54204bca7293dd",
+        "base": "f52f9a14d8f682ca2cd39e33c50cd5ab63d11bd0",
+        "clean": true,
+        "published": false,
+        "stage_review": "pg_cancel_stage_review ACCEPT 5eeeb8e rebase combination; explicitly approved bridge hash rebind. New focused test and subsequent policy-only main rebase returned for source review.",
+        "tests": "56 bridge unit tests PASS; authority compare PASS against latest main. Added public native Chat Bearer/cookie integration test with session auth enabled, not run yet.",
+        "limits": "No new runtime acceptance; disk observed 1947616 KiB, below >=2GiB runtime preflight. Prior source/CI does not certify combined candidate.",
+        "stage_followup": "Independent pg_cancel_stage_review source-stage ACCEPT at 71631f24c86fb9cef2e9c2509c54204bca7293dd after startup identity assertion; runtime integration remains not run."
+      },
+      "local_account_contract_delta": {
+        "observed_at": "2026-10-16T17:44:03.457348+00:00",
+        "source_file": "/Users/zeeland/.codex/worktrees/rust-local-account-lifecycle-20261017/rudder-oss/server/src/__tests__/rust-native-session-workflow.test.ts",
+        "sha256": "65b23d315899488110f332de0d970459b5e538aad35d8ce21c3e49580f27707b",
+        "changes": [
+          "Seven invalid payload public HTTP cases compare complete errors with existing shared Zod schemas",
+          "All four lifecycle GET requests must return legacy 404 without Identity verifier or Node handler calls"
+        ],
+        "evidence": [
+          "Actual Zod 3.25.76 probe confirms Required missing-field text and literal received field; accepts numeric 1.0",
+          "TypeScript transpile syntax check PASS",
+          "git diff --check PASS"
+        ],
+        "not_run": [
+          "Updated Rust compile/unit tests",
+          "New public HTTP/PG workflow assertions"
+        ],
+        "implementation_findings": "Three mapper compatibility discrepancies assigned to existing implementer; independent reviewer tasked to rebind after source freeze.",
+        "review_boundary": "Prior handler stage ACCEPT was source-only; does not prove current mutable candidate runtime behavior.",
+        "sqlx_timestamp_concern": "Resolved by independent source inspection: INT8 Parse OID and encoding precede server-side double precision cast; no SQL correction needed."
+      },
+      "local_account_frozen_checkpoint": {
+        "observed_at": "2026-10-16T17:45:55.658500+00:00",
+        "sha": "3910e5be5273d9e08c04cb83ca250bfd26edd1a9",
+        "branch": "codex/rust-local-account-lifecycle-20261017",
+        "worktree": "/Users/zeeland/.codex/worktrees/rust-local-account-lifecycle-20261017/rudder-oss",
+        "source_manifest": "/private/tmp/rudder-local-account-unit-20261017/frozen-source-manifest.json",
+        "source_manifest_sha256": "bf6f6f49a5014d34eff9adf4f7f5f049f951ae747ba0e14ad275cbd7f9f3c773",
+        "paths": 23,
+        "worktree_clean": true,
+        "publication": "local checkpoint only; no push or PR",
+        "latest_repairs": [
+          "Zod missing-field Required message",
+          "literal error actual received value",
+          "normalize JSON version 1.0 before u8 deserialization"
+        ],
+        "checks": [
+          "author rustfmt --check PASS",
+          "root diff --check PASS",
+          "TypeScript workflow syntax transpile PASS"
+        ],
+        "pending": [
+          "independent review rebind to frozen source",
+          "compile and unit tests after mapper changes",
+          "actual public HTTP and PostgreSQL workflow acceptance",
+          "full baseline and applicable desktop verification",
+          "current-main integration and authority inventory reconciliation",
+          "protected PR CI and merge"
+        ],
+        "resource_preflight": {
+          "available_disk_kib": 1257808,
+          "heavyweight_execution_started": false
+        },
+        "runtime_preflight_note": "Read server/vitest.config.ts and HEAD:scripts/vitest-postgres-global-setup.ts. Default global setup scans all rudder-prefixed PGDATA under os.tmpdir and can terminate peers. Focused acceptance must use task-owned canonical TMPDIR and an explicit test config without broad global cleanup; suite owns and stops its embedded cluster. Root workspace config also enumerates absent sparse packages and must not be used for this focused run.",
+        "independent_stage_receipt": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/handler-stage-review.json",
+          "sha256": "4d1bdb1759e21fa66cc7c9d956fa622ba917c7ec771a6f89e3b5569a8f921fd0",
+          "verdict": "ACCEPT",
+          "level": "source-only; not compile, runtime, PostgreSQL, or release acceptance",
+          "all_23_file_hashes_revalidated": true,
+          "limitations": [
+            {
+              "severity": "P2 non-blocking",
+              "topic": "multiple unknown-key validation ordering",
+              "detail": "serde_json map iteration can sort multiple unknown keys, so the unrecognized_keys.keys array and its message may differ in order from Zod input-order diagnostics. The new differential fixture has a single unknown key. The request is still rejected with HTTP 400 and the same unknown-key set; no authorization or state effect changes. Treat as a diagnostic ordering limitation, not a blocker for this stage; do not claim exact ordering parity for multi-key payloads."
+            }
+          ]
+        },
+        "execution_blocker": {
+          "kind": "insufficient_local_disk",
+          "available_disk_kib": 1247148,
+          "minimum_compile_preflight_bytes": 2147483648,
+          "recurrence": "same resource constraint observed across at least three consecutive goal turns",
+          "source_stage": "complete and frozen; no reviewer or implementer still running",
+          "next_required_action": "Free sufficient local disk, then execute guarded latest compile and focused tests before PG acceptance. No push/merge before applicable gates."
+        }
+      },
+      "local_account_validation_resumed": {
+        "at": "2026-10-17T03:11:50.024118+00:00",
+        "candidate": "3910e5be5273d9e08c04cb83ca250bfd26edd1a9",
+        "resource_blocker": "cleared: initial available disk 52183596 KiB; no cleanup performed by this run",
+        "compile": {
+          "exit": 0,
+          "diskGuardStopped": false,
+          "freeBytes": 53136506880,
+          "scope": "library and tests compilation; tests not executed"
+        },
+        "unit_tests": {
+          "result": "28 PASS,146 filtered",
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/cargo-test-frozen3910-receipt.json"
+        },
+        "author_http_pg_workflow": {
+          "result": "1 PASS,9 skipped",
+          "log": "/private/tmp/rudder-local-account-unit-20261017/author-workflow3910.log",
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/author-workflow3910-receipt.json",
+          "coverage": "four local lifecycle public HTTP paths, seven Zod contract errors, wrong methods, concurrent exchange and claim, replay, account claim conflict, signed offline device proof and wrong-key rejection, signout database deletion and old-cookie rejection, Node handler non-calls",
+          "identity_verifier": "controlled loopback fixture; not hosted service acceptance"
+        },
+        "artifact": {
+          "source": "3910e5be5273d9e08c04cb83ca250bfd26edd1a9",
+          "path": "/private/tmp/rudder-local-account-unit-20261017/frozen3910/rudder-server-foundation",
+          "sha256": "bbfa6fc9653e090afeb254503af0d15ae4d9697a9a5919065afdc23674a0b21f",
+          "origin": "/private/tmp/rudder-agent-auth-target/debug/rudder-server-foundation"
+        },
+        "independent_acceptance": "running under exclusive runtime lease: /root/local_lifecycle_acceptance",
+        "current_main": "e9bef3d6fc8b63ebe30d1ee283ca3441ea4def51",
+        "dependencies": "pnpm install --frozen-lockfile completed in own expanded checkout; source stays clean",
+        "baseline_lint": {
+          "result": "22 files fail import organization",
+          "log": "/private/tmp/rudder-local-account-unit-20261017/lint3910.log",
+          "scoped_followup": "three task paths require import organization after verifier lease ends; other19 untouched"
+        },
+        "publication": "not pushed; source checkpoint only",
+        "full_typecheck": {
+          "result": "PASS exit0",
+          "command": "pnpm -r typecheck",
+          "log": "/private/tmp/rudder-local-account-unit-20261017/typecheck3910.log",
+          "log_sha256": "595c0a4c986b230c1395a33df5e37be2908c005f8232a4a1d216857b8d2c1409"
+        },
+        "lint_attribution": {
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/lint3910-attribution.json",
+          "unchanged_from_candidate_base": 19,
+          "task_paths_to_organize": 3,
+          "prepared_fixes": "outside candidate only; source remains frozen during independent lease"
+        },
+        "authority_inventory_check": {
+          "result": "FAIL stale inventory",
+          "log": "/private/tmp/rudder-local-account-unit-20261017/authority3910.log",
+          "next": "Regenerate and independently review source/policy deltas after source lease."
+        },
+        "independent_runtime": {
+          "agent": "/root/local_lifecycle_acceptance",
+          "state": "live",
+          "postgres_version": "PostgreSQL18.1",
+          "pg_pid": 13868,
+          "pgdata": "/private/tmp/rudder-local-account-unit-20261017/independent-pg/data",
+          "database": "local_lifecycle_acceptance",
+          "port": 50488,
+          "packet": "/private/tmp/rudder-local-account-unit-20261017/independent-acceptance-packet.md",
+          "requested_adjacent_risk": "nonempty legacy membership copy and unrelated organization retention"
+        },
+        "focused_javascript_tests": {
+          "startup_config_and_router": "19PASS, js-units3910.log",
+          "bridge": "53PASS, bridge-units3910.log"
+        }
+      },
+      "session_pr316_current_main_rebase": {
+        "local_head": "c3a8541a605a04edfd822ecbe61ebddbae343848",
+        "previous_local_head": "71631f24c86fb9cef2e9c2509c54204bca7293dd",
+        "base_main": "e9bef3d6fc8b63ebe30d1ee283ca3441ea4def51",
+        "remote_head_unchanged": "4f657726bc2d0b939168f712aea8e5b6fc9a26e0",
+        "conflict": "Generated inventory reviewed_node_changes empty in latest main after321; retained only still-unmerged session PR records/admission; source-derived inventory regeneration parsed equal to finalHEAD. No canonical formatting churn retained.",
+        "source_equivalence": "native/server/packages-db/packages-shared exact unchanged from71631",
+        "equivalence_proof": "/private/tmp/rudder-local-account-unit-20261017/pr316-rebase-equivalence.json",
+        "checks": [
+          "inventory check PASS",
+          "authority compare currentmain PASS",
+          "diffcheck clean"
+        ],
+        "pending": [
+          "independent integration source review",
+          "session-enabled Chat PG regression execution",
+          "current candidate verifier/final review gates",
+          "authorized protected PR update and CI"
+        ],
+        "state": "local rebase only, no push",
+        "review_receipt": "/private/tmp/rudder-local-account-unit-20261017/pr316-rebase-review.json",
+        "review_verdict": "ACCEPT source/integration only",
+        "integration_execution": {
+          "first_attempt": "FAIL beforePG: build6unresolvedD1module errors; cargo check thenPASS and sourceexports present",
+          "failure_log": "/private/tmp/rudder-local-account-unit-20261017/pr316-build-errors.log",
+          "correction": "No sourceedit. Clone sharedtarget to owned /private/tmp/rudder-native-sessions-c3a8-target and clean only4taskRustpackages inthatcopy; preserveoriginaltarget and frozenlifecycleartifact.",
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/pr316-target-isolation.json",
+          "rerun": {
+            "result": "PASS7realPG/publicChatcases",
+            "receipt": "/private/tmp/rudder-local-account-unit-20261017/pr316-chat-isolated-c3a8-receipt.json",
+            "log": "/private/tmp/rudder-local-account-unit-20261017/pr316-chat-isolated-c3a8.log",
+            "artifact": "/private/tmp/rudder-local-account-unit-20261017/frozen-pr316c3/rudder-server-foundation",
+            "sha256": "1fa5df4b5eac03e9fc39c393877fb880e69871a1b9cb3b6b27737e0ecfc53534",
+            "source": "c3a8541a605a04edfd822ecbe61ebddbae343848",
+            "source_changed_to_fix_build": false,
+            "independent_acceptance": "running /root/local_lifecycle_acceptance on separatePG/currentartifact"
+          }
+        },
+        "post_format_checkpoint": {
+          "head": "0465f99c3f73c9470bce9f54876e38b630c736f3",
+          "previous": "c3a8541a605a04edfd822ecbe61ebddbae343848",
+          "changes": "Onlytype-export declaration move andinventoryhash; emittedruntimeJSbyteidentical; Rustsource/artifactunchanged",
+          "review": "/private/tmp/rudder-local-account-unit-20261017/pr316-type-export-review.json",
+          "verifier": "/private/tmp/rudder-local-account-unit-20261017/pr316-independent/acceptance-rebind-0465.json",
+          "verifier_sha256": "7952bbc62567ce2ab8b1cc8550f2d5d9baba1a299aadf6f707889e35f9d364c4",
+          "independent_original_checks": 17,
+          "focused_lint": "PASS1file",
+          "full_typecheck": {
+            "result": "PASS",
+            "source": "c3a8541a605a04edfd822ecbe61ebddbae343848",
+            "log": "/private/tmp/rudder-local-account-unit-20261017/pr316-typecheck-c3a8.log"
+          },
+          "full_build": {
+            "result": "PASS",
+            "source": "c3a8541a605a04edfd822ecbe61ebddbae343848",
+            "log": "/private/tmp/rudder-local-account-unit-20261017/pr316-build-c3a8.log"
+          },
+          "lint_baseline": {
+            "failed_beforefix": 21,
+            "unchanged_from_main": 20,
+            "only_owned_file_fixed": true,
+            "attribution": "/private/tmp/rudder-local-account-unit-20261017/pr316-lint-attribution.json"
+          },
+          "full_test": "live execsession37509, logpr316-test-0465.log, ownedTMPDIRandRUDDER_HOME via run-pr316-baseline.py",
+          "desktop_verification": "notyetstarted; browserandElectronexecutablepreflightPASS",
+          "publication_review": "requested currentexact0465 publication verdict; no remoteupdateyet",
+          "remote_head_unchanged": "4f657726bc2d0b939168f712aea8e5b6fc9a26e0"
+        }
+      },
+      "local_account_independent_acceptance": {
+        "verdict": "PASS",
+        "checks": 36,
+        "receipt": "/private/tmp/rudder-local-account-unit-20261017/independent-run2/independent-acceptance.json",
+        "receipt_sha256": "7558ca163533d47af1d62448da74b29435d0fe70e4fdf29f72fce0e8611f2e32",
+        "candidate": "3910e5be5273d9e08c04cb83ca250bfd26edd1a9",
+        "artifact_sha256": "bbfa6fc9653e090afeb254503af0d15ae4d9697a9a5919065afdc23674a0b21f",
+        "scope": "Four local account public HTTP routes, realPG18.1, controlledIdentity/countingNode fixtures, one legacyrole/membership transfer and unrelatedmembership preservation, stable-cookie restart, proof/replay and signout isolation",
+        "limits": [
+          "Hosted Identity, Desktop/packaged startup and all operator state classes are not accepted by this receipt",
+          "Other backend/auth responsibilities still incomplete"
+        ],
+        "first_run": {
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/independent-run/independent-acceptance.json",
+          "status": "Preserved failed verifier fixture run: premature valid-signout, changing sessionsecret onrestart and wrongproofbodyhash. Corrected in cleanrun; no productsource altered."
+        },
+        "cleanup": "Verifier reports native12208/12211 andPG13868 stopped, fixtureHTTP serversclosed",
+        "lease": "released; root applying3import-only edits, protocol doc and pending-review inventory metadata"
+      },
+      "local_account_post_review_checkpoint": {
+        "candidate": "902784cbd97cc7f89765e82304f9d31f36482f7d",
+        "previous_candidate": "3910e5be5273d9e08c04cb83ca250bfd26edd1a9",
+        "base": "d8d0311fc5e01cb75afa89cf7f9c7a885a6ed95e",
+        "worktree_clean": true,
+        "changes": "3import-only reorder files, protocol doc, refreshed5reviewedNodeadapterrecords. AllRustsource/Cargo/artifact unchanged.",
+        "manifest": "/private/tmp/rudder-local-account-unit-20261017/frozen-source-manifest-post-review.json",
+        "manifest_sha256": "52fb76d2c6c074397695b9d5657583922e881cb06ce9c1cb6b3c37b92cc9d2ab",
+        "equivalence": "/private/tmp/rudder-local-account-unit-20261017/import-only-equivalence.json",
+        "review": "/private/tmp/rudder-local-account-unit-20261017/final-local-lifecycle-review.json",
+        "checks": [
+          "19focusedJS PASS afterimportedits",
+          "changedfileimportlintPASS",
+          "authorityinventorycomparedependencybasePASS",
+          "diffcheckPASS"
+        ],
+        "verification_rebind": {
+          "verdict": "PASS",
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/local3910-to-902-independent-acceptance-rebind.json",
+          "sha256": "60ee922f28b00a652894cfc3fcc4faa72bf3f3de4c8e89074c095e5b162d7077",
+          "source_equivalence": true,
+          "runtime_replayed": false,
+          "original_checks": 36,
+          "limits": [
+            "This is not a new HTTP/PostgreSQL execution; it rebinds the preserved 36/36 run through verified source equivalence.",
+            "Identity validation used the controlled local HTTP verifier recorded in the original receipt, not a hosted Identity service.",
+            "No Desktop or packaged acceptance, full repository baseline, current PR CI, merge, release, or deployment claim is made.",
+            "The original failed first-run record remains preserved separately and is not overwritten."
+          ]
+        },
+        "pending": [
+          "issuerverificationrebind",
+          "exactcheckpointreview",
+          "fulltest/build/desktopbaseline",
+          "upstreamauthdelivery andcurrentmainintegration",
+          "protectedPR/CI"
+        ],
+        "publication": "localcheckpoint; no push",
+        "checkpoint_review": {
+          "verdict": "ACCEPT source/metadata rebind only",
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/checkpoint-review-902784c.json",
+          "sha256": "02ba5db6060309b1edfdfb944aebc8053103769f2b62ef36dbe53f7ed1840b9e",
+          "final_handoff": false
+        }
+      },
+      "session_pr316_publication_0465": {
+        "candidate": "0465f99c3f73c9470bce9f54876e38b630c736f3",
+        "base": "e9bef3d6fc8b63ebe30d1ee283ca3441ea4def51",
+        "pr": "https://github.com/Undertone0809/rudder/pull/316",
+        "remote_head_verified": true,
+        "push_mode": "force-with-lease",
+        "expected_old_remote_sha": "4f657726bc2d0b939168f712aea8e5b6fc9a26e0",
+        "review_receipt": "/private/tmp/rudder-local-account-unit-20261017/pr316-publication-review-0465.json",
+        "review_scope": "PR update / protected CI only; not merge approval",
+        "body_file": "/private/tmp/rudder-local-account-unit-20261017/pr316-body.md",
+        "body_updated": true,
+        "current_ci": "in_progress",
+        "test_baseline": "running session 37509",
+        "desktop_verify": "pending",
+        "merge": "not performed"
+      },
+      "session_pr316_baseline_disposition": {
+        "candidate": "0465f99c3f73c9470bce9f54876e38b630c736f3",
+        "independent_lint_review": "/private/tmp/rudder-local-account-unit-20261017/pr316-lint-disposition-review.json",
+        "receipt_sha256": "3b1fd9a7c929504dd80311cbf352eb4793f0d747baedb97c2f0a92e1ba155929",
+        "lint_status": "20 inherited main import-organization findings; changed bridge focused lint PASS; aggregate lint not PASS",
+        "test_status": "live; 2 observed failed cases retained",
+        "failed_cases": [
+          "agent-issue-creation-routes.test.ts queued replay expected202 actual200 unresolved",
+          "claude-local-execute.test.ts global RUDDER_HOME wrapper conflicts with per-case HOME sandbox"
+        ],
+        "retry_plan": "After full run, only failed suites; remove RUDDER_HOME override; pin HOME and USERPROFILE to task temp directory",
+        "retry_runner": "/private/tmp/rudder-local-account-unit-20261017/run-pr316-failed-suites.py",
+        "required_ci_policy": "No bypass; any failed required check blocks merge"
+      },
+      "migration_lifecycle_cancel_integration": {
+        "candidate": "f8c4637a04c1475393e281b2fcc3575714255112",
+        "base_candidate": "b516b0039cc2ab36fafb6d8a7812585f08c00c2c",
+        "worktree": "/Users/zeeland/.codex/worktrees/rust-pr292-rebase-20261016/rudder-oss",
+        "receipt": "/private/tmp/rudder-local-account-unit-20261017/migration-lifecycle-integration.json",
+        "receipt_sha256": "f5e3e8c0468ed511ede4bac284a4b5dfe1bc46995b1d92ad3bc0217d2bb5fc35",
+        "state": "source_integrated; independent stage review pending",
+        "author_static_checks": "rustfmt changed paths PASS; git diff --check PASS; clean worktree",
+        "runtime_tests": "not run on combined candidate; queued after auth baseline/Desktop",
+        "pushed": false,
+        "merged": false
+      },
+      "auth_next_integration_review": {
+        "receipt": "/private/tmp/rudder-local-account-unit-20261017/auth-next-integration-review.json",
+        "sha256": "7bae8ecd213ef96d3cd1933caaefaf2d0a9c59b4c0168ccff04309ffa655d13a",
+        "verdict": "integration guidance only; needs new candidate evidence",
+        "sequence": [
+          "merge qualified PR316",
+          "carry d8 JWT/identity delta only and retain PR316 session implementation",
+          "replay local lifecycle3910 and902 on integrated identity",
+          "refresh inventory and rerun affected independent checks"
+        ],
+        "preservation": "all three candidate worktrees unchanged and clean",
+        "old_pr_disposition": "262/314/318 not closed; only metadata-level overlap established"
+      },
+      "migration_lifecycle_cancel_stage_review": {
+        "candidate": "f8c4637a04c1475393e281b2fcc3575714255112",
+        "verdict": "reject",
+        "level": "source integration stage",
+        "receipt": "/private/tmp/rudder-local-account-unit-20261017/migration-lifecycle-stage-review-f8c.json",
+        "sha256": "13a87d2cc850a89e8cc74133ad25ce805845c9c314d08366c8899fd0683a1169",
+        "blocker": "unbounded backend identity capture occurs before cancellation select; direct Rust caller can hang",
+        "repair_owner": "session_revocation",
+        "repair_scope": "bounded cancellation-aware pre-mutation metadata and backup journal lookups; connection discard/close; focused stalled-boundary and commit/retry tests",
+        "runtime_status": "not run; heavy slot remains PR316 baseline/Desktop",
+        "publication": "not approved"
+      },
+      "pr318_superseded_closure": {
+        "state": "closed; source branch retained",
+        "pr": "https://github.com/Undertone0809/rudder/pull/318",
+        "head": "2b9055a26c9b48cf1b11391b4eced070afe1548b",
+        "replacement_pr": "https://github.com/Undertone0809/rudder/pull/323",
+        "replacement_head": "586cf89ba46e9580298c42d5f47a3abceaf0d3b4",
+        "replacement_state": "draft; not accepted or merged",
+        "source_review": "/private/tmp/rudder-local-account-unit-20261017/pr318-pr323-supersession-review.json",
+        "closure_receipt": "/private/tmp/rudder-local-account-unit-20261017/pr318-closure.json",
+        "closure_receipt_sha256": "fa901ef30d2b4a00669557b2d00068db0145c6989ea47fd661aae6f65183f5c2",
+        "root_disposition": "14/14 paths reviewed; no unique executable function/test remains. Closed source/history/evidence retained; replacement acceptance remains a separate gate."
+      },
+      "session_pr316_harness_checkpoint_367b": {
+        "candidate": "367b44a0447f193d2d470a9e03eaec32da9c11df",
+        "parent": "0465f99c3f73c9470bce9f54876e38b630c736f3",
+        "worktree_clean": true,
+        "checkpoint_receipt": "/private/tmp/rudder-local-account-unit-20261017/pr316-harness-checkpoint.json",
+        "baseline_disposition": "/private/tmp/rudder-local-account-unit-20261017/pr316-baseline-disposition-367b.json",
+        "baseline_disposition_sha256": "a53bc84f771fc6fc227b94fe6e183db58b003c24f86344bcafdad7abf8555fed",
+        "stage_review": "/private/tmp/rudder-local-account-unit-20261017/pr316-harness-stage-review.json",
+        "focused_checks": "3/3 PASS; scoped lint/rustfmt/inventory/policy PASS",
+        "runtime_change": "none; production prefix byte-identical; CLI test-only change",
+        "independent_rebind": {
+          "verdict": "PASS",
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/pr316-independent/acceptance-rebind-367b.json",
+          "sha256": "27f72c48d2b7b89b29c48ede391581f268c074e28198abdaffda3dcbcb03ad4f",
+          "checks": "17/17 existing observations retained by independent production equivalence rebind; no HTTP/PG replay",
+          "scope": "test-only delta; frozen session artifact unchanged"
+        },
+        "desktop_lease": "pr316-367b-desktop-exclusive-20261017T0406Z",
+        "pushed": false,
+        "merged": false
+      },
+      "efficiency_correction_2026_10_17_baseline": {
+        "original_failure_evidence_preserved": true,
+        "avoid_repeat": "Passing baseline groups/typecheck/build retained across verified test-only delta. Only failed groups and exact changed tests replayed.",
+        "preflight_correction": "Use task-owned HOME/USERPROFILE and let per-case HOME tests control RUDDER_HOME; stage required native binaries explicitly from worktree-owned Cargo target.",
+        "fixed_test_debts": [
+          "CLI parity respects CARGO_TARGET_DIR",
+          "Overview body/signature share captured test clock"
+        ],
+        "desktop_preflight": "PG18.4/version/templates, Chromium and Electron checked; explicit read-only PG cache input + task-owned runtime cache; no shared cache cleanup/download",
+        "agents": "No recursive spawn after slot contention; reuse existing verifier/reviewer. Parent and security child confirmed explicit gpt-6-luna/xhigh."
+      },
+      "session_pr316_publication_367b": {
+        "candidate": "367b44a0447f193d2d470a9e03eaec32da9c11df",
+        "base": "e9bef3d6fc8b63ebe30d1ee283ca3441ea4def51",
+        "pr": "https://github.com/Undertone0809/rudder/pull/316",
+        "push": "success; fast-forward exact lease from0465",
+        "expected_old_remote_sha": "0465f99c3f73c9470bce9f54876e38b630c736f3",
+        "review_receipt": "/private/tmp/rudder-local-account-unit-20261017/pr316-publication-review-367b.json",
+        "review_sha256": "185a1aa343cb60982976a3a51d537a0daff4ee2c376d84d5a4cf3062a59fe67e",
+        "review_scope": "PR publication only; merge/finalhandoff not approved",
+        "body_file": "/private/tmp/rudder-local-account-unit-20261017/pr316-body-367b.md",
+        "body_updated": true,
+        "ci": "new head pending",
+        "desktop": "independent367b v2 wrapper running; exclusive lease",
+        "merge": "not performed"
+      },
+      "session_pr316_desktop_367b": {
+        "readiness": "/private/tmp/rudder-pr316-baseline-367b/desktop-readiness-367b-v2.json",
+        "readiness_sha256": "8b5dfce216afb61d414c76b29ba66dae5e7864028cacf0f15099e59ac0ff5e34",
+        "wrapper": "/private/tmp/rudder-pr316-baseline-367b/run-desktop-verify-isolated-v2.py",
+        "wrapper_sha256": "3cad2f8655532c1d613b632ff682943cef0864f9a16b60c9921eceab5b42f15a",
+        "lease": "pr316-367b-desktop-exclusive-20261017T0406Z",
+        "first_attempt": "preflight-only version substring assertion failed before pnpm; preserved, wrapper corrected; no product run failure",
+        "first_attempt_receipt": "/private/tmp/rudder-pr316-baseline-367b/preflight-first-attempt-failure.json",
+        "status": "v3 terminal FAIL, lease released; no merge/final handoff",
+        "v2_terminal": {
+          "verdict": "FAIL",
+          "receipt": "/private/tmp/rudder-pr316-baseline-367b/desktop-final-acceptance-367b.json",
+          "sha256": "d4e9ea9553d0985e8ef62cc097afc77fa4d818e93cd15deba103ef9066bbac19",
+          "reason": "Cargo writes custom target; dev host resolver and package stage read default native/target. Default release cache was older; staged-native observations not reusable.",
+          "cleanup": "owned group empty; exactPGnotrunning; port52037 absent"
+        },
+        "v3_prepared": {
+          "binding": "/private/tmp/rudder-pr316-baseline-367b/default-target-binding-v3.json",
+          "independent_binding": "/private/tmp/rudder-pr316-baseline-367b/default-target-binding-v3-independent.json",
+          "independent_binding_sha256": "5f9856fe9b63e1b2325fb4fbdcedb78508a45faef795683546dd4c0cf5fe8054",
+          "result": "5/5 native artifact hashes match; worktree default Cargo target is active. Prior default target preserved, no deletion.",
+          "readiness": "/private/tmp/rudder-pr316-baseline-367b/v3/desktop-readiness-prepared.json",
+          "wrapper": "/private/tmp/rudder-pr316-baseline-367b/run-desktop-verify-isolated-v3.py",
+          "status": "WAITING_FOR_SHARED_HOST_SLOT; external NativeChat fullsuite PID96728/97130 active; no unrelated process interrupted"
+        },
+        "v3_running": {
+          "lease": "pr316-367b-desktop-default-target-v3-20261017T0416Z",
+          "wrapper_pid": 30847,
+          "process_group": 31517,
+          "preflight": "/private/tmp/rudder-pr316-baseline-367b/v3/execution-preflight-v3.json",
+          "log": "/private/tmp/rudder-pr316-baseline-367b/v3/desktop-verify-isolated.log",
+          "isolation": "exclusive heavy validation; separate Cargo worktree target, HOME, TMPDIR, owned process group; no cache deletion"
+        },
+        "v3_terminal": {
+          "path": "/private/tmp/rudder-pr316-baseline-367b/v3/desktop-final-acceptance-367b.json",
+          "sha256": "97ed74b90f338562e48aca0c5833a7a0ed39f8e6e655a6e84d2f55162227b1b4",
+          "verdict": "FAIL",
+          "first_failure": "packaged auto-update-public expected shell archive, selected portable archive; first-cause investigation running",
+          "passed": "dev smoke, update-session, dist, server-package, Computer Use, packaged account-gate",
+          "not_reached": "packaged app-builder",
+          "cleanup": "exact owned group empty; PG stopped; source clean; failed fixture retained"
+        },
+        "first_cause_investigation": "External RUDDER_POSTGRES_BIN_DIR from isolation wrapper produces runtime scope=external; shell-assets guard intentionally picks portable. Awaiting exact managed-cache environment repair and two-binary provenance reconciliation; no product workaround or assertion relaxation."
+      },
+      "migration_cancel_boundary_fix_c208": {
+        "candidate": "c208885ee060afce1cbe5815e68e7f7fc9ff6a96",
+        "parent": "f8c4637a04c1475393e281b2fcc3575714255112",
+        "receipt": "/private/tmp/rudder-local-account-unit-20261017/migration-cancel-boundary-fix.json",
+        "receipt_sha256": "6ea54f1c1b21937c51ac1925c0e837c674aa49e0f4606f9284b555c92d6c92c9",
+        "source_status": "author bounded lookup fixes and ignored realPG regression sources; clean checkpoint; independent stage review requested",
+        "tests": "not compiled or run; queued after Desktop lease",
+        "pushed": false,
+        "independent_stage_review": {
+          "verdict": "reject",
+          "receipt": "/private/tmp/rudder-local-account-unit-20261017/migration-cancel-boundary-stage-review-c208.json",
+          "sha256": "b58e51cb65bd34248bf77ad74114b35a8cbd0acf35b93412eb90ae3e56917dd7",
+          "reason": "SQLx close proves only local stream termination, not server backend disappearance; success acknowledgement must require remote proof or cleanup_unconfirmed",
+          "repair_owner": "migration_remote_exit_fix",
+          "status": "new source-only fix in progress"
+        }
+      },
+      "auth_lifecycle_integration_assignment": {
+        "owner": "session_revocation",
+        "worktree": "/Users/zeeland/.codex/worktrees/rust-native-agent-auth-20261016/rudder-oss",
+        "base_candidate": "367b44a0447f193d2d470a9e03eaec32da9c11df",
+        "dependency": "PR316 unmerged; old d8 and902 branches preserved",
+        "scope": "single source candidate for unique JWT/identity + local lifecycle increments; no heavy tests during Desktop lease",
+        "status": "source checkpoint b109 ready for independent Rust and Node-transport source review; not compiled/run",
+        "candidate": "b1091d485105b7c008e013d4d76f98a2bc1c2f55",
+        "receipt": "/private/tmp/rudder-local-account-unit-20261017/auth-lifecycle-source-integration.json",
+        "receipt_sha256": "ba12de20ef9dd70185bc09aa67ddfefc8cd0ccc8f79ab119ba0dbcfbc705f109",
+        "inventory": "generated check PASS; 13 review/pinned transport findings deliberately pending, not bypassed"
+      },
+      "dynamic_capability_classification": {
+        "receipt": "/private/tmp/rudder-local-account-unit-20261017/dynamic-capability-classification-367b.json",
+        "status": "author-only classification of all10 dynamic scanner unknowns; no backend retirement or CI policy claim"
+      },
+      "auth_lifecycle_stage_review_b109": {
+        "path": "/private/tmp/rudder-local-account-unit-20261017/auth-lifecycle-stage-review-b109.json",
+        "sha256": "6efc5c008baad2ae513e05046be3541f4fd7ff64c377a6fbb6a1df469805a6cd",
+        "verdict": "reject",
+        "blocker": "Rust offline nonce redemption key differs from existing Node durable key; cross-version replay possible",
+        "repair": "assigned source-only fix and public-route seeded Node-format regression; no acceptance claim",
+        "parent_reconciliation": "P1 finding contradicted exact b109 source with identical reviewer hash: existing replay_jti includes verified.jti. Parent and test author independently confirmed; reviewer correction requested. Preserve original rejected receipt; do not treat it as an actual production bug.",
+        "superseding_correction": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-lifecycle-stage-review-b109-correction.json",
+          "sha256": "8b873a4b5e643f16cb340e8c941dceef2e514b143258e62ce8d4f98925654bc8"
+        },
+        "original_receipt_integrity": "Reviewer overwrote original rejected receipt in place. Original full text remains in current tool transcript; original file bytes were not recovered. Correction is now separately stored, original path is a tombstone. Do not claim original SHA resolves to current file."
+      },
+      "migration_remote_exit_4607": {
+        "path": "/private/tmp/rudder-local-account-unit-20261017/migration-remote-exit-fix.json",
+        "sha256": "0d7fe4ab41877be642ebfaaf4100079c05c809f0d3bdf9d2fe60323316872ef5",
+        "head": "46074176ef336ec1808d685feb5b97b3d6eee1c9",
+        "status": "independent source-stage review running; no compile/runtime acceptance",
+        "publication": "local checkpoint only, clean; not pushed",
+        "stage_review": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-remote-exit-stage-review-4607.json",
+          "sha256": "7b0418258eb1e28ef7ee0739908d626e63cc600a6d1aabb51353b98225e7e7a2",
+          "verdict": "accept source stage only"
+        },
+        "author_checks": {
+          "path": "/private/tmp/rudder-migration-4607-author-checks/receipt.json",
+          "sha256": "052a899378ada3c2eb71cb4f4455ddb692e5c00abd58efe4c6254d30f0335027",
+          "verdict": "FAIL cargo check all-targets; new postgres_apply.rs561 tokio::spawn Send lifetime errors",
+          "no_pg_started": true,
+          "repair": "original author assigned narrow compile fix; one 2-job Cargo check lease; runtime acceptance pending"
+        }
+      },
+      "auth_lifecycle_replay_regression_df6b": {
+        "head": "df6b5eb0149538676c29a006c227026d8152c935",
+        "receipt": "/private/tmp/rudder-local-account-unit-20261017/auth-offline-replay-compat-fix.json",
+        "sha256": "6385b034c1e6f7f32311d536eb41bb59e4fe337840cef11a632c30cffb0c9bbf",
+        "scope": "test-only Node-format preconsumed proof public-route regression; production implementation already compatible",
+        "validation": "static only; Vitest/PostgreSQL not run; Desktop lease active",
+        "publication": "local checkpoint only"
+      },
+      "auth_lifecycle_node_transport_review": {
+        "candidate": "df6b5eb0149538676c29a006c227026d8152c935",
+        "status": "independent source review running; 9 Node files and 13 ratchet findings; no admission fabricated"
+      },
+      "session_pr316_current_ci_snapshot": {
+        "head": "367b44a0447f193d2d470a9e03eaec32da9c11df",
+        "remaining": "Ubuntu Verify and macOS Intel Native foundations in progress; Windows Native foundations now PASS",
+        "local_desktop": "v3 dev smoke PASS, packaged validation running; no terminal verdict",
+        "branch_protection": "active main-pr-only ruleset 22449828; classic branch-protection endpoint absent; all applicable checks still required by delivery plan"
+      },
+      "auth_identity_inventory_binding_ab218": {
+        "head": "ab218d30c4631f99ff7cf0cdd716522f9ba09535",
+        "parent": "df6b5eb0149538676c29a006c227026d8152c935",
+        "scope": "two documentation files; binds 9 Node records and one exact identity transport admission to genuine independent source review",
+        "review": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-lifecycle-node-transport-review-df6b.json",
+          "sha256": "ab60da3033ce172dcc83cd68f4eb677d25f30bcdfffc39a76c68e8e8bdbe19cd"
+        },
+        "inventory_check": "PASS",
+        "compare_367b": "PASS; 13 findings resolved without changing ratchet/source",
+        "publication": "local checkpoint only, no push",
+        "artifact_review": "pending independent binding review",
+        "empty_jwt_question": "parent source verification: Rust config accepts empty selected secret and native_agent_jwt::verify returns None, matching disabled Node JWT behavior; no production change needed",
+        "independent_artifact_review": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-identity-inventory-binding-review-ab218.json",
+          "sha256": "09139a13f0f0b059501f38e2355035d2aae5b459018b3c76ec49aac4a6bc8273",
+          "verdict": "accept artifact stage only"
+        },
+        "dependencies": "own pnpm frozen-lockfile ignore-scripts install PASS; no borrowed node_modules; source clean",
+        "lint": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-ab218-lint-disposition.json",
+          "sha256": "0d43c3613cde32b6eba802192d47ef90eb8db499ac8d1ca29322296aa4188a13"
+        },
+        "compile": "single-job cargo check core+binary alltargets running in own native/target; no PG/runtime yet"
+      },
+      "migration_author_checks_53b8": {
+        "head": "53b8a7eace80214737711e0ad8a4bbea07dc4458",
+        "production_content_equivalent_to": "46074176ef336ec1808d685feb5b97b3d6eee1c9",
+        "source_stage": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-recovery-barrier-stage-review-53b8.json",
+          "sha256": "a2944b577e311eda3478d8560bd246479403c0e8faa4dfae43b5f75fcdd4242f"
+        },
+        "original_author_run": {
+          "path": "/private/tmp/rudder-migration-2c56-author-checks/receipt.json",
+          "sha256": "7e5ddb540fab09390b7bf4363e476426aa18ef57bfad21d1d4387ae1f0e06c4f"
+        },
+        "original_result": "23lib/11binary units PASS; 2 PostgreSQL identity/backup cancel cases PASS; migration integration10/11 PASS, original exit101 retained",
+        "focused_retry": {
+          "path": "/private/tmp/rudder-migration-2c56-author-checks/recovery-barrier-53b8-receipt.json",
+          "sha256": "033eb8822ffd89ac8f0ea7e79c485451170006f2baa7f1a112765f1a6d0f57c3"
+        },
+        "retry_result": "sole failed recovery barrier case PASS after test-only future polling fix; exact PG stopped, pg_ctl status3",
+        "aggregate_claim": "all previously failed groups resolved by focused evidence; original whole command remains FAIL, no entire-suite green relabel",
+        "next_gate": "independent real Rust CLI bootstrap/upgrade/cancel/retry verification assigned",
+        "publication": "local checkpoint only"
+      },
+      "migration_cli_independent_assignment": {
+        "candidate": "53b8a7eace80214737711e0ad8a4bbea07dc4458",
+        "agent": "/root/migration_cli_acceptance_53b8",
+        "requested_model": "gpt-6-luna",
+        "requested_reasoning_effort": "xhigh",
+        "status": "preflight preparing",
+        "scope": "real Rust CLI on independent disposable PG18.4; no Node/default/full-backend or Windows claim",
+        "resource": "one-job Cargo build in own migration target; own PGDATA/port/process group"
+      },
+      "session_pr316_delivered_d041": {
+        "path": "/private/tmp/rudder-local-account-unit-20261017/pr316-protected-merge-d041.json",
+        "sha256": "41172dedb3ac14fdc72fd66164d1ca8c301cc6a2c4ccaea30fb2081d077ad2bd",
+        "state": "MERGED",
+        "sha": "d0410bab3f4a88af04351ebc4c447824b94e87e8",
+        "tree": "2f9066bd3eca41f5b45766be76900f10b2c5dd8e",
+        "review": "accept",
+        "ci": "21 SUCCESS, 1 SKIPPED",
+        "acceptance": "17/17 PASS; exact source/build equivalence",
+        "desktop": "individual gates accepted by composed evidence; original full command FAIL retained",
+        "deployment": "not performed"
+      },
+      "auth_f662_author_checks": {
+        "candidate": "f66232b9be258913276d7ea8c0fd82b02fdfd399",
+        "rust": "177 PASS,4ignored",
+        "node_auth_unit": "5files/87testsPASS",
+        "repository_typecheck": "PASS",
+        "repository_build": "PASS",
+        "lint": "19 inherited findings; same bytes as base/main",
+        "public_workflow": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-f662-public-workflow-pg184.json",
+          "sha256": "83b544044e78c64362f340cbdbc0d7e3917826a3d5067213512cd40f9602bdb9",
+          "result": "9/10; local lifecycle body did not run because external fixture has embedded=null",
+          "integrity_note": "workflow log SHA manually transcribed incorrectly; actual 5dcc66bb170936d98b681d710027f0e8b769873cdb6276847e5e7a1fa2ec41ad; author correction requested, original receipt preserved"
+        },
+        "next": "repair fixture binary selection without weakening assertions; only uncovered workflow rerun",
+        "publication": "not pushed"
+      },
+      "migration_cli_independent_53b8_terminal": {
+        "candidate": "53b8a7eace80214737711e0ad8a4bbea07dc4458",
+        "original": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-cli-independent-53b8.json",
+          "sha256": "1e702001819adbef2387a52e07b8ba7af5f31b3edcfd073e539b1537f199ad7a"
+        },
+        "supplement": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-cli-independent-53b8-unconfirmed-supplement.json",
+          "sha256": "d948fed2350c33fb5adce75119aae1c30305a7e693c6bb5f0393b87caf619bf3"
+        },
+        "verdict": "QUESTION",
+        "passed": "real CLI bootstrap/old upgrade/backup restore/long SQL cancel/backend disappearance/operator lock/exactly once retry",
+        "missing": "cancellation_cleanup_unconfirmed branch; control SIGSTOP still yielded confirmed operation_aborted",
+        "cleanup": "both leases released; exact PG stopped",
+        "next": "read-only first-principles analysis before further fault injection",
+        "windows": "not tested",
+        "publication": "not pushed"
+      },
+      "auth_candidate_ba851": {
+        "head": "ba85140c7fe1b54a495b130ecf4893deb881541a",
+        "tree": "46768f661e2adf70979f52e67a9a2ebbb06b6c70",
+        "rebase": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-main-rebase-ba851.json",
+          "sha256": "d76a5244312bdfd155b52dae9ab94f0a7288da0432ef547adabd37c17b61a45c"
+        },
+        "scope": "native JWT/key identity plus local account lifecycle; not full auth retirement",
+        "fixture_review": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-fixture-stage-review-4f10.json",
+          "sha256": "9481dff8cb853f0020d4c795a2ee29352e0eed800abb821d68059c7aca7889ea"
+        },
+        "lifecycle_author": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-f662-public-workflow-pg184-provider.json",
+          "sha256": "ee0719f948a25837daecc999752a3a19afd3ff2da560c32063469c8712f82dc5"
+        },
+        "lifecycle_author_result": "1 selected PASS;9 skipped; existing-row index-upgrade helper executed",
+        "prior_log_correction": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-f662-public-workflow-pg184-receipt-correction.json",
+          "sha256": "440b269b8175f94179264df01f8a64c1ea2d61a8a512963d83b8b5e389ce0da4"
+        },
+        "jwt_author": {
+          "path": "/private/tmp/rudder-auth-f662-jwt-workflow-author/receipt.json",
+          "sha256": "2a2f53a9c551f64a20c5c2b118ae34320f7d8837c0c8f5fdfdb0599bef174c4b"
+        },
+        "jwt_author_result": "21/21 PASS real public Rust ingress",
+        "dependency_preflight": {
+          "path": "/private/tmp/rudder-auth-vendor-preflight-dve7axnh/receipt.json",
+          "sha256": "22b8f904ba4e3a7af897dc2327bd91b677780c3df4dbd17bd0807bdadf712153"
+        },
+        "full_test_baseline": "running once with own HOME/TMP and hydrated package; no result yet",
+        "independent_acceptance": "readiness preparing; stage rebind pending",
+        "publication": "not pushed"
+      },
+      "migration_unconfirmed_diagnosis_53b8": {
+        "receipt": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-unconfirmed-analysis-53b8.json",
+          "sha256": "2f844b9bb1861863325980c88f7d766d08a22821f8802372b0673c39853528a4"
+        },
+        "finding": "stopped control session can be replaced by pool reconnect; old QUESTION unchanged",
+        "next": "deny reconnect on disposable non-superuser role plus exact stopped control backend; wait for main integration candidate first"
+      },
+      "auth_ba851_independent_runtime_assignment": {
+        "candidate": "ba85140c7fe1b54a495b130ecf4893deb881541a",
+        "tree": "46768f661e2adf70979f52e67a9a2ebbb06b6c70",
+        "stage": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-stage-rebind-ba851.json",
+          "sha256": "9d6525e2a089de533d3a7d56015152af289b4d39932dbccda314c4a4e5f63478"
+        },
+        "readiness": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-independent-acceptance-readiness-ba851.json",
+          "sha256": "7f797347a8164eb9ee6d52e61ea1f247c4172bd2e21c45bdf6f6e7dc8b478cd9"
+        },
+        "readiness_reference_correction": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-stage-rebind-ba851-readiness-correction.json",
+          "sha256": "e83986f9143a1d7b691b9b5eb5d4841a7a041d24ddb8ef82561de23955cbe4c7"
+        },
+        "lease": "auth-ba851-independent-pg184-20261017T0522Z",
+        "runtime_root": "/private/tmp/rudder-auth-independent-ba851-20261017",
+        "status": "running; no terminal acceptance yet",
+        "scope": "seven public JWT/local lifecycle criteria; controlled Identity/NodeWS fixtures disclosed",
+        "parallel_baseline": "own other TMP/HOME; pnpm test:run still running with no observed failures at update"
+      },
+      "migration_c72d_integration": {
+        "candidate": "c72d30f1ad6916b08267bd1bbcf007558b0d8da4",
+        "base": "d0410bab3f4a88af04351ebc4c447824b94e87e8",
+        "previous_branch_preserved": "codex/rust-postgres-lifecycle-owner-20261016 at53b8a7eace80214737711e0ad8a4bbea07dc4458",
+        "branch": "codex/rust-lifecycle-main-integration-20261017",
+        "migration_production_prefix": "apply/operator/Postgres lifecycle/TS migration transport byte equivalent to53b; new main startup API composition reviewed separately",
+        "catalog": "main0179 index retained;180journal entries plus legacy0055/0128",
+        "author_check": {
+          "path": "/private/tmp/rudder-migration-c72d-author-checks/receipt.json",
+          "sha256": "589e21a8a80681505fa0847d5a9782a173a041a54e8077d318fd6e5f862d933b"
+        },
+        "stage": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-main-integration-stage-review-c72d.json",
+          "sha256": "3dc95557a75e769c622809ef9f2b5c1805a4cc90c86686ef10558b768230b3b3"
+        },
+        "verdict": "REJECT P1 standalone startup shutdown drops active migration future without token cancellation/cleanup confirmation; Node-managed modeoff path unaffected",
+        "repair": "author implementing startup token+await same future; unconfirmed cleanup must nonzero",
+        "next_acceptance": "independent verifier preparation includes real SIGTERM/SIGINT active startup, no-ready/cleanup/atomicity/retry and combined success receipt, plus actual CLI cleanup_unconfirmed with reconnect denied",
+        "publication": "not pushed"
+      },
+      "current_state_as_of_2026_10_17_0527Z": {
+        "source_delivered": [
+          "PR316 merged d041; existing-session HTTP authority"
+        ],
+        "auth": "ba851 source-stage accepted; independent runtime and full baseline in progress; Desktop pending",
+        "migration": "c72d compilation passes but source stage rejects standalone shutdown path; repair in progress",
+        "backend_retirement_complete": false,
+        "deployment": "none"
+      },
+      "auth_73fa_candidate": {
+        "head": "73fa84370f12c818e8f41ba05a3fb6241c97dc57",
+        "tree": "bfebe68efbf904767c77ba477dd12fbc4491f1db",
+        "parent": "ba85140c7fe1b54a495b130ecf4893deb881541a",
+        "scope": "six test-only identity/JWT environment lines in runtime binding public workflow; production unchanged",
+        "focused_public_binding": {
+          "path": "/private/tmp/rudder-auth-runtime-binding-fixture-final-v2/receipt.json",
+          "sha256": "2596defa62c8a507bb37772be31a4e642234d0a352658ec86ecb2615d91b820f"
+        },
+        "server_typecheck": {
+          "path": "/private/tmp/rudder-auth-runtime-binding-fixture-static/receipt.json",
+          "sha256": "9f37c07d7eca75b5258b3f6788594c6c010e064790bd59a724725367329b85ce"
+        },
+        "static_limit": "Static receipt check0 passes typecheck; check1 ESLint command unavailable (repository uses scripts/lint-imports.mjs); no imports changed. Previous full lint19 inherited.",
+        "full_test_original": {
+          "path": "/private/tmp/rudder-auth-4f10-full-baseline/receipt.json",
+          "sha256": "14d0ebf3c2cf7749faa13b1dfe83ecb0016894ecb4061694fd0d564087426905"
+        },
+        "baseline_disposition": "Original pnpm test:run FAIL retained. Failed runtime-binding group now7PASS; missing explicit watcher artifact remedied3PASS; omitted Electron postinstall remedied6PASS; separately runtime-packaging18PASS. No claim original full command became green.",
+        "watcher_focused": {
+          "path": "/private/tmp/rudder-auth-ba851-manifest-focused/receipt.json",
+          "sha256": "3a1c9d68cd63fb60d3e2e42dddff4e77c37401dbce5cbae6120b58d5a98f093e"
+        },
+        "desktop_tests_focused": {
+          "path": "/private/tmp/rudder-auth-ba851-desktop-focused/receipt.json",
+          "sha256": "fdb36bf479e574176686bbdbaef4b088c1759b0ce685ec690f44461275fa80f3"
+        },
+        "runtime_packaging": {
+          "path": "/private/tmp/rudder-auth-ba851-runtime-packaging/receipt.json",
+          "sha256": "d07110f8ac7d937d134f8f612d49881833b1b07a500210e4136aa7bb0acb868c"
+        },
+        "publication": "not pushed; protected PR pending independent Desktop and final review",
+        "stage": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-stage-rebind-73fa-review.json",
+          "sha256": "e58e53d32b91ada47457011d980a941e44ab7be195eb984bf8d9ccfd131b472a"
+        }
+      },
+      "auth_ba851_independent_terminal": {
+        "verdict": "PASS",
+        "criteria": "61/61",
+        "receipt": {
+          "path": "/private/tmp/rudder-auth-independent-ba851-20261017/auth-independent-acceptance-ba851-final.json",
+          "sha256": "08a4b39eea20ba212bd37018468b7a68a2cd0ab5929e3e303aedeafb5b0a99a8"
+        },
+        "primary": {
+          "path": "/private/tmp/rudder-auth-independent-ba851-20261017/attempt-8/auth-independent-acceptance-ba851-run10.json",
+          "sha256": "5698ff07d10f8c7ad04fb730ababf0ccea2343eb254c5e3e2e65adf2f78ceb29"
+        },
+        "source_rebind_to_73fa": {
+          "path": "/private/tmp/rudder-auth-independent-ba851-20261017/auth-independent-acceptance-ba851-rebind-73fa.json",
+          "sha256": "1a90305e8390a3608efd090a063999275705346693cb98f9efd8386976eb914e"
+        },
+        "limits": [
+          "controlled Identity verification fixture; hosted Identity/OAuth not accepted",
+          "Node WebSocket transport fixture; production private Node WS authorization not retired",
+          "dynamic offline policy and persisted offline grant epoch remain debt",
+          "Desktop and full Node retirement not covered"
+        ],
+        "cleanup": "exact owned PostgreSQL and native processes stopped; no Node fallback HTTP requests",
+        "failure_integrity": "Historical failed/QUESTION harness attempts retained; public session projection/terminated-agent/admin override expectations corrected against Node and Rust contracts; WS listener armed before signout."
+      },
+      "auth_desktop_73fa_assignment": {
+        "state": "formal command active after exact source-stage ACCEPT and fresh own-cache/browser/PG preflight",
+        "lease": {
+          "path": "/private/tmp/rudder-auth-ba851-desktop/execution-lease.json",
+          "sha256": "3c4ba633000386849a741bf4c4d230316ef4d9bd29d10b31f0ed5d90dab8a8dc"
+        },
+        "wrapper": {
+          "path": "/private/tmp/rudder-auth-ba851-desktop/run-desktop-verify.py",
+          "sha256": "4257c2e086db9709c036a8fc6cddbc0d476212224cdb29baf7b9b1aef926828f"
+        },
+        "command": "pnpm desktop:verify",
+        "isolation": "separate desktop lease/root/HOME/TMP/RUDDER_HOME, complete CoW PG18.4 cache; no PG BIN/SKIP selectors; offline Cargo jobs1; existing original preflight immutable"
+      },
+      "migration_0b8b_source": {
+        "head": "0b8b380d3954dcb61e9f055822a8d323919c6b51",
+        "tree": "218793e2eaa60d5f3bbb327239a8b2a58596cc29",
+        "base": "d0410bab3f4a88af04351ebc4c447824b94e87e8",
+        "scope": "standalone startup migration cancellation token + bounded same-future drain; fail nonzero on unconfirmed cleanup; exact PG remote proof",
+        "unit_tests": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-0b8b-cancel-author-unit-tests.json",
+          "sha256": "74a9197ee2084a2c04652b09f9a8856169ef962d9dcde78015319adc86bcf4a4"
+        },
+        "stage": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-startup-cancel-stage-review-0b8b.json",
+          "sha256": "70f88dc0b0de3afdd78b1cb49a55b44d2c7ecdb5caa732dce1b8dc5484049a03"
+        },
+        "stage_verdict": "accept",
+        "unit_results": "7PASS; no separate timeout unit claimed",
+        "runtime": "independent0b8b frozen-build realPG SIGTERM/SIGINT/preidentity/unconfirmed acceptance in progress",
+        "publication": "none; previous c72d stage REJECT retained"
+      },
+      "current_state_as_of_latest": {
+        "recorded_utc": "2026-10-17T08:20:47.270296+00:00",
+        "source_delivered": "PR316 merged at d041. Duplicate PR314/317/319/320 closed with branches retained. PR323 remains draft.",
+        "auth": "64857 Host parser/readiness repair checkpoint awaiting exact reround stage review; no verifier lease or PR.",
+        "migration": "223ac owner SIGTERM repair stage accepted; rebase onto current auth then composed runtime acceptance required, e67 C3 FAIL preserved.",
+        "agent_core": "5bf Agent roster/permission slice rebased onto auth; focused source checks PASS, independent review and real acceptance pending.",
+        "backend_retirement_complete": false,
+        "deployment": "not performed"
+      },
+      "pr317_319_320_superseded_closure": {
+        "closed": [
+          317,
+          319,
+          320
+        ],
+        "replacement": 323,
+        "replacement_head": "586cf89ba46e9580298c42d5f47a3abceaf0d3b4",
+        "exact_stable_patch_matches": {
+          "317": "5/5",
+          "319": "2/2",
+          "320": "1/1"
+        },
+        "receipt": {
+          "path": "/private/tmp/rudder-rust-open-pr-audit-20261017/closure-receipt-317-319-320.json",
+          "sha256": "f05da03dfe2fd20e623bc24c64a2cad407e6d822f693eef293648f41aa085b5a"
+        },
+        "branches_deleted": false,
+        "review": "Independent auth_final_review verified patch map, live heads and retained historical check/review records; no unique implementation in closed PRs.",
+        "remaining": {
+          "314": "3/8 matches; five unique differences retained",
+          "323": "still draft/incomplete; no Native Chat acceptance or main merge claim"
+        }
+      },
+      "migration_0b8b_independent_terminal": {
+        "verdict": "PASS",
+        "scope": "six exact-candidate macOS/PostgreSQL criteria only; not phase3 completion",
+        "receipt": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-independent-0b8b-terminal.json",
+          "sha256": "7a31467ad56ada3bdb7f120240d7be0509c276c467d0e08e2dae13baffb3b947"
+        },
+        "cargo_metadata_correction": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/migration-independent-0b8b-terminal-correction-cargo-version.json",
+          "sha256": "4b773fc8321e4767ef377756e555bd6d7c84d21e820c6f749d7c0c205c249eea"
+        },
+        "root_reconciliation": "Read complete terminal; all33 referenced evidence hashes verified. Original incorrect cargoVersion0.7.24 preserved; append correction identifies it as Rudder crate version, actual build-time Cargo CLI not proven by old log.",
+        "next": "Rebase integration onto final auth main after merge, preserving0b8b; run one integrated full repository/Desktop baseline and exact required platformCI; final independent review.",
+        "limits": [
+          "full Cargo/repo baseline pending",
+          "packaged Desktop pending",
+          "Windows target/runtime CI pending"
+        ],
+        "cleanup": {
+          "ownedClusterStopped": true,
+          "pgdataRetained": true,
+          "frozenArtifactsNotRunning": true,
+          "trackedSourceTreeUnchanged": true,
+          "sharedOrUserPostgresTouched": false,
+          "sharedCacheTouched": false
+        }
+      },
+      "auth_desktop_73fa_terminal": {
+        "command_result": "FAIL exit1 preserved",
+        "scope": "development smoke, dist/package validation and packaged Computer Use passed; packaged account gate failed before first BrowserWindow",
+        "execution": {
+          "path": "/private/tmp/rudder-auth-ba851-desktop/desktop-verify-execution.json",
+          "sha256": "69305f46493f860ced7639b6a811ed2aa2105d3c2c4ee3f46be5d81f4410d0fb"
+        },
+        "diagnosis": {
+          "path": "/private/tmp/rudder-auth-ba851-desktop/account-gate-readonly-diagnosis-73fa.json",
+          "sha256": "37116624eb3168fb3244dab3751d70b01041e46b39cfe5a7b125032602e71b34"
+        },
+        "root_cause": "Confirmed native main-thread Keychain authorization wait at credentialVault.status, before first BrowserWindow and before any Rust startup. Original full command remainsFAIL.",
+        "publication": "blocked final gate; no push/PR for auth yet",
+        "confirmed_diagnostic": {
+          "path": "/private/tmp/rudder-auth-ba851-desktop/diagnostic-keychain-73fa/account-gate-native-sample-73fa.json",
+          "sha256": "3f070b67457d8ce1c6ecc05522cf5fe42b2f99e713f985f8fb6f6dcf9b0a75c5"
+        },
+        "post_run_ui_contamination": {
+          "path": "/private/tmp/rudder-auth-ba851-desktop/diagnostic-keychain-73fa/root-ui-observation-contamination.json",
+          "sha256": "05747ea7ef91a11a76c2549691e418a43fc380264031773b31580f4525e50ffe"
+        },
+        "repair_design": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-desktop-keychain-storage-design-review-v2.json",
+          "sha256": "221f55ac69e50c90cd587ac60a319befd2b738b7c522dfe7ef0a5792f5540538"
+        },
+        "repair_scope": "Explicit opt-in marker-gated Darwin memory-only fixture; independent auth bypass stays false; default native keychain/crypto-restart checks remain required CI. No local native-vault or no-dialog claim."
+      },
+      "auth_native_ignored_pg_contracts": {
+        "receipt": {
+          "path": "/private/tmp/rudder-auth-73fa-ignored-postgres/receipt.json",
+          "sha256": "5d8fff51259344c2a60f28c550ae01425a8454feb0b5d0cfce34fc03bbd393d5"
+        },
+        "result": "4/4 exact existing ignored cases PASS on fresh PG18.4; author supplement via frozen same-source coretest binary, no rebuild",
+        "ci_supplement": {
+          "path": "/private/tmp/rudder-auth-ci-evidence-proposal-20261017/static-validation-v2.json",
+          "sha256": "279332e97e3273bc98adbf20eaa49b6e772fd0c104310981a7e6142a0ab16a5e"
+        },
+        "scope": "Existing authority workflow plus fourth cookie test, exact-test guard, source/evidence and auth/ingress triggers; no duplicate workflow. Full fake-loop validations reject earlier command failure despite later passes and zero-selected false green."
+      },
+      "migration_auth_backend_integration": {
+        "state": "clean composed checkpoint; independent source review pending",
+        "target_backend_base": "73fa84370f12c818e8f41ba05a3fb6241c97dc57",
+        "reason": "Auth backend bytes stable while independent Desktop fixture repair progresses; combine backend once before whole repository/packaged baseline",
+        "source_owner": "/root/migration_auth_integration",
+        "preserve": "old0b8b branch/artifacts/PGDATA; no publication before new review/verifier/CI gates",
+        "head": "373f3a5e68af1360b7568240bf7c96245a72301f",
+        "tree": "39a31c221a5a0ca5adc78757dc5917beeeadbe2b",
+        "branch": "codex/rust-lifecycle-auth-integration-20261017",
+        "receipt": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-migration-integration-373f-branch-receipt/receipt.json",
+          "sha256": "3c124503273fe12bad8f1c4d1b37640e9017e0f145dd6365bf3459397242a4a6"
+        },
+        "root_reconciliation": "All8 extracted stdout log hashes and22 pairs of Git source blobs independently verified; 19 ratchet findings remain FAILED. Old main-integration and0b8b backup branch refs restored/preserved.",
+        "checks": "fmt, all-targets Cargo check,3 startup integration tests,27 migration units plus7 operator cases, inventory generation/check and recursive typecheck PASS;2 PG cases ignored in this author run. Prior0b8b independent PG workflow remains separately scoped.",
+        "remaining": "newly composed index/bridge/runtime/db adapters require exact independent review; then truthful metadata, final auth-base update, one integrated baseline/runtime and protected PR/CI"
+      },
+      "auth_595_checkpoint_and_stage": {
+        "head": "5952972d5d364a9a9c3cc03617c097ebf06abfaa",
+        "tree": "228700c2e8b5d0edc125f1c7d9eb00db7d784216",
+        "scope": "Desktop memory-storage smoke fixture separation, exact ignored-PG CI guard loop, generated inventory; no native backend behavior changed from73fa.",
+        "author": {
+          "path": "/private/tmp/rudder-auth-desktop-storage-author-20261017/author-receipt.json",
+          "sha256": "bd809d74d39e71ac72fa8c7deb77ee40eadb400f1d3b9a1080bed5ded6cc636c"
+        },
+        "stage": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-desktop-storage-implementation-stage-review.json",
+          "sha256": "515efeac6c09471a1783aed8472e73702a172736db6354cf80caae03c9373451"
+        },
+        "stage_verdict": "needs more evidence",
+        "finding": "Current inventory schema cannot truthfully describe retained Electron clients. Add a narrowly scoped retained_client role with meaningful validator regression tests; do not call client credential storage Rust-owned.",
+        "packaged_verification": "not started; new independent preparation only pending stage accept",
+        "publication": "local checkpoint only; no push or PR"
+      },
+      "next_public_agent_core_slice": {
+        "map": {
+          "path": "/private/tmp/rudder-agent-api-cutover-map-20261017/map.json",
+          "sha256": "d3121c82193b28450c74482b7dcaba5879ded3b7f1d0b7da5c5bbda8ae99b01b"
+        },
+        "source": "5952972d5d364a9a9c3cc03617c097ebf06abfaa",
+        "routes": [
+          "GET /api/orgs/:orgId/agents",
+          "PATCH /api/agents/:id/permissions"
+        ],
+        "reusable_authority": "Existing Rust D1 list and transactional permissions implementation; public native-identity adapter and exact Express retirement still required.",
+        "status": "mapped only; no implementation or acceptance claim",
+        "resource_gap": "Organization resources create and some legacy-owned writes still Node-owned; cannot unmount whole resource domain.",
+        "independent_design_followup": {
+          "worktree": "/Users/zeeland/.codex/worktrees/rust-pr264-integration-20261016/rudder-oss",
+          "branch": "codex/rust-public-agent-core-20261017",
+          "base": "939d452fe97f5f01e340ce359eac02ba02bed80a",
+          "reuse": "ReusedcleancompletedCLIattachedcheckout; old862bCLIbranchpreserved; authfrozenworktreeuntouched.",
+          "scope": "Correcthostcontextmapping andchoose narrow nativeidentity-to-D1trustedadapter beforeimplementation; no arbitraryuncheckedactorconstructor.",
+          "initial_map_correction": "CurrentpermissionsNodeadapterpassesinstructionsHost; initialorganizationAgentsRootdescriptionisincomplete. Followupmustcoverdetailresponse/filesystemeffects."
+        },
+        "corrected_map": {
+          "path": "/private/tmp/rudder-agent-api-cutover-map-20261017/corrected-native-agent-core-appendix.json",
+          "sha256": "c9db2e6c438dede693bd9bbb160a15c41027257d29718f037e7dddb60b46f052"
+        },
+        "implementation": "AssignedLuna/xhighinreusedclean939worktree. Rust-ownedEnvelopeverificationseam, Rusthostpathresolver, typednativeprincipalproofwithsame-transactionfreshsession/JWTrecheckafterwrite-lock waits; exact2Expressroute/shadowretirement. Existingoutbox/audit/D1businessreused. No uncheckedpublicactorconstructor; firstsource/focusedchecks only."
+      },
+      "auth_939_frozen_packaged_candidate": {
+        "head": "939d452fe97f5f01e340ce359eac02ba02bed80a",
+        "tree": "65529cc81bf8bbc25cf38c016ce0007d93921859",
+        "branch": "codex/rust-auth-lifecycle-integration-20261017",
+        "clean": true,
+        "source_stage": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-desktop-storage-implementation-stage-review-accepted.json",
+          "sha256": "85256e2c0741d990b1662f00acbdd0648cd098f0af50a94386131e335edd364e"
+        },
+        "stage_rebind": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-desktop-storage-stage-rebind-939.json",
+          "sha256": "06266cd3f4676f31508bf49a81b9758d1301dc817d3d9428ffd712e01689ba37"
+        },
+        "inventory_policy_author": {
+          "path": "/private/tmp/rudder-auth-retained-client-policy-20261017/receipt.json",
+          "sha256": "1d58aa52e8d3cc4ff87e603f3d60891ce6fce0d4d5d01acfa44d1b57a703ae9c"
+        },
+        "stage_verdict": "accept",
+        "policy_scope": "Exact3 pre-existing Electron identity clients only; retained_client denies invented Rust storage ownership/new backend responsibility.28focusedvalidator cases PASS.3independentreviewedrecords appliedunchanged; archivedoriginalNMEandACCEPTreceipts exactbytes.",
+        "inventory_check": "910files/4606surfaces/10unknownPASS; compare d041PASS",
+        "packaged_lease": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/execution-lease-939.json",
+          "sha256": "3453e210038d751b84d1a8d726d3fb6259eb9593bc35ab2a0156580779ef64ae"
+        },
+        "packaged_packet": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/acceptance-packet-939.json",
+          "sha256": "4e3bf46ddb5db70d8c5a9c3cf7ffec37966ad825fc82ff073b729a95854e0529"
+        },
+        "artifact_manifest": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/frozen-native-manifest.json",
+          "sha256": "e9b86d500cc5ae89458172bbcafbd5a98945607eb7d44a03f80db3444a7d7df4"
+        },
+        "artifact_drift": "Preflight found native/target/debug+release, desktop/.packaged and oldRudder.appresources absent; cause unconfirmed. Existingserverfoundationf4 preserved/copied0555. Officialnewbuild includingCargo authorized once; mustfreezeallnewruntimeartifacts before acceptance. Original957HTTPartifactand61resultseparatelyscoped.",
+        "resource_lock": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/worktree-preservation-lock.json",
+          "sha256": "00a5aadf67407bc1cf68d4c910f289d85a0656a16bb60f7f6b6c8e57b90101f7"
+        },
+        "runtime_state": "V2executing:serverdev/nativeprofile1m55s andUIprepcompleted, releaseCargoactive; no939runtimeyet.",
+        "publication": "localcheckpointonly, no push or PR",
+        "dependency_recovery": "Verifierfoundroot+desktopnode_modulesalsoabsent. Matching-lockfile1.6GBstoreCoWcopiedfromownedretainedsessioncheckout; normalfrozen-lockfileinstallPASS1352reused/0downloaded. Ownverified37.10.3ElectronZIPseededbeforeofficialpostinstall. Sourcesandlockfileunchanged939. Causeofpriorcacheevictionunconfirmed.",
+        "app_attachment": "Purpose-builtattach_worktree returnedcheckoutnotmanaged; noattachmentcreated. ExistingGitworktreepreservationlock+externallease retained; no sourcecheckoutreplacement ordataremoval.",
+        "packaged_packet_v2": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/acceptance-packet-939-v2.json",
+          "sha256": "8268e4de930803d6a94a0a600d7004187a26e49197c93d20bbc30f68a5a5fc29"
+        },
+        "packaged_lease_v2": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/execution-lease-939-v2.json",
+          "sha256": "cc6573fafa69a27d564b593bb2212c52d537d6cd30cb2096a4235fef1ed1e1d9"
+        },
+        "readiness_v1": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/receipts/readiness-939.json",
+          "sha256": "42fae3e25aa8c1456ef855a79de99f8bb3ed8e04a10433481b58afb3442bc0b9"
+        },
+        "readiness_v2": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/receipts/readiness-939-standalone-build-v2.json",
+          "sha256": "c58ac91505d73614b005d908b23af55d6c6f585e34672e5c3479b5c67c986fdb"
+        },
+        "v1_build_failure": "workspace-builtflagincorrectlyassumedserver/dependencydistwerepresent; officialstage-serverfailedbeforeCargo/runtime. Driverthenreadmissingpackagepayloadandfailedtoterminatewithreceipt; verifierpreservingbothfailuresandfixingfailure-safeledger.",
+        "v2_correction": "SupportedstandaloneDesktopbuild(internalserverdeps/UI/native/appstages), expandedknown generated-outputscope, oldf4frozenreferenceNOTrequiredbuiltequality; newwholeappCoWfreeze+manifestbeforeactualruntime. NoDirectoryabsencepermissiongate.",
+        "content_equivalence_root": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-native-content-equivalence-939-root.json",
+          "sha256": "4bd46030f512240bfa835be0eb83ab5b212995ea71f96776253f5e48c9018125"
+        }
+      },
+      "migration_373f_composition_stage": {
+        "receipt": {
+          "path": "/private/tmp/rudder-migration-composition-review-20261017/receipt.json",
+          "sha256": "db7c767de69b886dc3b6ffda41a7666fd9a0c17390fd6839b203a13681963654"
+        },
+        "verdict": "reject",
+        "finding": "P1ownerexitbeforelisten can dispose startup resources whilestartupcontinues andlateHTTPbindescapes cachedpre-listenno-opdrain.",
+        "repair_owner": "/root/migration_auth_integration",
+        "repair_scope": "Abort startup onownerexit; makependinglisten cleanup race-safe; actualchild/localHTTPregression pluspostlistendrain. Focusedchecks only before integratedbaseline.",
+        "metadata": "19ratchetfindings stillFAILED; no proposedreviewrecordapplied to rejected candidate.",
+        "source_equivalence": "22migrationfilepairs remain identical0b8b; prior0b runtimePASSnotcompositionproof.",
+        "rollout_prefix_correction": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/auth-migration-integration-373f-branch-receipt/append-only-rollout-hash-clarification.json",
+          "sha256": "cabb20bb3cd9561a8bc3d51e23a76205e9d18a37e84da9b5a689bfcb961560a8"
+        }
+      },
+      "migration_379e_startup_race_repair": {
+        "head": "379e10f1485eda9ea8fb79f5b9195123d8546245",
+        "tree": "70c312fe1e6e1f8b8a784bbaa6cf0e0cdbd7604d",
+        "parent": "373f3a5e68af1360b7568240bf7c96245a72301f",
+        "receipt": {
+          "path": "/private/tmp/rudder-migration-composition-review-20261017/owner-exit-race-fix-379e10f1/receipt.json",
+          "sha256": "5944ae2d8b7ec6e561754c8c758b3f2f1ba948a4971eb3cb747115094d1cfb09"
+        },
+        "root_integrity": "6rawloghashes+3Gitblobhashesallverified",
+        "author_checks": "4focusedactualchild/HTTPcases, server typecheck andlintchangedPASS; noPG/Rudderruntime",
+        "independent_source_followup": "ReviewerreportsP1closedat379e; terminalstageNMEforinventorypolicyandrecordgapsbeingprepared. Noacceptance/publicationclaim."
+      },
+      "pr314_superseded_closure": {
+        "receipt": {
+          "path": "/private/tmp/rudder-rust-open-pr-audit-20261017/closure-receipt-314.json",
+          "sha256": "4b85e8f1d3c3711a910bf9213f3a4312eeb5e7b4b22185789982b6db2ebd56cc"
+        },
+        "state": "CLOSED",
+        "source_head": "24af73f2c163ee7303b5808fbe942f7352289056",
+        "replacement_head": "586cf89ba46e9580298c42d5f47a3abceaf0d3b4",
+        "reason": "Fullrange-diffmaps8/8:6equivalent,2modified. First3counterpartsalreadyancestorsofd041; oneadmissionrefactordelta preservesPR312BrokenPipefix/regressions andotherdelta inventorymetadata only. Earlier3/8stablepatchsubsetanalysiswasincomplete, notlostcode.",
+        "comparison": {
+          "path": "/private/tmp/rudder-rust-open-pr-audit-20261017/pr314-unmatched-final-blob-comparison.json",
+          "sha256": "48786a7fce19af2b6f5d96270ffecfbbf429e147a1feaf4746ab0183e514c4ec"
+        },
+        "range_diff": {
+          "path": "/private/tmp/rudder-rust-open-pr-audit-20261017/pr314-vs323-range-diff.txt",
+          "sha256": "cd2d814a064712f50dfbdfd7bbfa4341b40e5e0289214d2f5b4472379c7bde98"
+        },
+        "closure_review": "Rootcomparativereview, notindependentproductacceptance",
+        "replacement_state": "PR323open draft, nofullfeaturecompletionclaim",
+        "branches_deleted": false
+      },
+      "authority_dynamic_surface_clarification": {
+        "audit": {
+          "path": "/private/tmp/rudder-local-account-unit-20261017/authority-dynamic-surface-semantic-audit-939.json",
+          "sha256": "39fb6cd83726ddf24b2bc3d2a8a5b524670a730055ef0924e59a6ec6bbba63f9"
+        },
+        "structural_unknowns": 10,
+        "distinct_known_source_files": 4,
+        "clarification": "10dynamic scanner findings are NOT10unknownsourcefiles. CLIbrowseractionloops, MessengerSQLhelpercalls, SPAVitefallbacks, Hostguard/actormiddlewareandaccessroutermount aremanuallyclassifiedNodecapabilities; structuralfindingsretained andstillblockcompletion. No checkerwaiver/retirementclaim."
+      },
+      "migration_9bdd_policy_repair": {
+        "recorded_utc": "2026-10-17T07:10:08.079852+00:00",
+        "head": "9bddca9480d7e1a9fefd5e6c69a9ee00cc5b97de",
+        "tree": "16e18185dc08bb8a7fd8b24beeec1a29344ace55",
+        "base": "939d452fe97f5f01e340ce359eac02ba02bed80a",
+        "author_receipt": {
+          "path": "/private/tmp/rudder-migration-auth-integration-20261017/integration-repair-receipt.json",
+          "sha256": "5380c02db9361ccfbae0bfe2c3d8e8d3f479900d6e46c17d8d4df324191bb8b1"
+        },
+        "root_integrity": {
+          "path": "/private/tmp/rudder-migration-auth-integration-20261017/root-integrity-and-full-sha-clarification.json",
+          "sha256": "501339ee868cebc2c0af1405cf5a3f94636b260924e3e156ea55260462ca89b1"
+        },
+        "author_checks": "35 inventory rule tests and 30 startup/lifecycle/migration tests passed; server/db types and changed import lint passed. Root verified 11 log hashes and 48 Git blob hashes.",
+        "review_status": "Independent source stage review running. Five explicit pending-review comparator failures remain; no approval invented.",
+        "scope": "Dropped unrelated Desktop update coalescing. Exact-path PostgreSQL adapter and code-pinned lifecycle handoff policies. Existing owner-exit/listen race repair retained.",
+        "runtime_acceptance": "Not yet executed for this composed auth/migration candidate. Older 0b8b PASS remains limited to its original candidate.",
+        "publication": "Local only; no push or PR"
+      },
+      "auth_packaged_resume_dist_v3": {
+        "recorded_utc": "2026-10-17T07:10:08.079852+00:00",
+        "source": "939d452fe97f5f01e340ce359eac02ba02bed80a",
+        "v2_fail_receipt": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/receipts/packaged-storage-acceptance-939-standalone-build-v2.json",
+          "sha256": "240cc29e3c1991ef5007576bf999442642ece787d7dd321617d7dd0e61ab3069"
+        },
+        "failure": "Official standalone Desktop build and prune passed. External driver used repo root for dist; electron-builder requires desktop cwd. Original failure preserved.",
+        "recovery": "Resume at dist under existing lease; no repeat build/prune. Correct-cwd dist and both package validators passed; external whole-app manifest frozen before runtime.",
+        "current_state": "Packaged memory smoke FAIL: provider-Google launch timed out after 180 seconds before first window. Correct env/marker observed; exact cause not yet established. Short <=45-second copied-app diagnostic with debug stdio and native sampling in progress. Passing build/dist/validators are retained and will not replay."
+      },
+      "migration_e67_reviewed_checkpoint": {
+        "recorded_utc": "2026-10-17T07:14:49.799024+00:00",
+        "head": "e67df7720a084d9b8cfbb4d6c1648991587bf567",
+        "tree": "5c05b4187a57c22dbf5c8300cd961a9405a81b94",
+        "source_stage": {
+          "path": "/private/tmp/rudder-migration-composition-review-20261017/review-9bdd/receipt.json",
+          "sha256": "5f11c3fa702246ca5f90186fb77802f2d78cab5dc42b4525636bfeb99f72e42a"
+        },
+        "literal_clarification": {
+          "path": "/private/tmp/rudder-migration-composition-review-20261017/review-9bdd/clarification-native-owner-literal-20261017.json",
+          "sha256": "02f235e2c770f98879594f9f519df7beaa87009d48218cb2fc08c57befe8664a"
+        },
+        "checkpoint": {
+          "path": "/private/tmp/rudder-migration-auth-integration-20261017/root-reviewed-metadata-checkpoint.json",
+          "sha256": "28e6cb220b3c5bfe1937ddf07544e1a5b5b0119ab9337d6eec1aeaf700fb2e81"
+        },
+        "checks": {
+          "path": "/private/tmp/rudder-migration-auth-integration-20261017/root-metadata-final-checks.json",
+          "sha256": "c082baf4a5320f92a885517f6c4f42b29dd07d47cb0aae376b14eccb33e06041"
+        },
+        "intermediate_failure": {
+          "path": "/private/tmp/rudder-migration-auth-integration-20261017/root-metadata-proposal-first-check.json",
+          "sha256": "a526a0268c190ae58856d4908cc8463011decc9cf4421d6a9b0b6c56ccb25d73"
+        },
+        "source_changed": "No runtime source change from accepted 9bdd. Exact reviewed metadata and two policy references applied. Literal mismatch corrected under reviewer clarification.",
+        "status": "Clean local checkpoint. Inventory/check/compare/diff pass; exact stage identity rebind requested. Composed real runtime acceptance not yet run. No push/PR."
+      },
+      "execution_efficiency_guidance_2026_10_17": {
+        "recorded_utc": "2026-10-17T07:21:22.499850+00:00",
+        "path": "doc/engineering/DEVELOPING.md#parallel-verification-resources",
+        "status": "Earlier26-line section artifact accepted; added explicit per-run short canonical TMPDIR and unchanged-output reuse; updated artifact review required before publication.",
+        "rules": [
+          "Canonicalize macOS temporary paths before ownership comparison.",
+          "Isolate runtime homes, PGDATA, ports, logs, and one writer per build output; freeze and hash acceptance artifacts.",
+          "Cleanup exact run-owned process groups and PGDATA, never shared temporary prefixes.",
+          "Preflight cwd and actual browser/PostgreSQL executables; workspace-built requires existing dependency outputs.",
+          "Preserve failed stages and resume only the failed stage when inputs are unchanged; write terminal receipts on partial build failure."
+        ],
+        "scope": "Contributor guidance only; no product behavior change and no new product E2E required."
+      },
+      "auth_939_packaged_terminal_diagnosis": {
+        "recorded_utc": "2026-10-17T07:31:44.858621+00:00",
+        "terminal": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/receipts/auth-939-terminal-evidence-v3.json",
+          "sha256": "e33e12f11c2feb41da6e318dc3b12862e75cd8b56a6cba8c6651c44c2fbbefc6"
+        },
+        "native_61_rebind": {
+          "path": "/private/tmp/rudder-auth-independent-ba851-20261017/auth-independent-acceptance-939-native-rebind.json",
+          "sha256": "3d1941bebdd48fb5671fb570e1c9d9cabff2097b83224585a3e076cd0bf0c1a6"
+        },
+        "exception_summary": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/receipts/packaged-startup-js-exception-summary-v3g.json",
+          "sha256": "354ec359e5286e59f38463ffed10913d990069f673c42b540feed9e0498c69ba"
+        },
+        "desktop_verdict": "FAIL preserved. Real packaged app is missing @rudderhq/identity-core/electron, caught via Inspector exception chain after the NSAlert obscured stdio. No Keychain attribution for this fresh failure.",
+        "native_verdict": "61/61 PASS rebind to939 and unchanged frozen native artifact; does not certify packaged Desktop.",
+        "cleanup": "All six diagnostic process groups absent; no diagnostic PGDATA created. Root-created Git worktree lock released after terminal."
+      },
+      "auth_04c_identity_package_repair": {
+        "recorded_utc": "2026-10-17T07:31:44.858621+00:00",
+        "head": "04c62c4dce780903961b1e9d6ade4aff9715ca83",
+        "tree": "2ba116afd75f2f67c7c2625882257894812bd42c",
+        "checkpoint": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/checkpoint.json",
+          "sha256": "0d27f05303099a89b78eaf51cce023d2578e1967b39c768f4fc7999cda6f29b0"
+        },
+        "author_checks": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/author-checks.json",
+          "sha256": "e08a85c0a5f42e448ea81bbd9e4eaffb6a849f99c94699f008005dcd322620af"
+        },
+        "actual_stage_and_lint": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/staging-and-lint-receipt.json",
+          "sha256": "8a52de5847a0e08789366096ea47dfbc8ecf40cc08dfe0d9f45d67eed02284fe"
+        },
+        "change": "Stages compiled Electron identity client on every platform, normalizes root/electron exports, excludes workspace source/development dependencies, validates isolated staged resolutions. Existing generic afterPack dependency copy now named accurately.",
+        "tests": "14/14 focused tests passed, including stage-to-afterPack imports after removing source dependencies, virtual package layouts for all three platforms and missing compiled-output rejection. Actual staged real Identity imports passed; no cross-platform native runtime claim.",
+        "status": "Independent bounded stage review running. No packaged runtime replay yet. Rust source/build unchanged.",
+        "independent_stage_review": {
+          "path": "/private/tmp/rudder-auth-identity-package-review-20261017/stage-review.md",
+          "sha256": "7ea11f97359c305cdff5d085eb1a95cccecf30bbc0666c20558ca24d86a9fa17"
+        }
+      },
+      "migration_e67_composed_terminal": {
+        "recorded_utc": "2026-10-17T07:53:39.781174+00:00",
+        "verdict": "FAIL",
+        "terminal": {
+          "path": "/private/tmp/rudder-migration-composed-e67-20261017/receipts/terminal.json",
+          "sha256": "87079d9bd12974af2f63b47631ee90a5a84bbba8bd8bbec2e3b42a90baaa44a2"
+        },
+        "root_reconciliation": {
+          "path": "/private/tmp/rudder-migration-composed-e67-20261017/receipts/root-terminal-reconciliation.json",
+          "sha256": "cecc871d56332f8211a4df7422c891d80aa0c0136ce3169c75955797d4681ae5"
+        },
+        "findings": [
+          "Owner-only SIGTERM left owned PostgreSQL reachable after Node exit on Darwin.",
+          "Unexpected owner cleanup emitted unhandled rejection during delayed real HTTP bind."
+        ],
+        "reviewer_stage_verdict": "reject after C3 evidence",
+        "repair_owner": "/root/owner_signal_cleanup_fix",
+        "coverage_limits": "C4 only missing owner and apply binaries; add missing preflight/foundation. Lease original packet hash mismatch preserved with final addendum, not silently rewritten.",
+        "publication": "none"
+      },
+      "authorized_cleanup_protection_2026_10_17": {
+        "recorded_utc": "2026-10-17T07:53:39.781174+00:00",
+        "user_answer": "加入临时排除规则（推荐）",
+        "scope": "Temporary active migration worktree, targets and frozen receipts exclusions only; other idle cleanup continues.",
+        "automation_id": "automation",
+        "cleanup_thread_id": "01a14501-0209-7761-a084-523acb3413d9",
+        "schedule": "Existing ACTIVE hourly heartbeat preserved.",
+        "confirmed_cause": "Live cleanup task removed auth dependency directories/store, causing missing-module typecheck failure; confirmed in that task and filesystem observations.",
+        "protection": "Persisted exclusions and sent authorized immediate instruction; cleanup thread terminal confirmed stop and protection.",
+        "restoration": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/dependency-restore-after-cleanup.json",
+          "sha256": "7117ae2c4b3dd8fb2a4b47f1e781477f4ab23506480e48086be4cc5f65c82c4a"
+        },
+        "release_rule": "Keep exclusions until root explicitly releases exact resources after delivery. No deletion or reset of user data authorized."
+      },
+      "agent_0055_local_checkpoint": {
+        "head": "0055b8b64208b26545a3ecc4cb77b6659cf2b01f",
+        "receipt": {
+          "path": "/private/tmp/rudder-agent-api-cutover-map-20261017/host-and-agent-cutover-receipt.json",
+          "sha256": "5cba559a27dcdcb460aeb12820ace0c59d12626c88edc332c65ead3dd06498aa"
+        },
+        "supplement": {
+          "path": "/private/tmp/rudder-agent-api-cutover-map-20261017/host-and-agent-cutover-receipt.supplement-1.json",
+          "sha256": "312c7c779524e4bde56d965362305640b59da8d84bca185c24577827ee25c8bd"
+        },
+        "status": "Author-claimed checks only; no independent accept/PASS, no push/PR."
+      },
+      "auth_8b49_host_and_clippy_checkpoint": {
+        "head": "8b49d5458fb200868ca3ab1d50ad99b3b871e43b",
+        "tree": "4b221754f7a5ec7774ff23178d10f976db7a899a",
+        "checkpoint": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/host-clippy-checkpoint.json",
+          "sha256": "787fd48d7273d8439985d7982a2d59cf69c9c84fcb48af76831360a0e048229a"
+        },
+        "current_author_checks": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/clippy-core-typecheck-repair-v2.json",
+          "sha256": "83fd2ecf0be4ff27d18b6a160e590232e50d5783cfc2e45c5d4cc07bfca10dea"
+        },
+        "whole_repository_lint_types": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/full-lint-typecheck-8b49.json",
+          "sha256": "1785ef47b39f5a7f749386ecb18bf05a768305216080221f37b7122f06ca255a"
+        },
+        "lint_attribution": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/lint-main-attribution-8b49.json",
+          "sha256": "2d2615f3155458304969ccedda3d497c374f509ad4b5f4dc6a9939a29464e8ad"
+        },
+        "policy_tests": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/authority-policy-tests-8b49.json",
+          "sha256": "c7e1f1280cc4c49d48cd8a2a9c777ea98c13da7c2123919a4d4e3eda6944d056"
+        },
+        "result": "Strict Clippy PASS; core179PASS4ignored; all workspace types PASS; authority policy28PASS. Whole lint FAIL19paths, independently byte-compared19/19 identical to main d041; scoped changed lint previously PASS.",
+        "remaining": "Independent stage review, exact three pending Node records, new native/runtime/package acceptance, final review and protected PR/CI. No public push."
+      },
+      "auth_8b49_stage_rejection": {
+        "verdict": "reject",
+        "receipt": {
+          "path": "/private/tmp/rudder-auth-host-stage-review-20261017/stage-review.md",
+          "sha256": "882a97de796a4dc9739fb74541481b3d11fd5fa9df3280347b9a5f0fa480693a"
+        },
+        "findings": [
+          "Host must precede unsupported method/path dispatch.",
+          "Non-API denial must preserve JSON/text response negotiation."
+        ],
+        "status": "Preserved; no pending inventory records promoted on rejected candidate."
+      },
+      "auth_6de654_host_repair": {
+        "head": "6de654dd1d8a9790d5455497074fcba369e7f91c",
+        "tree": "4c0d9a9a800d655a1949c2b689f61c44f8387159",
+        "checkpoint": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/host-dispatch-repair-checkpoint.json",
+          "sha256": "c043745d2f16c3f56241d0fbfd4e2199cc92b5438116fd69c2d0574e171f1088"
+        },
+        "author_checks": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/host-dispatch-repair-author-checks.json",
+          "sha256": "3b68a12a6ce15ea751c1dd884aad2fe41e01519839d4684ec61c43f16fdbad0f"
+        },
+        "author_final_checks": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/host-dispatch-final-author-checks.json",
+          "sha256": "7826c59be86bb7cbd7cdabb65b14b727c32f011ec4f3a3ae851b024779439531"
+        },
+        "baseline_accepts_reference": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/express-accepts-contract-reference.json",
+          "sha256": "d8aa65cb59b0696942127fdecab9e0fe51fe7e7897a6114e42ba64e66fac65ca"
+        },
+        "checks": "Clippy/core/servertypes/scopedlint/inventory PASS. Publicworkflow49+startup12=61PASS; distinct from independentauth61. New Cargo compression features and four new Brotli packages; existing package versions unchanged.",
+        "build_reuse": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/full-build-8b49.json",
+          "sha256": "699888ce9ad25f16c05cb17d361f6d9147524d30ee28bfeafa9e971e049ce73e"
+        },
+        "build_scope": "Previous whole build passed; only unchanged TS/client outputs reusable. New native/release staging still required.",
+        "remaining": "Corrected source stage review; exact three Node records; fresh independent native/runtime/package acceptance; final review and protected PR/CI."
+      },
+      "full_baseline_test_execution": {
+        "candidate": "6de654dd1d8a9790d5455497074fcba369e7f91c",
+        "receipt_path": "/private/tmp/rudder-auth-identity-package-fix-20261017/full-test-6de654.json",
+        "status": "running; one inherited main-identical approval-read test failure observed, run continues to terminal receipt",
+        "canonical_tmpdir": "/private/tmp/rudder-auth-identity-package-fix-20261017/bt",
+        "postgres_cleanup_scope": "/private/tmp/rudder-auth-identity-package-fix-20261017/bt/rudder-",
+        "isolation": "Global test cleanup now confined to this unique TMPDIR rather than shared system temp; no other task PGDATA falls under the prefix."
+      },
+      "root_identity_reset_2026_10_17": {
+        "recorded_utc": "2026-10-17T08:12:12.865020+00:00",
+        "reason": "The initial root candidate and integration observations are historical. No final whole-backend candidate exists while auth, lifecycle, business and retirement gates remain open. Preserve old tuple here, use explicit placeholders in the top-level final-candidate fields.",
+        "historical_candidate": {
+          "branch": "codex/rust-backend-completion-20261016",
+          "source_ref": "HEAD",
+          "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+          "dirty_fingerprint": "unknown_in_progress",
+          "changed_paths": [],
+          "build": {
+            "id": "replace-with-build-id",
+            "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab"
+          },
+          "runtime": {
+            "id": "replace-with-runtime-id",
+            "source_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab"
+          },
+          "organization_data": {
+            "organization_id": "replace-with-org",
+            "data_id": "replace-with-data"
+          },
+          "workload_fixture": "replace-with-workload-or-not_applicable",
+          "budget_lease": {
+            "id": "replace-with-budget-lease",
+            "fingerprint": "replace-with-budget-fingerprint",
+            "expires_at": "replace-with-iso-time"
+          },
+          "acceptance_packet": {
+            "version": "root-v1",
+            "fingerprint": "fd865986e56b69210e47432237512e1a75e0cc132e394e4ff72651fa892151fe",
+            "criteria": [
+              "All first-party backend authority Rust-owned",
+              "Existing identity and migration history preserved",
+              "No hidden Node backend fallback",
+              "Installed workflows pass without Node backend artifacts",
+              "Exact-candidate independent review and acceptance plus required CI"
+            ],
+            "state_inventory": []
+          }
+        },
+        "historical_integration": {
+          "authorized": true,
+          "mode": "isolated_risk",
+          "target_ref": "refs/heads/main",
+          "base_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+          "remote_ref": "refs/remotes/origin/main",
+          "observed_remote_sha": "1021d5c5ba7d0b758fae42fd6569810c1a456a77",
+          "branch_refs": [],
+          "isolation_trigger": "concurrent_write_risk",
+          "isolated_worktree": "/Users/zeeland/.codex/worktrees/rust-backend-completion-20261016/rudder-oss",
+          "patch_tree_sha": "replace-with-patch-tree-sha",
+          "expected_old_sha": "ae74493a38f9688980d9ff46d49fff1a32896eab",
+          "cas": {
+            "attempted": false,
+            "succeeded": false,
+            "observed_old_sha": null,
+            "delivered_sha": null
+          },
+          "index_update_mode": "none"
+        }
+      },
+      "migration_owner_signal_stage_accept": {
+        "recorded_utc": "2026-10-17T08:20:47.270296+00:00",
+        "candidate": "223ac76cd2ec578f84aa664904a804b297e914ec",
+        "tree": "62a032ac161c451402ea18f1dbeb07ec50852aef",
+        "verdict": "accept stage only",
+        "receipt": {
+          "path": "/private/tmp/rudder-migration-composition-review-20261017/owner-signal-223/receipt.json",
+          "sha256": "bcc432e8991aa0ae29ce81b30f16314a00929903850201bdde78e689ed07ac3c"
+        },
+        "author_receipt": {
+          "path": "/private/tmp/rudder-owner-signal-fix-20261017/author-receipt.json",
+          "sha256": "c53e15d236c681f5f95de8d734c68706593bb16986a0549c6a6b0a50a8714968"
+        },
+        "limits": "Catchable SIGTERM only; no SIGKILL/crash claim; composed C3 verifier pending; rebase onto current auth before runtime acceptance."
+      },
+      "agent_core_5bf_rebased_on_auth": {
+        "recorded_utc": "2026-10-17T08:20:47.270296+00:00",
+        "candidate": "5bf391e99",
+        "worktree": "/Users/zeeland/.codex/worktrees/rust-pr264-integration-20261016/rudder-oss",
+        "patch": {
+          "path": "/private/tmp/rudder-agent-core-cutover-run-20261017-rebase3596/agent-core-rebased-5bf391e99.patch",
+          "sha256": "0e24c04cb0fa3897d0ada17e5b1837f781946fee2e47cbcb16bb8586b2681a0e"
+        },
+        "receipt": {
+          "path": "/private/tmp/rudder-agent-core-cutover-run-20261017-rebase3596/rebase-5bf391e99-receipt.json",
+          "sha256": "189f31d00693999d6bc621e853d77d319a3b24cb75584fd5d3ee7dbcdf98d463"
+        },
+        "status": "Author/focused checks only; inventory six Node records pending_review and compare intentionally flags eight review-gate findings. No runtime/PG/browser/independent stage verdict."
+      },
+      "auth_64857_pending_stage_reround": {
+        "recorded_utc": "2026-10-17T08:20:47.270296+00:00",
+        "candidate": "64857cd2ac5b0a286cc594f96c99f6671f9da0b5",
+        "tree": "6512e04712e2e171fed26f5e5edca7e5d882ccea",
+        "previous_reject": "6de654dd1d8a9790d5455497074fcba369e7f91c",
+        "source_changes": [
+          "unknown Content-Encoding now generic500 before deniedHost403",
+          "real privateHostnameGuard mounted in readiness fixture; allowed readiness200, denied readiness maps Node guard to Rust503",
+          "UTF8 parser contract explicitly bounded"
+        ],
+        "author_checks": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/host-coding-repair-author-checks.json",
+          "sha256": "04e8dcd56c0397937eedf2d7a87e2c7d58d494d4136fd8c90bdae879ca59c809"
+        },
+        "checkpoint": {
+          "path": "/private/tmp/rudder-auth-identity-package-fix-20261017/host-coding-checkpoint.json",
+          "sha256": "48e7976bb699e54a9c9092c262a88b01cf2bc982cf2ad65978d3d50505c84a08"
+        },
+        "status": "Fresh exact stage reround pending; prior 6de reject remains preserved. No native/package verifier lease yet."
+      },
+      "auth_64857_stage_accept": {
+        "recorded_utc": "2026-10-17T08:24:53.834833+00:00",
+        "candidate": "64857cd2ac5b0a286cc594f96c99f6671f9da0b5",
+        "tree": "6512e04712e2e171fed26f5e5edca7e5d882ccea",
+        "verdict": "accept stage only",
+        "receipt": {
+          "path": "/private/tmp/rudder-auth-host-stage-review-20261017/stage-review-64857.md",
+          "sha256": "54b62ed744473e5336e45345dc8b80bfd318a7130c45132dc55b938088fedb15"
+        },
+        "receipt_sha256": "54b62ed744473e5336e45345dc8b80bfd318a7130c45132dc55b938088fedb15",
+        "inventory_proposals": {
+          "path": "/private/tmp/rudder-auth-host-stage-review-20261017/node-inventory-reviewed-proposals-64857.json",
+          "sha256": "dd97b1b024d9a6ef519969cb1d3f9a2f3de30cf74e152e8f7fa50b19a96faa7e"
+        },
+        "status": "Verifier lease active; exact fresh native/package acceptance pending. Three Node inventory records remain pending in source until verifier PASS and final review."
+      },
+      "auth_64857_verifier_lease": {
+        "packet": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/next-candidate-64857/acceptance-packet.json",
+          "sha256": "2202457e4d0e984107d16d65efb326531088bb7dd1cf07b95b81fafc93b8a942"
+        },
+        "lease": {
+          "path": "/private/tmp/rudder-auth-storage-packaged-20261017/next-candidate-64857/execution-lease.json",
+          "sha256": "aa2d98c51da46167486247a285a29a9d4a697e3f1cc579acbf517d0f8b1c40cc"
+        },
+        "lease_id": "auth-64857-83fcabe2e0da4c24b78a3c9e680c9779",
+        "scope": "Fresh native auth and packaged memory-mode candidate acceptance; no native vault/release/deployment claim.",
+        "status": "ACTIVE"
+      }
     }
   }
 }
