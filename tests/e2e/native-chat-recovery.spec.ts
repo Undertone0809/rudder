@@ -195,7 +195,6 @@ test("resumes the exact accepted Run after reload without replacing a newer draf
     await fixture.stop({ preserveRoot: !passed });
   }
 });
-
 test("resumes an active Run and then records an explicit Stop without another provider start", async ({ page }, testInfo) => {
   const fixture = await startNativeChatFixture({ ...(await fixtureOptions()), mode: "complete" });
   let passed = false;
