@@ -259,28 +259,35 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
     let budget_monthly_cents = match object.get("budgetMonthlyCents") {
         None => 0,
         Some(Value::Number(value)) => {
-            let Some(value) = value.as_i64() else {
+            let Some(value) = value.as_f64() else {
                 return Err(validation_error(vec![wrong(
                     "integer",
                     object.get("budgetMonthlyCents"),
                     json!(["budgetMonthlyCents"]),
                 )]));
             };
-            if value < 0 {
+            if !value.is_finite() || value.fract() != 0.0 {
+                return Err(validation_error(vec![wrong(
+                    "integer",
+                    object.get("budgetMonthlyCents"),
+                    json!(["budgetMonthlyCents"]),
+                )]));
+            }
+            if value < 0.0 {
                 return Err(validation_error(vec![json!({
                     "code":"too_small", "minimum":0, "type":"number", "inclusive":true,
                     "exact":false, "path":["budgetMonthlyCents"],
                     "message":"Number must be greater than or equal to 0"
                 })]));
             }
-            if value > i32::MAX as i64 {
+            if value > i32::MAX as f64 {
                 return Err(validation_error(vec![json!({
                     "code":"too_big", "maximum": i32::MAX, "type":"number", "inclusive":true,
                     "exact":false, "path":["budgetMonthlyCents"],
                     "message":"Number must be less than or equal to 2147483647"
                 })]));
             }
-            value
+            value as i64
         }
         value => {
             return Err(validation_error(vec![wrong(
@@ -505,6 +512,26 @@ mod tests {
         assert_eq!(request.budget_monthly_cents, 0);
         assert!(request.permissions.can_create_agents);
         assert!(request.permissions.can_manage_skills);
+
+        let decimal_integer: Value =
+            serde_json::from_str(r#"{"budgetMonthlyCents":1.0}"#).expect("decimal integer JSON");
+        assert_eq!(
+            parse_create(&decimal_integer)
+                .expect("decimal integer accepted")
+                .budget_monthly_cents,
+            1
+        );
+        let exponent_integer: Value =
+            serde_json::from_str(r#"{"budgetMonthlyCents":1e3}"#).expect("exponent integer JSON");
+        assert_eq!(
+            parse_create(&exponent_integer)
+                .expect("exponent integer accepted")
+                .budget_monthly_cents,
+            1_000
+        );
+        let fractional = parse_create(&json!({"budgetMonthlyCents": 1.5}))
+            .expect_err("fractional budget rejected");
+        assert!(matches!(fractional, AgentCoreError::Http(400, _, _)));
 
         for key in [
             "icon",
