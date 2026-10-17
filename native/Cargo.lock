@@ -2166,6 +2166,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-opencode-native"
+version = "0.7.24"
+dependencies = [
+ "awc",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "rudder-organization-mutation-core"
 version = "0.7.24"
 dependencies = [
