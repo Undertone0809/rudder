@@ -2327,18 +2327,17 @@ mod tests {
         parsed.to_string()
     }
 
-    async fn wait_for_goal_read_relation_lock(pool: &PgPool, application_name: &str) -> String {
+    async fn wait_for_goal_read_relation_lock(pool: &PgPool) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let query = sqlx::query_scalar::<_, String>(
-                "SELECT query FROM pg_stat_activity WHERE application_name = $1 AND state = 'active' AND wait_event_type = 'Lock' AND query ILIKE '%FROM goals%' LIMIT 1",
+            let blocked = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity AS activity JOIN pg_locks AS relation_lock ON relation_lock.pid = activity.pid JOIN pg_class AS relation ON relation.oid = relation_lock.relation WHERE activity.state = 'active' AND activity.wait_event_type = 'Lock' AND relation_lock.granted = false AND relation.relname = 'goals')",
             )
-            .bind(application_name)
-            .fetch_optional(pool)
+            .fetch_one(pool)
             .await
             .unwrap();
-            if let Some(query) = query {
-                return query;
+            if blocked {
+                return;
             }
             assert!(
                 Instant::now() < deadline,
@@ -2627,12 +2626,9 @@ mod tests {
         let token_hash = native_bearer_auth::hash_token(&token);
         let release_lock = tokio::spawn({
             let pool = pool.clone();
-            let application_name = application_name.clone();
             async move {
-                let blocked_query =
-                    wait_for_goal_read_relation_lock(&pool, &application_name).await;
+                wait_for_goal_read_relation_lock(&pool).await;
                 blocker.commit().await.unwrap();
-                blocked_query
             }
         });
         let response = foundation
@@ -2644,11 +2640,10 @@ mod tests {
                 &token_hash,
             )
             .await;
-        let blocked_query = tokio::time::timeout(Duration::from_secs(5), release_lock)
+        tokio::time::timeout(Duration::from_secs(5), release_lock)
             .await
             .expect("native goal read should reach its goals query")
             .unwrap();
-        assert!(blocked_query.to_ascii_lowercase().contains("from goals"));
 
         let status = response.status();
         let body = actix_web::body::to_bytes(response.into_body())
