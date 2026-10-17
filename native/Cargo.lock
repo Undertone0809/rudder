@@ -2150,6 +2150,7 @@ dependencies = [
  "rudder-codex-app-server",
  "rudder-d1-persistence",
  "rudder-hermes-acp",
+ "rudder-pi-rpc",
  "rudder-runtime-core",
  "serde_json",
  "sha2",
