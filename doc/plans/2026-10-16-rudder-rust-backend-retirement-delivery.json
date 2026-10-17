@@ -2416,15 +2416,14 @@
       "number": 329,
       "url": "https://github.com/Undertone0809/rudder/pull/329",
       "branch": "codex/goal-reads-public-ingress-20261018",
-      "head": "e0b57da7a9b860217f53e2dd70b4ca2538997478",
+      "head": "56e82e15323551dccac1a6a09259fff198478116",
       "state": "open",
       "merge_state": "unstable",
-      "scope": "Rust public ingress owns Goal collection list, workspace cards, and assigned reads; preserves Node query/error compatibility and reserves near-match paths.; retired provenance records preserved in doc/plans/2026-10-16-rudder-rust-backend-retired-authority-records.json.",
-      "stage_review": "needs_more_evidence",
+      "scope": "Rust public ingress owns Goal collection list, workspace cards, and assigned reads; preserves Node query/error compatibility and reserves near-match paths.; retired provenance records preserved in doc/plans/2026-10-16-rudder-rust-backend-retired-authority-records.json.; real server-foundation auth+read lock-wait test now directly exercises AppState.goal_read_with_native_bearer.",
+      "stage_review": "accept",
       "stage_blockers": [
-        "CI for exact head is still pending",
-        "fresh reviewer must rebind to e0b57da7a",
-        "server-foundation real auth+read path test still needed"
+        "CI and independent verifier still pending",
+        "ignored disposable DB verifier requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL"
       ],
       "local_checks": [
         "cargo fmt --all -- --check",
@@ -2452,34 +2451,24 @@
       "number": 324,
       "url": "https://github.com/Undertone0809/rudder/pull/324",
       "branch": "codex/native-chat-main-refresh-integration-20261017",
-      "head": "80f63c812cf874fa19048d4d77fd2dbcdcff4d35",
+      "head": "e619a20c2d9d5fb4fe265a275b24424548b40d07",
       "state": "open",
       "merge_state": "unstable",
       "scope": "Native Chat Codex/Hermes Rust ingress, recovery, and compatibility fences.",
-      "stage_review": "needs_more_evidence",
+      "stage_review": "needs_more_evidence_on_prior_candidate; fresh final review required for e619a20c",
       "ci": {
-        "workflow_run": 39063292382,
-        "status": "queued/in_progress",
-        "passed": [
-          "plan qualification",
-          "architecture ratchet",
-          "docs qualification",
-          "D1 real-entry",
-          "native-boundaries"
+        "latest_run_ids": [
+          39065990006
         ],
-        "pending": [
-          "cross-platform foundations",
-          "Verify jobs",
-          "packaged Desktop smoke"
-        ],
+        "status": "in_progress",
         "known_failures_before_latest_head": [
-          "Desktop packaged smoke macOS arm64 local-apps failed with required local configuration while packaged account-gate passed"
+          "Desktop packaged smoke local-apps config failure fixed via marked smoke local implicit identity; architecture regression removed"
         ]
       },
       "limits": "No merge or independent packaged/installed-provider verifier PASS yet; production deployment not included.",
       "stage_blockers": [
-        "packaged Local App smoke failure requires local-implicit test auth repair",
-        "fresh final candidate verifier still missing"
+        "fresh full protected CI pending",
+        "independent packaged/installed-provider verifier still missing"
       ]
     }
   }
