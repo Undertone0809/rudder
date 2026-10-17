@@ -49,6 +49,30 @@ async function copyInstalledPackage(packageName, resolveFrom = requireFromDeskto
   return copyPackageRoot(packageName, sourceRoot);
 }
 
+async function stageIdentityRuntime() {
+  const packageName = "@rudderhq/identity-core";
+  const sourceRoot = await findPackageRoot(requireFromDesktop.resolve(`${packageName}/electron`), packageName);
+  const destinationRoot = path.join(stagedAppDir, "node_modules", ...packageName.split("/"));
+  await fs.mkdir(destinationRoot, { recursive: true });
+  // Identity is an Electron client dependency on every platform. Ship compiled
+  // code only, without the workspace package's development dependency links.
+  await fs.cp(path.join(sourceRoot, "dist"), path.join(destinationRoot, "dist"), { recursive: true });
+  await fs.copyFile(path.join(sourceRoot, "package.json"), path.join(destinationRoot, "package.json"));
+  await rewriteInternalPackageManifest(destinationRoot);
+  const resolveFromStagedApp = createRequire(path.join(stagedAppDir, "package.json"));
+  const canonicalDestination = await fs.realpath(destinationRoot);
+  for (const entry of [packageName, `${packageName}/electron`]) {
+    const resolved = resolveFromStagedApp.resolve(entry);
+    const relative = path.relative(canonicalDestination, await fs.realpath(resolved));
+    if (path.extname(resolved) !== ".js" || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`Packaged Identity entry must resolve to its staged JavaScript: ${entry}`);
+    }
+    await fs.access(resolved);
+  }
+  const manifest = JSON.parse(await fs.readFile(path.join(sourceRoot, "package.json"), "utf8"));
+  return { [packageName]: manifest.version };
+}
+
 async function stageComputerUseRuntime(desktopPackage) {
   const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
   const target = resolveComputerUsePackageTarget(process.platform, targetArch);
@@ -85,6 +109,7 @@ async function main() {
   await fs.mkdir(stagedAppDir, { recursive: true });
   await fs.cp(sourceDistDir, path.join(stagedAppDir, "dist"), { recursive: true });
   await fs.cp(sourceReleasesDir, path.join(stagedAppDir, "releases"), { recursive: true });
+  const identityDependencies = await stageIdentityRuntime();
   const computerUseDependencies = await stageComputerUseRuntime(desktopPackage);
 
   const appManifest = {
@@ -95,9 +120,7 @@ async function main() {
     author: "Rudder",
     type: "module",
     main: "dist/main.js",
-    ...(Object.keys(computerUseDependencies).length > 0
-      ? { dependencies: computerUseDependencies }
-      : {}),
+    dependencies: { ...identityDependencies, ...computerUseDependencies },
   };
 
   await fs.writeFile(
