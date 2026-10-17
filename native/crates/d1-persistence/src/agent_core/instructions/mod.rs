@@ -37,20 +37,23 @@ pub struct Host {
     pub hostname: String,
 }
 fn validate_host(host: &Host, ctx: &Context<'_>) -> Result<()> {
-    if host.hostname.is_empty()
-        || [
-            &host.instance_root,
-            &host.workspace_home,
-            &host.previous_documents_root,
-            &ctx.request.home_directory,
-            &ctx.request.process_working_directory,
-        ]
-        .iter()
-        .any(|path| !Path::new(path).is_absolute())
+    if !host_paths_are_absolute(host, Path::new(&ctx.request.process_working_directory))
+        || !Path::new(&ctx.request.home_directory).is_absolute()
     {
         return Err(http(400, "Invalid Agent instruction host facts"));
     }
     Ok(())
+}
+fn host_paths_are_absolute(host: &Host, cwd: &Path) -> bool {
+    !host.hostname.is_empty()
+        && [
+            &host.instance_root,
+            &host.workspace_home,
+            &host.previous_documents_root,
+        ]
+        .iter()
+        .all(|path| Path::new(path).is_absolute())
+        && cwd.is_absolute()
 }
 pub(super) fn agents_root(ctx: &Context<'_>) -> Result<PathBuf> {
     let host = ctx
@@ -204,6 +207,9 @@ pub(super) fn materialize_create_bundle(
     bundle: &AgentCreateInstructionsBundle,
     cwd: &Path,
 ) -> io::Result<MaterializedCreateBundle> {
+    if !host_paths_are_absolute(host, cwd) {
+        return Err(invalid("Invalid Agent instruction host facts"));
+    }
     let _guard = lock::Guard::acquire(Path::new(&host.workspace_home), &host.hostname)
         .map_err(|_| invalid("Instruction workspace lock unavailable"))?;
     let workspace = storage::ensure(host, org, cwd)?
@@ -212,43 +218,75 @@ pub(super) fn materialize_create_bundle(
     let root = workspace.join("instructions");
     disk::create_dir_all(&root)?;
     let mut created_files = Vec::new();
-    for (relative_path, body) in &bundle.files {
-        let normalized = relative(relative_path)?;
-        let target = root.join(&normalized);
-        if stat(&target).is_some_and(|metadata| metadata.is_file()) {
-            continue;
+    let result = (|| {
+        for (relative_path, body) in &bundle.files {
+            let normalized = relative(relative_path)?;
+            let target = root.join(&normalized);
+            if stat(&target).is_some_and(|metadata| metadata.is_file()) {
+                continue;
+            }
+            write_missing(&root, &normalized, body)?;
+            if stat(&target).is_some_and(|metadata| metadata.is_file()) {
+                created_files.push(target);
+            }
         }
-        write_missing(&root, &normalized, body)?;
-        if stat(&target).is_some_and(|metadata| metadata.is_file()) {
-            created_files.push(target);
+        let entry = relative(&bundle.entry_file)?;
+        let entry_path = root.join(entry);
+        if !stat(&entry_path).is_some_and(|metadata| metadata.is_file()) {
+            write_missing(&root, &bundle.entry_file, "")?;
+            if stat(&entry_path).is_some_and(|metadata| metadata.is_file()) {
+                created_files.push(entry_path);
+            }
+        }
+        Ok(MaterializedCreateBundle {
+            root: root.clone(),
+            created_files: created_files.clone(),
+        })
+    })();
+    match result {
+        Ok(bundle) => Ok(bundle),
+        Err(error) => {
+            let cleanup = MaterializedCreateBundle {
+                root,
+                created_files,
+            };
+            let _ = compensate_create_bundle(cleanup);
+            Err(error)
         }
     }
-    let entry = relative(&bundle.entry_file)?;
-    let entry_path = root.join(entry);
-    if !stat(&entry_path).is_some_and(|metadata| metadata.is_file()) {
-        write_missing(&root, &bundle.entry_file, "")?;
-        if stat(&entry_path).is_some_and(|metadata| metadata.is_file()) {
-            created_files.push(entry_path);
-        }
-    }
-    Ok(MaterializedCreateBundle {
-        root,
-        created_files,
-    })
 }
 
 pub(super) fn compensate_create_bundle(bundle: MaterializedCreateBundle) -> io::Result<()> {
+    let mut first_error = None;
     for path in bundle.created_files.iter().rev() {
         match disk::remove_file(path) {
             Ok(()) => (),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-            Err(error) => return Err(error),
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
         }
     }
     // Only remove empty directories under the bundle root; the workspace and
     // organization roots may predate this create attempt.
-    let _ = disk::remove_dir(&bundle.root);
-    Ok(())
+    for path in &bundle.created_files {
+        let mut current = path.parent().map(Path::to_path_buf);
+        while let Some(directory) = current {
+            if !directory.starts_with(&bundle.root) {
+                break;
+            }
+            match disk::remove_dir(&directory) {
+                Ok(()) => current = directory.parent().map(Path::to_path_buf),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+                Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => break,
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                    break;
+                }
+            }
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value> {
     let org = text(row, "orgId");

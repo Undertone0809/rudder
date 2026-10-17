@@ -306,9 +306,16 @@ async fn execute_agent_inner(
             if op == "create" {
                 require_create(&mut tx, &ctx).await?;
             }
-            let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth).await?;
-            sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(&org).execute(&mut *tx).await?;
-            tx.commit().await?;return Ok((if matches!(op,"create"|"key-create"){201}else{200},body.to_string()));
+            let mut outcome=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth).await?;
+            if let Err(error)=sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(&org).execute(&mut *tx).await {
+                if let Some(cleanup)=outcome.instruction_cleanup.take() { let _=instructions::compensate_create_bundle(cleanup); }
+                return Err(error.into());
+            }
+            if let Err(error)=tx.commit().await {
+                if let Some(cleanup)=outcome.instruction_cleanup.take() { let _=instructions::compensate_create_bundle(cleanup); }
+                return Err(error.into());
+            }
+            return Ok((if matches!(op,"create"|"key-create"){201}else{200},outcome.value.to_string()));
         }
         if matches!(op,"detail"|"me") {
             sqlx::query("SELECT id FROM agents WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;

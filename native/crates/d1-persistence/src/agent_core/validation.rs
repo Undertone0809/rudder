@@ -485,6 +485,11 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             let instructions_bundle = match node.get("instructionsBundle") {
                 None | Some(Value::Null) => None,
                 Some(Value::Object(bundle)) => {
+                    if bundle.contains_key("clearLegacyPromptTemplate") {
+                        return Err(unsupported_field(
+                            "nodeOwned.instructionsBundle.clearLegacyPromptTemplate",
+                        ));
+                    }
                     let entry_file = match bundle.get("entryFile") {
                         Some(Value::String(value)) => {
                             let trimmed = value.trim();
@@ -530,26 +535,10 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                             )]));
                         }
                     };
-                    let clear_legacy_prompt_template = match bundle.get("clearLegacyPromptTemplate")
-                    {
-                        None => false,
-                        Some(Value::Bool(value)) => *value,
-                        value => {
-                            return Err(validation_error(vec![wrong(
-                                "boolean",
-                                value,
-                                json!([
-                                    "nodeOwned",
-                                    "instructionsBundle",
-                                    "clearLegacyPromptTemplate"
-                                ]),
-                            )]));
-                        }
-                    };
                     Some(AgentCreateInstructionsBundle {
                         entry_file,
                         files,
-                        clear_legacy_prompt_template,
+                        clear_legacy_prompt_template: false,
                     })
                 }
                 value => {
@@ -703,17 +692,26 @@ pub(super) async fn normalize_runtime_config(
     if let Some(env) = object.get("env") {
         normalized.insert("env".into(), normalize_env(tx, org, env).await?);
     }
-    if let Some(Value::Array(fallbacks)) = object.get("modelFallbacks") {
+    if let Some(fallbacks_value) = object.get("modelFallbacks") {
+        let Some(fallbacks) = fallbacks_value.as_array() else {
+            return Err(unsupported_field("agentRuntimeConfig.modelFallbacks"));
+        };
         let mut next = Vec::with_capacity(fallbacks.len());
-        for fallback in fallbacks {
+        for (index, fallback) in fallbacks.iter().enumerate() {
             let Some(record) = fallback.as_object() else {
-                next.push(fallback.clone());
-                continue;
+                return Err(unsupported_field(&format!(
+                    "agentRuntimeConfig.modelFallbacks[{index}]"
+                )));
             };
             let Some(config) = record.get("config") else {
                 next.push(fallback.clone());
                 continue;
             };
+            if !config.is_object() {
+                return Err(unsupported_field(&format!(
+                    "agentRuntimeConfig.modelFallbacks[{index}].config"
+                )));
+            }
             let mut next_record = record.clone();
             next_record.insert(
                 "config".into(),
@@ -935,8 +933,7 @@ mod tests {
                 },
                 "instructionsBundle": {
                     "entryFile": "SOUL.md",
-                    "files": {"SOUL.md": "# Prepared"},
-                    "clearLegacyPromptTemplate": true
+                    "files": {"SOUL.md": "# Prepared"}
                 }
             }
         }))
@@ -948,6 +945,7 @@ mod tests {
         for input in [
             json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{"apiKey":"raw"}}}),
             json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"../SOUL.md","files":{}}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"SOUL.md","files":{},"clearLegacyPromptTemplate":true}}}),
         ] {
             assert!(matches!(
                 parse_create(&input),

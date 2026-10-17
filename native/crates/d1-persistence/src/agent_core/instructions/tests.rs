@@ -112,6 +112,37 @@ fn create_bundle_rejects_path_escape_before_writing() {
     );
     assert!(!f.root.path().join("outside.md").exists());
 }
+
+#[test]
+fn create_bundle_failure_compensates_files_written_earlier() {
+    let f = Fixture::new();
+    let bundle = AgentCreateInstructionsBundle {
+        entry_file: "SOUL.md".into(),
+        files: BTreeMap::from([
+            ("A.md".into(), "prepared".into()),
+            ("../outside.md".into(), "blocked".into()),
+        ]),
+        clear_legacy_prompt_template: false,
+    };
+    assert!(
+        materialize_create_bundle(&f.host, ORG, "builder-key", &bundle, f.root.path()).is_err()
+    );
+    assert!(!f.instructions().join("A.md").exists());
+    assert!(!f.root.path().join("outside.md").exists());
+}
+
+#[test]
+fn create_bundle_rejects_relative_host_facts() {
+    let f = Fixture::new();
+    let mut host = f.host.clone();
+    host.workspace_home = "relative-workspace".into();
+    let bundle = AgentCreateInstructionsBundle {
+        entry_file: "SOUL.md".into(),
+        files: BTreeMap::new(),
+        clear_legacy_prompt_template: false,
+    };
+    assert!(materialize_create_bundle(&host, ORG, "builder-key", &bundle, f.root.path()).is_err());
+}
 #[test]
 fn legacy_absolute_file_normalizes_only_for_managed_root_matching() {
     let mut f = Fixture::new();

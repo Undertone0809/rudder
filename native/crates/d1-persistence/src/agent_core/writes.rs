@@ -2,6 +2,17 @@ use super::{AgentCreateRequest, common::*, constants::*, reads, redaction};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+pub(super) struct MutationOutcome {
+    pub value: Value,
+    pub instruction_cleanup: Option<super::instructions::MaterializedCreateBundle>,
+}
+fn plain(value: Value) -> MutationOutcome {
+    MutationOutcome {
+        value,
+        instruction_cleanup: None,
+    }
+}
 pub(super) fn random_hex(bytes: usize) -> Result<String> {
     let mut output = vec![0_u8; bytes];
     getrandom::getrandom(&mut output).map_err(|_| http(503, "Secure randomness is unavailable"))?;
@@ -52,14 +63,16 @@ pub(super) async fn execute(
     current: Option<&Value>,
     input: &Value,
     native_auth: Option<&dyn super::NativeAgentAuthorizer>,
-) -> Result<Value> {
+) -> Result<MutationOutcome> {
     if op == "create" {
         return create(tx, ctx, input).await;
     }
     let row = current.ok_or_else(|| http(404, "Agent not found"))?;
     let id = text(row, "id");
     match op {
-        "permissions" => super::detail::update_permissions(tx, ctx, row, input, native_auth).await,
+        "permissions" => super::detail::update_permissions(tx, ctx, row, input, native_auth)
+            .await
+            .map(plain),
         "key-create" => {
             if row["status"] == "pending_approval" {
                 return Err(http(409, "Cannot create keys for pending approval agents"));
@@ -83,16 +96,16 @@ pub(super) async fn execute(
                 Some(&json!({"keyId":key["id"],"name":key["name"]})),
             )
             .await?;
-            Ok(
+            Ok(plain(
                 json!({"id":key["id"],"name":key["name"],"token":token,"createdAt":key["createdAt"]}),
-            )
+            ))
         }
         "key-revoke" => {
             let changed=sqlx::query("UPDATE agent_api_keys SET revoked_at=now() WHERE org_id=$1::uuid AND agent_id=$2::uuid AND id=$3::uuid").bind(ctx.org).bind(id).bind(ctx.request.key_id.as_deref()).execute(&mut **tx).await?.rows_affected();
             if changed == 0 {
                 return Err(http(404, "Key not found"));
             }
-            Ok(json!({"ok":true}))
+            Ok(plain(json!({"ok":true})))
         }
         "reset-session" => {
             reads::ensure_state(tx, ctx, row).await?;
@@ -114,14 +127,14 @@ pub(super) async fn execute(
                 Some(&json!({"taskKey":key})),
             )
             .await?;
-            Ok(state)
+            Ok(plain(state))
         }
-        "rollback" => rollback(tx, ctx, row).await,
+        "rollback" => rollback(tx, ctx, row).await.map(plain),
         _ => Err(http(400, "Invalid Agent command")),
     }
 }
 
-async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Value> {
+async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<MutationOutcome> {
     let request = AgentCreateRequest::parse(input)?;
     let config_source = request
         .node_owned
@@ -276,7 +289,10 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
         }
     };
     match reads::public_row(tx, row, true, false).await {
-        Ok(value) => Ok(value),
+        Ok(value) => Ok(MutationOutcome {
+            value,
+            instruction_cleanup: materialized,
+        }),
         Err(error) => {
             if let Some(materialized) = materialized {
                 let _ = super::instructions::compensate_create_bundle(materialized);
