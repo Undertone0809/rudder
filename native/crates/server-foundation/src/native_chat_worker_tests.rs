@@ -365,6 +365,7 @@ fn job(host: &fixture::FixtureHost, actor: VerifiedActor, run: &str, attempt: &s
 
 #[cfg(unix)]
 #[test]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; covered by Rust D1 real-entry smoke"]
 fn browser_job_derives_organization_from_authenticated_principal() {
     use rudder_d1_persistence::native_chat::{BrowserCredentialBinding, BrowserPrincipal};
 

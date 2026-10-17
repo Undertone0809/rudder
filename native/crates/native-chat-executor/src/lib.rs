@@ -1275,6 +1275,7 @@ mod cleanup_claim_tests {
     use super::*;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires RUDDER_TEST_PROCESS_HOST; covered by Rust D1 real-entry smoke"]
     async fn browser_request_credentials_cannot_be_used_as_execution_authority_without_claim() {
         let host = cleanup_claim_fixture::FixtureHost::new("complete");
         let paths = host.paths();
