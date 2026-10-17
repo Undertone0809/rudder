@@ -2538,7 +2538,7 @@
       "branch": "codex/agent-create-rust-foundation",
       "head": "cc86fd6df83f04f7767ac58bf2acc1084286741c",
       "base_sha": "541748fb6870ee2360ec5d096d1f07838b12b433",
-      "state": "open",
+      "state": "merged",
       "scope": "Private feature-gated Rust AgentCreate foundation; no public POST cutover.",
       "stage_review": "accept",
       "acceptance": {
@@ -2572,8 +2572,12 @@
         "final review pending",
         "public POST cutover requires remaining Node-owned semantics migration"
       ],
-      "limits": "Private feature-gated AgentCreate foundation only; no public route cutover, no full Agent API migration, no no-Node backend acceptance, production deployment not included.",
-      "final_review": "pending exact-head final handoff review"
+      "limits": "Merged private AgentCreate foundation only; public POST cutover and remaining Node-owned semantics are still incomplete; no production deployment/no-Node acceptance.",
+      "final_review": "accept",
+      "merge_state": "merged",
+      "merge_commit": "c43c0ada9e4064b271b9be00af4c4459dd284415",
+      "merged_at": "2026-10-17T22:27:55Z",
+      "ci_status": "protected CI green; auto-merge completed"
     }
   }
 }
