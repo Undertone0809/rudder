@@ -12,6 +12,38 @@ use super::validation::{Result, canonical_uuid, http};
 const MAX_TRANSCRIPT_LIMIT: i32 = 100;
 const MAX_MESSAGE_LIMIT: i32 = 200;
 
+fn transcript_from_payload(payload: &Value) -> Vec<Value> {
+    payload
+        .get("__chatTranscript")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn transcript_summary(entries: &[Value]) -> Value {
+    if entries.is_empty() {
+        return Value::Null;
+    }
+    let mut started_at: Option<String> = None;
+    let mut ended_at: Option<String> = None;
+    for entry in entries {
+        let Some(ts) = entry.get("ts").and_then(Value::as_str) else {
+            continue;
+        };
+        if started_at.as_deref().is_none_or(|value| ts < value) {
+            started_at = Some(ts.to_owned());
+        }
+        if ended_at.as_deref().is_none_or(|value| ts > value) {
+            ended_at = Some(ts.to_owned());
+        }
+    }
+    serde_json::json!({
+        "entryCount": entries.len(),
+        "startedAt": started_at,
+        "endedAt": ended_at,
+    })
+}
+
 pub(super) async fn read(
     pool: &PgPool,
     actor: &VerifiedActor,
@@ -204,7 +236,7 @@ pub(super) async fn read_message_transcript(
     let conversation_id = canonical_uuid(raw_conversation_id, "conversation id")?;
     let message_id = canonical_uuid(raw_message_id, "message id")?;
     let mut tx = pool.begin().await?;
-    let row = sqlx::query(
+    let native_row = sqlx::query(
         "SELECT m.id::text AS message_id, m.conversation_id::text AS conversation_id,
                 r.chat_generation_id::text AS generation_id,
                 s.id::text AS span_id, s.binding_id::text AS binding_id,
@@ -224,8 +256,90 @@ pub(super) async fn read_message_transcript(
     .bind(&conversation_id)
     .bind(&message_id)
     .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| http(404, "Native transcript message not found"))?;
+    .await?;
+    let Some(row) = native_row else {
+        // Legacy/detached Side Chat messages remain readable during the
+        // migration. This path is read-only, organization-scoped, and uses
+        // the same target authorization as the native ledger path; it never
+        // becomes a second writer or a provider authority.
+        let message = sqlx::query(
+            "SELECT m.id::text AS message_id, m.structured_payload,
+                    COALESCE(c.preferred_agent_id, c.routed_agent_id)::text AS agent_id,
+                    c.conversation_kind
+             FROM chat_messages m
+             JOIN chat_conversations c ON c.org_id=m.org_id AND c.id=m.conversation_id
+             WHERE m.org_id=$1::uuid AND m.conversation_id=$2::uuid
+               AND m.id=$3::uuid AND m.role='assistant'",
+        )
+        .bind(organization_id)
+        .bind(&conversation_id)
+        .bind(&message_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| http(404, "Chat message not found"))?;
+        let conversation_kind: String = message.try_get("conversation_kind")?;
+        if conversation_kind != "side_chat" {
+            return Err(http(404, "Native transcript message not found"));
+        }
+        let agent_id: Option<String> = message.try_get("agent_id")?;
+        if let Some(agent_id) = agent_id.as_deref() {
+            runtime_bindings::authorize_chat_target_read_tx(
+                &mut tx,
+                actor,
+                organization_id,
+                &conversation_id,
+                agent_id,
+            )
+            .await?;
+        } else {
+            runtime_bindings::authorize_chat_target_read_without_agent_tx(
+                &mut tx,
+                actor,
+                organization_id,
+                &conversation_id,
+            )
+            .await?;
+        }
+        let detached = sqlx::query(
+            "SELECT entry_seq, payload
+             FROM chat_message_transcript_entries
+             WHERE org_id=$1::uuid AND message_id=$2::uuid AND entry_seq>$3
+             ORDER BY entry_seq ASC LIMIT $4",
+        )
+        .bind(organization_id)
+        .bind(&message_id)
+        .bind(*after_seq)
+        .bind(limit + 1)
+        .fetch_all(&mut *tx)
+        .await?;
+        let has_more = detached.len() > limit as usize;
+        let visible = detached.into_iter().take(limit as usize);
+        let mut transcript = Vec::new();
+        let mut revision = *after_seq;
+        for entry in visible {
+            revision = entry.try_get("entry_seq")?;
+            transcript.push(entry.try_get("payload")?);
+        }
+        if transcript.is_empty() && *after_seq == 0 {
+            let payload: Option<Value> = message.try_get("structured_payload")?;
+            transcript = payload
+                .as_ref()
+                .map(transcript_from_payload)
+                .unwrap_or_default();
+        }
+        tx.commit().await?;
+        return Ok(serde_json::json!({
+            "messageId": message_id.clone(),
+            "messageRef": message_id,
+            "transcript": transcript,
+            "reader": {
+                "source": "legacy_compatibility",
+                "revision": revision,
+                "availability": "complete",
+                "nextCursor": has_more.then_some(revision.to_string()),
+            },
+        }));
+    };
     let message_id: String = row.try_get("message_id")?;
     let conversation_id: String = row.try_get("conversation_id")?;
     let generation_id: String = row.try_get("generation_id")?;
@@ -335,9 +449,10 @@ pub(super) async fn read_message_transcript(
 
 /// Read the bounded user-visible message projection for a Native Chat
 /// conversation. This is deliberately separate from the legacy TypeScript
-/// transcript hydrator: native rows never expose structured payloads or
-/// provider locators through the shared Reader. Detailed transcript ranges
-/// remain available through `read_message_transcript`.
+/// transcript hydrator. Structured payloads, approvals, and attachments are
+/// projected from the same authorized snapshot as the message rows, while
+/// provider locators remain outside the Reader contract. Detailed transcript
+/// ranges remain available through `read_message_transcript`.
 pub(super) async fn read_conversation_messages(
     pool: &PgPool,
     actor: &VerifiedActor,
@@ -379,23 +494,34 @@ pub(super) async fn read_conversation_messages(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| http(404, "Chat conversation not found"))?;
-    let agent_id: String = target
-        .try_get("agent_id")
-        .map_err(|_| http(409, "Native Chat conversation has no selected Agent"))?;
+    let agent_id: Option<String> = target.try_get("agent_id")?;
     let conversation_kind: String = target.try_get("conversation_kind")?;
-    runtime_bindings::authorize_chat_target_read_tx(
-        &mut tx,
-        actor,
-        organization_id,
-        &conversation_id,
-        &agent_id,
-    )
-    .await?;
+    if let Some(agent_id) = agent_id.as_deref() {
+        runtime_bindings::authorize_chat_target_read_tx(
+            &mut tx,
+            actor,
+            organization_id,
+            &conversation_id,
+            agent_id,
+        )
+        .await?;
+    } else if conversation_kind == "side_chat" {
+        runtime_bindings::authorize_chat_target_read_without_agent_tx(
+            &mut tx,
+            actor,
+            organization_id,
+            &conversation_id,
+        )
+        .await?;
+    } else {
+        return Err(http(409, "Native Chat conversation has no selected Agent"));
+    }
 
     let rows = sqlx::query(
         "SELECT m.id::text AS id, m.org_id::text AS org_id,
                 m.conversation_id::text AS conversation_id, m.role, m.kind,
-                m.status, m.body, m.approval_id::text AS approval_id,
+                m.status, m.body, m.structured_payload,
+                m.approval_id::text AS approval_id,
                 m.run_id::text AS run_id, m.replying_agent_id::text AS replying_agent_id,
                 m.chat_turn_id::text AS chat_turn_id, m.turn_variant,
                 m.superseded_at::text AS superseded_at,
@@ -431,6 +557,125 @@ pub(super) async fn read_conversation_messages(
                 .flatten()
         })
         .collect::<Vec<_>>();
+    let message_ids = rows
+        .iter()
+        .filter_map(|row| row.try_get::<String, _>("id").ok())
+        .collect::<Vec<_>>();
+    let approval_ids = rows
+        .iter()
+        .filter_map(|row| {
+            row.try_get::<Option<String>, _>("approval_id")
+                .ok()
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let mut approval_by_id: HashMap<String, Value> = HashMap::new();
+    if !approval_ids.is_empty() {
+        let approval_rows = sqlx::query(
+            "SELECT a.id::text AS id,
+                    jsonb_build_object(
+                      'id', a.id::text,
+                      'orgId', a.org_id::text,
+                      'type', a.type,
+                      'requestedByAgentId', a.requested_by_agent_id::text,
+                      'requestedByUserId', a.requested_by_user_id,
+                      'status', a.status,
+                      'payload', a.payload,
+                      'decisionNote', a.decision_note,
+                      'decidedByUserId', a.decided_by_user_id,
+                      'decidedAt', a.decided_at,
+                      'createdAt', a.created_at,
+                      'updatedAt', a.updated_at
+                    ) AS value
+             FROM approvals a
+             WHERE a.org_id=$1::uuid AND a.id=ANY($2::text[]::uuid[])",
+        )
+        .bind(organization_id)
+        .bind(&approval_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in approval_rows {
+            approval_by_id.insert(row.try_get("id")?, row.try_get("value")?);
+        }
+    }
+    let mut attachments_by_message_id: HashMap<String, Vec<Value>> = HashMap::new();
+    if !message_ids.is_empty() {
+        let attachment_rows = sqlx::query(
+            "SELECT ca.message_id::text AS message_id,
+                    CASE
+                      WHEN a.content_type='text/html' AND a.created_by_agent_id IS NOT NULL THEN
+                        jsonb_build_object(
+                          'id', ca.id::text,
+                          'orgId', ca.org_id::text,
+                          'conversationId', ca.conversation_id::text,
+                          'messageId', ca.message_id::text,
+                          'assetId', ca.asset_id::text,
+                          'contentType', a.content_type,
+                          'byteSize', a.byte_size,
+                          'sha256', a.sha256,
+                          'originalFilename', a.original_filename,
+                          'createdByAgentId', a.created_by_agent_id::text,
+                          'createdByUserId', a.created_by_user_id,
+                          'createdAt', ca.created_at,
+                          'updatedAt', ca.updated_at,
+                          'contentPath', '/api/assets/' || a.id::text || '/content'
+                        )
+                      ELSE
+                        jsonb_build_object(
+                          'id', ca.id::text,
+                          'orgId', ca.org_id::text,
+                          'conversationId', ca.conversation_id::text,
+                          'messageId', ca.message_id::text,
+                          'assetId', ca.asset_id::text,
+                          'provider', a.provider,
+                          'objectKey', a.object_key,
+                          'contentType', a.content_type,
+                          'byteSize', a.byte_size,
+                          'sha256', a.sha256,
+                          'originalFilename', a.original_filename,
+                          'createdByAgentId', a.created_by_agent_id::text,
+                          'createdByUserId', a.created_by_user_id,
+                          'createdAt', ca.created_at,
+                          'updatedAt', ca.updated_at,
+                          'contentPath', '/api/assets/' || a.id::text || '/content'
+                        )
+                    END AS value
+             FROM chat_attachments ca
+             INNER JOIN assets a
+               ON a.org_id=ca.org_id AND a.id=ca.asset_id
+             WHERE ca.org_id=$1::uuid AND ca.message_id=ANY($2::text[]::uuid[])
+             ORDER BY ca.created_at ASC, ca.id ASC",
+        )
+        .bind(organization_id)
+        .bind(&message_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in attachment_rows {
+            attachments_by_message_id
+                .entry(row.try_get("message_id")?)
+                .or_default()
+                .push(row.try_get("value")?);
+        }
+    }
+    let mut detached_by_message_id: HashMap<String, Vec<Value>> = HashMap::new();
+    if !message_ids.is_empty() {
+        let detached_rows = sqlx::query(
+            "SELECT message_id::text AS message_id, entry_seq, payload
+             FROM chat_message_transcript_entries
+             WHERE org_id=$1::uuid AND message_id=ANY($2::text[]::uuid[])
+             ORDER BY message_id, entry_seq ASC",
+        )
+        .bind(organization_id)
+        .bind(&message_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in detached_rows {
+            detached_by_message_id
+                .entry(row.try_get("message_id")?)
+                .or_default()
+                .push(row.try_get("payload")?);
+        }
+    }
     let mut transcript_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
     let mut fallback_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
     let mut transcript_summary_by_generation: HashMap<String, Value> = HashMap::new();
@@ -552,16 +797,56 @@ pub(super) async fn read_conversation_messages(
         }
         let id: String = row.try_get("id")?;
         let generation_id: Option<String> = row.try_get("generation_id")?;
-        let transcript = generation_id
+        let ledger_transcript = generation_id
             .as_ref()
             .and_then(|id| transcript_by_generation.get(id))
             .cloned()
             .unwrap_or_default();
+        let detached_transcript = detached_by_message_id.get(&id).cloned().unwrap_or_default();
+        let legacy_transcript = row
+            .try_get::<Option<Value>, _>("structured_payload")?
+            .as_ref()
+            .map(transcript_from_payload)
+            .unwrap_or_default();
+        let selected_transcript = if !ledger_transcript.is_empty() {
+            ledger_transcript
+        } else if !detached_transcript.is_empty() {
+            detached_transcript
+        } else {
+            legacy_transcript
+        };
         let transcript_summary = generation_id
             .as_ref()
             .and_then(|id| transcript_summary_by_generation.get(id))
             .cloned()
+            .filter(|summary| !summary.is_null())
+            .unwrap_or_else(|| transcript_summary(&selected_transcript));
+        let transcript = if *include_transcript {
+            selected_transcript
+        } else {
+            Vec::new()
+        };
+        let structured_payload = row
+            .try_get::<Option<Value>, _>("structured_payload")?
+            .and_then(|payload| match payload {
+                Value::Null => None,
+                Value::Object(mut object) => {
+                    object.remove("__chatTranscript");
+                    (!object.is_empty()).then_some(Value::Object(object))
+                }
+                value => Some(value),
+            })
             .unwrap_or(Value::Null);
+        let approval_id = row.try_get::<Option<String>, _>("approval_id")?;
+        let approval = approval_id
+            .as_ref()
+            .and_then(|id| approval_by_id.get(id))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let attachments = attachments_by_message_id
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
         messages.push(serde_json::json!({
             "id": id,
             "orgId": row.try_get::<String, _>("org_id")?,
@@ -570,10 +855,10 @@ pub(super) async fn read_conversation_messages(
             "kind": row.try_get::<String, _>("kind")?,
             "status": row.try_get::<String, _>("status")?,
             "body": body,
-            "structuredPayload": Value::Null,
-            "approvalId": row.try_get::<Option<String>, _>("approval_id")?,
-            "approval": Value::Null,
-            "attachments": [],
+            "structuredPayload": structured_payload,
+            "approvalId": approval_id,
+            "approval": approval,
+            "attachments": attachments,
             "runId": run_id,
             "generationId": generation_id,
             "generationTerminalReason": row.try_get::<Option<String>, _>("terminal_reason")?,
