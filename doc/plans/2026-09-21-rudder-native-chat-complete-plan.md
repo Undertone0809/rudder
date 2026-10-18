@@ -1015,10 +1015,10 @@ milestone does not close the remaining four adapters, full product journeys,
 independent final review, or required CI gates.
 
 The branch was subsequently rebased onto the latest `origin/main`
-(`9ba84ce6b`, agent runtime normalization) and force-updated through the PR;
-the equivalent post-rebase candidate is `f9fc5bb02`. The rebase does not change
-the Hermes result, so the exact installed-runtime acceptance must be rerun and
-rebound to `f9fc5bb02` before any merge decision.
+(`9ba84ce6b`, agent runtime normalization) and force-updated through the PR.
+The earlier execution receipt was captured before the Reader integration and
+must not be reused as proof for a later merge candidate; every merge decision
+must name the exact tested SHA.
 
 ### October 18 Hermes provider-route diagnosis
 
@@ -1065,9 +1065,11 @@ Hermes 0.21.0 venv entrypoint, Rust public ingress completed a first turn with
 the assistant projection `HERMES_CANONICAL_FIRST_OK`. After stopping and
 restarting the Node/Rust server, the same conversation/session completed a
 second turn with `HERMES_CANONICAL_RESTART_OK`; the earlier stale Kimi route was
-not used. This is the final-candidate Hermes first-turn plus restart-continuity
-evidence. Existing Codex first-turn and restart-continuity evidence remains
-content-equivalent because this follow-up changes only the Hermes launch path.
+not used. This is the installed Hermes first-turn plus restart-continuity
+evidence for that earlier execution candidate. Existing Codex first-turn and
+restart-continuity evidence remains content-equivalent because that follow-up
+changed only the Hermes launch path; rerun and bind both providers to the
+current SHA before claiming merge readiness.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
@@ -1095,7 +1097,7 @@ The migration must support empty databases and databases with old Runs; do not d
 
 October 17 transport prerequisite: the existing Codex adapter now consumes a bounded, provider-neutral LF record decoder from `rudder-native-protocol`. The decoder accepts an adapter parser rather than assuming every native record is a Codex JSON-RPC envelope; malformed adapter records still poison the stream and discard their batch. Existing Codex wire/session/transport tests and non-RPC records with byte-split UTF-8 and Unicode separators cover this extraction. This is shared transport groundwork only: it does not add a Pi driver, generalize the durable Codex checkpoint, or establish any additional runtime capability.
 
-Current Rust implementation note (October 18): Native Chat now has provider-specific Codex, Hermes, Pi, Claude Code, Cursor, and OpenCode configuration, admission guards, provider-native checkpoints, execution dispatch, host cleanup proofs, and terminal projection branches. Claude, Cursor, and OpenCode receipts preserve their native session/request identities and never populate Codex Thread/Turn fields. OpenCode Server is started and stopped by the Rust-owned process host; `/doc` readiness, completed assistant readback, and the terminal cleanup receipt are all required before finalization. A fresh local required-ingress acceptance on the current runtime candidate passed real Codex first-send and real Hermes two-turn continuity (`native_rust`, succeeded Runs, provider-native checkpoint/session readback; evidence is under `/tmp/native-chat-current-acceptance/`). The shared Reader, legacy transcript retirement, Side Chat consumers, retention/GC/backup, and duplicate-writer shutdown remain open W04/W11/W12 gates, so this is the bounded Codex/Hermes delivery milestone rather than completion of the full six-runtime plan. Keep the provider-neutral fenced Run/Attempt authority separate from each provider's native session and execution selectors; existing TypeScript adapters remain behavior references, never a backend fallback.
+Current Rust implementation note (October 18): Native Chat now has provider-specific Codex, Hermes, Pi, Claude Code, Cursor, and OpenCode configuration, admission guards, provider-native checkpoints, execution dispatch, host cleanup proofs, and terminal projection branches. Claude, Cursor, and OpenCode receipts preserve their native session/request identities and never populate Codex Thread/Turn fields. OpenCode Server is started and stopped by the Rust-owned process host; `/doc` readiness, completed assistant readback, and the terminal cleanup receipt are all required before finalization. A fresh local required-ingress acceptance previously passed real Codex first-send and real Hermes two-turn continuity (`native_rust`, succeeded Runs, provider-native checkpoint/session readback; evidence is under `/tmp/native-chat-current-acceptance/`). Those receipts predate the current Reader commits and are execution evidence only. Main Chat Reader now has a Rust-owned array/envelope contract, stable cursor predicate, accepted-through transcript cutoff, transcript summaries, and ledger entries; Side Chat remains on the legacy projection until its copied annotations, attachments, approvals, and consumers are migrated. Re-run required-ingress acceptance and bind its receipts to the exact merge candidate. The shared Reader completion, legacy transcript retirement, Side Chat consumers, retention/GC/backup, and duplicate-writer shutdown remain open W04/W11/W12 gates, so this is the bounded Codex/Hermes delivery milestone rather than completion of the full six-runtime plan. Keep the provider-neutral fenced Run/Attempt authority separate from each provider's native session and execution selectors; existing TypeScript adapters remain behavior references, never a backend fallback.
 
 Extend existing Agent Run submission and SessionIntent, and migrate native Chat calls to the shared foundation. Wire up admission, budgets, Attempt, session-writer fencing, unknown acceptance for create/submit, recovery, controls, human requests, and terminal state. Native submissions do not accept a complete history array; Task/Review-specific claiming runs only in its corresponding surface.
 
