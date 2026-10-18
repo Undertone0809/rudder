@@ -11,6 +11,7 @@
 //! completion by this adapter.
 
 use awc::{Client, ClientResponse, http::StatusCode};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use std::{
@@ -39,6 +40,10 @@ pub enum OpenCodeCapability {
     AsyncPromptAccepted,
     Abort,
     ForkAtExactMessage,
+    SseSubscription,
+    NativeQuestionReply,
+    NativePermissionReply,
+    NativeCommand,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -75,14 +80,12 @@ impl Default for OpenCodeCapabilityManifest {
                 OpenCodeCapability::AsyncPromptAccepted,
                 OpenCodeCapability::Abort,
                 OpenCodeCapability::ForkAtExactMessage,
+                OpenCodeCapability::SseSubscription,
+                OpenCodeCapability::NativeQuestionReply,
+                OpenCodeCapability::NativePermissionReply,
+                OpenCodeCapability::NativeCommand,
             ],
-            unsupported: vec![
-                OpenCodeUnsupportedCapability::SseSubscription,
-                OpenCodeUnsupportedCapability::NativeQuestionReply,
-                OpenCodeUnsupportedCapability::NativePermissionReply,
-                OpenCodeUnsupportedCapability::NativeCommand,
-                OpenCodeUnsupportedCapability::ForkAtAssistantBoundary,
-            ],
+            unsupported: vec![OpenCodeUnsupportedCapability::ForkAtAssistantBoundary],
         }
     }
 }
@@ -103,6 +106,8 @@ pub enum OpenCodeError {
     Http { status: u16, body: String },
     #[error("OpenCode response decode failed: {0}")]
     Decode(#[source] serde_json::Error),
+    #[error("OpenCode response body was not valid UTF-8")]
+    InvalidBodyUtf8,
     #[error("OpenCode response exceeded the {limit} byte bound")]
     BodyTooLarge { limit: usize },
     #[error("OpenCode URL could not be constructed")]
@@ -188,6 +193,78 @@ pub struct OpenCodeClient {
     client: Client,
 }
 
+/// One OpenCode Server-sent event. OpenCode currently sends JSON in the SSE
+/// `data` field and may add an event name; preserve both so newer event kinds
+/// remain observable without flattening provider payloads.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenCodeEvent {
+    pub name: Option<String>,
+    pub data: Value,
+}
+
+pub struct OpenCodeEventStream {
+    response: ClientResponse,
+    buffer: String,
+    event_name: Option<String>,
+    event_data: Vec<String>,
+}
+
+impl OpenCodeEventStream {
+    pub async fn next_event(&mut self) -> Result<Option<OpenCodeEvent>, OpenCodeError> {
+        loop {
+            if let Some(event) = self.take_event()? {
+                return Ok(Some(event));
+            }
+            if let Some(index) = self.buffer.find('\n') {
+                let line = self.buffer.drain(..=index).collect::<String>();
+                self.consume_line(line.trim_end_matches(['\r', '\n']))?;
+                continue;
+            }
+            let Some(chunk) = self.response.next().await else {
+                if self.event_data.is_empty() {
+                    return Ok(None);
+                }
+                if !self.buffer.is_empty() {
+                    let line = std::mem::take(&mut self.buffer);
+                    self.consume_line(line.trim_end_matches(['\r', '\n']))?;
+                }
+                return self.take_event();
+            };
+            let chunk = chunk.map_err(OpenCodeError::Body)?;
+            if self.buffer.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                return Err(OpenCodeError::BodyTooLarge {
+                    limit: MAX_RESPONSE_BYTES,
+                });
+            }
+            self.buffer
+                .push_str(std::str::from_utf8(&chunk).map_err(|_| OpenCodeError::InvalidBodyUtf8)?);
+        }
+    }
+
+    fn consume_line(&mut self, line: &str) -> Result<(), OpenCodeError> {
+        if line.is_empty() {
+            return Ok(());
+        }
+        if let Some(name) = line.strip_prefix("event:") {
+            self.event_name = Some(name.trim().to_owned());
+        } else if let Some(data) = line.strip_prefix("data:") {
+            self.event_data.push(data.trim_start().to_owned());
+        }
+        Ok(())
+    }
+
+    fn take_event(&mut self) -> Result<Option<OpenCodeEvent>, OpenCodeError> {
+        if self.event_data.is_empty() {
+            return Ok(None);
+        }
+        let data = self.event_data.join("\n");
+        self.event_data.clear();
+        let name = self.event_name.take();
+        let data = serde_json::from_str(&data).map_err(OpenCodeError::Decode)?;
+        Ok(Some(OpenCodeEvent { name, data }))
+    }
+}
+
 impl OpenCodeClient {
     /// Construct a client for an explicitly owned OpenCode Server.
     ///
@@ -235,6 +312,108 @@ impl OpenCodeClient {
         let url = self.endpoint(&["doc"])?;
         let _: Value = decode_json(self.get(url).await?).await?;
         Ok(())
+    }
+
+    pub async fn subscribe_events(
+        &self,
+        query: EventQuery<'_>,
+    ) -> Result<OpenCodeEventStream, OpenCodeError> {
+        let mut url = self.endpoint(&["event"])?;
+        query.append_to(&mut url);
+        let response = self
+            .prepare(self.client.get(url.as_str()))
+            .insert_header(("accept", "text/event-stream"))
+            .send()
+            .await
+            .map_err(OpenCodeError::Transport)?;
+        if response.status() != StatusCode::OK {
+            return Err(http_error(response).await);
+        }
+        Ok(OpenCodeEventStream {
+            response,
+            buffer: String::new(),
+            event_name: None,
+            event_data: Vec::new(),
+        })
+    }
+
+    pub async fn list_questions(&self, query: EventQuery<'_>) -> Result<Vec<Value>, OpenCodeError> {
+        let mut url = self.endpoint(&["question"])?;
+        query.append_to(&mut url);
+        decode_json(self.get(url).await?).await
+    }
+
+    pub async fn reply_question(
+        &self,
+        request_id: &str,
+        answers: Vec<Vec<String>>,
+        query: EventQuery<'_>,
+    ) -> Result<bool, OpenCodeError> {
+        validate_identifier(request_id, "que")?;
+        let mut url = self.endpoint(&["question", request_id, "reply"])?;
+        query.append_to(&mut url);
+        decode_json(
+            self.post_json(url, &serde_json::json!({ "answers": answers }))
+                .await?,
+        )
+        .await
+    }
+
+    pub async fn reject_question(
+        &self,
+        request_id: &str,
+        query: EventQuery<'_>,
+    ) -> Result<bool, OpenCodeError> {
+        validate_identifier(request_id, "que")?;
+        let mut url = self.endpoint(&["question", request_id, "reject"])?;
+        query.append_to(&mut url);
+        decode_json(self.post_empty(url).await?).await
+    }
+
+    pub async fn list_permissions(
+        &self,
+        query: EventQuery<'_>,
+    ) -> Result<Vec<Value>, OpenCodeError> {
+        let mut url = self.endpoint(&["permission"])?;
+        query.append_to(&mut url);
+        decode_json(self.get(url).await?).await
+    }
+
+    pub async fn reply_permission(
+        &self,
+        request_id: &str,
+        reply: &str,
+        message: Option<&str>,
+        query: EventQuery<'_>,
+    ) -> Result<bool, OpenCodeError> {
+        validate_identifier(request_id, "per")?;
+        if !matches!(reply, "once" | "always" | "reject") {
+            return Err(OpenCodeError::Http {
+                status: 400,
+                body: "invalid permission reply".into(),
+            });
+        }
+        let mut url = self.endpoint(&["permission", request_id, "reply"])?;
+        query.append_to(&mut url);
+        decode_json(
+            self.post_json(
+                url,
+                &serde_json::json!({ "reply": reply, "message": message }),
+            )
+            .await?,
+        )
+        .await
+    }
+
+    pub async fn send_command(
+        &self,
+        session_id: &str,
+        request: &CommandRequest<'_>,
+    ) -> Result<MessageEnvelope, OpenCodeError> {
+        validate_identifier(session_id, "ses")?;
+        let mut url = self.endpoint(&["session", session_id, "command"])?;
+        request.query.append_to(&mut url);
+        decode_json(self.post_json(url, &request.body).await?).await
     }
 
     pub async fn list_sessions(
@@ -415,12 +594,6 @@ impl OpenCodeClient {
         };
         let response = self.post_json(url, &body).await?;
         decode_json(response).await
-    }
-
-    /// The current crate keeps SSE behind an explicit unsupported result until
-    /// the shared bounded stream/reconnect reader is wired to Run authority.
-    pub fn subscribe_events(&self) -> Result<(), OpenCodeError> {
-        Err(OpenCodeUnsupported::SseSubscription.into())
     }
 
     fn endpoint(&self, segments: &[&str]) -> Result<Url, OpenCodeError> {
@@ -952,6 +1125,55 @@ impl SessionCreateQuery {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct EventQuery<'a> {
+    #[serde(skip)]
+    pub directory: Option<&'a str>,
+    #[serde(skip)]
+    pub workspace: Option<&'a str>,
+}
+
+impl EventQuery<'_> {
+    fn append_to(&self, url: &mut Url) {
+        if self.directory.is_none() && self.workspace.is_none() {
+            return;
+        }
+        let mut query = url.query_pairs_mut();
+        if let Some(value) = self.directory {
+            query.append_pair("directory", value);
+        }
+        if let Some(value) = self.workspace {
+            query.append_pair("workspace", value);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandRequest<'a> {
+    #[serde(skip)]
+    pub query: EventQuery<'a>,
+    pub body: CommandBody,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandBody {
+    pub arguments: String,
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<Value>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateSessionBody {
     #[serde(default)]
     #[serde(rename = "parentID")]
@@ -1233,8 +1455,23 @@ mod tests {
         );
         assert!(
             manifest
-                .unsupported
-                .contains(&OpenCodeUnsupportedCapability::SseSubscription)
+                .supported
+                .contains(&OpenCodeCapability::SseSubscription)
+        );
+        assert!(
+            manifest
+                .supported
+                .contains(&OpenCodeCapability::NativeQuestionReply)
+        );
+        assert!(
+            manifest
+                .supported
+                .contains(&OpenCodeCapability::NativePermissionReply)
+        );
+        assert!(
+            manifest
+                .supported
+                .contains(&OpenCodeCapability::NativeCommand)
         );
         assert!(
             manifest
@@ -1359,6 +1596,33 @@ mod tests {
                     "unexpected request: {request}"
                 );
                 server.join().expect("server thread");
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sse_stream_decodes_named_and_unnamed_json_events() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let body = "event: session.updated\ndata: {\"type\":\"session.updated\"}\n\ndata: {\"type\":\"message.updated\"}\n\n";
+                let (url, request, server) = one_shot_server("200 OK", body);
+                let client = OpenCodeClient::new(url, None).expect("client");
+                let mut stream = client
+                    .subscribe_events(EventQuery {
+                        directory: Some("/tmp/workspace"),
+                        workspace: Some("workspace-1"),
+                    })
+                    .await
+                    .expect("event stream");
+                let first = stream.next_event().await.expect("first event").expect("first");
+                assert_eq!(first.name.as_deref(), Some("session.updated"));
+                assert_eq!(first.data["type"], "session.updated");
+                let second = stream.next_event().await.expect("second event").expect("second");
+                assert_eq!(second.name, None);
+                assert_eq!(second.data["type"], "message.updated");
+                let request = request.recv().expect("request captured");
+                assert!(request.starts_with("GET /event?directory=%2Ftmp%2Fworkspace&workspace=workspace-1 HTTP/1.1"));
+                server.join().expect("server joined");
             })
             .await;
     }

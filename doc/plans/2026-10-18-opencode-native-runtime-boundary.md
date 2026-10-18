@@ -43,7 +43,10 @@ this repository.
 - bounded JSON response decoding and identifier/path validation;
 - HTTP request construction for Session, history, async prompt, Abort, and
   exact-message Fork;
-- explicit capability reporting and rejection of unsupported operations.
+- bounded SSE event decoding with named/unnamed JSON event preservation;
+- native Question and Permission listing/reply methods and Session Command
+  request typing;
+- explicit capability reporting and rejection of still-unsupported operations.
 
 The shared Rust execution foundation remains responsible for Run/Attempt
 admission, organization authorization, idempotency, event reduction,
@@ -54,18 +57,20 @@ acceptance and native message/Part evidence into that shared authority.
 
 ## Deliberate capability limits
 
-The crate currently returns an explicit unsupported result for global/session
-SSE subscription, native Question and Permission replies, native Command
-execution, and an unanchored or assistant-boundary Fork. OpenCode's optional
-Fork body does not prove a stable assistant boundary, so the adapter accepts
-only an exact native `messageID`. HTTP `204` from `prompt_async` is represented
-as a non-terminal `Accepted` outcome and cannot complete a Run by itself.
+The crate now exposes bounded session SSE, Question/Permission reply, and
+Session Command wire methods. It still returns an explicit unsupported result
+for an unanchored or assistant-boundary Fork. OpenCode's optional Fork body
+cannot prove a stable assistant boundary, so the adapter accepts only an exact
+native `messageID`. HTTP `204` from `prompt_async` is represented as a
+non-terminal `Accepted` outcome and cannot complete a Run by itself. The new
+wire methods are not yet connected to shared Run/Attempt interaction authority.
 
 ## Verification
 
 The Rust crate has unit and local HTTP contract tests covering typed message and
 Part decoding, native media Part shape, identifier safety, async HTTP `204`
-acceptance without terminal projection, Abort, and exact-message Fork. The
+acceptance without terminal projection, bounded SSE event parsing, Abort, and
+exact-message Fork. The
 tests use a disposable loopback fixture and do not claim real provider model
 execution. W08 still requires independent real-environment Session continuity,
 SSE isolation/reconnect, questions/permissions/commands, 204 disconnect and
