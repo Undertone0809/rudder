@@ -207,6 +207,7 @@ pub struct OpenCodeEventStream {
     buffer: String,
     event_name: Option<String>,
     event_data: Vec<String>,
+    event_data_bytes: usize,
 }
 
 impl OpenCodeEventStream {
@@ -248,7 +249,18 @@ impl OpenCodeEventStream {
         if let Some(name) = line.strip_prefix("event:") {
             self.event_name = Some(name.trim().to_owned());
         } else if let Some(data) = line.strip_prefix("data:") {
-            self.event_data.push(data.trim_start().to_owned());
+            let data = data.trim_start();
+            self.event_data_bytes = self.event_data_bytes.checked_add(data.len()).ok_or(
+                OpenCodeError::BodyTooLarge {
+                    limit: MAX_RESPONSE_BYTES,
+                },
+            )?;
+            if self.event_data_bytes > MAX_RESPONSE_BYTES {
+                return Err(OpenCodeError::BodyTooLarge {
+                    limit: MAX_RESPONSE_BYTES,
+                });
+            }
+            self.event_data.push(data.to_owned());
         }
         Ok(())
     }
@@ -259,6 +271,7 @@ impl OpenCodeEventStream {
         }
         let data = self.event_data.join("\n");
         self.event_data.clear();
+        self.event_data_bytes = 0;
         let name = self.event_name.take();
         let data = serde_json::from_str(&data).map_err(OpenCodeError::Decode)?;
         Ok(Some(OpenCodeEvent { name, data }))
@@ -334,6 +347,7 @@ impl OpenCodeClient {
             buffer: String::new(),
             event_name: None,
             event_data: Vec::new(),
+            event_data_bytes: 0,
         })
     }
 
@@ -1161,15 +1175,12 @@ pub struct CommandBody {
     pub arguments: String,
     pub command: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "messageID")]
     pub message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub parts: Vec<Value>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -1540,6 +1551,21 @@ mod tests {
         assert_eq!(value["parts"][0]["type"], "file");
         assert_eq!(value["parts"][0]["mime"], "image/png");
         assert_eq!(value["parts"][0]["url"], "data:image/png;base64,AA==");
+    }
+
+    #[test]
+    fn command_body_matches_installed_server_message_id_contract() {
+        let value = serde_json::to_value(CommandBody {
+            arguments: "--verbose".into(),
+            command: "diagnose".into(),
+            message_id: Some("msg_previous".into()),
+            agent: Some("build".into()),
+            model: None,
+        })
+        .expect("command body serializes");
+        assert_eq!(value["messageID"], "msg_previous");
+        assert!(value.get("messageId").is_none());
+        assert!(value.get("parts").is_none());
     }
 
     #[test]
