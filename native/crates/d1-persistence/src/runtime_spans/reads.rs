@@ -133,10 +133,12 @@ pub(super) async fn read_transcript(
     let generation_id = generation_id.expect("checked above");
     let events = sqlx::query(
         "SELECT generation_seq, event_kind, payload, recorded_at::text AS recorded_at
-         FROM chat_generation_events
-         WHERE org_id=$1::uuid AND generation_id=$2::uuid
-           AND generation_seq>$3 AND event_kind IN ('assistant_delta','runtime_output')
-        ORDER BY generation_seq ASC LIMIT $4",
+         FROM chat_generation_events e
+         JOIN chat_generations g ON g.org_id=e.org_id AND g.id=e.generation_id
+         WHERE e.org_id=$1::uuid AND e.generation_id=$2::uuid
+           AND e.generation_seq>$3 AND e.event_kind IN ('assistant_delta','runtime_output')
+           AND (g.accepted_through_seq IS NULL OR e.generation_seq <= g.accepted_through_seq)
+        ORDER BY e.generation_seq ASC LIMIT $4",
     )
     .bind(organization_id)
     .bind(&generation_id)
@@ -250,11 +252,13 @@ pub(super) async fn read_message_transcript(
     }
     let events = sqlx::query(
         "SELECT generation_seq, event_kind, payload, recorded_at::text AS recorded_at
-         FROM chat_generation_events
-         WHERE org_id=$1::uuid AND generation_id=$2::uuid
-           AND generation_seq>$3
-           AND event_kind IN ('assistant_delta','runtime_output')
-           ORDER BY generation_seq ASC LIMIT $4",
+         FROM chat_generation_events e
+         JOIN chat_generations g ON g.org_id=e.org_id AND g.id=e.generation_id
+         WHERE e.org_id=$1::uuid AND e.generation_id=$2::uuid
+           AND e.generation_seq>$3
+           AND e.event_kind IN ('assistant_delta','runtime_output','transcript')
+           AND (g.accepted_through_seq IS NULL OR e.generation_seq <= g.accepted_through_seq)
+           ORDER BY e.generation_seq ASC LIMIT $4",
     )
     .bind(organization_id)
     .bind(&generation_id)
@@ -272,6 +276,21 @@ pub(super) async fn read_message_transcript(
         let kind: String = event.try_get("event_kind")?;
         let payload: Value = event.try_get("payload")?;
         let recorded_at: String = event.try_get("recorded_at")?;
+        if kind == "transcript" {
+            let Some(mut entry) = payload.get("entry").cloned() else {
+                continue;
+            };
+            if let Value::Object(object) = &mut entry {
+                object.insert(
+                    "generationId".to_owned(),
+                    Value::String(generation_id.clone()),
+                );
+                object.insert("generationSeqStart".to_owned(), Value::from(seq));
+                object.insert("generationSeqEnd".to_owned(), Value::from(seq));
+            }
+            transcript.push(entry);
+            continue;
+        }
         let text = match kind.as_str() {
             "assistant_delta" => payload.get("delta").and_then(Value::as_str),
             "runtime_output" => payload.get("body").and_then(Value::as_str),
@@ -414,6 +433,35 @@ pub(super) async fn read_conversation_messages(
         .collect::<Vec<_>>();
     let mut transcript_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
     let mut fallback_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut transcript_summary_by_generation: HashMap<String, Value> = HashMap::new();
+    if !generation_ids.is_empty() {
+        let summaries = sqlx::query(
+            "SELECT g.id::text AS generation_id, count(e.generation_seq)::bigint AS entry_count,
+                    min(e.recorded_at)::text AS started_at, max(e.recorded_at)::text AS ended_at
+             FROM chat_generations g
+             LEFT JOIN chat_generation_events e
+               ON e.org_id=g.org_id AND e.generation_id=g.id AND e.event_kind='transcript'
+              AND (g.accepted_through_seq IS NULL OR e.generation_seq <= g.accepted_through_seq)
+             WHERE g.org_id=$1::uuid AND g.id=ANY($2::text[]::uuid[])
+             GROUP BY g.id",
+        )
+        .bind(organization_id)
+        .bind(&generation_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        for summary in summaries {
+            let generation_id: String = summary.try_get("generation_id")?;
+            let entry_count: i64 = summary.try_get("entry_count")?;
+            transcript_summary_by_generation.insert(
+                generation_id,
+                serde_json::json!({
+                    "entryCount": entry_count,
+                    "startedAt": summary.try_get::<Option<String>, _>("started_at")?,
+                    "endedAt": summary.try_get::<Option<String>, _>("ended_at")?,
+                }),
+            );
+        }
+    }
     if *include_transcript && !generation_ids.is_empty() {
         let events = sqlx::query(
             "SELECT generation_id::text AS generation_id, generation_seq, event_kind,
@@ -505,15 +553,11 @@ pub(super) async fn read_conversation_messages(
             .and_then(|id| transcript_by_generation.get(id))
             .cloned()
             .unwrap_or_default();
-        let transcript_summary = if transcript.is_empty() {
-            Value::Null
-        } else {
-            serde_json::json!({
-                "entryCount": transcript.len(),
-                "startedAt": transcript.first().and_then(|entry| entry.get("ts")).cloned().unwrap_or(Value::Null),
-                "endedAt": transcript.last().and_then(|entry| entry.get("ts")).cloned().unwrap_or(Value::Null),
-            })
-        };
+        let transcript_summary = generation_id
+            .as_ref()
+            .and_then(|id| transcript_summary_by_generation.get(id))
+            .cloned()
+            .unwrap_or(Value::Null);
         messages.push(serde_json::json!({
             "id": id,
             "orgId": row.try_get::<String, _>("org_id")?,

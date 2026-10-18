@@ -93,7 +93,7 @@ export function registerChatMessageQueryRoutes(ctx: ChatMessageQueryRouteContext
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
-    if (conversation.mutability === "native_chat") {
+    if (conversation.mutability === "native_chat" && conversation.conversationKind === "chat") {
       const response = await callNativeChatTranscript(
         rustFoundationBridge,
         req.actor,
