@@ -8,8 +8,8 @@ use sqlx::PgPool;
 pub use crate::runtime_bindings::Error;
 
 mod admission;
-mod lifecycle;
 mod context;
+mod lifecycle;
 mod locator;
 mod projection;
 mod reads;

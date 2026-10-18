@@ -4,7 +4,10 @@
 
 use super::{IdentityInput, Result, Tx, http};
 use crate::native_chat::NativeChatActor;
-use rudder_runtime_core::native_chat::HermesSessionSelector;
+use rudder_runtime_core::native_chat::{
+    ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector, OpenCodeSessionSelector,
+    PiSessionSelector,
+};
 use sqlx::Row;
 
 /// Runtime types that are admitted through the Rust Native Chat path. Keep
@@ -22,6 +25,20 @@ fn supports_native_chat_runtime(runtime_type: &str) -> bool {
             | "opencode_local"
             | "pi_local"
     )
+}
+
+fn valid_open_session(runtime_type: &str, session_id: &str) -> bool {
+    match runtime_type {
+        "codex_local" => !session_id.trim().is_empty() && session_id.len() <= 4096,
+        "hermes_local" => HermesSessionSelector::from_persisted(session_id).is_ok(),
+        "claude_local" => ClaudeSessionSelector::from_persisted(session_id).is_ok(),
+        "cursor" | "cursor_local" => CursorSessionSelector::from_persisted(session_id).is_ok(),
+        "opencode_local" => OpenCodeSessionSelector::from_persisted(session_id).is_ok(),
+        "pi_local" => serde_json::from_str::<PiSessionSelector>(session_id)
+            .ok()
+            .is_some_and(|selector| selector.validate().is_ok()),
+        _ => false,
+    }
 }
 
 pub(crate) struct EnsuredNativeChatBinding {
@@ -116,8 +133,7 @@ async fn locked_segment(
         native_session_id.as_deref(),
     ) {
         (_, "pending", None) => true,
-        ("codex_local", "open", Some(id)) => !id.trim().is_empty() && id.len() <= 4096,
-        ("hermes_local", "open", Some(id)) => HermesSessionSelector::from_persisted(id).is_ok(),
+        (_, "open", Some(id)) => valid_open_session(&runtime_type, id),
         _ => false,
     };
     if !valid || sealed || !supports_native_chat_runtime(&runtime_type) {
@@ -133,7 +149,7 @@ async fn locked_segment(
 
 #[cfg(test)]
 mod tests {
-    use super::supports_native_chat_runtime;
+    use super::{supports_native_chat_runtime, valid_open_session};
 
     #[test]
     fn all_rust_native_chat_runtimes_are_admissible() {
@@ -151,5 +167,31 @@ mod tests {
         for runtime in ["process", "openclaw_gateway", "gemini_cli", ""] {
             assert!(!supports_native_chat_runtime(runtime), "{runtime}");
         }
+    }
+
+    #[test]
+    fn open_sessions_use_provider_specific_selectors() {
+        assert!(valid_open_session("codex_local", "thread"));
+        assert!(valid_open_session(
+            "hermes_local",
+            "550e8400-e29b-41d4-a716-446655440000"
+        ));
+        assert!(valid_open_session(
+            "claude_local",
+            "05a82e73-f42d-4a40-9323-e58356868e6b"
+        ));
+        assert!(valid_open_session("cursor_local", "cursor-session"));
+        assert!(valid_open_session("opencode_local", "ses_rudder_native"));
+        assert!(valid_open_session(
+            "pi_local",
+            r#"{"sessionId":"pi-session","sessionFile":"/tmp/pi.jsonl","leafId":"deadbeef"}"#
+        ));
+        assert!(!valid_open_session("hermes_local", "not-a-uuid"));
+        assert!(!valid_open_session("claude_local", "not-a-uuid"));
+        assert!(!valid_open_session("opencode_local", "not-a-session"));
+        assert!(!valid_open_session(
+            "pi_local",
+            r#"{"sessionId":"missing"}"#
+        ));
     }
 }

@@ -127,7 +127,10 @@ async fn lock_current_context_inner(
     )
     .await?;
 
-    if run_status != "running" || run_owner.as_deref() != Some(owner_token) {
+    let terminal_retry = allow_sealed_segment
+        && run_status != "running"
+        && run_owner.as_deref() == Some(owner_token);
+    if (run_status != "running" && !terminal_retry) || run_owner.as_deref() != Some(owner_token) {
         return Err(http(409, "Run execution owner or lease is stale"));
     }
 
@@ -167,7 +170,8 @@ async fn lock_current_context_inner(
     if attempt_agent_id != agent_id
         || stored_epoch != Some(attempt_epoch)
         || stored_owner.as_deref() != Some(owner_token)
-        || !matches!(attempt_status.as_str(), "started" | "waiting_for_network")
+        || (!terminal_retry
+            && !matches!(attempt_status.as_str(), "started" | "waiting_for_network"))
         || attempt_index < 0
     {
         return Err(http(409, "Run attempt owner or epoch is stale"));
@@ -243,7 +247,9 @@ async fn lock_current_context_inner(
     {
         return Err(http(409, "Run, binding, and current segment do not match"));
     }
-    assert_current_lease_tx(tx, organization_id, &run_id, owner_token).await?;
+    if !terminal_retry {
+        assert_current_lease_tx(tx, organization_id, &run_id, owner_token).await?;
+    }
 
     Ok(LockedContext {
         run_id,

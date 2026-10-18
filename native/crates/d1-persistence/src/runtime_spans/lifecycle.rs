@@ -8,9 +8,7 @@ use super::context::{
     lock_current_context_allow_sealed_segment,
 };
 use super::projection::span_and_segment;
-use super::validation::{
-    Result, canonical_uuid, completeness, http, owner_token,
-};
+use super::validation::{Result, canonical_uuid, completeness, http, owner_token};
 
 /// Close the exact primary span owned by one Run Attempt.
 ///
@@ -53,7 +51,14 @@ pub(super) async fn close(
     )
     .await?;
     let span = locked_span(&mut tx, organization_id, &span_id).await?;
-    ensure_span_fence(&span, &context, &run_id, &attempt_id, *attempt_epoch, &owner_token)?;
+    ensure_span_fence(
+        &span,
+        &context,
+        &run_id,
+        &attempt_id,
+        *attempt_epoch,
+        &owner_token,
+    )?;
     let current_state: String = span.try_get("state")?;
     let current_completeness: String = span.try_get("completeness")?;
     let closed_at: Option<String> = span.try_get("closed_at")?;
@@ -100,7 +105,10 @@ pub(super) async fn close(
     .execute(&mut *tx)
     .await?;
     if updated.rows_affected() != 1 {
-        return Err(http(409, "Run span owner or lifecycle changed concurrently"));
+        return Err(http(
+            409,
+            "Run span owner or lifecycle changed concurrently",
+        ));
     }
     assert_current_lease_tx(&mut tx, organization_id, &run_id, &owner_token).await?;
 
@@ -128,6 +136,7 @@ pub(super) async fn close(
         &context.segment_id,
     )
     .await?;
+    assert_current_lease_tx(&mut tx, organization_id, &run_id, &owner_token).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -192,11 +201,21 @@ async fn segment_transition(
     )
     .await?;
     let span = locked_span(&mut tx, organization_id, &span_id).await?;
-    ensure_span_fence(&span, &context, &run_id, &attempt_id, *attempt_epoch, &owner_token)?;
+    ensure_span_fence(
+        &span,
+        &context,
+        &run_id,
+        &attempt_id,
+        *attempt_epoch,
+        &owner_token,
+    )?;
     let span_state: String = span.try_get("state")?;
     let span_closed: Option<String> = span.try_get("closed_at")?;
     if reconcile && (span_state == "open" || span_closed.is_none()) {
-        return Err(http(409, "Run span must be closed before Segment reconciliation"));
+        return Err(http(
+            409,
+            "Run span must be closed before Segment reconciliation",
+        ));
     }
     if !reconcile && span_state != "open" {
         return Err(http(409, "Run span is not open for Segment sealing"));
@@ -279,6 +298,7 @@ async fn segment_transition(
         &context.segment_id,
     )
     .await?;
+    assert_current_lease_tx(&mut tx, organization_id, &run_id, &owner_token).await?;
     tx.commit().await?;
     Ok(result)
 }
