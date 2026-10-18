@@ -187,7 +187,7 @@ async fn private_locator_migration_preserves_authority_and_legacy_and_refuses_un
         execute_on_worker(&database, host, actor, run.clone(), attempt.clone()).await;
     let observed = observed.unwrap();
     let migration = include_str!(
-        "../../../../../packages/db/src/migrations/0181_native_chat_finalization_guards.sql"
+        "../../../../../packages/db/src/migrations/0182_native_chat_finalization_guards.sql"
     )
     .split("--> statement-breakpoint")
     .next()

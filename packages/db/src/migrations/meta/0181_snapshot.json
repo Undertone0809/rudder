@@ -1,6 +1,6 @@
 {
-  "id": "813dbae1-4845-48af-a029-8994cd7827a3",
-  "prevId": "610541e4-f2af-49de-9b37-d042edac8777",
+  "id": "610541e4-f2af-49de-9b37-d042edac8777",
+  "prevId": "c30678dd-c009-464a-8a78-d84608fecc67",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -31650,6 +31650,165 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.agent_instruction_bundles": {
+      "name": "agent_instruction_bundles",
+      "schema": "",
+      "columns": {
+        "agent_id": {
+          "name": "agent_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_file": {
+          "name": "entry_file",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "files": {
+          "name": "files",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "clear_legacy_prompt_template": {
+          "name": "clear_legacy_prompt_template",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "materialized_at": {
+          "name": "materialized_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "agent_instruction_bundles_claim_idx": {
+          "name": "agent_instruction_bundles_claim_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "agent_instruction_bundles_agent_id_agents_id_fk": {
+          "name": "agent_instruction_bundles_agent_id_agents_id_fk",
+          "tableFrom": "agent_instruction_bundles",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "agent_instruction_bundles_org_id_organizations_id_fk": {
+          "name": "agent_instruction_bundles_org_id_organizations_id_fk",
+          "tableFrom": "agent_instruction_bundles",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "agent_instruction_bundles_state_ck": {
+          "name": "agent_instruction_bundles_state_ck",
+          "value": "\"agent_instruction_bundles\".\"state\" in ('pending', 'repair', 'materialized') and \"agent_instruction_bundles\".\"attempts\" >= 0"
+        },
+        "agent_instruction_bundles_entry_ck": {
+          "name": "agent_instruction_bundles_entry_ck",
+          "value": "octet_length(\"agent_instruction_bundles\".\"entry_file\") between 1 and 512 and left(\"agent_instruction_bundles\".\"entry_file\", 1) <> '/'"
+        },
+        "agent_instruction_bundles_files_ck": {
+          "name": "agent_instruction_bundles_files_ck",
+          "value": "jsonb_typeof(\"agent_instruction_bundles\".\"files\") = 'object'"
+        }
+      },
       "isRLSEnabled": false
     }
   },

@@ -88,6 +88,14 @@ pub(super) async fn handle(
     payload: web::Payload,
     endpoint: LocalAccountEndpoint,
 ) -> HttpResponse {
+    // These paths are owned by the native lifecycle router only for POST.
+    // Check the method before consuming or parsing a body so unsupported
+    // methods retain the legacy route-not-found response even when a caller
+    // supplies malformed or oversized JSON.
+    if request.method() != Method::POST {
+        return method_not_allowed();
+    }
+
     let body = match read_limited_body(&request, payload).await {
         Ok(body) => body,
         Err(BodyReadError::TooLarge) => {
@@ -102,10 +110,6 @@ pub(super) async fn handle(
     if let Some(response) = crate::public_ingress::private_host_rejection(&state, &request) {
         return response;
     }
-    if request.method() != Method::POST {
-        return method_not_allowed();
-    }
-
     let Some(service) = state.local_account.as_ref() else {
         return api_error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1093,6 +1097,42 @@ mod tests {
             .unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({ "error": "API route not found" })
+        );
+    }
+
+    #[actix_web::test]
+    async fn wrong_methods_are_rejected_before_body_parsing() {
+        let state = web::Data::new(IngressState {
+            foundation: std::sync::Arc::new(
+                crate::AppState::new(crate::ServerConfig::default()).unwrap(),
+            ),
+            config: crate::public_ingress_config::PublicIngressConfig::new(
+                "127.0.0.1:0".parse().unwrap(),
+                "http://127.0.0.1:1",
+                "0123456789abcdef0123456789abcdef",
+            )
+            .unwrap(),
+            local_account: None,
+        });
+        let app = actix_test::init_service(
+            actix_web::App::new()
+                .app_data(state)
+                .route("/api/auth/local-claim", web::route().to(local_claim)),
+        )
+        .await;
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::get()
+                .uri("/api/auth/local-claim")
+                .insert_header((header::CONTENT_TYPE, "application/json"))
+                .set_payload("not-json")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&actix_test::read_body(response).await).unwrap(),
             json!({ "error": "API route not found" })
         );
     }

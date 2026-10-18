@@ -1143,7 +1143,7 @@ async fn calendar_month_budget_uses_post_lock_clock_and_excludes_adjacent_utc_mo
 
 #[tokio::test(flavor = "multi_thread")]
 async fn migration_refuses_legacy_cross_org_generation_and_rolls_back() {
-    let database = Database::start_before_migration("0180_native_chat_rust_admission").await;
+    let database = Database::start_before_migration("0181_native_chat_rust_admission").await;
     seed_chat(&database.pool, CHAT).await;
     sqlx::query(
         "INSERT INTO chat_generations (id, org_id, conversation_id, status)
@@ -1156,7 +1156,7 @@ async fn migration_refuses_legacy_cross_org_generation_and_rolls_back() {
     .expect("legacy independent FKs permit a mismatched org/conversation pair");
 
     let error = database
-        .apply_migration("0180_native_chat_rust_admission")
+        .apply_migration("0181_native_chat_rust_admission")
         .await
         .expect_err("migration must report existing cross-org corruption");
     assert!(
@@ -1182,7 +1182,7 @@ async fn migration_refuses_legacy_cross_org_generation_and_rolls_back() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn migration_preserves_populated_legacy_chat_without_native_linkage() {
-    let database = Database::start_before_migration("0180_native_chat_rust_admission").await;
+    let database = Database::start_before_migration("0181_native_chat_rust_admission").await;
     seed_chat(&database.pool, CHAT).await;
     sqlx::query(
         "INSERT INTO chat_messages (id, org_id, conversation_id, role, body)
@@ -1236,7 +1236,7 @@ async fn migration_preserves_populated_legacy_chat_without_native_linkage() {
     .expect("seed legacy Attempt");
 
     database
-        .apply_migration("0180_native_chat_rust_admission")
+        .apply_migration("0181_native_chat_rust_admission")
         .await
         .expect("migration accepts valid populated legacy data");
 

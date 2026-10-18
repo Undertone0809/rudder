@@ -1,5 +1,5 @@
 {
-  "id": "610541e4-f2af-49de-9b37-d042edac8777",
+  "id": "dbdb9098-21ac-47c1-95e4-5b5924047b70",
   "prevId": "c30678dd-c009-464a-8a78-d84608fecc67",
   "version": "7",
   "dialect": "postgresql",
@@ -8447,32 +8447,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "execution_authority": {
-          "name": "execution_authority",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'legacy_ts'"
-        },
-        "source_message_id": {
-          "name": "source_message_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source_turn_variant": {
-          "name": "source_turn_variant",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "native_admission_hold": {
-          "name": "native_admission_hold",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "status": {
           "name": "status",
           "type": "text",
@@ -8664,73 +8638,6 @@
           "method": "btree",
           "with": {}
         },
-        "chat_generations_org_id_conversation_authority_hold_uq": {
-          "name": "chat_generations_org_id_conversation_authority_hold_uq",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "execution_authority",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "native_admission_hold",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "chat_generations_native_source_identity_uq": {
-          "name": "chat_generations_native_source_identity_uq",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "source_message_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "source_turn_variant",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"chat_generations\".\"source_message_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "chat_generations_active_conversation_uq": {
           "name": "chat_generations_active_conversation_uq",
           "columns": [
@@ -8748,7 +8655,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"chat_generations\".\"status\" in ('starting', 'active', 'running', 'waiting_for_network', 'tool_busy', 'closing', 'stop_requested', 'stopping') or \"chat_generations\".\"native_admission_hold\" = true",
+          "where": "\"chat_generations\".\"status\" in ('starting', 'active', 'running', 'waiting_for_network', 'tool_busy', 'closing', 'stop_requested', 'stopping')",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -8801,55 +8708,12 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
-        },
-        "chat_generations_org_conversation_fk": {
-          "name": "chat_generations_org_conversation_fk",
-          "tableFrom": "chat_generations",
-          "tableTo": "chat_conversations",
-          "columnsFrom": [
-            "org_id",
-            "conversation_id"
-          ],
-          "columnsTo": [
-            "org_id",
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "chat_generations_native_source_message_fk": {
-          "name": "chat_generations_native_source_message_fk",
-          "tableFrom": "chat_generations",
-          "tableTo": "chat_messages",
-          "columnsFrom": [
-            "org_id",
-            "source_message_id",
-            "conversation_id",
-            "source_turn_variant"
-          ],
-          "columnsTo": [
-            "org_id",
-            "id",
-            "conversation_id",
-            "turn_variant"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "chat_generations_native_authority_shape_check": {
-          "name": "chat_generations_native_authority_shape_check",
-          "value": "(\n        (\"chat_generations\".\"execution_authority\" = 'legacy_ts' and \"chat_generations\".\"source_message_id\" is null\n          and \"chat_generations\".\"source_turn_variant\" is null and \"chat_generations\".\"native_admission_hold\" = false)\n        or\n        (\"chat_generations\".\"execution_authority\" = 'native_rust' and \"chat_generations\".\"source_message_id\" is not null\n          and \"chat_generations\".\"source_turn_variant\" is not null and \"chat_generations\".\"source_turn_variant\" >= 0)\n      )"
-        },
-        "chat_generations_execution_authority_check": {
-          "name": "chat_generations_execution_authority_check",
-          "value": "\"chat_generations\".\"execution_authority\" in ('legacy_ts', 'native_rust')"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.chat_message_transcript_entries": {
@@ -9171,39 +9035,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "chat_messages_org_id_conversation_variant_uq": {
-          "name": "chat_messages_org_id_conversation_variant_uq",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "turn_variant",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -9276,12 +9107,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "chat_messages_turn_variant_check": {
-          "name": "chat_messages_turn_variant_check",
-          "value": "\"chat_messages\".\"turn_variant\" >= 0"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.chat_queued_messages": {
@@ -15047,24 +14873,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "generation_attempt_epoch": {
-          "name": "generation_attempt_epoch",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "connection_epoch": {
-          "name": "connection_epoch",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "protocol_phase": {
-          "name": "protocol_phase",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "submission_phase": {
           "name": "submission_phase",
           "type": "text",
@@ -15319,18 +15127,6 @@
         "heartbeat_run_attempts_owner_fence_shape_check": {
           "name": "heartbeat_run_attempts_owner_fence_shape_check",
           "value": "(\n        (\"heartbeat_run_attempts\".\"owner_token\" is null and \"heartbeat_run_attempts\".\"attempt_epoch\" is null)\n        or\n        (\"heartbeat_run_attempts\".\"owner_token\" is not null and btrim(\"heartbeat_run_attempts\".\"owner_token\") <> '' and \"heartbeat_run_attempts\".\"attempt_epoch\" is not null and \"heartbeat_run_attempts\".\"attempt_epoch\" > 0)\n      )"
-        },
-        "heartbeat_run_attempts_native_chat_epoch_shape_check": {
-          "name": "heartbeat_run_attempts_native_chat_epoch_shape_check",
-          "value": "((\n        (\"heartbeat_run_attempts\".\"generation_attempt_epoch\" is null and \"heartbeat_run_attempts\".\"connection_epoch\" is null)\n        or\n        (\"heartbeat_run_attempts\".\"generation_attempt_epoch\" > 0 and \"heartbeat_run_attempts\".\"connection_epoch\" > 0\n          and \"heartbeat_run_attempts\".\"attempt_epoch\" > 0 and \"heartbeat_run_attempts\".\"owner_token\" is not null)\n      ) is true)"
-        },
-        "heartbeat_run_attempts_resume_source_check": {
-          "name": "heartbeat_run_attempts_resume_source_check",
-          "value": "\"heartbeat_run_attempts\".\"resume_source\" in ('fresh', 'same_session', 'pristine_replay')"
-        },
-        "heartbeat_run_attempts_native_chat_protocol_phase_check": {
-          "name": "heartbeat_run_attempts_native_chat_protocol_phase_check",
-          "value": "((\n        (\"heartbeat_run_attempts\".\"protocol_phase\" is null and \"heartbeat_run_attempts\".\"generation_attempt_epoch\" is null and \"heartbeat_run_attempts\".\"connection_epoch\" is null)\n        or\n        (\"heartbeat_run_attempts\".\"protocol_phase\" in ('no_thread_request', 'thread_start_indeterminate', 'thread_known', 'input_pre_submission', 'input_indeterminate', 'turn_known', 'provider_terminal_observed', 'execution_terminal_committed')\n          and \"heartbeat_run_attempts\".\"generation_attempt_epoch\" > 0 and \"heartbeat_run_attempts\".\"connection_epoch\" > 0\n          and jsonb_typeof(\"heartbeat_run_attempts\".\"checkpoint_json\") = 'object'\n          and \"heartbeat_run_attempts\".\"checkpoint_json\"->>'phase' = \"heartbeat_run_attempts\".\"protocol_phase\")\n      ) is true)"
         }
       },
       "isRLSEnabled": false
@@ -15753,26 +15549,6 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
-        },
-        "chat_generation_id": {
-          "name": "chat_generation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "execution_authority": {
-          "name": "execution_authority",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'legacy_ts'"
-        },
-        "native_admission_hold": {
-          "name": "native_admission_hold",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "goal_id": {
           "name": "goal_id",
@@ -16268,29 +16044,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"heartbeat_runs\".\"chat_conversation_id\" is not null and (\"heartbeat_runs\".\"status\" in ('queued', 'running') or \"heartbeat_runs\".\"terminal_effects_pending\" = true or \"heartbeat_runs\".\"native_admission_hold\" = true)",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "heartbeat_runs_native_generation_uq": {
-          "name": "heartbeat_runs_native_generation_uq",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "chat_generation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"heartbeat_runs\".\"chat_generation_id\" is not null",
+          "where": "\"heartbeat_runs\".\"chat_conversation_id\" is not null and (\"heartbeat_runs\".\"status\" in ('queued', 'running') or \"heartbeat_runs\".\"terminal_effects_pending\" = true)",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -16409,27 +16163,6 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
-        },
-        "heartbeat_runs_native_generation_fk": {
-          "name": "heartbeat_runs_native_generation_fk",
-          "tableFrom": "heartbeat_runs",
-          "tableTo": "chat_generations",
-          "columnsFrom": [
-            "org_id",
-            "chat_generation_id",
-            "chat_conversation_id",
-            "execution_authority",
-            "native_admission_hold"
-          ],
-          "columnsTo": [
-            "org_id",
-            "id",
-            "conversation_id",
-            "execution_authority",
-            "native_admission_hold"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -16443,14 +16176,6 @@
         "heartbeat_runs_common_run_identity_check": {
           "name": "heartbeat_runs_common_run_identity_check",
           "value": "(\n        (\"heartbeat_runs\".\"scene\" is null and \"heartbeat_runs\".\"target_type\" is null and \"heartbeat_runs\".\"target_id\" is null\n          and \"heartbeat_runs\".\"idempotency_key\" is null and \"heartbeat_runs\".\"session_intent_json\" is null)\n        or\n        (\"heartbeat_runs\".\"scene\" is not null and \"heartbeat_runs\".\"target_type\" is not null and \"heartbeat_runs\".\"target_id\" is not null\n          and \"heartbeat_runs\".\"idempotency_key\" is not null and \"heartbeat_runs\".\"session_intent_json\" is not null)\n      )"
-        },
-        "heartbeat_runs_native_authority_shape_check": {
-          "name": "heartbeat_runs_native_authority_shape_check",
-          "value": "(\n        (\"heartbeat_runs\".\"execution_authority\" = 'legacy_ts' and \"heartbeat_runs\".\"chat_generation_id\" is null\n          and \"heartbeat_runs\".\"native_admission_hold\" = false)\n        or\n        (\"heartbeat_runs\".\"execution_authority\" = 'native_rust' and \"heartbeat_runs\".\"chat_generation_id\" is not null\n          and \"heartbeat_runs\".\"chat_conversation_id\" is not null and \"heartbeat_runs\".\"scene\" = 'chat'\n          and \"heartbeat_runs\".\"target_type\" = 'chat_conversation'\n          and \"heartbeat_runs\".\"target_id\" = \"heartbeat_runs\".\"chat_conversation_id\"::text)\n      )"
-        },
-        "heartbeat_runs_execution_authority_check": {
-          "name": "heartbeat_runs_execution_authority_check",
-          "value": "\"heartbeat_runs\".\"execution_authority\" in ('legacy_ts', 'native_rust')"
         },
         "heartbeat_runs_scene_check": {
           "name": "heartbeat_runs_scene_check",
@@ -16466,7 +16191,7 @@
         },
         "heartbeat_runs_session_intent_shape_check": {
           "name": "heartbeat_runs_session_intent_shape_check",
-          "value": "(\n        \"heartbeat_runs\".\"session_intent_json\" is null\n        or (\n          jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\") = 'object'\n          and \"heartbeat_runs\".\"session_intent_json\" ?& array['kind', 'reuseScope', 'sourceRunId', 'sessionId', 'sessionParams']\n          and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'kind') = 'string'\n          and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'reuseScope') = 'string'\n          and \"heartbeat_runs\".\"session_intent_json\"->>'kind' in ('fresh', 'resume', 'fork')\n          and (\n            (\n              \"heartbeat_runs\".\"session_intent_json\"->>'kind' = 'fresh'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'reuseScope' = 'none'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceRunId') = 'null'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'null'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionParams') = 'null'\n              and not (\"heartbeat_runs\".\"session_intent_json\" ? 'sourceBoundaryRef')\n            )\n            or\n            (\n              \"heartbeat_runs\".\"session_intent_json\"->>'kind' = 'resume'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'reuseScope' in ('explicit', 'task')\n              and (\n                jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceRunId') = 'null'\n                or (jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceRunId') = 'string' and \"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId') and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId') <> '')\n              )\n              and (\n                jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'null'\n                or (jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'string' and (\n                  (\"heartbeat_runs\".\"execution_authority\" = 'native_rust' and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') <> '' and octet_length(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') <= 4096)\n                  or (\"heartbeat_runs\".\"execution_authority\" = 'legacy_ts' and \"heartbeat_runs\".\"session_intent_json\"->>'sessionId' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') <> '')\n                ))\n              )\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionParams') in ('null', 'object')\n              and not (\"heartbeat_runs\".\"session_intent_json\" ? 'sourceBoundaryRef')\n            )\n            or\n            (\n              \"heartbeat_runs\".\"session_intent_json\"->>'kind' = 'fork'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'reuseScope' = 'explicit'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceRunId') = 'string'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId')\n              and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId') <> ''\n              and \"heartbeat_runs\".\"session_intent_json\" ? 'sourceBoundaryRef'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceBoundaryRef') = 'string'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'sourceBoundaryRef' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceBoundaryRef')\n              and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceBoundaryRef') <> ''\n              and (\n                jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'null'\n                or (jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'string' and (\n                  (\"heartbeat_runs\".\"execution_authority\" = 'native_rust' and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') <> '' and octet_length(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') <= 4096)\n                  or (\"heartbeat_runs\".\"execution_authority\" = 'legacy_ts' and \"heartbeat_runs\".\"session_intent_json\"->>'sessionId' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') <> '')\n                ))\n              )\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionParams') in ('null', 'object')\n            )\n          )\n        )\n      )"
+          "value": "(\n        \"heartbeat_runs\".\"session_intent_json\" is null\n        or (\n          jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\") = 'object'\n          and \"heartbeat_runs\".\"session_intent_json\" ?& array['kind', 'reuseScope', 'sourceRunId', 'sessionId', 'sessionParams']\n          and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'kind') = 'string'\n          and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'reuseScope') = 'string'\n          and \"heartbeat_runs\".\"session_intent_json\"->>'kind' in ('fresh', 'resume', 'fork')\n          and (\n            (\n              \"heartbeat_runs\".\"session_intent_json\"->>'kind' = 'fresh'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'reuseScope' = 'none'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceRunId') = 'null'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'null'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionParams') = 'null'\n              and not (\"heartbeat_runs\".\"session_intent_json\" ? 'sourceBoundaryRef')\n            )\n            or\n            (\n              \"heartbeat_runs\".\"session_intent_json\"->>'kind' = 'resume'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'reuseScope' in ('explicit', 'task')\n              and (\n                jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceRunId') = 'null'\n                or (jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceRunId') = 'string' and \"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId') and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId') <> '')\n              )\n              and (\n                jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'null'\n                or (jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'string' and \"heartbeat_runs\".\"session_intent_json\"->>'sessionId' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') <> '')\n              )\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionParams') in ('null', 'object')\n              and not (\"heartbeat_runs\".\"session_intent_json\" ? 'sourceBoundaryRef')\n            )\n            or\n            (\n              \"heartbeat_runs\".\"session_intent_json\"->>'kind' = 'fork'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'reuseScope' = 'explicit'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceRunId') = 'string'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId')\n              and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceRunId') <> ''\n              and \"heartbeat_runs\".\"session_intent_json\" ? 'sourceBoundaryRef'\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sourceBoundaryRef') = 'string'\n              and \"heartbeat_runs\".\"session_intent_json\"->>'sourceBoundaryRef' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceBoundaryRef')\n              and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sourceBoundaryRef') <> ''\n              and (\n                jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'null'\n                or (jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionId') = 'string' and \"heartbeat_runs\".\"session_intent_json\"->>'sessionId' = btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') and btrim(\"heartbeat_runs\".\"session_intent_json\"->>'sessionId') <> '')\n              )\n              and jsonb_typeof(\"heartbeat_runs\".\"session_intent_json\"->'sessionParams') in ('null', 'object')\n            )\n          )\n        )\n      )"
         }
       },
       "isRLSEnabled": false
@@ -31650,6 +31375,165 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.agent_instruction_bundles": {
+      "name": "agent_instruction_bundles",
+      "schema": "",
+      "columns": {
+        "agent_id": {
+          "name": "agent_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_file": {
+          "name": "entry_file",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "files": {
+          "name": "files",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "clear_legacy_prompt_template": {
+          "name": "clear_legacy_prompt_template",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "materialized_at": {
+          "name": "materialized_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "agent_instruction_bundles_claim_idx": {
+          "name": "agent_instruction_bundles_claim_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "agent_instruction_bundles_agent_id_agents_id_fk": {
+          "name": "agent_instruction_bundles_agent_id_agents_id_fk",
+          "tableFrom": "agent_instruction_bundles",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "agent_instruction_bundles_org_id_organizations_id_fk": {
+          "name": "agent_instruction_bundles_org_id_organizations_id_fk",
+          "tableFrom": "agent_instruction_bundles",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "agent_instruction_bundles_state_ck": {
+          "name": "agent_instruction_bundles_state_ck",
+          "value": "\"agent_instruction_bundles\".\"state\" in ('pending', 'repair', 'materialized') and \"agent_instruction_bundles\".\"attempts\" >= 0"
+        },
+        "agent_instruction_bundles_entry_ck": {
+          "name": "agent_instruction_bundles_entry_ck",
+          "value": "octet_length(\"agent_instruction_bundles\".\"entry_file\") between 1 and 512 and left(\"agent_instruction_bundles\".\"entry_file\", 1) <> '/'"
+        },
+        "agent_instruction_bundles_files_ck": {
+          "name": "agent_instruction_bundles_files_ck",
+          "value": "jsonb_typeof(\"agent_instruction_bundles\".\"files\") = 'object'"
+        }
+      },
       "isRLSEnabled": false
     }
   },

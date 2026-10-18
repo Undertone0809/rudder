@@ -7,6 +7,7 @@ pub(super) fn random_hex(bytes: usize) -> Result<String> {
     getrandom::getrandom(&mut output).map_err(|_| http(503, "Secure randomness is unavailable"))?;
     Ok(output.iter().map(|b| format!("{b:02x}")).collect())
 }
+
 pub(super) async fn suggest_name(tx: &mut Tx<'_>, org: &str) -> Result<String> {
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT name FROM agents WHERE org_id=$1::uuid AND status<>'terminated'",
@@ -146,7 +147,13 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
     .fetch_all(&mut **tx)
     .await?;
     let unique_name = deduplicate_name(&base_name, &existing_names);
-    let icon = default_avatar_icon()?;
+    let icon = normalize_avatar_icon(
+        request
+            .node_owned
+            .as_ref()
+            .and_then(|node| node.avatar_icon.as_deref()),
+    )?;
+    assert_avatar_asset_belongs_to_org(tx, ctx.org, &icon).await?;
 
     // Generate the id in PostgreSQL so the same transaction owns the id,
     // workspace key, row, membership, grant, activity, and budget policy.
@@ -192,6 +199,18 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
     .execute(&mut **tx)
     .await?;
 
+    // The instruction plan is an outbox row in the same Agent transaction.
+    // No host filesystem call is allowed before commit; a later detail read
+    // or recovery worker can replay the row without changing Agent identity.
+    if super::instructions::create_feature_enabled()
+        && let Some(bundle) = request
+            .node_owned
+            .as_ref()
+            .and_then(|node| node.instructions_bundle.as_ref())
+    {
+        super::instructions::enqueue_create_bundle(tx, ctx.org, &id, bundle).await?;
+    }
+
     // Every created Agent is an active organization principal and receives
     // the same default task-assignment grant as the Node route.
     sqlx::query("INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES($1::uuid,'agent',$2,'member','active') ON CONFLICT(org_id,principal_type,principal_id) DO UPDATE SET membership_role='member',status='active',updated_at=now()")
@@ -212,6 +231,11 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
     // skills are validated then omitted as always-enabled runtime skills.
     if super::agent_create_feature_enabled() {
         super::skills::assign_desired_skills(tx, ctx.org, &id, &request).await?;
+    }
+
+    if super::intelligence::feature_enabled() {
+        super::intelligence::ensure_default(tx, ctx.org, &id, &request, &normalized_runtime_config)
+            .await?;
     }
 
     if request.budget_monthly_cents > 0 {
@@ -263,6 +287,133 @@ fn default_avatar_icon() -> Result<String> {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Ok(format!("oreo:bloom:rose-milk:{}", Uuid::from_bytes(bytes)))
+}
+
+fn valid_background(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "mist" | "slate" | "sky" | "mint" | "peach" | "violet"
+    )
+}
+
+fn split_avatar_background(value: &str) -> (&str, Option<&str>) {
+    let lower = value.to_ascii_lowercase();
+    let Some(index) = lower.find("?bg=") else {
+        return (value, None);
+    };
+    (&value[..index], Some(&value[index + 4..]))
+}
+
+fn valid_uuid_suffix(value: &str) -> bool {
+    let (uuid, background) = split_avatar_background(value);
+    uuid_like(uuid) && background.is_none_or(valid_background)
+}
+
+fn extract_avatar_asset_id(icon: &str) -> Option<&str> {
+    let prefix = icon.get(..6)?;
+    if !prefix.eq_ignore_ascii_case("asset:") {
+        return None;
+    }
+    let value = &icon[6..];
+    let (uuid, _) = split_avatar_background(value);
+    (valid_uuid_suffix(value) && uuid_like(uuid)).then_some(uuid)
+}
+
+fn supported_avatar_icon(icon: &str) -> bool {
+    let lowered = icon.to_ascii_lowercase();
+    if let Some(value) = lowered.strip_prefix("oreo:") {
+        let mut parts = value.split(':');
+        let shape = parts.next();
+        let palette = parts.next();
+        let uuid = parts.next();
+        return parts.next().is_none()
+            && matches!(
+                shape,
+                Some("bloom" | "silk" | "flare" | "nova" | "void" | "jade")
+            )
+            && matches!(
+                palette,
+                Some(
+                    "rose-milk"
+                        | "peach-cream"
+                        | "mint-milk"
+                        | "aurora-pink"
+                        | "lilac-silk"
+                        | "blue-cream"
+                        | "jade-cream"
+                        | "coral-mist"
+                        | "lemon-mint"
+                        | "violet-peach"
+                        | "magenta-void"
+                        | "teal-void"
+                        | "amber-dusk"
+                        | "sky-melon"
+                        | "grapefruit"
+                        | "lavender-lime"
+                        | "aqua-orchid"
+                        | "honeydew"
+                        | "plum-gold"
+                        | "ice-berry"
+                        | "apricot-mint"
+                        | "candy-blue"
+                        | "raspberry-cream"
+                        | "spring-glow"
+                        | "sunset-punch"
+                        | "moon-pearl"
+                        | "seafoam-rose"
+                        | "blueberry-milk"
+                        | "mango-iris"
+                        | "forest-neon"
+                        | "cotton-candy"
+                        | "lime-sorbet"
+                        | "cherry-cola"
+                        | "opal-mint"
+                        | "peach-lilac"
+                        | "cyan-flame"
+                        | "orchid-night"
+                        | "pistachio-blush"
+                        | "lagoon-gold"
+                        | "vanilla-sky"
+                )
+            )
+            && uuid.is_some_and(uuid_like);
+    }
+    ["dicebear:notionists:", "asset:"]
+        .iter()
+        .find_map(|prefix| lowered.strip_prefix(prefix))
+        .is_some_and(valid_uuid_suffix)
+}
+
+fn normalize_avatar_icon(icon: Option<&str>) -> Result<String> {
+    let Some(icon) = icon.map(str::trim).filter(|value| !value.is_empty()) else {
+        return default_avatar_icon();
+    };
+    if supported_avatar_icon(icon) {
+        return Ok(icon.to_owned());
+    }
+    Err(http(422, "Invalid avatar reference"))
+}
+
+async fn assert_avatar_asset_belongs_to_org(tx: &mut Tx<'_>, org: &str, icon: &str) -> Result<()> {
+    let Some(asset_id) = extract_avatar_asset_id(icon) else {
+        return Ok(());
+    };
+    let asset = sqlx::query_as::<_, (String, String)>(
+        "SELECT org_id::text,content_type FROM assets WHERE id=$1::uuid",
+    )
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some((asset_org, content_type)) = asset else {
+        return Err(http(422, "Avatar asset not found"));
+    };
+    if asset_org != org {
+        return Err(http(403, "Avatar asset belongs to another organization"));
+    }
+    if !content_type.to_ascii_lowercase().starts_with("image/") {
+        return Err(http(422, "Avatar asset must be an image"));
+    }
+    Ok(())
 }
 
 fn deduplicate_name(base: &str, existing: &[String]) -> String {
@@ -419,4 +570,41 @@ async fn rollback(tx: &mut Tx<'_>, ctx: &Context<'_>, row: &Value) -> Result<Val
     )
     .await?;
     reads::public_row(tx, updated, false, false).await
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    use super::super::AgentCoreError;
+    use super::*;
+
+    #[test]
+    fn supported_avatar_refs_match_case_insensitively_and_preserve_input() {
+        let asset = "ASSET:40000000-0000-4000-8000-000000000001?BG=MIST";
+        assert_eq!(normalize_avatar_icon(Some(asset)).expect("asset"), asset);
+        let oreo = "OREO:BLOOM:ROSE-MILK:40000000-0000-4000-8000-000000000001";
+        assert_eq!(normalize_avatar_icon(Some(oreo)).expect("oreo"), oreo);
+        let dicebear = "DICEBEAR:NOTIONISTS:40000000-0000-4000-8000-000000000001?Bg=Slate";
+        assert_eq!(
+            normalize_avatar_icon(Some(dicebear)).expect("dicebear"),
+            dicebear
+        );
+    }
+
+    #[test]
+    fn malformed_private_avatar_refs_are_rejected() {
+        for icon in [
+            "asset:not-a-uuid",
+            "asset:40000000-0000-4000-8000-000000000001?bg=unknown",
+            "notionists:40000000-0000-4000-8000-000000000001",
+            "oreo:legacy:rose-milk:40000000-0000-4000-8000-000000000001",
+        ] {
+            assert!(
+                matches!(
+                    normalize_avatar_icon(Some(icon)),
+                    Err(AgentCoreError::Http(422, _, _))
+                ),
+                "{icon}"
+            );
+        }
+    }
 }

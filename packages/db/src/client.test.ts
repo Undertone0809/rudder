@@ -292,15 +292,15 @@ describe("migration catalog", () => {
 
     expect(latestEntry).toMatchObject({
       idx: journal.entries.length - 1,
-      tag: "0182_runtime_retention_expiry_lifecycle",
+      tag: "0183_runtime_retention_expiry_lifecycle",
     });
     expect(fs.existsSync(new URL(`${latestEntry.tag}.sql`, migrationsUrl))).toBe(true);
 
     const latestSnapshot = JSON.parse(
-      fs.readFileSync(new URL("meta/0182_snapshot.json", migrationsUrl), "utf8"),
+      fs.readFileSync(new URL("meta/0183_snapshot.json", migrationsUrl), "utf8"),
     ) as { id: string; prevId: string };
     const previousSnapshot = JSON.parse(
-      fs.readFileSync(new URL("meta/0181_snapshot.json", migrationsUrl), "utf8"),
+      fs.readFileSync(new URL("meta/0182_snapshot.json", migrationsUrl), "utf8"),
     ) as { id: string };
     expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
   });
@@ -1009,9 +1009,10 @@ describe("applyPendingMigrations", () => {
           "0177_organization_import_receipt_activity_mode.sql",
           "0178_organization_resource_mutation_state.sql",
           "0179_reflective_wallow.sql",
-          "0180_native_chat_rust_admission.sql",
-          "0181_native_chat_finalization_guards.sql",
-          "0182_runtime_retention_expiry_lifecycle.sql",
+          "0180_agent_instruction_bundles.sql",
+          "0181_native_chat_rust_admission.sql",
+          "0182_native_chat_finalization_guards.sql",
+          "0183_runtime_retention_expiry_lifecycle.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1212,9 +1213,10 @@ describe("applyPendingMigrations", () => {
           "0177_organization_import_receipt_activity_mode.sql",
           "0178_organization_resource_mutation_state.sql",
           "0179_reflective_wallow.sql",
-          "0180_native_chat_rust_admission.sql",
-          "0181_native_chat_finalization_guards.sql",
-          "0182_runtime_retention_expiry_lifecycle.sql",
+          "0180_agent_instruction_bundles.sql",
+          "0181_native_chat_rust_admission.sql",
+          "0182_native_chat_finalization_guards.sql",
+          "0183_runtime_retention_expiry_lifecycle.sql",
         ],
         reason: "pending-migrations",
       });
@@ -2074,23 +2076,13 @@ describe("applyPendingMigrations", () => {
           VALUES (${org!.id}, ${binding!.id}, ${segment!.id}, 'native:test', 'descendant-history', 'test:owner')
         `;
         await sql`
-          INSERT INTO runtime_retention_claims
-            (org_id, binding_id, segment_id, resource_ref, purpose, principal_scope_ref, status, expires_at, created_at, updated_at)
-          VALUES
-            (${org!.id}, ${binding!.id}, ${segment!.id}, 'native:expired', 'expired-history', 'test:owner', 'expired',
-             '2026-01-01T00:00:00.000Z', '2026-07-19T02:00:00.000Z', '2026-07-19T02:00:00.000Z')
-        `;
-        await sql`
-          INSERT INTO runtime_source_aliases
-            (org_id, conversation_id, binding_id, segment_id, source_kind, source_ref, principal_scope_ref, expires_at, created_at, updated_at)
-          VALUES
-            (${org!.id}, ${chat!.id}, ${binding!.id}, ${segment!.id}, 'native', 'native:test', 'test:owner',
-             '2026-01-01T00:00:00.000Z', '2026-07-19T02:00:00.000Z', '2026-07-19T02:00:00.000Z')
+          INSERT INTO runtime_source_aliases (org_id, conversation_id, binding_id, segment_id, source_kind, source_ref, principal_scope_ref)
+          VALUES (${org!.id}, ${chat!.id}, ${binding!.id}, ${segment!.id}, 'native', 'native:test', 'test:owner')
         `;
         await expect(sql`DELETE FROM native_segments WHERE id = ${segment!.id}`).rejects.toMatchObject({ code: '23503' });
         await expect(sql`DELETE FROM runtime_bindings WHERE id = ${binding!.id}`).rejects.toMatchObject({ code: '23503' });
         await expect(sql`DELETE FROM chat_conversations WHERE id = ${chat!.id}`).rejects.toMatchObject({ code: '23503' });
-        expect(await sql`SELECT id FROM runtime_retention_claims WHERE org_id = ${org!.id}`).toHaveLength(2);
+        expect(await sql`SELECT id FROM runtime_retention_claims WHERE org_id = ${org!.id}`).toHaveLength(1);
         expect(await sql`SELECT id FROM runtime_source_aliases WHERE org_id = ${org!.id}`).toHaveLength(1);
         // Authorized cleanup must explicitly release and remove its references;
         // a parent DELETE cannot silently do that work on its behalf.

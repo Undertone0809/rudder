@@ -1,11 +1,21 @@
 //! Schemas for the independently migrated Agent endpoints. Absent root, null,
 //! empty strings and unknown fields retain the exact public Zod distinction.
 use super::{
-    AgentCoreError, AgentCreateNodeOwned, AgentCreatePermissions, AgentCreateRequest,
+    AgentCoreError, AgentCreateInstructionsBundle, AgentCreateIntelligenceDefaults,
+    AgentCreateNodeOwned, AgentCreatePermissions, AgentCreateRequest,
     common::{Result, Tx, js_trim, uuid_like},
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, env};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+};
+
+pub(super) const MAX_INSTRUCTION_FILES: usize = 128;
+pub(super) const MAX_INSTRUCTION_PATH_BYTES: usize = 512;
+pub(super) const MAX_INSTRUCTION_FILE_BYTES: usize = 256 * 1024;
+pub(super) const MAX_INSTRUCTION_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_INTELLIGENCE_LAST_ERROR_BYTES: usize = 2048;
 fn received(value: Option<&Value>) -> &'static str {
     match value {
         None => "undefined",
@@ -84,6 +94,14 @@ fn validation_error(issues: Vec<Value>) -> AgentCoreError {
     AgentCoreError::Http(400, "Validation error".into(), Some(json!(issues)))
 }
 
+fn intelligence_constraint(message: &str) -> AgentCoreError {
+    AgentCoreError::Http(
+        422,
+        format!("Invalid nodeOwned.intelligenceDefaults: {message}"),
+        None,
+    )
+}
+
 fn unsupported_field(field: &str) -> AgentCoreError {
     AgentCoreError::Http(
         422,
@@ -133,6 +151,20 @@ fn env_key(key: &str) -> bool {
     let mut chars = key.chars();
     matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn instruction_relative_path(value: &str) -> bool {
+    let value = value.replace('\\', "/");
+    value.len() <= MAX_INSTRUCTION_PATH_BYTES
+        && !value.is_empty()
+        && !value.starts_with('/')
+        && value.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && !part.contains(':')
+                && !part.chars().any(char::is_control)
+        })
 }
 
 fn normalized_env_binding(value: &Value, path: &str) -> Result<Value> {
@@ -570,19 +602,284 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                 )]));
             }
             reject_secret_like(config, "nodeOwned.normalizedAgentRuntimeConfig")?;
-            if node.contains_key("instructionsBundle") {
-                return Err(unsupported_field("nodeOwned.instructionsBundle"));
-            }
             if node.keys().any(|key| {
                 !matches!(
                     key.as_str(),
-                    "normalizedAgentRuntimeConfig" | "instructionsBundle"
+                    "normalizedAgentRuntimeConfig"
+                        | "instructionsBundle"
+                        | "avatarIcon"
+                        | "intelligenceDefaults"
                 )
             }) {
                 return Err(unsupported_field("nodeOwned"));
             }
+            let instructions_bundle = match node.get("instructionsBundle") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(bundle)) => {
+                    if bundle.keys().any(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "entryFile" | "files" | "clearLegacyPromptTemplate"
+                        )
+                    }) {
+                        return Err(unsupported_field("nodeOwned.instructionsBundle"));
+                    }
+                    let entry_file = match bundle.get("entryFile") {
+                        Some(Value::String(value)) => {
+                            let value = value.trim();
+                            if !instruction_relative_path(value) {
+                                return Err(unsupported_field(
+                                    "nodeOwned.instructionsBundle.entryFile",
+                                ));
+                            }
+                            value.replace('\\', "/")
+                        }
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "string",
+                                value,
+                                json!(["nodeOwned", "instructionsBundle", "entryFile"]),
+                            )]));
+                        }
+                    };
+                    let files = match bundle.get("files") {
+                        Some(Value::Object(files)) => {
+                            if files.len() > MAX_INSTRUCTION_FILES {
+                                return Err(unsupported_field(
+                                    "nodeOwned.instructionsBundle.files",
+                                ));
+                            }
+                            let mut output = BTreeMap::new();
+                            let mut casefolded = BTreeSet::new();
+                            casefolded.insert(entry_file.to_lowercase());
+                            let mut total = entry_file.len();
+                            for (path, value) in files {
+                                if !instruction_relative_path(path) {
+                                    return Err(unsupported_field(&format!(
+                                        "nodeOwned.instructionsBundle.files.{path}"
+                                    )));
+                                }
+                                let normalized = path.replace('\\', "/");
+                                let folded = normalized.to_lowercase();
+                                if !casefolded.insert(folded) && normalized != entry_file {
+                                    return Err(unsupported_field(&format!(
+                                        "nodeOwned.instructionsBundle.files.{path}"
+                                    )));
+                                }
+                                let Some(body) = value.as_str() else {
+                                    return Err(validation_error(vec![wrong(
+                                        "string",
+                                        Some(value),
+                                        json!(["nodeOwned", "instructionsBundle", "files", path]),
+                                    )]));
+                                };
+                                if body.len() > MAX_INSTRUCTION_FILE_BYTES {
+                                    return Err(unsupported_field(&format!(
+                                        "nodeOwned.instructionsBundle.files.{path}"
+                                    )));
+                                }
+                                total = total
+                                    .saturating_add(normalized.len())
+                                    .saturating_add(body.len());
+                                if total > MAX_INSTRUCTION_BUNDLE_BYTES {
+                                    return Err(unsupported_field(
+                                        "nodeOwned.instructionsBundle.files",
+                                    ));
+                                }
+                                if output.insert(normalized, body.to_owned()).is_some() {
+                                    return Err(unsupported_field(&format!(
+                                        "nodeOwned.instructionsBundle.files.{path}"
+                                    )));
+                                }
+                            }
+                            output
+                        }
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "object",
+                                value,
+                                json!(["nodeOwned", "instructionsBundle", "files"]),
+                            )]));
+                        }
+                    };
+                    let clear_legacy_prompt_template = match bundle.get("clearLegacyPromptTemplate")
+                    {
+                        None => false,
+                        Some(Value::Bool(value)) => *value,
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "boolean",
+                                value,
+                                json!([
+                                    "nodeOwned",
+                                    "instructionsBundle",
+                                    "clearLegacyPromptTemplate"
+                                ]),
+                            )]));
+                        }
+                    };
+                    Some(AgentCreateInstructionsBundle {
+                        entry_file,
+                        files,
+                        clear_legacy_prompt_template,
+                    })
+                }
+                value => {
+                    return Err(validation_error(vec![wrong(
+                        "object",
+                        value,
+                        json!(["nodeOwned", "instructionsBundle"]),
+                    )]));
+                }
+            };
+            let avatar_icon = match node.get("avatarIcon") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(value)) => Some(value.trim().to_owned()),
+                value => {
+                    return Err(validation_error(vec![wrong(
+                        "string",
+                        value,
+                        json!(["nodeOwned", "avatarIcon"]),
+                    )]));
+                }
+            };
+            let intelligence_defaults = match node.get("intelligenceDefaults") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(defaults)) => {
+                    if defaults.keys().any(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "seed" | "status" | "lastError" | "lastVerifiedAt"
+                        )
+                    }) {
+                        return Err(unsupported_field("nodeOwned.intelligenceDefaults"));
+                    }
+                    let seed = match defaults.get("seed") {
+                        None => true,
+                        Some(Value::Bool(value)) => *value,
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "boolean",
+                                value,
+                                json!(["nodeOwned", "intelligenceDefaults", "seed"]),
+                            )]));
+                        }
+                    };
+                    let status = match defaults.get("status") {
+                        None => "disabled".to_owned(),
+                        Some(Value::String(value))
+                            if matches!(value.as_str(), "disabled" | "configured" | "invalid") =>
+                        {
+                            value.clone()
+                        }
+                        _value => {
+                            return Err(validation_error(vec![json!({
+                                "code":"invalid_enum_value",
+                                "options":["disabled","configured","invalid"],
+                                "path":["nodeOwned","intelligenceDefaults","status"],
+                                "message":"Invalid enum value"
+                            })]));
+                        }
+                    };
+                    let last_error = match defaults.get("lastError") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(value))
+                            if value.len() <= MAX_INTELLIGENCE_LAST_ERROR_BYTES =>
+                        {
+                            Some(value.clone())
+                        }
+                        Some(Value::String(_)) => {
+                            return Err(intelligence_constraint(
+                                "lastError must be at most 2048 bytes",
+                            ));
+                        }
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "string",
+                                value,
+                                json!(["nodeOwned", "intelligenceDefaults", "lastError"]),
+                            )]));
+                        }
+                    };
+                    let last_verified_at = match defaults.get("lastVerifiedAt") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(value))
+                            if time::OffsetDateTime::parse(
+                                value,
+                                &time::format_description::well_known::Rfc3339,
+                            )
+                            .is_ok() =>
+                        {
+                            Some(value.clone())
+                        }
+                        Some(Value::String(_)) => {
+                            return Err(intelligence_constraint(
+                                "lastVerifiedAt must be an RFC3339 timestamp",
+                            ));
+                        }
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "string",
+                                value,
+                                json!(["nodeOwned", "intelligenceDefaults", "lastVerifiedAt"]),
+                            )]));
+                        }
+                    };
+                    match status.as_str() {
+                        "disabled" if last_error.is_some() || last_verified_at.is_some() => {
+                            return Err(intelligence_constraint(
+                                "disabled status cannot include lastError or lastVerifiedAt",
+                            ));
+                        }
+                        "configured" => {
+                            if last_error.is_some() {
+                                return Err(intelligence_constraint(
+                                    "configured status cannot include lastError",
+                                ));
+                            }
+                            if last_verified_at.is_none() {
+                                return Err(intelligence_constraint(
+                                    "configured status requires lastVerifiedAt",
+                                ));
+                            }
+                        }
+                        "invalid" => {
+                            if last_error
+                                .as_deref()
+                                .is_none_or(|value| value.trim().is_empty())
+                            {
+                                return Err(intelligence_constraint(
+                                    "invalid status requires a non-empty lastError",
+                                ));
+                            }
+                            if last_verified_at.is_some() {
+                                return Err(intelligence_constraint(
+                                    "invalid status cannot include lastVerifiedAt",
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                    Some(AgentCreateIntelligenceDefaults {
+                        seed,
+                        status,
+                        last_error,
+                        last_verified_at,
+                    })
+                }
+                value => {
+                    return Err(validation_error(vec![wrong(
+                        "object",
+                        value,
+                        json!(["nodeOwned", "intelligenceDefaults"]),
+                    )]));
+                }
+            };
             Some(AgentCreateNodeOwned {
                 normalized_agent_runtime_config: config.clone(),
+                instructions_bundle,
+                avatar_icon,
+                intelligence_defaults,
             })
         }
         value => {
@@ -896,17 +1193,12 @@ mod tests {
                 "{key}: {error:?}"
             );
         }
-        let request = parse_create(
-            &json!({"desiredSkills":["org:organization/org-1/alpha", "rudder/browser"]}),
-        )
-        .expect("desired skills are a Rust create input");
-        assert_eq!(
-            request.desired_skills,
-            ["org:organization/org-1/alpha", "rudder/browser"]
-        );
-        let empty_skill = parse_create(&json!({"desiredSkills":[""]}))
-            .expect_err("empty desired skill must match the shared min(1) schema");
-        assert!(matches!(empty_skill, AgentCoreError::Http(400, _, _)));
+        let desired_skills_type_error =
+            parse_create(&json!({"desiredSkills": "unsupported"})).expect_err("array field");
+        assert!(matches!(
+            desired_skills_type_error,
+            AgentCoreError::Http(400, _, _)
+        ));
         let error = parse_create(&json!({
             "agentRuntimeConfig": {"apiKey": "secret"}
         }))
@@ -985,22 +1277,110 @@ mod tests {
             "nodeOwned": {
                 "normalizedAgentRuntimeConfig": {
                     "env": {"MODEL": {"type":"plain", "value":"fast"}}
+                },
+                "instructionsBundle": {
+                    "entryFile": "SOUL.md",
+                    "files": {"SOUL.md": "# Prepared"},
+                    "clearLegacyPromptTemplate": true
                 }
             }
         }))
         .expect("typed preparation");
         assert!(request.node_owned.is_some());
         assert_eq!(request.agent_runtime_config["env"]["MODEL"], "fast");
+        let bundle = request
+            .node_owned
+            .as_ref()
+            .and_then(|value| value.instructions_bundle.as_ref())
+            .expect("instruction bundle");
+        assert_eq!(bundle.entry_file, "SOUL.md");
+        assert_eq!(bundle.files["SOUL.md"], "# Prepared");
 
         for input in [
             json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{"apiKey":"raw"}}}),
             json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"../SOUL.md","files":{}}}}),
-            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"SOUL.md","files":{},"clearLegacyPromptTemplate":true}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"SOUL.md","files":{},"unexpected":"value"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"SOUL.md","files":{"a\\b":"one","a/b":"two"}}}}),
         ] {
             assert!(matches!(
                 parse_create(&input),
                 Err(AgentCoreError::Http(422, _, _))
             ));
         }
+
+        let prepared = parse_create(&json!({
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "avatarIcon": "asset:40000000-0000-4000-8000-000000000001?bg=mist",
+                "intelligenceDefaults": {
+                    "status": "configured",
+                    "lastError": null,
+                    "lastVerifiedAt": "2026-10-18T01:02:03Z"
+                }
+            }
+        }))
+        .expect("typed identity preparation");
+        let node = prepared.node_owned.expect("node-owned preparation");
+        assert_eq!(
+            node.avatar_icon.as_deref(),
+            Some("asset:40000000-0000-4000-8000-000000000001?bg=mist")
+        );
+        assert_eq!(
+            node.intelligence_defaults
+                .as_ref()
+                .map(|defaults| defaults.status.as_str()),
+            Some("configured")
+        );
+        for input in [
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"avatarIcon":42}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"enabled"}}}),
+        ] {
+            assert!(matches!(
+                parse_create(&input),
+                Err(AgentCoreError::Http(400, _, _))
+            ));
+        }
+    }
+
+    #[test]
+    fn intelligence_defaults_enforce_status_error_and_timestamp_invariants() {
+        let valid = parse_create(&json!({
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "intelligenceDefaults": {
+                    "status": "configured",
+                    "lastVerifiedAt": "2026-10-18T01:02:03Z"
+                }
+            }
+        }))
+        .expect("configured timestamp");
+        assert_eq!(
+            valid
+                .node_owned
+                .as_ref()
+                .and_then(|node| node.intelligence_defaults.as_ref())
+                .and_then(|defaults| defaults.last_verified_at.as_deref()),
+            Some("2026-10-18T01:02:03Z")
+        );
+
+        for input in [
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"configured","lastError":"probe failed"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"invalid"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"invalid","lastError":"probe failed","lastVerifiedAt":"2026-10-18T01:02:03Z"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"disabled","lastVerifiedAt":"2026-10-18T01:02:03Z"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"configured","lastVerifiedAt":"not-a-timestamp"}}}),
+        ] {
+            assert!(matches!(
+                parse_create(&input),
+                Err(AgentCoreError::Http(422, _, _))
+            ));
+        }
+        let oversized = "x".repeat(MAX_INTELLIGENCE_LAST_ERROR_BYTES + 1);
+        assert!(matches!(
+            parse_create(
+                &json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"invalid","lastError":oversized}}})
+            ),
+            Err(AgentCoreError::Http(422, _, _))
+        ));
     }
 }

@@ -4,6 +4,7 @@ mod common;
 mod constants;
 mod detail;
 pub(crate) mod instructions;
+mod intelligence;
 mod json_boundary;
 mod managed_mcp;
 mod reads;
