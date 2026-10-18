@@ -335,6 +335,7 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                 | "budgetMonthlyCents"
                 | "permissions"
                 | "metadata"
+                | "desiredSkills"
                 | "nodeOwned"
         ) {
             return Err(unsupported_field(key));
@@ -541,6 +542,39 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             )]));
         }
     };
+    let desired_skills = match object.get("desiredSkills") {
+        None => Vec::new(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| match value {
+                Value::String(value) if value.is_empty() => Err(validation_error(vec![json!({
+                    "code":"too_small", "minimum":1, "type":"string", "inclusive":true,
+                    "exact":false, "path":["desiredSkills", index],
+                    "message":"String must contain at least 1 character(s)"
+                })])),
+                Value::String(value) => Ok(value.clone()),
+                other => Err(validation_error(vec![wrong(
+                    "string",
+                    Some(other),
+                    json!(["desiredSkills", index]),
+                )])),
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|value| js_trim(&value).to_owned())
+            .filter(|value| !value.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        value => {
+            return Err(validation_error(vec![wrong(
+                "array",
+                value,
+                json!(["desiredSkills"]),
+            )]));
+        }
+    };
     let node_owned = match object.get("nodeOwned") {
         None => None,
         Some(Value::Object(node)) => {
@@ -710,6 +744,7 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
         budget_monthly_cents,
         permissions,
         metadata,
+        desired_skills,
         node_owned,
     })
 }
