@@ -53,6 +53,18 @@ describe("HTTP request log levels", () => {
 });
 
 describe("HTTP request-body logging", () => {
+  it("redacts every authentication body on failure and rate-limit paths", () => {
+    const body = { email: "synthetic@example.test", password: "synthetic-private-password", token: "synthetic-token" };
+    for (const originalUrl of ["/api/auth/sign-up/email", "/api/auth/sign-in/email", "/API/AUTH/RESET-PASSWORD/?retry=1", "/api/auth"]) {
+      const request = { originalUrl };
+      expect(requestBodyForLogs(request, body)).toBe("[REDACTED]");
+      markBrowserHttpRequestBodySensitive(request, {}, () => {});
+      request.originalUrl = "/rewritten";
+      expect(requestBodyForLogs(request, body)).toBe("[REDACTED]");
+    }
+    expect(requestBodyForLogs({ originalUrl: "/api/authors" }, body)).toBe(body);
+  });
+
   it("redacts a request body after the route marks it sensitive", () => {
     const request = {};
     const body = {

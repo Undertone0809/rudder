@@ -28,6 +28,7 @@ import {
   type LocalPostgresInstance,
 } from "@rudderhq/db";
 import {
+  authRequirementForDeploymentMode,
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
   type DeploymentExposure,
@@ -37,6 +38,7 @@ import { and, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
@@ -55,6 +57,7 @@ import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 import { createEmbeddedPostgresStartupLogBuffer } from "./embedded-postgres-startup-logs.js";
 import {
   reconcileOrganizationStorageRoots,
+  resolveOrganizationWorkspaceHomeDir,
   resolveRudderHomeDir,
   resolveRudderInstanceId,
   resolveRudderInstanceRoot,
@@ -303,6 +306,22 @@ export async function startManagedLocalServer(
         const runtimeOwnerKind = probe.health.runtimeOwnerKind ?? probe.descriptor.ownerKind;
         const shouldTakeOverForOwner = preferredOwner && runtimeOwnerKind !== options.ownerKind;
         const shouldTakeOverForVersion = !probe.versionMatches && takeoverOnVersionMismatch;
+        let shouldTakeOverForNativeIngress = false;
+        if (process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE?.trim() === "required") {
+          try {
+            const response = await fetch(new URL("/api/native-chat/capabilities", probe.descriptor.apiUrl), {
+              signal: AbortSignal.timeout(2_000), redirect: "error",
+            });
+            const capabilities = response.ok ? await response.json() as Record<string, unknown> : null;
+            shouldTakeOverForNativeIngress = capabilities?.executionAuthority !== "native_rust" || capabilities?.firstSend !== true;
+          } catch {
+            shouldTakeOverForNativeIngress = true;
+          }
+          if (shouldTakeOverForNativeIngress && !shouldTakeOverForOwner && !shouldTakeOverForVersion) {
+            throw new Error("The existing local runtime does not provide Rust Native Chat. Stop that runtime, then reopen Desktop to enable native conversations.");
+          }
+        }
+
 
         if (shouldTakeOverForOwner || shouldTakeOverForVersion) {
           const stopped = await gracefullyStopRuntime(probe.descriptor, gracefulStopTimeoutMs);
@@ -1064,6 +1083,7 @@ async function startServerRuntime(
     resolveSessionFromHeaders,
     localAccountExchangePolicy,
     localAccountSessionRevocation,
+    browserSessionAuth,
   } = await createAuthRuntime({
     db: db as any,
     config,
@@ -1073,7 +1093,44 @@ async function startServerRuntime(
   });
   
   const listenPort = await selectAvailablePort(config.port, config.host);
-  const ingress = await preparePublicIngressStartup(config, listenPort, options.localAccountAuth, runtimeOwnerKind, options.localAccountAuth ? { installationId: instanceId, expectedIssuer: new URL(options.localAccountAuth.identityOrigin).origin, audience: options.localAccountAuth.audience, identityOrigin: options.localAccountAuth.identityOrigin, offline: options.localAccountAuth.offline } : undefined);
+  const nativeChatOrigin = config.authPublicBaseUrl && (browserSessionAuth || options.localAccountAuth)
+    ? new URL(config.authPublicBaseUrl).origin
+    : `http://${config.host === "0.0.0.0" || config.host === "::" ? "localhost" : config.host.includes(":") ? `[${config.host}]` : config.host}:${listenPort}`;
+  const nativeChatHost = {
+    instanceId,
+    instanceRoot: resolveRudderInstanceRoot(),
+    workspaceHome: resolveOrganizationWorkspaceHomeDir(),
+    operatorHome: process.env.HOME?.trim() ? resolve(process.env.HOME.trim()) : homedir(),
+    ...(process.env.CODEX_HOME?.trim() ? { codexHome: resolve(process.env.CODEX_HOME.trim()) } : {}),
+    executableSearchPath: process.env.PATH ?? "",
+    friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
+    deploymentMode: config.deploymentMode,
+    deploymentExposure: config.deploymentExposure,
+    authRequirement: options.localAccountAuth ? "required" : authRequirementForDeploymentMode(config.deploymentMode),
+    trustedOrigins: [...new Set([
+      nativeChatOrigin,
+      ...(["127.0.0.1", "::1"].includes(config.host) ? [
+        `http://localhost:${listenPort}`, `http://127.0.0.1:${listenPort}`, `http://[::1]:${listenPort}`,
+      ] : []),
+    ])],
+  } as const;
+  const ingress = await preparePublicIngressStartup(
+    config,
+    listenPort,
+    options.localAccountAuth,
+    runtimeOwnerKind,
+    options.localAccountAuth
+      ? {
+          installationId: instanceId,
+          expectedIssuer: new URL(options.localAccountAuth.identityOrigin).origin,
+          audience: options.localAccountAuth.audience,
+          identityOrigin: options.localAccountAuth.identityOrigin,
+          offline: options.localAccountAuth.offline,
+        }
+      : undefined,
+    nativeChatHost,
+    browserSessionAuth,
+  );
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });

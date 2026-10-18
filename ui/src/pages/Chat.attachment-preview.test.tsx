@@ -11,20 +11,26 @@ import {
 } from "@/context/LiveSurfaceRuntimeContext";
 import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
-import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
+import { readChatAskUserDraft, readChatComposerDraft } from "@/lib/chat-draft-storage";
 import { requestChatFileAnnotation } from "@/lib/chat-file-annotation-events";
 import { FirstChatTurnStore } from "@/lib/chat-first-turn-store";
 import {
+  readChatPendingAttachmentsForScope,
   resetChatPendingAttachmentsForTests,
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
 import {
+  preparePendingChatSendMutation,
+  readPendingChatSendMutation,
+  type ChatSendReconciliationResult,
+} from "@/lib/chat-send-mutation-storage";
+import {
   readPendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
 import type { DesktopBrowserShortcutRequest } from "@/lib/desktop-shell";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -78,7 +84,8 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
-const mockState = vi.hoisted(() => ({
+const mockState = vi.hoisted(() => {
+  const state = {
   abortChatStream: vi.fn(),
   conversationId: "chat-1" as string | null,
   conversations: [] as ChatConversation[],
@@ -122,6 +129,7 @@ const mockState = vi.hoisted(() => ({
   navigate: vi.fn(),
   openNewProject: vi.fn(),
   pushToast: vi.fn(),
+  dismissToast: vi.fn(),
   allQueryKeys: [] as unknown[][],
   queryKeys: [] as unknown[][],
   getQueryData: vi.fn(),
@@ -147,11 +155,15 @@ const mockState = vi.hoisted(() => ({
   preflightDraft: vi.fn(),
   sendFirstMessageStream: vi.fn(),
   sendMessageStream: vi.fn(),
+  reconcilePendingMessageSend: vi.fn(),
   setStreamDraftForChat: vi.fn(),
   setQueriesData: vi.fn(),
   setQueryData: vi.fn(),
   setBreadcrumbs: vi.fn(),
   stopMessageStream: vi.fn(),
+  getNativeChatCapabilities: vi.fn(),
+  readNativeChatTurn: vi.fn(),
+  readNativeChatControl: vi.fn(),
   streamDrafts: {} as Record<string, ChatStreamDraft>,
   intelligenceProfiles: [] as Array<{ id: string; orgId: string; purpose: string; status: string }>,
   browserShortcutListener: null as ((request: DesktopBrowserShortcutRequest) => void) | null,
@@ -172,7 +184,17 @@ const mockState = vi.hoisted(() => ({
       this.name = "ChatGenerationCloseSupersededError";
     }
   },
-}));
+    queryClient: null as unknown,
+  };
+  state.queryClient = {
+    getQueryData: state.getQueryData,
+    invalidateQueries: state.invalidateQueries,
+    removeQueries: state.removeQueries,
+    setQueryData: state.setQueryData,
+    setQueriesData: state.setQueriesData,
+  };
+  return state;
+});
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled = true }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
@@ -476,13 +498,7 @@ vi.mock("@tanstack/react-query", () => ({
       }
     },
   }),
-  useQueryClient: () => ({
-    getQueryData: mockState.getQueryData,
-    invalidateQueries: mockState.invalidateQueries,
-    removeQueries: mockState.removeQueries,
-    setQueryData: mockState.setQueryData,
-    setQueriesData: mockState.setQueriesData,
-  }),
+  useQueryClient: () => mockState.queryClient,
   skipToken: Symbol("skipToken"),
 }));
 
@@ -542,7 +558,7 @@ vi.mock("@/context/BreadcrumbContext", () => ({
 
 vi.mock("@/context/ToastContext", () => ({
   useOptionalToast: () => null,
-  useToast: () => ({ pushToast: mockState.pushToast }),
+  useToast: () => ({ pushToast: mockState.pushToast, dismissToast: mockState.dismissToast }),
 }));
 
 vi.mock("@/context/SavedViewPromotionContext", () => ({
@@ -648,7 +664,11 @@ vi.mock("@/api/chats", () => ({
     })),
     checkpointMessageStream: mockState.checkpointMessageStream,
     stopMessageStream: mockState.stopMessageStream,
+    getNativeChatCapabilities: mockState.getNativeChatCapabilities,
+    readNativeChatTurn: mockState.readNativeChatTurn,
+    readNativeChatControl: mockState.readNativeChatControl,
     sendMessageStream: mockState.sendMessageStream,
+    reconcilePendingMessageSend: mockState.reconcilePendingMessageSend,
     destroySideChat: mockState.destroySideChat,
     keepSideChat: mockState.keepSideChat,
     listQueue: vi.fn(async () => mockState.queueSnapshot),
@@ -905,6 +925,24 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
     ...overrides,
   };
 }
+
+function nativeControl(overrides: Record<string, unknown> = {}) {
+  return {
+    executionAuthority: "native_rust",
+    orgId: "org-1",
+    conversationId: "chat-1",
+    generationId: "generation-1",
+    attemptEpoch: 1,
+    controlVersion: 2,
+    lastClientCheckpointSeq: null,
+    lastClientCheckpointHash: null,
+    lastSequence: 0,
+    runtimeTerminal: false,
+    ...overrides,
+  };
+}
+
+const EMPTY_CHAT_BODY_SHA256_FOR_TEST = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 const persistedResponseAnnotation = {
   id: "30000000-0000-4000-8000-000000000001",
@@ -1342,6 +1380,72 @@ function installLocalStorageMock() {
   });
 }
 
+function installWebLocksMock() {
+  const locks = {
+    request: async <T,>(name: string, _options: LockOptions, callback: (lock: Lock) => T | Promise<T>) => (
+      callback({ name, mode: "exclusive" } as Lock)
+    ),
+  } as LockManager;
+  const navigatorStub = Object.create(globalThis.navigator) as Navigator;
+  Object.defineProperty(navigatorStub, "locks", { configurable: true, value: locks });
+  vi.stubGlobal("navigator", navigatorStub);
+}
+
+function seedUnknownChatSend(orgId: string, conversationId: string, body: string) {
+  const clientMutationId = "mutation-from-previous-page";
+  const scopeKey = `${orgId}:${conversationId}:new`;
+  const fingerprint = JSON.stringify({
+    body,
+    editUserMessageId: null,
+    files: [],
+    inlineAnnotations: [],
+    modelOverride: null,
+    effortOverride: null,
+  });
+  localStorage.setItem(`rudder:chat-send-mutations:v2:scope:${encodeURIComponent(scopeKey)}`, JSON.stringify({
+    version: 2,
+    nextOrdinal: 2,
+    settledThrough: 0,
+    settledRanges: [],
+    mutations: {
+      [clientMutationId]: {
+        id: clientMutationId,
+        fingerprint,
+        ordinal: 1,
+        status: "unknown",
+      },
+    },
+  }));
+  return clientMutationId;
+}
+
+function acceptedSendReceipt(
+  clientMutationId: string,
+  body: string,
+  terminal: boolean,
+): Extract<ChatSendReconciliationResult, { outcome: "accepted" }> {
+  return {
+    outcome: "accepted",
+    clientMutationId,
+    message: message({
+      id: "persisted-prior-user-message",
+      orgId: "org-1",
+      conversationId: "chat-1",
+      runId: "run-prior-send",
+      role: "user",
+      body,
+    }),
+    generationId: "generation-prior-send",
+    runId: "run-prior-send",
+    attemptEpoch: 1,
+    generationSeq: 0,
+    bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    generationStatus: terminal ? "completed" : "running",
+    runStatus: terminal ? "succeeded" : "running",
+    runtimeTerminal: terminal,
+  };
+}
+
 function renderChat({
   expanded = false,
   stableRuntime = false,
@@ -1449,27 +1553,38 @@ function dispatchComposerDrag(
 }
 
 async function clickEnabledButton(container: Element, label: string) {
-  await act(async () => {
-    await Promise.resolve();
+  let button: HTMLButtonElement | undefined;
+  await vi.waitFor(() => {
+    button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+      candidate.textContent?.includes(label)
+    );
+    expect(button).not.toBeUndefined();
+    expect(button?.disabled).toBe(false);
   });
-  const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-    candidate.textContent?.includes(label)
-  );
-  expect(button).not.toBeUndefined();
-  expect(button?.disabled).toBe(false);
   await act(async () => {
     button?.click();
     await Promise.resolve();
   });
 }
 
-async function clickEnabledButtonByAriaLabel(container: Element, label: string) {
+async function waitForInitialChatSendRecoveryCheck(container: Element) {
   await act(async () => {
-    await Promise.resolve();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
   });
-  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-  expect(button).not.toBeNull();
-  expect(button?.disabled).toBe(false);
+  await vi.waitFor(() => {
+    const checking = Array.from(container.querySelectorAll('[role="status"]'))
+      .some((status) => status.textContent?.includes("Checking the previous message before sending"));
+    expect(checking).toBe(false);
+  });
+}
+
+async function clickEnabledButtonByAriaLabel(container: Element, label: string) {
+  let button: HTMLButtonElement | null = null;
+  await vi.waitFor(() => {
+    button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    expect(button).not.toBeNull();
+    expect(button?.disabled).toBe(false);
+  });
   await act(async () => {
     button?.click();
     await Promise.resolve();
@@ -1592,6 +1707,7 @@ beforeEach(() => {
   mockState.chatGenerationScopes.clear();
   mockState.sitesEnabled = false;
   installLocalStorageMock();
+  installWebLocksMock();
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
     value: vi.fn(() => "blob:chat-attachment-preview"),
@@ -1717,11 +1833,16 @@ beforeEach(() => {
   mockState.preflightDraft.mockResolvedValue(mockState.draftPreflight);
   mockState.sendFirstMessageStream.mockReset();
   mockState.sendMessageStream.mockReset();
+  mockState.reconcilePendingMessageSend.mockReset();
   mockState.setStreamDraftForChat.mockReset();
   mockState.setQueriesData.mockReset();
   mockState.setQueryData.mockReset();
   mockState.stopMessageStream.mockReset();
-  mockState.stopMessageStream.mockResolvedValue({ stopped: true, disposition: "stopping" });
+  mockState.stopMessageStream.mockResolvedValue({ stopped: true, disposition: "stopped" });
+  mockState.getNativeChatCapabilities.mockReset();
+  mockState.getNativeChatCapabilities.mockResolvedValue(null);
+  mockState.readNativeChatTurn.mockReset();
+  mockState.readNativeChatControl.mockReset();
   mockState.sendMessageStream.mockImplementation(async (chatId: string, body: string, options: {
     onEvent: (event: unknown) => void | Promise<void>;
   }) => {
@@ -5697,6 +5818,442 @@ describe("Chat streaming controls", () => {
     expect(stopRequest).not.toHaveProperty("renderedBodyHash");
   });
 
+  it("uses the narrow native control fence before Stop without requiring turn projection", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = {
+      "chat-1": {
+        chatId: "chat-1",
+        streamKey: "stream-1",
+        userBody: "Please draft a plan.",
+        userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
+        userMessageId: "user-message-1",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        editedFromCreatedAt: null,
+        body: "Visible prefix",
+        generationId: "generation-1",
+        attemptEpoch: 3,
+        lastCommittedRenderSeq: 7,
+        renderedBodyHash: "a".repeat(64),
+        state: "streaming",
+        createdAt: new Date("2026-05-12T09:04:01.000Z"),
+        transcript: [],
+        replyingAgentId: "agent-1",
+      },
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 3,
+      activeControlVersion: 9,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatTurn.mockRejectedValue(new Error("full turn projection unavailable"));
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl({
+      attemptEpoch: 3,
+      controlVersion: 9,
+      lastSequence: 7,
+      lastClientCheckpointSeq: 5,
+      lastClientCheckpointHash: "b".repeat(64),
+    }));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.stopMessageStream).toHaveBeenCalledTimes(1));
+
+    expect(mockState.readNativeChatControl).toHaveBeenCalledWith("chat-1", "org-1", "generation-1");
+    expect(mockState.readNativeChatTurn).not.toHaveBeenCalled();
+    expect(mockState.readNativeChatControl.mock.invocationCallOrder[0]).toBeLessThan(
+      mockState.stopMessageStream.mock.invocationCallOrder[0]!,
+    );
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 3,
+      expectedControlVersion: 9,
+      lastCommittedRenderSeq: 7,
+      renderedBodyHash: "a".repeat(64),
+    }));
+  });
+
+  it.each(["missing action", "wrong action", "missing generation", "wrong generation"])("keeps Native Stop pending for a terminal response with %s", async (mismatch) => {
+    mockState.messagesByChatId = { "chat-1": [message({ id: "user-message-1", body: "Keep exact Stop authority." })] };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = { "chat-1": {
+      chatId: "chat-1", streamKey: "native-stop-mismatch", userBody: "Keep exact Stop authority.",
+      userCreatedAt: new Date(), userMessageId: "user-message-1", chatTurnId: "turn-1", turnVariant: 0,
+      editedFromCreatedAt: null, body: "", generationId: "generation-1", attemptEpoch: 1,
+      lastCommittedRenderSeq: 0, renderedBodyHash: EMPTY_CHAT_BODY_SHA256_FOR_TEST,
+      state: "streaming", createdAt: new Date(), transcript: [], replyingAgentId: "agent-1",
+    } };
+    mockState.queueSnapshot = queueSnapshot({ activeGenerationId: "generation-1", activeAttemptEpoch: 1, activeControlVersion: 2, activeGenerationStatus: "running" });
+    mockState.getNativeChatCapabilities.mockResolvedValue({ executionAuthority: "native_rust", firstSend: true, readTurn: true, nativeControls: true });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl());
+    mockState.stopMessageStream.mockImplementation(async (_chatId: string, request: { controlActionId: string; expectedGenerationId: string }) => ({
+      stopped: true, disposition: "stopped",
+      ...(mismatch === "missing action" ? {} : { controlActionId: mismatch === "wrong action" ? "another-action" : request.controlActionId }),
+      ...(mismatch === "missing generation" ? {} : { generationId: mismatch === "wrong generation" ? "another-generation" : request.expectedGenerationId }),
+    }));
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({ title: "Stop confirmation pending" })));
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).not.toBeNull();
+    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Response stopped" }));
+    expect(container.textContent).not.toContain("Stopped");
+  });
+
+  it("keeps Native Stop pending until the same action proves terminal and settles its exact send", async () => {
+    const pendingSend = await preparePendingChatSendMutation({
+      orgId: "org-1",
+      conversationId: "chat-1",
+      body: "Please draft a plan.",
+      files: [],
+      inlineAnnotations: [],
+      modelOverride: null,
+      effortOverride: null,
+    });
+    await pendingSend.markAccepted();
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = {
+      "chat-1": {
+        chatId: "chat-1",
+        streamKey: "native-stop-stream",
+        userBody: "Please draft a plan.",
+        userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
+        userMessageId: "user-message-1",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        editedFromCreatedAt: null,
+        body: "Visible prefix",
+        generationId: "generation-1",
+        attemptEpoch: 1,
+        lastCommittedRenderSeq: 0,
+        renderedBodyHash: EMPTY_CHAT_BODY_SHA256_FOR_TEST,
+        state: "streaming",
+        createdAt: new Date("2026-05-12T09:04:01.000Z"),
+        transcript: [],
+        replyingAgentId: "agent-1",
+      },
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 2,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl());
+    mockState.stopMessageStream
+      .mockImplementationOnce(async (_chatId: string, request: { controlActionId: string; expectedGenerationId: string }) => ({
+        stopped: false,
+        disposition: "stopping",
+        controlActionId: request.controlActionId,
+        generationId: request.expectedGenerationId,
+      }))
+      .mockImplementationOnce(async (_chatId: string, request: { controlActionId: string; expectedGenerationId: string }) => ({
+        stopped: true,
+        disposition: "stopped",
+        controlActionId: request.controlActionId,
+        generationId: request.expectedGenerationId,
+        idempotent: true,
+      }));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.stopMessageStream).toHaveBeenCalledTimes(1));
+
+    const request = mockState.stopMessageStream.mock.calls[0]?.[1];
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toMatchObject({
+      executionAuthority: "native_rust",
+      sendMutationIdentity: {
+        kind: "chat_send",
+        mutation: { clientMutationId: pendingSend.clientMutationId },
+      },
+      request: { controlActionId: request?.controlActionId },
+    });
+    expect(readPendingChatSendMutation("org-1", "chat-1")?.status).toBe("accepted");
+    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({
+      title: "Response stopped",
+    }));
+    expect(mockState.abortChatStream).toHaveBeenCalledWith("chat-1");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(mockState.stopMessageStream).toHaveBeenCalledTimes(2));
+    expect(mockState.stopMessageStream.mock.calls[1]?.[1]).toEqual(request);
+    await vi.waitFor(() => expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull());
+    expect(readPendingChatSendMutation("org-1", "chat-1")?.status).toBe("settled");
+    expect(mockState.pushToast).toHaveBeenCalledWith({
+      title: "Response stopped",
+      body: "Rudder confirmed that the response stopped.",
+      tone: "info",
+    });
+  });
+
+  it("uses an empty persisted cutoff when Native has no client checkpoint", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 2,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: false,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl({
+      attemptEpoch: 1,
+      controlVersion: 2,
+      lastClientCheckpointSeq: null,
+      lastClientCheckpointHash: null,
+    }));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.stopMessageStream).toHaveBeenCalledTimes(1));
+
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      expectedGenerationId: "generation-1",
+      lastCommittedRenderSeq: 0,
+      renderedBodyHash: EMPTY_CHAT_BODY_SHA256_FOR_TEST,
+    }));
+  });
+
+  it("does not submit Stop for a target already marked terminal", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 2,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: false,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl({
+      attemptEpoch: 1,
+      controlVersion: 2,
+      runtimeTerminal: true,
+    }));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+
+    expect(mockState.stopMessageStream).not.toHaveBeenCalled();
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Stop target could not be verified",
+      body: expect.stringContaining("already finished"),
+    }));
+  });
+
+  it("fails closed when narrow native control verification fails", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 2,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockRejectedValue(new ApiError("control read unavailable", 503, null));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+
+    expect(mockState.readNativeChatControl).toHaveBeenCalledWith("chat-1", "org-1", "generation-1");
+    expect(mockState.readNativeChatTurn).not.toHaveBeenCalled();
+    expect(mockState.stopMessageStream).not.toHaveBeenCalled();
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Stop target could not be verified",
+      tone: "error",
+    }));
+  });
+
+  it("rejects a control read whose attempt no longer matches the captured queue fence", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 4,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl({
+      attemptEpoch: 3,
+      controlVersion: 4,
+    }));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Stop target could not be verified",
+    })));
+
+    expect(mockState.stopMessageStream).not.toHaveBeenCalled();
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+  });
+
+  it("rejects a queue control-version change while the native control read is pending", async () => {
+    const pendingControl = deferred<unknown>();
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 4,
+      activeGenerationStatus: "running",
+    });
+    mockState.getQueryData.mockImplementation((queryKey: readonly unknown[]) => (
+      queryKey[0] === "chats" && queryKey[2] === "queue" ? mockState.queueSnapshot : undefined
+    ));
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockReturnValue(pendingControl.promise);
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.readNativeChatControl).toHaveBeenCalledTimes(1));
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 5,
+      activeGenerationStatus: "running",
+    });
+    pendingControl.resolve(nativeControl({
+      attemptEpoch: 2,
+      controlVersion: 4,
+    }));
+
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Stop target could not be verified",
+    })));
+    expect(mockState.stopMessageStream).not.toHaveBeenCalled();
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+  });
+
+  it("rejects a captured active generation when the refreshed queue no longer identifies it", async () => {
+    const pendingControl = deferred<unknown>();
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 4,
+      activeGenerationStatus: "running",
+    });
+    mockState.getQueryData.mockImplementation((queryKey: readonly unknown[]) => (
+      queryKey[0] === "chats" && queryKey[2] === "queue" ? mockState.queueSnapshot : undefined
+    ));
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockReturnValue(pendingControl.promise);
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.readNativeChatControl).toHaveBeenCalledTimes(1));
+    mockState.queueSnapshot = queueSnapshot();
+    pendingControl.resolve(nativeControl({
+      attemptEpoch: 2,
+      controlVersion: 4,
+    }));
+
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Stop target could not be verified",
+      body: expect.stringContaining("changed before Stop"),
+    })));
+    expect(mockState.stopMessageStream).not.toHaveBeenCalled();
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+  });
+
+  it("uses a positively identified legacy target only after the control authority read", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 4,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: false,
+      readTurn: true,
+      nativeControls: false,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl({
+      executionAuthority: "legacy_ts",
+      attemptEpoch: 2,
+      controlVersion: 4,
+    }));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.stopMessageStream).toHaveBeenCalledTimes(1));
+
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 4,
+    }));
+    expect(mockState.stopMessageStream.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockState.readNativeChatControl.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("uses one coherent server generation fence while retaining the rendered draft checkpoint", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
@@ -5902,7 +6459,7 @@ describe("Chat streaming controls", () => {
     const { container } = renderChat();
     await clickEnabledButtonByAriaLabel(container, "Stop streaming");
     await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "No active response",
+      title: "Response already ended",
     })));
 
     const settleUpdate = mockState.setStreamDraftForChat.mock.calls[1]?.[1] as (
@@ -6057,6 +6614,7 @@ describe("Chat streaming controls", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     await clickEnabledButtonByAriaLabel(container, "Edit message");
     const inlineEditor = container.querySelector<HTMLElement>(
       "[data-testid='chat-inline-message-editor']",
@@ -6128,6 +6686,7 @@ describe("Chat streaming controls", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     await clickEnabledButtonByAriaLabel(container, "Edit message");
     const inlineEditor = container.querySelector<HTMLElement>(
       "[data-testid='chat-inline-message-editor']",
@@ -6149,6 +6708,7 @@ describe("Chat streaming controls", () => {
 
     mockState.sendMessageStream.mockClear();
     const retried = renderChat();
+    await waitForInitialChatSendRecoveryCheck(retried.container);
     await clickEnabledButton(retried.container, "Retry");
     await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     expect(mockState.sendMessageStream).toHaveBeenLastCalledWith(
@@ -6215,6 +6775,7 @@ describe("Chat streaming controls", () => {
     });
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     await clickEnabledButton(container, "Retry");
 
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
@@ -7755,6 +8316,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
     expect(panel?.textContent).toContain("Narrow path");
@@ -7777,7 +8339,7 @@ describe("Chat ask_user panel", () => {
     expect(submit?.disabled).toBe(false);
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Use the custom compatibility path");
   });
 
@@ -7929,6 +8491,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -7947,7 +8510,7 @@ describe("Chat ask_user panel", () => {
 
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     expect(mockState.sendMessageStream.mock.calls[0]?.[2]).toMatchObject({
       files: [attachment],
     });
@@ -7968,14 +8531,21 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
     await clickEnabledButton(container, "Other");
 
-    const imageButton = panel?.querySelector<HTMLButtonElement>(
+    let imageButton = panel?.querySelector<HTMLButtonElement>(
       "[data-testid='chat-pending-image-attachment'] button",
     );
+    await vi.waitFor(() => {
+      imageButton = container.querySelector<HTMLButtonElement>(
+        "[data-testid='chat-pending-image-attachment'] button",
+      ) ?? undefined;
+      expect(imageButton).not.toBeUndefined();
+    });
     expect(imageButton).not.toBeNull();
 
     act(() => {
@@ -7996,6 +8566,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -8014,7 +8585,7 @@ describe("Chat ask_user panel", () => {
 
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
     expect(sentFiles).toHaveLength(1);
     expect(sentFiles?.[0]?.name).toBe("receipt.txt");
@@ -8030,6 +8601,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -8052,6 +8624,47 @@ describe("Chat ask_user panel", () => {
     expect(panel?.textContent).toContain("answer-notes.txt");
   });
 
+  it("keeps Ask User editing and attachments available while disabling submit during recovery discovery", async () => {
+    const previousMutationId = seedUnknownChatSend("org-1", "chat-1", "Earlier accepted input");
+    const reconciliation = deferred<ChatSendReconciliationResult>();
+    mockState.reconcilePendingMessageSend.mockReturnValue(reconciliation.promise);
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(mockState.reconcilePendingMessageSend).toHaveBeenCalledWith(
+      "chat-1",
+      { clientMutationId: previousMutationId, body: "Earlier accepted input" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel?.textContent).toContain("Checking the previous message before sending");
+    const submit = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.includes("Submit answer"));
+    expect(submit?.disabled).toBe(true);
+
+    await clickEnabledButton(container, "Other");
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    const attachment = new File(["still stageable"], "while-checking.txt", { type: "text/plain" });
+    await act(async () => {
+      dispatchPasteFiles(textarea!, [attachment]);
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Keep editing while the old send is checked.");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")?.textContent)
+      .toContain("while-checking.txt");
+    expect(submit?.disabled).toBe(true);
+    act(() => submit?.click());
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+  });
+
   it("dedupes pasted attachments exposed through both clipboard items and files", async () => {
     mockState.messagesByChatId = {
       "chat-1": [
@@ -8061,6 +8674,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -8085,7 +8699,7 @@ describe("Chat ask_user panel", () => {
 
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
     expect(sentFiles).toHaveLength(1);
     expect(sentFiles?.[0]?.name).toBe("receipt.png");
@@ -8220,6 +8834,7 @@ describe("Chat ask_user panel", () => {
     };
 
     const { container, rerender } = renderChat();
+    await waitForInitialChatSendRecoveryCheck(container);
     let panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
@@ -8242,6 +8857,7 @@ describe("Chat ask_user panel", () => {
 
     mockState.conversationId = "chat-1";
     rerender();
+    await waitForInitialChatSendRecoveryCheck(container);
     panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
     expect(panel?.textContent).toContain("Review answers");
@@ -8251,7 +8867,7 @@ describe("Chat ask_user panel", () => {
 
     await clickEnabledButton(container, "Submit answer");
 
-    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Broad path");
     expect(readChatAskUserDraft("org-1", "ask-user-multi-1")).toBeNull();
   });
@@ -8350,6 +8966,29 @@ describe("Chat ask_user panel", () => {
 });
 
 describe("Atomic new-chat drafts", () => {
+  it.each(["codex_local", "hermes_local"] as const)("preserves a %s draft when native execution is unavailable", async (agentRuntimeType) => {
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+    mockState.agents = [agent({ agentRuntimeType })];
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust", firstSend: false, readTurn: true, nativeControls: true,
+    });
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(container.textContent).toContain("The selected native runtime is unavailable"));
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(editor, "Keep this native draft.");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(editor.value).toBe("Keep this native draft.");
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled).toBe(true);
+    expect(mockState.sendFirstMessageStream).not.toHaveBeenCalled();
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.createConversation).not.toHaveBeenCalled();
+  });
+
   it("keeps draft preflight loading silent on initial entry", () => {
     mockState.conversationId = null;
     mockState.conversations = [];
@@ -8471,6 +9110,163 @@ describe("Atomic new-chat drafts", () => {
     expect(mockState.navigate).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { label: "an accepted response", outcome: "accepted_active" as const, notice: "Resume response" },
+    { label: "a confirmed missing message", outcome: "not_found" as const, notice: "Retry previous message" },
+    { label: "a terminal accepted message", outcome: "accepted_terminal" as const, notice: "The earlier message already finished" },
+  ])("keeps the newer composer untouched while recovery checks $label", async ({ outcome, notice }) => {
+    installWebLocksMock();
+    const previousBody = "Original request from the earlier page.";
+    const pendingMutationId = seedUnknownChatSend("org-1", "chat-1", previousBody);
+    const reconciliation = deferred<ChatSendReconciliationResult>();
+    mockState.reconcilePendingMessageSend.mockReturnValue(reconciliation.promise);
+
+    const attachment = new File(["new draft attachment"], "new-draft.txt", { type: "text/plain" });
+    const annotation: ChatInlineAnnotationInput = {
+      id: "30000000-0000-4000-8000-000000000091",
+      selectedText: "Source excerpt",
+      comment: null,
+      sourceConversationId: "chat-1",
+      sourceMessageId: "recovery-annotation-source",
+      surface: "assistant_body",
+      sourceHash: "a".repeat(64),
+      start: 0,
+      end: 14,
+      prefix: "",
+      suffix: "",
+      attachmentIds: [],
+    };
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "recovery-annotation-source",
+        role: "assistant",
+        body: "Source excerpt for the draft annotation.",
+      })],
+    };
+
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(mockState.reconcilePendingMessageSend).toHaveBeenCalledWith(
+      "chat-1",
+      { clientMutationId: pendingMutationId, body: previousBody },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(editor).not.toBeNull();
+
+    await act(async () => {
+      requestChatFileAnnotation({
+        action: "add_to_chat",
+        annotation,
+        anchorRect: { left: 10, right: 60, top: 20, bottom: 40, width: 50, height: 20 },
+        boundaryRect: null,
+      });
+      await Promise.resolve();
+    });
+    await clickEnabledButton(document.body, "Save");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "New message that must remain a draft.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      dispatchPasteFiles(editor!, [attachment]);
+      await Promise.resolve();
+    });
+
+    const sendButton = container.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
+    expect(sendButton?.disabled).toBe(true);
+    expect(container.textContent).toContain("Checking the previous message before sending");
+    expect(container.textContent).toContain("new-draft.txt");
+    expect(readChatComposerDraft("org-1", "chat-1")).toMatchObject({
+      body: "New message that must remain a draft.",
+    });
+    expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
+    expect(readChatPendingAttachmentsForScope(resolveChatPendingAttachmentScopeKey("org-1", "chat-1")))
+      .toEqual([attachment]);
+
+    mockState.setChatSendInFlight.mockClear();
+    mockState.setStreamDraftForChat.mockClear();
+    await act(async () => {
+      editor!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
+    expect(mockState.setStreamDraftForChat).not.toHaveBeenCalled();
+
+    const receipt: ChatSendReconciliationResult = outcome === "not_found"
+      ? { outcome: "not_found", clientMutationId: pendingMutationId }
+      : acceptedSendReceipt(pendingMutationId, previousBody, outcome === "accepted_terminal");
+    await act(async () => {
+      reconciliation.resolve(receipt);
+      await reconciliation.promise;
+    });
+    await vi.waitFor(() => expect(container.textContent).toContain(notice));
+
+    expect(editor?.value).toBe("New message that must remain a draft.");
+    expect(container.textContent).toContain("new-draft.txt");
+    expect(readChatComposerDraft("org-1", "chat-1")).toMatchObject({
+      body: "New message that must remain a draft.",
+    });
+    expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
+    expect(readChatPendingAttachmentsForScope(resolveChatPendingAttachmentScopeKey("org-1", "chat-1")))
+      .toEqual([attachment]);
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
+    expect(mockState.setStreamDraftForChat.mock.calls.some((call) => (
+      Boolean(call[1]) && typeof call[1] === "object" && "streamKey" in call[1]
+    ))).toBe(false);
+  });
+
+  it.each([
+    { label: "a recovered send", outcome: "accepted_terminal" as const },
+    { label: "an accepted send", outcome: "accepted_active" as const },
+    { label: "a send that was not admitted", outcome: "not_found" as const },
+  ])("does not create a phantom stream when send preflight returns $label", async ({ outcome }) => {
+    installWebLocksMock();
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "existing-user-message", body: "Existing chat history." })],
+    };
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(container.textContent).not.toContain("Checking the previous message before sending"));
+
+    const previousBody = "Earlier content that needs reconciliation.";
+    const pendingMutationId = seedUnknownChatSend("org-1", "chat-1", previousBody);
+    mockState.reconcilePendingMessageSend.mockResolvedValue(outcome === "not_found"
+      ? { outcome: "not_found", clientMutationId: pendingMutationId }
+      : acceptedSendReceipt(pendingMutationId, previousBody, outcome === "accepted_terminal"));
+    const attachment = new File(["current composer attachment"], "current-draft.txt", { type: "text/plain" });
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(editor).not.toBeNull();
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "New composer text remains unsent.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      dispatchPasteFiles(editor!, [attachment]);
+      await Promise.resolve();
+    });
+    mockState.setChatSendInFlight.mockClear();
+    mockState.setStreamDraftForChat.mockClear();
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    if (outcome === "accepted_terminal") {
+      await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Previous message recovered",
+      })));
+    } else {
+      await vi.waitFor(() => expect(container.textContent).toContain(
+        outcome === "accepted_active" ? "Resume response" : "Retry previous message",
+      ));
+    }
+
+    expect(editor?.value).toBe("New composer text remains unsent.");
+    expect(container.textContent).toContain("current-draft.txt");
+    expect(readChatPendingAttachmentsForScope(resolveChatPendingAttachmentScopeKey("org-1", "chat-1")))
+      .toEqual([attachment]);
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
+    expect(mockState.setStreamDraftForChat.mock.calls.some((call) => (
+      Boolean(call[1]) && typeof call[1] === "object" && "streamKey" in call[1]
+    ))).toBe(false);
+  });
+
   it("restores an existing-chat draft before slow failure reconciliation finishes", async () => {
     const attachment = new File(["recovery context"], "recovery-context.txt", {
       type: "text/plain",
@@ -8560,6 +9356,12 @@ describe("Atomic new-chat drafts", () => {
     await clickEnabledButtonByAriaLabel(container, "Send");
     await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(editor?.value).toBe("Retry without duplication."));
+    const firstOptions = mockState.sendMessageStream.mock.calls[0]?.[2];
+    expect(firstOptions?.clientMutationId).toEqual(expect.any(String));
+    mockState.reconcilePendingMessageSend.mockResolvedValue({
+      outcome: "not_found",
+      clientMutationId: firstOptions!.clientMutationId,
+    });
     cleanupFn?.();
     cleanupFn = null;
 
@@ -8568,14 +9370,12 @@ describe("Atomic new-chat drafts", () => {
       "textarea[aria-label='Composer draft']",
     );
     await vi.waitFor(() => expect(remountedEditor?.value).toBe("Retry without duplication."));
-    await clickEnabledButtonByAriaLabel(remounted.container, "Send");
+    await clickEnabledButton(remounted.container, "Retry previous message");
     await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(2));
 
-    const firstOptions = mockState.sendMessageStream.mock.calls[0]?.[2];
     const retryOptions = mockState.sendMessageStream.mock.calls[1]?.[2];
-    expect(firstOptions?.clientMutationId).toEqual(expect.any(String));
     expect(retryOptions?.clientMutationId).toBe(firstOptions?.clientMutationId);
-    expect(remountedEditor?.value).toBe("");
+    expect(remountedEditor?.value).toBe("Retry without duplication.");
   });
 
   it("does not restore an existing-chat draft when a pre-ack stream error identifies the committed user message", async () => {

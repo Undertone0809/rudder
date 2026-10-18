@@ -34,3 +34,4 @@ export function restoreFoundationExecutableMode({
 
 restoreFoundationExecutableMode();
 restoreFoundationExecutableMode({ binaryName: "migration-preflight" });
+restoreFoundationExecutableMode({ binaryName: "rudder-process-host" });

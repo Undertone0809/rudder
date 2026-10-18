@@ -1,0 +1,22 @@
+[package]
+name = "rudder-native-chat-executor"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rudder-auth-core = { path = "../auth-core" }
+rudder-codex-app-server = { path = "../codex-app-server" }
+rudder-d1-persistence = { path = "../d1-persistence" }
+rudder-hermes-acp = { path = "../hermes-acp" }
+rudder-pi-rpc = { path = "../pi-rpc" }
+rudder-runtime-core = { path = "../runtime-core" }
+serde_json = "1.0"
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["rt", "time"] }
+
+[dev-dependencies]
+sha2 = "0.10"
+tempfile = "3.27"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }

@@ -7,6 +7,8 @@ use crate::runtime_bindings;
 use super::projection::span_and_segment;
 use super::validation::{Result, canonical_uuid, http};
 
+const MAX_TRANSCRIPT_LIMIT: i32 = 100;
+
 pub(super) async fn read(
     pool: &PgPool,
     actor: &VerifiedActor,
@@ -58,4 +60,253 @@ pub(super) async fn read(
         span_and_segment(&mut tx, organization_id, &span_id, &binding_id, &segment_id).await?;
     tx.commit().await?;
     Ok(result)
+}
+
+/// Read the bounded native event projection for one authorized Run span.
+/// Cursors are generation sequence numbers and are scoped by the span's
+/// immutable Run/Attempt identity; no provider call or legacy transcript read
+/// is performed here.
+pub(super) async fn read_transcript(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    request: &super::Request,
+) -> Result<Value> {
+    let super::Request::ReadTranscript {
+        span_id: raw_span_id,
+        after_seq,
+        limit,
+    } = request
+    else {
+        return Err(http(400, "Expected a Run transcript read request"));
+    };
+    if *after_seq < 0 {
+        return Err(http(400, "Invalid transcript cursor"));
+    }
+    let limit = (*limit).clamp(1, MAX_TRANSCRIPT_LIMIT);
+    let span_id = canonical_uuid(raw_span_id, "span id")?;
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
+        "SELECT s.binding_id::text AS binding_id, s.segment_id::text AS segment_id,
+                s.state, s.completeness, s.source_revision,
+                r.chat_generation_id::text AS generation_id,
+                b.agent_id::text AS agent_id, b.conversation_id::text AS conversation_id,
+                b.target_type, b.target_id, b.principal_scope_ref
+         FROM run_runtime_spans s
+         JOIN runtime_bindings b ON b.org_id=s.org_id AND b.id=s.binding_id
+         JOIN heartbeat_runs r ON r.org_id=s.org_id AND r.id=s.run_id
+         WHERE s.org_id=$1::uuid AND s.id=$2::uuid",
+    )
+    .bind(organization_id)
+    .bind(&span_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| http(404, "Run span not found"))?;
+    let binding_id: String = row.try_get("binding_id")?;
+    let segment_id: String = row.try_get("segment_id")?;
+    let generation_id: Option<String> = row.try_get("generation_id")?;
+    let agent_id: String = row.try_get("agent_id")?;
+    let target_type: Option<String> = row.try_get("target_type")?;
+    let target_id: String = row.try_get("target_id")?;
+    let conversation_id: Option<String> = row.try_get("conversation_id")?;
+    let binding_scope: String = row.try_get("principal_scope_ref")?;
+    if target_type.as_deref() != Some("chat_conversation")
+        || conversation_id.as_deref() != Some(target_id.as_str())
+        || generation_id.is_none()
+    {
+        return Err(http(404, "Run span not found"));
+    }
+    let principal_scope_ref = runtime_bindings::authorize_chat_target_read_tx(
+        &mut tx,
+        actor,
+        organization_id,
+        &target_id,
+        &agent_id,
+    )
+    .await?;
+    if binding_scope != principal_scope_ref {
+        return Err(http(404, "Run span not found"));
+    }
+    let generation_id = generation_id.expect("checked above");
+    let events = sqlx::query(
+        "SELECT generation_seq, event_kind, payload, recorded_at::text AS recorded_at
+         FROM chat_generation_events
+         WHERE org_id=$1::uuid AND generation_id=$2::uuid
+           AND generation_seq>$3 AND event_kind IN ('assistant_delta','runtime_output')
+         ORDER BY generation_seq ASC LIMIT $4",
+    )
+    .bind(organization_id)
+    .bind(&generation_id)
+    .bind(*after_seq)
+    .bind(limit + 1)
+    .fetch_all(&mut *tx)
+    .await?;
+    let has_more = events.len() > limit as usize;
+    let visible = events.into_iter().take(limit as usize);
+    let mut items = Vec::new();
+    let mut revision = *after_seq;
+    for event in visible {
+        let seq: i32 = event.try_get("generation_seq")?;
+        revision = seq;
+        let kind: String = event.try_get("event_kind")?;
+        let payload: Value = event.try_get("payload")?;
+        let recorded_at: String = event.try_get("recorded_at")?;
+        items.push(serde_json::json!({
+            "seq": seq,
+            "kind": kind,
+            "payload": payload,
+            "recordedAt": recorded_at,
+        }));
+    }
+    let span =
+        span_and_segment(&mut tx, organization_id, &span_id, &binding_id, &segment_id).await?;
+    tx.commit().await?;
+    Ok(serde_json::json!({
+        "spanId": span_id,
+        "source": "native_event_ledger",
+        "revision": revision,
+        "availability": if row.try_get::<String, _>("state")? == "sealed" { "complete" } else { "partial" },
+        "completeness": row.try_get::<Option<String>, _>("completeness")?,
+        "nextCursor": has_more.then(|| revision.to_string()),
+        "items": items,
+        "span": span,
+    }))
+}
+
+/// Resolve a user-visible assistant message to its exact Native Run span and
+/// return the same bounded ledger projection used by the internal span reader.
+/// The message lookup is only an index into the native Run; authorization and
+/// event ownership are still checked from the binding and target rows below.
+pub(super) async fn read_message_transcript(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    request: &super::Request,
+) -> Result<Value> {
+    let super::Request::ReadMessageTranscript {
+        conversation_id: raw_conversation_id,
+        message_id: raw_message_id,
+        after_seq,
+        limit,
+    } = request
+    else {
+        return Err(http(400, "Expected a message transcript read request"));
+    };
+    if *after_seq < 0 {
+        return Err(http(400, "Invalid transcript cursor"));
+    }
+    let limit = (*limit).clamp(1, MAX_TRANSCRIPT_LIMIT);
+    let conversation_id = canonical_uuid(raw_conversation_id, "conversation id")?;
+    let message_id = canonical_uuid(raw_message_id, "message id")?;
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
+        "SELECT m.id::text AS message_id, m.conversation_id::text AS conversation_id,
+                r.chat_generation_id::text AS generation_id,
+                s.id::text AS span_id, s.binding_id::text AS binding_id,
+                s.segment_id::text AS segment_id, s.state, s.completeness,
+                b.agent_id::text AS agent_id, b.target_type, b.target_id,
+                b.principal_scope_ref
+         FROM chat_messages m
+         JOIN heartbeat_runs r ON r.org_id=m.org_id AND r.id=m.run_id
+           AND r.execution_authority='native_rust'
+         JOIN run_runtime_spans s ON s.org_id=r.org_id AND s.run_id=r.id
+           AND s.relation='primary'
+         JOIN runtime_bindings b ON b.org_id=s.org_id AND b.id=s.binding_id
+         WHERE m.org_id=$1::uuid AND m.conversation_id=$2::uuid
+           AND m.id=$3::uuid AND m.role='assistant'",
+    )
+    .bind(organization_id)
+    .bind(&conversation_id)
+    .bind(&message_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| http(404, "Native transcript message not found"))?;
+    let message_id: String = row.try_get("message_id")?;
+    let conversation_id: String = row.try_get("conversation_id")?;
+    let generation_id: String = row.try_get("generation_id")?;
+    let span_id: String = row.try_get("span_id")?;
+    let binding_id: String = row.try_get("binding_id")?;
+    let segment_id: String = row.try_get("segment_id")?;
+    let agent_id: String = row.try_get("agent_id")?;
+    let target_type: Option<String> = row.try_get("target_type")?;
+    let target_id: String = row.try_get("target_id")?;
+    let binding_scope: String = row.try_get("principal_scope_ref")?;
+    if target_type.as_deref() != Some("chat_conversation") || target_id != conversation_id {
+        return Err(http(404, "Native transcript message not found"));
+    }
+    let principal_scope_ref = runtime_bindings::authorize_chat_target_read_tx(
+        &mut tx,
+        actor,
+        organization_id,
+        &conversation_id,
+        &agent_id,
+    )
+    .await?;
+    if binding_scope != principal_scope_ref {
+        return Err(http(404, "Native transcript message not found"));
+    }
+    let events = sqlx::query(
+        "SELECT generation_seq, event_kind, payload, recorded_at::text AS recorded_at
+         FROM chat_generation_events
+         WHERE org_id=$1::uuid AND generation_id=$2::uuid
+           AND generation_seq>$3
+           AND event_kind IN ('assistant_delta','runtime_output')
+           ORDER BY generation_seq ASC LIMIT $4",
+    )
+    .bind(organization_id)
+    .bind(&generation_id)
+    .bind(*after_seq)
+    .bind(limit + 1)
+    .fetch_all(&mut *tx)
+    .await?;
+    let has_more = events.len() > limit as usize;
+    let visible = events.into_iter().take(limit as usize);
+    let mut transcript = Vec::new();
+    let mut revision = *after_seq;
+    for event in visible {
+        let seq: i32 = event.try_get("generation_seq")?;
+        revision = seq;
+        let kind: String = event.try_get("event_kind")?;
+        let payload: Value = event.try_get("payload")?;
+        let recorded_at: String = event.try_get("recorded_at")?;
+        let text = match kind.as_str() {
+            "assistant_delta" => payload.get("delta").and_then(Value::as_str),
+            "runtime_output" => payload.get("body").and_then(Value::as_str),
+            _ => None,
+        };
+        let Some(text) = text else { continue };
+        transcript.push(serde_json::json!({
+            "kind": "assistant",
+            "ts": recorded_at,
+            "text": text,
+            "delta": kind == "assistant_delta",
+            "phase": if kind == "runtime_output" { "final_answer" } else { "commentary" },
+            "generationId": generation_id.clone(),
+            "generationSeqStart": seq,
+            "generationSeqEnd": seq,
+        }));
+    }
+    let span =
+        span_and_segment(&mut tx, organization_id, &span_id, &binding_id, &segment_id).await?;
+    let availability = if row.try_get::<String, _>("state")? == "sealed" {
+        "complete"
+    } else {
+        "partial"
+    };
+    let completeness: Option<String> = row.try_get("completeness")?;
+    tx.commit().await?;
+    Ok(serde_json::json!({
+        "messageId": message_id.clone(),
+        "messageRef": message_id,
+        "transcript": transcript,
+        "reader": {
+            "source": "native_event_ledger",
+            "spanId": span_id,
+            "revision": revision,
+            "availability": availability,
+            "completeness": completeness,
+            "nextCursor": has_more.then(|| revision.to_string()),
+        },
+        "span": span,
+    }))
 }

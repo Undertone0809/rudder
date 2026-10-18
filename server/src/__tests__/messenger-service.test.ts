@@ -228,6 +228,10 @@ describe("messengerService and issue follows", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+      await tx.delete(chatGenerations).where(eq(chatGenerations.executionAuthority, "native_rust"));
+    });
     await db.delete(productAnalyticsEvents);
     await db.delete(issueFollows);
     await db.delete(messengerCustomGroupEntries);
@@ -644,6 +648,404 @@ describe("messengerService and issue follows", () => {
     });
     return { orgId, conversationId, source, annotation, queued };
   }
+
+  it("keeps legacy queue delivery and admission out of native-owned chats", async () => {
+    const fixture = await createQueuedAnnotationFixture({ body: "Queued before Native Chat admission" });
+    const sourceMutationId = randomUUID();
+    const sourceMessage = await chatSvc.addUserChatMessage(
+      fixture.conversationId,
+      fixture.orgId,
+      "Native admission source",
+      null,
+      { clientMutationId: sourceMutationId },
+    );
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+      await tx.insert(chatGenerations).values({
+        orgId: fixture.orgId,
+        conversationId: fixture.conversationId,
+        executionAuthority: "native_rust",
+        sourceMessageId: sourceMessage.id,
+        sourceTurnVariant: sourceMessage.turnVariant,
+        status: "running",
+        attemptEpoch: 1,
+        controlVersion: 1,
+      });
+    });
+
+    await expect(chatSvc.claimNextServerQueuedMessage({
+      workerId: "legacy-must-skip-native-chat",
+      leaseMs: 30_000,
+    })).resolves.toBeNull();
+    await expect(chatSvc.addUserChatMessage(
+      fixture.conversationId,
+      fixture.orgId,
+      "Native admission source",
+      null,
+      { clientMutationId: sourceMutationId },
+    )).resolves.toMatchObject({ id: sourceMessage.id });
+    const beforeUnsupportedWrite = await db.select({
+      id: chatMessages.id,
+      body: chatMessages.body,
+      chatTurnId: chatMessages.chatTurnId,
+      turnVariant: chatMessages.turnVariant,
+      updatedAt: chatMessages.updatedAt,
+    })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.orgId, fixture.orgId),
+        eq(chatMessages.conversationId, fixture.conversationId),
+      ));
+    await expect(chatSvc.addUserChatMessage(
+      fixture.conversationId,
+      fixture.orgId,
+      "must not replace the existing user message",
+      sourceMessage.id,
+      { clientMutationId: randomUUID() },
+    )).rejects.toMatchObject({ status: 409 });
+    const afterUnsupportedWrite = await db.select({
+      id: chatMessages.id,
+      body: chatMessages.body,
+      chatTurnId: chatMessages.chatTurnId,
+      turnVariant: chatMessages.turnVariant,
+      updatedAt: chatMessages.updatedAt,
+    })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.orgId, fixture.orgId),
+        eq(chatMessages.conversationId, fixture.conversationId),
+      ));
+    expect(afterUnsupportedWrite).toEqual(beforeUnsupportedWrite);
+    await expect(chatSvc.createQueuedMessage({
+      orgId: fixture.orgId,
+      conversationId: fixture.conversationId,
+      clientMutationId: randomUUID(),
+      payload: { body: "must not enter the legacy queue" },
+      requestActor: boardQueueRequestActor(fixture.orgId),
+    })).rejects.toMatchObject({ status: 409 });
+
+    const [queued] = await db.select().from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, fixture.queued.id));
+    expect(queued).toMatchObject({
+      id: fixture.queued.id,
+      status: "queued",
+      deliveryLeaseToken: null,
+      deliveryAttempts: 0,
+    });
+  });
+
+  it("does not insert a legacy message after Native Chat owns the conversation", async () => {
+    const fixture = await createQueuedAnnotationFixture({ body: "" });
+    await db.delete(chatQueuedMessages).where(eq(chatQueuedMessages.id, fixture.queued.id));
+    const sourceMessage = await chatSvc.addUserChatMessage(
+      fixture.conversationId,
+      fixture.orgId,
+      "User message before Native Chat ownership",
+      null,
+      { clientMutationId: randomUUID() },
+    );
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+      await tx.insert(chatGenerations).values({
+        orgId: fixture.orgId,
+        conversationId: fixture.conversationId,
+        executionAuthority: "native_rust",
+        sourceMessageId: sourceMessage.id,
+        sourceTurnVariant: sourceMessage.turnVariant,
+        status: "running",
+        attemptEpoch: 1,
+        controlVersion: 1,
+      });
+    });
+
+    const before = await db
+      .select({ id: chatMessages.id, role: chatMessages.role, body: chatMessages.body })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.orgId, fixture.orgId),
+        eq(chatMessages.conversationId, fixture.conversationId),
+      ));
+    await expect(chatSvc.addMessage(fixture.conversationId, {
+      orgId: fixture.orgId,
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      body: "Legacy failure must not be projected after Native ownership",
+      chatTurnId: sourceMessage.chatTurnId,
+    })).rejects.toMatchObject({ status: 409 });
+    const after = await db
+      .select({ id: chatMessages.id, role: chatMessages.role, body: chatMessages.body })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.orgId, fixture.orgId),
+        eq(chatMessages.conversationId, fixture.conversationId),
+      ));
+    expect(after).toEqual(before);
+  });
+
+  it("blocks the legacy failed-message fallback when Native admission wins between message and generation creation", async () => {
+    const fixture = await createQueuedAnnotationFixture({ body: "" });
+    await db.delete(chatQueuedMessages).where(eq(chatQueuedMessages.id, fixture.queued.id));
+    const sourceMessage = await chatSvc.addUserChatMessage(
+      fixture.conversationId,
+      fixture.orgId,
+      "The first Node transaction persisted this message",
+      null,
+      { clientMutationId: randomUUID() },
+    );
+
+    // Model the interleaving: Node has persisted the user message but not yet
+    // created its Generation; Native admission takes ownership in that gap.
+    await db.transaction(async (tx) => {
+      const targetKey = `runtime-binding:target:chat_conversation:${fixture.orgId}:${fixture.conversationId}`;
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${targetKey}, 0))`);
+      await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+      await tx.insert(chatGenerations).values({
+        orgId: fixture.orgId,
+        conversationId: fixture.conversationId,
+        executionAuthority: "native_rust",
+        sourceMessageId: sourceMessage.id,
+        sourceTurnVariant: sourceMessage.turnVariant,
+        status: "running",
+        attemptEpoch: 1,
+        controlVersion: 1,
+      });
+    });
+
+    await expect(chatSvc.createGeneration(fixture.orgId, fixture.conversationId))
+      .rejects.toMatchObject({ status: 409 });
+    await expect(chatSvc.addMessage(fixture.conversationId, {
+      orgId: fixture.orgId,
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      body: "A failed legacy generation must not leave an assistant error row",
+      chatTurnId: sourceMessage.chatTurnId,
+    })).rejects.toMatchObject({ status: 409 });
+
+    const messages = await db
+      .select({ id: chatMessages.id, role: chatMessages.role, body: chatMessages.body })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.orgId, fixture.orgId),
+        eq(chatMessages.conversationId, fixture.conversationId),
+      ));
+    expect(messages).toHaveLength(2);
+    expect(messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: fixture.source.id, role: "assistant", body: "Alpha selected quote omega" }),
+      expect.objectContaining({ id: sourceMessage.id, role: "user", body: "The first Node transaction persisted this message" }),
+    ]));
+    const generations = await db
+      .select({ id: chatGenerations.id, executionAuthority: chatGenerations.executionAuthority })
+      .from(chatGenerations)
+      .where(and(
+        eq(chatGenerations.orgId, fixture.orgId),
+        eq(chatGenerations.conversationId, fixture.conversationId),
+      ));
+    expect(generations).toHaveLength(1);
+    expect(generations[0]?.executionAuthority).toBe("native_rust");
+  });
+
+  it("serializes queue admission behind a Rust target lock and leaves no legacy queue row", async () => {
+    const fixture = await createQueuedAnnotationFixture({ body: "Replace the setup queue" });
+    await db.delete(chatQueuedMessages).where(eq(chatQueuedMessages.id, fixture.queued.id));
+    const sourceMessage = await chatSvc.addUserChatMessage(
+      fixture.conversationId,
+      fixture.orgId,
+      "Native admission source",
+      null,
+      { clientMutationId: randomUUID() },
+    );
+    const targetKey = `runtime-binding:target:chat_conversation:${fixture.orgId}:${fixture.conversationId}`;
+    let letNativeCommit!: () => void;
+    let nativeLockReady!: (pid: number) => void;
+    const nativeCommit = new Promise<void>((resolve) => { letNativeCommit = resolve; });
+    const nativeReady = new Promise<number>((resolve) => { nativeLockReady = resolve; });
+    const nativeAdmission = db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${targetKey}, 0))`);
+      await tx.execute(sql`SELECT set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+      await tx.insert(chatGenerations).values({
+        orgId: fixture.orgId,
+        conversationId: fixture.conversationId,
+        executionAuthority: "native_rust",
+        sourceMessageId: sourceMessage.id,
+        sourceTurnVariant: sourceMessage.turnVariant,
+        status: "running",
+        attemptEpoch: 1,
+        controlVersion: 1,
+      });
+      const [row] = await tx.execute(sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`);
+      nativeLockReady(Number(row!.pid));
+      await nativeCommit;
+    });
+    let queueWrite: Promise<{ value: unknown | null; error: unknown | null }> | undefined;
+    try {
+      const nativePid = await Promise.race([
+        nativeReady,
+        nativeAdmission.then(() => { throw new Error("Native admission exited before signaling its target lock"); }),
+      ]);
+      const uppercaseOrgId = fixture.orgId.toUpperCase();
+      queueWrite = chatSvc.createQueuedMessage({
+        orgId: uppercaseOrgId,
+        conversationId: fixture.conversationId.toUpperCase(),
+        clientMutationId: randomUUID(),
+        payload: { body: "This must wait and then fail closed" },
+        requestActor: boardQueueRequestActor(uppercaseOrgId),
+      }).then((value) => ({ value, error: null }), (error: unknown) => ({ value: null, error }));
+      const deadline = Date.now() + 5_000;
+      let queueWriterWaiting = false;
+      while (Date.now() < deadline) {
+        const [row] = await db.execute(sql<{ waiting: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND ${nativePid}::int = ANY(pg_blocking_pids(pid))
+              AND wait_event = 'advisory'
+              AND query ILIKE '%pg_advisory_xact_lock%'
+          ) AS waiting
+        `);
+        if (row?.waiting) {
+          queueWriterWaiting = true;
+          break;
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(queueWriterWaiting).toBe(true);
+      letNativeCommit();
+      await nativeAdmission;
+      const queueResult = await queueWrite;
+      expect(queueResult.error).toMatchObject({ status: 409 });
+      expect(await db.select({ id: chatQueuedMessages.id }).from(chatQueuedMessages)
+        .where(eq(chatQueuedMessages.conversationId, fixture.conversationId))).toEqual([]);
+    } finally {
+      letNativeCommit();
+      await Promise.allSettled([nativeAdmission, ...(queueWrite ? [queueWrite] : [])]);
+    }
+  });
+
+  it("lets a queue writer finish before target-locked Native admission rechecks pending work", async () => {
+    const fixture = await createQueuedAnnotationFixture({ body: "Replace the setup queue" });
+    await db.delete(chatQueuedMessages).where(eq(chatQueuedMessages.id, fixture.queued.id));
+    const suffix = randomUUID().replaceAll("-", "");
+    const triggerName = `native_queue_gate_${suffix}`;
+    const functionName = `native_queue_gate_fn_${suffix}`;
+    const gateKey = `native-queue-test:${suffix}`;
+    let releaseGate!: () => void;
+    let gateReady!: (pid: number) => void;
+    const gateReleased = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const gateLocked = new Promise<number>((resolve) => { gateReady = resolve; });
+    let gateHolder: Promise<void> | undefined;
+    let queueWrite: Promise<Awaited<ReturnType<typeof chatSvc.createQueuedMessage>>> | undefined;
+    let nativeAdmissionCheck: Promise<void> | undefined;
+    try {
+    await db.execute(sql.raw(`
+      CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.conversation_id = '${fixture.conversationId}'::uuid THEN
+          PERFORM pg_advisory_xact_lock(hashtext(TG_ARGV[0]));
+        END IF;
+        RETURN NEW;
+      END $$
+    `));
+    await db.execute(sql.raw(`
+      CREATE TRIGGER ${triggerName} BEFORE INSERT ON chat_queued_messages
+      FOR EACH ROW EXECUTE FUNCTION ${functionName}('${gateKey}')
+    `));
+
+      gateHolder = db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${gateKey}))`);
+        const [row] = await tx.execute(sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`);
+        gateReady(Number(row!.pid));
+        await gateReleased;
+      });
+      const gatePid = await Promise.race([
+        gateLocked,
+        gateHolder.then(() => { throw new Error("Queue gate holder exited before acquiring its lock"); }),
+      ]);
+      queueWrite = chatSvc.createQueuedMessage({
+        orgId: fixture.orgId,
+        conversationId: fixture.conversationId,
+        clientMutationId: randomUUID(),
+        payload: { body: "Queue write wins the target lock" },
+        requestActor: boardQueueRequestActor(fixture.orgId),
+      });
+      const deadline = Date.now() + 5_000;
+      let queueWriterPid: number | null = null;
+      while (Date.now() < deadline) {
+        const [row] = await db.execute(sql<{ pid: number | null }>`
+          SELECT pid
+          FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND ${gatePid}::int = ANY(pg_blocking_pids(pid))
+            AND query ILIKE '%insert into "chat_queued_messages"%'
+          LIMIT 1
+        `);
+        if (row?.pid) {
+          queueWriterPid = Number(row.pid);
+          break;
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(queueWriterPid).not.toBeNull();
+
+      const targetKey = `runtime-binding:target:chat_conversation:${fixture.orgId}:${fixture.conversationId}`;
+      let admissionObservation!: (value: { pendingCount: number; status: string | null }) => void;
+      const observation = new Promise<{ pendingCount: number; status: string | null }>((resolve) => {
+        admissionObservation = resolve;
+      });
+      nativeAdmissionCheck = db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${targetKey}, 0))`);
+        await tx.execute(sql`
+          SELECT id FROM chat_conversations
+          WHERE org_id = ${fixture.orgId}::uuid AND id = ${fixture.conversationId}::uuid
+          FOR UPDATE
+        `);
+        const [row] = await tx.execute(sql<{ pending_count: number; status: string | null }>`
+          SELECT count(*)::int AS pending_count, min(status) AS status
+          FROM chat_queued_messages
+          WHERE org_id = ${fixture.orgId}::uuid
+            AND conversation_id = ${fixture.conversationId}::uuid
+        `);
+        admissionObservation({ pendingCount: Number(row?.pending_count ?? 0), status: row?.status ?? null });
+      });
+
+      const waitDeadline = Date.now() + 5_000;
+      let admissionBlockedByQueueWriter = false;
+      while (Date.now() < waitDeadline) {
+        const [row] = await db.execute(sql<{ waiting: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND ${queueWriterPid}::int = ANY(pg_blocking_pids(pid))
+              AND wait_event = 'advisory'
+              AND query ILIKE '%pg_advisory_xact_lock%'
+          ) AS waiting
+        `);
+        if (row?.waiting) {
+          admissionBlockedByQueueWriter = true;
+          break;
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(admissionBlockedByQueueWriter).toBe(true);
+      releaseGate();
+      await gateHolder;
+      const queued = await queueWrite;
+      await nativeAdmissionCheck;
+      expect(queued.id).toBeTruthy();
+      await expect(observation).resolves.toMatchObject({ pendingCount: 1, status: "queued" });
+    } finally {
+      releaseGate();
+      await Promise.allSettled([
+        ...(queueWrite ? [queueWrite] : []),
+        ...(gateHolder ? [gateHolder] : []),
+        ...(nativeAdmissionCheck ? [nativeAdmissionCheck] : []),
+      ]);
+      await db.execute(sql.raw(`DROP TRIGGER IF EXISTS ${triggerName} ON chat_queued_messages`));
+      await db.execute(sql.raw(`DROP FUNCTION IF EXISTS ${functionName}()`));
+    }
+  });
 
   it("hydrates canonical queued annotations and preserves them across prose-only edits", async () => {
     const fixture = await createQueuedAnnotationFixture();
@@ -1520,8 +1922,15 @@ describe("messengerService and issue follows", () => {
       status: "active",
     });
 
-    const stopped = await chatSvc.markGenerationTerminal(generationId, "stopped");
-    const completed = await chatSvc.markGenerationTerminal(generationId, "completed");
+    await expect(chatSvc.markGenerationTerminal(randomUUID(), generationId, "failed")).resolves.toBeNull();
+    const [unchangedGeneration] = await db
+      .select()
+      .from(chatGenerations)
+      .where(eq(chatGenerations.id, generationId));
+    expect(unchangedGeneration).toMatchObject({ status: "active" });
+
+    const stopped = await chatSvc.markGenerationTerminal(orgId, generationId, "stopped");
+    const completed = await chatSvc.markGenerationTerminal(orgId, generationId, "completed");
 
     expect(stopped).toMatchObject({
       id: generationId,
@@ -1660,7 +2069,7 @@ describe("messengerService and issue follows", () => {
 
     expect(started.generation?.id).toBe(generationId);
     expect(await chatSvc.listQueuedMessages(conversationId)).toEqual([]);
-    await chatSvc.markGenerationTerminal(generationId, "completed");
+    await chatSvc.markGenerationTerminal(orgId, generationId, "completed");
 
     const [storedQueueItem] = await db
       .select()
@@ -2193,6 +2602,124 @@ describe("messengerService and issue follows", () => {
     ]);
   });
 
+  it("skips a locked conversation head without blocking another conversation or reordering its own queue", async () => {
+    const orgId = randomUUID();
+    const firstConversationId = randomUUID();
+    const secondConversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger cross-chat locked queue org",
+      urlKey: deriveOrganizationUrlKey("Messenger cross-chat locked queue org"),
+      issuePrefix: `X${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values([
+      {
+        id: firstConversationId,
+        orgId,
+        title: "Earlier locked queue chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
+        id: secondConversationId,
+        orgId,
+        title: "Independent queue chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    ]);
+    await db.insert(chatGenerations).values([
+      {
+        id: randomUUID(),
+        orgId,
+        conversationId: firstConversationId,
+        status: "stopped",
+        terminalReason: "operator_stop",
+        completedAt: new Date(),
+      },
+      {
+        id: randomUUID(),
+        orgId,
+        conversationId: secondConversationId,
+        status: "stopped",
+        terminalReason: "operator_stop",
+        completedAt: new Date(),
+      },
+    ]);
+    const firstHead = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId: firstConversationId,
+      clientMutationId: "cross-chat-locked-head",
+      payload: { body: "Earlier conversation head" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const firstLater = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId: firstConversationId,
+      clientMutationId: "cross-chat-locked-later",
+      payload: { body: "Later message in the same conversation" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const independentHead = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId: secondConversationId,
+      clientMutationId: "cross-chat-independent-head",
+      payload: { body: "Independent conversation head" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    // Make candidate order deterministic even when all inserts share one millisecond.
+    await db
+      .update(chatQueuedMessages)
+      .set({ createdAt: new Date("2030-01-01T00:00:00.000Z") })
+      .where(eq(chatQueuedMessages.id, independentHead.id));
+
+    let releaseHeadLock!: () => void;
+    const headLockBarrier = new Promise<void>((resolve) => {
+      releaseHeadLock = resolve;
+    });
+    let signalHeadLocked!: () => void;
+    const headLocked = new Promise<void>((resolve) => {
+      signalHeadLocked = resolve;
+    });
+    const lockedHeadTransaction = db.transaction(async (tx) => {
+      await tx
+        .select({ id: chatQueuedMessages.id })
+        .from(chatQueuedMessages)
+        .where(eq(chatQueuedMessages.id, firstHead.id))
+        .for("update");
+      signalHeadLocked();
+      await headLockBarrier;
+    });
+    await headLocked;
+
+    let claimWhileHeadLocked;
+    try {
+      claimWhileHeadLocked = await chatSvc.claimNextServerQueuedMessage({
+        workerId: "cross-chat-locked-head-worker",
+        leaseMs: 30_000,
+      });
+    } finally {
+      releaseHeadLock();
+      await lockedHeadTransaction;
+    }
+
+    expect(claimWhileHeadLocked?.item.id).toBe(independentHead.id);
+    expect(await chatSvc.listQueuedMessages(firstConversationId)).toMatchObject([
+      { id: firstHead.id, status: "queued" },
+      { id: firstLater.id, status: "queued" },
+    ]);
+    const claimAfterHeadUnlocked = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "cross-chat-unlocked-head-worker",
+      leaseMs: 30_000,
+    });
+    expect(claimAfterHeadUnlocked?.item.id).toBe(firstHead.id);
+    expect(await chatSvc.listQueuedMessages(firstConversationId)).toMatchObject([
+      { id: firstHead.id, status: "dequeue_claimed" },
+      { id: firstLater.id, status: "queued" },
+    ]);
+  });
+
   it.each([
     { status: "failed", terminalReason: "runtime_failed" },
     { status: "aborted", terminalReason: "runtime_aborted" },
@@ -2350,7 +2877,7 @@ describe("messengerService and issue follows", () => {
       requestActor: boardQueueRequestActor(orgId),
     });
     const claim = await chatSvc.claimNextServerQueuedMessage({ workerId: "terminal-legacy-worker", leaseMs: 30_000 });
-    await chatSvc.markGenerationTerminal(claim!.generationId, "failed");
+    await chatSvc.markGenerationTerminal(orgId, claim!.generationId, "failed");
     await chatSvc.completeServerQueuedMessageDelivery({
       itemId: claim!.item.id,
       generationId: claim!.generationId,
@@ -2395,7 +2922,7 @@ describe("messengerService and issue follows", () => {
       requestActor: boardQueueRequestActor(orgId),
     });
     const claim = await chatSvc.claimNextServerQueuedMessage({ workerId: "terminal-before-release-worker", leaseMs: 30_000 });
-    await chatSvc.markGenerationTerminal(claim!.generationId, "failed");
+    await chatSvc.markGenerationTerminal(orgId, claim!.generationId, "failed");
 
     expect(await chatSvc.listQueuedMessages(conversationId)).toMatchObject([
       { id: claim!.item.id, status: "dequeue_claimed", deliveryLeaseToken: claim!.leaseToken },
@@ -3643,7 +4170,7 @@ describe("messengerService and issue follows", () => {
       payload: { body: "Continue with this feedback after Stop" },
       requestActor: boardQueueRequestActor(orgId),
     });
-    await chatSvc.markGenerationTerminal(generationId, "stopped");
+    await chatSvc.markGenerationTerminal(orgId, generationId, "stopped");
 
     const scheduled = await chatSvc.beginSteerControlAction({
       orgId,
@@ -3856,6 +4383,7 @@ describe("messengerService and issue follows", () => {
     });
 
     await chatSvc.markGenerationControlAttemptCompleted({
+      orgId,
       generationId,
       attemptEpoch: 1,
       ownerToken,
@@ -4109,7 +4637,7 @@ describe("messengerService and issue follows", () => {
       sendDenied: true,
       item: { status: "continuation_pending" },
     });
-    await chatSvc.markGenerationTerminal(oldGenerationId, "stopped");
+    await chatSvc.markGenerationTerminal(orgId, oldGenerationId, "stopped");
 
     const claim = await chatSvc.claimNextServerQueuedMessage({
       workerId: "released-continuation-worker",
@@ -4208,6 +4736,7 @@ describe("messengerService and issue follows", () => {
     });
 
     await chatSvc.markGenerationControlAttemptCompleted({
+      orgId,
       generationId,
       attemptEpoch: 1,
       ownerToken,

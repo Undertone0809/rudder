@@ -7,5 +7,5 @@ export const codexLocalUIAdapter: UIAgentRuntimeModule = {
   label: "Codex (local)",
   parseStdoutLine: parseCodexStdoutLine,
   ConfigFields: CodexLocalConfigFields,
-  buildAdapterConfig: buildCodexLocalConfig,
+  buildAdapterConfig: (values) => ({ ...buildCodexLocalConfig(values), profileId: values.codexProfileId ?? "operator-default" }),
 };

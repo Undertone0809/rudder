@@ -18,7 +18,7 @@ import {
   withQueuedAnnotationAssetState,
   type StagedQueuedAnnotationAttachment,
 } from "./chat-queued-message-materialization.js";
-import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { lockLegacyNativeChatQueueTarget, lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { isPostgresError } from "./postgres-errors.js";
 
 export async function createQueuedMessageWithStagedAttachments(
@@ -54,6 +54,10 @@ export async function createQueuedMessageWithStagedAttachments(
     try {
       return await db.transaction(async (tx) => {
         await lockNodeMutationAuthority(tx, input.orgId);
+        const ownership = await lockLegacyNativeChatQueueTarget(tx, input.orgId, input.conversationId);
+        if (ownership === "native_owned") {
+          throw conflict("Native Chat owns this conversation");
+        }
         const existing = await tx
           .select()
           .from(chatQueuedMessages)

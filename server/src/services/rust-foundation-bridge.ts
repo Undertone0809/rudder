@@ -14,7 +14,11 @@ import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
 export { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 export { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
-export type { RustPublicIngressOptions } from "./rust-public-ingress-config.js";
+export type {
+  RustBrowserSessionAuth,
+  RustNativeChatHost,
+  RustPublicIngressOptions,
+} from "./rust-public-ingress-config.js";
 
 import { requestActivityLinkRead, type ActivityLinkReadInput } from "./activity-link-read-bridge.js";
 import { requestActivityRead, type ActivityReadInput } from "./activity-read-bridge.js";
@@ -31,6 +35,7 @@ import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
+import { requestNativeChatTranscript, type NativeChatTranscriptInput } from "./native-chat-transcript-bridge.js";
 import {
   nativeIdentityAuthEnvironment,
   nativeLocalAccountLifecycleEnvironment,
@@ -60,6 +65,7 @@ export type RustFoundationResponse = {
 
 export interface RustFoundationBridge {
   runtimeBinding?(actor: RustFoundationActor, orgId: string, input: RuntimeBindingInput): Promise<RustFoundationResponse>;
+  nativeChatTranscript?(actor: RustFoundationActor, orgId: string, input: NativeChatTranscriptInput): Promise<RustFoundationResponse>;
   automationRead?(actor: RustFoundationActor, orgId: string, input: AutomationReadInput): Promise<RustFoundationResponse>;
   activityLinkRead?(actor: RustFoundationActor, orgId: string, input: ActivityLinkReadInput): Promise<RustFoundationResponse>;
   issueMetadataRead?(actor: RustFoundationActor, orgId: string, input: IssueMetadataReadInput): Promise<RustFoundationResponse>;
@@ -76,6 +82,7 @@ export interface RustFoundationBridge {
   readonly projectGoalSetMode: RustFoundationMode;
   readonly requiresStartup: boolean;
   readonly publicIngressBaseUrl?: string | null;
+  readonly nativeChatHostEnabled?: boolean;
   waitForPublicIngressReady?(): Promise<void>;
   start(): Promise<void>;
   calendar?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
@@ -374,6 +381,15 @@ function createFoundationChildEnvironment(input: {
       ...nativeIdentityAuthEnvironment(input.publicIngress.identityAuth),
       ...nativeSessionAuthEnvironment(input.publicIngress.sessionAuth),
       ...nativeLocalAccountLifecycleEnvironment(input.publicIngress),
+      ...(input.publicIngress.nativeChatHost
+        ? {
+            RUDDER_NATIVE_CHAT_HOST: JSON.stringify(input.publicIngress.nativeChatHost),
+            PATH: input.publicIngress.nativeChatHost.executableSearchPath,
+          }
+        : {}),
+      ...(input.publicIngress.browserSessionAuth
+        ? { RUDDER_NATIVE_BROWSER_AUTH_ISSUER: JSON.stringify(input.publicIngress.browserSessionAuth) }
+        : {}),
       ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
     } : {}),
   };
@@ -700,6 +716,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     organizationBrandingMode,
     projectGoalSetMode,
     requiresStartup,
+    nativeChatHostEnabled: Boolean(options.publicIngress?.nativeChatHost),
     get publicIngressBaseUrl() { return publicIngressBaseUrl; },
     async waitForPublicIngressReady() {
       if (!options.publicIngress || !publicIngressBaseUrl || !child || childHasExited(child)) {
@@ -726,6 +743,11 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
       return requestRuntimeBinding(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async nativeChatTranscript(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestNativeChatTranscript(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
     },
     async automationRead(actor, orgId, input) {
       await ensureStarted();

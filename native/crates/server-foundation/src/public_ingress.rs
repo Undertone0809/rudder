@@ -18,6 +18,8 @@ use rudder_d1_persistence::goal_reads::{GoalReadRequest, GoalReadView};
 use uuid::Uuid;
 
 mod agent_core;
+mod browser_session;
+mod native_chat;
 mod runtime_bindings;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
@@ -144,6 +146,7 @@ pub struct PublicIngressRuntime {
     native_identity_enabled: bool,
     local_implicit_enabled: bool,
     local_account_lifecycle_enabled: bool,
+    browser_session_auth_enabled: bool,
 }
 
 impl PublicIngressRuntime {
@@ -158,7 +161,26 @@ impl PublicIngressRuntime {
             )
             .into());
         }
+        if let Some(browser_auth) = &config.browser_auth {
+            browser_auth
+                .validate_listener(config.listen_addr)
+                .map_err(|error| {
+                    ConfigError::invalid("RUDDER_NATIVE_BROWSER_AUTH_MODE", &error.to_string())
+                })?;
+        }
+        if config.native_chat_runtime.is_some()
+            && (config.browser_auth.is_none() || config.native_chat_mutations.is_none())
+        {
+            return Err(ConfigError::invalid(
+                "RUDDER_NATIVE_CHAT_RUNTIME",
+                "explicit browser authentication and mutation Origin policy are required",
+            )
+            .into());
+        }
         let listen_addr = config.listen_addr;
+        let session_auth_kind = config.session_auth.as_ref().map(|settings| settings.kind);
+        let browser_session_auth_enabled =
+            config.browser_auth.is_some() || session_auth_kind.is_some();
         if config.identity_auth.as_ref().is_some_and(|identity| {
             identity.local_implicit_enabled && !listen_addr.ip().is_loopback()
         }) {
@@ -227,6 +249,20 @@ impl PublicIngressRuntime {
                 .app_data(web::PayloadConfig::new(max_request_bytes))
                 .wrap(middleware::from_fn(enforce_private_host_gate))
                 .wrap(middleware::from_fn(reject_unsupported_websocket_upgrade))
+                .configure(|routes| {
+                    if config.native_chat_mutations.is_some() {
+                        // Send routes also serve exact, read-only replay after
+                        // restart. Fresh admission separately requires trusted
+                        // host configuration and a reserved worker slot.
+                        native_chat::configure(routes, true);
+                    }
+                    if config.browser_auth.is_some() {
+                        routes.route(
+                            "/api/auth/get-session",
+                            web::route().to(browser_session::get),
+                        );
+                    }
+                })
                 .route("/healthz", web::get().to(ingress_health))
                 .route("/readyz", web::get().to(ingress_readiness))
                 .route(
@@ -313,6 +349,7 @@ impl PublicIngressRuntime {
             session_auth_kind,
             native_identity_enabled,
             local_account_lifecycle_enabled,
+            browser_session_auth_enabled,
             local_implicit_enabled,
         })
     }
@@ -326,6 +363,7 @@ impl PublicIngressRuntime {
             self.session_auth_kind,
             self.native_identity_enabled,
             self.local_implicit_enabled,
+            self.browser_session_auth_enabled,
         );
         if self.local_account_lifecycle_enabled {
             receipt["localAccountLifecycle"] = serde_json::json!({
@@ -352,6 +390,7 @@ fn public_ingress_startup_receipt(
     session_auth_kind: Option<NativeSessionAuthKind>,
     native_identity_enabled: bool,
     local_implicit_enabled: bool,
+    browser_session_auth_enabled: bool,
 ) -> serde_json::Value {
     let mut direct_routes = vec![
         "/api/orgs/:org_id/members/directory",
@@ -404,6 +443,21 @@ fn public_ingress_startup_receipt(
             vec!["native_pcp_bearer_resolver"]
         },
         "nativeAuthentication": native_authentication,
+        "browserSessionAuthentication": {
+            "enabled": browser_session_auth_enabled,
+            "authority": if session_auth_kind.is_some() {
+                "native-existing-session-cookie-resolver"
+            } else {
+                "native-browser-session-resolver"
+            },
+            "route": "GET /api/auth/get-session",
+            "nativeFailureFallback": false,
+            "scope": if session_auth_kind.is_some() {
+                "public_ingress_non_lifecycle_http_without_bearer"
+            } else {
+                "session-read-only; other compatibility routes retain their existing authentication"
+            },
+        },
         "compatibilityAuthentication": {
             "authority": if native_identity_enabled { "none_for_managed_http_identity" } else { "private-node-adapter" },
             "credentialForms": if native_identity_enabled { vec!["auth lifecycle routes", "websocket session resolution"] } else { vec!["local Agent JWTs", "local-trusted and local-implicit identities", "non-pcp_ bearer credentials", "Bearer-authenticated HTTP requests"] },
@@ -476,7 +530,9 @@ async fn proxy_request(
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
     // aliases are dispatched here so they remain native and never fall back.
-    if state.config.identity_auth.is_some() && agent_core::is_reserved_path(request.uri().path()) {
+    if state.config.identity_auth.is_some()
+        && agent_core::is_reserved_path(request.uri().path(), request.method())
+    {
         return agent_core::dispatch_alias(state, request, payload).await;
     }
     if let Some(endpoint) = crate::local_account_ingress::endpoint_for_path(request.uri().path()) {
@@ -514,7 +570,11 @@ async fn proxy_request(
     // optional trailing slash. Never let a near-match under this namespace
     // fall back to Node in required-Rust mode: exact migrated routes are
     // handled above, and every remaining /llms path is deliberately closed.
-    if runtime_bindings::reserved_path(request.uri().path())
+    if (state.config.browser_auth.is_some() && browser_session::reserved_path(request.uri().path()))
+        || native_chat::capability_path(request.uri().path())
+        || (state.config.native_chat_mutations.is_some()
+            && native_chat::reserved_path(request.uri().path()))
+        || runtime_bindings::reserved_path(request.uri().path())
         || request
             .uri()
             .path()
@@ -646,6 +706,67 @@ async fn proxy_request(
             )
             .await;
     }
+    let Some(session_auth) = state.config.session_auth.as_ref() else {
+        return proxy.forward(request, payload).await;
+    };
+    if has_bearer_header(&request) || is_node_owned_lifecycle_route(&request) {
+        return proxy.forward(request, payload).await;
+    }
+    let identity = match state
+        .foundation
+        .resolve_public_session(session_auth, request.headers())
+        .await
+    {
+        NativeSessionResolution::Authenticated(identity) => Some(identity),
+        NativeSessionResolution::Anonymous => None,
+        NativeSessionResolution::DatabaseDisabled => {
+            return state
+                .foundation
+                .json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+        }
+        NativeSessionResolution::Unavailable => {
+            return state.foundation.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "native_session_unavailable",
+            );
+        }
+    };
+    let Some(path_and_query) = request.uri().path_and_query() else {
+        return state
+            .foundation
+            .json_error(StatusCode::BAD_REQUEST, "invalid_request_target");
+    };
+    let assertion_identity = identity
+        .map(NativeIngressIdentity::Session)
+        .unwrap_or(NativeIngressIdentity::None);
+    let proof = match issue_assertion(
+        &session_auth.assertion_key,
+        request.method().as_str(),
+        path_and_query.as_str(),
+        &assertion_identity,
+    ) {
+        Ok(proof) => proof,
+        Err(_) => {
+            return state.foundation.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "native_session_assertion_unavailable",
+            );
+        }
+    };
+    proxy
+        .forward_with_session_assertion(request, payload, Some(&proof), Some(session_auth))
+        .await
+}
+
+/// Forward a request through the authenticated compatibility path after a
+/// Rust-owned Native target has explicitly declined it. Native failures must
+/// never silently select this transport.
+pub(super) async fn forward_compatibility(
+    state: web::Data<IngressState>,
+    proxy: web::Data<PublicIngressProxy>,
+    request: HttpRequest,
+    payload: web::Payload,
+) -> HttpResponse {
     let Some(session_auth) = state.config.session_auth.as_ref() else {
         return proxy.forward(request, payload).await;
     };
@@ -943,7 +1064,7 @@ async fn get_session(state: web::Data<IngressState>, request: HttpRequest) -> Ht
             .foundation
             .json_error(StatusCode::NOT_FOUND, "route_not_found");
     };
-    match state
+    let mut response = match state
         .foundation
         .resolve_public_session(session_auth, request.headers())
         .await
@@ -961,7 +1082,12 @@ async fn get_session(state: web::Data<IngressState>, request: HttpRequest) -> Ht
             StatusCode::SERVICE_UNAVAILABLE,
             "native_session_unavailable",
         ),
-    }
+    };
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 fn goal_query_value(request: &HttpRequest, key: &str) -> Option<String> {
@@ -1009,6 +1135,7 @@ fn goal_query_number(value: &str) -> Option<f64> {
     value.parse::<f64>().ok()
 }
 
+#[allow(clippy::result_large_err)]
 fn goal_assigned_input(
     request: &HttpRequest,
     agent_id: String,
@@ -2128,7 +2255,7 @@ mod tests {
     #[actix_web::test]
     async fn startup_receipt_reports_only_the_configured_public_auth_authorities() {
         let address = "127.0.0.1:3100".parse().unwrap();
-        let bearer_only = public_ingress_startup_receipt(address, None, false, false);
+        let bearer_only = public_ingress_startup_receipt(address, None, false, false, false);
         assert_eq!(bearer_only["publicListener"], true);
         assert_eq!(
             bearer_only["nativeAuthentication"]["directRoutes"],
@@ -2141,7 +2268,7 @@ mod tests {
         );
         assert!(bearer_only["nativeAuthentication"]["sessionCookieAuthority"].is_null());
 
-        let managed_http = public_ingress_startup_receipt(address, None, true, true);
+        let managed_http = public_ingress_startup_receipt(address, None, true, true, false);
         assert_eq!(
             managed_http["nativeAuthentication"]["supportedCredentialStores"],
             serde_json::json!(["board_api_keys", "agent_api_keys", "agent_jwt"])
@@ -2156,6 +2283,7 @@ mod tests {
             Some(NativeSessionAuthKind::BetterAuth),
             true,
             false,
+            true,
         );
         assert_eq!(
             with_better_auth["nativeAuthentication"]["directRoutes"],
@@ -2180,6 +2308,27 @@ mod tests {
         assert_eq!(
             with_better_auth["compatibilityAuthentication"]["nodeOwnedRoutes"],
             serde_json::json!(["auth_lifecycle_routes", "websocket_session_resolution"])
+        );
+        assert_eq!(
+            with_better_auth["browserSessionAuthentication"],
+            serde_json::json!({
+                "enabled":true,"authority":"native-existing-session-cookie-resolver",
+                "route":"GET /api/auth/get-session","nativeFailureFallback":false,
+                "scope":"public_ingress_non_lifecycle_http_without_bearer",
+            })
+        );
+        assert_eq!(
+            bearer_only["browserSessionAuthentication"]["enabled"],
+            false
+        );
+        let browser_only = public_ingress_startup_receipt(address, None, true, false, true);
+        assert_eq!(
+            browser_only["browserSessionAuthentication"]["authority"],
+            "native-browser-session-resolver"
+        );
+        assert_eq!(
+            browser_only["browserSessionAuthentication"]["enabled"],
+            true
         );
         let rendered = with_better_auth.to_string();
         assert!(!rendered.contains("session-secret"));

@@ -13,7 +13,7 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
-  chatQueuedMessages
+  chatQueuedMessages,
 } from "@rudderhq/db";
 import { parseShortRef, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
@@ -102,8 +102,9 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
-import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { lockLegacyNativeChatQueueTarget, lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { organizationService } from "./orgs.js";
+import { releaseSideChatLineage } from "./side-chats.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
   completeProductAnalyticsWorkCycle,
@@ -655,27 +656,18 @@ export function chatService(
 
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
     const now = new Date();
-    const [row] = await db
-      .insert(chatGenerations)
-      .values({
-        orgId,
-        conversationId,
-        status: "active",
-        controlOwnerToken: null,
-        controlLeaseExpiresAt: null,
-        startedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-    if (!row) throw new Error("Failed to create chat generation");
+    const [row] = await db.insert(chatGenerations).values({
+      orgId, conversationId, status: "active", controlOwnerToken: null,
+      controlLeaseExpiresAt: null, startedAt: now, createdAt: now, updatedAt: now,
+    }).onConflictDoNothing().returning();
+    if (!row) throw conflict("Native Chat owns this conversation");
     return row;
   }
 
-  async function markGenerationTerminal(
-    generationId: string | null | undefined,
-    status: "completed" | "failed" | "stopped" | "aborted",
-  ) {
+  async function markGenerationTerminal(first: string | null | undefined, second: "completed" | "failed" | "stopped" | "aborted" | string, third?: "completed" | "failed" | "stopped" | "aborted") {
+    const orgId = third === undefined ? undefined : first;
+    const generationId = third === undefined ? first : second;
+    const status = third === undefined ? second as "completed" | "failed" | "stopped" | "aborted" : third;
     if (!generationId) return null;
     const now = new Date();
     return db.transaction(async (tx) => {
@@ -692,6 +684,8 @@ export function chatService(
         .where(
           and(
             eq(chatGenerations.id, generationId),
+            ...(orgId ? [eq(chatGenerations.orgId, orgId)] : []),
+            eq(chatGenerations.executionAuthority, "legacy_ts"),
             inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
           ),
         )
@@ -4053,6 +4047,7 @@ export function chatService(
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
         .where(eq(chatAttachments.conversationId, id));
+      const now = new Date(); await releaseSideChatLineage(tx, id, now);
       const [deleted] = await tx
         .delete(chatConversations)
         .where(eq(chatConversations.id, id))
@@ -4354,6 +4349,11 @@ export function chatService(
       const transcriptFromPayload = chatTranscriptFromPayload(sanitizedPayload);
       const transcript = input.transcript ?? transcriptFromPayload;
       const { message, created } = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, input.orgId);
+        const ownership = await lockLegacyNativeChatQueueTarget(tx, input.orgId, conversationId);
+        if (ownership === "native_owned") {
+          throw conflict("Native Chat owns this conversation");
+        }
         const values = {
           orgId: input.orgId,
           conversationId,

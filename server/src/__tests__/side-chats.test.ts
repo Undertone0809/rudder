@@ -12,6 +12,8 @@ import {
   messengerCustomGroups,
   organizations,
   productAnalyticsEvents,
+  runtimeRetentionClaims,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -116,6 +118,8 @@ describe("sideChatService", () => {
     await db.delete(assets);
     await db.delete(chatContextLinks);
     await db.delete(chatMessages);
+    await db.delete(runtimeSourceAliases);
+    await db.delete(runtimeRetentionClaims);
     await db.delete(chatConversations);
     await db.delete(organizations);
   });
@@ -793,6 +797,9 @@ describe("sideChatService", () => {
     await expect(service.assertMutable(stale, source.userId, new Date(expiredAt.getTime() + 1))).rejects.toMatchObject({ status: 409 });
     const [expired] = await db.select().from(chatConversations).where(eq(chatConversations.id, other.id));
     expect(expired?.sideChatState).toBe("expired");
+    const [expiredClaim] = await db.select().from(runtimeRetentionClaims)
+      .where(eq(runtimeRetentionClaims.resourceRef, `side_chat:${other.id}`));
+    expect(expiredClaim).toMatchObject({ status: "expired", expiresAt: expect.any(Date) });
 
     const staleKeep = await service.create({
       ...source,
@@ -807,6 +814,9 @@ describe("sideChatService", () => {
       .rejects.toMatchObject({ status: 409 });
     const [rejectedKeep] = await db.select().from(chatConversations).where(eq(chatConversations.id, staleKeep.id));
     expect(rejectedKeep).toMatchObject({ sideChatState: "expired", messengerVisible: false });
+    const [rejectedKeepClaim] = await db.select().from(runtimeRetentionClaims)
+      .where(eq(runtimeRetentionClaims.resourceRef, `side_chat:${staleKeep.id}`));
+    expect(rejectedKeepClaim).toMatchObject({ status: "expired", expiresAt: expect.any(Date) });
   });
 
   it("rejects an assistant anchor that has not completed", async () => {
@@ -860,6 +870,17 @@ describe("sideChatService", () => {
       `chat:${sideChat.id}`,
     ]);
     await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).rejects.toMatchObject({ status: 409 });
+    await expect(chats.remove(sideChat.id)).resolves.toMatchObject({ id: sideChat.id });
+    const [claim] = await db
+      .select({ status: runtimeRetentionClaims.status, expiresAt: runtimeRetentionClaims.expiresAt, releasedAt: runtimeRetentionClaims.releasedAt })
+      .from(runtimeRetentionClaims)
+      .where(eq(runtimeRetentionClaims.resourceRef, `side_chat:${sideChat.id}`));
+    expect(claim).toMatchObject({ status: "released", releasedAt: expect.any(Date) });
+    const [alias] = await db
+      .select({ conversationId: runtimeSourceAliases.conversationId, releasedAt: runtimeSourceAliases.releasedAt })
+      .from(runtimeSourceAliases)
+      .where(eq(runtimeSourceAliases.sourceRef, source.sourceConversationId));
+    expect(alias).toMatchObject({ conversationId: null, releasedAt: expect.any(Date) });
   });
 
   it("creates a fork-family Messenger group when the source is not grouped", async () => {

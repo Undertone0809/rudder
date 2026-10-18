@@ -10,6 +10,7 @@ import {
   checkPackagedFoundationArtifacts,
   foundationBinaryName,
   migrationPreflightBinaryName,
+  processHostBinaryName,
   resolveCargoFoundationExecutable,
   resolveFoundationTarget,
   stageFoundationArtifacts,
@@ -48,6 +49,7 @@ function makeArtifactRoot(targets = Object.keys(FOUNDATION_TARGETS)) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, foundationBinaryName(target)), fakeBinary(target), { mode: 0o600 });
     writeFileSync(path.join(dir, migrationPreflightBinaryName(target)), fakeBinary(target), { mode: 0o600 });
+    writeFileSync(path.join(dir, processHostBinaryName(target)), fakeBinary(target), { mode: 0o600 });
   }
   return root;
 }
@@ -148,7 +150,7 @@ test("replaces a staged executable without changing bytes seen by an existing re
     assert.deepEqual(readFileSync(destinationPath), replacementBytes);
     assert.deepEqual(await previousReader.readFile(), previousBytes);
     if (process.platform !== "win32") assert.notEqual(statSync(destinationPath).ino, previousStat.ino);
-    assert.deepEqual(readdirSync(path.dirname(destinationPath)).sort(), [foundationBinaryName(target), migrationPreflightBinaryName(target)].sort());
+    assert.deepEqual(readdirSync(path.dirname(destinationPath)).sort(), [foundationBinaryName(target), migrationPreflightBinaryName(target), processHostBinaryName(target)].sort());
 
     writeFileSync(sourcePath, Buffer.from("invalid replacement"));
     await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /Unrecognized/u);
@@ -167,7 +169,7 @@ test("validates every artifact before writing any package payload", async () => 
   mkdirSync(path.dirname(sentinel), { recursive: true });
   writeFileSync(sentinel, "preserve");
   try {
-    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir }), /rudder-server-foundation\.exe/u);
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir }), /(rudder-server-foundation|rudder-process-host)\.exe/u);
     assert.equal(readFileSync(sentinel, "utf8"), "preserve");
     assert.deepEqual(requireNativeTargets(resourcesDir), []);
   } finally {
@@ -235,6 +237,7 @@ test("keeps all six payloads in the server npm package without adding install-ti
       const filename = `resources/native/${target}/${foundationBinaryName(target)}`;
       assert.ok(packagedPaths.has(filename));
       assert.ok(packagedPaths.has(`resources/native/${target}/${migrationPreflightBinaryName(target)}`));
+      assert.ok(packagedPaths.has(`resources/native/${target}/${processHostBinaryName(target)}`));
       if (process.platform !== "win32") {
         const entry = result.files.find(({ path: packagedPath }) => packagedPath === filename);
         assert.notEqual(entry.mode & 0o111, 0);
@@ -262,6 +265,8 @@ test("restores a normalized native mode through a real npm tarball install lifec
     mkdirSync(isolatedHome, { recursive: true });
     writeFileSync(sourceBinary, fakeBinary(target), { mode: 0o644 });
     chmodSync(sourceBinary, 0o644);
+    const processHostRelativePath = path.join("native", target, processHostBinaryName(target));
+    writeFileSync(path.join(packageRoot, "resources", processHostRelativePath), fakeBinary(target), { mode: 0o644 });
     const preflightRelativePath = path.join("native", target, migrationPreflightBinaryName(target));
     writeFileSync(path.join(packageRoot, "resources", preflightRelativePath), fakeBinary(target), { mode: 0o644 });
     for (const script of ["postinstall-native-mode.mjs", "postinstall-postgres-compat.mjs"]) {
@@ -304,6 +309,8 @@ test("restores a normalized native mode through a real npm tarball install lifec
     assert.notEqual(statSync(installedBinary).mode & 0o111, 0, "postinstall did not restore executable mode");
     const installedPreflight = path.join(installPrefix, "node_modules", "@rudderhq", "server", "resources", preflightRelativePath);
     assert.notEqual(statSync(installedPreflight).mode & 0o111, 0, "postinstall did not restore migration preflight executable mode");
+    const installedProcessHost = path.join(installPrefix, "node_modules", "@rudderhq", "server", "resources", processHostRelativePath);
+    assert.notEqual(statSync(installedProcessHost).mode & 0o111, 0, "postinstall did not restore native process host executable mode");
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -365,4 +372,22 @@ test("selects the migration executable from Cargo output separately from foundat
   ].join("\n");
   assert.equal(resolveCargoFoundationExecutable(output, "migration-preflight"), "/fixture/migration");
   assert.throws(() => resolveCargoFoundationExecutable(output.split("\n")[0], "migration-preflight"), /0 migration-preflight/u);
+});
+
+test("rejects a missing or wrong-target process host before publishing server artifacts", async () => {
+  const target = "x86_64-unknown-linux-gnu";
+  const artifactDir = makeArtifactRoot([target]);
+  const resourcesDir = mkdtempSync(path.join(os.tmpdir(), "rudder-process-host-stage-"));
+  try {
+    const source = path.join(artifactDir, target, processHostBinaryName(target));
+    await unlink(source);
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /rudder-process-host/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+    writeFileSync(source, fakeBinary("aarch64-unknown-linux-gnu"));
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /does not match/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+  } finally {
+    rmSync(artifactDir, { recursive: true, force: true });
+    rmSync(resourcesDir, { recursive: true, force: true });
+  }
 });

@@ -10,6 +10,7 @@
 mod checkpoint;
 mod event;
 mod identity;
+mod protocol;
 mod reducer;
 mod validation;
 
@@ -21,6 +22,10 @@ pub use event::{
     NativeChatTurnEvent, NativeChatTurnEventKind, NativeChatTurnRequest,
 };
 pub use identity::NativeChatTurnIdentity;
+pub use protocol::{
+    HermesSessionSelector, MAX_NATIVE_CHAT_PROVIDER_ID_BYTES, NativeChatProtocolCheckpoint,
+    NativeChatProtocolPhase, NativeChatProtocolStart, NativeChatProvider, PiSessionSelector,
+};
 pub use reducer::NativeChatTurnReducer;
 
 pub const NATIVE_CHAT_TURN_PROTOCOL_VERSION: u16 = 1;
