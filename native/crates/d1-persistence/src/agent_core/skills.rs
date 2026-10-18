@@ -233,6 +233,18 @@ fn explicit_bundled(value: &str) -> bool {
     trimmed.starts_with("bundled:") || trimmed == "rudder" || trimmed.starts_with("rudder/")
 }
 
+fn catalog_bundled_match<'a>(
+    catalog: &'a [CatalogSkill],
+    canonical_key: &str,
+) -> Option<&'a CatalogSkill> {
+    let canonical_slug = canonical_key.rsplit('/').next().unwrap_or_default();
+    catalog.iter().find(|skill| {
+        bundled_key(&skill.key).as_deref() == Some(canonical_key)
+            || normalize_key(&skill.key) == canonical_key
+            || (skill.is_bundled() && normalize_skill_segment(&skill.slug) == canonical_slug)
+    })
+}
+
 fn resolve_reference(
     catalog: &[CatalogSkill],
     org_id: &str,
@@ -240,8 +252,11 @@ fn resolve_reference(
     reference: &str,
 ) -> Resolution {
     if let Some(key) = bundled_key(reference) {
-        let _ = key;
-        return Resolution::Bundled;
+        return if catalog_bundled_match(catalog, &key).is_some() {
+            Resolution::Bundled
+        } else {
+            Resolution::Unknown
+        };
     }
     if explicit_bundled(reference) {
         // A bundled prefix is never allowed to resolve to an organization
@@ -335,6 +350,18 @@ mod tests {
                 "{reference}"
             );
         }
+    }
+
+    #[test]
+    fn bundled_reference_requires_a_catalog_entry() {
+        assert_eq!(
+            resolve_reference(&[], "org-1", "acme", "rudder/browser"),
+            Resolution::Unknown
+        );
+        assert_eq!(
+            resolve_reference(&[], "org-1", "acme", "bundled:rudder/browser"),
+            Resolution::Unknown
+        );
     }
 
     #[test]
