@@ -2774,5 +2774,24 @@
     ],
     "external_boundary": "Required Rust mode returns stable 503 for external bundle authority and never falls back to Node; omitted mode preserves an existing external configuration and also returns 503.",
     "limits": "Global Rust backend retirement remains incomplete; inventory completion_gate is blocked by retained Node backend sources and unknowns. This merge does not claim no-Node runtime acceptance or production deployment."
+  },
+  "open_pr_audit_20261018": {
+    "needed_open": [
+      {
+        "number": 346,
+        "url": "https://github.com/Undertone0809/rudder/pull/346",
+        "title": "feat: migrate native Side Chat reads to Rust",
+        "decision": "retain_open",
+        "reason": "Substantive Rust reader/Side Chat migration slice; Plan qualification failed because reviewed_node_changes records are missing for server/src/routes/chats.message-query-routes.ts and server/src/services/rust-public-ingress-config.ts. Do not merge until inventory evidence and independent review are added."
+      },
+      {
+        "number": 305,
+        "url": "https://github.com/Undertone0809/rudder/pull/305",
+        "title": "fix: close maintenance-check injection and false-green gaps",
+        "decision": "retain_open",
+        "reason": "Previously retained maintenance/qualification guardrail work; no new merge decision in this batch."
+      }
+    ],
+    "closed_superseded": []
   }
 }
