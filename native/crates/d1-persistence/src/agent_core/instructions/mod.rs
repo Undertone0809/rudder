@@ -9,7 +9,7 @@ mod storage;
 mod tests;
 #[cfg(windows)]
 mod windows;
-use super::common::*;
+use super::{AgentCreateInstructionsBundle, common::*};
 use fs::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -189,6 +189,123 @@ fn write_missing(root: &Path, relative_path: &str, body: &str) -> io::Result<()>
     let _ = disk::remove_file(temporary);
     result
 }
+
+/// The database row is the durable source of truth for a private create
+/// bundle. Files are deliberately kept as JSON text so this module can
+/// replay a row after a process crash without depending on a live request.
+#[derive(Clone, Debug)]
+struct DurableBundle {
+    entry_file: String,
+    files: BTreeMap<String, String>,
+    clear_legacy_prompt_template: bool,
+}
+
+fn durable_bundle(bundle: &AgentCreateInstructionsBundle) -> io::Result<DurableBundle> {
+    // Validation owns the public boundary. Keep a second cheap check here so
+    // rows constructed by a future caller cannot turn this into a path sink.
+    let entry_file = bundle_path(&bundle.entry_file)?;
+    validate_bundle_limits(&entry_file, &bundle.files)?;
+    let mut casefolded = BTreeMap::new();
+    casefolded.insert(entry_file.to_lowercase(), entry_file.clone());
+    let mut files = BTreeMap::new();
+    for (path, body) in &bundle.files {
+        let path = bundle_path(path)?;
+        if let Some(previous) = casefolded.insert(path.to_lowercase(), path.clone())
+            && previous != path
+        {
+            return Err(invalid(
+                "Instruction bundle paths collide on a case-insensitive host",
+            ));
+        }
+        if files.insert(path, body.clone()).is_some() {
+            return Err(invalid("Duplicate instruction bundle path"));
+        }
+    }
+    Ok(DurableBundle {
+        entry_file,
+        files,
+        clear_legacy_prompt_template: bundle.clear_legacy_prompt_template,
+    })
+}
+
+fn validate_bundle_limits(entry_file: &str, files: &BTreeMap<String, String>) -> io::Result<()> {
+    let limits = super::validation::MAX_INSTRUCTION_FILES;
+    let path_limit = super::validation::MAX_INSTRUCTION_PATH_BYTES;
+    let file_limit = super::validation::MAX_INSTRUCTION_FILE_BYTES;
+    let bundle_limit = super::validation::MAX_INSTRUCTION_BUNDLE_BYTES;
+    if entry_file.len() > path_limit || files.len() > limits {
+        return Err(invalid("Instruction bundle exceeds its size limits"));
+    }
+    let mut total = entry_file.len();
+    for (path, body) in files {
+        if path.len() > path_limit || body.len() > file_limit {
+            return Err(invalid("Instruction bundle exceeds its size limits"));
+        }
+        total = total
+            .checked_add(path.len())
+            .and_then(|size| size.checked_add(body.len()))
+            .ok_or_else(|| invalid("Instruction bundle exceeds its size limits"))?;
+        if total > bundle_limit {
+            return Err(invalid("Instruction bundle exceeds its size limits"));
+        }
+    }
+    Ok(())
+}
+
+fn bundle_path(value: &str) -> io::Result<String> {
+    let value = value.replace('\\', "/");
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.split('/').any(|part| {
+            part.is_empty()
+                || part == "."
+                || part == ".."
+                || part.contains(':')
+                || part.chars().any(char::is_control)
+        })
+    {
+        return Err(invalid(
+            "Instructions file path must be a relative bundle path",
+        ));
+    }
+    Ok(value)
+}
+
+pub(super) async fn enqueue_create_bundle(
+    tx: &mut Tx<'_>,
+    org: &str,
+    agent_id: &str,
+    bundle: &AgentCreateInstructionsBundle,
+) -> Result<()> {
+    let bundle = durable_bundle(bundle).map_err(|error| http(422, error.to_string()))?;
+    let files =
+        serde_json::to_value(&bundle.files).map_err(|_| http(500, "Internal server error"))?;
+    sqlx::query(
+        "INSERT INTO agent_instruction_bundles
+           (agent_id,org_id,entry_file,files,clear_legacy_prompt_template,state,attempts,next_attempt_at)
+         VALUES ($1::uuid,$2::uuid,$3,$4::jsonb,$5,'pending',0,now())",
+    )
+    .bind(agent_id)
+    .bind(org)
+    .bind(&bundle.entry_file)
+    .bind(files.to_string())
+    .bind(bundle.clear_legacy_prompt_template)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+pub(super) fn create_feature_enabled() -> bool {
+    std::env::var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+}
+
 
 struct BundleLocation {
     workspace: String,

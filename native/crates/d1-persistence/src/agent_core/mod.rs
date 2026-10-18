@@ -17,7 +17,7 @@ use rudder_auth_core::VerifiedActor;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
-use std::{future::Future, pin::Pin};
+use std::{collections::BTreeMap, future::Future, pin::Pin};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentCoreError {
@@ -123,6 +123,37 @@ pub struct AgentCreateNodeOwned {
     /// bindings or organization secret references; provider material is never
     /// carried over the AgentCreate boundary.
     pub normalized_agent_runtime_config: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions_bundle: Option<AgentCreateInstructionsBundle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intelligence_defaults: Option<AgentCreateIntelligenceDefaults>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentCreateIntelligenceDefaults {
+    #[serde(default = "default_seed_intelligence_defaults")]
+    pub seed: bool,
+    #[serde(default = "default_intelligence_profile_status")]
+    pub status: String,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub last_verified_at: Option<String>,
+}
+
+fn default_seed_intelligence_defaults() -> bool { true }
+fn default_intelligence_profile_status() -> String { "disabled".to_owned() }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentCreateInstructionsBundle {
+    pub entry_file: String,
+    pub files: BTreeMap<String, String>,
+    #[serde(default)]
+    pub clear_legacy_prompt_template: bool,
 }
 
 impl AgentCreateRequest {
@@ -266,6 +297,12 @@ async fn execute_agent_inner(
         }
         let id=resolve_id(&mut tx,actor,r,admin).await?;
         let input=validation::validate(&r.operation,(!r.input_missing).then_some(&r.input))?;
+        if r.operation == "create"
+            && intelligence::requested(&AgentCreateRequest::parse(&input)?)
+            && !intelligence::feature_enabled()
+        {
+            return Err(http(404, "Rust Agent intelligence/avatar authority is disabled"));
+        }
         early_authorization(actor,r)?;
         let current=if let Some(id)=&id{stored(&mut tx,id).await?}else{None};
         if id.is_some()&&current.is_none()&&!matches!(r.operation.as_str(),"keys"|"key-revoke"){return Err(http(404,"Agent not found"));}
