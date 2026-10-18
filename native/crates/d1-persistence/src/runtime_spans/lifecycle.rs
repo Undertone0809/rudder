@@ -303,6 +303,9 @@ async fn segment_transition(
     Ok(result)
 }
 
+// The span lock intentionally receives the complete durable fence tuple so
+// every lifecycle transition validates the same owner and attempt identity.
+#[allow(clippy::too_many_arguments)]
 async fn lock_for_span(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: &VerifiedActor,
