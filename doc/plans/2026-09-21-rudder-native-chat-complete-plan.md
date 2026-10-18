@@ -1071,6 +1071,24 @@ restart-continuity evidence remains content-equivalent because that follow-up
 changed only the Hermes launch path; rerun and bind both providers to the
 current SHA before claiming merge readiness.
 
+### October 18 exact candidate acceptance (`9e5aa4e0f62cdc993b6cd70d832bfb52e4a7bb28`)
+
+The current integration candidate was exercised against a fresh task-owned
+embedded PostgreSQL instance through the required Rust public ingress at
+`127.0.0.1:3100`, using the installed Codex `0.163.0-alpha.10.2` and Hermes
+`0.21.0` runtimes. Codex completed a first turn, a same-session continuation,
+and a new-input continuation after a full Node/Rust server restart; all three
+Runs were `native_rust` and succeeded, with projected final replies
+`FINAL_9E5AA4E0F_CODEX_OK_3`, `CODEX_CURRENT_CONTINUATION_OK`, and
+`CODEX_AFTER_RESTART_OK`. Hermes completed the corresponding first turn,
+same-session continuation, and post-restart continuation with
+`FINAL_9E5AA4E0F_HERMES_OK`, `HERMES_CURRENT_CONTINUATION_OK`, and
+`HERMES_AFTER_RESTART_OK`; all three Runs were `native_rust` and succeeded.
+The acceptance used a task-owned minimal Codex profile derived from the local
+login, with uncontrolled MCP/config layers removed; no provider credentials
+were changed. Receipts and NDJSON streams are retained under
+`/tmp/native-chat-current-acceptance/` and are bound to this exact SHA.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.
@@ -1097,7 +1115,7 @@ The migration must support empty databases and databases with old Runs; do not d
 
 October 17 transport prerequisite: the existing Codex adapter now consumes a bounded, provider-neutral LF record decoder from `rudder-native-protocol`. The decoder accepts an adapter parser rather than assuming every native record is a Codex JSON-RPC envelope; malformed adapter records still poison the stream and discard their batch. Existing Codex wire/session/transport tests and non-RPC records with byte-split UTF-8 and Unicode separators cover this extraction. This is shared transport groundwork only: it does not add a Pi driver, generalize the durable Codex checkpoint, or establish any additional runtime capability.
 
-Current Rust implementation note (October 18): Native Chat now has provider-specific Codex, Hermes, Pi, Claude Code, Cursor, and OpenCode configuration, admission guards, provider-native checkpoints, execution dispatch, host cleanup proofs, and terminal projection branches. Claude, Cursor, and OpenCode receipts preserve their native session/request identities and never populate Codex Thread/Turn fields. OpenCode Server is started and stopped by the Rust-owned process host; `/doc` readiness, completed assistant readback, and the terminal cleanup receipt are all required before finalization. A fresh local required-ingress acceptance previously passed real Codex first-send and real Hermes two-turn continuity (`native_rust`, succeeded Runs, provider-native checkpoint/session readback; evidence is under `/tmp/native-chat-current-acceptance/`). Those receipts predate the current Reader commits and are execution evidence only. Main Chat Reader now has a Rust-owned array/envelope contract, stable cursor predicate, accepted-through transcript cutoff, transcript summaries, and ledger entries; Side Chat remains on the legacy projection until its copied annotations, attachments, approvals, and consumers are migrated. Re-run required-ingress acceptance and bind its receipts to the exact merge candidate. The shared Reader completion, legacy transcript retirement, Side Chat consumers, retention/GC/backup, and duplicate-writer shutdown remain open W04/W11/W12 gates, so this is the bounded Codex/Hermes delivery milestone rather than completion of the full six-runtime plan. Keep the provider-neutral fenced Run/Attempt authority separate from each provider's native session and execution selectors; existing TypeScript adapters remain behavior references, never a backend fallback.
+Current Rust implementation note (October 18): Native Chat now has provider-specific Codex, Hermes, Pi, Claude Code, Cursor, and OpenCode configuration, admission guards, provider-native checkpoints, execution dispatch, host cleanup proofs, and terminal projection branches. Claude, Cursor, and OpenCode receipts preserve their native session/request identities and never populate Codex Thread/Turn fields. OpenCode Server is started and stopped by the Rust-owned process host; `/doc` readiness, completed assistant readback, and the terminal cleanup receipt are all required before finalization. The exact-candidate Codex/Hermes acceptance above passed through required Rust ingress. Main Chat Reader now has a Rust-owned array/envelope contract, stable cursor predicate, accepted-through transcript cutoff, transcript summaries, and ledger entries; Side Chat remains on the legacy projection until its copied annotations, attachments, approvals, and consumers are migrated. The shared Reader completion, legacy transcript retirement, Side Chat consumers, retention/GC/backup, and duplicate-writer shutdown remain open W04/W11/W12 gates, so this is the bounded Codex/Hermes delivery milestone rather than completion of the full six-runtime plan. Keep the provider-neutral fenced Run/Attempt authority separate from each provider's native session and execution selectors; existing TypeScript adapters remain behavior references, never a backend fallback.
 
 Extend existing Agent Run submission and SessionIntent, and migrate native Chat calls to the shared foundation. Wire up admission, budgets, Attempt, session-writer fencing, unknown acceptance for create/submit, recovery, controls, human requests, and terminal state. Native submissions do not accept a complete history array; Task/Review-specific claiming runs only in its corresponding surface.
 
