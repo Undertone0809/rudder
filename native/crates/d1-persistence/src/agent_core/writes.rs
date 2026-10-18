@@ -216,6 +216,14 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
             .await?;
     }
 
+    // Managed MCP inheritance stays private to the Rust create transaction
+    // until its own migration gate is explicitly enabled. The public POST
+    // remains Node-owned, and an opt-in binding failure rolls back identity
+    // creation with the surrounding transaction.
+    if super::managed_mcp::feature_enabled() {
+        super::managed_mcp::ensure_default_bindings_for_agent(tx, ctx.org, &id).await?;
+    }
+
     activity(
         tx,
         ctx,

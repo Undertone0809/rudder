@@ -419,3 +419,157 @@ async fn rust_create_normalizes_secret_refs_and_fallback_configs_with_org_isolat
     }
     unsafe { std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED") };
 }
+#[tokio::test(flavor = "multi_thread")]
+async fn rust_create_managed_mcp_gate_inherits_organization_defaults() {
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Create MCP User','create-mcp-user@example.test',now(),now())",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed create MCP user");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(ORG)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed create MCP membership");
+
+    let linear = "63000000-0000-4000-8000-000000000001";
+    let notion = "63000000-0000-4000-8000-000000000002";
+    let legacy = "63000000-0000-4000-8000-000000000003";
+    let tool = "64000000-0000-4000-8000-000000000001";
+    for (id, name, provider, access_mode, transport, status, enabled) in [
+        (
+            linear,
+            "rust-linear",
+            "linear",
+            "read_write",
+            "streamable_http",
+            "active",
+            true,
+        ),
+        (
+            notion,
+            "rust-notion",
+            "notion",
+            "provider_default",
+            "streamable_http",
+            "active",
+            true,
+        ),
+        (
+            legacy,
+            "rust-legacy",
+            "custom",
+            "provider_default",
+            "legacy_manual",
+            "disabled",
+            false,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO mcp_connections
+               (id, org_id, name, display_name, provider, transport, access_mode,
+                status, canonical_state, safe_config, enabled)
+             VALUES ($1::uuid, $2::uuid, $3, $3, $4, $5, $6, $7, 'canonical', '{}'::jsonb, $8)",
+        )
+        .bind(id)
+        .bind(ORG)
+        .bind(name)
+        .bind(provider)
+        .bind(transport)
+        .bind(access_mode)
+        .bind(status)
+        .bind(enabled)
+        .execute(&database.pool)
+        .await
+        .expect("seed create MCP connection");
+    }
+    sqlx::query(
+        "INSERT INTO custom_integration_tools
+           (id, org_id, connection_id, external_tool_name, rudder_tool_name,
+            input_schema, status, enabled)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'issues', 'linear.issues', '{}', 'active', true)",
+    )
+    .bind(tool)
+    .bind(ORG)
+    .bind(linear)
+    .execute(&database.pool)
+    .await
+    .expect("seed create MCP tool");
+
+    let request = AgentCoreRequest::parse(
+        br#"{"operation":"create","orgId":"10000000-0000-4000-8000-000000000001","input":{"name":"Rust Managed MCP","budgetMonthlyCents":0}}"#,
+    )
+    .expect("valid managed MCP create request");
+    let result = {
+        let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .await;
+        unsafe {
+            std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1");
+            std::env::set_var("RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED", "1");
+        }
+        let result = rudder_d1_persistence::agent_core::execute_agent(
+            &database.pool,
+            &verified_create_user(),
+            &request,
+        )
+        .await;
+        unsafe {
+            std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED");
+            std::env::remove_var("RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED");
+        }
+        result
+    };
+    let (_, body) = result.expect("managed MCP create succeeds");
+    let agent_id = serde_json::from_str::<serde_json::Value>(&body)
+        .expect("managed MCP create response")["id"]
+        .as_str()
+        .expect("created agent id")
+        .to_owned();
+    let bindings: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT connection_id::text, access_mode, enabled_tool_ids::text
+         FROM agent_custom_integration_bindings
+         WHERE org_id=$1::uuid AND agent_id=$2::uuid
+         ORDER BY connection_id",
+    )
+    .bind(ORG)
+    .bind(&agent_id)
+    .fetch_all(&database.pool)
+    .await
+    .expect("read managed MCP bindings");
+    assert_eq!(
+        bindings,
+        vec![
+            (linear.into(), "read_write".into(), format!("[\"{tool}\"]")),
+            (notion.into(), "provider_granted".into(), "[]".into()),
+        ]
+    );
+    let activities: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT entity_type, actor_type, actor_id, details->>'source'
+         FROM activity_log
+         WHERE org_id=$1::uuid AND action='mcp_agent_binding.created' AND agent_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&agent_id)
+    .fetch_all(&database.pool)
+    .await
+    .expect("read managed MCP activities");
+    assert_eq!(activities.len(), 2);
+    assert!(
+        activities
+            .iter()
+            .all(|(entity_type, actor_type, actor_id, source)| {
+                entity_type == "mcp_agent_binding"
+                    && actor_type == "system"
+                    && actor_id == "system"
+                    && source.as_deref() == Some("agent_creation")
+            })
+    );
+}
