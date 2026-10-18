@@ -156,13 +156,36 @@ fn defaults(ceo: bool) -> BTreeMap<String, String> {
         .collect()
 }
 fn write_missing(root: &Path, relative_path: &str, body: &str) -> io::Result<()> {
-    let target = root.join(relative(relative_path)?);
-    if stat(&target).is_some_and(|m| m.is_file()) {
-        return Ok(());
-    }
+    let relative_path = relative(relative_path)?;
+    let target = root.join(&relative_path);
     let parent = target
         .parent()
         .ok_or_else(|| invalid("Missing file parent"))?;
+
+    // Never follow a symlink while materializing a durable instruction bundle.
+    // Check every existing parent component as well as the final destination;
+    // `metadata` would follow a link and make an outside path writable.
+    let parent_relative = Path::new(&relative_path)
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
+    let mut current = root.to_path_buf();
+    for component in parent_relative.components() {
+        current.push(component.as_os_str());
+        if let Some(metadata) = lstat(&current)?
+            && (metadata.file_type().is_symlink() || !metadata.is_dir())
+        {
+            return Err(invalid("Instruction bundle parent must be a directory"));
+        }
+    }
+    if let Some(metadata) = lstat(&target)? {
+        if metadata.file_type().is_symlink() {
+            return Err(invalid("Instruction bundle target must not be a symlink"));
+        }
+        if metadata.is_file() {
+            return Ok(());
+        }
+        return Err(invalid("Instruction bundle target must be a regular file"));
+    }
     disk::create_dir_all(parent)?;
     let temporary = parent.join(format!(".rudder-write-probe-{}", random()?));
     let result = (|| {
@@ -761,4 +784,43 @@ pub(super) async fn library_path(
     .await
     .map_err(|_| http(500, "Internal server error"))?
     .map_err(|_| http(500, "Internal server error"))
+}
+
+#[cfg(test)]
+fn materialize_bundle_for_test(
+    host: &Host,
+    org: &str,
+    agent_key: &str,
+    bundle: &AgentCreateInstructionsBundle,
+    _root: &Path,
+) -> io::Result<()> {
+    if host.workspace_home.is_empty() || !Path::new(&host.workspace_home).is_absolute() {
+        return Err(invalid("Invalid Agent instruction host facts"));
+    }
+    if agent_key.is_empty() || agent_key.contains('/') || agent_key.contains('\\') {
+        return Err(invalid("Invalid Agent workspace key"));
+    }
+    let (workspace, _) = storage::root(host, org)?;
+    let mut current = workspace.clone();
+    if lstat(&current)?.is_none() {
+        mkdir_private(&current)?;
+    }
+    for component in ["agents", agent_key, "instructions"] {
+        current.push(component);
+        match lstat(&current)? {
+            Some(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(invalid("Instruction bundle root is not an owned directory"));
+            }
+            Some(_) => {}
+            None => {
+                mkdir_private(&current)?;
+                assert_owned(&current)?;
+            }
+        }
+    }
+    let bundle = durable_bundle(bundle).map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
+    for (path, body) in bundle.files {
+        write_missing(&current, &path, &body)?;
+    }
+    Ok(())
 }
