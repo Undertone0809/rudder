@@ -407,7 +407,7 @@
         {
           "number": 333,
           "state": "open_ci_pending_stage_review_pending",
-          "head_sha": "d8e2d88d7e7100f333d65c976c7b48ef872601e5",
+          "head_sha": "6bf0a672c",
           "base_sha": "9ba84ce6b20df6c938e28db0625fca0f93c3e52d",
           "scope": "private feature-gated Agent create canonical skills foundation: desired ref trim/dedupe/sort, bundled always-enabled omission, org catalog canonicalization and unknown/ambiguous/cross-org rejection, same-transaction agent_enabled_skills idempotent writes; public POST unchanged and gate default off",
           "validation": [
@@ -418,7 +418,8 @@
             "focused PG rust_create_ tests 4/4"
           ],
           "stage_review": "pending exact-head independent review",
-          "mergeability": "MERGEABLE/CI queued at observation; do not merge yet"
+          "mergeability": "MERGEABLE/CI queued at observation; do not merge yet",
+          "correction": "Stage review rejected empty desiredSkills and unchecked bundled catalog; fixed in 6bf0a672c with parser/catalog regression tests and rerun local checks."
         }
       ],
       "managed_migration": {
