@@ -156,7 +156,12 @@ export function organizationIntelligenceProfileService(db: Db) {
     return getDefault(orgId);
   }
 
-  async function ensureDefaultsFromRuntime(input: {
+  /**
+   * Prepare the first-agent default without writing it. Public Agent create
+   * uses this as a Node-owned preflight and passes the resulting facts to the
+   * Rust transaction; the legacy route still calls ensureDefaultsFromRuntime.
+   */
+  async function prepareDefaultsFromRuntime(input: {
     orgId: string;
     agentRuntimeType: AgentRuntimeType;
     agentRuntimeConfig: Record<string, unknown>;
@@ -166,7 +171,7 @@ export function organizationIntelligenceProfileService(db: Db) {
       agentRuntimeConfig: Record<string, unknown>;
     }) => Promise<void>;
   }) {
-    if (await getDefault(input.orgId)) return [];
+    if (await getDefault(input.orgId)) return null;
     const purpose = DEFAULT_INTELLIGENCE_PROFILE_PURPOSE;
     const agentRuntimeConfig = buildIntelligenceProfileConfigWithPurposeDefaults(
       purpose,
@@ -186,15 +191,31 @@ export function organizationIntelligenceProfileService(db: Db) {
         lastError = error instanceof Error ? error.message : String(error);
       }
     }
-    const profile = await createDefaultIfAbsent(input.orgId, {
-      agentRuntimeType: input.agentRuntimeType,
-      agentRuntimeConfig,
-      status,
-      lastError,
-      lastVerifiedAt,
-    });
+    return { agentRuntimeType: input.agentRuntimeType, agentRuntimeConfig, status, lastError, lastVerifiedAt };
+  }
+
+  async function ensureDefaultsFromRuntime(input: {
+    orgId: string;
+    agentRuntimeType: AgentRuntimeType;
+    agentRuntimeConfig: Record<string, unknown>;
+    testRuntimeChain?: (input: {
+      purpose: OrganizationIntelligenceProfilePurpose;
+      agentRuntimeType: AgentRuntimeType;
+      agentRuntimeConfig: Record<string, unknown>;
+    }) => Promise<void>;
+  }) {
+    const prepared = await prepareDefaultsFromRuntime(input);
+    if (!prepared) return [];
+    const profile = await createDefaultIfAbsent(input.orgId, prepared);
     return profile ? [profile] : [];
   }
 
-  return { getByPurpose, list, upsert, ensureDefaultsFromRuntime, sanitizeConfigForProductIntelligence };
+  return {
+    getByPurpose,
+    list,
+    upsert,
+    ensureDefaultsFromRuntime,
+    prepareDefaultsFromRuntime,
+    sanitizeConfigForProductIntelligence,
+  };
 }
