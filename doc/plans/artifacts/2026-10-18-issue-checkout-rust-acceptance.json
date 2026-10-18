@@ -39,8 +39,8 @@
       "result": "pass: 104 tests"
     },
     {
-      "command": "RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL=postgres://rudder@127.0.0.1:58778/rudder pnpm exec vitest run server/src/__tests__/issue-checkout-rust-real-entry.test.ts --pool=threads --poolOptions.threads.singleThread=true",
-      "result": "pass: 1 public Node-to-Rust-to-PostgreSQL test after transport extraction; disposable PostgreSQL cluster; durable issue, activity, outbox, full projection, and pending-terminal-effects conflict verified"
+    "command": "RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL=postgres://rudder@127.0.0.1:58779/rudder pnpm exec vitest run server/src/__tests__/issue-checkout-rust-real-entry.test.ts --pool=threads --poolOptions.threads.singleThread=true",
+    "result": "pass: 1 public Node-to-Rust-to-PostgreSQL test after lifecycle fix; disposable PostgreSQL cluster; durable issue, activity, outbox, full projection, and pending-terminal-effects conflict verified"
     },
     {
       "command": "node scripts/rust-backend-authority-inventory.mjs check --root . --inventory doc/plans/2026-10-16-rudder-rust-backend-authority-inventory.json",
@@ -52,7 +52,8 @@
     }
   ],
   "evidence_limits": [
-    "The default embedded-postgres helper aborted with SIGABRT in this macOS workspace; the real acceptance was rerun against an independently initialized disposable PostgreSQL cluster on 127.0.0.1:58778.",
+    "The default embedded-postgres helper aborted with SIGABRT in this macOS workspace; the real acceptance was rerun against an independently initialized disposable PostgreSQL cluster on 127.0.0.1:58779.",
+    "The real-entry test skips when a caller has not supplied both the Rust foundation binary and RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL; CI's Rust D1 real-entry job supplies both, while generic verification jobs do not claim this acceptance.",
     "This packet covers authenticated Agent self-checkout only. Board/on-behalf checkout, wakeup ownership, and global Node backend retirement remain migration debt.",
     "Cross-organization invalid-envelope denial and concurrency/rollback fault injection remain required follow-up acceptance cases before this slice is merged as a protected PR."
   ],
@@ -65,8 +66,8 @@
     "verifier": "independent agent /root/issue_checkout_verifier2",
     "status": "PASS",
     "candidate": "de1487992cdbc8333aee12c50f2c920a9d664833",
-    "command": "RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL=postgres://rudder@127.0.0.1:58778/rudder pnpm exec vitest run server/src/__tests__/issue-checkout-rust-real-entry.test.ts --pool=threads --poolOptions.threads.singleThread=true",
-    "result": "exit 0; Test Files 1 passed; Tests 1 passed; duration 4.17s",
+    "command": "RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL=postgres://rudder@127.0.0.1:58779/rudder pnpm exec vitest run server/src/__tests__/issue-checkout-rust-real-entry.test.ts --pool=threads --poolOptions.threads.singleThread=true",
+    "result": "exit 0; Test Files 1 passed; Tests 1 passed; duration 3.53s",
     "route_review": "Independent inspection confirmed self forwarding, typed agt_ forwarding, 503 bridge-unavailable/rejection, and no Node fallback writes.",
     "limits": "Authenticated Agent self-checkout only; board/on-behalf checkout, cross-org invalid-envelope, and concurrency/rollback fault injection remain outside this verifier run."
   }

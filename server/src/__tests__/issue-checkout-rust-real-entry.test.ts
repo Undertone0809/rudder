@@ -14,8 +14,6 @@ import { eq } from "drizzle-orm";
 import express from "express";
 import { once } from "node:events";
 import fs from "node:fs";
-import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
@@ -24,42 +22,19 @@ import { errorHandler } from "../middleware/index.js";
 import { issueRoutes } from "../routes/issues.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
-type EmbeddedPostgresInstance = {
-  initialise(): Promise<void>;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-};
-type EmbeddedPostgresCtor = new (options: {
-  databaseDir: string;
-  user: string;
-  password: string;
-  port: number;
-  persistent: boolean;
-  initdbFlags: string[];
-  onLog: () => void;
-  onError: () => void;
-}) => EmbeddedPostgresInstance;
+const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const binaryName = process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation";
+const foundationBinaryCandidates = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim()
+  ? [process.env.RUDDER_SERVER_FOUNDATION_PATH.trim()]
+  : [
+      path.join(repositoryRoot, "native", "target", "debug", binaryName),
+      path.join(repositoryRoot, "native", "target", "release", binaryName),
+    ];
+const foundationBinaryAvailable = foundationBinaryCandidates.some((candidate) => fs.existsSync(candidate));
+const configuredDatabaseUrl = process.env.RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL?.trim();
 
-async function availablePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close(() => reject(new Error("failed to allocate test port")));
-        return;
-      }
-      server.close((error) => error ? reject(error) : resolve(address.port));
-    });
-  });
-}
-
-describe("Agent self-checkout through the public Node transport and Rust authority", () => {
+describe.skipIf(!foundationBinaryAvailable || !configuredDatabaseUrl)("Agent self-checkout through the public Node transport and Rust authority", () => {
   let db: ReturnType<typeof createDb> | undefined;
-  let postgres: EmbeddedPostgresInstance | undefined;
-  let dataDir = "";
   let bridge: RustFoundationBridge | undefined;
   const orgId = "11111111-1111-4111-8111-111111111111";
   const agentId = "22222222-2222-4222-8222-222222222222";
@@ -70,36 +45,13 @@ describe("Agent self-checkout through the public Node transport and Rust authori
   const pendingRunId = "77777777-7777-4777-8777-777777777777";
 
   beforeAll(async () => {
-    const external = process.env.RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL?.trim();
-    let connectionString: string;
-    if (external) {
-      const parsed = new URL(external);
-      const databaseName = parsed.pathname.replace(/^\//, "");
-      parsed.pathname = "/postgres";
-      await ensurePostgresDatabase(parsed.toString(), databaseName);
-      await applyPendingMigrations(external);
-      connectionString = external;
-    } else {
-      dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-issue-checkout-rust-"));
-      const port = await availablePort();
-      const EmbeddedPostgres = (await import("embedded-postgres")).default as EmbeddedPostgresCtor;
-      postgres = new EmbeddedPostgres({
-        databaseDir: dataDir,
-        user: "rudder",
-        password: "rudder",
-        port,
-        persistent: true,
-        initdbFlags: ["--encoding=UTF8", "--locale=C"],
-        onLog: () => {},
-        onError: () => {},
-      });
-      await postgres.initialise();
-      await postgres.start();
-      const admin = `postgres://rudder:rudder@127.0.0.1:${port}/postgres`;
-      await ensurePostgresDatabase(admin, "rudder");
-      connectionString = `postgres://rudder:rudder@127.0.0.1:${port}/rudder`;
-      await applyPendingMigrations(connectionString);
-    }
+    const external = configuredDatabaseUrl!;
+    const parsed = new URL(external);
+    const databaseName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), databaseName);
+    await applyPendingMigrations(external);
+    const connectionString = external;
     db = createDb(connectionString);
     await db.insert(organizations).values({
       id: orgId,
@@ -157,9 +109,7 @@ describe("Agent self-checkout through the public Node transport and Rust authori
       executionRunId: pendingRunId,
     });
 
-    const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-    const binary = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim()
-      || path.join(repoRoot, "native", "target", "debug", process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation");
+    const binary = foundationBinaryCandidates.find((candidate) => fs.existsSync(candidate)) ?? foundationBinaryCandidates[0]!;
     if (!fs.existsSync(binary)) {
       throw new Error(`missing Rust foundation binary: ${binary}`);
     }
@@ -178,8 +128,6 @@ describe("Agent self-checkout through the public Node transport and Rust authori
   afterAll(async () => {
     await bridge?.close();
     await db?.$client.end({ timeout: 5 });
-    await postgres?.stop();
-    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   }, 20_000);
 
   it("persists checkout, full labels projection, and activity through Rust", async () => {
