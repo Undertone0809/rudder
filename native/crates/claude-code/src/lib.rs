@@ -23,7 +23,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fs,
     io::Read,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     time::Duration,
 };
 use uuid::Uuid;
@@ -1167,31 +1167,20 @@ impl ClaudeHistoryReader {
 }
 
 fn encoded_project_name(cwd: &Path) -> Result<String, ClaudeError> {
-    let mut encoded = String::new();
-    for component in cwd.components() {
-        match component {
-            Component::RootDir => encoded.push('-'),
-            Component::Normal(value) => {
-                let value = value.to_str().ok_or(ClaudeError::InvalidHistoryPath)?;
-                if value.is_empty() || value.contains('\0') {
-                    return Err(ClaudeError::InvalidHistoryPath);
-                }
-                encoded.push('-');
-                encoded.push_str(value);
-            }
-            Component::Prefix(prefix) => {
-                let value = prefix
-                    .as_os_str()
-                    .to_str()
-                    .ok_or(ClaudeError::InvalidHistoryPath)?;
-                encoded.push('-');
-                encoded.push_str(value);
-            }
-            Component::CurDir | Component::ParentDir => {
-                return Err(ClaudeError::InvalidHistoryPath);
-            }
-        }
+    let value = cwd.to_str().ok_or(ClaudeError::InvalidHistoryPath)?;
+    if value.is_empty() || value.contains('\0') {
+        return Err(ClaudeError::InvalidHistoryPath);
     }
+    let encoded: String = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
     if encoded.is_empty() || encoded.len() > 4096 {
         return Err(ClaudeError::InvalidHistoryPath);
     }
@@ -1205,6 +1194,24 @@ mod tests {
 
     fn session() -> ClaudeSessionSelector {
         ClaudeSessionSelector::parse("05a82e73-f42d-4a40-9323-e58356868e6b").unwrap()
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn encoded_project_name_matches_claude_unix_slug() {
+        assert_eq!(
+            encoded_project_name(Path::new("/Users/dev/repo")).unwrap(),
+            "-Users-dev-repo"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn encoded_project_name_matches_claude_windows_slug() {
+        assert_eq!(
+            encoded_project_name(Path::new(r"C:\Users\dev\repo")).unwrap(),
+            "C--Users-dev-repo"
+        );
     }
 
     #[test]
