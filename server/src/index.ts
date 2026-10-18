@@ -96,6 +96,7 @@ import {
 } from "./services/integrations/feishu/runtime-registry.js";
 import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/runtime.js";
 import { startManagedMcpOAuthSessionGc } from "./services/mcp/oauth-session-gc.js";
+import { resolveNativeChatProviderHostFields } from "./services/rust-public-ingress-config.js";
 import { managedMcpOAuthService } from "./services/mcp/oauth.js";
 import { assertMigrationPreflightAgreement, runMigrationPreflightBeforeNodeInspection } from "./services/migration-preflight.js";
 import { printStartupBanner } from "./startup-banner.js";
@@ -321,8 +322,6 @@ export async function startManagedLocalServer(
             throw new Error("The existing local runtime does not provide Rust Native Chat. Stop that runtime, then reopen Desktop to enable native conversations.");
           }
         }
-
-
         if (shouldTakeOverForOwner || shouldTakeOverForVersion) {
           const stopped = await gracefullyStopRuntime(probe.descriptor, gracefulStopTimeoutMs);
           if (!stopped) {
@@ -1102,18 +1101,7 @@ async function startServerRuntime(
     workspaceHome: resolveOrganizationWorkspaceHomeDir(),
     operatorHome: process.env.HOME?.trim() ? resolve(process.env.HOME.trim()) : homedir(),
     ...(process.env.CODEX_HOME?.trim() ? { codexHome: resolve(process.env.CODEX_HOME.trim()) } : {}),
-    ...(process.env.RUDDER_CLAUDE_EXECUTABLE?.trim()
-      ? { claudeExecutable: resolve(process.env.RUDDER_CLAUDE_EXECUTABLE.trim()) }
-      : {}),
-    ...(process.env.RUDDER_CURSOR_EXECUTABLE?.trim()
-      ? { cursorExecutable: resolve(process.env.RUDDER_CURSOR_EXECUTABLE.trim()) }
-      : {}),
-    ...(process.env.RUDDER_OPENCODE_SERVER_URL?.trim()
-      ? { opencodeServerUrl: process.env.RUDDER_OPENCODE_SERVER_URL.trim() }
-      : {}),
-    ...(process.env.RUDDER_OPENCODE_BEARER_TOKEN?.trim()
-      ? { opencodeBearerToken: process.env.RUDDER_OPENCODE_BEARER_TOKEN.trim() }
-      : {}),
+    ...resolveNativeChatProviderHostFields(),
     executableSearchPath: process.env.PATH ?? "",
     friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
     deploymentMode: config.deploymentMode,

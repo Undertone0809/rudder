@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { LocalAccountAuthOptions } from "../bootstrap/auth-runtime.js";
 
 export type RustBrowserSessionAuth = Readonly<{
@@ -62,6 +63,25 @@ export type RustNativeChatHost = Readonly<{
   authRequirement: string;
   trustedOrigins: readonly string[];
 }>;
+
+
+/** Resolve optional provider installation facts from trusted process configuration. */
+export function resolveNativeChatProviderHostFields(): Readonly<Record<string, string>> {
+  return {
+    ...(process.env.RUDDER_CLAUDE_EXECUTABLE?.trim()
+      ? { claudeExecutable: resolve(process.env.RUDDER_CLAUDE_EXECUTABLE.trim()) }
+      : {}),
+    ...(process.env.RUDDER_CURSOR_EXECUTABLE?.trim()
+      ? { cursorExecutable: resolve(process.env.RUDDER_CURSOR_EXECUTABLE.trim()) }
+      : {}),
+    ...(process.env.RUDDER_OPENCODE_SERVER_URL?.trim()
+      ? { opencodeServerUrl: process.env.RUDDER_OPENCODE_SERVER_URL.trim() }
+      : {}),
+    ...(process.env.RUDDER_OPENCODE_BEARER_TOKEN?.trim()
+      ? { opencodeBearerToken: process.env.RUDDER_OPENCODE_BEARER_TOKEN.trim() }
+      : {}),
+  };
+}
 
 export type RustPublicIngressOptions = {
   browserSessionAuth?: RustBrowserSessionAuth;
