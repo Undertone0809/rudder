@@ -417,9 +417,11 @@
             "skills unit tests 3/3",
             "focused PG rust_create_ tests 4/4"
           ],
-          "stage_review": "pending exact-head independent review",
+          "stage_review": "ACCEPT exact 6bf0a672cd91af1425590a6e094c9fa5227b6655",
           "mergeability": "MERGEABLE/CI queued at observation; do not merge yet",
-          "correction": "Stage review rejected empty desiredSkills and unchecked bundled catalog; fixed in 6bf0a672c with parser/catalog regression tests and rerun local checks."
+          "correction": "Stage review rejected empty desiredSkills and unchecked bundled catalog; fixed in 6bf0a672c with parser/catalog regression tests and rerun local checks.",
+          "stage_review_limits": "No product verifier at this private artifact stage; protected CI and final handoff remain required.",
+          "final_review": "pending protected CI and final handoff review"
         }
       ],
       "managed_migration": {
