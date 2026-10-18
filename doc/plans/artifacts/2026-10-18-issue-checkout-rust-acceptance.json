@@ -52,14 +52,14 @@
     }
   ],
   "evidence_limits": [
-    "The default embedded-postgres helper aborted with SIGABRT in this macOS workspace; the real acceptance was rerun against an independently initialized disposable PostgreSQL cluster on 127.0.0.1:58777.",
+    "The default embedded-postgres helper aborted with SIGABRT in this macOS workspace; the real acceptance was rerun against an independently initialized disposable PostgreSQL cluster on 127.0.0.1:58778.",
     "This packet covers authenticated Agent self-checkout only. Board/on-behalf checkout, wakeup ownership, and global Node backend retirement remain migration debt.",
     "Cross-organization invalid-envelope denial and concurrency/rollback fault injection remain required follow-up acceptance cases before this slice is merged as a protected PR."
   ],
   "stage_review": {
     "reviewer": "independent agent /root/side_chat_pr346_stage_review",
-    "status": "re-review_required_after_lifecycle_fix",
-    "reference": "Issue checkout Rust checkpoint exact-head stage review accepted 1b3de3089; lifecycle getter fix at ebd0a6514 is independently verified and awaits final exact-head review."
+    "status": "accept",
+    "reference": "Issue checkout Rust final handoff review; exact HEAD d90e46775db0b0db11f3f3c641ab9786e1bf3328, source-equivalent to independently verified de1487992cdbc8333aee12c50f2c920a9d664833."
   },
   "independent_verifier": {
     "verifier": "independent agent /root/issue_checkout_verifier2",
