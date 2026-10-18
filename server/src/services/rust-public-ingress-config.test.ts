@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { nativeLocalAccountLifecycleEnvironment, nativeSessionAuthEnvironment, type RustNativeSessionAuthOptions } from "./rust-public-ingress-config.js";
+import {
+  nativeLocalAccountLifecycleEnvironment,
+  nativeSessionAuthEnvironment,
+  resolveNativeChatProviderHostFields,
+  type RustNativeSessionAuthOptions,
+} from "./rust-public-ingress-config.js";
 
 const local: RustNativeSessionAuthOptions = {
   kind: "local_account", secret: "test-only", secureCookie: false, assertionKey: "test-proof",
@@ -39,5 +44,25 @@ describe("native local-account lifecycle transport", () => {
     expect(() => nativeLocalAccountLifecycleEnvironment({ ...ingress, localAccountLifecycle: lifecycle })).toThrow();
     expect(() => nativeLocalAccountLifecycleEnvironment({ ...ingress, sessionAuth: { ...local, kind: "better_auth" }, localAccountLifecycle: lifecycle })).toThrow();
     expect(nativeLocalAccountLifecycleEnvironment(ingress)).toEqual({});
+  });
+});
+
+describe("native provider installation facts", () => {
+  it("passes only explicit Pi launcher paths to Rust", () => {
+    const previousNode = process.env.RUDDER_PI_NODE_EXECUTABLE;
+    const previousEntry = process.env.RUDDER_PI_CLI_ENTRY;
+    process.env.RUDDER_PI_NODE_EXECUTABLE = "/opt/rudder/node/bin/node";
+    process.env.RUDDER_PI_CLI_ENTRY = "/opt/rudder/pi/cli.js";
+    try {
+      expect(resolveNativeChatProviderHostFields()).toMatchObject({
+        piNodeExecutable: "/opt/rudder/node/bin/node",
+        piCliEntry: "/opt/rudder/pi/cli.js",
+      });
+    } finally {
+      if (previousNode === undefined) delete process.env.RUDDER_PI_NODE_EXECUTABLE;
+      else process.env.RUDDER_PI_NODE_EXECUTABLE = previousNode;
+      if (previousEntry === undefined) delete process.env.RUDDER_PI_CLI_ENTRY;
+      else process.env.RUDDER_PI_CLI_ENTRY = previousEntry;
+    }
   });
 });
