@@ -58,7 +58,16 @@
   ],
   "stage_review": {
     "reviewer": "independent agent /root/side_chat_pr346_stage_review",
-    "status": "needs_more_evidence_before_final_handoff",
-    "reference": "Issue checkout Rust checkpoint stage review; implementation blockers were fixed and the exact inventory/real-PG evidence was added afterward."
+    "status": "accept",
+    "reference": "Issue checkout Rust checkpoint exact-head stage review; candidate 781f17e952dca58bf9bfa4bf808b883584b1a762."
+  },
+  "independent_verifier": {
+    "verifier": "independent agent /root/issue_checkout_verifier2",
+    "status": "PASS",
+    "candidate": "781f17e952dca58bf9bfa4bf808b883584b1a762",
+    "command": "RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL=postgres://rudder@127.0.0.1:58777/rudder pnpm exec vitest run server/src/__tests__/issue-checkout-rust-real-entry.test.ts --pool=threads --poolOptions.threads.singleThread=true",
+    "result": "exit 0; Test Files 1 passed; Tests 1 passed; duration 4.14s",
+    "route_review": "Independent inspection confirmed self forwarding, typed agt_ forwarding, 503 bridge-unavailable/rejection, and no Node fallback writes.",
+    "limits": "Authenticated Agent self-checkout only; board/on-behalf checkout, cross-org invalid-envelope, and concurrency/rollback fault injection remain outside this verifier run."
   }
 }
