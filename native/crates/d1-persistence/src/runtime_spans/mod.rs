@@ -77,6 +77,10 @@ pub enum Request {
         conversation_id: String,
         #[serde(default = "default_message_limit")]
         limit: i32,
+        #[serde(default)]
+        cursor: Option<String>,
+        #[serde(default, rename = "includeTranscript")]
+        include_transcript: bool,
     },
 }
 
@@ -168,12 +172,19 @@ mod wire_tests {
         let messages: Request = serde_json::from_value(json!({
             "operation":"read_conversation_messages",
             "conversationId":"60000000-0000-4000-8000-000000000002",
-            "limit":25
+            "limit":25,
+            "cursor":"60000000-0000-4000-8000-000000000003",
+            "includeTranscript":true
         }))
         .unwrap();
         assert!(matches!(
             messages,
-            Request::ReadConversationMessages { limit: 25, .. }
+            Request::ReadConversationMessages {
+                limit: 25,
+                cursor: Some(ref cursor),
+                include_transcript: true,
+                ..
+            } if cursor == "60000000-0000-4000-8000-000000000003"
         ));
 
         for invalid in [

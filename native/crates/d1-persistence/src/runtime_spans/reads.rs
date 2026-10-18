@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rudder_auth_core::VerifiedActor;
 use serde_json::Value;
 use sqlx::{PgPool, Row};
@@ -139,7 +141,7 @@ pub(super) async fn read_transcript(
     .bind(organization_id)
     .bind(&generation_id)
     .bind(*after_seq)
-    .bind(limit + 1)
+    .bind(limit)
     .fetch_all(&mut *tx)
     .await?;
     let has_more = events.len() > limit as usize;
@@ -326,6 +328,8 @@ pub(super) async fn read_conversation_messages(
     let super::Request::ReadConversationMessages {
         conversation_id: raw_conversation_id,
         limit,
+        cursor,
+        include_transcript,
     } = request
     else {
         return Err(http(400, "Expected a conversation message read request"));
@@ -341,9 +345,11 @@ pub(super) async fn read_conversation_messages(
         .await?;
 
     let target = sqlx::query(
-        "SELECT COALESCE(preferred_agent_id, routed_agent_id)::text AS agent_id
+        "SELECT COALESCE(preferred_agent_id, routed_agent_id)::text AS agent_id,
+                conversation_kind
          FROM chat_conversations
-         WHERE org_id=$1::uuid AND id=$2::uuid AND conversation_kind='chat'",
+         WHERE org_id=$1::uuid AND id=$2::uuid
+           AND conversation_kind IN ('chat', 'side_chat')",
     )
     .bind(organization_id)
     .bind(&conversation_id)
@@ -353,6 +359,7 @@ pub(super) async fn read_conversation_messages(
     let agent_id: String = target
         .try_get("agent_id")
         .map_err(|_| http(409, "Native Chat conversation has no selected Agent"))?;
+    let conversation_kind: String = target.try_get("conversation_kind")?;
     runtime_bindings::authorize_chat_target_read_tx(
         &mut tx,
         actor,
@@ -376,21 +383,82 @@ pub(super) async fn read_conversation_messages(
          LEFT JOIN heartbeat_runs r ON r.org_id=m.org_id AND r.id=m.run_id
          LEFT JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
          WHERE m.org_id=$1::uuid AND m.conversation_id=$2::uuid
+           AND ($3::uuid IS NULL OR (m.created_at, m.id) > (
+             SELECT c.created_at, c.id FROM chat_messages c
+             WHERE c.org_id=$1::uuid AND c.conversation_id=$2::uuid AND c.id=$3::uuid
+           ))
          ORDER BY m.created_at ASC, m.id ASC
-         LIMIT $3",
+         LIMIT $4",
     )
     .bind(organization_id)
     .bind(&conversation_id)
+    .bind(cursor)
     .bind(limit + 1)
     .fetch_all(&mut *tx)
     .await?;
     let has_more = rows.len() > limit as usize;
+    let next_cursor = rows
+        .get(limit as usize)
+        .and_then(|row| row.try_get::<String, _>("id").ok());
+    let generation_ids = rows
+        .iter()
+        .filter_map(|row| {
+            row.try_get::<Option<String>, _>("generation_id")
+                .ok()
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let mut transcript_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
+    if *include_transcript && !generation_ids.is_empty() {
+        let events = sqlx::query(
+            "SELECT generation_id::text AS generation_id, generation_seq, event_kind,
+                    payload, recorded_at::text AS recorded_at
+             FROM chat_generation_events
+             WHERE org_id=$1::uuid AND generation_id=ANY($2::uuid[])
+               AND event_kind IN ('assistant_delta','runtime_output')
+             ORDER BY generation_id, generation_seq ASC",
+        )
+        .bind(organization_id)
+        .bind(&generation_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        for event in events {
+            let generation_id: String = event.try_get("generation_id")?;
+            let kind: String = event.try_get("event_kind")?;
+            let payload: Value = event.try_get("payload")?;
+            let Some(text) = (match kind.as_str() {
+                "assistant_delta" => payload.get("delta").and_then(Value::as_str),
+                "runtime_output" => payload.get("body").and_then(Value::as_str),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let seq: i32 = event.try_get("generation_seq")?;
+            let recorded_at: String = event.try_get("recorded_at")?;
+            transcript_by_generation
+                .entry(generation_id.clone())
+                .or_default()
+                .push(serde_json::json!({
+                    "kind": "assistant",
+                    "ts": recorded_at,
+                    "text": text,
+                    "delta": kind == "assistant_delta",
+                    "phase": if kind == "runtime_output" { "final_answer" } else { "commentary" },
+                    "generationId": generation_id,
+                    "generationSeqStart": seq,
+                    "generationSeqEnd": seq,
+                }));
+        }
+    }
     let mut messages = Vec::new();
     for row in rows.into_iter().take(limit as usize) {
         let role: String = row.try_get("role")?;
         let run_id: Option<String> = row.try_get("run_id")?;
         let execution_authority: Option<String> = row.try_get("execution_authority")?;
-        if role == "assistant" && execution_authority.as_deref() != Some("native_rust") {
+        if conversation_kind == "chat"
+            && role == "assistant"
+            && execution_authority.as_deref() != Some("native_rust")
+        {
             return Err(http(
                 409,
                 "Native Chat Reader found a legacy assistant projection",
@@ -402,6 +470,11 @@ pub(super) async fn read_conversation_messages(
         }
         let id: String = row.try_get("id")?;
         let generation_id: Option<String> = row.try_get("generation_id")?;
+        let transcript = generation_id
+            .as_ref()
+            .and_then(|id| transcript_by_generation.get(id))
+            .cloned()
+            .unwrap_or_default();
         messages.push(serde_json::json!({
             "id": id,
             "orgId": row.try_get::<String, _>("org_id")?,
@@ -424,21 +497,14 @@ pub(super) async fn read_conversation_messages(
             "createdAt": row.try_get::<String, _>("created_at")?,
             "updatedAt": row.try_get::<String, _>("updated_at")?,
             "transcriptSummary": Value::Null,
+            "transcript": transcript,
         }));
     }
-    let next_cursor = has_more
-        .then(|| {
-            messages
-                .last()
-                .and_then(|message| message.get("id").and_then(Value::as_str))
-                .map(str::to_owned)
-        })
-        .flatten();
     tx.commit().await?;
     Ok(serde_json::json!({
         "messages": messages,
         "source": "native_chat_reader",
         "availability": "complete",
-        "nextCursor": next_cursor,
+        "nextCursor": has_more.then_some(next_cursor).flatten(),
     }))
 }

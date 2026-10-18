@@ -37,7 +37,15 @@ export function registerChatMessageQueryRoutes(ctx: ChatMessageQueryRouteContext
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
-    if (conversation.mutability !== "external_bound_chat" && !hasActiveChatGeneration(conversation.id)) {
+    // Native Chat reads are strictly read-only from Node's perspective. A
+    // Node recovery write here would race Rust's generation authority and
+    // mutate chat_messages as a side effect of GET. Legacy external-bound
+    // chats retain the old interrupted-stream cleanup.
+    if (
+      conversation.mutability === "external_bound_chat"
+      && conversation.sourceMetadata?.source !== "agent_integration"
+      && !hasActiveChatGeneration(conversation.id)
+    ) {
       await svc.markInterruptedStreamingMessages(conversation.id);
     }
     const includeTranscript = req.query.includeTranscript === "true";
@@ -50,11 +58,19 @@ export function registerChatMessageQueryRoutes(ctx: ChatMessageQueryRouteContext
           operation: "read_conversation_messages",
           conversationId: conversation.id,
           limit: boundedQueryNumber(req.query.limit, 200),
+          cursor: typeof req.query.cursor === "string" ? req.query.cursor : undefined,
+          includeTranscript,
         },
       );
-      if (req.query.envelope === "true" && response.status === 200) {
+      if (response.status === 200) {
         const value = JSON.parse(response.body.toString("utf8")) as { messages?: unknown[]; nextCursor?: string | null };
-        res.json({ items: value.messages ?? [], nextCursor: value.nextCursor ?? null });
+        if (req.query.envelope === "true") {
+          res.json({ items: value.messages ?? [], nextCursor: value.nextCursor ?? null });
+        } else {
+          // Keep the public Chat API compatible with the legacy reader: the
+          // non-envelope form is always a bare ChatMessage array.
+          res.json(value.messages ?? []);
+        }
         return;
       }
       res.status(response.status).type(response.contentType).send(response.body);

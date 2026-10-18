@@ -6,6 +6,8 @@ export type NativeChatMessageReaderInput = {
   operation: "read_conversation_messages";
   conversationId: string;
   limit?: number;
+  cursor?: string;
+  includeTranscript?: boolean;
 };
 
 export async function callNativeChatMessages(

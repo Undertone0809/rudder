@@ -2955,7 +2955,7 @@ describe("chat routes", { retry: 2 }, () => {
   });
 
   it("marks stale streaming assistant messages interrupted when listing messages", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ mutability: "external_bound_chat" });
     const interruptedMessage = {
       ...createMessage("message-streaming", "assistant", "message", "Partial preserved reply"),
       status: "interrupted",
@@ -3516,7 +3516,7 @@ describe("chat routes", { retry: 2 }, () => {
   });
 
   it("can include full chat transcripts when explicitly requested", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ mutability: "external_bound_chat" });
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValueOnce([]);
 
@@ -3528,7 +3528,7 @@ describe("chat routes", { retry: 2 }, () => {
   });
 
   it("can return paginated chat message envelopes for CLI readers", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ mutability: "external_bound_chat" });
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValueOnce([
       createMessage("message-1", "user", "message", "first"),
@@ -3551,6 +3551,39 @@ describe("chat routes", { retry: 2 }, () => {
       returnedMessages: 1,
       totalMessages: 3,
     });
+  });
+
+  it("keeps the native Rust reader compatible with array and envelope callers", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    const messages = [createMessage("native-message-1", "user", "message", "from rust")];
+    const nativeChatMessages = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({
+        messages,
+        source: "native_chat_reader",
+        availability: "complete",
+        nextCursor: null,
+      })),
+    });
+    const app = createApp(
+      undefined,
+      undefined,
+      undefined,
+      { nativeChatMessages },
+    );
+
+    const bare = await request(app)
+      .get("/api/chats/chat-1/messages?orgId=organization-1");
+    expect(bare.status).toBe(200);
+    expect(bare.body).toEqual(JSON.parse(JSON.stringify(messages)));
+
+    const envelope = await request(app)
+      .get("/api/chats/chat-1/messages?orgId=organization-1&envelope=true");
+    expect(envelope.status).toBe(200);
+    expect(envelope.body).toEqual({ items: JSON.parse(JSON.stringify(messages)), nextCursor: null });
+    expect(nativeChatMessages).toHaveBeenCalledTimes(2);
   });
 
   it("allows a queued message claim after a verified operator Stop", async () => {
