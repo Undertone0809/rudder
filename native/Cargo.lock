@@ -2184,6 +2184,7 @@ name = "rudder-opencode-native"
 version = "0.7.24"
 dependencies = [
  "awc",
+ "futures-util",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
