@@ -431,9 +431,9 @@
         },
         {
           "number": 334,
-          "state": "open_ci_pending_stage_review_pending",
-          "head_sha": "919a7b3151020a051407a269307a7eae4a6dd158",
-          "base_sha": "8e946face31aa7aeb4f8ab6740f164f23d3416bd",
+          "state": "merged",
+          "head_sha": "e5f1e767ee88bd2f0afb59130ded31a27ebfa6bd",
+          "base_sha": "0abea4e69423480736700a9dc715ec18c7b4d6e9",
           "scope": "private feature-gated durable Agent instruction bundle foundation: transactional desired rows, crash-safe/idempotent materialization/replay, canonical runtime config and prompt cleanup, host/path/symlink/size limits, migration 0180; public POST unchanged and no background worker yet",
           "validation": [
             "cargo fmt/check",
@@ -445,9 +445,13 @@
             "release compatibility fingerprint 643ce93... with 181 journal/183 SQL"
           ],
           "limits": "pending/repair reconciler is detail-triggered until future worker; no full Node-retirement claim",
-          "stage_review": "pending exact-head independent review after final rebase onto main including #333",
-          "mergeability": "CI pending; do not merge",
-          "rebase": "Current candidate was based on 8e946face; must rebase onto main after #333 merge before final publication."
+          "stage_review": "ACCEPT exact e5f1e767ee88bd2f0afb59130ded31a27ebfa6bd against base 0abea4e69423480736700a9dc715ec18c7b4d6e9",
+          "final_review": "ACCEPT exact e5f1e767ee88bd2f0afb59130ded31a27ebfa6bd; independent final handoff found no blockers",
+          "mergeability": "CLEAN/MERGEABLE after all protected checks",
+          "rebase": "Rebased after #333 merge onto main 0abea4e; preserved desiredSkills contract and durable instruction changes.",
+          "merge_sha": "0d0c925e826d3e8c9a60ddcc22088a3085d83c91",
+          "merged_at": "2026-10-18T03:35:43Z",
+          "ci": "All published protected checks SUCCESS: Test 39091202143, Rust D1 real-entry smoke 39091202136, native-boundaries 39091202141, all platform foundations/artifacts, Verify Ubuntu/Windows/macOS, Desktop packaged smoke, qualification, architecture/docs/plan, and GitGuardian."
         }
       ],
       "managed_migration": {
