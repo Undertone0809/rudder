@@ -4426,7 +4426,7 @@
     },
     {
       "path": "server/src/index.ts",
-      "sha256": "0d302ab9198d4596176e7b0937fa5f294d44e75bc6d44b80607c1ffb4b09070f",
+      "sha256": "58925efcf2477b7d08c1a9e433c11c1d5bd56f98b29b1ae414a86ba7120ddc78",
       "families": [
         "database_queries_and_writers",
         "server_lifecycle_and_workers"
@@ -6901,7 +6901,7 @@
     },
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
-      "sha256": "2650478aec27c2906b9ae00d547514fb329535f700214e6ded26380fdfb19b57",
+      "sha256": "641c55d0cc1f065c55138bc87854ea4819fd100983d81c45ccc0fc03c033caaf",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -15393,7 +15393,7 @@
       "type": "http_server_construction",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1165,
+      "line": 1177,
       "signature": "server/src/index.ts|http-server|appHandle.app as unknown as Parameters<typeof createServer>[0]",
       "expression": "appHandle.app as unknown as Parameters<typeof createServer>[0]"
     },
@@ -15401,7 +15401,7 @@
       "type": "listener_start",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1497,
+      "line": 1509,
       "signature": "server/src/index.ts|listener|server|ingress.nodeListenPort",
       "receiver": "server",
       "expression": "ingress.nodeListenPort"
@@ -15428,7 +15428,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1230,
+      "line": 1242,
       "signature": "server/src/index.ts|supervisor-own|feishu-runtime",
       "receiver": "supervisor",
       "resource": "feishu-runtime"
@@ -15437,7 +15437,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1236,
+      "line": 1248,
       "signature": "server/src/index.ts|supervisor-own|feishu-runtime-registry",
       "receiver": "supervisor",
       "resource": "feishu-runtime-registry"
@@ -15446,7 +15446,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1552,
+      "line": 1564,
       "signature": "server/src/index.ts|supervisor-own|http-ingress",
       "receiver": "supervisor",
       "resource": "http-ingress"
@@ -15455,7 +15455,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1174,
+      "line": 1186,
       "signature": "server/src/index.ts|supervisor-own|http-server-drain",
       "receiver": "supervisor",
       "resource": "http-server-drain"
@@ -15464,7 +15464,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1190,
+      "line": 1202,
       "signature": "server/src/index.ts|supervisor-own|live-events-websocket",
       "receiver": "supervisor",
       "resource": "live-events-websocket"
@@ -15473,7 +15473,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1224,
+      "line": 1236,
       "signature": "server/src/index.ts|supervisor-own|managed-mcp-oauth-session-gc",
       "receiver": "supervisor",
       "resource": "managed-mcp-oauth-session-gc"
@@ -15482,7 +15482,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1206,
+      "line": 1218,
       "signature": "server/src/index.ts|supervisor-own|name",
       "receiver": "supervisor",
       "resource": "name"
@@ -15491,7 +15491,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1610,
+      "line": 1622,
       "signature": "server/src/index.ts|supervisor-own|process-signal-listeners",
       "receiver": "supervisor",
       "resource": "process-signal-listeners"
@@ -15509,7 +15509,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1264,
+      "line": 1276,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .recoverNetworkWaitingRuns() .then(() => heartbeat.reapTimedOutRuns({ maxRuntim… [sha256:4ff3e87ec312f4bb922fe31fc5993b706c9a650f75df88884c1fb686c67f57bf]",
       "receiver": null,
       "method": "setInterval",
@@ -15519,7 +15519,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1279,
+      "line": 1291,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .tickTimers(new Date()) .then((result) => { if (result.enqueued > 0) { logger.i… [sha256:836394bb771c6983d27882ad1a77902f9b5b4b9d448a4d8b3ab46fc1871ff562]",
       "receiver": null,
       "method": "setInterval",
@@ -15529,7 +15529,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1351,
+      "line": 1363,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledBackup(); }",
       "receiver": null,
       "method": "setInterval",
@@ -15539,7 +15539,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1484,
+      "line": 1496,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledWorkspaceBackups(\"running\"); }",
       "receiver": null,
       "method": "setInterval",
