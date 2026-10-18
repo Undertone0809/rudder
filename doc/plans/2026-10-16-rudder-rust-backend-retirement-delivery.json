@@ -2745,5 +2745,34 @@
       "merge_commit": "aaa470507f37c02ea29e45d9cbf90ffd52e565de",
       "merged_at": "2026-10-18T06:13:01Z"
     }
+  },
+  "agent_instructions_pr_345": {
+    "number": 345,
+    "url": "https://github.com/Undertone0809/rudder/pull/345",
+    "branch": "codex/agent-instructions-rust-authority",
+    "head": "728129b75bfa3c3a4bb5405e60ede59fd3268146",
+    "merge_commit": "5632a001db4797f0aa4dac229165de9fa1b230a1",
+    "state": "merged",
+    "merged_at": "2026-10-18T08:16:47Z",
+    "scope": "Bounded Agent instructions authority slice: Rust owns managed path/bundle/file persistence, durable replay, locking, authorization revalidation, organization checks, symlink/path preflight, legacy compatibility and redacted projections; existing Node routes/bridge remain transport adapters.",
+    "stage_review": "accept",
+    "stage_review_binding": "independent agent /root/agent_instructions_stage_review_recheck; source-equivalent review reference cfde7a026af2515453785c1dcfe8b692fd98a087; final head 728129b75bfa3c3a4bb5405e60ede59fd3268146",
+    "verifier": "pass",
+    "verifier_scope": "Focused candidate checks only; no Rudder HTTP server, PostgreSQL runtime workflow, installed-package acceptance, or production deployment claim.",
+    "checks": [
+      "cargo clippy -p rudder-d1-persistence --all-targets -- -D warnings",
+      "cargo test -p rudder-d1-persistence agent_core::instructions --lib (33 passed)",
+      "cargo test -p rudder-server-foundation-core public_ingress::agent_core (6 passed)",
+      "Vitest instructions routes/bridge (69 passed)",
+      "rust:authority:test (33 passed)",
+      "rust:inventory:check (914 source files, 4647 surfaces, 10 unknowns)",
+      "rust:authority:check (failures=[])",
+      "server typecheck",
+      "architecture audit (no comparison regressions)",
+      "cargo fmt and git diff --check",
+      "protected CI: plan qualification, architecture ratchet, Rust D1 real-entry smoke, native-boundaries, GitGuardian passed"
+    ],
+    "external_boundary": "Required Rust mode returns stable 503 for external bundle authority and never falls back to Node; omitted mode preserves an existing external configuration and also returns 503.",
+    "limits": "Global Rust backend retirement remains incomplete; inventory completion_gate is blocked by retained Node backend sources and unknowns. This merge does not claim no-Node runtime acceptance or production deployment."
   }
 }
