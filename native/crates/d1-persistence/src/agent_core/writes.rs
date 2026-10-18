@@ -123,6 +123,13 @@ pub(super) async fn execute(
 
 async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Value> {
     let request = AgentCreateRequest::parse(input)?;
+    let config_source = request
+        .node_owned
+        .as_ref()
+        .map(|prepared| &prepared.normalized_agent_runtime_config)
+        .unwrap_or(&request.agent_runtime_config);
+    let normalized_runtime_config =
+        super::validation::normalize_runtime_config(tx, ctx.org, config_source).await?;
     let requested_name = request
         .name
         .as_deref()
@@ -157,7 +164,7 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
     .bind(&icon)
     .bind(request.capabilities.as_deref())
     .bind(&request.agent_runtime_type)
-    .bind(request.agent_runtime_config.to_string())
+    .bind(normalized_runtime_config.to_string())
     .bind(request.runtime_config.to_string())
     .bind(request.budget_monthly_cents as i32)
     .bind(serde_json::to_string(&request.permissions).map_err(|_| http(500, "Internal server error"))?)
@@ -222,10 +229,15 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
         })),
     )
     .await?;
-    let row = stored(tx, &id)
-        .await?
-        .ok_or_else(|| http(500, "Agent create did not persist"))?;
-    reads::public_row(tx, row, true, false).await
+    let row = match stored(tx, &id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return Err(http(500, "Agent create did not persist")),
+        Err(error) => return Err(error),
+    };
+    match reads::public_row(tx, row, true, false).await {
+        Ok(value) => Ok(value),
+        Err(error) => Err(error),
+    }
 }
 
 fn default_avatar_icon() -> Result<String> {

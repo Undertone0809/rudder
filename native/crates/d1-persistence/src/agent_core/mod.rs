@@ -93,6 +93,12 @@ pub struct AgentCreateRequest {
     pub permissions: AgentCreatePermissions,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    /// Node-owned preparation is accepted only by the private Rust bridge.
+    /// The public create route does not expose this field until parity is
+    /// complete. Raw provider material and unsupported runtime fields are
+    /// rejected by validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_owned: Option<AgentCreateNodeOwned>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -100,6 +106,15 @@ pub struct AgentCreateRequest {
 pub struct AgentCreatePermissions {
     pub can_create_agents: bool,
     pub can_manage_skills: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentCreateNodeOwned {
+    /// The Node secrets service's persisted representation. Values are plain
+    /// bindings or organization secret references; provider material is never
+    /// carried over the AgentCreate boundary.
+    pub normalized_agent_runtime_config: Value,
 }
 
 impl AgentCreateRequest {
