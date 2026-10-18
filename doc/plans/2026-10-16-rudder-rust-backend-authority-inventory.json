@@ -59103,7 +59103,34 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [],
+  "reviewed_node_changes": [
+    {
+      "path": "server/src/routes/chats.message-query-routes.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "356dba3d9afeaaafeac9d4466514aaab14325c8186f04455540a18c0ae03812f",
+      "head_sha256": "697e9773ff6501bcdff292bb79f2f5e881d3276340598875d5e60b8743643f88",
+      "rust_authority": "native::d1_persistence::runtime_spans::read_conversation_messages owns Native Chat and Side Chat message/transcript projection; Node remains the bounded route compatibility adapter.",
+      "compatibility_boundary": "Only native chat and side_chat message/transcript reads select the Rust Reader; legacy, external, and non-native conversations retain the existing Node service path.",
+      "retirement_criterion": "Remove this route branch and Node message/transcript reader fallback after all supported conversation reads are Rust-owned and their consumers have migrated.",
+      "reviewer": "/root/candidate_review_506bd67b7",
+      "review_reference": "PR #346 Side Chat Reader stage review on exact candidate dc7a15068; Rust Reader projection and scoped route boundary accepted.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-public-ingress-config.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "a3d8b6472e57fe97c75f953f1061fa8d9beb33b1b17395436371d299d20fb440",
+      "head_sha256": "dff008782ee71cafce558597fa052e58500500dbe4c9843e357c14dbb10a38be",
+      "rust_authority": "native::server_foundation::native_chat_startup owns Pi host installation and runtime facts; Node only forwards typed environment configuration.",
+      "compatibility_boundary": "Pi executable and CLI entry are startup configuration facts forwarded to the Rust public ingress; request handling, path canonicalization, and native host authority remain Rust-owned.",
+      "retirement_criterion": "Remove the Node environment adapter after Rust startup receives native host configuration without Node assembly or supervision.",
+      "reviewer": "/root/candidate_review_506bd67b7",
+      "review_reference": "PR #346 Pi host activation stage review on exact candidate dc7a15068; startup configuration boundary accepted.",
+      "review_status": "reviewed"
+    }
+  ],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {
