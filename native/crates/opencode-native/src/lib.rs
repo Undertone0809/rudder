@@ -1184,7 +1184,7 @@ pub struct CommandBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub parts: Vec<PromptPart>,
+    pub parts: Vec<CommandPart>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -1352,6 +1352,19 @@ pub enum PromptPart {
         model: Option<ModelSelection>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         command: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum CommandPart {
+    File {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        mime: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
+        url: String,
     },
 }
 
@@ -1566,7 +1579,7 @@ mod tests {
             agent: Some("build".into()),
             model: None,
             variant: Some("fast".into()),
-            parts: vec![PromptPart::File {
+            parts: vec![CommandPart::File {
                 id: None,
                 mime: "text/plain".into(),
                 filename: Some("notes.txt".into()),
