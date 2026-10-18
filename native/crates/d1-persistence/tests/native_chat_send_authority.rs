@@ -325,7 +325,7 @@ async fn missing_agent_cannot_route_mixed_native_and_legacy_defaults_through_nod
         .await,
         Err(Error::Http(422, _))
     ));
-    sqlx::query("UPDATE agents SET agent_runtime_type='claude_local' WHERE org_id=$1::uuid")
+    sqlx::query("UPDATE agents SET agent_runtime_type='process' WHERE org_id=$1::uuid")
         .bind(ORG)
         .execute(&database.pool)
         .await
