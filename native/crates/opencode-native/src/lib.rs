@@ -352,7 +352,7 @@ impl OpenCodeClient {
                     .clone()
                     .or_else(|| latest_user_message_id(&messages));
                 if latest.as_ref().is_none_or(|(current, _)| {
-                    message_sort_key(&assistant) >= message_sort_key(current)
+                    message_sort_key(assistant) >= message_sort_key(current)
                 }) {
                     latest = Some((assistant.as_ref().clone(), user_id));
                 }
