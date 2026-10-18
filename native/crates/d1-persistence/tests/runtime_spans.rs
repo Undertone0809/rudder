@@ -485,6 +485,16 @@ async fn conversation_reader_pages_summarizes_cutoffs_and_side_chat_access() {
     seed_access(&database.pool).await;
     seed_chat(&database.pool, CHAT, "chat", USER).await;
     seed_chat(&database.pool, SIDE_CHAT, "side_chat", USER).await;
+    sqlx::query(
+        "UPDATE chat_conversations
+         SET preferred_agent_id=NULL, routed_agent_id=NULL
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(SIDE_CHAT)
+    .execute(&database.pool)
+    .await
+    .expect("clear legacy Side Chat target");
     let owner = actor(USER, ORG, "conversation-reader");
     seed_run_attempt(&database.pool, CHAT).await;
 
@@ -604,6 +614,17 @@ async fn conversation_reader_pages_summarizes_cutoffs_and_side_chat_access() {
     .await
     .expect("insert Side Chat message");
     sqlx::query(
+        "INSERT INTO chat_message_transcript_entries
+           (org_id, message_id, entry_seq, payload)
+         VALUES ($1::uuid, $2::uuid, 1, $3::jsonb)",
+    )
+    .bind(ORG)
+    .bind(SIDE_MESSAGE)
+    .bind(json!({"kind":"assistant","text":"detached"}))
+    .execute(&mut *tx)
+    .await
+    .expect("insert detached Side Chat transcript");
+    sqlx::query(
         "INSERT INTO chat_attachments
            (id, org_id, conversation_id, message_id, asset_id)
          VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid)",
@@ -663,7 +684,8 @@ async fn conversation_reader_pages_summarizes_cutoffs_and_side_chat_access() {
     let side_request: Request = serde_json::from_value(json!({
         "operation":"read_conversation_messages",
         "conversationId":SIDE_CHAT,
-        "limit":10
+        "limit":10,
+        "includeTranscript":false
     }))
     .expect("Side Chat reader request");
     let side = execute(&database.pool, &owner, ORG, &side_request)
@@ -682,6 +704,37 @@ async fn conversation_reader_pages_summarizes_cutoffs_and_side_chat_access() {
         side_message["attachments"][0]["contentPath"],
         format!("/api/assets/{}/content", support::ASSET)
     );
+    assert_eq!(side_message["transcript"], json!([]));
+    assert_eq!(side_message["transcriptSummary"]["entryCount"], 1);
+
+    let side_with_transcript_request: Request = serde_json::from_value(json!({
+        "operation":"read_conversation_messages",
+        "conversationId":SIDE_CHAT,
+        "limit":10,
+        "includeTranscript":true
+    }))
+    .expect("Side Chat reader transcript request");
+    let side_with_transcript = execute(&database.pool, &owner, ORG, &side_with_transcript_request)
+        .await
+        .expect("read Side Chat messages with transcript");
+    assert_eq!(
+        side_with_transcript["messages"][0]["transcript"][0]["text"],
+        "detached"
+    );
+
+    let side_transcript_request: Request = serde_json::from_value(json!({
+        "operation":"read_message_transcript",
+        "conversationId":SIDE_CHAT,
+        "messageId":SIDE_MESSAGE,
+        "afterSeq":0,
+        "limit":10
+    }))
+    .expect("Side Chat detached transcript request");
+    let side_transcript = execute(&database.pool, &owner, ORG, &side_transcript_request)
+        .await
+        .expect("read detached Side Chat transcript");
+    assert_eq!(side_transcript["reader"]["source"], "legacy_compatibility");
+    assert_eq!(side_transcript["transcript"][0]["text"], "detached");
 
     let denied = actor(
         "conversation-reader-denied",

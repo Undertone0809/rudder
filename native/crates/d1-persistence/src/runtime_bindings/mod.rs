@@ -388,6 +388,25 @@ pub(crate) async fn authorize_chat_target_read_tx(
     Ok(principal_scope_ref)
 }
 
+/// Historical read authorization for conversations whose persisted target has
+/// no selected Agent. This is valid for user-owned Side Chats and preserves
+/// the legacy reader's organization/owner checks without inventing an agent.
+pub(crate) async fn authorize_chat_target_read_without_agent_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &impl NativeChatActor,
+    organization_id: &str,
+    conversation_id: &str,
+) -> std::result::Result<String, Error> {
+    auth::preauthorize_org(tx, actor, organization_id).await?;
+    let conversation = auth::conversation(tx, organization_id, conversation_id, false)
+        .await?
+        .ok_or_else(|| http(404, "Chat conversation not found"))?;
+    let principal_scope_ref =
+        auth::authorize_conversation(actor, organization_id, &conversation, None)?;
+    auth::ensure_conversation_readable(&conversation)?;
+    Ok(principal_scope_ref)
+}
+
 /// Recheck historical read entitlement after target serialization. Conversation
 /// ownership/selection cannot change until commit, and organization access is
 /// checked again after any wait for the row lock.
