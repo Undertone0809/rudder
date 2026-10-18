@@ -1181,6 +1181,10 @@ pub struct CommandBody {
     pub agent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<CommandPart>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -1348,6 +1352,19 @@ pub enum PromptPart {
         model: Option<ModelSelection>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         command: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum CommandPart {
+    File {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        mime: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
+        url: String,
     },
 }
 
@@ -1554,18 +1571,27 @@ mod tests {
     }
 
     #[test]
-    fn command_body_matches_installed_server_message_id_contract() {
+    fn command_body_matches_installed_server_contract() {
         let value = serde_json::to_value(CommandBody {
             arguments: "--verbose".into(),
             command: "diagnose".into(),
             message_id: Some("msg_previous".into()),
             agent: Some("build".into()),
             model: None,
+            variant: Some("fast".into()),
+            parts: vec![CommandPart::File {
+                id: None,
+                mime: "text/plain".into(),
+                filename: Some("notes.txt".into()),
+                url: "data:text/plain;base64,SGk=".into(),
+            }],
         })
         .expect("command body serializes");
         assert_eq!(value["messageID"], "msg_previous");
         assert!(value.get("messageId").is_none());
-        assert!(value.get("parts").is_none());
+        assert_eq!(value["variant"], "fast");
+        assert_eq!(value["parts"][0]["type"], "file");
+        assert_eq!(value["parts"][0]["filename"], "notes.txt");
     }
 
     #[test]
