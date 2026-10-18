@@ -68,7 +68,7 @@ vi.mock("../agent-runtimes/index.js", () => ({
 
 const activeServers = new Set<Server>();
 
-async function createApp() {
+async function createApp(rustFoundationBridge?: unknown) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -81,7 +81,7 @@ async function createApp() {
     };
     next();
   });
-  app.use("/api", agentRoutes({} as any));
+  app.use("/api", agentRoutes({} as any, undefined, rustFoundationBridge as any));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -222,6 +222,7 @@ describe("agent instructions bundle routes", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all([...activeServers].map((server) => new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     })));
@@ -241,6 +242,54 @@ describe("agent instructions bundle routes", () => {
     });
     expect(mockAgentInstructionsService.getBundle).toHaveBeenCalled();
     expect(mockAgentInstructionsService.reconcileBundle).not.toHaveBeenCalled();
+  });
+
+  it("uses the typed Rust authority when the instruction gate is required", async () => {
+    vi.stubEnv("RUDDER_AGENT_INSTRUCTIONS_RUST_MODE", "required");
+    const agentInstructions = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify({ mode: "managed", files: [] }),
+    });
+
+    const res = await request(await createApp({ agentInstructions }))
+      .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle?orgId=organization-1");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual({ mode: "managed", files: [] });
+    expect(agentInstructions).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "board", userId: "local-board" }),
+      expect.objectContaining({
+        operation: "instructions-bundle-get",
+        id: "11111111-1111-4111-8111-111111111111",
+        orgId: "organization-1",
+      }),
+    );
+    expect(mockAgentInstructionsService.getBundle).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with a stable 503 when required Rust authority is unavailable", async () => {
+    vi.stubEnv("RUDDER_AGENT_INSTRUCTIONS_RUST_MODE", "required");
+
+    const res = await request(await createApp())
+      .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?orgId=organization-1")
+      .send({ path: "SOUL.md", content: "# Updated Agent\n" });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({
+      error: "Rust Agent instruction authority is unavailable",
+      code: "rust_agent_instructions_unavailable",
+    });
+    expect(mockAgentInstructionsService.writeFile).not.toHaveBeenCalled();
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps POST outside the public instructions-path contract", async () => {
+    const res = await request(await createApp())
+      .post("/api/orgs/organization-1/agents/11111111-1111-4111-8111-111111111111/instructions-path")
+      .send({ path: "/tmp/instructions.md" });
+
+    expect(res.status).toBe(404);
   });
 
   it("does not persist healed managed bundle metadata when bundle metadata is read", async () => {

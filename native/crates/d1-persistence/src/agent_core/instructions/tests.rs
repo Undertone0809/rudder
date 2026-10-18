@@ -174,6 +174,30 @@ fn durable_bundle_rejects_symlinked_targets_and_nested_parents() {
     assert!(!outside.join("TOOLS.md").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn instruction_read_preflight_rejects_symlinked_entries_and_parents() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    f.run().unwrap();
+    let outside = f.root.path().join("outside");
+    disk::create_dir_all(&outside).unwrap();
+    let outside_file = outside.join("private.md");
+    disk::write(&outside_file, "outside").unwrap();
+
+    let linked_file = f.instructions().join("LINK.md");
+    symlink(&outside_file, &linked_file).unwrap();
+    assert!(preflight_root(&f.instructions(), false).is_err());
+    assert!(preflight_file(&linked_file).is_err());
+
+    disk::remove_file(&linked_file).unwrap();
+    let linked_parent = f.instructions().join("nested");
+    symlink(&outside, &linked_parent).unwrap();
+    let nested_file = linked_parent.join("TOOLS.md");
+    assert!(preflight_root(&f.instructions(), false).is_err());
+    assert!(preflight_file(&nested_file).is_err());
+}
+
 #[test]
 fn legacy_absolute_file_normalizes_only_for_managed_root_matching() {
     let mut f = Fixture::new();
@@ -424,4 +448,116 @@ fn typed_instruction_path_normalization_matches_legacy_rules() {
     for input in ["", ".", "..", "a/../../secret"] {
         assert!(relative(input).is_err());
     }
+}
+
+#[test]
+fn instruction_language_matches_node_extension_labels() {
+    for (path, expected) in [
+        ("SOUL.md", "markdown"),
+        ("config.json", "json"),
+        ("config.yaml", "yaml"),
+        ("src/agent.ts", "typescript"),
+        ("src/agent.tsx", "typescript"),
+        ("src/agent.js", "javascript"),
+        ("src/agent.jsx", "javascript"),
+        ("src/agent.mjs", "javascript"),
+        ("src/agent.cjs", "javascript"),
+        ("scripts/run.sh", "bash"),
+        ("scripts/run.py", "python"),
+        ("config.toml", "toml"),
+        ("notes.txt", "text"),
+        ("README", "text"),
+    ] {
+        assert_eq!(
+            infer_language(path),
+            expected,
+            "unexpected language for {path}"
+        );
+    }
+}
+
+#[test]
+fn durable_operation_markers_are_not_published_as_files() {
+    let bundle = decode_durable_bundle(
+        "SOUL.md",
+        r#"{"SOUL.md":"updated","__rudderDeletes":["docs/OLD.md"],"__rudderReplace":true}"#,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        bundle.files.get("SOUL.md").map(String::as_str),
+        Some("updated")
+    );
+    assert!(!bundle.files.contains_key("__rudderDeletes"));
+    assert!(!bundle.files.contains_key("__rudderReplace"));
+    assert_eq!(bundle.deletions, vec!["docs/OLD.md"]);
+    assert!(bundle.replace_existing);
+}
+
+#[test]
+fn durable_operation_markers_fail_closed_on_invalid_deletions() {
+    for files in [
+        r#"{"SOUL.md":"updated","__rudderDeletes":"docs/OLD.md"}"#,
+        r#"{"SOUL.md":"updated","__rudderDeletes":["../outside.md"]}"#,
+        r#"{"SOUL.md":"updated","__rudderDeletes":[42]}"#,
+    ] {
+        assert!(decode_durable_bundle("SOUL.md", files, false).is_err());
+    }
+}
+
+#[test]
+fn durable_replace_snapshot_updates_and_deletes_only_bundle_files() {
+    let f = Fixture::new();
+    f.run().unwrap();
+    disk::create_dir_all(f.instructions().join("docs")).unwrap();
+    disk::write(f.instructions().join("SOUL.md"), "before").unwrap();
+    disk::write(f.instructions().join("docs/OLD.md"), "remove").unwrap();
+    disk::write(f.instructions().join("docs/KEEP.md"), "keep").unwrap();
+
+    let bundle = decode_durable_bundle(
+        "SOUL.md",
+        r#"{"SOUL.md":"after","docs/KEEP.md":"keep","__rudderDeletes":["docs/OLD.md"],"__rudderReplace":true}"#,
+        false,
+    )
+    .unwrap();
+    validate_host_paths(&f.host, f.root.path()).unwrap();
+    let _guard = lock::Guard::acquire(Path::new(&f.host.workspace_home), &f.host.hostname).unwrap();
+    materialize_bundle_locked(&f.host, ORG, "builder-key", &bundle, f.root.path()).unwrap();
+
+    assert_eq!(
+        disk::read_to_string(f.instructions().join("SOUL.md")).unwrap(),
+        "after"
+    );
+    assert_eq!(
+        disk::read_to_string(f.instructions().join("docs/KEEP.md")).unwrap(),
+        "keep"
+    );
+    assert!(!f.instructions().join("docs/OLD.md").exists());
+    assert!(!f.instructions().join("__rudderDeletes").exists());
+    assert!(!f.instructions().join("__rudderReplace").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_delete_rejects_symlink_targets_without_touching_outside_root() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    f.run().unwrap();
+    let outside = f.root.path().join("outside.md");
+    disk::write(&outside, "outside").unwrap();
+    symlink(&outside, f.instructions().join("DELETE.md")).unwrap();
+
+    let bundle = decode_durable_bundle(
+        "SOUL.md",
+        r#"{"SOUL.md":"after","__rudderDeletes":["DELETE.md"],"__rudderReplace":true}"#,
+        false,
+    )
+    .unwrap();
+    validate_host_paths(&f.host, f.root.path()).unwrap();
+    let _guard = lock::Guard::acquire(Path::new(&f.host.workspace_home), &f.host.hostname).unwrap();
+    assert!(
+        materialize_bundle_locked(&f.host, ORG, "builder-key", &bundle, f.root.path()).is_err()
+    );
+    assert_eq!(disk::read_to_string(&outside).unwrap(), "outside");
+    assert!(f.instructions().join("DELETE.md").exists());
 }

@@ -2063,6 +2063,39 @@ function isTransportAdapterPath(sourcePath) {
     && (sourcePath.startsWith("server/src/") || sourcePath.startsWith("identity/src/"));
 }
 
+// A transport adapter may add a route surface while handing business
+// authority to Rust. Keep this allowance explicit and hash-bound to the
+// reviewed source record: every permitted signature must exist in the current
+// candidate and must be one of the exact surfaces added by this diff.
+function consumeReviewedTransportSurfaces(record, sourcePath, headSurfaces, remainingAdded, failures) {
+  if (!record || !Object.hasOwn(record, "allowed_transport_surfaces")) return;
+  const allowed = record.allowed_transport_surfaces;
+  if (!Array.isArray(allowed) || allowed.some((signature) => typeof signature !== "string" || !signature.trim())) {
+    failures.push(`${sourcePath}: allowed_transport_surfaces must be an array of nonempty signatures`);
+    return;
+  }
+  const headSignatures = new Set(headSurfaces.filter((surface) => surface.source === sourcePath).map((surface) => surface.signature));
+  const seen = new Set();
+  for (const signature of allowed) {
+    if (seen.has(signature)) {
+      failures.push(`${sourcePath}: duplicate allowed transport surface: ${signature}`);
+      continue;
+    }
+    seen.add(signature);
+    if (!headSignatures.has(signature)) {
+      failures.push(`${sourcePath}: allowed transport surface is absent from candidate: ${signature}`);
+      continue;
+    }
+    const count = remainingAdded.get(signature) ?? 0;
+    if (count < 1) {
+      failures.push(`${sourcePath}: allowed transport surface is not an exact added surface: ${signature}`);
+      continue;
+    }
+    if (count === 1) remainingAdded.delete(signature);
+    else remainingAdded.set(signature, count - 1);
+  }
+}
+
 function journalAppendProblems(journalPath, beforeText, afterText, availableHeadMigrationPaths) {
   const problems = [];
   let before;
@@ -2275,6 +2308,15 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
   for (const signature of allowedTransportSurfaceSignatures) {
     const remaining = unmatchedAdded.get(signature) ?? 0;
     if (remaining === 1) unmatchedAdded.delete(signature);
+  }
+  for (const record of records.values()) {
+    consumeReviewedTransportSurfaces(
+      record,
+      record.path,
+      headInventory.structural_surfaces,
+      unmatchedAdded,
+      failures,
+    );
   }
   const legacyFenceComparison = compareLegacyFenceChanges(
     baseInventory, headInventory, baseContents, headContents, unmatchedAdded, surfaceChanges.removed, trustedCallers,

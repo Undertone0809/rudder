@@ -31,6 +31,7 @@ import {
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
 import { sendLiveRunRead } from "../services/live-run-read-bridge.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { requireRunReadAccess, runReadRedaction, sendRunRead } from "../services/run-read-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import {
@@ -46,6 +47,25 @@ type AgentManagementRouteContext = {
   storage?: StorageService;
   [key: string]: any;
 };
+
+type RustInstructionsAgent = { id: string; orgId: string; agentRuntimeType: string; agentRuntimeConfig?: unknown };
+function createRustInstructionsResponder(rustFoundationBridge?: RustFoundationBridge) {
+  const mode = (process.env.RUDDER_AGENT_INSTRUCTIONS_RUST_MODE ?? "off").trim().toLowerCase();
+  return async (req: Request, res: any, existing: RustInstructionsAgent, operation: string, input: unknown = null) => {
+    if (mode !== "required") return false;
+    if (!rustFoundationBridge?.agentInstructions) {
+      res.status(503).json({ error: "Rust Agent instruction authority is unavailable", code: "rust_agent_instructions_unavailable" });
+      return true;
+    }
+    try {
+      const response = await rustFoundationBridge.agentInstructions(req.actor, { operation, orgId: existing.orgId, id: existing.id, query: req.query, input });
+      res.status(response.status).set("content-type", response.contentType).send(response.body);
+    } catch {
+      res.status(503).json({ error: "Rust Agent instruction authority is unavailable", code: "rust_agent_instructions_unavailable" });
+    }
+    return true;
+  };
+}
 
 export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) {
   const {
@@ -103,6 +123,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     KNOWN_INSTRUCTIONS_PATH_KEYS,
     KNOWN_INSTRUCTIONS_BUNDLE_KEYS,
   } = ctx;
+  const replyRustInstructions = createRustInstructionsResponder(rustFoundationBridge);
   const delegation = delegationRunService(db, { heartbeat, access });
   const findFirstAgentId = async (orgId: string) => {
     const [firstAgent] = await db
@@ -541,6 +562,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
 
+    if (await replyRustInstructions(req, res, existing, "instructions-path-patch", req.body)) return;
+
     await assertCanManageInstructionsPath(req, existing);
 
     const existingAdapterConfig = asRecord(existing.agentRuntimeConfig) ?? {};
@@ -618,6 +641,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
+    if (await replyRustInstructions(req, res, existing, "instructions-bundle-get")) return;
     await assertCanReadAgent(req, existing);
     res.json(await instructions.getBundle(existing));
   });
@@ -629,6 +653,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
+    if (await replyRustInstructions(req, res, existing, "instructions-bundle-patch", req.body)) return;
     await assertCanManageInstructionsPath(req, existing);
 
     const actor = getActorInfo(req);
@@ -677,6 +702,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
+    if (await replyRustInstructions(req, res, existing, "instructions-file-get")) return;
     await assertCanReadAgent(req, existing);
 
     const relativePath = typeof req.query.path === "string" ? req.query.path : "";
@@ -694,6 +720,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
+    if (await replyRustInstructions(req, res, existing, "instructions-file-put", req.body)) return;
     await assertCanManageInstructionsPath(req, existing);
 
     const actor = getActorInfo(req);
@@ -743,6 +770,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
+    if (await replyRustInstructions(req, res, existing, "instructions-file-delete")) return;
     await assertCanManageInstructionsPath(req, existing);
 
     const relativePath = typeof req.query.path === "string" ? req.query.path : "";
