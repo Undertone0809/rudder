@@ -687,12 +687,13 @@ pub(super) async fn submit_in_transaction<'a>(
              JOIN heartbeat_runs r ON r.org_id=a.org_id AND r.id=a.run_id
              WHERE a.org_id=$1::uuid AND a.agent_id=$2::uuid
                AND a.runtime_type='pi_local'
+               AND r.execution_authority='native_rust'
                AND r.context_snapshot->>'nativeSegmentId'=$3
                AND a.checkpoint_json->>'provider'='pi_local'
                AND a.checkpoint_json->'piSession'->>'sessionId'=$4
                AND a.protocol_phase='execution_terminal_committed'
                AND a.checkpoint_json->'piSession'->>'leafId' IS NOT NULL
-             ORDER BY COALESCE(a.finished_at, a.created_at) DESC, a.created_at DESC
+             ORDER BY COALESCE(a.finished_at, a.created_at) DESC, a.created_at DESC, a.id DESC
              LIMIT 1",
         )
         .bind(organization_id)
