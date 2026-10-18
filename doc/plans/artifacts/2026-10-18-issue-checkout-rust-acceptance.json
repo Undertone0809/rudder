@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "kind": "bounded_rust_backend_acceptance",
+  "capability": "agent_self_issue_checkout",
+  "candidate": {
+    "source_commit": "0ceac1a1e",
+    "implementation_commit": "43d7b50f7",
+    "source_content_equivalent_tested": true,
+    "rust_binary": "native/target/debug/rudder-server-foundation",
+    "rust_binary_sha256": "2b3c2ff8b5d1fdac0a895f27a7d6e6063a39b56579428e8fa8d8f913b12d0e46",
+    "base": "origin/main at 41ee7dacb92b33b2f15a348d9f607b346a61eba8"
+  },
+  "authority": {
+    "public_transport": "server/src/routes/issues.mutations.ts",
+    "signed_bridge": "server/src/services/rust-foundation-bridge.ts",
+    "rust_http": "native/crates/server-foundation/src/issue_checkout.rs",
+    "rust_transaction": "native/crates/d1-persistence/src/issue_checkout.rs",
+    "node_residual": "Board and agent on-behalf checkout remain Node compatibility paths; self-agent checkout has no Node business fallback."
+  },
+  "checks": [
+    {
+      "command": "cargo fmt --all --manifest-path native/Cargo.toml --check",
+      "result": "pass"
+    },
+    {
+      "command": "cargo clippy --manifest-path native/Cargo.toml -p rudder-d1-persistence -p rudder-server-foundation --all-targets -- -D warnings",
+      "result": "pass"
+    },
+    {
+      "command": "cargo test --manifest-path native/Cargo.toml -p rudder-d1-persistence issue_checkout::tests -- --nocapture",
+      "result": "pass: 5 tests"
+    },
+    {
+      "command": "pnpm --filter @rudderhq/server typecheck",
+      "result": "pass"
+    },
+    {
+      "command": "pnpm exec vitest run server/src/__tests__/issue-lifecycle-routes.test.ts --pool=threads --poolOptions.threads.singleThread=true",
+      "result": "pass: 104 tests"
+    },
+    {
+      "command": "RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL=postgres://rudder@127.0.0.1:58777/rudder pnpm exec vitest run server/src/__tests__/issue-checkout-rust-real-entry.test.ts --pool=threads --poolOptions.threads.singleThread=true",
+      "result": "pass: 1 public Node-to-Rust-to-PostgreSQL test; disposable PostgreSQL cluster; durable issue, activity, outbox, full projection, and pending-terminal-effects conflict verified"
+    },
+    {
+      "command": "node scripts/rust-backend-authority-inventory.mjs check --root . --inventory doc/plans/2026-10-16-rudder-rust-backend-authority-inventory.json",
+      "result": "pass: 914 source files, 4647 structural surfaces, 10 unknowns"
+    },
+    {
+      "command": "node scripts/rust-backend-authority-inventory.mjs compare --compare-ref origin/main --root . --inventory doc/plans/2026-10-16-rudder-rust-backend-authority-inventory.json",
+      "result": "pass: no unreviewed Node authority changes"
+    }
+  ],
+  "evidence_limits": [
+    "The default embedded-postgres helper aborted with SIGABRT in this macOS workspace; the real acceptance was rerun against an independently initialized disposable PostgreSQL cluster on 127.0.0.1:58777.",
+    "This packet covers authenticated Agent self-checkout only. Board/on-behalf checkout, wakeup ownership, and global Node backend retirement remain migration debt.",
+    "Cross-organization invalid-envelope denial and concurrency/rollback fault injection remain required follow-up acceptance cases before this slice is merged as a protected PR."
+  ],
+  "stage_review": {
+    "reviewer": "independent agent /root/side_chat_pr346_stage_review",
+    "status": "needs_more_evidence_before_final_handoff",
+    "reference": "Issue checkout Rust checkpoint stage review; implementation blockers were fixed and the exact inventory/real-PG evidence was added afterward."
+  }
+}
