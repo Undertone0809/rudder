@@ -9,14 +9,9 @@ use rudder_d1_persistence::agent_core::{
 };
 use serde_json::json;
 use sqlx::PgConnection;
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::{
-        OnceLock,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{future::Future, pin::Pin, sync::OnceLock};
 use support::{Database, ORG};
 use tokio::sync::Mutex;
 
@@ -148,11 +143,13 @@ struct RevokedMembershipAuthorizer {
     user_id: &'static str,
 }
 
+#[cfg(unix)]
 struct RevokeAfterFilesystemAuthorizer {
     user_id: &'static str,
     calls: AtomicUsize,
 }
 
+#[cfg(unix)]
 impl NativeAgentAuthorizer for RevokeAfterFilesystemAuthorizer {
     fn revalidate<'a>(
         &'a self,

@@ -1027,11 +1027,7 @@ mod tests {
             .expect_err("fractional budget rejected");
         assert!(matches!(fractional, AgentCoreError::Http(400, _, _)));
 
-        for key in [
-            "icon",
-            "desiredSkills",
-            "seedOrganizationIntelligenceDefaults",
-        ] {
+        for key in ["icon", "seedOrganizationIntelligenceDefaults"] {
             let mut input = serde_json::Map::new();
             input.insert(key.to_owned(), json!("unsupported"));
             let error = parse_create(&Value::Object(input)).expect_err("unsupported field");
@@ -1040,6 +1036,12 @@ mod tests {
                 "{key}: {error:?}"
             );
         }
+        let desired_skills_type_error =
+            parse_create(&json!({"desiredSkills": "unsupported"})).expect_err("array field");
+        assert!(matches!(
+            desired_skills_type_error,
+            AgentCoreError::Http(400, _, _)
+        ));
         let error = parse_create(&json!({
             "agentRuntimeConfig": {"apiKey": "secret"}
         }))
