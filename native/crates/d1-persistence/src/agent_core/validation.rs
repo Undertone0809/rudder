@@ -525,6 +525,11 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             .iter()
             .enumerate()
             .map(|(index, value)| match value {
+                Value::String(value) if value.is_empty() => Err(validation_error(vec![json!({
+                    "code":"too_small", "minimum":1, "type":"string", "inclusive":true,
+                    "exact":false, "path":["desiredSkills", index],
+                    "message":"String must contain at least 1 character(s)"
+                })])),
                 Value::String(value) => Ok(value.clone()),
                 other => Err(validation_error(vec![wrong(
                     "string",
@@ -899,6 +904,9 @@ mod tests {
             request.desired_skills,
             ["org:organization/org-1/alpha", "rudder/browser"]
         );
+        let empty_skill = parse_create(&json!({"desiredSkills":[""]}))
+            .expect_err("empty desired skill must match the shared min(1) schema");
+        assert!(matches!(empty_skill, AgentCoreError::Http(400, _, _)));
         let error = parse_create(&json!({
             "agentRuntimeConfig": {"apiKey": "secret"}
         }))

@@ -548,6 +548,10 @@ async fn rust_create_rejects_unknown_ambiguous_and_cross_org_skills_atomically()
             "org:organization/10000000-0000-4000-8000-000000000001/missing".to_owned(),
         ),
         ("Ambiguous skill", "dup".to_owned()),
+        (
+            "Unavailable bundled skill",
+            "bundled:rudder/browser".to_owned(),
+        ),
         ("Cross org skill", foreign_skill_id),
     ] {
         let before =
