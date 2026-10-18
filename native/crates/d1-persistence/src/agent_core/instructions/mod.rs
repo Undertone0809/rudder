@@ -329,6 +329,97 @@ pub(super) fn create_feature_enabled() -> bool {
         })
 }
 
+fn decode_durable_bundle(
+    entry_file: &str,
+    files: &str,
+    clear_legacy_prompt_template: bool,
+) -> io::Result<DurableBundle> {
+    if files.len() > super::validation::MAX_INSTRUCTION_BUNDLE_BYTES {
+        return Err(invalid("Instruction bundle exceeds its size limits"));
+    }
+    let entry_file = bundle_path(entry_file)?;
+    let value = super::json_boundary::parse(files).map_err(io::Error::other)?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid("Invalid persisted instruction bundle files"))?;
+    if object.len() > super::validation::MAX_INSTRUCTION_FILES {
+        return Err(invalid("Instruction bundle exceeds its size limits"));
+    }
+    let mut output = BTreeMap::new();
+    let mut casefolded = BTreeMap::new();
+    casefolded.insert(entry_file.to_lowercase(), entry_file.clone());
+    for (path, body) in object {
+        let path = bundle_path(path)?;
+        let body = body
+            .as_str()
+            .ok_or_else(|| invalid("Invalid persisted instruction bundle content"))?;
+        if let Some(previous) = casefolded.insert(path.to_lowercase(), path.clone())
+            && previous != path
+        {
+            return Err(invalid(
+                "Instruction bundle paths collide on a case-insensitive host",
+            ));
+        }
+        if output.insert(path, body.to_owned()).is_some() {
+            return Err(invalid("Duplicate persisted instruction bundle path"));
+        }
+    }
+    let bundle = DurableBundle {
+        entry_file,
+        files: output,
+        clear_legacy_prompt_template,
+    };
+    validate_bundle_limits(&bundle.entry_file, &bundle.files)?;
+    Ok(bundle)
+}
+
+fn materialize_bundle_locked(
+    host: &Host,
+    org: &str,
+    workspace_key: &str,
+    bundle: &DurableBundle,
+    cwd: &Path,
+) -> io::Result<PathBuf> {
+    if workspace_key.is_empty()
+        || !workspace_key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(invalid("Invalid Agent workspace key"));
+    }
+    // Reject a pre-existing agents symlink before storage::ensure can create
+    // children through it.
+    if let Ok((storage_root, _)) = storage::root(host, org) {
+        let agents = storage_root.join("agents");
+        if lstat(&agents)?.is_some_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(invalid("Agent workspace root must not be a symlink"));
+        }
+    }
+    let agents = storage::ensure(host, org, cwd)?.join("agents");
+    assert_owned(&agents)?;
+    let workspace = agents.join(workspace_key);
+    let root = workspace.join("instructions");
+    for directory in [&workspace, &root] {
+        match lstat(directory)? {
+            Some(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(invalid("Agent workspace is not an owned directory"));
+            }
+            Some(_) => assert_owned(directory)?,
+            None => {
+                mkdir_private(directory)?;
+                assert_owned(directory)?;
+            }
+        }
+    }
+    for (path, body) in &bundle.files {
+        write_missing(&root, path, body)?;
+    }
+    // Ensure a missing entry is represented even if a malformed row omitted
+    // it from `files`; a pre-existing symlink is still rejected by write_missing.
+    write_missing(&root, &bundle.entry_file, "")?;
+    Ok(root)
+}
+
 struct BundleLocation {
     workspace: String,
     agent_root: PathBuf,
@@ -770,19 +861,167 @@ pub(super) async fn library_path(
     super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
     // A filesystem lock wait is also an authorization boundary. A revoked key,
     // membership or administrator role cannot use pre-wait authority.
-    let admin=ctx.user().is_some() && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut **tx).await?;
+    let admin = ctx.user().is_some()
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
+        )
+        .bind(ctx.user())
+        .fetch_one(&mut **tx)
+        .await?;
     let fresh = Context { admin, ..*ctx };
     authorize_org(tx, &fresh).await?;
+
+    // The row is the durable source of truth for a private create bundle. A
+    // detail read is the current authorized reconciliation trigger; filesystem
+    // work remains outside the SQL transaction and is committed only after the
+    // actor is revalidated.
+    let pending = sqlx::query_as::<_, (String, String, bool)>(
+        "SELECT entry_file,files::text,clear_legacy_prompt_template
+           FROM agent_instruction_bundles
+          WHERE org_id=$1::uuid AND agent_id=$2::uuid
+            AND EXISTS (SELECT 1 FROM agents a WHERE a.id=agent_instruction_bundles.agent_id AND a.org_id=$1::uuid)
+            AND state IN ('pending','repair')
+          ORDER BY created_at
+          LIMIT 1",
+    )
+    .bind(ctx.org)
+    .bind(text(row, "id"))
+    .fetch_optional(&mut **tx)
+    .await?;
+    let has_pending = pending.is_some();
+    let agent_id = text(row, "id").to_owned();
+    let org = ctx.org.to_owned();
     let row = row.clone();
     let home = ctx.request.home_directory.clone();
     let cwd = ctx.request.process_working_directory.clone();
-    tokio::task::spawn_blocking(move || {
+    let pending_for_materializer = pending.clone();
+    let materialized = tokio::task::spawn_blocking(move || {
         let _guard = guard;
-        recover(&host, &row, &home, &cwd)
+        let (materialize_error, materialized_root) = pending_for_materializer
+            .as_ref()
+            .map(|(entry_file, files, clear_legacy)| {
+                match decode_durable_bundle(entry_file, files, *clear_legacy) {
+                    Ok(bundle) => {
+                        let workspace = if row["workspaceKey"].is_null() {
+                            super::reads::workspace_key(&row)
+                        } else {
+                            js_trim(text(&row, "workspaceKey")).to_owned()
+                        };
+                        match materialize_bundle_locked(
+                            &host,
+                            &org,
+                            &workspace,
+                            &bundle,
+                            Path::new(&cwd),
+                        ) {
+                            Ok(root) => (None, Some(root)),
+                            Err(error) => (Some(error.to_string()), None),
+                        }
+                    }
+                    Err(error) => (Some(error.to_string()), None),
+                }
+            })
+            .unwrap_or((None, None));
+        // A malformed or failed private bundle must remain repairable. Do not
+        // let legacy recovery writes mask the durable error.
+        let recovered = if materialize_error.is_some() {
+            Ok(Value::Null)
+        } else {
+            recover(&host, &row, &home, &cwd)
+        };
+        let recovery_error = recovered.as_ref().err().map(ToString::to_string);
+        (
+            recovered,
+            materialize_error.or(recovery_error),
+            materialized_root,
+        )
     })
     .await
-    .map_err(|_| http(500, "Internal server error"))?
-    .map_err(|_| http(500, "Internal server error"))
+    .map_err(|_| http(500, "Internal server error"))?;
+    let (recovered, materialize_error, materialized_root) = materialized;
+
+    if has_pending {
+        if let Some(error) = materialize_error {
+            // Filesystem failure leaves the row in a retryable repair state.
+            super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
+            let admin = ctx.user().is_some()
+                && sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
+                )
+                .bind(ctx.user())
+                .fetch_one(&mut **tx)
+                .await?;
+            let fresh = Context { admin, ..*ctx };
+            authorize_org(tx, &fresh).await?;
+            sqlx::query(
+                "UPDATE agent_instruction_bundles
+                    SET state='repair',attempts=attempts+1,next_attempt_at=now(),last_error=$3,updated_at=now()
+                  WHERE org_id=$1::uuid AND agent_id=$2::uuid AND state IN ('pending','repair')",
+            )
+            .bind(ctx.org)
+            .bind(&agent_id)
+            .bind(error.chars().take(1024).collect::<String>())
+            .execute(&mut **tx)
+            .await?;
+        } else {
+            // Filesystem work happens outside the transaction. Re-check the
+            // actor before committing the durable projection and its state.
+            super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
+            let admin = ctx.user().is_some()
+                && sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
+                )
+                .bind(ctx.user())
+                .fetch_one(&mut **tx)
+                .await?;
+            let fresh = Context { admin, ..*ctx };
+            authorize_org(tx, &fresh).await?;
+            let Some(managed_root) = materialized_root else {
+                return Err(http(
+                    500,
+                    "Instruction bundle materialization did not produce a root",
+                ));
+            };
+            let (entry_file, _, clear_legacy) = pending
+                .as_ref()
+                .expect("pending row exists when materializing");
+            let managed_root = managed_root.to_string_lossy().into_owned();
+            let managed_entry = Path::new(&managed_root).join(entry_file);
+            let managed_entry = managed_entry.to_string_lossy().into_owned();
+            sqlx::query(
+                "UPDATE agents
+                    SET agent_runtime_config =
+                      ((COALESCE(agent_runtime_config,'{}'::jsonb)
+                         || jsonb_build_object(
+                              'instructionsBundleMode','managed',
+                              'instructionsRootPath',$3::text,
+                              'instructionsEntryFile',$4::text,
+                              'instructionsFilePath',$5::text
+                            ))
+                        - CASE WHEN $6 THEN ARRAY['promptTemplate','bootstrapPromptTemplate']::text[] ELSE ARRAY[]::text[] END),
+                        updated_at=now()
+                  WHERE org_id=$1::uuid AND id=$2::uuid",
+            )
+            .bind(ctx.org)
+            .bind(&agent_id)
+            .bind(&managed_root)
+            .bind(entry_file)
+            .bind(&managed_entry)
+            .bind(*clear_legacy)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "UPDATE agent_instruction_bundles
+                    SET state='materialized',attempts=attempts+1,next_attempt_at=now(),last_error=NULL,materialized_at=now(),updated_at=now()
+                  WHERE org_id=$1::uuid AND agent_id=$2::uuid AND state IN ('pending','repair')",
+            )
+            .bind(ctx.org)
+            .bind(&agent_id)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    recovered.map_err(|_| http(500, "Internal server error"))
 }
 
 #[cfg(test)]
