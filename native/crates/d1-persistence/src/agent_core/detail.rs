@@ -127,6 +127,12 @@ pub(super) async fn build(
     } else {
         super::instructions::library_path(tx, ctx, &row, native_auth).await?
     };
+    // library_path may have just committed a durable instruction projection
+    // and canonical runtime config. Refresh the row so the same detail
+    // response reflects that commit instead of requiring a second read.
+    if !restricted && let Some(updated) = super::stored(tx, text(&row, "id")).await? {
+        row = updated;
+    }
     // buildAgentDetail uses redactEventPayload(value ?? {}) ?? {}; its falsy
     // primitive inputs become an empty configuration, while other opaque JSON
     // roots retain their original values. Keep this specific to these routes.

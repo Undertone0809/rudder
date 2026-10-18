@@ -16,7 +16,7 @@ use rudder_auth_core::VerifiedActor;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
-use std::{future::Future, pin::Pin};
+use std::{collections::BTreeMap, future::Future, pin::Pin};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentCoreError {
@@ -122,6 +122,21 @@ pub struct AgentCreateNodeOwned {
     /// bindings or organization secret references; provider material is never
     /// carried over the AgentCreate boundary.
     pub normalized_agent_runtime_config: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions_bundle: Option<AgentCreateInstructionsBundle>,
+}
+
+/// A private, bounded instruction plan. The plan is persisted as desired
+/// state during the Agent transaction and materialized after commit by the
+/// native recovery path. It intentionally carries only relative paths and
+/// plain text; secrets stay in the Node-owned runtime preparation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentCreateInstructionsBundle {
+    pub entry_file: String,
+    pub files: BTreeMap<String, String>,
+    #[serde(default)]
+    pub clear_legacy_prompt_template: bool,
 }
 
 impl AgentCreateRequest {

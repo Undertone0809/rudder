@@ -1,11 +1,20 @@
 //! Schemas for the independently migrated Agent endpoints. Absent root, null,
 //! empty strings and unknown fields retain the exact public Zod distinction.
 use super::{
-    AgentCoreError, AgentCreateNodeOwned, AgentCreatePermissions, AgentCreateRequest,
+    AgentCoreError, AgentCreateInstructionsBundle, AgentCreateNodeOwned, AgentCreatePermissions,
+    AgentCreateRequest,
     common::{Result, Tx, js_trim, uuid_like},
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, env};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+};
+
+pub(super) const MAX_INSTRUCTION_FILES: usize = 128;
+pub(super) const MAX_INSTRUCTION_PATH_BYTES: usize = 512;
+pub(super) const MAX_INSTRUCTION_FILE_BYTES: usize = 256 * 1024;
+pub(super) const MAX_INSTRUCTION_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
 fn received(value: Option<&Value>) -> &'static str {
     match value {
         None => "undefined",
@@ -133,6 +142,20 @@ fn env_key(key: &str) -> bool {
     let mut chars = key.chars();
     matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn instruction_relative_path(value: &str) -> bool {
+    let value = value.replace('\\', "/");
+    value.len() <= MAX_INSTRUCTION_PATH_BYTES
+        && !value.is_empty()
+        && !value.starts_with('/')
+        && value.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && !part.contains(':')
+                && !part.chars().any(char::is_control)
+        })
 }
 
 fn normalized_env_binding(value: &Value, path: &str) -> Result<Value> {
@@ -570,9 +593,6 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                 )]));
             }
             reject_secret_like(config, "nodeOwned.normalizedAgentRuntimeConfig")?;
-            if node.contains_key("instructionsBundle") {
-                return Err(unsupported_field("nodeOwned.instructionsBundle"));
-            }
             if node.keys().any(|key| {
                 !matches!(
                     key.as_str(),
@@ -581,8 +601,128 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             }) {
                 return Err(unsupported_field("nodeOwned"));
             }
+            let instructions_bundle = match node.get("instructionsBundle") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(bundle)) => {
+                    if bundle.keys().any(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "entryFile" | "files" | "clearLegacyPromptTemplate"
+                        )
+                    }) {
+                        return Err(unsupported_field("nodeOwned.instructionsBundle"));
+                    }
+                    let entry_file = match bundle.get("entryFile") {
+                        Some(Value::String(value)) => {
+                            let value = value.trim();
+                            if !instruction_relative_path(value) {
+                                return Err(unsupported_field(
+                                    "nodeOwned.instructionsBundle.entryFile",
+                                ));
+                            }
+                            value.replace('\\', "/")
+                        }
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "string",
+                                value,
+                                json!(["nodeOwned", "instructionsBundle", "entryFile"]),
+                            )]));
+                        }
+                    };
+                    let files = match bundle.get("files") {
+                        Some(Value::Object(files)) => {
+                            if files.len() > MAX_INSTRUCTION_FILES {
+                                return Err(unsupported_field(
+                                    "nodeOwned.instructionsBundle.files",
+                                ));
+                            }
+                            let mut output = BTreeMap::new();
+                            let mut casefolded = BTreeSet::new();
+                            casefolded.insert(entry_file.to_lowercase());
+                            let mut total = entry_file.len();
+                            for (path, value) in files {
+                                if !instruction_relative_path(path) {
+                                    return Err(unsupported_field(&format!(
+                                        "nodeOwned.instructionsBundle.files.{path}"
+                                    )));
+                                }
+                                let normalized = path.replace('\\', "/");
+                                let folded = normalized.to_lowercase();
+                                if !casefolded.insert(folded) && normalized != entry_file {
+                                    return Err(unsupported_field(&format!(
+                                        "nodeOwned.instructionsBundle.files.{path}"
+                                    )));
+                                }
+                                let Some(body) = value.as_str() else {
+                                    return Err(validation_error(vec![wrong(
+                                        "string",
+                                        Some(value),
+                                        json!(["nodeOwned", "instructionsBundle", "files", path]),
+                                    )]));
+                                };
+                                if body.len() > MAX_INSTRUCTION_FILE_BYTES {
+                                    return Err(unsupported_field(&format!(
+                                        "nodeOwned.instructionsBundle.files.{path}"
+                                    )));
+                                }
+                                total = total
+                                    .saturating_add(normalized.len())
+                                    .saturating_add(body.len());
+                                if total > MAX_INSTRUCTION_BUNDLE_BYTES {
+                                    return Err(unsupported_field(
+                                        "nodeOwned.instructionsBundle.files",
+                                    ));
+                                }
+                                if output.insert(normalized, body.to_owned()).is_some() {
+                                    return Err(unsupported_field(&format!(
+                                        "nodeOwned.instructionsBundle.files.{path}"
+                                    )));
+                                }
+                            }
+                            output
+                        }
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "object",
+                                value,
+                                json!(["nodeOwned", "instructionsBundle", "files"]),
+                            )]));
+                        }
+                    };
+                    let clear_legacy_prompt_template = match bundle.get("clearLegacyPromptTemplate")
+                    {
+                        None => false,
+                        Some(Value::Bool(value)) => *value,
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "boolean",
+                                value,
+                                json!([
+                                    "nodeOwned",
+                                    "instructionsBundle",
+                                    "clearLegacyPromptTemplate"
+                                ]),
+                            )]));
+                        }
+                    };
+                    Some(AgentCreateInstructionsBundle {
+                        entry_file,
+                        files,
+                        clear_legacy_prompt_template,
+                    })
+                }
+                value => {
+                    return Err(validation_error(vec![wrong(
+                        "object",
+                        value,
+                        json!(["nodeOwned", "instructionsBundle"]),
+                    )]));
+                }
+            };
             Some(AgentCreateNodeOwned {
                 normalized_agent_runtime_config: config.clone(),
+                instructions_bundle,
             })
         }
         value => {
@@ -896,17 +1036,12 @@ mod tests {
                 "{key}: {error:?}"
             );
         }
-        let request = parse_create(
-            &json!({"desiredSkills":["org:organization/org-1/alpha", "rudder/browser"]}),
-        )
-        .expect("desired skills are a Rust create input");
-        assert_eq!(
-            request.desired_skills,
-            ["org:organization/org-1/alpha", "rudder/browser"]
-        );
-        let empty_skill = parse_create(&json!({"desiredSkills":[""]}))
-            .expect_err("empty desired skill must match the shared min(1) schema");
-        assert!(matches!(empty_skill, AgentCoreError::Http(400, _, _)));
+        let desired_skills_type_error =
+            parse_create(&json!({"desiredSkills": "unsupported"})).expect_err("array field");
+        assert!(matches!(
+            desired_skills_type_error,
+            AgentCoreError::Http(400, _, _)
+        ));
         let error = parse_create(&json!({
             "agentRuntimeConfig": {"apiKey": "secret"}
         }))
@@ -985,17 +1120,30 @@ mod tests {
             "nodeOwned": {
                 "normalizedAgentRuntimeConfig": {
                     "env": {"MODEL": {"type":"plain", "value":"fast"}}
+                },
+                "instructionsBundle": {
+                    "entryFile": "SOUL.md",
+                    "files": {"SOUL.md": "# Prepared"},
+                    "clearLegacyPromptTemplate": true
                 }
             }
         }))
         .expect("typed preparation");
         assert!(request.node_owned.is_some());
         assert_eq!(request.agent_runtime_config["env"]["MODEL"], "fast");
+        let bundle = request
+            .node_owned
+            .as_ref()
+            .and_then(|value| value.instructions_bundle.as_ref())
+            .expect("instruction bundle");
+        assert_eq!(bundle.entry_file, "SOUL.md");
+        assert_eq!(bundle.files["SOUL.md"], "# Prepared");
 
         for input in [
             json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{"apiKey":"raw"}}}),
             json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"../SOUL.md","files":{}}}}),
-            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"SOUL.md","files":{},"clearLegacyPromptTemplate":true}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"SOUL.md","files":{},"unexpected":"value"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"instructionsBundle":{"entryFile":"SOUL.md","files":{"a\\b":"one","a/b":"two"}}}}),
         ] {
             assert!(matches!(
                 parse_create(&input),

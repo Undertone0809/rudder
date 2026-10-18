@@ -13,7 +13,7 @@ export { agentIssueCreationRequests } from "./agent_issue_creation_requests.js";
 export { agentRuntimeState } from "./agent_runtime_state.js";
 export { agentTaskSessions } from "./agent_task_sessions.js";
 export { agentWakeupRequests } from "./agent_wakeup_requests.js";
-export { agents } from "./agents.js";
+export { agentInstructionBundles, agents } from "./agents.js";
 export { appBuilderApps } from "./app_builder_apps.js";
 export { approvalComments } from "./approval_comments.js";
 export { approvals } from "./approvals.js";
