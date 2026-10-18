@@ -329,7 +329,6 @@ pub(super) fn create_feature_enabled() -> bool {
         })
 }
 
-
 struct BundleLocation {
     workspace: String,
     agent_root: PathBuf,
@@ -818,7 +817,8 @@ fn materialize_bundle_for_test(
             }
         }
     }
-    let bundle = durable_bundle(bundle).map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
+    let bundle =
+        durable_bundle(bundle).map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
     for (path, body) in bundle.files {
         write_missing(&current, &path, &body)?;
     }

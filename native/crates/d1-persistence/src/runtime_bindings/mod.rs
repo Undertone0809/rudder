@@ -338,32 +338,6 @@ pub(crate) async fn authorize_chat_execution_target_run_mutation_tx(
     Ok(principal_scope_ref)
 }
 
-async fn authorize_chat_target_tx(
-    tx: &mut Tx<'_>,
-    actor: &impl NativeChatActor,
-    organization_id: &str,
-    conversation_id: &str,
-    selected_agent_id: &str,
-    mutable: bool,
-) -> Result<String> {
-    auth::authorize_org(tx, actor, organization_id).await?;
-    let conversation = auth::conversation(tx, organization_id, conversation_id, mutable)
-        .await?
-        .ok_or_else(|| http(404, "Chat conversation not found"))?;
-    let principal_scope_ref = auth::authorize_conversation(
-        actor,
-        organization_id,
-        &conversation,
-        Some(selected_agent_id),
-    )?;
-    if mutable {
-        auth::ensure_conversation_mutable(&conversation)?;
-    } else {
-        auth::ensure_conversation_readable(&conversation)?;
-    }
-    Ok(principal_scope_ref)
-}
-
 /// Nonlocking read/precheck for a request-scoped Native Chat browser actor.
 /// Mutations must still reauthorize with credential/grant locks after target serialization.
 pub(crate) async fn preauthorize_chat_target_read_tx(
@@ -395,15 +369,21 @@ pub(crate) async fn authorize_chat_target_read_tx(
     conversation_id: &str,
     selected_agent_id: &str,
 ) -> std::result::Result<String, Error> {
-    authorize_chat_target_tx(
-        tx,
+    // Historical readers run in a PostgreSQL READ ONLY transaction. Reuse the
+    // nonlocking authorization path so membership checks do not issue FOR
+    // SHARE, which PostgreSQL rejects in a read-only transaction.
+    auth::preauthorize_org(tx, actor, organization_id).await?;
+    let conversation = auth::conversation(tx, organization_id, conversation_id, false)
+        .await?
+        .ok_or_else(|| http(404, "Chat conversation not found"))?;
+    let principal_scope_ref = auth::authorize_conversation(
         actor,
         organization_id,
-        conversation_id,
-        selected_agent_id,
-        false,
-    )
-    .await
+        &conversation,
+        Some(selected_agent_id),
+    )?;
+    auth::ensure_conversation_readable(&conversation)?;
+    Ok(principal_scope_ref)
 }
 
 /// Recheck historical read entitlement after target serialization. Conversation

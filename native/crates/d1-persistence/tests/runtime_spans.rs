@@ -4,7 +4,7 @@ mod support;
 
 use fixtures::*;
 use rudder_d1_persistence::runtime_spans::{Error, Request, execute};
-use serde_json::json;
+use serde_json::{Value, json};
 use support::{CEO, Database, ORG, OTHER};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -469,5 +469,179 @@ async fn message_transcript_reader_maps_events_paginates_and_fences_access() {
     assert!(matches!(
         execute(&database.pool, &foreign, OTHER, &complete_page).await,
         Err(Error::Http(404, _))
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_reader_pages_summarizes_cutoffs_and_side_chat_access() {
+    const GENERATION: &str = "66000000-0000-4000-8000-000000000102";
+    const SOURCE_MESSAGE: &str = "67000000-0000-4000-8000-000000000102";
+    const ASSISTANT_MESSAGE: &str = "68000000-0000-4000-8000-000000000102";
+    const SIDE_MESSAGE: &str = "68000000-0000-4000-8000-000000000103";
+
+    let database = Database::start().await;
+    seed_access(&database.pool).await;
+    seed_chat(&database.pool, CHAT, "chat", USER).await;
+    seed_chat(&database.pool, SIDE_CHAT, "side_chat", USER).await;
+    let owner = actor(USER, ORG, "conversation-reader");
+    seed_run_attempt(&database.pool, CHAT).await;
+
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin conversation fixture");
+    sqlx::query("SELECT set_config('rudder.native_chat_write', 'native_chat:test_fixture', true)")
+        .execute(&mut *tx)
+        .await
+        .expect("mark native fixture writer");
+    sqlx::query(
+        "INSERT INTO chat_messages
+           (id, org_id, conversation_id, role, kind, status, body,
+            run_id, replying_agent_id, turn_variant)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'user', 'message', 'completed', 'prompt',
+                 NULL, NULL, 0),
+                ($4::uuid, $2::uuid, $3::uuid, 'assistant', 'message', 'completed', 'answer',
+                 $5::uuid, $6::uuid, 0)",
+    )
+    .bind(SOURCE_MESSAGE)
+    .bind(ORG)
+    .bind(CHAT)
+    .bind(ASSISTANT_MESSAGE)
+    .bind(RUN)
+    .bind(CEO)
+    .execute(&mut *tx)
+    .await
+    .expect("insert conversation messages");
+    sqlx::query(
+        "INSERT INTO chat_generations
+           (id, org_id, conversation_id, execution_authority, source_message_id,
+            source_turn_variant, status, attempt_epoch, accepted_through_seq)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'native_rust', $4::uuid, 0,
+                 'completed', 7, 1)",
+    )
+    .bind(GENERATION)
+    .bind(ORG)
+    .bind(CHAT)
+    .bind(SOURCE_MESSAGE)
+    .execute(&mut *tx)
+    .await
+    .expect("insert conversation generation");
+    sqlx::query(
+        "UPDATE heartbeat_runs
+         SET chat_generation_id=$2::uuid, execution_authority='native_rust',
+             scene='chat', target_type='chat_conversation', target_id=$3,
+             idempotency_key='conversation-reader-fixture', native_admission_hold=false,
+             session_intent_json=$5::jsonb
+         WHERE org_id=$1::uuid AND id=$4::uuid",
+    )
+    .bind(ORG)
+    .bind(GENERATION)
+    .bind(CHAT)
+    .bind(RUN)
+    .bind(json!({
+        "kind": "fresh",
+        "reuseScope": "none",
+        "sourceRunId": null,
+        "sessionId": null,
+        "sessionParams": null,
+    }))
+    .execute(&mut *tx)
+    .await
+    .expect("mark conversation Run native authority");
+    for (sequence, payload) in [
+        (1, json!({"entry":{"kind":"tool","text":"visible"}})),
+        (2, json!({"entry":{"kind":"tool","text":"cut off"}})),
+    ] {
+        sqlx::query(
+            "INSERT INTO chat_generation_events
+               (org_id, generation_id, generation_seq, attempt_epoch,
+                event_kind, payload, assistant_message_id, run_id)
+             VALUES ($1::uuid, $2::uuid, $3, 7, 'transcript', $4::jsonb, $5::uuid, $6::uuid)",
+        )
+        .bind(ORG)
+        .bind(GENERATION)
+        .bind(sequence)
+        .bind(payload)
+        .bind(ASSISTANT_MESSAGE)
+        .bind(RUN)
+        .execute(&mut *tx)
+        .await
+        .expect("insert conversation transcript event");
+    }
+    sqlx::query(
+        "INSERT INTO chat_messages
+           (id, org_id, conversation_id, role, kind, status, body, turn_variant)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'assistant', 'message', 'completed', 'side answer', 0)",
+    )
+    .bind(SIDE_MESSAGE)
+    .bind(ORG)
+    .bind(SIDE_CHAT)
+    .execute(&mut *tx)
+    .await
+    .expect("insert Side Chat message");
+    tx.commit().await.expect("commit conversation fixture");
+
+    let first_request: Request = serde_json::from_value(json!({
+        "operation":"read_conversation_messages",
+        "conversationId":CHAT,
+        "limit":1,
+        "includeTranscript":false
+    }))
+    .expect("first conversation page request");
+    let first = execute(&database.pool, &owner, ORG, &first_request)
+        .await
+        .expect("read first conversation page");
+    assert_eq!(
+        first["messages"].as_array().expect("first messages").len(),
+        1
+    );
+    assert!(first["nextCursor"].is_string());
+    assert_eq!(first["messages"][0]["transcript"], json!([]));
+
+    let cursor = first["nextCursor"].as_str().expect("conversation cursor");
+    let second_request: Request = serde_json::from_value(json!({
+        "operation":"read_conversation_messages",
+        "conversationId":CHAT,
+        "limit":10,
+        "cursor":cursor,
+        "includeTranscript":true
+    }))
+    .expect("second conversation page request");
+    let second = execute(&database.pool, &owner, ORG, &second_request)
+        .await
+        .expect("read second conversation page");
+    assert_eq!(second["nextCursor"], Value::Null);
+    let message = &second["messages"][0];
+    assert_eq!(message["body"], "answer");
+    assert_eq!(message["transcriptSummary"]["entryCount"], 1);
+    assert_eq!(message["transcript"][0]["text"], "visible");
+    assert_eq!(
+        message["transcript"]
+            .as_array()
+            .expect("visible transcript")
+            .len(),
+        1
+    );
+
+    let side_request: Request = serde_json::from_value(json!({
+        "operation":"read_conversation_messages",
+        "conversationId":SIDE_CHAT,
+        "limit":10
+    }))
+    .expect("Side Chat reader request");
+    let side = execute(&database.pool, &owner, ORG, &side_request)
+        .await
+        .expect("read Side Chat messages");
+    assert_eq!(side["messages"][0]["body"], "side answer");
+
+    let denied = actor(
+        "conversation-reader-denied",
+        ORG,
+        "conversation-reader-denied",
+    );
+    assert!(matches!(
+        execute(&database.pool, &denied, ORG, &first_request).await,
+        Err(Error::Http(403, _))
     ));
 }

@@ -144,8 +144,12 @@ pub struct AgentCreateIntelligenceDefaults {
     pub last_verified_at: Option<String>,
 }
 
-fn default_seed_intelligence_defaults() -> bool { true }
-fn default_intelligence_profile_status() -> String { "disabled".to_owned() }
+fn default_seed_intelligence_defaults() -> bool {
+    true
+}
+fn default_intelligence_profile_status() -> String {
+    "disabled".to_owned()
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
