@@ -59139,8 +59139,8 @@
       "rust_authority": "native/crates/server-foundation/src/messenger_state/threads.rs::follow_issue/unfollow_issue",
       "compatibility_boundary": "Express keeps public issue path, board/org checks, and issue identity lookup; Rust Messenger state owns follow/unfollow writes, activity, and outbox with no Node fallback.",
       "retirement_criterion": "Remove this Express adapter when Rust public HTTP owns the issue follow/unfollow paths and the general issue router no longer provides the endpoint.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "PR #347 exact-candidate review",
+      "reviewer": "independent agent /root/side_chat_pr346_stage_review",
+      "review_reference": "PR #347 exact-candidate stage review at 370efdbb0",
       "review_status": "reviewed"
     },
     {
@@ -59152,8 +59152,8 @@
       "rust_authority": "native/crates/server-foundation/src/messenger_state/mod.rs::messenger_state",
       "compatibility_boundary": "Bridge only signs and transports issueFollow/issueUnfollow commands; it does not perform database writes or activity logging.",
       "retirement_criterion": "Remove the bridge when the public Rust HTTP server accepts issue follow/unfollow directly.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "PR #347 exact-candidate review",
+      "reviewer": "independent agent /root/side_chat_pr346_stage_review",
+      "review_reference": "PR #347 exact-candidate stage review at 370efdbb0",
       "review_status": "reviewed"
     }
   ],
