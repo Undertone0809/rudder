@@ -9,8 +9,10 @@ import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { type RustAgentCreateCommand } from "./agent-create-bridge.js";
 import { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
+export { buildRustAgentCreateCommand, type RustAgentCreateCommand, type RustAgentCreateInput, type RustAgentCreateInstructionsBundle, type RustAgentCreateIntelligenceDefaults, type RustAgentCreateNodeOwned } from "./agent-create-bridge.js";
 export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
 export { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 export { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
@@ -57,98 +59,6 @@ export type RustFoundationResponse = {
   contentType: string;
   body: Buffer;
 };
-
-/** The only fields a public Agent create is allowed to hand to AgentCore. */
-export type RustAgentCreateInstructionsBundle = {
-  entryFile: string;
-  files: Record<string, string>;
-  clearLegacyPromptTemplate?: boolean;
-};
-
-export type RustAgentCreateIntelligenceDefaults = {
-  seed?: boolean;
-  status?: "disabled" | "configured" | "invalid";
-  lastError?: string | null;
-  lastVerifiedAt?: string | null;
-};
-
-export type RustAgentCreateNodeOwned = {
-  normalizedAgentRuntimeConfig: Record<string, unknown>;
-  instructionsBundle?: RustAgentCreateInstructionsBundle;
-  avatarIcon?: string;
-  intelligenceDefaults?: RustAgentCreateIntelligenceDefaults;
-};
-
-export type RustAgentCreateInput = {
-  name?: string;
-  role: string;
-  title?: string | null;
-  capabilities?: string | null;
-  agentRuntimeType: string;
-  agentRuntimeConfig: Record<string, unknown>;
-  runtimeConfig: Record<string, unknown>;
-  budgetMonthlyCents: number;
-  permissions: {
-    canCreateAgents: boolean;
-    canManageSkills: boolean;
-  };
-  metadata?: Record<string, unknown> | null;
-  desiredSkills?: string[];
-  nodeOwned?: RustAgentCreateNodeOwned;
-};
-
-export type RustAgentCreateCommand = {
-  operation: "create";
-  orgId: string;
-  input: RustAgentCreateInput;
-};
-
-/**
- * Build the private AgentCore command from server-owned preparation facts.
- * Keeping this as an explicit allowlist prevents a public request's `icon`,
- * `status`, `nodeOwned`, secret, or instruction-shaped fields from crossing
- * the bridge accidentally.
- */
-export function buildRustAgentCreateCommand(
-  orgId: string,
-  input: RustAgentCreateInput,
-): RustAgentCreateCommand {
-  const output: RustAgentCreateInput = {
-    role: input.role,
-    agentRuntimeType: input.agentRuntimeType,
-    agentRuntimeConfig: input.agentRuntimeConfig,
-    runtimeConfig: input.runtimeConfig,
-    budgetMonthlyCents: input.budgetMonthlyCents,
-    permissions: {
-      canCreateAgents: input.permissions.canCreateAgents,
-      canManageSkills: input.permissions.canManageSkills,
-    },
-  };
-  if (input.name !== undefined) output.name = input.name;
-  if (input.title !== undefined) output.title = input.title;
-  if (input.capabilities !== undefined) output.capabilities = input.capabilities;
-  if (input.metadata !== undefined) output.metadata = input.metadata;
-  if (input.desiredSkills !== undefined) output.desiredSkills = [...input.desiredSkills];
-  if (input.nodeOwned !== undefined) {
-    output.nodeOwned = {
-      normalizedAgentRuntimeConfig: input.nodeOwned.normalizedAgentRuntimeConfig,
-      ...(input.nodeOwned.instructionsBundle
-        ? { instructionsBundle: {
-          entryFile: input.nodeOwned.instructionsBundle.entryFile,
-          files: { ...input.nodeOwned.instructionsBundle.files },
-          ...(input.nodeOwned.instructionsBundle.clearLegacyPromptTemplate !== undefined
-            ? { clearLegacyPromptTemplate: input.nodeOwned.instructionsBundle.clearLegacyPromptTemplate }
-            : {}),
-        } }
-        : {}),
-      ...(input.nodeOwned.avatarIcon !== undefined ? { avatarIcon: input.nodeOwned.avatarIcon } : {}),
-      ...(input.nodeOwned.intelligenceDefaults
-        ? { intelligenceDefaults: { ...input.nodeOwned.intelligenceDefaults } }
-        : {}),
-    };
-  }
-  return { operation: "create", orgId, input: output };
-}
 
 export interface RustFoundationBridge {
   runtimeBinding?(actor: RustFoundationActor, orgId: string, input: RuntimeBindingInput): Promise<RustFoundationResponse>;
