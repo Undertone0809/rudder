@@ -425,6 +425,23 @@
           "stage_review_limits": "Private artifact stage; final protected CI and exact-candidate final handoff still required.",
           "final_review": "pending protected CI and final handoff review",
           "rebase": "Rebased after #332 merge onto main 8e946face; preserved managed MCP and normalization tests."
+        },
+        {
+          "number": 334,
+          "state": "open_ci_pending_stage_review_pending",
+          "head_sha": "ebb9a8e0362d9d85a39f77728ddf29968a0b924c",
+          "base_sha": "8e946face31aa7aeb4f8ab6740f164f23d3416bd",
+          "scope": "private feature-gated durable Agent instruction bundle foundation: transactional desired rows, crash-safe/idempotent materialization/replay, canonical runtime config and prompt cleanup, host/path/symlink/size limits, migration 0180; public POST unchanged and no background worker yet",
+          "validation": [
+            "cargo fmt/check",
+            "21 instruction tests",
+            "targeted PG outbox/detail materialization tests",
+            "clippy -D warnings",
+            "DB typecheck/lint/migration differential pass"
+          ],
+          "limits": "pnpm verify:migration-preflight and embedded-Postgres migration suites blocked by macOS ICU dylib; pending/repair reconciler is detail-triggered until future worker",
+          "stage_review": "pending exact-head independent review",
+          "mergeability": "MERGEABLE/CI pending; do not merge"
         }
       ],
       "managed_migration": {
