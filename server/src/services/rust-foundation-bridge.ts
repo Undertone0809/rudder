@@ -9,8 +9,10 @@ import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { type RustAgentCreateCommand } from "./agent-create-bridge.js";
 import { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
+export { buildRustAgentCreateCommand, type RustAgentCreateCommand, type RustAgentCreateInput, type RustAgentCreateInstructionsBundle, type RustAgentCreateIntelligenceDefaults, type RustAgentCreateNodeOwned } from "./agent-create-bridge.js";
 export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
 export { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 export { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
@@ -79,6 +81,7 @@ export interface RustFoundationBridge {
   activityRead?(actor: RustFoundationActor, orgId: string, input: ActivityReadInput): Promise<RustFoundationResponse>;
   runWorkspaceOrdinaryUpdate?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   agentCore?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
+  agentCreate?(actor: RustFoundationActor, command: RustAgentCreateCommand): Promise<RustFoundationResponse>;
   readonly mode: RustFoundationMode;
   readonly organizationBrandingMode: RustFoundationMode;
   readonly projectGoalSetMode: RustFoundationMode;
@@ -647,6 +650,34 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     await start();
   });
 
+  async function requestAgentCore(
+    actor: RustFoundationActor,
+    input: Record<string, unknown>,
+  ): Promise<RustFoundationResponse> {
+    await ensureStarted();
+    if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+    const requestPath = "/internal/agent-core";
+    const body = Buffer.from(JSON.stringify({ ...input, actorRunId: actor.runId ?? null,
+      localImplicit: actor.type === "board" && actor.source === "local_implicit", canonicalLocale: Intl.Collator().resolvedOptions().locale }), "utf8");
+    const requestId = randomUUID();
+    const envelope = createRustActorEnvelope({ actor, organizationId: "agent-core", method: "POST", path: requestPath,
+      action: "agent.core.execute", body, secret: actorEnvelopeKey, requestId, allowAnonymous: true });
+    try {
+      const response = await fetch(`${baseUrl}${requestPath}`, { method: "POST", headers: {
+        "content-type": "application/json", "x-rudder-actor-envelope": JSON.stringify(envelope), "x-rudder-request-id": requestId },
+        body: body as unknown as BodyInit,
+        // Detail/permissions and create retain the legacy lock wait. An
+        // admitted create may commit several organization-wide side effects;
+        // aborting the fetch would make a successful commit indistinguishable
+        // from a failed request and make a retry unsafe. Explicit caller
+        // timeouts remain available for read/resolve operations.
+        signal: input.operation === "create"
+          || (input.resolveOnly !== true && ["detail", "me", "permissions"].includes(String(input.operation)) && options.requestTimeoutMs === undefined)
+          ? undefined : AbortSignal.timeout(requestTimeoutMs) });
+      return { status: response.status, contentType: response.headers.get("content-type") ?? "application/json", body: Buffer.from(await response.arrayBuffer()) };
+    } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust Agent core request failed", { cause: error }); }
+  }
+
   const close = (): Promise<void> => enqueueLifecycle(async () => {
     lifecycleState = "closing";
     const current = child;
@@ -817,26 +848,21 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust run workspace update request failed", { cause: error }); }
     },
     async agentCore(actor, input) {
-      await ensureStarted();
-      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
-      const requestPath = "/internal/agent-core";
-      const body = Buffer.from(JSON.stringify({ ...input, actorRunId: actor.runId ?? null,
-        localImplicit: actor.type === "board" && actor.source === "local_implicit", canonicalLocale: Intl.Collator().resolvedOptions().locale }), "utf8");
-      const requestId = randomUUID();
-      const envelope = createRustActorEnvelope({ actor, organizationId: "agent-core", method: "POST", path: requestPath,
-        action: "agent.core.execute", body, secret: actorEnvelopeKey, requestId, allowAnonymous: true });
-      try {
-        const response = await fetch(`${baseUrl}${requestPath}`, { method: "POST", headers: {
-          "content-type": "application/json", "x-rudder-actor-envelope": JSON.stringify(envelope), "x-rudder-request-id": requestId },
-          body: body as unknown as BodyInit,
-          // These operations retain the legacy ten-second filesystem-lock wait
-          // and migration I/O without a new total deadline. A short timer can report a
-          // false failure while the admitted transaction is still committing.
-          // Explicit caller timeouts remain an opt-in with ambiguous outcomes.
-          signal: input.resolveOnly !== true && ["detail", "me", "permissions"].includes(String(input.operation)) && options.requestTimeoutMs === undefined
-            ? undefined : AbortSignal.timeout(requestTimeoutMs) });
-        return { status: response.status, contentType: response.headers.get("content-type") ?? "application/json", body: Buffer.from(await response.arrayBuffer()) };
-      } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust Agent core request failed", { cause: error }); }
+      return requestAgentCore(actor, input);
+    },
+    async agentCreate(actor, command) {
+      return requestAgentCore(actor, {
+        operation: command.operation,
+        orgId: command.orgId,
+        id: null,
+        revisionId: null,
+        keyId: null,
+        query: {},
+        input: command.input,
+        deploymentMode: options.publicIngress?.deploymentMode ?? "authenticated",
+        homeDirectory: homedir(),
+        processWorkingDirectory: process.cwd(),
+      });
     },
     async goalRead(actor, orgId, input) {
       await ensureStarted();

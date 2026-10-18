@@ -60,6 +60,7 @@ const mockOrganizationIntelligenceProfiles = vi.hoisted(() => ({
   getByPurpose: vi.fn(),
   upsert: vi.fn(),
   ensureDefaultsFromRuntime: vi.fn(),
+  prepareDefaultsFromRuntime: vi.fn(),
 }));
 const mockOrganizationIntelligenceRuntimeChain = vi.hoisted(() => ({
   assertUsable: vi.fn(),
@@ -128,7 +129,7 @@ vi.mock("@rudderhq/agent-runtime-pi-local/server", () => ({
 
 function createDb(
   requireBoardApprovalForNewAgents = false,
-  firstAgentId = "11111111-1111-4111-8111-111111111111",
+  firstAgentId: string | null = "11111111-1111-4111-8111-111111111111",
 ) {
   return {
     select: vi.fn((selection?: Record<string, unknown>) => ({
@@ -137,7 +138,7 @@ function createDb(
           return {
             where: vi.fn(() => ({
               orderBy: vi.fn(() => ({
-                limit: vi.fn(async () => [{ id: firstAgentId }]),
+                limit: vi.fn(async () => firstAgentId ? [{ id: firstAgentId }] : []),
               })),
             })),
           };
@@ -172,6 +173,7 @@ async function createApp(
     source: "local_implicit",
     isInstanceAdmin: false,
   },
+  rustFoundationBridge?: Record<string, unknown>,
 ) {
   const app = express();
   app.use(express.json());
@@ -179,7 +181,7 @@ async function createApp(
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes(db as any));
+  app.use("/api", agentRoutes(db as any, undefined, rustFoundationBridge as any));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -307,6 +309,13 @@ describe("agent skill routes", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) delete process.env[key];
     enabledSkillState = [];
     mockAgentService.resolveByReference.mockResolvedValue({
       ambiguous: false,
@@ -316,6 +325,7 @@ describe("agent skill routes", () => {
     mockAgentService.getInternalById.mockResolvedValue(makeAgent("claude_local"));
     mockAgentService.list.mockResolvedValue([makeAgent("claude_local")]);
     mockSecretService.resolveAdapterConfigForRuntime.mockResolvedValue({ config: { env: {} } });
+    mockOrganizationIntelligenceProfiles.prepareDefaultsFromRuntime.mockResolvedValue(null);
     mockCompanySkillService.list.mockResolvedValue([
       {
         id: "skill-rudder",
@@ -561,6 +571,301 @@ describe("agent skill routes", () => {
       "11111111-1111-4111-8111-111111111111",
       [],
     );
+  });
+
+  it("fails closed when public Rust Agent create is enabled without every sub-gate", async () => {
+    process.env.RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED = "1";
+    const res = await request(await createApp())
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "Not Ready", role: "engineer", agentRuntimeType: "claude_local", agentRuntimeConfig: {} });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: "rust_agent_create_cutover_not_ready" });
+    expect(res.body.missingGates).toEqual(expect.arrayContaining(["identity/skills", "instructions", "managed-mcp", "intelligence/avatar"]));
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("reports the Rust bridge readiness gap when the public gate has no listener", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const res = await request(await createApp(undefined, undefined, {}))
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "No Rust Listener", role: "engineer", agentRuntimeType: "claude_local", agentRuntimeConfig: {} });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: "rust_agent_create_cutover_not_ready" });
+    expect(res.body.missingGates).toContain("public-listener");
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Node create path when the public Rust gate is off", async () => {
+    const res = await request(await createApp())
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "Node Create", role: "engineer", agentRuntimeType: "claude_local", agentRuntimeConfig: {} });
+
+    expect(res.status).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalled();
+  });
+
+  it("drops client nodeOwned data and redacts the Rust response", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const bridge = {
+      agentCreate: vi.fn(async (_actor: unknown, command: { input: Record<string, unknown> }) => ({
+        status: 201,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify({
+          id: "22222222-2222-4222-8222-222222222222",
+          orgId: "organization-1",
+          name: String(command.input.name),
+          role: "engineer",
+          status: "idle",
+          agentRuntimeType: "claude_local",
+          agentRuntimeConfig: { apiKey: "secret" },
+          runtimeConfig: {},
+        })),
+      })),
+    };
+    const res = await request(await createApp(createDb(false, "11111111-1111-4111-8111-111111111111"), undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "Rust Create",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+        nodeOwned: { normalizedAgentRuntimeConfig: { apiKey: "forged" }, status: "configured" },
+      });
+
+    expect(res.status).toBe(201);
+    expect(bridge.agentCreate).toHaveBeenCalledTimes(1);
+    const command = bridge.agentCreate.mock.calls[0]?.[1] as { input: Record<string, unknown> };
+    expect(command.input).not.toHaveProperty("icon");
+    expect(command.input).not.toHaveProperty("status");
+    expect(command.input).not.toHaveProperty("nodeOwned.status");
+    expect(res.body.agentRuntimeConfig).not.toHaveProperty("apiKey");
+  });
+
+  it("preserves Rust validation errors for secret runtime config without falling back to Node", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const bridge = {
+      agentCreate: vi.fn(async (_actor: unknown, command: { input: Record<string, unknown> }) => {
+        expect(command.input.runtimeConfig).toEqual({ fallbacks: [{ privateKey: "raw" }] });
+        return {
+          status: 422,
+          contentType: "application/json",
+          body: Buffer.from(JSON.stringify({ error: "runtimeConfig contains secret-like fields" })),
+        };
+      }),
+    };
+    const res = await request(await createApp(undefined, undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "Secret Runtime Config",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        runtimeConfig: { fallbacks: [{ privateKey: "raw" }] },
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("secret-like");
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("preserves Rust budget bounds errors without falling back to Node", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const bridge = {
+      agentCreate: vi.fn(async (_actor: unknown, command: { input: Record<string, unknown> }) => {
+        expect(command.input.budgetMonthlyCents).toBe(2_147_483_648);
+        return {
+          status: 422,
+          contentType: "application/json",
+          body: Buffer.from(JSON.stringify({ error: "budgetMonthlyCents exceeds Rust i32 limit" })),
+        };
+      }),
+    };
+    const res = await request(await createApp(undefined, undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "Large Budget",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        budgetMonthlyCents: 2_147_483_648,
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("i32");
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("does not probe intelligence when the seed flag is false", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const bridge = {
+      agentCreate: vi.fn(async () => ({
+        status: 201,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify({ id: "22222222-2222-4222-8222-222222222222", orgId: "organization-1", name: "No Seed", agentRuntimeType: "claude_local", agentRuntimeConfig: {}, runtimeConfig: {} })),
+      })),
+    };
+    await request(await createApp(createDb(false, "11111111-1111-4111-8111-111111111111"), undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "No Seed", role: "engineer", agentRuntimeType: "claude_local", agentRuntimeConfig: {} })
+      .expect(201);
+    expect(mockOrganizationIntelligenceProfiles.prepareDefaultsFromRuntime).not.toHaveBeenCalled();
+  });
+
+  it("passes trusted first-agent intelligence preparation to Rust and fails closed on probe errors", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    mockOrganizationIntelligenceProfiles.prepareDefaultsFromRuntime.mockResolvedValueOnce({
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      status: "configured",
+      lastError: null,
+      lastVerifiedAt: new Date("2026-10-18T00:00:00.000Z"),
+    });
+    const bridge = {
+      agentCreate: vi.fn(async (_actor: unknown, command: { input: Record<string, any> }) => {
+        expect(command.input.nodeOwned?.intelligenceDefaults).toEqual({
+          seed: true,
+          status: "configured",
+          lastError: null,
+          lastVerifiedAt: "2026-10-18T00:00:00.000Z",
+        });
+        return {
+          status: 201,
+          contentType: "application/json",
+          body: Buffer.from(JSON.stringify({ id: "22222222-2222-4222-8222-222222222222", orgId: "organization-1", name: "First Agent", agentRuntimeType: "claude_local", agentRuntimeConfig: {}, runtimeConfig: {} })),
+        };
+      }),
+    };
+    const firstRes = await request(await createApp(createDb(false, null), undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "First Agent", role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: { command: "codex", model: "gpt-5.3-codex" }, seedOrganizationIntelligenceDefaults: true });
+    expect(firstRes.status).toBe(201);
+    expect(mockOrganizationIntelligenceProfiles.prepareDefaultsFromRuntime).toHaveBeenCalledTimes(1);
+
+    mockOrganizationIntelligenceProfiles.prepareDefaultsFromRuntime.mockRejectedValueOnce(new Error("runtime unavailable"));
+    const failingBridge = { agentCreate: vi.fn() };
+    const failureRes = await request(await createApp(createDb(false, null), undefined, failingBridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "Probe Failure", role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: { command: "codex", model: "gpt-5.3-codex" }, seedOrganizationIntelligenceDefaults: true });
+    expect(failureRes.status).toBe(503);
+    expect(failureRes.body.code).toBe("rust_agent_create_intelligence_preflight_failed");
+    expect(failingBridge.agentCreate).not.toHaveBeenCalled();
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("does not probe first-agent intelligence when another agent already exists", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const bridge = {
+      agentCreate: vi.fn(async () => ({
+        status: 201,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify({ id: "22222222-2222-4222-8222-222222222222", orgId: "organization-1", name: "Second Agent", agentRuntimeType: "claude_local", agentRuntimeConfig: {}, runtimeConfig: {} })),
+      })),
+    };
+    const res = await request(await createApp(createDb(false, "11111111-1111-4111-8111-111111111111"), undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "Second Agent", role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: { command: "codex", model: "gpt-5.3-codex" }, seedOrganizationIntelligenceDefaults: true });
+    expect(res.status).toBe(201);
+    expect(mockOrganizationIntelligenceProfiles.prepareDefaultsFromRuntime).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for explicit instruction paths while Rust outbox parity is unavailable", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const bridge = { agentCreate: vi.fn() };
+    const res = await request(await createApp(undefined, undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "Explicit Instructions", role: "engineer", agentRuntimeType: "claude_local", agentRuntimeConfig: { instructionsFilePath: "/tmp/SOUL.md" } });
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("rust_agent_create_instructions_preparation_unavailable");
+    expect(bridge.agentCreate).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for nested instruction config that cannot become a Rust outbox bundle", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const bridge = { agentCreate: vi.fn() };
+    const res = await request(await createApp(undefined, undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "Nested Instructions",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: { modelFallbacks: [{ agentRuntimeType: "claude_local", model: "fallback", config: { instructionsEntryFile: "AGENTS.md" } }] },
+      });
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("rust_agent_create_instructions_preparation_unavailable");
+    expect(bridge.agentCreate).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the Rust create request cannot reach the private listener", async () => {
+    for (const key of [
+      "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ]) process.env[key] = "1";
+    const bridge = { agentCreate: vi.fn(async () => { throw new Error("listener unavailable"); }) };
+    const res = await request(await createApp(undefined, undefined, bridge))
+      .post("/api/orgs/organization-1/agents")
+      .send({ name: "Listener Failure", role: "engineer", agentRuntimeType: "claude_local", agentRuntimeConfig: {} });
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("rust_agent_create_cutover_request_failed");
+    expect(mockAgentService.create).not.toHaveBeenCalled();
   });
 
   it("passes a runtime-chain tester when onboarding seeds Codex organization intelligence defaults", async () => {
