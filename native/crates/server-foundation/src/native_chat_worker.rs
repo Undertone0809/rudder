@@ -937,11 +937,10 @@ fn finalize_native_observation(
     }
 }
 
-/// Pi has provider-native session/leaf receipts, while the current D1
-/// finalizer accepts only Codex and Hermes projections. Preserve the typed
-/// observation and report the exact missing boundary to the supervisor. A
-/// settled provider receipt is distinguishable from an unknown cleanup state;
-/// neither path fabricates Codex Thread/Turn identifiers or releases the hold.
+/// Pi has provider-native session/leaf receipts. A settled receipt with an
+/// owned cleanup proof is handed to the D1 Pi finalizer; missing terminal or
+/// cleanup evidence remains unresolved. Neither path fabricates Codex
+/// Thread/Turn identifiers.
 fn finish_pi_observation(
     handle: &tokio::runtime::Handle,
     pool: &PgPool,

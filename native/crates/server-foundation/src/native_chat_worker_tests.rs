@@ -22,10 +22,10 @@ fn complete() -> Completion {
 }
 
 #[test]
-fn pi_terminal_receipt_is_reported_as_unsupported_without_codex_projection() {
+fn pi_missing_receipt_is_classified_without_codex_projection() {
     assert_eq!(
-        classify_pi_observation(true, true, true),
-        UnresolvedReason::ProviderTerminalUnsupported
+        classify_pi_observation(true, false, false),
+        UnresolvedReason::ProviderCleanupUnknown
     );
 }
 
