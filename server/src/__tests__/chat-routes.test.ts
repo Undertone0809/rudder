@@ -3575,7 +3575,7 @@ describe("chat routes", { retry: 2 }, () => {
     );
 
     const bare = await request(app)
-      .get("/api/chats/chat-1/messages?orgId=organization-1");
+      .get("/api/chats/chat-1/messages?orgId=organization-1&includeTranscript=true&cursor=10000000-0000-4000-8000-000000000009");
     expect(bare.status).toBe(200);
     expect(bare.body).toEqual(JSON.parse(JSON.stringify(messages)));
 
@@ -3584,6 +3584,16 @@ describe("chat routes", { retry: 2 }, () => {
     expect(envelope.status).toBe(200);
     expect(envelope.body).toEqual({ items: JSON.parse(JSON.stringify(messages)), nextCursor: null });
     expect(nativeChatMessages).toHaveBeenCalledTimes(2);
+    expect(nativeChatMessages.mock.calls[0]?.[2]).toMatchObject({
+      operation: "read_conversation_messages",
+      conversationId: "chat-1",
+      cursor: "10000000-0000-4000-8000-000000000009",
+      includeTranscript: true,
+    });
+    expect(nativeChatMessages.mock.calls[1]?.[2]).toMatchObject({
+      operation: "read_conversation_messages",
+      includeTranscript: false,
+    });
   });
 
   it("allows a queued message claim after a verified operator Stop", async () => {

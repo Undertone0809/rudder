@@ -49,7 +49,10 @@ export function registerChatMessageQueryRoutes(ctx: ChatMessageQueryRouteContext
       await svc.markInterruptedStreamingMessages(conversation.id);
     }
     const includeTranscript = req.query.includeTranscript === "true";
-    if (conversation.mutability === "native_chat") {
+    // Side Chats still use the legacy projection until their copied
+    // annotations, attachments, approvals, and transcript consumers are
+    // migrated to the Rust Reader contract. Main Native Chat is Rust-owned.
+    if (conversation.mutability === "native_chat" && conversation.conversationKind === "chat") {
       const response = await callNativeChatMessages(
         rustFoundationBridge,
         req.actor,

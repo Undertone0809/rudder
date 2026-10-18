@@ -15,6 +15,8 @@ const input: NativeChatMessageReaderInput = {
   operation: "read_conversation_messages",
   conversationId: "20000000-0000-4000-8000-000000000001",
   limit: 25,
+  cursor: "20000000-0000-4000-8000-000000000002",
+  includeTranscript: true,
 };
 
 afterEach(() => vi.restoreAllMocks());

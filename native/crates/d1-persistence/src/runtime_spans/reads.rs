@@ -136,12 +136,12 @@ pub(super) async fn read_transcript(
          FROM chat_generation_events
          WHERE org_id=$1::uuid AND generation_id=$2::uuid
            AND generation_seq>$3 AND event_kind IN ('assistant_delta','runtime_output')
-         ORDER BY generation_seq ASC LIMIT $4",
+        ORDER BY generation_seq ASC LIMIT $4",
     )
     .bind(organization_id)
     .bind(&generation_id)
     .bind(*after_seq)
-    .bind(limit)
+    .bind(limit + 1)
     .fetch_all(&mut *tx)
     .await?;
     let has_more = events.len() > limit as usize;
@@ -334,6 +334,10 @@ pub(super) async fn read_conversation_messages(
     else {
         return Err(http(400, "Expected a conversation message read request"));
     };
+    let cursor = cursor
+        .as_deref()
+        .map(|raw| canonical_uuid(raw, "message cursor"))
+        .transpose()?;
     let conversation_id = canonical_uuid(raw_conversation_id, "conversation id")?;
     let limit = (*limit).clamp(1, MAX_MESSAGE_LIMIT);
     let mut tx = pool.begin().await?;
@@ -398,7 +402,7 @@ pub(super) async fn read_conversation_messages(
     .await?;
     let has_more = rows.len() > limit as usize;
     let next_cursor = rows
-        .get(limit as usize)
+        .get(limit.saturating_sub(1) as usize)
         .and_then(|row| row.try_get::<String, _>("id").ok());
     let generation_ids = rows
         .iter()
@@ -409,14 +413,17 @@ pub(super) async fn read_conversation_messages(
         })
         .collect::<Vec<_>>();
     let mut transcript_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut fallback_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
     if *include_transcript && !generation_ids.is_empty() {
         let events = sqlx::query(
             "SELECT generation_id::text AS generation_id, generation_seq, event_kind,
                     payload, recorded_at::text AS recorded_at
-             FROM chat_generation_events
-             WHERE org_id=$1::uuid AND generation_id=ANY($2::uuid[])
-               AND event_kind IN ('assistant_delta','runtime_output')
-             ORDER BY generation_id, generation_seq ASC",
+             FROM chat_generation_events e
+             JOIN chat_generations g ON g.org_id=e.org_id AND g.id=e.generation_id
+             WHERE e.org_id=$1::uuid AND e.generation_id=ANY($2::text[]::uuid[])
+               AND (g.accepted_through_seq IS NULL OR e.generation_seq <= g.accepted_through_seq)
+               AND e.event_kind IN ('assistant_delta','runtime_output','transcript')
+             ORDER BY e.generation_id, e.generation_seq ASC",
         )
         .bind(organization_id)
         .bind(&generation_ids)
@@ -426,28 +433,51 @@ pub(super) async fn read_conversation_messages(
             let generation_id: String = event.try_get("generation_id")?;
             let kind: String = event.try_get("event_kind")?;
             let payload: Value = event.try_get("payload")?;
-            let Some(text) = (match kind.as_str() {
-                "assistant_delta" => payload.get("delta").and_then(Value::as_str),
-                "runtime_output" => payload.get("body").and_then(Value::as_str),
-                _ => None,
-            }) else {
-                continue;
-            };
             let seq: i32 = event.try_get("generation_seq")?;
             let recorded_at: String = event.try_get("recorded_at")?;
+            if kind == "transcript" {
+                let Some(mut entry) = payload.get("entry").cloned() else {
+                    continue;
+                };
+                if let Value::Object(object) = &mut entry {
+                    object.insert(
+                        "generationId".to_owned(),
+                        Value::String(generation_id.clone()),
+                    );
+                    object.insert("generationSeqStart".to_owned(), Value::from(seq));
+                    object.insert("generationSeqEnd".to_owned(), Value::from(seq));
+                }
+                transcript_by_generation
+                    .entry(generation_id)
+                    .or_default()
+                    .push(entry);
+            } else {
+                let Some(text) = (match kind.as_str() {
+                    "assistant_delta" => payload.get("delta").and_then(Value::as_str),
+                    "runtime_output" => payload.get("body").and_then(Value::as_str),
+                    _ => None,
+                }) else {
+                    continue;
+                };
+                fallback_by_generation
+                    .entry(generation_id.clone())
+                    .or_default()
+                    .push(serde_json::json!({
+                        "kind": "assistant",
+                        "ts": recorded_at,
+                        "text": text,
+                        "delta": kind == "assistant_delta",
+                        "phase": if kind == "runtime_output" { "final_answer" } else { "commentary" },
+                        "generationId": generation_id,
+                        "generationSeqStart": seq,
+                        "generationSeqEnd": seq,
+                    }));
+            }
+        }
+        for (generation_id, fallback) in fallback_by_generation {
             transcript_by_generation
-                .entry(generation_id.clone())
-                .or_default()
-                .push(serde_json::json!({
-                    "kind": "assistant",
-                    "ts": recorded_at,
-                    "text": text,
-                    "delta": kind == "assistant_delta",
-                    "phase": if kind == "runtime_output" { "final_answer" } else { "commentary" },
-                    "generationId": generation_id,
-                    "generationSeqStart": seq,
-                    "generationSeqEnd": seq,
-                }));
+                .entry(generation_id)
+                .or_insert(fallback);
         }
     }
     let mut messages = Vec::new();
@@ -475,6 +505,15 @@ pub(super) async fn read_conversation_messages(
             .and_then(|id| transcript_by_generation.get(id))
             .cloned()
             .unwrap_or_default();
+        let transcript_summary = if transcript.is_empty() {
+            Value::Null
+        } else {
+            serde_json::json!({
+                "entryCount": transcript.len(),
+                "startedAt": transcript.first().and_then(|entry| entry.get("ts")).cloned().unwrap_or(Value::Null),
+                "endedAt": transcript.last().and_then(|entry| entry.get("ts")).cloned().unwrap_or(Value::Null),
+            })
+        };
         messages.push(serde_json::json!({
             "id": id,
             "orgId": row.try_get::<String, _>("org_id")?,
@@ -496,7 +535,7 @@ pub(super) async fn read_conversation_messages(
             "supersededAt": row.try_get::<Option<String>, _>("superseded_at")?,
             "createdAt": row.try_get::<String, _>("created_at")?,
             "updatedAt": row.try_get::<String, _>("updated_at")?,
-            "transcriptSummary": Value::Null,
+            "transcriptSummary": transcript_summary,
             "transcript": transcript,
         }));
     }
