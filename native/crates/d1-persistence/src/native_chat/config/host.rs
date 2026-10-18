@@ -198,7 +198,8 @@ impl LocalHostContext {
         profiles_root: PathBuf,
     ) -> std::result::Result<Self, super::Error> {
         self.cursor_executable = Some(canonical_file(executable, "Cursor executable")?);
-        self.cursor_profiles_root = Some(canonical_directory(profiles_root, "Cursor profile root")?);
+        self.cursor_profiles_root =
+            Some(canonical_directory(profiles_root, "Cursor profile root")?);
         Ok(self)
     }
 
@@ -227,7 +228,10 @@ impl LocalHostContext {
     }
 
     pub fn claude_runtime(&self) -> Option<(&Path, &Path)> {
-        Some((self.claude_executable.as_deref()?, self.claude_profiles_root.as_deref()?))
+        Some((
+            self.claude_executable.as_deref()?,
+            self.claude_profiles_root.as_deref()?,
+        ))
     }
 
     pub fn opencode_runtime(&self) -> Option<(&Url, Option<&str>)> {
@@ -238,7 +242,10 @@ impl LocalHostContext {
     }
 
     pub fn cursor_runtime(&self) -> Option<(&Path, &Path)> {
-        Some((self.cursor_executable.as_deref()?, self.cursor_profiles_root.as_deref()?))
+        Some((
+            self.cursor_executable.as_deref()?,
+            self.cursor_profiles_root.as_deref()?,
+        ))
     }
 
     pub(super) fn instance_root(&self) -> &Path {
