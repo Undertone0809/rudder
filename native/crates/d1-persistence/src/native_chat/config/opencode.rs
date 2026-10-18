@@ -288,6 +288,8 @@ pub(crate) async fn resolve_opencode_config(
         instruction_content: instructions.entry_content,
         hermes: None,
         pi: None,
+        claude: None,
+        cursor: None,
         opencode: Some(opencode),
     })
 }

@@ -262,6 +262,7 @@ pub(crate) async fn resolve_claude_config(
         instruction_content: instructions.entry_content,
         hermes: None,
         pi: None,
+        opencode: None,
         claude: Some(ClaudeLocalConfig {
             home,
             profile_id,

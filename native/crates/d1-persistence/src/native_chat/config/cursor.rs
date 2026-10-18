@@ -273,6 +273,7 @@ pub(crate) async fn resolve_cursor_config(
         instruction_content: instructions.entry_content,
         hermes: None,
         pi: None,
+        opencode: None,
         claude: None,
         cursor: Some(CursorLocalConfig {
             home,
