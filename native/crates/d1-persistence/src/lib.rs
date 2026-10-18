@@ -17,6 +17,7 @@ pub mod calendar;
 pub mod cost_reads;
 pub mod goal_reads;
 mod goal_sets;
+pub mod issue_checkout;
 pub mod issue_metadata_reads;
 pub mod legacy_read_json;
 mod links;

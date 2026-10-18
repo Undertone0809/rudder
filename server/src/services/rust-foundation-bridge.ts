@@ -95,6 +95,11 @@ export interface RustFoundationBridge {
   calendar?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   secret?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   messengerState?(actor: RustFoundationActor, orgId: string, input: MessengerStateInput): Promise<RustFoundationResponse>;
+  issueCheckout?(actor: RustFoundationActor, orgId: string, input: {
+    issueId: string;
+    agentId: string;
+    expectedStatuses: string[];
+  }): Promise<RustFoundationResponse>;
   runRead?(actor: RustFoundationActor, orgId: string, input: RunReadInput): Promise<RustFoundationResponse>;
   liveRunRead?(
     actor: RustFoundationActor,
@@ -1152,6 +1157,51 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         } satisfies RustFoundationResponse;
       } catch (error) {
         throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
+      }
+    },
+    async issueCheckout(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/issue-checkout`;
+      const body = Buffer.from(JSON.stringify({
+        orgId,
+        issueId: input.issueId,
+        agentId: input.agentId,
+        expectedStatuses: input.expectedStatuses,
+        actorRunId: actor.type === "agent" ? actor.runId ?? null : null,
+      }));
+      const requestId = randomUUID();
+      const envelope = createRustActorEnvelope({
+        actor,
+        organizationId: orgId,
+        method: "POST",
+        path: requestPath,
+        action: "issue.checkout",
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+      });
+      try {
+        const response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+          },
+          body: body as unknown as BodyInit,
+          // Checkout commits issue state, activity, and the mutation outbox in
+          // one transaction. Do not abort the fetch after admission: a client
+          // timeout would make a committed result indistinguishable from a
+          // failed request and make a retry duplicate activity.
+        });
+        return {
+          status: response.status,
+          contentType: response.headers.get("content-type") ?? "application/json",
+          body: Buffer.from(await response.arrayBuffer()),
+        } satisfies RustFoundationResponse;
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust Issue checkout request failed", { cause: error });
       }
     },
     async projectCreate(actor, orgId, data, idempotencyKey, activityDetails, roots) {

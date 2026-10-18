@@ -1053,6 +1053,7 @@ export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridg
     router,
     db,
     storage,
+    rustFoundationBridge,
     svc,
     access,
     agentsSvc,
