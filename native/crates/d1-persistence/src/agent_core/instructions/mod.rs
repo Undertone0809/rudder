@@ -674,7 +674,14 @@ pub(super) async fn library_path(
                 }
             })
             .unwrap_or((None, None));
-        let recovered = recover(&host, &row, &home, &cwd);
+        // Do not let a failed or malformed private bundle trigger legacy
+        // default recovery writes. The durable row remains repairable and the
+        // next authorized detail request can retry it after the cause is fixed.
+        let recovered = if materialize_error.is_some() {
+            Ok(Value::Null)
+        } else {
+            recover(&host, &row, &home, &cwd)
+        };
         let recovery_error = recovered.as_ref().err().map(ToString::to_string);
         (
             recovered,
@@ -687,6 +694,19 @@ pub(super) async fn library_path(
     let (recovered, materialize_error, materialized_root) = materialized;
     if has_pending {
         if let Some(error) = materialize_error {
+            // The filesystem operation is an authorization boundary even
+            // when it fails. Only the actor that started the request may
+            // commit the retry state; otherwise leave the pending row intact.
+            super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
+            let admin = ctx.user().is_some()
+                && sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
+                )
+                .bind(ctx.user())
+                .fetch_one(&mut **tx)
+                .await?;
+            let fresh = Context { admin, ..*ctx };
+            authorize_org(tx, &fresh).await?;
             sqlx::query(
                 "UPDATE agent_instruction_bundles
                     SET state='repair',attempts=attempts+1,next_attempt_at=now(),last_error=$3,updated_at=now()

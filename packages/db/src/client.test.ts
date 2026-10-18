@@ -1009,6 +1009,7 @@ describe("applyPendingMigrations", () => {
           "0177_organization_import_receipt_activity_mode.sql",
           "0178_organization_resource_mutation_state.sql",
           "0179_reflective_wallow.sql",
+          "0180_agent_instruction_bundles.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1209,6 +1210,7 @@ describe("applyPendingMigrations", () => {
           "0177_organization_import_receipt_activity_mode.sql",
           "0178_organization_resource_mutation_state.sql",
           "0179_reflective_wallow.sql",
+          "0180_agent_instruction_bundles.sql",
         ],
         reason: "pending-migrations",
       });

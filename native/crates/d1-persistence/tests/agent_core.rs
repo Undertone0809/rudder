@@ -9,7 +9,14 @@ use rudder_d1_persistence::agent_core::{
 };
 use serde_json::json;
 use sqlx::PgConnection;
-use std::{future::Future, pin::Pin, sync::OnceLock};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use support::{Database, ORG};
 use tokio::sync::Mutex;
 
@@ -139,6 +146,33 @@ impl NativeAgentAuthorizer for NoopNativeAuthorizer {
 
 struct RevokedMembershipAuthorizer {
     user_id: &'static str,
+}
+
+struct RevokeAfterFilesystemAuthorizer {
+    user_id: &'static str,
+    calls: AtomicUsize,
+}
+
+impl NativeAgentAuthorizer for RevokeAfterFilesystemAuthorizer {
+    fn revalidate<'a>(
+        &'a self,
+        connection: &'a mut PgConnection,
+        org_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<NativeAgentAccess, sqlx::Error>> + Send + 'a>> {
+        Box::pin(async move {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Ok(NativeAgentAccess::Authorized);
+            }
+            sqlx::query(
+                "UPDATE organization_memberships SET status='revoked' WHERE org_id=$1::uuid AND principal_type='user' AND principal_id=$2",
+            )
+            .bind(org_id)
+            .bind(self.user_id)
+            .execute(&mut *connection)
+            .await?;
+            Ok(NativeAgentAccess::Forbidden)
+        })
+    }
 }
 
 impl NativeAgentAuthorizer for RevokedMembershipAuthorizer {
@@ -418,6 +452,13 @@ async fn rust_create_persists_instruction_bundle_outbox_without_touching_filesys
     .await
     .expect("detail reconciler succeeds");
     assert_eq!(detail_result.0, 200);
+    let detail_response: serde_json::Value =
+        serde_json::from_str(&detail_result.1).expect("detail JSON response");
+    assert_eq!(
+        detail_response["agentRuntimeConfig"]["instructionsBundleMode"],
+        "managed"
+    );
+    assert!(detail_response["agentRuntimeConfig"]["promptTemplate"].is_null());
     let stored_state: (String, serde_json::Value) = sqlx::query_as(
         "SELECT b.state, a.agent_runtime_config FROM agent_instruction_bundles b JOIN agents a ON a.id=b.agent_id WHERE b.org_id=$1::uuid AND b.agent_id=$2::uuid",
     )
@@ -458,6 +499,109 @@ async fn rust_create_persists_instruction_bundle_outbox_without_touching_filesys
         std::fs::read_to_string(instructions.join("nested/TOOLS.md")).unwrap(),
         "tools"
     );
+
+    // A filesystem failure must not update the pending row when native auth
+    // is revoked during materialization. The second revalidation runs after
+    // the filesystem attempt and the transaction rolls back all repair state.
+    #[cfg(unix)]
+    {
+        unsafe {
+            std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1");
+            std::env::set_var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED", "1");
+        }
+        let broken = execute_create_body(
+            &database,
+            json!({
+                "operation": "create",
+                "orgId": ORG,
+                "input": {
+                    "name": "Durable Bundle Auth Race",
+                    "nodeOwned": {
+                        "normalizedAgentRuntimeConfig": {},
+                        "instructionsBundle": {
+                            "entryFile": "SOUL.md",
+                            "files": {"SOUL.md": "# Broken"},
+                            "clearLegacyPromptTemplate": false
+                        }
+                    }
+                }
+            }),
+        )
+        .await
+        .expect("second bundle create succeeds");
+        unsafe {
+            std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED");
+            std::env::remove_var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED");
+        }
+        assert_eq!(broken.0, 201);
+        let broken_id: String = sqlx::query_scalar(
+            "SELECT id::text FROM agents WHERE org_id=$1::uuid AND name='Durable Bundle Auth Race'",
+        )
+        .bind(ORG)
+        .fetch_one(&database.pool)
+        .await
+        .expect("created auth race agent");
+        let broken_key: String =
+            sqlx::query_scalar("SELECT workspace_key FROM agents WHERE id=$1::uuid")
+                .bind(&broken_id)
+                .fetch_one(&database.pool)
+                .await
+                .expect("auth race workspace key");
+        let broken_workspace = workspace_home
+            .join("100000000000/workspaces/agents")
+            .join(&broken_key);
+        let outside = filesystem.path().join("outside-auth-race");
+        std::fs::create_dir_all(&outside).expect("outside auth race directory");
+        std::fs::create_dir_all(broken_workspace.parent().expect("workspace parent"))
+            .expect("agents directory");
+        std::os::unix::fs::symlink(&outside, &broken_workspace)
+            .expect("symlink workspace to force materialization failure");
+
+        let broken_detail = json!({
+            "operation": "detail",
+            "orgId": ORG,
+            "id": broken_id,
+            "homeDirectory": filesystem.path(),
+            "processWorkingDirectory": filesystem.path(),
+            "deploymentMode": "local_trusted",
+            "instructionsHost": {
+                "instanceRoot": instance_root,
+                "workspaceHome": workspace_home,
+                "previousDocumentsRoot": previous_documents_root,
+                "friendlyWorkspaceHome": false,
+                "hostname": "durable-bundle-auth-race-host"
+            }
+        });
+        let broken_detail_bytes =
+            serde_json::to_vec(&broken_detail).expect("serialize race detail");
+        let broken_detail_request =
+            AgentCoreRequest::parse(&broken_detail_bytes).expect("valid race detail request");
+        let broken_result = execute_agent_with_native_auth(
+            &database.pool,
+            &verified_create_user_with_body(&broken_detail_bytes),
+            &broken_detail_request,
+            &RevokeAfterFilesystemAuthorizer {
+                user_id: CREATE_USER,
+                calls: AtomicUsize::new(0),
+            },
+        )
+        .await;
+        assert!(matches!(
+            broken_result,
+            Err(AgentCoreError::Http(403, ref message, _)) if message == "Forbidden"
+        ));
+        let broken_state: (String, Option<String>) = sqlx::query_as(
+            "SELECT state,last_error FROM agent_instruction_bundles WHERE org_id=$1::uuid AND agent_id=$2::uuid",
+        )
+        .bind(ORG)
+        .bind(&broken_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("auth race outbox row");
+        assert_eq!(broken_state.0, "pending");
+        assert!(broken_state.1.is_none());
+        assert!(!outside.join("instructions/SOUL.md").exists());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
