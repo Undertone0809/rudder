@@ -60,6 +60,12 @@ pub(super) async fn execute(
     let row = current.ok_or_else(|| http(404, "Agent not found"))?;
     let id = text(row, "id");
     match op {
+        "instructions-path-patch"
+        | "instructions-bundle-patch"
+        | "instructions-file-put"
+        | "instructions-file-delete" => {
+            super::instructions::write_operation(tx, ctx, row, op, input, native_auth).await
+        }
         "permissions" => super::detail::update_permissions(tx, ctx, row, input, native_auth).await,
         "key-create" => {
             if row["status"] == "pending_approval" {

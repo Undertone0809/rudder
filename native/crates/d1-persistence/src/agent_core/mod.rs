@@ -251,6 +251,13 @@ fn admit_inner(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
         "reset-session",
         "task-sessions",
         "scheduler-heartbeats",
+        "instructions-path-get",
+        "instructions-path-patch",
+        "instructions-bundle-get",
+        "instructions-bundle-patch",
+        "instructions-file-get",
+        "instructions-file-put",
+        "instructions-file-delete",
     ]
     .contains(&r.operation.as_str())
     {
@@ -321,7 +328,7 @@ async fn execute_agent_inner(
             revalidate_native_auth(native_auth, &mut tx, &org).await?;
             tx.commit().await?;return Ok((200,json!({"orgId":org,"id":id}).to_string()))
         }
-        let op=r.operation.as_str();let is_write=matches!(op,"create"|"key-create"|"key-revoke"|"rollback"|"reset-session"|"permissions");
+        let op=r.operation.as_str();let is_write=matches!(op,"create"|"key-create"|"key-revoke"|"rollback"|"reset-session"|"permissions"|"instructions-path-patch"|"instructions-bundle-patch"|"instructions-file-put"|"instructions-file-delete");
         if is_write{
             // Match runtime admission lock order: Issues, Agents, organization.
             sqlx::query("SELECT id FROM issues WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
@@ -345,7 +352,11 @@ async fn execute_agent_inner(
             }
             let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth).await?;
             sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(&org).execute(&mut *tx).await?;
-            tx.commit().await?;return Ok((if matches!(op,"create"|"key-create"){201}else{200},body.to_string()));
+            tx.commit().await?;
+            if matches!(op,"instructions-bundle-patch"|"instructions-file-put"|"instructions-file-delete") {
+                instructions::replay_after_commit(pool, actor, r, &org, id.as_deref().unwrap_or_default(), native_auth).await?;
+            }
+            return Ok((if matches!(op,"create"|"key-create"){201}else{200},body.to_string()));
         }
         if matches!(op,"detail"|"me") {
             sqlx::query("SELECT id FROM agents WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
@@ -360,6 +371,7 @@ async fn execute_agent_inner(
         let row=current.unwrap_or(Value::Null);
         let row=if !row.is_null()&&!matches!(op,"keys"|"inbox"){reads::ensure_workspace_key(&mut tx,&ctx,row).await?}else{row};
         let body=match op{
+            "instructions-path-get"|"instructions-bundle-get"|"instructions-file-get" => instructions::read_operation(&mut tx,&ctx,&row,op,&input,native_auth).await?,
             "list"|"configurations"=>reads::list(&mut tx,&ctx,op=="configurations").await?,
             "name-suggestion"=>{require_configs(&mut tx,&ctx).await?;json!({"name":writes::suggest_name(&mut tx,&org).await?})},
             "configuration"=>{require_configs(&mut tx,&ctx).await?;reads::configuration(&reads::public_row(&mut tx,row,true,false).await?)},
@@ -417,6 +429,11 @@ async fn resolve_id(
         return Ok(Some(raw.to_owned()));
     }
     let org = if let Some(s) = r.query["orgId"].as_str().filter(|s| !js_trim(s).is_empty()) {
+        js_trim(s).to_owned()
+    } else if let Some(s) = r.org_id.as_deref().filter(|s| !js_trim(s).is_empty()) {
+        // Organization-scoped public routes carry the organization in the
+        // path field rather than in the query object. Preserve that scope for
+        // short-name resolution before SQL selects a candidate Agent.
         js_trim(s).to_owned()
     } else if actor.actor().kind == "agent" {
         sqlx::query_scalar::<_, String>("SELECT org_id::text FROM agents WHERE id::text=$1")

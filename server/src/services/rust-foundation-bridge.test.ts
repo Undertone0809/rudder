@@ -338,6 +338,56 @@ describe("rust foundation bridge lifecycle", () => {
     }, "bridge-test-secret");
   });
 
+  it("sends typed Agent instruction operations with signed host facts", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture);
+    const actor = {
+      type: "board" as const,
+      userId: "local-board",
+      source: "local_implicit" as const,
+      sessionId: "local-implicit",
+    };
+
+    const response = await bridge.agentInstructions!(actor, {
+      operation: "instructions-file-put",
+      orgId: "org-1",
+      id: "agent-1",
+      query: { path: "SOUL.md" },
+      input: { path: "SOUL.md", content: "# Agent\n" },
+    });
+
+    const captured = await fixture.readRequest();
+    expect(response.status).toBe(201);
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("/internal/agent-core");
+    const body = JSON.parse(captured.body);
+    expect(body).toMatchObject({
+      operation: "instructions-file-put",
+      orgId: "org-1",
+      id: "agent-1",
+      query: { path: "SOUL.md" },
+      input: { path: "SOUL.md", content: "# Agent\n" },
+      deploymentMode: "authenticated",
+    });
+    expect(body.homeDirectory).toBe(homedir());
+    expect(body.processWorkingDirectory).toBe(process.cwd());
+    expect(body.instructionsHost).toMatchObject({
+      instanceRoot: expect.any(String),
+      workspaceHome: expect.any(String),
+      previousDocumentsRoot: expect.any(String),
+      hostname: hostname(),
+    });
+    expectEnvelopeSignedWith(captured, {
+      actor,
+      organizationId: "agent-core",
+      method: "POST",
+      path: "/internal/agent-core",
+      action: "agent.core.execute",
+      body: Buffer.from(captured.body),
+      allowAnonymous: true,
+    }, "bridge-test-secret");
+  });
+
   it("signs only a metadata stringify RangeError as a deferred encoding failure", async () => {
     const fixture = await createFixture("ready"); const bridge = createBridge(fixture);
     const actor = { type: "board" as const, userId: "local-board", source: "local_implicit" as const, sessionId: "local-implicit" };

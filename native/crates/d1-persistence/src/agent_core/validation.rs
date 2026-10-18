@@ -39,6 +39,140 @@ pub(super) fn validate(operation: &str, value: Option<&Value>) -> Result<Value> 
         return serde_json::to_value(request)
             .map_err(|_| AgentCoreError::Http(500, "Internal server error".into(), None));
     }
+    if matches!(
+        operation,
+        "instructions-path-get"
+            | "instructions-bundle-get"
+            | "instructions-file-get"
+            | "instructions-file-delete"
+    ) {
+        return Ok(Value::Null);
+    }
+    if operation == "instructions-path-patch" {
+        let Some(Value::Object(object)) = value else {
+            return Err(AgentCoreError::Http(
+                422,
+                "Invalid instructions path".into(),
+                None,
+            ));
+        };
+        let mut output = serde_json::Map::new();
+        match object.get("path") {
+            Some(Value::Null) | Some(Value::String(_)) => {
+                output.insert("path".into(), object["path"].clone())
+            }
+            _ => {
+                return Err(AgentCoreError::Http(
+                    422,
+                    "Invalid instructions path".into(),
+                    None,
+                ));
+            }
+        };
+        if let Some(key) = object.get("agentRuntimeConfigKey") {
+            if !key.is_string() || key.as_str().is_some_and(|s| s.trim().is_empty()) {
+                return Err(AgentCoreError::Http(
+                    422,
+                    "Invalid agentRuntimeConfigKey".into(),
+                    None,
+                ));
+            }
+            output.insert("agentRuntimeConfigKey".into(), key.clone());
+        }
+        return Ok(Value::Object(output));
+    }
+    if operation == "instructions-bundle-patch" {
+        let Some(Value::Object(object)) = value else {
+            return Err(AgentCoreError::Http(
+                422,
+                "Invalid instructions bundle".into(),
+                None,
+            ));
+        };
+        let mut output = serde_json::Map::new();
+        if let Some(mode) = object.get("mode") {
+            if !matches!(mode.as_str(), Some("managed" | "external")) {
+                return Err(AgentCoreError::Http(
+                    422,
+                    "Invalid instructions bundle mode".into(),
+                    None,
+                ));
+            }
+            output.insert("mode".into(), mode.clone());
+        }
+        if let Some(root) = object.get("rootPath") {
+            if !(root.is_null() || root.is_string()) {
+                return Err(AgentCoreError::Http(
+                    422,
+                    "Invalid instructions bundle rootPath".into(),
+                    None,
+                ));
+            }
+            output.insert("rootPath".into(), root.clone());
+        }
+        if let Some(entry) = object.get("entryFile") {
+            if !entry.is_string() || entry.as_str().is_some_and(|s| s.trim().is_empty()) {
+                return Err(AgentCoreError::Http(
+                    422,
+                    "Invalid instructions bundle entryFile".into(),
+                    None,
+                ));
+            }
+            output.insert("entryFile".into(), entry.clone());
+        }
+        if let Some(clear) = object.get("clearLegacyPromptTemplate") {
+            if !clear.is_boolean() {
+                return Err(AgentCoreError::Http(
+                    422,
+                    "Invalid clearLegacyPromptTemplate".into(),
+                    None,
+                ));
+            }
+            output.insert("clearLegacyPromptTemplate".into(), clear.clone());
+        }
+        return Ok(Value::Object(output));
+    }
+    if operation == "instructions-file-put" {
+        let Some(Value::Object(object)) = value else {
+            return Err(AgentCoreError::Http(
+                422,
+                "Invalid instructions file".into(),
+                None,
+            ));
+        };
+        let path = object
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| {
+                AgentCoreError::Http(422, "Invalid instructions file path".into(), None)
+            })?;
+        let content = object
+            .get("content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                AgentCoreError::Http(422, "Invalid instructions file content".into(), None)
+            })?;
+        if !instruction_relative_path(path) || content.len() > MAX_INSTRUCTION_FILE_BYTES {
+            return Err(AgentCoreError::Http(
+                422,
+                "Invalid instructions file".into(),
+                None,
+            ));
+        }
+        let mut output = json!({"path": path, "content": content});
+        if let Some(clear) = object.get("clearLegacyPromptTemplate") {
+            if !clear.is_boolean() {
+                return Err(AgentCoreError::Http(
+                    422,
+                    "Invalid clearLegacyPromptTemplate".into(),
+                    None,
+                ));
+            }
+            output["clearLegacyPromptTemplate"] = clear.clone();
+        }
+        return Ok(output);
+    }
     if !matches!(operation, "key-create" | "reset-session" | "permissions") {
         return Ok(Value::Null);
     }

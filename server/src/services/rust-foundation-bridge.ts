@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { resolveOrganizationWorkspaceHomeDir, resolvePreviousDocumentsOrganizationWorkspaceRoot, resolveRudderInstanceRoot } from "../home-paths.js";
 import { type RustAgentCreateCommand } from "./agent-create-bridge.js";
 import { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
@@ -19,7 +20,7 @@ export { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 export type {
   RustBrowserSessionAuth,
   RustNativeChatHost,
-  RustPublicIngressOptions,
+  RustPublicIngressOptions
 } from "./rust-public-ingress-config.js";
 
 import { requestActivityLinkRead, type ActivityLinkReadInput } from "./activity-link-read-bridge.js";
@@ -30,6 +31,8 @@ import { requestCostRead, type CostReadInput } from "./cost-read-bridge.js";
 import { requestIssueMetadataRead, type IssueMetadataReadInput } from "./issue-metadata-read-bridge.js";
 import type { LiveRunReadInput } from "./live-run-read-bridge.js";
 import { messengerAuditContext, type MessengerStateInput } from "./messenger-state-bridge.js";
+import { requestNativeChatMessages, type NativeChatMessageReaderInput } from "./native-chat-message-reader-bridge.js";
+import { requestNativeChatTranscript, type NativeChatTranscriptInput } from "./native-chat-transcript-bridge.js";
 import { requestOrganizationCatalogRead, type OrganizationCatalogReadInput } from "./organization-catalog-read-bridge.js";
 import { requestOverviewRead, type OverviewReadInput } from "./overview-read-bridge.js";
 import { requestRequestRead, type RequestReadInput } from "./request-read-bridge.js";
@@ -37,8 +40,6 @@ import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
-import { requestNativeChatMessages, type NativeChatMessageReaderInput } from "./native-chat-message-reader-bridge.js";
-import { requestNativeChatTranscript, type NativeChatTranscriptInput } from "./native-chat-transcript-bridge.js";
 import {
   nativeIdentityAuthEnvironment,
   nativeLocalAccountLifecycleEnvironment,
@@ -81,6 +82,7 @@ export interface RustFoundationBridge {
   activityRead?(actor: RustFoundationActor, orgId: string, input: ActivityReadInput): Promise<RustFoundationResponse>;
   runWorkspaceOrdinaryUpdate?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   agentCore?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
+  agentInstructions?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   agentCreate?(actor: RustFoundationActor, command: RustAgentCreateCommand): Promise<RustFoundationResponse>;
   readonly mode: RustFoundationMode;
   readonly organizationBrandingMode: RustFoundationMode;
@@ -849,6 +851,29 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     },
     async agentCore(actor, input) {
       return requestAgentCore(actor, input);
+    },
+    async agentInstructions(actor, input) {
+      const orgId = typeof input.orgId === "string" ? input.orgId : "";
+      const host = {
+        instanceRoot: resolveRudderInstanceRoot(),
+        workspaceHome: resolveOrganizationWorkspaceHomeDir(),
+        previousDocumentsRoot: resolvePreviousDocumentsOrganizationWorkspaceRoot(orgId),
+        friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
+        hostname: hostname(),
+      };
+      return requestAgentCore(actor, {
+        operation: input.operation,
+        orgId,
+        id: input.id ?? null,
+        revisionId: null,
+        keyId: null,
+        query: input.query ?? {},
+        input: input.input ?? null,
+        deploymentMode: options.publicIngress?.deploymentMode ?? "authenticated",
+        homeDirectory: homedir(),
+        processWorkingDirectory: process.cwd(),
+        instructionsHost: host,
+      });
     },
     async agentCreate(actor, command) {
       return requestAgentCore(actor, {

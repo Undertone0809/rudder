@@ -16,6 +16,9 @@ use serde_json::{Map, Value, json};
 enum Endpoint {
     Roster(String),
     Permissions(String),
+    InstructionsPath { org_id: String, agent_id: String },
+    InstructionsBundle(String),
+    InstructionsFile(String),
 }
 
 pub(super) async fn roster(
@@ -46,6 +49,18 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
     endpoint_for_path(path).is_some_and(|endpoint| match endpoint {
         Endpoint::Roster(_) => matches!(*method, Method::GET | Method::HEAD),
         Endpoint::Permissions(_) => *method == Method::PATCH,
+        Endpoint::InstructionsPath { .. } => {
+            matches!(*method, Method::GET | Method::HEAD | Method::PATCH)
+        }
+        Endpoint::InstructionsBundle(_) => {
+            matches!(*method, Method::GET | Method::HEAD | Method::PATCH)
+        }
+        Endpoint::InstructionsFile(_) => {
+            matches!(
+                *method,
+                Method::GET | Method::HEAD | Method::PUT | Method::DELETE
+            )
+        }
     })
 }
 
@@ -80,7 +95,36 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
     let path = path.strip_prefix('/')?;
     let path = path.strip_suffix('/').unwrap_or(path);
     let segments: Vec<_> = path.split('/').collect();
-    if segments.iter().any(|segment| segment.is_empty()) || segments.len() != 4 {
+    if segments.iter().any(|segment| segment.is_empty()) {
+        return None;
+    }
+    if segments.len() == 6
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("orgs")
+        && segments[3].eq_ignore_ascii_case("agents")
+        && segments[5].eq_ignore_ascii_case("instructions-path")
+    {
+        return Some(Endpoint::InstructionsPath {
+            org_id: decode_capture(segments[2])?,
+            agent_id: decode_capture(segments[4])?,
+        });
+    }
+    if segments.len() == 5
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("instructions-bundle")
+        && segments[4].eq_ignore_ascii_case("file")
+    {
+        return decode_capture(segments[2]).map(Endpoint::InstructionsFile);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("instructions-bundle")
+    {
+        return decode_capture(segments[2]).map(Endpoint::InstructionsBundle);
+    }
+    if segments.len() != 4 {
         return None;
     }
     if segments[0].eq_ignore_ascii_case("api")
@@ -109,6 +153,18 @@ fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
     match endpoint {
         Endpoint::Roster(_) => matches!(*request.method(), Method::GET | Method::HEAD),
         Endpoint::Permissions(_) => *request.method() == Method::PATCH,
+        Endpoint::InstructionsPath { .. } => matches!(
+            *request.method(),
+            Method::GET | Method::HEAD | Method::PATCH
+        ),
+        Endpoint::InstructionsBundle(_) => matches!(
+            *request.method(),
+            Method::GET | Method::HEAD | Method::PATCH
+        ),
+        Endpoint::InstructionsFile(_) => matches!(
+            *request.method(),
+            Method::GET | Method::HEAD | Method::PUT | Method::DELETE
+        ),
     }
 }
 
@@ -122,6 +178,10 @@ async fn execute(
     public_body: web::Bytes,
     endpoint: Endpoint,
 ) -> HttpResponse {
+    let requested_org = match &endpoint {
+        Endpoint::InstructionsPath { org_id, .. } => Some(org_id.clone()),
+        _ => None,
+    };
     // Express JSON parsing runs before auth and route middleware. Preserve its
     // parse-error precedence and leave non-JSON bodies absent on the command.
     let parsed_body = match parse_public_json_body(&request, &public_body) {
@@ -161,8 +221,17 @@ async fn execute(
     // This is the Rust equivalent of boardMutationGuard(): cookie-backed
     // board actors need a same-host browser origin; local-implicit and bearer
     // actors are exempt exactly as the legacy middleware specifies.
-    if matches!(&endpoint, Endpoint::Permissions(_))
-        && matches!(&identity, NativeIngressIdentity::Session(_))
+    if matches!(
+        &endpoint,
+        Endpoint::Permissions(_)
+            | Endpoint::InstructionsPath { .. }
+            | Endpoint::InstructionsBundle(_)
+            | Endpoint::InstructionsFile(_)
+    ) && matches!(&identity, NativeIngressIdentity::Session(_))
+        && !matches!(
+            *request.method(),
+            Method::GET | Method::HEAD | Method::OPTIONS
+        )
         && !crate::local_account_ingress::has_trusted_board_origin(&request)
     {
         return HttpResponse::Forbidden()
@@ -265,7 +334,11 @@ async fn execute(
     if let Err(error) = admit_agent(&actor, &parsed) {
         return response_error(error);
     }
-    if command["operation"] == "permissions" {
+    if command["operation"] == "permissions"
+        || command["operation"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("instructions-"))
+    {
         command["resolveOnly"] = json!(true);
         let resolve_bytes = match serde_json::to_vec(&command) {
             Ok(bytes) => bytes,
@@ -307,6 +380,14 @@ async fn execute(
                 "agent_core_resolution_unavailable",
             );
         };
+        if requested_org
+            .as_deref()
+            .is_some_and(|requested| requested != org_id)
+        {
+            // Keep the organization-scoped Express route's 404 boundary: a
+            // valid Agent id must not be usable through another org's URL.
+            return HttpResponse::NotFound().json(json!({"error":"Agent not found"}));
+        }
         let Some(agent_id) = resolved["id"].as_str() else {
             return state.foundation.json_error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -364,6 +445,29 @@ fn request_command(
     let (operation, org_id, id) = match endpoint {
         Endpoint::Roster(org_id) => ("list", Some(org_id), None),
         Endpoint::Permissions(agent_id) => ("permissions", None, Some(agent_id)),
+        Endpoint::InstructionsPath { org_id, agent_id } => {
+            let op = match *request.method() {
+                Method::GET | Method::HEAD => "instructions-path-get",
+                _ => "instructions-path-patch",
+            };
+            (op, Some(org_id), Some(agent_id))
+        }
+        Endpoint::InstructionsBundle(agent_id) => {
+            let op = if matches!(*request.method(), Method::GET | Method::HEAD) {
+                "instructions-bundle-get"
+            } else {
+                "instructions-bundle-patch"
+            };
+            (op, None, Some(agent_id))
+        }
+        Endpoint::InstructionsFile(agent_id) => {
+            let op = match *request.method() {
+                Method::GET | Method::HEAD => "instructions-file-get",
+                Method::PUT => "instructions-file-put",
+                _ => "instructions-file-delete",
+            };
+            (op, None, Some(agent_id))
+        }
     };
     let mut command = json!({
         "operation": operation,
@@ -383,8 +487,13 @@ fn request_command(
         "canonicalLocale": "en-US",
         "deploymentMode": state.config.deployment_mode,
     });
-    if matches!(operation, "permissions")
-        && let Some(input) = parsed_body
+    if matches!(
+        operation,
+        "permissions"
+            | "instructions-path-patch"
+            | "instructions-bundle-patch"
+            | "instructions-file-put"
+    ) && let Some(input) = parsed_body
     {
         command["input"] = input;
     }
@@ -526,5 +635,76 @@ fn response_error(error: AgentCoreError) -> HttpResponse {
             tracing::warn!(error=?error,"Agent authority database command failed");
             HttpResponse::InternalServerError().json(json!({"error":"Internal server error"}))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::test::TestRequest;
+
+    fn request(method: Method) -> HttpRequest {
+        TestRequest::default().method(method).to_http_request()
+    }
+
+    #[test]
+    fn instructions_routes_are_reserved_with_exact_method_contracts() {
+        let cases = [
+            (
+                "/api/orgs/org%2Fone/agents/agent-1/instructions-path",
+                Endpoint::InstructionsPath {
+                    org_id: "org/one".to_owned(),
+                    agent_id: "agent-1".to_owned(),
+                },
+                [Method::GET, Method::PATCH, Method::POST],
+            ),
+            (
+                "/api/agents/agent-1/instructions-bundle",
+                Endpoint::InstructionsBundle("agent-1".to_owned()),
+                [Method::GET, Method::PATCH, Method::POST],
+            ),
+            (
+                "/api/agents/agent-1/instructions-bundle/file",
+                Endpoint::InstructionsFile("agent-1".to_owned()),
+                [Method::GET, Method::PUT, Method::DELETE],
+            ),
+        ];
+        for (path, expected, methods) in cases {
+            assert_eq!(endpoint_for_path(path), Some(expected.clone()));
+            for method in methods {
+                let accepted = method_matches(&request(method.clone()), &expected);
+                let should_accept = match &expected {
+                    Endpoint::InstructionsPath { .. } => {
+                        matches!(method, Method::GET | Method::HEAD | Method::PATCH)
+                    }
+                    Endpoint::InstructionsBundle(_) => {
+                        matches!(method, Method::GET | Method::HEAD | Method::PATCH)
+                    }
+                    Endpoint::InstructionsFile(_) => {
+                        matches!(
+                            method,
+                            Method::GET | Method::HEAD | Method::PUT | Method::DELETE
+                        )
+                    }
+                    _ => false,
+                };
+                assert_eq!(accepted, should_accept, "{path} {method}");
+            }
+        }
+    }
+
+    #[test]
+    fn instructions_routes_reject_unsupported_methods_and_malformed_paths() {
+        let path = "/api/agents/agent-1/instructions-bundle";
+        let endpoint = endpoint_for_path(path).expect("bundle route");
+        assert!(!method_matches(&request(Method::POST), &endpoint));
+        assert_eq!(
+            endpoint_for_path("/api/agents/agent-1/instructions-bundle/file/extra"),
+            None
+        );
+        assert_eq!(
+            endpoint_for_path("/api/orgs/org-1/agents/agent-1/instructions-path//"),
+            None
+        );
     }
 }
