@@ -996,7 +996,7 @@ W09 or the six-runtime completion requirement.
 
 ### October 18 Codex and Hermes acceptance status
 
-The exact candidate `820e7a75b` was exercised through the local Rust public
+The exact pre-rebase candidate `820e7a75b` was exercised through the local Rust public
 ingress at `127.0.0.1:3318` against the user's installed profiles and embedded
 PostgreSQL. A fresh Codex Chat (`288a6933…`) completed its first turn and its
 post-Node/Rust-restart continuation as `native_rust` Runs, with the same
@@ -1013,6 +1013,12 @@ two-runtime slice: its same-session continuation must succeed with a projected
 assistant reply. Synthetic fixture passes remain supporting evidence only. This
 milestone does not close the remaining four adapters, full product journeys,
 independent final review, or required CI gates.
+
+The branch was subsequently rebased onto the latest `origin/main`
+(`9ba84ce6b`, agent runtime normalization) and force-updated through the PR;
+the equivalent post-rebase candidate is `f9fc5bb02`. The rebase does not change
+the Hermes result, so the exact installed-runtime acceptance must be rerun and
+rebound to `f9fc5bb02` before any merge decision.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
