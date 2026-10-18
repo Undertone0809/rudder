@@ -454,11 +454,15 @@ pub(super) async fn read_conversation_messages(
             let entry_count: i64 = summary.try_get("entry_count")?;
             transcript_summary_by_generation.insert(
                 generation_id,
-                serde_json::json!({
-                    "entryCount": entry_count,
-                    "startedAt": summary.try_get::<Option<String>, _>("started_at")?,
-                    "endedAt": summary.try_get::<Option<String>, _>("ended_at")?,
-                }),
+                if entry_count > 0 {
+                    serde_json::json!({
+                        "entryCount": entry_count,
+                        "startedAt": summary.try_get::<Option<String>, _>("started_at")?,
+                        "endedAt": summary.try_get::<Option<String>, _>("ended_at")?,
+                    })
+                } else {
+                    Value::Null
+                },
             );
         }
     }
