@@ -452,6 +452,27 @@
           "merge_sha": "0d0c925e826d3e8c9a60ddcc22088a3085d83c91",
           "merged_at": "2026-10-18T03:35:43Z",
           "ci": "All published protected checks SUCCESS: Test 39091202143, Rust D1 real-entry smoke 39091202136, native-boundaries 39091202141, all platform foundations/artifacts, Verify Ubuntu/Windows/macOS, Desktop packaged smoke, qualification, architecture/docs/plan, and GitGuardian."
+        },
+        {
+          "number": 335,
+          "state": "merged",
+          "head_sha": "496301a3a7678cb9430ff84f486b85e0278a4dd5",
+          "base_sha": "0d0c925e826d3e8c9a60ddcc22088a3085d83c91",
+          "scope": "narrow Rust local-account ingress compatibility fix: gate all four lifecycle routes on POST before body consumption so malformed or oversized unsupported methods preserve the legacy 404 response; prune stale post-#334 authority records",
+          "validation": [
+            "cargo fmt --manifest-path native/Cargo.toml --all -- --check",
+            "server-foundation local_account focused tests 29/29",
+            "clippy -p rudder-server-foundation-core --lib -- -D warnings",
+            "authority inventory check/compare pass",
+            "git diff --check"
+          ],
+          "stage_review": "ACCEPT exact 496301a3a7678cb9430ff84f486b85e0278a4dd5 against base 0d0c925e826d3e8c9a60ddcc22088a3085d83c91",
+          "final_review": "ACCEPT exact 496301a3a7678cb9430ff84f486b85e0278a4dd5; narrow API slice, no product verifier required",
+          "mergeability": "CLEAN/MERGEABLE after all protected checks",
+          "limits": "Inherited local-account follow-on debt remains explicit: hosted Identity/OAuth, WS close E2E, exact claim subject binding, audit/transaction E2E, offline epoch semantics, startup receipt wording, and route-shadowing guard; this PR does not claim full auth migration.",
+          "merge_sha": "ce17c097351a959e7016c4f7c76ecf5353f54ff5",
+          "merged_at": "2026-10-18T04:24:37Z",
+          "ci": "All protected checks SUCCESS: Test 39094741288, Rust D1 real-entry smoke 39094741248, native-boundaries 39094741277, all platform foundations/artifacts, Verify Ubuntu/Windows/macOS, Desktop packaged smoke, qualification, architecture/docs/plan, and GitGuardian."
         }
       ],
       "managed_migration": {
