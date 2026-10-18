@@ -1,0 +1,986 @@
+{
+  "schema_version": "1.0",
+  "kind": "retired_reviewed_authority_records",
+  "retirement_reference": "PR #338 follow-up after Native Chat PR #324 merged into current main; records were consumed by the merged candidate and must not be revalidated against a later base.",
+  "reviewed_node_changes": [
+    {
+      "path": "packages/agent-runtime-utils/src/types.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "6a48b14feb1f9adf655f59a6f33e8a5bd9534a69ec39d035b88f0998cc723b4a",
+      "head_sha256": "39a0454746309067c4c60c891608a6097243f1a00202bf6df927ea25e421d35b",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Shared runtime profile shape carries optional Codex/Hermes identifiers for the existing client contract; it has no execution or persistence authority.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/schema/chat_generations.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "686057826d8366b0ebd10b8631ca079e5d3334ddf526fe7b69dca61afd04485d",
+      "head_sha256": "774dfaddd50b2f5574f5a49a5ad84b010ca6da616a90a976b1d77193ce8e68ef",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Drizzle schema compatibility for Rust-owned generation authority; Node schema declarations do not implement a route, worker, or write decision.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/schema/chat_messages.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "64577bff8ae07fa390fc87d02cadd58b9eddf315753de5ebf2fe776c9047f8da",
+      "head_sha256": "3cdf94c835b423a71a1cf8346f310b61120a372b8e341a3fb96131653129c8d7",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Drizzle schema compatibility for Rust-owned chat messages; declarations preserve legacy consumers without implementing message authority.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/schema/heartbeat_run_attempts.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "90abb3b4b3f53c984ed773397c5040a6d57a8647a68fe26e5179eaf3e9802607",
+      "head_sha256": "d7c1330e68ff06a1a3e5a2f440f2622a4b19694d005ec77d6f8f56ff228064e0",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Drizzle schema compatibility for Rust execution-authority filtering; declarations do not schedule or claim heartbeat work.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/schema/heartbeat_runs.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "1fc1b2783234dd489f2999640a85d7ebbdb85e350a6691fdd7b42345b9e744e8",
+      "head_sha256": "8c9cb9a1e9d0f9cace1b7b877133b8e49af6044051a5ca5457dbe33d6730b9d7",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Drizzle schema compatibility for Rust execution-authority filtering; declarations do not schedule or claim heartbeat work.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/bootstrap/auth-runtime.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "0e0161532c370d0b42d1a45e85d56bab9ca0c401746f9ab1287d8a81a33c65b4",
+      "head_sha256": "33c3788ed3ad6f1a55c84faa96907c28864c4127b595d104c6c8ae194266d156",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Startup transport adapter exposes Rust session/native-chat ingress configuration; Node auth lifecycle and domain permission decisions remain outside this bridge.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/bootstrap/public-ingress-startup.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "ff6fb5ba335781f9cd540e03572559e6b88e2dfc278c575c1f114b594e4f7869",
+      "head_sha256": "ceb45e32f77dd16bc7405c6e5d5c52983a2fcaedd900dcde6788edc00c3f3695",
+      "rust_authority": "native::server_foundation::public_ingress_config and native::server_foundation::agent_core",
+      "scope": "Forwards the effective deployment mode into the Rust public ingress so native Agent roster and permission handlers receive the same local_trusted or authenticated policy as Node startup.",
+      "compatibility_boundary": "Compatibility configuration only; Node chooses the existing deployment mode and Rust owns native Agent route authentication, authorization, and persistence.",
+      "retirement_criterion": "Retire this field and startup adapter when Rust ingress is no longer configured or supervised by the Node runtime.",
+      "reviewer": "agent /root/agent_api_next_slice",
+      "review_reference": "Agent core native ingress slice 99fb9506e; current-main authority audit",
+      "review_status": "reviewed",
+      "final_review_reference": "/private/tmp/rudder-auth-host-stage-review-20261017/final-64857.md",
+      "final_review_sha256": "ef7fb5538eca666fbde905645b9397c157b5b2c0b0cd32d37708159b2d1c006b"
+    },
+    {
+      "path": "server/src/index.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "3414f8b0f30943f66eaa44962620b5b6f096932edcef6a5a44f3c9fd7e9ff48b",
+      "head_sha256": "ec6a362d1b12c76c86da78d9987848778fe8fbb3c373c4a37b3b5cf4c1da8a77",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Server bootstrap forwards Rust ingress/runtime configuration while retaining the legacy Node transport boundary.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 native provider host wiring review; exact candidate source hash refreshed after main rebase.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/middleware/logger.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "932ba6ded49ed9e786be44ff054790a7f286bbfa053bc701c0dece4f6821729b",
+      "head_sha256": "82da5b06d5e6cc1a32e3557ed8ef214eae5875869faae9824d6294abc97a0100",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Logger middleware preserves request diagnostics for the existing transport and carries no chat or database authority.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/chats.stop-route.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "4057430f2433196927c946f8e366a74379beb03456241db8e4b1ba82b241ed3f",
+      "head_sha256": "af171e05eb70d61e9b41224a310b99c0e2857eabd1ede9baf792bf0d372a0c88",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Legacy stop route remains a compatibility ingress guarded by Native Chat execution authority; Rust owns native stop decisions.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/chats.stream-routes.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "81b59a4d8612a46486d78a0a0e23de9a975ab356b8ccc10f1320f64a4e963c36",
+      "head_sha256": "99e17476fc3340ea9ef2d5557fdb40469e689c6fad3d4d42485caf75824de5cc",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Legacy stream route remains a compatibility ingress guarded by Native Chat execution authority; Rust owns native stream decisions.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/chats.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "a3a008cc55b2f60c669d46b4335625ab92d5e956a6db51dd6e2e809e60d8570b",
+      "head_sha256": "b37fc57d2780399215e204499cb65f8fad28e38f085fb18d0d1580675a049d7d",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Existing Node chat mutations remain behind exact Native Chat conversation/generation/queue fences; this record does not authorize unguarded writes.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/chat-assistant.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "f8b292d161e8f0868446ca4e05304f29dd735e65c83f30060bea1df9173668bb",
+      "head_sha256": "8053d917e84fcfd2c93deff0494c2c4cc85616a9ffcecfa3156d42e01f1b684f",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Assistant service remains a legacy transport adapter and delegates Native Chat execution to the Rust runtime.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/chats.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "e7ac79627b74f050efb12b3c5a70afcd1780fab3337f388df3be604a3edcb9db",
+      "head_sha256": "61be982db17c50a346e0e59c7a73141a6b026597d7805a12e44575f14e208bf0",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "This change is a bounded Node compatibility or lifecycle adapter; Rust owns Native Chat authority and the Node path is guarded or non-authoritative.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad; source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/integrations/feishu/runtime.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "4f28ffea084263d997a9130f70ae2a8ca6a6ae03c47dd4abfc05f4d281277c34",
+      "head_sha256": "b2c562b5d54afca1a9c9952f66541254377588bfd0d0785e8eec89f521966e3e",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Feishu integration preserves the existing terminal-generation transport contract while Rust remains the Native Chat generation authority.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/organization-mutation-fence.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "67c72769dbb24d58145ab9ab4f8a1e7136e458451210d62a94dfbcf57174d153",
+      "head_sha256": "71bce6b24daec8f8396b0669df0e4908d72256b82f468c46cf184f0dfc3fab70",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Adds the exact advisory-lock and Native-owner check helper used to fence existing Node queue writers; Rust owns the target authority.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/runtime-kernel/heartbeat.misc.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "139bb752f2acf95e98c7492d9d2d074e5bb277113db0afda527730c8fe5ae877",
+      "head_sha256": "d2d33c05861495d21249071b1125040c71efc89c960d7c7bdaadb36bbe1f777d",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Legacy heartbeat helpers filter on explicit execution authority so Rust-owned runs do not enter Node workers.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/runtime-kernel/heartbeat.queue.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "32cda262d82eb5af7228f6ea47c62746aa33d2726fbd5362c0ec73d54fe74c8c",
+      "head_sha256": "7daeca59cfc4c7b42e61bb1f4af9b8a3c7d9890be0a9cb2d547d4a9dc420b844",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "Legacy heartbeat queue helpers preserve the Rust/legacy execution-authority split and do not claim Native runs.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-foundation-bridge.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "f6b7292a626c31fb9712865e8f9f905cdcd0b4876cc4ddaa49a0f3925a10b538",
+      "head_sha256": "c27dc3365ce7e29f5fe9d8744470a41a58c98cec4df166c029cfbdccbaa8fb40",
+      "rust_authority": "native::server_foundation::public_ingress_config and native::server_foundation::agent_core",
+      "scope": "Serializes host-path context and deployment mode for the Rust child so native AgentCore resolves the same workspace identity and ingress policy as the Node runtime.",
+      "compatibility_boundary": "Environment bridge only; it does not authenticate requests or authorize Agent operations, which remain Rust-owned at the public ingress and D1 authority.",
+      "retirement_criterion": "Retire these host and deployment environment fields when Node no longer supervises or configures the Rust public ingress child.",
+      "reviewer": "agent /root/agent_api_next_slice",
+      "review_reference": "PR #324 current candidate after main #337 sync; Native Chat transport and main agent-create bridge changes reviewed on current HEAD",
+      "review_status": "reviewed",
+      "final_review_reference": "/private/tmp/rudder-auth-host-stage-review-20261017/final-64857.md",
+      "final_review_sha256": "ef7fb5538eca666fbde905645b9397c157b5b2c0b0cd32d37708159b2d1c006b"
+    },
+    {
+      "path": "server/src/services/rust-public-ingress-config.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "f65d42ca5af78d68a0ffdc2da6cf10d95cc97b7ab1f0cb2fab2eeaa4affa5de7",
+      "head_sha256": "a3d8b6472e57fe97c75f953f1061fa8d9beb33b1b17395436371d299d20fb440",
+      "rust_authority": "native::server_foundation::public_ingress_config and native::server_foundation::agent_core",
+      "scope": "Forwards Rust public-ingress deployment/auth settings plus trusted Claude/Cursor executable facts and OpenCode server URL/token fields; credentials remain startup-only installation facts and are not logged or selected by requests.",
+      "compatibility_boundary": "Typed Node-to-Rust configuration adapter only; it forwards installation facts and redacted policy shape while Rust owns provider selection, identity, organization access, permissions, and secret use.",
+      "retirement_criterion": "Retire this adapter when Rust ingress startup receives the complete host/install configuration without Node assembly and the legacy Node transport boundary is retired.",
+      "reviewer": "agent /root/agent_api_next_slice",
+      "review_reference": "PR #324 native provider host wiring review; exact candidate source hash refreshed after main rebase.",
+      "review_status": "reviewed",
+      "final_review_reference": "/private/tmp/rudder-auth-host-stage-review-20261017/final-64857.md",
+      "final_review_sha256": "ef7fb5538eca666fbde905645b9397c157b5b2c0b0cd32d37708159b2d1c006b"
+    },
+    {
+      "path": "server/src/services/runtime-kernel/heartbeat.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "177105656cec53e3dd17be0ddc24455a5f3881c25a99a4a31501c062cf14d1e4",
+      "head_sha256": "45eb1897e51fa6701e0d79cdd3336a33a821dfc19b9d1e2d6130ee3863cc5831",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "This change is a bounded Node compatibility or lifecycle adapter; Rust owns Native Chat authority and the Node path is guarded or non-authoritative.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad; source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/chat-agent-runs.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed",
+      "base_sha256": "053ae02dfcf428d8f9499bd2fa489c47827f4d5c06b4b01aab1e78bb6cc3dd51",
+      "head_sha256": "3020f94518283349fbc231b13bac14775923a385cf3ce98aba689ec9e30ca08f",
+      "compatibility_boundary": "Legacy Chat compatibility service now persists a durable initial Run Attempt in one transaction; Rust Native Chat remains the production admission and execution authority."
+    },
+    {
+      "path": "server/src/services/side-chats.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "dddb26271cda5e4fed76dff3117a36c44e2c80e2de1bd2e266ebcaff32f7ae97",
+      "head_sha256": "716d38e5e6aa9973c103b9bd5d462c8adeed643af791d8b964e8751335f99606",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "This change is a bounded Node compatibility or lifecycle adapter; Rust owns Native Chat authority and the Node path is guarded or non-authoritative.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad; source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/native-chat-transcript-bridge.ts",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "base_sha256": null,
+      "head_sha256": "fb033fda09d8f1789d7f65186f6acac7d5cbfd75461c221e3469ae176f0702b1",
+      "rust_authority": "native/crates/server-foundation and native/crates/d1-persistence own Native Chat transcript authority; this Node module only transports signed actor-bound requests.",
+      "compatibility_boundary": "The Node module forwards authenticated Native transcript reads and carries no transcript storage or selection authority.",
+      "retirement_criterion": "Remove this transport adapter when the Rust public/browser Reader is mounted directly and the Node route no longer needs a compatibility bridge.",
+      "reviewer": "/root/current_scope_audit",
+      "review_reference": "PR #324 Native Reader bridge review; exact source hash is pinned in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/chats.message-query-routes.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "d7a3e181f8f0ea622c06519cc36d580992c36f1027d7811dee84d3b5a3bbadf2",
+      "head_sha256": "356dba3d9afeaaafeac9d4466514aaab14325c8186f04455540a18c0ae03812f",
+      "rust_authority": "native/crates/server-foundation and native/crates/d1-persistence own Native Chat transcript authority; this route only selects the signed Rust reader for native conversations.",
+      "compatibility_boundary": "Legacy conversations continue using the existing transcript service; native conversations fail closed when the Rust Reader bridge is unavailable and never fall back to legacy transcript storage.",
+      "retirement_criterion": "Remove the Node route branch after the Rust public/browser Reader is mounted directly and legacy transcript consumers are migrated.",
+      "reviewer": "/root/current_scope_audit",
+      "review_reference": "PR #324 Native Reader bridge review; exact source hash is pinned in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/chat-generation-protocol.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "68ed46a1f47ff5a2bad37ab0c16801928c83ae1fe9d09b550db55b7e8737f756",
+      "head_sha256": "4de496cbfd7cd7f781baaea08d04cbc2e5fa080262d42748efb3ae4e3570157f",
+      "rust_authority": "Native Rust owns native_rust Chat terminal recovery and projection; Node retains stale-owner recovery only for legacy_ts generations.",
+      "compatibility_boundary": "The legacy protocol candidate query explicitly filters to legacy_ts so Node never claims or writes Native Rust generations without the Rust transaction marker.",
+      "retirement_criterion": "Remove this legacy recovery worker after Rust owns all Chat generation terminal recovery and the Node Chat worker no longer handles legacy generations.",
+      "reviewer": "/root/final_candidate_review",
+      "review_reference": "PR #324 exact-candidate recovery fence review.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/runtime-kernel/heartbeat.terminal.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "13e99cf9b50812ddbbe169bc99dbfdc26ec7987238423ba25618883aec822fce",
+      "head_sha256": "24d3eae576a042f3d9ed9d61220d7f8a86791d9de2a07749c1bc54912134be37",
+      "rust_authority": "Native Rust owns native Chat recovery and terminal projection; the Node heartbeat recovery helper only claims legacy_ts runs.",
+      "compatibility_boundary": "Legacy heartbeat lease recovery is explicitly filtered to legacy_ts and cannot claim native_rust executions.",
+      "retirement_criterion": "Remove this legacy heartbeat recovery helper after Rust owns all heartbeat recovery and terminal projection.",
+      "reviewer": "/root/final_candidate_review",
+      "review_reference": "PR #324 exact-candidate native recovery fence review.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "desktop/src/identity-runtime.ts",
+      "change_kind": "modified_retained_client",
+      "node_role": "retained_client",
+      "base_sha256": "0b5e16bb9e8e52ab3f450d3ba582d990ced23a5121338ee5130de40bca08852d",
+      "head_sha256": "fda54402669fdb02d747d82c58d0b5628ea94b598ac9a525f80587291a112c14",
+      "compatibility_boundary": "Desktop identity policy remains a client-only packaged smoke gate; it does not own Rust ingress authority.",
+      "client_responsibility": "The Desktop identity runtime marks only the signed packaged smoke bypass for native local implicit auth; ordinary Desktop identity and account flows remain unchanged.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 packaged smoke native ingress compatibility review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "desktop/src/identity-startup-policy.ts",
+      "change_kind": "modified_retained_client",
+      "node_role": "retained_client",
+      "base_sha256": "da53db74303d88e736c44a713039926696591e5095c8e8d95d96b41bdd909ef1",
+      "head_sha256": "4d913833cb824871d78b3513a403a795c55c9e745969a3ecef32e349f7d0d1b2",
+      "compatibility_boundary": "Desktop identity policy remains a client-only packaged smoke gate; it does not own Rust ingress authority.",
+      "client_responsibility": "The startup policy ties the smoke-only native identity capability to the existing app-name, resource-marker, and explicit bypass gates.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 packaged smoke native ingress compatibility review; exact base/head source hashes bound in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/schema/runtime_retention.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "This change is a bounded Node compatibility or lifecycle adapter; Rust owns Native Chat authority and the Node path is guarded or non-authoritative.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad; source hashes bound in this inventory.",
+      "review_status": "reviewed",
+      "base_sha256": "198d0c100c62c14c40a1b1140acc887179ed0a076e553275983583243215f0d2",
+      "head_sha256": "30b603587d8bebd11c19c491d9c5bf7402dc569c472c8dca195cfaec1a5954ef"
+    },
+    {
+      "path": "server/src/middleware/account-session-required.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "This change is a bounded Node compatibility or lifecycle adapter; Rust owns Native Chat authority and the Node path is guarded or non-authoritative.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad; source hashes bound in this inventory.",
+      "review_status": "reviewed",
+      "base_sha256": "23a9a61a10de3d7c820b02e0a76fd00030eb89c0bea66c24a13ae5d78547088a",
+      "head_sha256": "09bdf931d79674f72f64abb89b0727b65c03b4ec49ff619d2ad02fc17f15059f"
+    },
+    {
+      "path": "server/src/services/chats.annotation-persistence.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "This change is a bounded Node compatibility or lifecycle adapter; Rust owns Native Chat authority and the Node path is guarded or non-authoritative.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad; source hashes bound in this inventory.",
+      "review_status": "reviewed",
+      "base_sha256": "026bd1af488d5476499473d4fe5204773cf92dbf2489c9099567c12034797d67",
+      "head_sha256": "4b6928dc55da793a26dd38341fb672e36f0532cebe46d1e868f5a01ac3032a64"
+    },
+    {
+      "path": "server/src/services/chats.queued-message-create.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "This change is a bounded Node compatibility or lifecycle adapter; Rust owns Native Chat authority and the Node path is guarded or non-authoritative.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad; source hashes bound in this inventory.",
+      "review_status": "reviewed",
+      "base_sha256": "a41e04ac0ac51307c59d371467320c8ba67751f26e4f3f6f25b950b479085bdd",
+      "head_sha256": "3bb902fca2552e07e40f0cf1e1760784b8b76aae8393900ed4f6d5d8776aedb7"
+    },
+    {
+      "path": "server/src/services/orgs.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation and native/crates/chat own Native Chat authority; Node remains a bounded compatibility ingress/fence.",
+      "compatibility_boundary": "This change is a bounded Node compatibility or lifecycle adapter; Rust owns Native Chat authority and the Node path is guarded or non-authoritative.",
+      "retirement_criterion": "Remove this compatibility surface after the corresponding Rust route/worker/writer owns the production workflow and the legacy Node path is retired.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad; source hashes bound in this inventory.",
+      "review_status": "reviewed",
+      "base_sha256": "3ed3b4f05f71b62a097cb90ffa1569bbc2bce2d23a6058cb2d648ed73f9a33e1",
+      "head_sha256": "d5f67c2a12b02e578bbf30091df96bf39018e9554714598870a63b079e472a3a"
+    },
+    {
+      "path": "server/src/services/native-chat-message-reader-bridge.ts",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "base_sha256": null,
+      "head_sha256": "38d9378994060625131d0b7061006c988bd4ecb94706507b50f652a125325ec7",
+      "rust_authority": "native::server_foundation::runtime_spans and native::d1_persistence::runtime_spans own Native Chat message Reader authority.",
+      "scope": "Signs and forwards the bounded Rust Native Chat message Reader request; it carries no message persistence or authorization authority.",
+      "compatibility_boundary": "Transport adapter only; Rust revalidates actor, organization, conversation, selected agent, cursor and transcript cutoff.",
+      "retirement_criterion": "Remove the Node bridge when the public Rust Reader is mounted directly for all main Chat clients.",
+      "reviewer": "/root/candidate_review_506bd67b7",
+      "review_reference": "PR #324 Native Reader bridge review; current candidate source hash pinned in this inventory.",
+      "review_status": "reviewed"
+    }
+  ],
+  "reviewed_legacy_fence_changes": [
+    {
+      "id": "native-chat-queue-guard:helper",
+      "path": "server/src/services/organization-mutation-fence.ts",
+      "base_sha256": "67c72769dbb24d58145ab9ab4f8a1e7136e458451210d62a94dfbcf57174d153",
+      "head_sha256": "71bce6b24daec8f8396b0669df0e4908d72256b82f468c46cf184f0dfc3fab70",
+      "change_kind": "native_chat_queue_guard_helper",
+      "helper_name": "lockLegacyNativeChatQueueTarget",
+      "semantic_operation": "chat.queue.mutation-fence",
+      "rust_authority": "native/crates/chat::legacy_admission",
+      "compatibility_boundary": "This exact Node helper is a temporary scoped admission fence; Rust owns Native Chat target authority and the legacy writer remains behind it.",
+      "retirement_criterion": "Delete after Rust owns all Native Chat queue/conversation mutations and the legacy Node writers are removed.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 exact helper source and structural surface review.",
+      "review_status": "reviewed",
+      "head_surfaces": [
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/organization-mutation-fence.ts|db-call|tx|execute|sql` SELECT c.id::text AS id, EXISTS ( SELECT 1 FROM chat_generations native_generation WH… [sha256:4b692505d89169e1aab505252aba9910319cda9116bae4086c79ac7f7e326090]",
+          "line": 95
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/organization-mutation-fence.ts|db-call|tx|execute|sql` SELECT c.org_id::text AS org_id, c.id::text AS id FROM chat_conversations c WHERE c.org_id = ${organizationId}::uuid AND c.id = ${conversationId}::uuid `",
+          "line": 79
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/organization-mutation-fence.ts|db-call|tx|execute|sql` SELECT pg_advisory_xact_lock(hashtextextended(${targetKey}, 0)) `",
+          "line": 91
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/organization-mutation-fence.ts|db-write-candidate|tx|execute|sql` SELECT c.id::text AS id, EXISTS ( SELECT 1 FROM chat_generations native_ge… [sha256:98831b57532ad5a526cc6baaa9656391b516d8ec9f31f2c1c83b0b07f25dc93e]",
+          "line": 95
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/organization-mutation-fence.ts|db-write-candidate|tx|execute|sql` SELECT c.org_id::text AS org_id, c.id::text AS id FROM chat_conversations c WHERE c.org_id = ${organizationId}::uuid AND c.id = ${conversationId}::uuid `",
+          "line": 79
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/organization-mutation-fence.ts|db-write-candidate|tx|execute|sql` SELECT pg_advisory_xact_lock(hashtextextended(${targetKey}, 0)) `",
+          "line": 91
+        }
+      ]
+    },
+    {
+      "id": "native-chat-run-attempt-admission",
+      "path": "server/src/services/chat-agent-runs.ts",
+      "base_sha256": "053ae02dfcf428d8f9499bd2fa489c47827f4d5c06b4b01aab1e78bb6cc3dd51",
+      "head_sha256": "3020f94518283349fbc231b13bac14775923a385cf3ce98aba689ec9e30ca08f",
+      "change_kind": "native_chat_run_attempt_admission",
+      "semantic_operation": "native_chat_run_attempt_admission",
+      "head_surfaces": [
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|db-call|db|transaction|async (tx) => { // The selected runtime is part of the admission record. Legacy // integration cal… [sha256:dbc8f42a9bba31d2af523103cf6c0a058ccb7fe3a0d8eea2f2b9df089c108ca5]",
+          "line": 181
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|db-call|tx|insert|heartbeatRunAttempts",
+          "line": 219
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|db-call|tx|insert|heartbeatRuns",
+          "line": 196
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|db-call|tx|select|{ runtimeType: agents.agentRuntimeType }",
+          "line": 187
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|db-call|tx|update|heartbeatRuns",
+          "line": 241
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|db-write-candidate|tx|insert|heartbeatRunAttempts",
+          "line": 219
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|db-write-candidate|tx|insert|heartbeatRuns",
+          "line": 196
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|db-write-candidate|tx|update|heartbeatRuns",
+          "line": 241
+        }
+      ],
+      "rust_authority": "Rust Native Chat owns production Run/Attempt admission; this Node transaction is a bounded compatibility mirror for legacy Chat transport.",
+      "compatibility_boundary": "The legacy Chat service persists the initial Run and Attempt atomically for recovery identity; it does not claim Native Chat execution authority or dispatch providers.",
+      "retirement_criterion": "Remove after the Rust public Chat admission route is the sole production writer for all ordinary Chat Runs and the legacy transport is retired.",
+      "reviewer": "/root/ci_failure_repair",
+      "review_reference": "PR #324 authority-ratchet review; exact transaction and writer surfaces are pinned in this inventory.",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "native-chat-side-chat-retention",
+      "path": "server/src/services/side-chats.ts",
+      "base_sha256": "dddb26271cda5e4fed76dff3117a36c44e2c80e2de1bd2e266ebcaff32f7ae97",
+      "head_sha256": "716d38e5e6aa9973c103b9bd5d462c8adeed643af791d8b964e8751335f99606",
+      "change_kind": "native_chat_side_chat_retention",
+      "semantic_operation": "native_chat_side_chat_retention",
+      "head_surfaces": [
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, conversation.orgId); await tx .update(chatConversat… [sha256:7a82f9aca38ce00771915232d91b01f884a6fe7bf228a9e12c56cb87fde830f4]",
+          "line": 187
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, conversation.orgId); const current = await tx .sele… [sha256:1b36b5b3770cd540afdb75e90f7899429ae854d6fb135cb830a1f189ec36598d]",
+          "line": 523
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, conversation.orgId); const now = new Date(); const … [sha256:5b8b271ac2d33c8ffabafba394f0a75e97896995786a2f05810cdf0ff078570e]",
+          "line": 583
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, input.orgId); const existing = await tx .select() .… [sha256:8345de9156f1bca5d0a79b42c582ff53290a799686c9b1a5dd19a2ff72020bde]",
+          "line": 215
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|db|transaction|async (tx) => { const conversation = await tx .select({ orgId: chatConversations.orgId }) .from(chatCon… [sha256:d045e5a1be682832ffb3cfe3e9e37be5901e5eb5eb0fade46ead334f9897c324]",
+          "line": 142
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|insert|runtimeRetentionClaims",
+          "line": 343
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|insert|runtimeSourceAliases",
+          "line": 351
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|select|{ id: chatConversations.id, createdByUserId: chatConversations.createdByUserId, conversationKind: chatConver… [sha256:a246e159e7dee37884ddee9b97bfa4a67a77aa8c9f1fc98e93125f2a8d311951]",
+          "line": 526
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeRetentionClaims",
+          "line": 37
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeRetentionClaims",
+          "line": 62
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeRetentionClaims",
+          "line": 199
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeRetentionClaims",
+          "line": 552
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeRetentionClaims",
+          "line": 635
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeSourceAliases",
+          "line": 28
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeSourceAliases",
+          "line": 69
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeSourceAliases",
+          "line": 201
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeSourceAliases",
+          "line": 548
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/side-chats.ts|db-call|tx|update|runtimeSourceAliases",
+          "line": 642
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|insert|runtimeRetentionClaims",
+          "line": 343
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|insert|runtimeSourceAliases",
+          "line": 351
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeRetentionClaims",
+          "line": 37
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeRetentionClaims",
+          "line": 62
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeRetentionClaims",
+          "line": 199
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeRetentionClaims",
+          "line": 552
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeRetentionClaims",
+          "line": 635
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeSourceAliases",
+          "line": 28
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeSourceAliases",
+          "line": 69
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeSourceAliases",
+          "line": 201
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeSourceAliases",
+          "line": 548
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/side-chats.ts|db-write-candidate|tx|update|runtimeSourceAliases",
+          "line": 642
+        }
+      ],
+      "rust_authority": "Rust Native Chat owns the future native retention/cleanup authority; Node remains a bounded lifecycle compatibility writer.",
+      "compatibility_boundary": "The Node lifecycle writer performs the existing product cleanup inside an explicit transaction while retaining Rust-owned lineage guards.",
+      "retirement_criterion": "Remove this Node retention cleanup after Rust owns the corresponding product lifecycle end-to-end.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad.",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "native-chat-checkpoint-authority",
+      "path": "server/src/services/chat-generation-protocol.ts",
+      "change_kind": "existing_operation_mapping",
+      "semantic_operation": "native_chat_checkpoint_authority",
+      "base_sha256": "68ed46a1f47ff5a2bad37ab0c16801928c83ae1fe9d09b550db55b7e8737f756",
+      "head_sha256": "4de496cbfd7cd7f781baaea08d04cbc2e5fa080262d42748efb3ae4e3570157f",
+      "base_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chat-generation-protocol.ts|db-call|db|transaction|async (tx) => { const generation = await lockGeneration(tx, input); assertGenerationFence… [sha256:1572ffadff1c6e47f31d4559e99110ca20879b73de94fc44fb9a0ceb5e4b2d6c]",
+        "line": 398
+      },
+      "head_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chat-generation-protocol.ts|db-call|db|transaction|async (tx) => { const generation = await lockGeneration(tx, input); assertGenerationFence… [sha256:1ed84ced1640f54e53d6bce1e21dc6d7bf0937f496b50253979baafb94121d2a]",
+        "line": 397
+      },
+      "base_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chat-generation-protocol.ts|db-write-candidate|tx|update|chatGenerations",
+        "line": 425
+      },
+      "head_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chat-generation-protocol.ts|db-write-candidate|tx|update|chatGenerations",
+        "line": 425
+      },
+      "rust_authority": "Native Rust owns native_rust Chat checkpoints; Node checkpoint writes remain legacy-only.",
+      "compatibility_boundary": "The protocol rejects native_rust generations before any legacy checkpoint writer.",
+      "retirement_criterion": "Remove the legacy checkpoint path after Rust owns all Chat checkpoint writes.",
+      "reviewer": "/root/final_candidate_review",
+      "review_reference": "PR #324 exact-candidate native recovery fence review.",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "native-chat-terminal-authority",
+      "path": "server/src/services/chats.ts",
+      "change_kind": "existing_operation_mapping",
+      "semantic_operation": "native_chat_terminal_authority",
+      "base_sha256": "e7ac79627b74f050efb12b3c5a70afcd1780fab3337f388df3be604a3edcb9db",
+      "head_sha256": "61be982db17c50a346e0e59c7a73141a6b026597d7805a12e44575f14e208bf0",
+      "base_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.ts|db-call|db|transaction|async (tx) => { const [row] = await tx .update(chatGenerations) .set({ status, terminalReason: status, contr… [sha256:0ce0c6ca7e60aa48e83e5a2d3ec7b8d919c30314dd00e8167271a7e9f4ad508e]",
+        "line": 681
+      },
+      "head_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.ts|db-call|db|transaction|async (tx) => { const [row] = await tx .update(chatGenerations) .set({ status, terminalReason: status, contr… [sha256:836d42b2105b23451290027be836cc45ee13a4771cee6b4244d4a7b7e55e0de8]",
+        "line": 673
+      },
+      "base_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.ts|db-write-candidate|tx|update|chatGenerations",
+        "line": 683
+      },
+      "head_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.ts|db-write-candidate|tx|update|chatGenerations",
+        "line": 675
+      },
+      "rust_authority": "Native Rust owns native_rust Chat terminal projection; Node terminal writes remain legacy-only.",
+      "compatibility_boundary": "The terminal writer is constrained to legacy_ts generations before it updates Chat state.",
+      "retirement_criterion": "Remove the legacy terminal path after Rust owns all Chat terminal projection.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad.",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "native-chat-annotation-message-fence",
+      "path": "server/src/services/chats.annotation-persistence.ts",
+      "base_sha256": "026bd1af488d5476499473d4fe5204773cf92dbf2489c9099567c12034797d67",
+      "head_sha256": "4b6928dc55da793a26dd38341fb672e36f0532cebe46d1e868f5a01ac3032a64",
+      "change_kind": "existing_operation_mapping",
+      "semantic_operation": "native_chat_annotation_message_fence",
+      "base_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.annotation-persistence.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, orgId); const now = new Date(); l… [sha256:e3d4b4c8717750163c00702aef86c3ace62bb8de257e2a1f3957277571a7087c]",
+        "line": 165
+      },
+      "head_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.annotation-persistence.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, orgId); const now = new Date(); l… [sha256:e5a48714fd738705abe6ca24bd487b80a6a8714d32eced0ee4ccdca672b47547]",
+        "line": 165
+      },
+      "base_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.annotation-persistence.ts|db-write-candidate|tx|insert|chatMessages",
+        "line": 299
+      },
+      "head_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.annotation-persistence.ts|db-write-candidate|tx|insert|chatMessages",
+        "line": 304
+      },
+      "rust_authority": "Native Rust owns native_rust Chat authority; Node remains legacy-only behind an exact transaction fence.",
+      "compatibility_boundary": "The existing Node transaction remains a bounded compatibility writer and now observes the Rust target boundary before its semantic writer.",
+      "retirement_criterion": "Remove the legacy operation after Rust owns the corresponding workflow end-to-end.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad.",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "native-chat-queued-message-fence",
+      "path": "server/src/services/chats.queued-message-create.ts",
+      "base_sha256": "a41e04ac0ac51307c59d371467320c8ba67751f26e4f3f6f25b950b479085bdd",
+      "head_sha256": "3bb902fca2552e07e40f0cf1e1760784b8b76aae8393900ed4f6d5d8776aedb7",
+      "change_kind": "existing_operation_mapping",
+      "semantic_operation": "native_chat_queued_message_fence",
+      "base_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.queued-message-create.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, input.orgId); const existing = awa… [sha256:421c37b3c0929346bc1c8288acb974552bf5487ad53682fd2ea2d19e1dddd1b7]",
+        "line": 55
+      },
+      "head_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.queued-message-create.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, input.orgId); const ownership = aw… [sha256:ce6ab23a183b7dbe86c8cddc8ec5609017d8f5ab0af41ebf026f31d31485abd3]",
+        "line": 55
+      },
+      "base_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.queued-message-create.ts|db-write-candidate|tx|insert|chatQueuedMessages",
+        "line": 142
+      },
+      "head_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.queued-message-create.ts|db-write-candidate|tx|insert|chatQueuedMessages",
+        "line": 146
+      },
+      "rust_authority": "Native Rust owns native_rust Chat authority; Node remains legacy-only behind an exact transaction fence.",
+      "compatibility_boundary": "The existing Node transaction remains a bounded compatibility writer and now observes the Rust target boundary before its semantic writer.",
+      "retirement_criterion": "Remove the legacy operation after Rust owns the corresponding workflow end-to-end.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad.",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "native-chat-message-writer-fence",
+      "path": "server/src/services/chats.ts",
+      "base_sha256": "e7ac79627b74f050efb12b3c5a70afcd1780fab3337f388df3be604a3edcb9db",
+      "head_sha256": "61be982db17c50a346e0e59c7a73141a6b026597d7805a12e44575f14e208bf0",
+      "change_kind": "existing_operation_mapping",
+      "semantic_operation": "native_chat_message_writer_fence",
+      "base_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.ts|db-call|db|transaction|async (tx) => { const values = { orgId: input.orgId, conversationId, role: input.role, kind: input.kind, sta… [sha256:8196273b49f17fc1973f2187457e07dafd31a3ea33e530f0e16d809010781dde]",
+        "line": 4356
+      },
+      "head_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, input.orgId); const ownership = await lockLegacyNativeCh… [sha256:4ffd7c3581e041599e5e9b003c230cdf27cc44b48d0f06c565b768bed8bed6da]",
+        "line": 4351
+      },
+      "base_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.ts|db-write-candidate|tx|insert|chatMessages",
+        "line": 4373
+      },
+      "head_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.ts|db-write-candidate|tx|insert|chatMessages",
+        "line": 4373
+      },
+      "rust_authority": "Native Rust owns native_rust Chat authority; Node remains legacy-only behind an exact transaction fence.",
+      "compatibility_boundary": "The existing Node transaction remains a bounded compatibility writer and now observes the Rust target boundary before its semantic writer.",
+      "retirement_criterion": "Remove the legacy operation after Rust owns the corresponding workflow end-to-end.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad.",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "native-chat-org-retention-cleanup",
+      "path": "server/src/services/orgs.ts",
+      "base_sha256": "3ed3b4f05f71b62a097cb90ffa1569bbc2bce2d23a6058cb2d648ed73f9a33e1",
+      "head_sha256": "d5f67c2a12b02e578bbf30091df96bf39018e9554714598870a63b079e472a3a",
+      "change_kind": "native_chat_side_chat_retention",
+      "semantic_operation": "native_chat_org_retention_cleanup",
+      "head_surfaces": [
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/orgs.ts|db-call|db|transaction|async (tx) => { await lockOrganizationBrandingAuthorityForDeletion(tx, id); await lockProjectGoalMutationAuth… [sha256:d6f74ab833c7ef1ee352cdb89d923bd2aea986c54ab861a04a00318948e89220]",
+          "line": 507
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/orgs.ts|db-call|tx|delete|runtimeRetentionClaims",
+          "line": 519
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/orgs.ts|db-call|tx|delete|runtimeSourceAliases",
+          "line": 518
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/orgs.ts|db-write-candidate|tx|delete|runtimeRetentionClaims",
+          "line": 519
+        },
+        {
+          "type": "database_write_candidate",
+          "signature": "server/src/services/orgs.ts|db-write-candidate|tx|delete|runtimeSourceAliases",
+          "line": 518
+        }
+      ],
+      "rust_authority": "Rust Native Chat owns the future native retention/cleanup authority; Node remains a bounded lifecycle compatibility writer.",
+      "compatibility_boundary": "The Node lifecycle writer performs the existing product cleanup inside an explicit transaction while retaining Rust-owned lineage guards.",
+      "retirement_criterion": "Remove this Node retention cleanup after Rust owns the corresponding product lifecycle end-to-end.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad.",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "native-chat-conversation-delete-lineage",
+      "path": "server/src/services/chats.ts",
+      "base_sha256": "e7ac79627b74f050efb12b3c5a70afcd1780fab3337f388df3be604a3edcb9db",
+      "head_sha256": "61be982db17c50a346e0e59c7a73141a6b026597d7805a12e44575f14e208bf0",
+      "change_kind": "existing_operation_mapping",
+      "semantic_operation": "native_chat_conversation_delete_lineage",
+      "base_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.ts|db-call|db|transaction|async (tx) => { const conversation = await tx .select({ orgId: chatConversations.orgId }) .from(chatConversa… [sha256:dd6defaef9988625c7ad4192d02bbf01c6b7a62b43f2b325d402c463e7a8667f]",
+        "line": 4044
+      },
+      "head_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/chats.ts|db-call|db|transaction|async (tx) => { const conversation = await tx .select({ orgId: chatConversations.orgId }) .from(chatConversa… [sha256:31ba41a4f757048ea5f59dbe4c25acf9ec67377c240b8d53f429cbd14baac00a]",
+        "line": 4038
+      },
+      "base_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.ts|db-write-candidate|tx|delete|chatConversations",
+        "line": 4057
+      },
+      "head_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/chats.ts|db-write-candidate|tx|delete|chatConversations",
+        "line": 4052
+      },
+      "rust_authority": "Native Rust owns native_rust Chat authority; Node remains legacy-only behind an exact transaction fence.",
+      "compatibility_boundary": "The existing Node transaction remains a bounded compatibility writer and now observes the Rust target boundary before its semantic writer.",
+      "retirement_criterion": "Remove the legacy operation after Rust owns the corresponding workflow end-to-end.",
+      "reviewer": "/root/current_candidate_review",
+      "review_reference": "PR #324 exact-candidate authority review for 5bb50b9ad.",
+      "review_status": "reviewed"
+    }
+  ]
+}
