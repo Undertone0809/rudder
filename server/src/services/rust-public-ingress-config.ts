@@ -51,6 +51,8 @@ export type RustNativeChatHost = Readonly<{
   operatorHome: string;
   codexHome?: string;
   /** Optional Rust-discovered local provider installation facts. */
+  piNodeExecutable?: string;
+  piCliEntry?: string;
   claudeExecutable?: string;
   cursorExecutable?: string;
   /** Explicitly owned OpenCode Server endpoint; never request supplied. */
@@ -68,6 +70,12 @@ export type RustNativeChatHost = Readonly<{
 /** Resolve optional provider installation facts from trusted process configuration. */
 export function resolveNativeChatProviderHostFields(): Readonly<Record<string, string>> {
   return {
+    ...(process.env.RUDDER_PI_NODE_EXECUTABLE?.trim()
+      ? { piNodeExecutable: resolve(process.env.RUDDER_PI_NODE_EXECUTABLE.trim()) }
+      : {}),
+    ...(process.env.RUDDER_PI_CLI_ENTRY?.trim()
+      ? { piCliEntry: resolve(process.env.RUDDER_PI_CLI_ENTRY.trim()) }
+      : {}),
     ...(process.env.RUDDER_CLAUDE_EXECUTABLE?.trim()
       ? { claudeExecutable: resolve(process.env.RUDDER_CLAUDE_EXECUTABLE.trim()) }
       : {}),

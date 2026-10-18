@@ -20,6 +20,10 @@ struct Installation {
     workspace_home: PathBuf,
     operator_home: PathBuf,
     codex_home: Option<PathBuf>,
+    /// Optional Pi paths are installation facts supplied by the trusted host.
+    /// Both are required before Pi native admission is advertised.
+    pi_node_executable: Option<PathBuf>,
+    pi_cli_entry: Option<PathBuf>,
     /// Optional provider executables are installation facts from the Rust
     /// launcher. Their absence keeps the provider unavailable and never
     /// triggers a fallback to another runtime.
@@ -94,6 +98,10 @@ pub(crate) fn configure(
         std::env::current_exe().map_err(|_| invalid_at("invalid native runtime installation"))?;
     let codex = executable("codex", &installation.executable_search_path);
     let hermes = executable("hermes", &installation.executable_search_path);
+    let pi_node = installation
+        .pi_node_executable
+        .or_else(|| executable("node", &installation.executable_search_path));
+    let pi_cli_entry = installation.pi_cli_entry;
     let claude = installation
         .claude_executable
         .or_else(|| executable("claude", &installation.executable_search_path));
@@ -113,14 +121,17 @@ pub(crate) fn configure(
                 .and_then(|_| url::Url::parse("http://127.0.0.1:0/").ok())
         });
     let has_opencode = opencode.is_some() || opencode_url.is_some();
+    let has_pi = pi_node.is_some() && pi_cli_entry.is_some();
     let Some(host_executable) = preferred_native_executable(
         codex.clone(),
         hermes.clone(),
+        has_pi.then(|| pi_node.clone()).flatten(),
         claude.clone(),
         cursor.clone(),
     )
     .or_else(|| opencode.clone())
-    .or_else(|| has_opencode.then(|| current.clone())) else {
+    .or_else(|| has_opencode.then(|| current.clone()))
+    .or_else(|| has_pi.then(|| current.clone())) else {
         return Ok(config);
     };
     let host_name = if cfg!(windows) {
@@ -168,6 +179,15 @@ pub(crate) fn configure(
                 .with_operator_codex_profile(operator_codex_home)
                 .map_err(|_| invalid_at("invalid operator Codex profile"))?;
         }
+    }
+    if has_pi {
+        let (Some(node), Some(entry)) = (pi_node, pi_cli_entry) else {
+            return Err(invalid_at("invalid installed Pi paths"));
+        };
+        let profiles = owned_directory(&native_root.join("pi-profiles"))?;
+        host = host
+            .with_pi_runtime(node, entry, profiles)
+            .map_err(|_| invalid_at("invalid installed Pi paths"))?;
     }
     let hermes_home = operator_home.join(".hermes");
     if hermes_home.is_dir()
@@ -223,10 +243,11 @@ fn executable(name: &str, search: &str) -> Option<PathBuf> {
 fn preferred_native_executable(
     codex: Option<PathBuf>,
     hermes: Option<PathBuf>,
+    pi_node: Option<PathBuf>,
     claude: Option<PathBuf>,
     cursor: Option<PathBuf>,
 ) -> Option<PathBuf> {
-    codex.or(hermes).or(claude).or(cursor)
+    codex.or(hermes).or(pi_node).or(claude).or(cursor)
 }
 
 fn canonical_executable(path: &Path) -> Option<PathBuf> {
@@ -309,8 +330,17 @@ mod tests {
     fn hermes_can_activate_native_host_without_codex() {
         let hermes = PathBuf::from("/opt/rudder/bin/hermes");
         assert_eq!(
-            super::preferred_native_executable(None, Some(hermes.clone()), None, None),
+            super::preferred_native_executable(None, Some(hermes.clone()), None, None, None),
             Some(hermes)
+        );
+    }
+
+    #[test]
+    fn pi_node_can_anchor_native_host_when_other_runtimes_are_absent() {
+        let node = PathBuf::from("/opt/rudder/node/bin/node");
+        assert_eq!(
+            super::preferred_native_executable(None, None, Some(node.clone()), None, None),
+            Some(node)
         );
     }
 }
