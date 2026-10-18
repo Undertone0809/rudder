@@ -371,7 +371,9 @@ pub(crate) async fn authorize_chat_target_read_tx(
 ) -> std::result::Result<String, Error> {
     // Historical readers run in a PostgreSQL READ ONLY transaction. Reuse the
     // nonlocking authorization path so membership checks do not issue FOR
-    // SHARE, which PostgreSQL rejects in a read-only transaction.
+    // SHARE, which PostgreSQL rejects in a read-only transaction. The
+    // repeatable-read snapshot still keeps this historical authorization
+    // decision consistent with the message rows below.
     auth::preauthorize_org(tx, actor, organization_id).await?;
     let conversation = auth::conversation(tx, organization_id, conversation_id, false)
         .await?
