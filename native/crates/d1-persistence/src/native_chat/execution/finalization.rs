@@ -8,6 +8,7 @@ use crate::{
 };
 use rudder_codex_app_server::{CleanupReceipt, TurnReceipt, TurnStatus};
 use rudder_hermes_acp::{HermesCleanupReceipt, HermesStopReason, HermesTurnReceipt};
+use rudder_native_process_transport::HostCleanupProof;
 use rudder_pi_rpc::{PiCleanupReceipt, PiTurnReceipt, PiTurnStatus};
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::{Value, json};
@@ -15,6 +16,50 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 
 const MAX_PROJECTED_BODY_BYTES: i32 = 256 * 1024;
+const MAX_NATIVE_ID_BYTES: usize = 512;
+
+/// Provider-native terminal evidence for adapters that do not expose Codex
+/// Thread/Turn identifiers. The worker must copy only bounded fields from the
+/// typed provider receipt; this value is never deserialized from HTTP input.
+#[derive(Clone, Debug)]
+pub struct NativeProviderTurnReceipt {
+    pub provider: NativeProviderKind,
+    pub session_id: String,
+    pub request_id: String,
+    pub final_text: Option<String>,
+    pub status: NativeProviderStatus,
+    pub usage: Option<Value>,
+    pub evidence: Value,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeProviderKind {
+    Claude,
+    Cursor,
+}
+
+impl NativeProviderKind {
+    pub const fn runtime_type(self) -> &'static str {
+        match self {
+            Self::Claude => "claude_local",
+            Self::Cursor => "cursor_local",
+        }
+    }
+
+    pub const fn checkpoint_provider(self) -> &'static str {
+        match self {
+            Self::Claude => "claude_local",
+            Self::Cursor => "cursor_local",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeProviderStatus {
+    Completed,
+    Failed,
+    Interrupted,
+}
 
 /// Atomically project a supported answer and close the exact owned execution.
 /// This private path records unknown cost, never a fabricated zero charge.
@@ -80,6 +125,59 @@ pub async fn finalize_pi(
         false,
     )
     .await
+}
+
+/// Atomically project Claude Code or Cursor ACP terminal evidence. Provider
+/// session/request IDs stay in provider-specific checkpoint fields and are
+/// never copied into `provider_thread_id` or `provider_turn_id`.
+pub async fn finalize_native(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    turn: &NativeProviderTurnReceipt,
+    cleanup: &HostCleanupProof,
+) -> Result<Value> {
+    validate_native_receipt(turn)?;
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Native(turn)),
+        ProviderCleanup::Host(cleanup),
+        None,
+        false,
+    )
+    .await
+}
+
+fn validate_native_receipt(turn: &NativeProviderTurnReceipt) -> Result<()> {
+    if turn.session_id.trim().is_empty()
+        || turn.session_id.len() > MAX_NATIVE_ID_BYTES
+        || turn.request_id.trim().is_empty()
+        || turn.request_id.len() > MAX_NATIVE_ID_BYTES
+    {
+        return Err(http(422, "Native provider receipt identity is invalid"));
+    }
+    if turn
+        .final_text
+        .as_deref()
+        .is_some_and(|text| text.len() > MAX_PROJECTED_BODY_BYTES as usize)
+    {
+        return Err(http(422, "Native provider final answer exceeds its bound"));
+    }
+    let evidence_bytes = serde_json::to_vec(&turn.evidence)
+        .map_err(|_| http(422, "Native provider evidence is invalid"))?;
+    if evidence_bytes.len() > MAX_PROJECTED_BODY_BYTES as usize {
+        return Err(http(422, "Native provider evidence exceeds its bound"));
+    }
+    if let Some(usage) = &turn.usage {
+        let usage_bytes = serde_json::to_vec(usage)
+            .map_err(|_| http(422, "Native provider usage is invalid"))?;
+        if usage_bytes.len() > MAX_PROJECTED_BODY_BYTES as usize {
+            return Err(http(422, "Native provider usage exceeds its bound"));
+        }
+    }
+    Ok(())
 }
 
 /// Resolve operator Stop only from the exact terminal and same-connection
@@ -216,6 +314,7 @@ enum ProviderTurn<'a> {
     Codex(&'a TurnReceipt),
     Hermes(&'a HermesTurnReceipt),
     Pi(&'a PiTurnReceipt),
+    Native(&'a NativeProviderTurnReceipt),
 }
 
 #[derive(Clone, Copy)]
@@ -223,6 +322,7 @@ enum ProviderCleanup<'a> {
     Codex(&'a CleanupReceipt),
     Hermes(&'a HermesCleanupReceipt),
     Pi(&'a PiCleanupReceipt),
+    Host(&'a HostCleanupProof),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -250,6 +350,11 @@ impl<'a> ProviderTurn<'a> {
                 PiTurnStatus::Failed => TerminalStatus::Failed,
                 PiTurnStatus::Interrupted => TerminalStatus::Interrupted,
             },
+            Self::Native(turn) => match turn.status {
+                NativeProviderStatus::Completed => TerminalStatus::Completed,
+                NativeProviderStatus::Failed => TerminalStatus::Failed,
+                NativeProviderStatus::Interrupted => TerminalStatus::Interrupted,
+            },
         }
     }
 
@@ -258,6 +363,7 @@ impl<'a> ProviderTurn<'a> {
             Self::Codex(turn) => turn.final_text(),
             Self::Hermes(turn) => Some(turn.final_text()),
             Self::Pi(turn) => turn.final_text(),
+            Self::Native(turn) => turn.final_text.as_deref(),
         }
     }
 
@@ -279,6 +385,11 @@ impl<'a> ProviderTurn<'a> {
                 PiTurnStatus::Failed => "failed",
                 PiTurnStatus::Interrupted => "interrupted",
             },
+            Self::Native(turn) => match turn.status {
+                NativeProviderStatus::Completed => "completed",
+                NativeProviderStatus::Failed => "failed",
+                NativeProviderStatus::Interrupted => "interrupted",
+            },
         }
     }
 
@@ -294,6 +405,11 @@ impl<'a> ProviderTurn<'a> {
             // per-Run increment or use it to release a billed-cost hold.
             Self::Hermes(_) => None,
             Self::Pi(_) => None,
+            Self::Native(turn) => turn.usage.clone().map(|usage| json!({
+                "source":"provider_terminal_receipt",
+                "scope":"provider_reported",
+                "usage":usage,
+            })),
         }
     }
 
@@ -310,6 +426,11 @@ impl<'a> ProviderTurn<'a> {
             Self::Pi(turn) => ProviderRetryPredicate::Pi {
                 session_id: turn.session_id(),
                 entry_id: turn.input_entry_id(),
+            },
+            Self::Native(turn) => ProviderRetryPredicate::Native {
+                provider: turn.provider,
+                session_id: &turn.session_id,
+                request_id: &turn.request_id,
             },
         }
     }
@@ -335,6 +456,49 @@ impl<'a> ProviderTurn<'a> {
                         .is_some_and(|session| session.session_id == turn.session_id())
                     && checkpoint.pi_turn_entry_id() == Some(turn.input_entry_id())
             }
+            Self::Native(turn) => {
+                let expected = match turn.provider {
+                    NativeProviderKind::Claude => {
+                        checkpoint.provider()
+                            == rudder_runtime_core::native_chat::NativeChatProvider::ClaudeLocal
+                            && checkpoint.claude_session().map(|s| s.as_str())
+                                == Some(turn.session_id.as_str())
+                            && checkpoint.claude_prompt_request_id()
+                                == Some(turn.request_id.as_str())
+                    }
+                    NativeProviderKind::Cursor => {
+                        checkpoint.provider()
+                            == rudder_runtime_core::native_chat::NativeChatProvider::CursorLocal
+                            && checkpoint.cursor_session().map(|s| s.as_str())
+                                == Some(turn.session_id.as_str())
+                            && checkpoint.cursor_prompt_request_id()
+                                == Some(turn.request_id.as_str())
+                    }
+                };
+                // The current Claude/Cursor executor may return a terminal
+                // receipt from a combined session+prompt call. Before the
+                // provider-specific checkpoint fields are persisted, accept
+                // only the exact admitted provider phase and let finalization
+                // write the session/request identity atomically.
+                expected
+                    || matches!(
+                        checkpoint.phase(),
+                        NativeChatProtocolPhase::NoThreadRequest
+                            | NativeChatProtocolPhase::ThreadKnown
+                    ) && matches!(
+                        turn.provider,
+                        NativeProviderKind::Claude | NativeProviderKind::Cursor
+                    ) && checkpoint.provider()
+                        == match turn.provider {
+                            NativeProviderKind::Claude => {
+                                rudder_runtime_core::native_chat::NativeChatProvider::ClaudeLocal
+                            }
+                            NativeProviderKind::Cursor => {
+                                rudder_runtime_core::native_chat::NativeChatProvider::CursorLocal
+                            }
+                        }
+                        && checkpoint.thread_id().is_none()
+            }
         }
     }
 
@@ -349,6 +513,9 @@ impl<'a> ProviderTurn<'a> {
             Self::Pi(turn) => {
                 json!({"kind":"pi_turn","sessionDigest":hash(turn.session_id()),"sessionFileDigest":hash(turn.session_file()),"inputEntryId":turn.input_entry_id(),"assistantEntryId":turn.assistant_entry_id(),"leafId":turn.leaf_id()})
             }
+            Self::Native(turn) => {
+                json!({"kind":match turn.provider { NativeProviderKind::Claude => "claude_turn", NativeProviderKind::Cursor => "cursor_turn" },"sessionId":turn.session_id,"requestId":turn.request_id,"evidence":turn.evidence})
+            }
         }
     }
 
@@ -357,6 +524,11 @@ impl<'a> ProviderTurn<'a> {
             Self::Codex(turn) => Some(turn.turn_id().to_owned()),
             Self::Hermes(turn) => Some(format!("hermes-acp-request:{}", turn.request_id())),
             Self::Pi(turn) => Some(format!("pi-leaf:{}", turn.leaf_id())),
+            Self::Native(turn) => Some(format!(
+                "{}:{}",
+                turn.provider.runtime_type(),
+                turn.request_id
+            )),
         }
     }
 
@@ -365,6 +537,7 @@ impl<'a> ProviderTurn<'a> {
             Self::Codex(_) => None,
             Self::Hermes(turn) => Some(turn.user_message_id().to_owned()),
             Self::Pi(turn) => Some(turn.input_entry_id().to_owned()),
+            Self::Native(turn) => Some(turn.request_id.clone()),
         }
     }
 
@@ -381,6 +554,9 @@ impl<'a> ProviderTurn<'a> {
             Self::Pi(turn) => {
                 json!({"provider":"pi_local","sessionId":turn.session_id(),"sessionFileDigest":hash(turn.session_file()),"inputEntryId":turn.input_entry_id(),"assistantEntryId":turn.assistant_entry_id(),"leafId":turn.leaf_id(),"inputFingerprint":turn.input_fingerprint(),"providerStatus":self.provider_status(),"finalTextDigest":turn.final_text().map(hash)})
             }
+            Self::Native(turn) => {
+                json!({"provider":turn.provider.runtime_type(),"sessionId":turn.session_id,"requestId":turn.request_id,"providerStatus":self.provider_status(),"finalTextDigest":turn.final_text.as_deref().map(hash),"evidence":turn.evidence})
+            }
         }
     }
 }
@@ -391,6 +567,7 @@ impl<'a> ProviderCleanup<'a> {
             Self::Codex(cleanup) => fence.matches_cleanup_receipt(cleanup),
             Self::Hermes(cleanup) => fence.matches_hermes_cleanup_receipt(cleanup),
             Self::Pi(cleanup) => fence.matches_pi_cleanup_receipt(cleanup),
+            Self::Host(cleanup) => fence.matches_host_cleanup_proof(cleanup),
         }
     }
 
@@ -403,6 +580,9 @@ impl<'a> ProviderCleanup<'a> {
                 cleanup.proves_quiescence_for(turn)
             }
             (Self::Pi(cleanup), ProviderTurn::Pi(turn)) => cleanup.proves_quiescence_for(turn),
+            // `matches_claim` above already binds HostCleanupProof to the
+            // exact fence. The host lifecycle proof is provider independent.
+            (Self::Host(_), ProviderTurn::Native(_)) => true,
             _ => false,
         }
     }
@@ -412,6 +592,11 @@ impl<'a> ProviderCleanup<'a> {
             Self::Codex(cleanup) => cleanup.evidence_fingerprint(),
             Self::Hermes(cleanup) => cleanup.evidence_fingerprint(),
             Self::Pi(cleanup) => cleanup.evidence_fingerprint(),
+            Self::Host(cleanup) => format!(
+                "host:{}:{}",
+                cleanup.connection_receipt_id(),
+                cleanup.connection_epoch().unwrap_or_default()
+            ),
         }
     }
 }
@@ -429,6 +614,11 @@ enum ProviderRetryPredicate<'a> {
         session_id: &'a str,
         entry_id: &'a str,
     },
+    Native {
+        provider: NativeProviderKind,
+        session_id: &'a str,
+        request_id: &'a str,
+    },
 }
 
 async fn finalize_inner(
@@ -443,21 +633,6 @@ async fn finalize_inner(
     let id = fence.identity();
     if actor.organization_id() != id.organization_id {
         return Err(http(403, "Organization access denied"));
-    }
-    // Claude, Cursor, and OpenCode observations are intentionally kept out of
-    // the Codex/Hermes/Pi finalizer until each provider has a typed terminal
-    // receipt plus cleanup proof. The Foundation worker returns an explicit
-    // unresolved result for those observations; this guard prevents an
-    // accidental call from coercing their provider-native IDs into the legacy
-    // finalization selectors.
-    if matches!(
-        fence.runtime_type(),
-        "claude_local" | "cursor" | "cursor_local" | "opencode_local"
-    ) {
-        return Err(http(
-            409,
-            "Native provider terminal finalization is not yet wired",
-        ));
     }
     let cleanup_matches = cleanup.matches_claim(fence);
     let turn_matches = turn.is_none_or(|turn| {
@@ -478,6 +653,11 @@ async fn finalize_inner(
                     id.attempt_id,
                     fence.run_execution_owner_token(),
                 ),
+                ProviderTurn::Native(turn) => {
+                    fence.runtime_type() == turn.provider.runtime_type()
+                        || (turn.provider == NativeProviderKind::Cursor
+                            && fence.runtime_type() == "cursor")
+                }
             }
     });
     let pre_submission_stop = stop.is_some() && turn.is_none();
@@ -666,6 +846,52 @@ async fn finalize_inner(
                 .bind(id.connection_epoch).bind(session_id).bind(entry_id)
                 .fetch_optional(&mut *tx).await?.flatten()
             }
+            ProviderRetryPredicate::Native {
+                provider,
+                session_id,
+                request_id,
+            } => {
+                let provider_name = provider.checkpoint_provider();
+                let session_key = match provider {
+                    NativeProviderKind::Claude => "claudeSession",
+                    NativeProviderKind::Cursor => "cursorSession",
+                };
+                let request_key = match provider {
+                    NativeProviderKind::Claude => "claudePromptRequestId",
+                    NativeProviderKind::Cursor => "cursorPromptRequestId",
+                };
+                let query = format!(
+                    "SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r
+                     JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
+                     JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id AND a.id=$7::uuid
+                     WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.execution_authority='native_rust'
+                       AND r.chat_conversation_id=$3::uuid AND r.chat_generation_id=$4::uuid
+                       AND r.execution_owner_token=$5 AND g.control_owner_token=$6 AND a.owner_token=$5
+                       AND g.attempt_epoch=$8 AND a.generation_attempt_epoch=$8 AND a.attempt_epoch=$9
+                       AND a.connection_epoch=$10 AND a.protocol_phase='execution_terminal_committed'
+                       AND a.provider_thread_id IS NULL AND a.provider_turn_id IS NULL
+                       AND a.checkpoint_json->>'provider'=$11
+                       AND a.checkpoint_json->>'{session_key}'=$12
+                       AND a.checkpoint_json->>'{request_key}'=$13"
+                );
+                sqlx::query_scalar(&query)
+                    .bind(id.organization_id)
+                    .bind(id.run_id)
+                    .bind(id.conversation_id)
+                    .bind(id.generation_id)
+                    .bind(fence.run_execution_owner_token())
+                    .bind(fence.generation_control_owner_token())
+                    .bind(id.attempt_id)
+                    .bind(id.generation_attempt_epoch)
+                    .bind(id.run_attempt_epoch)
+                    .bind(id.connection_epoch)
+                    .bind(provider_name)
+                    .bind(session_id)
+                    .bind(request_id)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .flatten()
+            }
         }
     };
     if let Some(existing) = existing {
@@ -697,8 +923,21 @@ async fn finalize_inner(
                 | NativeChatProtocolPhase::InputPreSubmission
         ) && locked.checkpoint.turn_id().is_none()
     } else if let Some(turn) = turn {
+        // Claude/Cursor currently return a typed terminal receipt from a
+        // combined session+prompt adapter call. Their provider-native session
+        // and request IDs are therefore first observed at this boundary, so
+        // the admitted pre-effect phases are accepted once and the finalizer
+        // atomically records those IDs below. Codex/Hermes/Pi still require
+        // their explicit terminal-observed transition (or a governed Stop
+        // from TurnKnown).
+        let native_combined_phase = matches!(turn, ProviderTurn::Native(_))
+            && matches!(
+                locked.checkpoint.phase(),
+                NativeChatProtocolPhase::NoThreadRequest | NativeChatProtocolPhase::ThreadKnown
+            );
         (locked.checkpoint.phase() == NativeChatProtocolPhase::ProviderTerminalObserved
-            || (stop.is_some() && locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown))
+            || (stop.is_some() && locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown)
+            || native_combined_phase)
             && turn.checkpoint_matches(&locked.checkpoint)
     } else {
         false
@@ -749,6 +988,19 @@ async fn finalize_inner(
     };
     let mut checkpoint = serde_json::to_value(&locked.checkpoint)
         .map_err(|_| http(500, "Cannot encode Native Chat checkpoint"))?;
+    if let Some(ProviderTurn::Native(turn)) = turn {
+        checkpoint["provider"] = json!(turn.provider.checkpoint_provider());
+        match turn.provider {
+            NativeProviderKind::Claude => {
+                checkpoint["claudeSession"] = json!(turn.session_id);
+                checkpoint["claudePromptRequestId"] = json!(turn.request_id);
+            }
+            NativeProviderKind::Cursor => {
+                checkpoint["cursorSession"] = json!(turn.session_id);
+                checkpoint["cursorPromptRequestId"] = json!(turn.request_id);
+            }
+        }
+    }
     checkpoint["phase"] = json!("execution_terminal_committed");
     checkpoint["revision"] = json!(
         locked
@@ -765,6 +1017,53 @@ async fn finalize_inner(
     sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:finalize',true)")
         .execute(&mut *tx)
         .await?;
+
+    // Combined provider adapters may observe their session while sending the
+    // first prompt. Persist that provider-native locator before terminal state
+    // so replay and later sends share one immutable Segment identity.
+    if let Some(ProviderTurn::Native(turn)) = turn {
+        if !matches!(
+            fence.runtime_type(),
+            "claude_local" | "cursor" | "cursor_local"
+        ) || (fence.runtime_type() == "claude_local"
+            && turn.provider != NativeProviderKind::Claude)
+            || (matches!(fence.runtime_type(), "cursor" | "cursor_local")
+                && turn.provider != NativeProviderKind::Cursor)
+        {
+            return Err(http(
+                409,
+                "Native provider runtime identity does not match receipt",
+            ));
+        }
+        if let Some(stored) = locked.native_session_id.as_deref() {
+            if stored != turn.session_id {
+                return Err(http(
+                    409,
+                    "Native provider session changed before finalization",
+                ));
+            }
+        } else {
+            let updated = sqlx::query(
+                "UPDATE native_segments
+                 SET native_session_id=$4,state='open',updated_at=clock_timestamp()
+                 WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$3::uuid
+                   AND state='pending' AND native_session_id IS NULL AND sealed_at IS NULL",
+            )
+            .bind(id.organization_id)
+            .bind(&fence.binding_id)
+            .bind(&fence.segment_id)
+            .bind(&turn.session_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if updated != 1 {
+                return Err(http(
+                    409,
+                    "Native provider Segment changed before finalization",
+                ));
+            }
+        }
+    }
 
     let message_id: Option<String> = if forced_failure {
         None
@@ -825,6 +1124,7 @@ async fn finalize_inner(
                 (Some(ProviderTurn::Pi(_)), _) => {
                     return Err(http(409, "Pi live output projection is unsupported"));
                 }
+                (Some(ProviderTurn::Native(_)), ProviderCleanup::Host(_)) => {}
                 _ => return Err(http(409, "Native Chat projection receipt is invalid")),
             }
             let status = match run_status {
@@ -979,6 +1279,12 @@ async fn finalize_inner(
                 ProviderCleanup::Pi(_) => {
                     return Err(http(409, "Pi Stop finalization is unsupported"));
                 }
+                ProviderCleanup::Host(_) => {
+                    return Err(http(
+                        409,
+                        "Native provider pre-submission Stop finalization is unsupported",
+                    ));
+                }
             }
         } else {
             let Some(turn) = turn else {
@@ -1002,6 +1308,12 @@ async fn finalize_inner(
                 }
                 (ProviderTurn::Pi(_), ProviderCleanup::Pi(_)) => {
                     return Err(http(409, "Pi Stop finalization is unsupported"));
+                }
+                (ProviderTurn::Native(_), ProviderCleanup::Host(_)) => {
+                    return Err(http(
+                        409,
+                        "Native provider Stop finalization is unsupported",
+                    ));
                 }
                 _ => return Err(http(409, "Provider Stop evidence does not match")),
             }

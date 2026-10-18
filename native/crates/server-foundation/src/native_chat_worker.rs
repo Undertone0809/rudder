@@ -611,13 +611,17 @@ fn run(
         Ok(rudder_native_chat_executor::NativeExecutionObservation::Pi(observation)) => {
             return finish_pi_observation(handle, &pool, observation);
         }
-        // These provider adapters already return typed, provider-native
-        // observations. Until their D1 projection/finalizer is available,
-        // retain the execution hold and expose an explicit unresolved state;
-        // never coerce their session IDs into Codex Thread/Turn fields.
-        Ok(rudder_native_chat_executor::NativeExecutionObservation::Claude(_))
-        | Ok(rudder_native_chat_executor::NativeExecutionObservation::Cursor(_))
-        | Ok(rudder_native_chat_executor::NativeExecutionObservation::OpenCode(_)) => {
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::Claude(observation)) => {
+            return finish_claude_observation(handle, &pool, observation);
+        }
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::Cursor(observation)) => {
+            return finish_cursor_observation(handle, &pool, observation);
+        }
+        // OpenCode currently proves only that its host-owned HTTP server is
+        // unowned. Keep the held attempt visible as unresolved until a
+        // provider-native server cleanup receipt and D1 finalizer exist; do
+        // not project its session/message IDs through Codex fields.
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::OpenCode(_)) => {
             return Completion {
                 status: Status::Unresolved(UnresolvedReason::ProviderTerminalUnsupported),
                 quiescent: false,
@@ -782,6 +786,145 @@ fn run(
             }
             result
         })
+        .await
+        {
+            Ok(Ok(_)) => Status::FinalizationCommitted,
+            _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+        }
+    });
+    Completion {
+        status,
+        quiescent: true,
+    }
+}
+
+fn finish_claude_observation(
+    handle: &tokio::runtime::Handle,
+    pool: &PgPool,
+    observation: rudder_native_chat_executor::ClaudeNativeExecutionObservation,
+) -> Completion {
+    let rudder_native_chat_executor::ClaudeNativeExecutionObservation {
+        execution_principal,
+        fence,
+        observation: provider,
+    } = observation;
+    let Some(cleanup) = provider.cleanup.as_ref() else {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::MissingCleanupProof),
+            quiescent: false,
+        };
+    };
+    if !fence.matches_host_cleanup_proof(cleanup) {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::ProviderCleanupUnknown),
+            quiescent: false,
+        };
+    }
+    let Some(request_id) = provider.turn.result_uuid() else {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::ProviderTerminalUnsupported),
+            quiescent: false,
+        };
+    };
+    let turn = rudder_d1_persistence::native_chat::execution::NativeProviderTurnReceipt {
+        provider: rudder_d1_persistence::native_chat::execution::NativeProviderKind::Claude,
+        session_id: provider.turn.session_id().as_str().to_owned(),
+        request_id: request_id.to_owned(),
+        final_text: provider.turn.summary().map(str::to_owned),
+        status: match provider.turn.status() {
+            rudder_claude_code::ClaudeTurnStatus::Completed => {
+                rudder_d1_persistence::native_chat::execution::NativeProviderStatus::Completed
+            }
+            rudder_claude_code::ClaudeTurnStatus::Failed => {
+                rudder_d1_persistence::native_chat::execution::NativeProviderStatus::Failed
+            }
+        },
+        usage: provider.turn.usage().cloned(),
+        evidence: serde_json::json!({
+            "provider": "claude_local",
+            "sessionId": provider.turn.session_id().as_str(),
+            "resultUuid": request_id,
+            "subtype": provider.turn.subtype(),
+            "isError": provider.turn.is_error(),
+        }),
+    };
+    finalize_native_observation(handle, pool, execution_principal, fence, turn, cleanup)
+}
+
+fn finish_cursor_observation(
+    handle: &tokio::runtime::Handle,
+    pool: &PgPool,
+    observation: rudder_native_chat_executor::CursorNativeExecutionObservation,
+) -> Completion {
+    let rudder_native_chat_executor::CursorNativeExecutionObservation {
+        execution_principal,
+        fence,
+        observation: provider,
+    } = observation;
+    let Some(cleanup) = provider.cleanup.as_ref() else {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::MissingCleanupProof),
+            quiescent: false,
+        };
+    };
+    if !fence.matches_host_cleanup_proof(cleanup) {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::ProviderCleanupUnknown),
+            quiescent: false,
+        };
+    }
+    if provider.request_id.trim().is_empty() {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::ProviderTerminalUnsupported),
+            quiescent: false,
+        };
+    }
+    let final_text = provider.final_text.or_else(|| {
+        provider
+            .response
+            .get("text")
+            .or_else(|| provider.response.get("output"))
+            .or_else(|| provider.response.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    });
+    let turn = rudder_d1_persistence::native_chat::execution::NativeProviderTurnReceipt {
+        provider: rudder_d1_persistence::native_chat::execution::NativeProviderKind::Cursor,
+        session_id: provider.session.as_str().to_owned(),
+        request_id: provider.request_id.clone(),
+        final_text,
+        status: rudder_d1_persistence::native_chat::execution::NativeProviderStatus::Completed,
+        usage: None,
+        evidence: serde_json::json!({
+            "provider": "cursor_local",
+            "sessionId": provider.session.as_str(),
+            "requestId": provider.request_id,
+            "updateCount": provider.update_count,
+            "response": provider.response,
+        }),
+    };
+    finalize_native_observation(handle, pool, execution_principal, fence, turn, cleanup)
+}
+
+fn finalize_native_observation(
+    handle: &tokio::runtime::Handle,
+    pool: &PgPool,
+    execution_principal: rudder_d1_persistence::native_chat::NativeChatExecutionPrincipal,
+    fence: rudder_d1_persistence::native_chat::execution::ExecutionFence,
+    turn: rudder_d1_persistence::native_chat::execution::NativeProviderTurnReceipt,
+    cleanup: &rudder_native_process_transport::HostCleanupProof,
+) -> Completion {
+    let status = handle.block_on(async {
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            rudder_d1_persistence::native_chat::execution::finalize_native(
+                pool,
+                &execution_principal,
+                &fence,
+                &turn,
+                cleanup,
+            ),
+        )
         .await
         {
             Ok(Ok(_)) => Status::FinalizationCommitted,

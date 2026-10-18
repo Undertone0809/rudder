@@ -118,6 +118,17 @@ impl RequestId {
     pub fn generated(sequence: u64) -> Self {
         Self::String(format!("rudder-cursor-{sequence}"))
     }
+
+    /// Return the bounded provider request identity in a stable form for
+    /// durable Native Chat evidence. Numeric ACP ids are represented in base
+    /// ten; string ids are returned unchanged. This does not create or infer
+    /// a Codex Thread/Turn identity.
+    pub fn as_string(&self) -> String {
+        match self {
+            Self::Number(value) => value.to_string(),
+            Self::String(value) => value.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]

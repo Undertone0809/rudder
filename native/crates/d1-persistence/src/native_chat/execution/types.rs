@@ -1,5 +1,6 @@
 use rudder_codex_app_server::CleanupReceipt;
 use rudder_hermes_acp::HermesCleanupReceipt;
+use rudder_native_process_transport::HostCleanupProof;
 use rudder_pi_rpc::PiCleanupReceipt;
 use rudder_runtime_core::native_chat::{
     ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector, NativeChatProtocolPhase,
@@ -88,6 +89,17 @@ impl ExecutionFence {
     }
 
     pub fn matches_pi_cleanup_receipt(&self, cleanup: &PiCleanupReceipt) -> bool {
+        let identity = self.identity();
+        cleanup.matches_connection_claim(
+            identity.run_id,
+            identity.attempt_id,
+            self.run_execution_owner_token(),
+            identity.connection_epoch,
+            &self.connection_claim_id,
+        )
+    }
+
+    pub fn matches_host_cleanup_proof(&self, cleanup: &HostCleanupProof) -> bool {
         let identity = self.identity();
         cleanup.matches_connection_claim(
             identity.run_id,

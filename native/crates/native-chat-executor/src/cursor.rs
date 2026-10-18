@@ -40,6 +40,15 @@ pub enum CursorExecutionError {
 /// opaque to the shared Codex finalizer.
 pub struct CursorExecutionObservation {
     pub session: SessionId,
+    /// The ACP request id for the terminal `session/prompt` response. It is a
+    /// provider-native correlation key and must not be projected as a Codex
+    /// turn id.
+    pub request_id: String,
+    /// Concatenated bounded `agent_message_chunk` text observed during the
+    /// prompt. ACP may return the answer in notifications instead of the JSON
+    /// RPC result, so retaining this provider-native text is part of the typed
+    /// terminal receipt.
+    pub final_text: Option<String>,
     pub response: Value,
     pub update_count: u64,
     pub cleanup: Option<HostCleanupProof>,
@@ -113,9 +122,11 @@ pub fn execute_turn(
         .stop(CLEANUP_TIMEOUT)
         .ok()
         .and_then(|_| transport.take_cleanup_proof());
-    let (session, response, update_count) = result?;
+    let (session, request_id, final_text, response, update_count) = result?;
     Ok(CursorExecutionObservation {
         session,
+        request_id,
+        final_text,
         response,
         update_count,
         cleanup,
@@ -129,7 +140,7 @@ fn run_turn(
     existing_session: Option<&str>,
     input: &str,
     deadline: Instant,
-) -> Result<(SessionId, Value, u64), CursorExecutionError> {
+) -> Result<(SessionId, String, Option<String>, Value, u64), CursorExecutionError> {
     transport.wait_spawned(remaining(deadline, Duration::from_secs(10)))?;
     request_and_wait(
         transport,
@@ -185,8 +196,15 @@ fn run_turn(
         prompt,
         remaining(deadline, Duration::from_secs(60)),
     )?;
-    let updates = drain_updates(transport, &session)?;
-    Ok((session, response.result.unwrap_or(Value::Null), updates))
+    let request_id = response.id.as_string();
+    let (updates, final_text) = drain_updates(transport, &session)?;
+    Ok((
+        session,
+        request_id,
+        final_text,
+        response.result.unwrap_or(Value::Null),
+        updates,
+    ))
 }
 
 fn request_and_wait(
@@ -222,12 +240,13 @@ fn session_from_response(
 fn drain_updates(
     transport: &mut CursorAcpTransport,
     session: &SessionId,
-) -> Result<u64, CursorExecutionError> {
+) -> Result<(u64, Option<String>), CursorExecutionError> {
     let mut reducer = CursorAcpSession::new();
     reducer
         .observe_session_load(session.clone())
         .map_err(|_| CursorExecutionError::InvalidSession)?;
     let mut count: u64 = 0;
+    let mut final_text = String::new();
     loop {
         match transport.receive(Duration::ZERO) {
             Ok(CursorAcpMessage::Notification(
@@ -237,6 +256,22 @@ fn drain_updates(
                     .observe_update(&update)
                     .map_err(|_| CursorExecutionError::InvalidSession)?;
                 count = count.saturating_add(1);
+                if matches!(
+                    update.kind,
+                    rudder_cursor_acp_adapter::SessionUpdateKind::AgentMessageChunk
+                ) && let Some(text) = update
+                    .raw
+                    .get("content")
+                    .and_then(|content| content.get("text"))
+                    .and_then(Value::as_str)
+                    .or_else(|| update.raw.get("text").and_then(Value::as_str))
+                    .or_else(|| update.raw.get("delta").and_then(Value::as_str))
+                {
+                    if final_text.len().saturating_add(text.len()) > 256 * 1024 {
+                        return Err(CursorExecutionError::InvalidSession);
+                    }
+                    final_text.push_str(text);
+                }
             }
             Ok(CursorAcpMessage::Request(_)) => return Err(CursorExecutionError::ControlRequest),
             Ok(CursorAcpMessage::Notification(_)) => {}
@@ -246,7 +281,7 @@ fn drain_updates(
             Err(error) => return Err(error.into()),
         }
     }
-    Ok(count)
+    Ok((count, (!final_text.is_empty()).then_some(final_text)))
 }
 
 fn path_string(path: &std::path::Path) -> Result<String, CursorExecutionError> {
