@@ -366,12 +366,12 @@
         },
         {
           "number": 331,
-          "state": "open_ci_pending_stage_accept_final_review_pending",
+          "state": "merged",
           "head_sha": "e1054aa0bffbf5c23fe97d29423012787c461cc0",
           "base_sha": "c43c0ada9e4064b271b9be00af4c4459dd284415",
           "scope": "private feature-gated AgentCreate runtime normalization only: typed env plain/secret_ref normalization, org/purpose secret validation, strict sensitive plaintext rejection, nested modelFallback parity including gemini_local; no public POST, instruction materialization, skills, MCP, intelligence or avatar cutover",
           "stage_review": "ACCEPT exact e1054aa0bffbf5c23fe97d29423012787c461cc0",
-          "final_review": "needs_more_evidence while protected native/packaged CI pending; rerun after CI settles",
+          "final_review": "ACCEPT exact e1054aa0bffbf5c23fe97d29423012787c461cc0",
           "validation": [
             "cargo fmt --all -- --check",
             "cargo check -p rudder-d1-persistence",
@@ -379,7 +379,10 @@
             "disposable PostgreSQL secret/fallback organization-isolation test",
             "transactional Agent create PostgreSQL test"
           ],
-          "mergeability": "MERGEABLE at observation; do not merge until required checks and final handoff review are green"
+          "mergeability": "MERGEABLE at observation; do not merge until required checks and final handoff review are green",
+          "merge_sha": "9ba84ce6b20df6c938e28db0625fca0f93c3e52d",
+          "merged_at": "2026-10-18T00:22:20Z",
+          "ci": "21 protected checks SUCCESS, including packaged smoke and all platform verification"
         },
         {
           "number": 332,
