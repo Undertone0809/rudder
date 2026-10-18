@@ -101,6 +101,35 @@ pub fn execute_turn(
         permit,
     )?;
     let deadline = Instant::now() + timeout;
+    let result = run_turn(
+        &mut transport,
+        config,
+        local,
+        existing_session,
+        input,
+        deadline,
+    );
+    let cleanup = transport
+        .stop(CLEANUP_TIMEOUT)
+        .ok()
+        .and_then(|_| transport.take_cleanup_proof());
+    let (session, response, update_count) = result?;
+    return Ok(CursorExecutionObservation {
+        session,
+        response,
+        update_count,
+        cleanup,
+    });
+}
+
+fn run_turn(
+    transport: &mut CursorAcpTransport,
+    config: &ResolvedCodexConfig,
+    local: &CursorLocalConfig,
+    existing_session: Option<&str>,
+    input: &str,
+    deadline: Instant,
+) -> Result<(SessionId, Value, u64), CursorExecutionError> {
     transport.wait_spawned(remaining(deadline, Duration::from_secs(10)))?;
     request_and_wait(
         &mut transport,
@@ -154,19 +183,10 @@ pub fn execute_turn(
     let response = request_and_wait(
         &mut transport,
         prompt,
-        remaining(deadline, timeout.min(Duration::from_secs(60))),
+        remaining(deadline, Duration::from_secs(60)),
     )?;
     let updates = drain_updates(&mut transport, &session)?;
-    let cleanup = transport
-        .stop(CLEANUP_TIMEOUT)
-        .ok()
-        .and_then(|_| transport.take_cleanup_proof());
-    Ok(CursorExecutionObservation {
-        session,
-        response: response.result.unwrap_or(Value::Null),
-        update_count: updates,
-        cleanup,
-    })
+    Ok((session, response.result.unwrap_or(Value::Null), updates))
 }
 
 fn request_and_wait(

@@ -96,6 +96,16 @@ pub struct ClaudeSessionSelector(String);
 impl ClaudeSessionSelector {
     pub fn from_persisted(value: &str) -> Result<Self, RuntimeError> {
         validate_opaque_session(value, "invalid Claude Code session selector")?;
+        let uuid_shape = value.len() == 36
+            && value.bytes().enumerate().all(|(index, byte)| match index {
+                8 | 13 | 18 | 23 => byte == b'-',
+                _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+            });
+        if !uuid_shape {
+            return Err(RuntimeError::invalid(
+                "invalid Claude Code session selector",
+            ));
+        }
         Ok(Self(value.to_owned()))
     }
     pub fn as_str(&self) -> &str {
@@ -1364,7 +1374,7 @@ mod tests {
         }
         check!(
             NativeChatProvider::ClaudeLocal,
-            ClaudeSessionSelector::from_persisted("claude-session").unwrap(),
+            ClaudeSessionSelector::from_persisted("05a82e73-f42d-4a40-9323-e58356868e6b").unwrap(),
             record_claude_session,
             mark_claude_input_indeterminate,
             record_claude_turn,
