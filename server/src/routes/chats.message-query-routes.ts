@@ -1,6 +1,7 @@
 import type { Router } from "express";
 import { hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 import { callNativeChatTranscript } from "../services/native-chat-transcript-bridge.js";
+import { callNativeChatMessages } from "../services/native-chat-message-reader-bridge.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { paginateChatMessages } from "./chats.helpers.js";
 
@@ -40,6 +41,25 @@ export function registerChatMessageQueryRoutes(ctx: ChatMessageQueryRouteContext
       await svc.markInterruptedStreamingMessages(conversation.id);
     }
     const includeTranscript = req.query.includeTranscript === "true";
+    if (conversation.mutability === "native_chat") {
+      const response = await callNativeChatMessages(
+        rustFoundationBridge,
+        req.actor,
+        conversation.orgId,
+        {
+          operation: "read_conversation_messages",
+          conversationId: conversation.id,
+          limit: boundedQueryNumber(req.query.limit, 200),
+        },
+      );
+      if (req.query.envelope === "true" && response.status === 200) {
+        const value = JSON.parse(response.body.toString("utf8")) as { messages?: unknown[]; nextCursor?: string | null };
+        res.json({ items: value.messages ?? [], nextCursor: value.nextCursor ?? null });
+        return;
+      }
+      res.status(response.status).type(response.contentType).send(response.body);
+      return;
+    }
     const messages = await svc.listMessages(conversation.id, { includeTranscript });
     if (req.query.envelope === "true") {
       res.json(paginateChatMessages(messages, req.query));

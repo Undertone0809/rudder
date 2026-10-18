@@ -8,6 +8,7 @@ use super::projection::span_and_segment;
 use super::validation::{Result, canonical_uuid, http};
 
 const MAX_TRANSCRIPT_LIMIT: i32 = 100;
+const MAX_MESSAGE_LIMIT: i32 = 200;
 
 pub(super) async fn read(
     pool: &PgPool,
@@ -308,5 +309,136 @@ pub(super) async fn read_message_transcript(
             "nextCursor": has_more.then(|| revision.to_string()),
         },
         "span": span,
+    }))
+}
+
+/// Read the bounded user-visible message projection for a Native Chat
+/// conversation. This is deliberately separate from the legacy TypeScript
+/// transcript hydrator: native rows never expose structured payloads or
+/// provider locators through the shared Reader. Detailed transcript ranges
+/// remain available through `read_message_transcript`.
+pub(super) async fn read_conversation_messages(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    request: &super::Request,
+) -> Result<Value> {
+    let super::Request::ReadConversationMessages {
+        conversation_id: raw_conversation_id,
+        limit,
+    } = request
+    else {
+        return Err(http(400, "Expected a conversation message read request"));
+    };
+    let conversation_id = canonical_uuid(raw_conversation_id, "conversation id")?;
+    let limit = (*limit).clamp(1, MAX_MESSAGE_LIMIT);
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL statement_timeout = '5s'")
+        .execute(&mut *tx)
+        .await?;
+
+    let target = sqlx::query(
+        "SELECT COALESCE(preferred_agent_id, routed_agent_id)::text AS agent_id
+         FROM chat_conversations
+         WHERE org_id=$1::uuid AND id=$2::uuid AND conversation_kind='chat'",
+    )
+    .bind(organization_id)
+    .bind(&conversation_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| http(404, "Chat conversation not found"))?;
+    let agent_id: String = target
+        .try_get("agent_id")
+        .map_err(|_| http(409, "Native Chat conversation has no selected Agent"))?;
+    runtime_bindings::authorize_chat_target_read_tx(
+        &mut tx,
+        actor,
+        organization_id,
+        &conversation_id,
+        &agent_id,
+    )
+    .await?;
+
+    let rows = sqlx::query(
+        "SELECT m.id::text AS id, m.org_id::text AS org_id,
+                m.conversation_id::text AS conversation_id, m.role, m.kind,
+                m.status, m.body, m.approval_id::text AS approval_id,
+                m.run_id::text AS run_id, m.replying_agent_id::text AS replying_agent_id,
+                m.chat_turn_id::text AS chat_turn_id, m.turn_variant,
+                m.superseded_at::text AS superseded_at,
+                m.created_at::text AS created_at, m.updated_at::text AS updated_at,
+                g.id::text AS generation_id, g.terminal_reason,
+                g.execution_authority, g.status AS generation_status
+         FROM chat_messages m
+         LEFT JOIN heartbeat_runs r ON r.org_id=m.org_id AND r.id=m.run_id
+         LEFT JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
+         WHERE m.org_id=$1::uuid AND m.conversation_id=$2::uuid
+         ORDER BY m.created_at ASC, m.id ASC
+         LIMIT $3",
+    )
+    .bind(organization_id)
+    .bind(&conversation_id)
+    .bind(limit + 1)
+    .fetch_all(&mut *tx)
+    .await?;
+    let has_more = rows.len() > limit as usize;
+    let mut messages = Vec::new();
+    for row in rows.into_iter().take(limit as usize) {
+        let role: String = row.try_get("role")?;
+        let run_id: Option<String> = row.try_get("run_id")?;
+        let execution_authority: Option<String> = row.try_get("execution_authority")?;
+        if role == "assistant" && execution_authority.as_deref() != Some("native_rust") {
+            return Err(http(
+                409,
+                "Native Chat Reader found a legacy assistant projection",
+            ));
+        }
+        let body: String = row.try_get("body")?;
+        if body.len() > 262_144 {
+            return Err(http(422, "Native Chat message exceeds the read bound"));
+        }
+        let id: String = row.try_get("id")?;
+        let generation_id: Option<String> = row.try_get("generation_id")?;
+        messages.push(serde_json::json!({
+            "id": id,
+            "orgId": row.try_get::<String, _>("org_id")?,
+            "conversationId": row.try_get::<String, _>("conversation_id")?,
+            "role": role,
+            "kind": row.try_get::<String, _>("kind")?,
+            "status": row.try_get::<String, _>("status")?,
+            "body": body,
+            "structuredPayload": Value::Null,
+            "approvalId": row.try_get::<Option<String>, _>("approval_id")?,
+            "approval": Value::Null,
+            "attachments": [],
+            "runId": run_id,
+            "generationId": generation_id,
+            "generationTerminalReason": row.try_get::<Option<String>, _>("terminal_reason")?,
+            "replyingAgentId": row.try_get::<Option<String>, _>("replying_agent_id")?,
+            "chatTurnId": row.try_get::<Option<String>, _>("chat_turn_id")?,
+            "turnVariant": row.try_get::<i32, _>("turn_variant")?,
+            "supersededAt": row.try_get::<Option<String>, _>("superseded_at")?,
+            "createdAt": row.try_get::<String, _>("created_at")?,
+            "updatedAt": row.try_get::<String, _>("updated_at")?,
+            "transcriptSummary": Value::Null,
+        }));
+    }
+    let next_cursor = has_more
+        .then(|| {
+            messages
+                .last()
+                .and_then(|message| message.get("id").and_then(Value::as_str))
+                .map(str::to_owned)
+        })
+        .flatten();
+    tx.commit().await?;
+    Ok(serde_json::json!({
+        "messages": messages,
+        "source": "native_chat_reader",
+        "availability": "complete",
+        "nextCursor": next_cursor,
     }))
 }

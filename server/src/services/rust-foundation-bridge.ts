@@ -35,6 +35,7 @@ import type { RunReadInput } from "./run-read-bridge.js";
 import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.js";
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
+import { requestNativeChatMessages, type NativeChatMessageReaderInput } from "./native-chat-message-reader-bridge.js";
 import { requestNativeChatTranscript, type NativeChatTranscriptInput } from "./native-chat-transcript-bridge.js";
 import {
   nativeIdentityAuthEnvironment,
@@ -66,6 +67,7 @@ export type RustFoundationResponse = {
 export interface RustFoundationBridge {
   runtimeBinding?(actor: RustFoundationActor, orgId: string, input: RuntimeBindingInput): Promise<RustFoundationResponse>;
   nativeChatTranscript?(actor: RustFoundationActor, orgId: string, input: NativeChatTranscriptInput): Promise<RustFoundationResponse>;
+  nativeChatMessages?(actor: RustFoundationActor, orgId: string, input: NativeChatMessageReaderInput): Promise<RustFoundationResponse>;
   automationRead?(actor: RustFoundationActor, orgId: string, input: AutomationReadInput): Promise<RustFoundationResponse>;
   activityLinkRead?(actor: RustFoundationActor, orgId: string, input: ActivityLinkReadInput): Promise<RustFoundationResponse>;
   issueMetadataRead?(actor: RustFoundationActor, orgId: string, input: IssueMetadataReadInput): Promise<RustFoundationResponse>;
@@ -748,6 +750,11 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       await ensureStarted();
       if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
       return requestNativeChatTranscript(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
+    },
+    async nativeChatMessages(actor, orgId, input) {
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      return requestNativeChatMessages(baseUrl, actorEnvelopeKey, requestTimeoutMs, actor, orgId, input);
     },
     async automationRead(actor, orgId, input) {
       await ensureStarted();

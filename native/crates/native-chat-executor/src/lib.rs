@@ -598,17 +598,17 @@ where
                     "codex_local" => profile::validate(config, paths),
                     "hermes_local" if allow_hermes => hermes::validate_config(config, host, paths),
                     "pi_local" => pi::validate_config(config, host, paths),
-                    "claude_local" => config
+                    "claude_local" if allow_hermes => config
                         .claude
                         .as_ref()
                         .map(|_| ())
                         .ok_or(Error::UnsupportedConfiguration),
-                    "cursor" | "cursor_local" => config
+                    "cursor" | "cursor_local" if allow_hermes => config
                         .cursor
                         .as_ref()
                         .map(|_| ())
                         .ok_or(Error::UnsupportedConfiguration),
-                    "opencode_local" => config
+                    "opencode_local" if allow_hermes => config
                         .opencode
                         .as_ref()
                         .filter(|value| value.executable().is_some())
