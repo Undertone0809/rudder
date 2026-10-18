@@ -409,21 +409,22 @@
         {
           "number": 333,
           "state": "open_ci_pending_stage_review_pending",
-          "head_sha": "6bf0a672cd91af1425590a6e094c9fa5227b6655",
-          "base_sha": "9ba84ce6b20df6c938e28db0625fca0f93c3e52d",
+          "head_sha": "b8b5de8efafc4f921556c20ac718d114ffa45caa",
+          "base_sha": "8e946face31aa7aeb4f8ab6740f164f23d3416bd",
           "scope": "private feature-gated Agent create canonical skills foundation: desired ref trim/dedupe/sort, bundled always-enabled omission, org catalog canonicalization and unknown/ambiguous/cross-org rejection, same-transaction agent_enabled_skills idempotent writes; public POST unchanged and gate default off",
           "validation": [
             "cargo fmt --all -- --check",
             "cargo check -p rudder-d1-persistence",
             "cargo clippy -p rudder-d1-persistence --all-targets -- -D warnings",
-            "skills unit tests 3/3",
-            "focused PG rust_create_ tests 4/4"
+            "skills unit tests 4/4",
+            "focused PG rust_create_ suite 5/5 after ENOSPC recovery"
           ],
           "stage_review": "ACCEPT exact 6bf0a672cd91af1425590a6e094c9fa5227b6655",
           "mergeability": "MERGEABLE/CI queued at observation; do not merge yet",
           "correction": "Stage review rejected empty desiredSkills and unchecked bundled catalog; fixed in 6bf0a672c with parser/catalog regression tests and rerun local checks.",
           "stage_review_limits": "No product verifier at this private artifact stage; protected CI and final handoff remain required.",
-          "final_review": "pending protected CI and final handoff review"
+          "final_review": "pending protected CI and final handoff review",
+          "rebase": "Rebased after #332 merge onto main 8e946face; preserved managed MCP and normalization tests."
         }
       ],
       "managed_migration": {
