@@ -478,6 +478,8 @@ async fn conversation_reader_pages_summarizes_cutoffs_and_side_chat_access() {
     const SOURCE_MESSAGE: &str = "67000000-0000-4000-8000-000000000102";
     const ASSISTANT_MESSAGE: &str = "68000000-0000-4000-8000-000000000102";
     const SIDE_MESSAGE: &str = "68000000-0000-4000-8000-000000000103";
+    const SIDE_APPROVAL: &str = "69000000-0000-4000-8000-000000000101";
+    const SIDE_ATTACHMENT: &str = "6a000000-0000-4000-8000-000000000101";
 
     let database = Database::start().await;
     seed_access(&database.pool).await;
@@ -570,16 +572,50 @@ async fn conversation_reader_pages_summarizes_cutoffs_and_side_chat_access() {
         .expect("insert conversation transcript event");
     }
     sqlx::query(
+        "INSERT INTO approvals
+           (id, org_id, type, requested_by_user_id, status, payload)
+         VALUES ($1::uuid, $2::uuid, 'operation_proposal', $3,
+                 'pending', $4::jsonb)",
+    )
+    .bind(SIDE_APPROVAL)
+    .bind(ORG)
+    .bind(USER)
+    .bind(json!({"title":"Side Chat approval"}))
+    .execute(&mut *tx)
+    .await
+    .expect("insert Side Chat approval");
+    sqlx::query(
         "INSERT INTO chat_messages
-           (id, org_id, conversation_id, role, kind, status, body, turn_variant)
-         VALUES ($1::uuid, $2::uuid, $3::uuid, 'assistant', 'message', 'completed', 'side answer', 0)",
+           (id, org_id, conversation_id, role, kind, status, body,
+            structured_payload, approval_id, turn_variant)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'assistant', 'message', 'completed',
+                 'side answer', $4::jsonb, $5::uuid, 0)",
     )
     .bind(SIDE_MESSAGE)
     .bind(ORG)
     .bind(SIDE_CHAT)
+    .bind(json!({
+        "source": "side_chat_fixture",
+        "annotation": {"label": "copied"},
+        "__chatTranscript": [{"kind": "assistant", "text": "legacy"}],
+    }))
+    .bind(SIDE_APPROVAL)
     .execute(&mut *tx)
     .await
     .expect("insert Side Chat message");
+    sqlx::query(
+        "INSERT INTO chat_attachments
+           (id, org_id, conversation_id, message_id, asset_id)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid)",
+    )
+    .bind(SIDE_ATTACHMENT)
+    .bind(ORG)
+    .bind(SIDE_CHAT)
+    .bind(SIDE_MESSAGE)
+    .bind(support::ASSET)
+    .execute(&mut *tx)
+    .await
+    .expect("insert Side Chat attachment");
     tx.commit().await.expect("commit conversation fixture");
 
     let first_request: Request = serde_json::from_value(json!({
@@ -633,7 +669,19 @@ async fn conversation_reader_pages_summarizes_cutoffs_and_side_chat_access() {
     let side = execute(&database.pool, &owner, ORG, &side_request)
         .await
         .expect("read Side Chat messages");
-    assert_eq!(side["messages"][0]["body"], "side answer");
+    let side_message = &side["messages"][0];
+    assert_eq!(side_message["body"], "side answer");
+    assert_eq!(
+        side_message["structuredPayload"],
+        json!({"source":"side_chat_fixture","annotation":{"label":"copied"}})
+    );
+    assert_eq!(side_message["approval"]["id"], SIDE_APPROVAL);
+    assert_eq!(side_message["approval"]["type"], "operation_proposal");
+    assert_eq!(side_message["attachments"][0]["id"], SIDE_ATTACHMENT);
+    assert_eq!(
+        side_message["attachments"][0]["contentPath"],
+        format!("/api/assets/{}/content", support::ASSET)
+    );
 
     let denied = actor(
         "conversation-reader-denied",

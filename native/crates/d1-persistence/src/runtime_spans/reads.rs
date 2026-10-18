@@ -335,9 +335,10 @@ pub(super) async fn read_message_transcript(
 
 /// Read the bounded user-visible message projection for a Native Chat
 /// conversation. This is deliberately separate from the legacy TypeScript
-/// transcript hydrator: native rows never expose structured payloads or
-/// provider locators through the shared Reader. Detailed transcript ranges
-/// remain available through `read_message_transcript`.
+/// transcript hydrator. Structured payloads, approvals, and attachments are
+/// projected from the same authorized snapshot as the message rows, while
+/// provider locators remain outside the Reader contract. Detailed transcript
+/// ranges remain available through `read_message_transcript`.
 pub(super) async fn read_conversation_messages(
     pool: &PgPool,
     actor: &VerifiedActor,
@@ -395,7 +396,8 @@ pub(super) async fn read_conversation_messages(
     let rows = sqlx::query(
         "SELECT m.id::text AS id, m.org_id::text AS org_id,
                 m.conversation_id::text AS conversation_id, m.role, m.kind,
-                m.status, m.body, m.approval_id::text AS approval_id,
+                m.status, m.body, m.structured_payload,
+                m.approval_id::text AS approval_id,
                 m.run_id::text AS run_id, m.replying_agent_id::text AS replying_agent_id,
                 m.chat_turn_id::text AS chat_turn_id, m.turn_variant,
                 m.superseded_at::text AS superseded_at,
@@ -431,6 +433,106 @@ pub(super) async fn read_conversation_messages(
                 .flatten()
         })
         .collect::<Vec<_>>();
+    let message_ids = rows
+        .iter()
+        .filter_map(|row| row.try_get::<String, _>("id").ok())
+        .collect::<Vec<_>>();
+    let approval_ids = rows
+        .iter()
+        .filter_map(|row| {
+            row.try_get::<Option<String>, _>("approval_id")
+                .ok()
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let mut approval_by_id: HashMap<String, Value> = HashMap::new();
+    if !approval_ids.is_empty() {
+        let approval_rows = sqlx::query(
+            "SELECT a.id::text AS id,
+                    jsonb_build_object(
+                      'id', a.id::text,
+                      'orgId', a.org_id::text,
+                      'type', a.type,
+                      'requestedByAgentId', a.requested_by_agent_id::text,
+                      'requestedByUserId', a.requested_by_user_id,
+                      'status', a.status,
+                      'payload', a.payload,
+                      'decisionNote', a.decision_note,
+                      'decidedByUserId', a.decided_by_user_id,
+                      'decidedAt', a.decided_at,
+                      'createdAt', a.created_at,
+                      'updatedAt', a.updated_at
+                    ) AS value
+             FROM approvals a
+             WHERE a.org_id=$1::uuid AND a.id=ANY($2::text[]::uuid[])",
+        )
+        .bind(organization_id)
+        .bind(&approval_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in approval_rows {
+            approval_by_id.insert(row.try_get("id")?, row.try_get("value")?);
+        }
+    }
+    let mut attachments_by_message_id: HashMap<String, Vec<Value>> = HashMap::new();
+    if !message_ids.is_empty() {
+        let attachment_rows = sqlx::query(
+            "SELECT ca.message_id::text AS message_id,
+                    CASE
+                      WHEN a.content_type='text/html' AND a.created_by_agent_id IS NOT NULL THEN
+                        jsonb_build_object(
+                          'id', ca.id::text,
+                          'orgId', ca.org_id::text,
+                          'conversationId', ca.conversation_id::text,
+                          'messageId', ca.message_id::text,
+                          'assetId', ca.asset_id::text,
+                          'contentType', a.content_type,
+                          'byteSize', a.byte_size,
+                          'sha256', a.sha256,
+                          'originalFilename', a.original_filename,
+                          'createdByAgentId', a.created_by_agent_id::text,
+                          'createdByUserId', a.created_by_user_id,
+                          'createdAt', ca.created_at,
+                          'updatedAt', ca.updated_at,
+                          'contentPath', '/api/assets/' || a.id::text || '/content'
+                        )
+                      ELSE
+                        jsonb_build_object(
+                          'id', ca.id::text,
+                          'orgId', ca.org_id::text,
+                          'conversationId', ca.conversation_id::text,
+                          'messageId', ca.message_id::text,
+                          'assetId', ca.asset_id::text,
+                          'provider', a.provider,
+                          'objectKey', a.object_key,
+                          'contentType', a.content_type,
+                          'byteSize', a.byte_size,
+                          'sha256', a.sha256,
+                          'originalFilename', a.original_filename,
+                          'createdByAgentId', a.created_by_agent_id::text,
+                          'createdByUserId', a.created_by_user_id,
+                          'createdAt', ca.created_at,
+                          'updatedAt', ca.updated_at,
+                          'contentPath', '/api/assets/' || a.id::text || '/content'
+                        )
+                    END AS value
+             FROM chat_attachments ca
+             INNER JOIN assets a
+               ON a.org_id=ca.org_id AND a.id=ca.asset_id
+             WHERE ca.org_id=$1::uuid AND ca.message_id=ANY($2::text[]::uuid[])
+             ORDER BY ca.created_at ASC, ca.id ASC",
+        )
+        .bind(organization_id)
+        .bind(&message_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in attachment_rows {
+            attachments_by_message_id
+                .entry(row.try_get("message_id")?)
+                .or_default()
+                .push(row.try_get("value")?);
+        }
+    }
     let mut transcript_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
     let mut fallback_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
     let mut transcript_summary_by_generation: HashMap<String, Value> = HashMap::new();
@@ -562,6 +664,27 @@ pub(super) async fn read_conversation_messages(
             .and_then(|id| transcript_summary_by_generation.get(id))
             .cloned()
             .unwrap_or(Value::Null);
+        let structured_payload = row
+            .try_get::<Option<Value>, _>("structured_payload")?
+            .and_then(|payload| match payload {
+                Value::Null => None,
+                Value::Object(mut object) => {
+                    object.remove("__chatTranscript");
+                    (!object.is_empty()).then_some(Value::Object(object))
+                }
+                value => Some(value),
+            })
+            .unwrap_or(Value::Null);
+        let approval_id = row.try_get::<Option<String>, _>("approval_id")?;
+        let approval = approval_id
+            .as_ref()
+            .and_then(|id| approval_by_id.get(id))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let attachments = attachments_by_message_id
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
         messages.push(serde_json::json!({
             "id": id,
             "orgId": row.try_get::<String, _>("org_id")?,
@@ -570,10 +693,10 @@ pub(super) async fn read_conversation_messages(
             "kind": row.try_get::<String, _>("kind")?,
             "status": row.try_get::<String, _>("status")?,
             "body": body,
-            "structuredPayload": Value::Null,
-            "approvalId": row.try_get::<Option<String>, _>("approval_id")?,
-            "approval": Value::Null,
-            "attachments": [],
+            "structuredPayload": structured_payload,
+            "approvalId": approval_id,
+            "approval": approval,
+            "attachments": attachments,
             "runId": run_id,
             "generationId": generation_id,
             "generationTerminalReason": row.try_get::<Option<String>, _>("terminal_reason")?,
