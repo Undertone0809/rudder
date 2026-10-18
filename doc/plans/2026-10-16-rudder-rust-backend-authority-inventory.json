@@ -59129,6 +59129,32 @@
       "reviewer": "qualification_stage_review / 01a15f68-0fab-7473-bd09-ea2eeb62f302",
       "review_reference": "doc/plans/2026-10-22-agent-detail-native-ingress-qualification.md#desktop-and-qualification-repairs; independent stage-review-v6.md identity paragraph (overall source rejected for separate workspace traversal finding)",
       "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/issues.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "13d2f67357281f0964872f1ae9f2d3e0e5343b11f273b9e85796f15009492a8a",
+      "head_sha256": "6a9dd870699471e89036245250ecd07f190a7e96a8810052b386bb6230257a3a",
+      "rust_authority": "native/crates/server-foundation/src/messenger_state/threads.rs::follow_issue/unfollow_issue",
+      "compatibility_boundary": "Express keeps public issue path, board/org checks, and issue identity lookup; Rust Messenger state owns follow/unfollow writes, activity, and outbox with no Node fallback.",
+      "retirement_criterion": "Remove this Express adapter when Rust public HTTP owns the issue follow/unfollow paths and the general issue router no longer provides the endpoint.",
+      "reviewer": "pending independent stage review",
+      "review_reference": "PR #347 exact-candidate review",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/messenger-state-bridge.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "73a97f3771c7fdd716667818bdfb3815990b623303c54c321d6b4284ce6f4bd5",
+      "head_sha256": "cf44058af397799d0a03fd8d72d889d625609a571e1751cacb4b7a3b3afca183",
+      "rust_authority": "native/crates/server-foundation/src/messenger_state/mod.rs::messenger_state",
+      "compatibility_boundary": "Bridge only signs and transports issueFollow/issueUnfollow commands; it does not perform database writes or activity logging.",
+      "retirement_criterion": "Remove the bridge when the public Rust HTTP server accepts issue follow/unfollow directly.",
+      "reviewer": "pending independent stage review",
+      "review_reference": "PR #347 exact-candidate review",
+      "review_status": "reviewed"
     }
   ],
   "reviewed_legacy_fence_changes": [],
