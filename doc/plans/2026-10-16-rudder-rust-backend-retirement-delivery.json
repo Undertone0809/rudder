@@ -2715,6 +2715,35 @@
       },
       "merge_commit": "a1c574cadc52e02a931ae87080be76fda8abc1fd",
       "merged_at": "2026-10-18T05:20:50Z"
+    },
+    "agent_create_pr_337": {
+      "number": 337,
+      "url": "https://github.com/Undertone0809/rudder/pull/337",
+      "branch": "codex/agent-create-public-cutover-20261018",
+      "head": "58833cce2625a36468f62b13ff50a181b81831ba",
+      "base_sha": "a1c574cadc52e02a931ae87080be76fda8abc1fd",
+      "state": "merged",
+      "scope": "Public Agent Create Rust cutover behind an explicit readiness gate; typed Node preflight bridge, atomic Rust create transaction, and fail-closed unsupported boundaries.",
+      "stage_review": "accept",
+      "final_review": "accept",
+      "acceptance": {
+        "verdict": "PASS",
+        "head": "58833cce2625a36468f62b13ff50a181b81831ba",
+        "local_checks": [
+          "Vitest route/bridge 97 passed",
+          "server typecheck",
+          "lint:changed",
+          "architecture:audit:check",
+          "Rust inventory/check and authority compare",
+          "git diff --check"
+        ],
+        "ci": "applicable protected checks passed: architecture, docs, affected qualification, native-boundaries, Rust D1 real-entry smoke, qualification summary, and GitGuardian; platform jobs intentionally skipped by impact selection",
+        "coverage": "public gate readiness, typed allowlist and anti-spoof, seed false/pass/fail/non-first intelligence preparation, recursive instruction fail-closed paths, secret/budget error passthrough, bridge failure 503, no-create-timeout retry safety, Rust response redaction",
+        "inventory": "912 source files, 4606 structural surfaces, 10 unknowns; authority compare failures=[]",
+        "limits": "Node remains responsible for preflight/secret normalization, filesystem instruction materialization after the Rust outbox, binary storage upload, and OAuth. Public gate is explicit and sub-gate readiness is fail-closed; no no-Node backend acceptance, release, deployment, or production verification claim."
+      },
+      "merge_commit": "aaa470507f37c02ea29e45d9cbf90ffd52e565de",
+      "merged_at": "2026-10-18T06:13:01Z"
     }
   }
 }
