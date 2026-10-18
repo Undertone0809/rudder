@@ -1020,6 +1020,31 @@ the equivalent post-rebase candidate is `f9fc5bb02`. The rebase does not change
 the Hermes result, so the exact installed-runtime acceptance must be rerun and
 rebound to `f9fc5bb02` before any merge decision.
 
+### October 18 Hermes provider-route diagnosis
+
+An additional real run on the rebase candidate used the same isolated instance,
+installed Hermes `0.21.0`, Rust public ingress, and a fresh Chat. The first
+turn projected an assistant reply. After stopping and restarting Node/Rust, the
+same Chat and Hermes session failed with `native_chat_failed` and no assistant
+projection. The Rust candidate was kept fail-closed; a temporary experiment
+that skipped `session/set_model` when the load response looked equivalent did
+not pass the real continuation and was removed before publication.
+
+The installed Hermes ACP was then exercised directly against the same profile:
+exact `session/load` followed by `session/prompt` succeeded, proving the durable
+session UUID and ACP load path exist outside Rudder. Repeated restored sessions
+in the installed `state.db` and request dumps show the failing class switching
+to `https://api.kimi.com/coding/responses` with HTTP 404
+`resource_not_found_error`; those rows persist the new user without an
+assistant. Hermes' own resolver treats `api.kimi.com/coding` as an Anthropic
+Messages endpoint, while ACP restore can pass a stale persisted
+`api_mode=codex_responses` into the recreated agent. This is now the leading
+provider/profile contract blocker. Rust must continue rejecting blank
+`end_turn` and must not silently change provider mode, replay an indeterminate
+prompt, or create a new session. The fix belongs in the installed Hermes ACP
+restore contract or in a verified profile/relay route, followed by the same
+real two-turn restart acceptance and independent verifier rebind.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.
