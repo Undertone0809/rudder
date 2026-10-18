@@ -408,7 +408,7 @@
         },
         {
           "number": 333,
-          "state": "open_ci_pending_stage_review_pending",
+          "state": "merged",
           "head_sha": "b8b5de8efafc4f921556c20ac718d114ffa45caa",
           "base_sha": "8e946face31aa7aeb4f8ab6740f164f23d3416bd",
           "scope": "private feature-gated Agent create canonical skills foundation: desired ref trim/dedupe/sort, bundled always-enabled omission, org catalog canonicalization and unknown/ambiguous/cross-org rejection, same-transaction agent_enabled_skills idempotent writes; public POST unchanged and gate default off",
@@ -420,28 +420,34 @@
             "focused PG rust_create_ suite 5/5 after ENOSPC recovery"
           ],
           "stage_review": "ACCEPT exact b8b5de8efafc4f921556c20ac718d114ffa45caa",
-          "mergeability": "MERGEABLE/CI queued at observation; do not merge yet",
+          "mergeability": "MERGEABLE/CLEAN after all protected checks and independent final handoff ACCEPT",
           "correction": "Stage review rejected empty desiredSkills and unchecked bundled catalog; fixed in 6bf0a672c with parser/catalog regression tests and rerun local checks.",
           "stage_review_limits": "Private artifact stage; final protected CI and exact-candidate final handoff still required.",
-          "final_review": "pending protected CI and final handoff review",
-          "rebase": "Rebased after #332 merge onto main 8e946face; preserved managed MCP and normalization tests."
+          "final_review": "ACCEPT exact b8b5de8efafc4f921556c20ac718d114ffa45caa; artifact-only Rust foundation, no product verifier required",
+          "rebase": "Rebased after #332 merge onto main 8e946face; preserved managed MCP and normalization tests.",
+          "merge_sha": "0abea4e69423480736700a9dc715ec18c7b4d6e9",
+          "merged_at": "2026-10-18T02:12:59Z",
+          "ci": "All published protected checks SUCCESS: Rust D1 real-entry smoke, native boundaries, plan/architecture/docs qualification, cross-platform verification/artifacts, packaged smoke, and GitGuardian."
         },
         {
           "number": 334,
           "state": "open_ci_pending_stage_review_pending",
-          "head_sha": "ebb9a8e0362d9d85a39f77728ddf29968a0b924c",
+          "head_sha": "919a7b3151020a051407a269307a7eae4a6dd158",
           "base_sha": "8e946face31aa7aeb4f8ab6740f164f23d3416bd",
           "scope": "private feature-gated durable Agent instruction bundle foundation: transactional desired rows, crash-safe/idempotent materialization/replay, canonical runtime config and prompt cleanup, host/path/symlink/size limits, migration 0180; public POST unchanged and no background worker yet",
           "validation": [
             "cargo fmt/check",
-            "21 instruction tests",
+            "29 instruction/agent-core tests",
             "targeted PG outbox/detail materialization tests",
             "clippy -D warnings",
-            "DB typecheck/lint/migration differential pass"
+            "DB typecheck/lint/migration differential pass",
+            "authority inventory ratchet pass",
+            "release compatibility fingerprint 643ce93... with 181 journal/183 SQL"
           ],
-          "limits": "pnpm verify:migration-preflight and embedded-Postgres migration suites blocked by macOS ICU dylib; pending/repair reconciler is detail-triggered until future worker",
-          "stage_review": "pending exact-head independent review",
-          "mergeability": "MERGEABLE/CI pending; do not merge"
+          "limits": "pending/repair reconciler is detail-triggered until future worker; no full Node-retirement claim",
+          "stage_review": "pending exact-head independent review after final rebase onto main including #333",
+          "mergeability": "CI pending; do not merge",
+          "rebase": "Current candidate was based on 8e946face; must rebase onto main after #333 merge before final publication."
         }
       ],
       "managed_migration": {
