@@ -806,6 +806,26 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     expect(await snapshot()).toEqual(baseline);
   });
 
+  it("owns Issue follow and unfollow mutations in Rust with activity/outbox parity", async () => {
+    const actor = { type: "board" as const, source: "session" as const, userId };
+    await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
+    await db.execute(sql`DELETE FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action IN ('issue.followed','issue.unfollowed')`);
+    await db.execute(sql`DELETE FROM organization_mutation_outbox`);
+
+    const followed = await bridge!.messengerState!(actor, orgId, { operation: "issueFollow", issueId: followedIssueId });
+    expect(followed.status).toBe(201);
+    expect(JSON.parse(followed.body.toString())).toMatchObject({ orgId, issueId: followedIssueId, userId });
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(1);
+    expect((await db.execute(sql`SELECT action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.followed'`)).length).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(1);
+
+    const unfollowed = await bridge!.messengerState!(actor, orgId, { operation: "issueUnfollow", issueId: followedIssueId });
+    expect(unfollowed.status).toBe(200);
+    expect(JSON.parse(unfollowed.body.toString())).toEqual({ ok: true });
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.unfollowed'`)).length).toBe(1);
+  }, 30_000);
+
   it("keeps Node healthy and fails every migrated endpoint when the actual native binary cannot start", async () => {
     const unavailable = createRustFoundationBridge({ databaseUrl: connectionString, binaryPath: path.join(home, "foundation-does-not-exist"), mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off" });
     const failingServer = await startApp(unavailable);
