@@ -407,7 +407,7 @@
         {
           "number": 333,
           "state": "open_ci_pending_stage_review_pending",
-          "head_sha": "6bf0a672c",
+          "head_sha": "6bf0a672cd91af1425590a6e094c9fa5227b6655",
           "base_sha": "9ba84ce6b20df6c938e28db0625fca0f93c3e52d",
           "scope": "private feature-gated Agent create canonical skills foundation: desired ref trim/dedupe/sort, bundled always-enabled omission, org catalog canonicalization and unknown/ambiguous/cross-org rejection, same-transaction agent_enabled_skills idempotent writes; public POST unchanged and gate default off",
           "validation": [
