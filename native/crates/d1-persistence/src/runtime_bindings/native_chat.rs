@@ -34,9 +34,16 @@ fn valid_open_session(runtime_type: &str, session_id: &str) -> bool {
         "claude_local" => ClaudeSessionSelector::from_persisted(session_id).is_ok(),
         "cursor" | "cursor_local" => CursorSessionSelector::from_persisted(session_id).is_ok(),
         "opencode_local" => OpenCodeSessionSelector::from_persisted(session_id).is_ok(),
-        "pi_local" => serde_json::from_str::<PiSessionSelector>(session_id)
-            .ok()
-            .is_some_and(|selector| selector.validate().is_ok()),
+        // Pi persists selector.session_id as the native segment locator. The
+        // session file and leaf remain in the execution checkpoint and are
+        // validated by the claim/context fence, so the binding continuity
+        // check must validate the stored opaque id rather than reparse the
+        // full selector JSON.
+        "pi_local" => {
+            !session_id.trim().is_empty()
+                && session_id.len() <= 256
+                && !session_id.chars().any(char::is_control)
+        }
         _ => false,
     }
 }
@@ -182,16 +189,10 @@ mod tests {
         ));
         assert!(valid_open_session("cursor_local", "cursor-session"));
         assert!(valid_open_session("opencode_local", "ses_rudder_native"));
-        assert!(valid_open_session(
-            "pi_local",
-            r#"{"sessionId":"pi-session","sessionFile":"/tmp/pi.jsonl","leafId":"deadbeef"}"#
-        ));
+        assert!(valid_open_session("pi_local", "pi-session"));
         assert!(!valid_open_session("hermes_local", "not-a-uuid"));
         assert!(!valid_open_session("claude_local", "not-a-uuid"));
         assert!(!valid_open_session("opencode_local", "not-a-session"));
-        assert!(!valid_open_session(
-            "pi_local",
-            r#"{"sessionId":"missing"}"#
-        ));
+        assert!(!valid_open_session("pi_local", "\n"));
     }
 }
