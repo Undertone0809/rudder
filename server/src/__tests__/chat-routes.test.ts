@@ -3596,6 +3596,47 @@ describe("chat routes", { retry: 2 }, () => {
     });
   });
 
+  it("routes native Side Chat message reads through the Rust Reader", async () => {
+    const conversation = createConversation({
+      id: "side-chat-1",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2026-03-26T09:00:00.000Z"),
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    const messages = [createMessage("side-message-1", "assistant", "message", "from rust side chat")];
+    const nativeChatMessages = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({
+        messages,
+        source: "native_chat_reader",
+        availability: "complete",
+        nextCursor: null,
+      })),
+    });
+
+    const res = await request(createApp(
+      undefined,
+      undefined,
+      undefined,
+      { nativeChatMessages },
+    )).get("/api/chats/side-chat-1/messages?orgId=organization-1&includeTranscript=true");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(JSON.parse(JSON.stringify(messages)));
+    expect(nativeChatMessages).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      expect.objectContaining({
+        operation: "read_conversation_messages",
+        conversationId: "side-chat-1",
+        includeTranscript: true,
+      }),
+    );
+    expect(mockChatService.listMessages).not.toHaveBeenCalled();
+  });
+
   it("allows a queued message claim after a verified operator Stop", async () => {
     const conversation = createConversation();
     const queuedItem = {
