@@ -669,6 +669,43 @@ pub(super) async fn submit_in_transaction<'a>(
     )
     .await?;
     let runtime_type = config.identity.runtime_type.as_str();
+    // Pi stores only selector.session_id in native_segments. Recover the
+    // complete selector from the latest checkpoint for this exact segment so
+    // resume admission can preserve Pi's session file and leaf fence without
+    // widening the segment locator contract.
+    let pi_open_selector = if runtime_type == "pi_local"
+        && binding.state == "open"
+        && binding.native_session_id.is_some()
+    {
+        let session_id = binding
+            .native_session_id
+            .as_deref()
+            .ok_or_else(|| http(409, "Native Chat Pi session locator is missing"))?;
+        let checkpoint = sqlx::query_scalar::<_, Value>(
+            "SELECT checkpoint_json
+             FROM heartbeat_run_attempts
+             WHERE org_id=$1::uuid AND agent_id=$2::uuid
+               AND runtime_type='pi_local'
+               AND context_snapshot->>'nativeSegmentId'=$3
+               AND checkpoint_json->>'provider'='pi_local'
+               AND checkpoint_json->'piSession'->>'sessionId'=$4
+             ORDER BY attempt_index DESC
+             LIMIT 1",
+        )
+        .bind(organization_id)
+        .bind(selected_agent_id)
+        .bind(&binding.segment_id)
+        .bind(session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        checkpoint
+            .and_then(|value| value.get("piSession").cloned())
+            .map(serde_json::from_value::<PiSessionSelector>)
+            .transpose()
+            .map_err(|_| http(409, "Native Chat Pi session checkpoint is invalid"))?
+    } else {
+        None
+    };
     let (checkpoint, reuse_scope, resume_source, session_intent) = match (
         runtime_type,
         binding.state.as_str(),
@@ -727,8 +764,14 @@ pub(super) async fn submit_in_transaction<'a>(
             json!({"kind":"fresh","reuseScope":"none","sourceRunId":null,"sessionId":null,"sessionParams":null}),
         ),
         ("pi_local", "open", Some(session_id)) => {
-            let selector: PiSessionSelector = serde_json::from_str(session_id)
-                .map_err(|_| http(409, "Native Chat Pi session locator is invalid"))?;
+            let selector = pi_open_selector
+                .ok_or_else(|| http(409, "Native Chat Pi session checkpoint is missing"))?;
+            if selector.session_id != session_id {
+                return Err(http(
+                    409,
+                    "Native Chat Pi session checkpoint does not match",
+                ));
+            }
             selector
                 .validate()
                 .map_err(|_| http(409, "Native Chat Pi session locator is invalid"))?;

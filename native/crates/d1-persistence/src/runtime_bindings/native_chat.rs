@@ -6,7 +6,6 @@ use super::{IdentityInput, Result, Tx, http};
 use crate::native_chat::NativeChatActor;
 use rudder_runtime_core::native_chat::{
     ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector, OpenCodeSessionSelector,
-    PiSessionSelector,
 };
 use sqlx::Row;
 
