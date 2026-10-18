@@ -682,14 +682,17 @@ pub(super) async fn submit_in_transaction<'a>(
             .as_deref()
             .ok_or_else(|| http(409, "Native Chat Pi session locator is missing"))?;
         let checkpoint = sqlx::query_scalar::<_, Value>(
-            "SELECT checkpoint_json
-             FROM heartbeat_run_attempts
-             WHERE org_id=$1::uuid AND agent_id=$2::uuid
-               AND runtime_type='pi_local'
-               AND context_snapshot->>'nativeSegmentId'=$3
-               AND checkpoint_json->>'provider'='pi_local'
-               AND checkpoint_json->'piSession'->>'sessionId'=$4
-             ORDER BY attempt_index DESC
+            "SELECT a.checkpoint_json
+             FROM heartbeat_run_attempts a
+             JOIN heartbeat_runs r ON r.org_id=a.org_id AND r.id=a.run_id
+             WHERE a.org_id=$1::uuid AND a.agent_id=$2::uuid
+               AND a.runtime_type='pi_local'
+               AND r.context_snapshot->>'nativeSegmentId'=$3
+               AND a.checkpoint_json->>'provider'='pi_local'
+               AND a.checkpoint_json->'piSession'->>'sessionId'=$4
+               AND a.protocol_phase='execution_terminal_committed'
+               AND a.checkpoint_json->'piSession'->>'leafId' IS NOT NULL
+             ORDER BY COALESCE(a.finished_at, a.created_at) DESC, a.created_at DESC
              LIMIT 1",
         )
         .bind(organization_id)
