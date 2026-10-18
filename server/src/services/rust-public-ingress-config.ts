@@ -49,6 +49,12 @@ export type RustNativeChatHost = Readonly<{
   workspaceHome: string;
   operatorHome: string;
   codexHome?: string;
+  /** Optional Rust-discovered local provider installation facts. */
+  claudeExecutable?: string;
+  cursorExecutable?: string;
+  /** Explicitly owned OpenCode Server endpoint; never request supplied. */
+  opencodeServerUrl?: string;
+  opencodeBearerToken?: string;
   executableSearchPath: string;
   friendlyWorkspaceHome: boolean;
   deploymentMode: string;

@@ -8,8 +8,9 @@ use crate::native_chat::{NativeChatActor, NativeChatExecutionPrincipal};
 use crate::runtime_bindings;
 use rudder_codex_app_server::ConnectionLaunchPermit;
 use rudder_runtime_core::native_chat::{
-    HermesSessionSelector, NativeChatProtocolCheckpoint, NativeChatProtocolPhase,
-    NativeChatProvider,
+    ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector,
+    NativeChatProtocolCheckpoint, NativeChatProtocolPhase, NativeChatProvider,
+    OpenCodeSessionSelector,
 };
 use serde_json::json;
 use sqlx::{PgPool, Row};
@@ -185,9 +186,20 @@ pub async fn claim_with_preflight(
         return Err(http(409, "Resolved Native Chat Agent changed"));
     }
     let runtime_type = config.identity.runtime_type.as_str();
-    if !matches!(runtime_type, "codex_local" | "hermes_local" | "pi_local")
-        || (runtime_type == "hermes_local") != config.hermes.is_some()
+    if !matches!(
+        runtime_type,
+        "codex_local"
+            | "hermes_local"
+            | "pi_local"
+            | "claude_local"
+            | "cursor"
+            | "cursor_local"
+            | "opencode_local"
+    ) || (runtime_type == "hermes_local") != config.hermes.is_some()
         || (runtime_type == "pi_local") != config.pi.is_some()
+        || (runtime_type == "claude_local") != config.claude.is_some()
+        || matches!(runtime_type, "cursor" | "cursor_local") != config.cursor.is_some()
+        || (runtime_type == "opencode_local") != config.opencode.is_some()
     {
         return Err(http(409, "Resolved Native Chat runtime is unsupported"));
     }
@@ -537,6 +549,139 @@ pub async fn claim_with_preflight(
                 && checkpoint.thread_id().is_none()
                 && checkpoint.turn_id().is_none()
                 && checkpoint.pi_turn_entry_id().is_none()
+                && phase.as_deref() == Some(checkpoint.phase().as_str())
+                && session_reuse_scope == "explicit"
+                && session_id_before.is_none()
+                && session_intent
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("resume")
+                && session_intent
+                    .get("reuseScope")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("explicit")
+                && session_intent
+                    .get("sessionId")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(session_id)
+                && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                && attempt_thread.is_none()
+                && attempt_turn.is_none()
+        }
+        ("claude_local", "pending", None) => {
+            checkpoint.provider() == NativeChatProvider::ClaudeLocal
+                && checkpoint.phase() == NativeChatProtocolPhase::NoThreadRequest
+                && checkpoint.claude_session().is_none()
+                && checkpoint.claude_prompt_request_id().is_none()
+                && phase.as_deref() == Some(checkpoint.phase().as_str())
+                && session_reuse_scope == "none"
+                && session_id_before.is_none()
+                && session_intent
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("fresh")
+                && session_intent
+                    .get("reuseScope")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("none")
+                && session_intent.get("sessionId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                && attempt_thread.is_none()
+                && attempt_turn.is_none()
+        }
+        ("claude_local", "open", Some(session_id)) => {
+            ClaudeSessionSelector::from_persisted(session_id).is_ok()
+                && checkpoint.provider() == NativeChatProvider::ClaudeLocal
+                && checkpoint.phase() == NativeChatProtocolPhase::ThreadKnown
+                && checkpoint
+                    .claude_session()
+                    .map(ClaudeSessionSelector::as_str)
+                    == Some(session_id)
+                && checkpoint.claude_prompt_request_id().is_none()
+                && phase.as_deref() == Some(checkpoint.phase().as_str())
+                && session_reuse_scope == "explicit"
+                && session_id_before.is_none()
+                && session_intent
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("resume")
+                && session_intent
+                    .get("reuseScope")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("explicit")
+                && session_intent
+                    .get("sessionId")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(session_id)
+                && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                && attempt_thread.is_none()
+                && attempt_turn.is_none()
+        }
+        (runtime, "pending", None)
+            if matches!(runtime, "cursor" | "cursor_local" | "opencode_local") =>
+        {
+            let provider = match runtime {
+                "opencode_local" => NativeChatProvider::OpenCodeLocal,
+                _ => NativeChatProvider::CursorLocal,
+            };
+            checkpoint.provider() == provider
+                && checkpoint.phase() == NativeChatProtocolPhase::NoThreadRequest
+                && checkpoint.thread_id().is_none()
+                && checkpoint.turn_id().is_none()
+                && checkpoint.pi_session().is_none()
+                && checkpoint.hermes_session().is_none()
+                && checkpoint.claude_session().is_none()
+                && checkpoint.opencode_session().is_none()
+                && checkpoint.cursor_session().is_none()
+                && phase.as_deref() == Some(checkpoint.phase().as_str())
+                && session_reuse_scope == "none"
+                && session_id_before.is_none()
+                && session_intent
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("fresh")
+                && session_intent
+                    .get("reuseScope")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("none")
+                && session_intent.get("sessionId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                && attempt_thread.is_none()
+                && attempt_turn.is_none()
+        }
+        (runtime, "open", Some(session_id))
+            if matches!(runtime, "cursor" | "cursor_local" | "opencode_local") =>
+        {
+            let provider = match runtime {
+                "opencode_local" => NativeChatProvider::OpenCodeLocal,
+                _ => NativeChatProvider::CursorLocal,
+            };
+            let valid_session = match provider {
+                NativeChatProvider::OpenCodeLocal => {
+                    OpenCodeSessionSelector::from_persisted(session_id).is_ok()
+                        && checkpoint
+                            .opencode_session()
+                            .map(OpenCodeSessionSelector::as_str)
+                            == Some(session_id)
+                }
+                NativeChatProvider::CursorLocal => {
+                    CursorSessionSelector::from_persisted(session_id).is_ok()
+                        && checkpoint
+                            .cursor_session()
+                            .map(CursorSessionSelector::as_str)
+                            == Some(session_id)
+                }
+                _ => false,
+            };
+            valid_session
+                && checkpoint.provider() == provider
+                && checkpoint.phase() == NativeChatProtocolPhase::ThreadKnown
+                && checkpoint.thread_id().is_none()
+                && checkpoint.turn_id().is_none()
                 && phase.as_deref() == Some(checkpoint.phase().as_str())
                 && session_reuse_scope == "explicit"
                 && session_id_before.is_none()

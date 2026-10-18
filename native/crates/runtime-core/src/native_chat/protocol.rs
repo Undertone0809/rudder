@@ -80,6 +80,104 @@ pub enum NativeChatProvider {
     CodexLocal,
     PiLocal,
     HermesLocal,
+    ClaudeLocal,
+    OpenCodeLocal,
+    CursorLocal,
+}
+
+/// Provider-native opaque session selectors. These wrappers deliberately do
+/// not implement or expose Codex Thread/Turn identity. A selector is only a
+/// durable locator; the provider receipt remains necessary before terminal
+/// projection.
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ClaudeSessionSelector(String);
+
+impl ClaudeSessionSelector {
+    pub fn from_persisted(value: &str) -> Result<Self, RuntimeError> {
+        validate_opaque_session(value, "invalid Claude Code session selector")?;
+        Ok(Self(value.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn validate(&self) -> Result<(), RuntimeError> {
+        Self::from_persisted(&self.0).map(|_| ())
+    }
+}
+
+impl fmt::Debug for ClaudeSessionSelector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ClaudeSessionSelector")
+            .field("present", &true)
+            .finish()
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct OpenCodeSessionSelector(String);
+
+impl OpenCodeSessionSelector {
+    pub fn from_persisted(value: &str) -> Result<Self, RuntimeError> {
+        validate_opaque_session(value, "invalid OpenCode session selector")?;
+        if !value.starts_with("ses") {
+            return Err(RuntimeError::invalid("invalid OpenCode session selector"));
+        }
+        Ok(Self(value.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn validate(&self) -> Result<(), RuntimeError> {
+        Self::from_persisted(&self.0).map(|_| ())
+    }
+}
+
+impl fmt::Debug for OpenCodeSessionSelector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OpenCodeSessionSelector")
+            .field("present", &true)
+            .finish()
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CursorSessionSelector(String);
+
+impl CursorSessionSelector {
+    pub fn from_persisted(value: &str) -> Result<Self, RuntimeError> {
+        validate_opaque_session(value, "invalid Cursor ACP session selector")?;
+        Ok(Self(value.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn validate(&self) -> Result<(), RuntimeError> {
+        Self::from_persisted(&self.0).map(|_| ())
+    }
+}
+
+impl fmt::Debug for CursorSessionSelector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CursorSessionSelector")
+            .field("present", &true)
+            .finish()
+    }
+}
+
+fn validate_opaque_session(value: &str, message: &'static str) -> Result<(), RuntimeError> {
+    if value.trim().is_empty()
+        || value.len() > MAX_NATIVE_CHAT_PROVIDER_ID_BYTES
+        || value.chars().any(char::is_control)
+    {
+        return Err(RuntimeError::invalid(message));
+    }
+    Ok(())
 }
 
 /// Exact Hermes ACP session UUID. This is not a Codex Thread ID and is never
@@ -190,6 +288,18 @@ pub struct NativeChatProtocolCheckpoint {
     /// write. It is not a provider session or turn identifier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hermes_prompt_request_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claude_session: Option<ClaudeSessionSelector>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claude_prompt_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opencode_session: Option<OpenCodeSessionSelector>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opencode_prompt_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cursor_session: Option<CursorSessionSelector>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cursor_prompt_request_id: Option<String>,
 }
 
 impl NativeChatProtocolCheckpoint {
@@ -222,6 +332,12 @@ impl NativeChatProtocolCheckpoint {
             pi_turn_entry_id: None,
             hermes_session: None,
             hermes_prompt_request_id: None,
+            claude_session: None,
+            claude_prompt_request_id: None,
+            opencode_session: None,
+            opencode_prompt_request_id: None,
+            cursor_session: None,
+            cursor_prompt_request_id: None,
         };
         state.validate()?;
         Ok(state)
@@ -268,6 +384,71 @@ impl NativeChatProtocolCheckpoint {
         Ok(state)
     }
 
+    pub fn new_claude_fresh_session() -> Result<Self, RuntimeError> {
+        Self::new_native_fresh(NativeChatProvider::ClaudeLocal)
+    }
+
+    pub fn new_claude_existing_session(
+        selector: ClaudeSessionSelector,
+    ) -> Result<Self, RuntimeError> {
+        Self::new_native_existing(NativeChatProvider::ClaudeLocal, selector.as_str()).and_then(
+            |mut state| {
+                state.claude_session = Some(selector);
+                state.validate()?;
+                Ok(state)
+            },
+        )
+    }
+
+    pub fn new_opencode_fresh_session() -> Result<Self, RuntimeError> {
+        Self::new_native_fresh(NativeChatProvider::OpenCodeLocal)
+    }
+
+    pub fn new_opencode_existing_session(
+        selector: OpenCodeSessionSelector,
+    ) -> Result<Self, RuntimeError> {
+        Self::new_native_existing(NativeChatProvider::OpenCodeLocal, selector.as_str()).and_then(
+            |mut state| {
+                state.opencode_session = Some(selector);
+                state.validate()?;
+                Ok(state)
+            },
+        )
+    }
+
+    pub fn new_cursor_fresh_session() -> Result<Self, RuntimeError> {
+        Self::new_native_fresh(NativeChatProvider::CursorLocal)
+    }
+
+    pub fn new_cursor_existing_session(
+        selector: CursorSessionSelector,
+    ) -> Result<Self, RuntimeError> {
+        Self::new_native_existing(NativeChatProvider::CursorLocal, selector.as_str()).and_then(
+            |mut state| {
+                state.cursor_session = Some(selector);
+                state.validate()?;
+                Ok(state)
+            },
+        )
+    }
+
+    fn new_native_fresh(provider: NativeChatProvider) -> Result<Self, RuntimeError> {
+        let mut state = Self::new(NativeChatProtocolStart::FreshThread)?;
+        state.provider = Some(provider);
+        state.validate()?;
+        Ok(state)
+    }
+
+    fn new_native_existing(
+        provider: NativeChatProvider,
+        _selector: &str,
+    ) -> Result<Self, RuntimeError> {
+        let mut state = Self::new(NativeChatProtocolStart::FreshThread)?;
+        state.phase = NativeChatProtocolPhase::ThreadKnown;
+        state.provider = Some(provider);
+        Ok(state)
+    }
+
     pub fn phase(&self) -> NativeChatProtocolPhase {
         self.phase
     }
@@ -304,6 +485,30 @@ impl NativeChatProtocolCheckpoint {
         self.hermes_prompt_request_id
     }
 
+    pub fn claude_session(&self) -> Option<&ClaudeSessionSelector> {
+        self.claude_session.as_ref()
+    }
+
+    pub fn claude_prompt_request_id(&self) -> Option<&str> {
+        self.claude_prompt_request_id.as_deref()
+    }
+
+    pub fn opencode_session(&self) -> Option<&OpenCodeSessionSelector> {
+        self.opencode_session.as_ref()
+    }
+
+    pub fn opencode_prompt_request_id(&self) -> Option<&str> {
+        self.opencode_prompt_request_id.as_deref()
+    }
+
+    pub fn cursor_session(&self) -> Option<&CursorSessionSelector> {
+        self.cursor_session.as_ref()
+    }
+
+    pub fn cursor_prompt_request_id(&self) -> Option<&str> {
+        self.cursor_prompt_request_id.as_deref()
+    }
+
     pub fn validate(&self) -> Result<(), RuntimeError> {
         for value in [&self.thread_id, &self.turn_id, &self.pi_turn_entry_id]
             .into_iter()
@@ -318,6 +523,25 @@ impl NativeChatProtocolCheckpoint {
             selector.validate()?;
         }
         if let Some(selector) = &self.hermes_session {
+            selector.validate()?;
+        }
+        for value in [
+            &self.claude_prompt_request_id,
+            &self.opencode_prompt_request_id,
+            &self.cursor_prompt_request_id,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            validate_opaque_session(value, "invalid native provider request identity")?;
+        }
+        if let Some(selector) = &self.claude_session {
+            selector.validate()?;
+        }
+        if let Some(selector) = &self.opencode_session {
+            selector.validate()?;
+        }
+        if let Some(selector) = &self.cursor_session {
             selector.validate()?;
         }
         if self.provider == Some(NativeChatProvider::HermesLocal) {
@@ -335,6 +559,12 @@ impl NativeChatProtocolCheckpoint {
                 || self.turn_id.is_some()
                 || self.pi_session.is_some()
                 || self.pi_turn_entry_id.is_some()
+                || self.claude_session.is_some()
+                || self.claude_prompt_request_id.is_some()
+                || self.opencode_session.is_some()
+                || self.opencode_prompt_request_id.is_some()
+                || self.cursor_session.is_some()
+                || self.cursor_prompt_request_id.is_some()
                 || self.observation_only
                 || self.hermes_session.is_some() != session_required
                 || self.hermes_prompt_request_id.is_some() != request_required
@@ -350,6 +580,12 @@ impl NativeChatProtocolCheckpoint {
                 || self.turn_id.is_some()
                 || self.hermes_session.is_some()
                 || self.hermes_prompt_request_id.is_some()
+                || self.claude_session.is_some()
+                || self.claude_prompt_request_id.is_some()
+                || self.opencode_session.is_some()
+                || self.opencode_prompt_request_id.is_some()
+                || self.cursor_session.is_some()
+                || self.cursor_prompt_request_id.is_some()
                 || self.observation_only
                 || matches!(self.phase, NoThreadRequest | ThreadStartIndeterminate)
                     != self.pi_session.is_none()
@@ -376,10 +612,64 @@ impl NativeChatProtocolCheckpoint {
             }
             return Ok(());
         }
+        if matches!(
+            self.provider,
+            Some(
+                NativeChatProvider::ClaudeLocal
+                    | NativeChatProvider::OpenCodeLocal
+                    | NativeChatProvider::CursorLocal
+            )
+        ) {
+            let (session, request) = match self.provider {
+                Some(NativeChatProvider::ClaudeLocal) => (
+                    self.claude_session.is_some(),
+                    self.claude_prompt_request_id.is_some(),
+                ),
+                Some(NativeChatProvider::OpenCodeLocal) => (
+                    self.opencode_session.is_some(),
+                    self.opencode_prompt_request_id.is_some(),
+                ),
+                Some(NativeChatProvider::CursorLocal) => (
+                    self.cursor_session.is_some(),
+                    self.cursor_prompt_request_id.is_some(),
+                ),
+                _ => unreachable!(),
+            };
+            let session_required =
+                !matches!(self.phase, NoThreadRequest | ThreadStartIndeterminate);
+            let request_required = matches!(
+                self.phase,
+                InputIndeterminate
+                    | TurnKnown
+                    | ProviderTerminalObserved
+                    | ExecutionTerminalCommitted
+            );
+            if self.thread_id.is_some()
+                || self.turn_id.is_some()
+                || self.pi_session.is_some()
+                || self.pi_turn_entry_id.is_some()
+                || self.hermes_session.is_some()
+                || self.hermes_prompt_request_id.is_some()
+                || self.observation_only
+                || session != session_required
+                || request != request_required
+            {
+                return Err(RuntimeError::invalid(
+                    "native provider checkpoint contains a mismatched session identity",
+                ));
+            }
+            return Ok(());
+        }
         if self.pi_session.is_some()
             || self.pi_turn_entry_id.is_some()
             || self.hermes_session.is_some()
             || self.hermes_prompt_request_id.is_some()
+            || self.claude_session.is_some()
+            || self.claude_prompt_request_id.is_some()
+            || self.opencode_session.is_some()
+            || self.opencode_prompt_request_id.is_some()
+            || self.cursor_session.is_some()
+            || self.cursor_prompt_request_id.is_some()
         {
             return Err(RuntimeError::invalid(
                 "Codex protocol checkpoint contains Pi session identity",
@@ -623,6 +913,297 @@ impl NativeChatProtocolCheckpoint {
         )
     }
 
+    pub fn record_claude_session(
+        &self,
+        expected_revision: u64,
+        selector: ClaudeSessionSelector,
+    ) -> Result<Self, RuntimeError> {
+        self.record_native_session(
+            expected_revision,
+            NativeChatProvider::ClaudeLocal,
+            selector.as_str(),
+        )
+        .and_then(|mut next| {
+            next.claude_session = Some(selector);
+            next.validate()?;
+            Ok(next)
+        })
+    }
+
+    pub fn mark_claude_input_indeterminate(
+        &self,
+        expected_revision: u64,
+        request_id: String,
+    ) -> Result<Self, RuntimeError> {
+        self.mark_native_input_indeterminate(
+            expected_revision,
+            NativeChatProvider::ClaudeLocal,
+            request_id,
+        )
+    }
+
+    pub fn record_claude_turn(&self, expected_revision: u64) -> Result<Self, RuntimeError> {
+        self.record_native_turn(expected_revision, NativeChatProvider::ClaudeLocal)
+    }
+
+    pub fn record_claude_provider_terminal(
+        &self,
+        expected_revision: u64,
+        session_id: &str,
+        request_id: &str,
+    ) -> Result<Self, RuntimeError> {
+        self.record_native_provider_terminal(
+            expected_revision,
+            NativeChatProvider::ClaudeLocal,
+            session_id,
+            request_id,
+        )
+    }
+
+    pub fn record_opencode_session(
+        &self,
+        expected_revision: u64,
+        selector: OpenCodeSessionSelector,
+    ) -> Result<Self, RuntimeError> {
+        self.record_native_session(
+            expected_revision,
+            NativeChatProvider::OpenCodeLocal,
+            selector.as_str(),
+        )
+        .and_then(|mut next| {
+            next.opencode_session = Some(selector);
+            next.validate()?;
+            Ok(next)
+        })
+    }
+
+    pub fn mark_opencode_input_indeterminate(
+        &self,
+        expected_revision: u64,
+        request_id: String,
+    ) -> Result<Self, RuntimeError> {
+        self.mark_native_input_indeterminate(
+            expected_revision,
+            NativeChatProvider::OpenCodeLocal,
+            request_id,
+        )
+    }
+
+    pub fn record_opencode_turn(&self, expected_revision: u64) -> Result<Self, RuntimeError> {
+        self.record_native_turn(expected_revision, NativeChatProvider::OpenCodeLocal)
+    }
+
+    pub fn record_opencode_provider_terminal(
+        &self,
+        expected_revision: u64,
+        session_id: &str,
+        request_id: &str,
+    ) -> Result<Self, RuntimeError> {
+        self.record_native_provider_terminal(
+            expected_revision,
+            NativeChatProvider::OpenCodeLocal,
+            session_id,
+            request_id,
+        )
+    }
+
+    pub fn record_cursor_session(
+        &self,
+        expected_revision: u64,
+        selector: CursorSessionSelector,
+    ) -> Result<Self, RuntimeError> {
+        self.record_native_session(
+            expected_revision,
+            NativeChatProvider::CursorLocal,
+            selector.as_str(),
+        )
+        .and_then(|mut next| {
+            next.cursor_session = Some(selector);
+            next.validate()?;
+            Ok(next)
+        })
+    }
+
+    pub fn mark_cursor_input_indeterminate(
+        &self,
+        expected_revision: u64,
+        request_id: String,
+    ) -> Result<Self, RuntimeError> {
+        self.mark_native_input_indeterminate(
+            expected_revision,
+            NativeChatProvider::CursorLocal,
+            request_id,
+        )
+    }
+
+    pub fn record_cursor_turn(&self, expected_revision: u64) -> Result<Self, RuntimeError> {
+        self.record_native_turn(expected_revision, NativeChatProvider::CursorLocal)
+    }
+
+    pub fn record_cursor_provider_terminal(
+        &self,
+        expected_revision: u64,
+        session_id: &str,
+        request_id: &str,
+    ) -> Result<Self, RuntimeError> {
+        self.record_native_provider_terminal(
+            expected_revision,
+            NativeChatProvider::CursorLocal,
+            session_id,
+            request_id,
+        )
+    }
+
+    fn record_native_session(
+        &self,
+        expected_revision: u64,
+        provider: NativeChatProvider,
+        _session_id: &str,
+    ) -> Result<Self, RuntimeError> {
+        if self.provider != Some(provider)
+            || self.phase != NativeChatProtocolPhase::ThreadStartIndeterminate
+            || self.revision != expected_revision
+        {
+            return Err(RuntimeError::fence(
+                "native provider session does not match pending start",
+            ));
+        }
+        self.validate()?;
+        let mut next = self.clone();
+        next.phase = NativeChatProtocolPhase::ThreadKnown;
+        next.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::invalid("provider checkpoint revision exhausted"))?;
+        Ok(next)
+    }
+
+    fn mark_native_input_indeterminate(
+        &self,
+        expected_revision: u64,
+        provider: NativeChatProvider,
+        request_id: String,
+    ) -> Result<Self, RuntimeError> {
+        if self.provider != Some(provider) || self.revision != expected_revision {
+            return Err(RuntimeError::fence(
+                "native provider prompt does not match session",
+            ));
+        }
+        validate_opaque_session(&request_id, "invalid native provider request identity")?;
+        if !self
+            .phase
+            .permits_transition(NativeChatProtocolPhase::InputIndeterminate)
+        {
+            return Err(RuntimeError::transition(
+                "native provider prompt cannot be recorded here",
+            ));
+        }
+        let has_session = match provider {
+            NativeChatProvider::ClaudeLocal => self.claude_session.is_some(),
+            NativeChatProvider::OpenCodeLocal => self.opencode_session.is_some(),
+            NativeChatProvider::CursorLocal => self.cursor_session.is_some(),
+            _ => false,
+        };
+        if !has_session {
+            return Err(RuntimeError::fence("native provider session is missing"));
+        }
+        let mut next = self.clone();
+        next.phase = NativeChatProtocolPhase::InputIndeterminate;
+        next.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::invalid("provider checkpoint revision exhausted"))?;
+        match provider {
+            NativeChatProvider::ClaudeLocal => next.claude_prompt_request_id = Some(request_id),
+            NativeChatProvider::OpenCodeLocal => next.opencode_prompt_request_id = Some(request_id),
+            NativeChatProvider::CursorLocal => next.cursor_prompt_request_id = Some(request_id),
+            _ => unreachable!(),
+        }
+        next.validate()?;
+        Ok(next)
+    }
+
+    fn record_native_turn(
+        &self,
+        expected_revision: u64,
+        provider: NativeChatProvider,
+    ) -> Result<Self, RuntimeError> {
+        if self.provider != Some(provider)
+            || self.revision != expected_revision
+            || !self
+                .phase
+                .permits_transition(NativeChatProtocolPhase::TurnKnown)
+        {
+            return Err(RuntimeError::fence("native provider turn receipt is stale"));
+        }
+        let mut next = self.clone();
+        next.phase = NativeChatProtocolPhase::TurnKnown;
+        next.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::invalid("provider checkpoint revision exhausted"))?;
+        next.validate()?;
+        Ok(next)
+    }
+
+    fn record_native_provider_terminal(
+        &self,
+        expected_revision: u64,
+        provider: NativeChatProvider,
+        session_id: &str,
+        request_id: &str,
+    ) -> Result<Self, RuntimeError> {
+        if self.provider != Some(provider) || self.revision != expected_revision {
+            return Err(RuntimeError::fence(
+                "native provider terminal receipt is stale",
+            ));
+        }
+        let session_matches = match provider {
+            NativeChatProvider::ClaudeLocal => {
+                self.claude_session
+                    .as_ref()
+                    .map(ClaudeSessionSelector::as_str)
+                    == Some(session_id)
+            }
+            NativeChatProvider::OpenCodeLocal => {
+                self.opencode_session
+                    .as_ref()
+                    .map(OpenCodeSessionSelector::as_str)
+                    == Some(session_id)
+            }
+            NativeChatProvider::CursorLocal => {
+                self.cursor_session
+                    .as_ref()
+                    .map(CursorSessionSelector::as_str)
+                    == Some(session_id)
+            }
+            _ => false,
+        };
+        let request_matches = match provider {
+            NativeChatProvider::ClaudeLocal => {
+                self.claude_prompt_request_id.as_deref() == Some(request_id)
+            }
+            NativeChatProvider::OpenCodeLocal => {
+                self.opencode_prompt_request_id.as_deref() == Some(request_id)
+            }
+            NativeChatProvider::CursorLocal => {
+                self.cursor_prompt_request_id.as_deref() == Some(request_id)
+            }
+            _ => false,
+        };
+        if !session_matches || !request_matches {
+            return Err(RuntimeError::fence(
+                "native provider terminal belongs to another prompt",
+            ));
+        }
+        self.advance(
+            expected_revision,
+            NativeChatProtocolPhase::ProviderTerminalObserved,
+            None,
+            None,
+        )
+    }
+
     /// The turn selector is Pi's exact persisted user-entry id observed in the
     /// newly extended session tree. `prompt` acceptance alone is insufficient.
     pub fn record_pi_turn_entry(
@@ -747,5 +1328,69 @@ impl NativeChatProtocolCheckpoint {
         next.pi_session = Some(selector);
         next.validate()?;
         Ok(next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_provider_checkpoint_keeps_session_and_request_identity_separate() {
+        macro_rules! check {
+            ($provider:expr, $session:expr, $record:ident, $mark:ident, $turn:ident, $terminal:ident) => {{
+                let provider = $provider;
+                let session = $session;
+                let mut checkpoint =
+                    NativeChatProtocolCheckpoint::new(NativeChatProtocolStart::FreshThread)
+                        .unwrap();
+                checkpoint.provider = Some(provider);
+                checkpoint.validate().unwrap();
+                checkpoint = checkpoint.prepare_thread_start(0).unwrap();
+                checkpoint = checkpoint.$record(1, $session).unwrap();
+                checkpoint = checkpoint.prepare_input(2).unwrap();
+                checkpoint = checkpoint.$mark(3, "request-1".into()).unwrap();
+                checkpoint = checkpoint.$turn(4).unwrap();
+                let terminal = checkpoint
+                    .$terminal(5, session.as_str(), "request-1")
+                    .unwrap();
+                assert_eq!(
+                    terminal.phase(),
+                    NativeChatProtocolPhase::ProviderTerminalObserved
+                );
+                assert!(terminal.thread_id().is_none());
+                assert!(terminal.turn_id().is_none());
+            }};
+        }
+        check!(
+            NativeChatProvider::ClaudeLocal,
+            ClaudeSessionSelector::from_persisted("claude-session").unwrap(),
+            record_claude_session,
+            mark_claude_input_indeterminate,
+            record_claude_turn,
+            record_claude_provider_terminal
+        );
+        check!(
+            NativeChatProvider::OpenCodeLocal,
+            OpenCodeSessionSelector::from_persisted("ses_rudder_native").unwrap(),
+            record_opencode_session,
+            mark_opencode_input_indeterminate,
+            record_opencode_turn,
+            record_opencode_provider_terminal
+        );
+        check!(
+            NativeChatProvider::CursorLocal,
+            CursorSessionSelector::from_persisted("cursor-session").unwrap(),
+            record_cursor_session,
+            mark_cursor_input_indeterminate,
+            record_cursor_turn,
+            record_cursor_provider_terminal
+        );
+    }
+
+    #[test]
+    fn opencode_selector_requires_native_session_prefix() {
+        assert!(OpenCodeSessionSelector::from_persisted("ses_1").is_ok());
+        assert!(OpenCodeSessionSelector::from_persisted("foo_session_1").is_err());
     }
 }

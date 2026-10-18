@@ -2140,9 +2140,12 @@ name = "rudder-native-chat-executor"
 version = "0.7.24"
 dependencies = [
  "rudder-auth-core",
+ "rudder-claude-code",
  "rudder-codex-app-server",
+ "rudder-cursor-acp-adapter",
  "rudder-d1-persistence",
  "rudder-hermes-acp",
+ "rudder-native-process-transport",
  "rudder-opencode-native",
  "rudder-pi-rpc",
  "rudder-runtime-core",

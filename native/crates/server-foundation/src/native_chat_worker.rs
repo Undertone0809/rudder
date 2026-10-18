@@ -611,6 +611,18 @@ fn run(
         Ok(rudder_native_chat_executor::NativeExecutionObservation::Pi(observation)) => {
             return finish_pi_observation(handle, &pool, observation);
         }
+        // These provider adapters already return typed, provider-native
+        // observations. Until their D1 projection/finalizer is available,
+        // retain the execution hold and expose an explicit unresolved state;
+        // never coerce their session IDs into Codex Thread/Turn fields.
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::Claude(_))
+        | Ok(rudder_native_chat_executor::NativeExecutionObservation::Cursor(_))
+        | Ok(rudder_native_chat_executor::NativeExecutionObservation::OpenCode(_)) => {
+            return Completion {
+                status: Status::Unresolved(UnresolvedReason::ProviderTerminalUnsupported),
+                quiescent: false,
+            };
+        }
         Err(failure) => {
             let Some(execution_actor) = failure.execution_principal() else {
                 return Completion {

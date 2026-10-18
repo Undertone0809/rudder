@@ -24,6 +24,9 @@ pub enum EffectDispatch<'a> {
     StartThread,
     StartHermesSession,
     StartPiSession,
+    StartClaudeSession,
+    StartOpenCodeSession,
+    StartCursorSession,
     SubmitInput {
         thread_id: &'a str,
         source_message_id: &'a str,
@@ -35,6 +38,21 @@ pub enum EffectDispatch<'a> {
         body: &'a str,
     },
     SubmitPiInput {
+        session_id: &'a str,
+        source_message_id: &'a str,
+        body: &'a str,
+    },
+    SubmitClaudeInput {
+        session_id: &'a str,
+        source_message_id: &'a str,
+        body: &'a str,
+    },
+    SubmitOpenCodeInput {
+        session_id: &'a str,
+        source_message_id: &'a str,
+        body: &'a str,
+    },
+    SubmitCursorInput {
         session_id: &'a str,
         source_message_id: &'a str,
         body: &'a str,
@@ -56,6 +74,24 @@ enum Payload {
         body: String,
     },
     SubmitPiInput {
+        session_id: String,
+        source_message_id: String,
+        body: String,
+    },
+    StartClaudeSession,
+    StartOpenCodeSession,
+    StartCursorSession,
+    SubmitClaudeInput {
+        session_id: String,
+        source_message_id: String,
+        body: String,
+    },
+    SubmitOpenCodeInput {
+        session_id: String,
+        source_message_id: String,
+        body: String,
+    },
+    SubmitCursorInput {
         session_id: String,
         source_message_id: String,
         body: String,
@@ -91,6 +127,9 @@ impl AuthorizedEffect {
             }),
             Payload::StartHermesSession => callback(EffectDispatch::StartHermesSession),
             Payload::StartPiSession => callback(EffectDispatch::StartPiSession),
+            Payload::StartClaudeSession => callback(EffectDispatch::StartClaudeSession),
+            Payload::StartOpenCodeSession => callback(EffectDispatch::StartOpenCodeSession),
+            Payload::StartCursorSession => callback(EffectDispatch::StartCursorSession),
             Payload::SubmitHermesInput {
                 session_id,
                 source_message_id,
@@ -105,6 +144,33 @@ impl AuthorizedEffect {
                 source_message_id,
                 body,
             } => callback(EffectDispatch::SubmitPiInput {
+                session_id: &session_id,
+                source_message_id: &source_message_id,
+                body: &body,
+            }),
+            Payload::SubmitClaudeInput {
+                session_id,
+                source_message_id,
+                body,
+            } => callback(EffectDispatch::SubmitClaudeInput {
+                session_id: &session_id,
+                source_message_id: &source_message_id,
+                body: &body,
+            }),
+            Payload::SubmitOpenCodeInput {
+                session_id,
+                source_message_id,
+                body,
+            } => callback(EffectDispatch::SubmitOpenCodeInput {
+                session_id: &session_id,
+                source_message_id: &source_message_id,
+                body: &body,
+            }),
+            Payload::SubmitCursorInput {
+                session_id,
+                source_message_id,
+                body,
+            } => callback(EffectDispatch::SubmitCursorInput {
                 session_id: &session_id,
                 source_message_id: &source_message_id,
                 body: &body,
@@ -283,6 +349,40 @@ pub async fn authorize_effect(
             }
             Payload::StartPiSession
         }
+        (
+            kind @ (EffectKind::StartClaudeSession
+            | EffectKind::StartOpenCodeSession
+            | EffectKind::StartCursorSession),
+            None,
+        ) => {
+            let provider = match kind {
+                EffectKind::StartClaudeSession => NativeChatProvider::ClaudeLocal,
+                EffectKind::StartOpenCodeSession => NativeChatProvider::OpenCodeLocal,
+                EffectKind::StartCursorSession => NativeChatProvider::CursorLocal,
+                _ => unreachable!(),
+            };
+            if permit.phase != NativeChatProtocolPhase::ThreadStartIndeterminate
+                || permit.session_id.is_some()
+                || permit.thread_id.is_some()
+                || permit.source_message_id.is_some()
+                || permit.input_fingerprint.is_some()
+                || locked.checkpoint.provider() != provider
+                || locked.checkpoint.thread_id().is_some()
+                || locked.segment_state != "pending"
+                || locked.native_session_id.is_some()
+            {
+                return Err(http(
+                    409,
+                    "Native Chat native provider session start authorization is stale",
+                ));
+            }
+            match kind {
+                EffectKind::StartClaudeSession => Payload::StartClaudeSession,
+                EffectKind::StartOpenCodeSession => Payload::StartOpenCodeSession,
+                EffectKind::StartCursorSession => Payload::StartCursorSession,
+                _ => unreachable!(),
+            }
+        }
         (EffectKind::SubmitHermesInput, Some(input)) => {
             let session_id = permit
                 .session_id
@@ -442,6 +542,118 @@ pub async fn authorize_effect(
                 session_id: session_id.to_owned(),
                 source_message_id: source_message_id.to_owned(),
                 body: input.body().to_owned(),
+            }
+        }
+        (
+            kind @ (EffectKind::SubmitClaudeInput
+            | EffectKind::SubmitOpenCodeInput
+            | EffectKind::SubmitCursorInput),
+            Some(input),
+        ) => {
+            let session_id = permit.session_id.as_deref().ok_or_else(|| {
+                http(
+                    409,
+                    "Native Chat native provider permit has no session identity",
+                )
+            })?;
+            let source_message_id = permit.source_message_id.as_deref().ok_or_else(|| {
+                http(
+                    409,
+                    "Native Chat native provider permit has no input identity",
+                )
+            })?;
+            let input_fingerprint = permit.input_fingerprint.as_deref().ok_or_else(|| {
+                http(
+                    409,
+                    "Native Chat native provider permit has no input fingerprint",
+                )
+            })?;
+            let provider_ok = match kind {
+                EffectKind::SubmitClaudeInput => {
+                    locked.checkpoint.provider() == NativeChatProvider::ClaudeLocal
+                        && locked.checkpoint.claude_session().map(|s| s.as_str())
+                            == Some(session_id)
+                }
+                EffectKind::SubmitOpenCodeInput => {
+                    locked.checkpoint.provider() == NativeChatProvider::OpenCodeLocal
+                        && locked.checkpoint.opencode_session().map(|s| s.as_str())
+                            == Some(session_id)
+                }
+                EffectKind::SubmitCursorInput => {
+                    locked.checkpoint.provider() == NativeChatProvider::CursorLocal
+                        && locked.checkpoint.cursor_session().map(|s| s.as_str())
+                            == Some(session_id)
+                }
+                _ => false,
+            };
+            if permit.phase != NativeChatProtocolPhase::InputIndeterminate
+                || !provider_ok
+                || locked.segment_state != "open"
+                || locked.native_session_id.as_deref() != Some(session_id)
+                || input.run_id() != fence.run_id.as_str()
+                || input.attempt_id() != fence.attempt_id.as_str()
+                || input.message_id() != source_message_id
+                || input.checkpoint_revision().checked_add(1) != Some(permit.committed_revision())
+                || input.fingerprint != input_fingerprint
+                || validation::fingerprint(input.body()) != input_fingerprint
+                || locked.admitted_message_id.as_deref() != Some(source_message_id)
+                || locked.admitted_input_fingerprint.as_deref() != Some(input_fingerprint)
+            {
+                return Err(http(
+                    409,
+                    "Native Chat native provider input identity is stale",
+                ));
+            }
+            let source = sqlx::query(
+                "SELECT m.id::text AS message_id, m.client_mutation_fingerprint,
+                        m.structured_payload IS NULL AS supported_payload,
+                        NOT EXISTS (SELECT 1 FROM chat_attachments ca
+                          WHERE ca.org_id=m.org_id AND ca.conversation_id=m.conversation_id
+                            AND ca.message_id=m.id) AS has_no_attachments
+                 FROM chat_generations g JOIN chat_messages m
+                   ON m.org_id=g.org_id AND m.id=g.source_message_id
+                  AND m.conversation_id=g.conversation_id AND m.run_id=$4::uuid
+                 WHERE g.org_id=$1::uuid AND g.id=$2::uuid AND g.conversation_id=$3::uuid
+                   AND m.role='user' AND m.kind='message' AND m.status='completed'
+                   AND m.turn_variant=g.source_turn_variant FOR UPDATE OF m NOWAIT",
+            )
+            .bind(&fence.organization_id)
+            .bind(&fence.generation_id)
+            .bind(&fence.conversation_id)
+            .bind(&fence.run_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| http(409, "Native Chat source input is unavailable"))?;
+            if source.try_get::<String, _>("message_id")? != source_message_id
+                || source
+                    .try_get::<Option<String>, _>("client_mutation_fingerprint")?
+                    .as_deref()
+                    != Some(input_fingerprint)
+                || !source.try_get::<bool, _>("supported_payload")?
+                || !source.try_get::<bool, _>("has_no_attachments")?
+            {
+                return Err(http(
+                    409,
+                    "Native Chat source input changed or contains unsupported content",
+                ));
+            }
+            match kind {
+                EffectKind::SubmitClaudeInput => Payload::SubmitClaudeInput {
+                    session_id: session_id.to_owned(),
+                    source_message_id: source_message_id.to_owned(),
+                    body: input.body().to_owned(),
+                },
+                EffectKind::SubmitOpenCodeInput => Payload::SubmitOpenCodeInput {
+                    session_id: session_id.to_owned(),
+                    source_message_id: source_message_id.to_owned(),
+                    body: input.body().to_owned(),
+                },
+                EffectKind::SubmitCursorInput => Payload::SubmitCursorInput {
+                    session_id: session_id.to_owned(),
+                    source_message_id: source_message_id.to_owned(),
+                    body: input.body().to_owned(),
+                },
+                _ => unreachable!(),
             }
         }
         _ => {

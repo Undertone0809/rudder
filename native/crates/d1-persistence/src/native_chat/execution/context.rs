@@ -2,7 +2,8 @@ use super::{ExecutionFence, Result, http};
 use crate::native_chat::NativeChatExecutionActor;
 use crate::runtime_bindings;
 use rudder_runtime_core::native_chat::{
-    NativeChatProtocolCheckpoint, NativeChatProtocolPhase, NativeChatProvider,
+    ClaudeSessionSelector, CursorSessionSelector, NativeChatProtocolCheckpoint,
+    NativeChatProtocolPhase, NativeChatProvider, OpenCodeSessionSelector,
 };
 use serde_json::Value;
 use sqlx::{Postgres, Row, Transaction};
@@ -438,7 +439,77 @@ async fn lock_execution(
             ("open", Some(stored), Some(selector)) => stored == selector.session_id.as_str(),
             _ => false,
         };
-    if !codex_identity_matches && !hermes_identity_matches && !pi_identity_matches {
+    let claude_identity_matches = checkpoint.provider() == NativeChatProvider::ClaudeLocal
+        && fence.runtime_type() == "claude_local"
+        && attempt_thread.is_none()
+        && attempt_turn.is_none()
+        && generation_thread.is_none()
+        && generation_turn.is_none()
+        && match (
+            segment_state.as_str(),
+            native_session_id.as_deref(),
+            checkpoint.claude_session(),
+        ) {
+            ("pending", None, None) => matches!(
+                checkpoint.phase(),
+                NativeChatProtocolPhase::NoThreadRequest
+                    | NativeChatProtocolPhase::ThreadStartIndeterminate
+            ),
+            ("open", Some(stored), Some(selector)) => {
+                stored == selector.as_str() && ClaudeSessionSelector::from_persisted(stored).is_ok()
+            }
+            _ => false,
+        };
+    let opencode_identity_matches = checkpoint.provider() == NativeChatProvider::OpenCodeLocal
+        && fence.runtime_type() == "opencode_local"
+        && attempt_thread.is_none()
+        && attempt_turn.is_none()
+        && generation_thread.is_none()
+        && generation_turn.is_none()
+        && match (
+            segment_state.as_str(),
+            native_session_id.as_deref(),
+            checkpoint.opencode_session(),
+        ) {
+            ("pending", None, None) => matches!(
+                checkpoint.phase(),
+                NativeChatProtocolPhase::NoThreadRequest
+                    | NativeChatProtocolPhase::ThreadStartIndeterminate
+            ),
+            ("open", Some(stored), Some(selector)) => {
+                stored == selector.as_str()
+                    && OpenCodeSessionSelector::from_persisted(stored).is_ok()
+            }
+            _ => false,
+        };
+    let cursor_identity_matches = checkpoint.provider() == NativeChatProvider::CursorLocal
+        && matches!(fence.runtime_type(), "cursor" | "cursor_local")
+        && attempt_thread.is_none()
+        && attempt_turn.is_none()
+        && generation_thread.is_none()
+        && generation_turn.is_none()
+        && match (
+            segment_state.as_str(),
+            native_session_id.as_deref(),
+            checkpoint.cursor_session(),
+        ) {
+            ("pending", None, None) => matches!(
+                checkpoint.phase(),
+                NativeChatProtocolPhase::NoThreadRequest
+                    | NativeChatProtocolPhase::ThreadStartIndeterminate
+            ),
+            ("open", Some(stored), Some(selector)) => {
+                stored == selector.as_str() && CursorSessionSelector::from_persisted(stored).is_ok()
+            }
+            _ => false,
+        };
+    if !codex_identity_matches
+        && !hermes_identity_matches
+        && !pi_identity_matches
+        && !claude_identity_matches
+        && !opencode_identity_matches
+        && !cursor_identity_matches
+    {
         return Err(http(
             409,
             "Native Chat checkpoint does not match its provider and current segment",

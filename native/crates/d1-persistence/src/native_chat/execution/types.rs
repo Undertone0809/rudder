@@ -2,7 +2,8 @@ use rudder_codex_app_server::CleanupReceipt;
 use rudder_hermes_acp::HermesCleanupReceipt;
 use rudder_pi_rpc::PiCleanupReceipt;
 use rudder_runtime_core::native_chat::{
-    HermesSessionSelector, NativeChatProtocolPhase, NativeChatProvider, PiSessionSelector,
+    ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector, NativeChatProtocolPhase,
+    NativeChatProvider, OpenCodeSessionSelector, PiSessionSelector,
 };
 use std::fmt;
 
@@ -137,6 +138,12 @@ pub struct CheckpointSnapshot {
     pub pi_turn_entry_id: Option<String>,
     pub hermes_session: Option<HermesSessionSelector>,
     pub hermes_prompt_request_id: Option<u64>,
+    pub claude_session: Option<ClaudeSessionSelector>,
+    pub claude_prompt_request_id: Option<String>,
+    pub opencode_session: Option<OpenCodeSessionSelector>,
+    pub opencode_prompt_request_id: Option<String>,
+    pub cursor_session: Option<CursorSessionSelector>,
+    pub cursor_prompt_request_id: Option<String>,
 }
 
 impl fmt::Debug for CheckpointSnapshot {
@@ -153,6 +160,9 @@ impl fmt::Debug for CheckpointSnapshot {
                 "has_hermes_prompt_request",
                 &self.hermes_prompt_request_id.is_some(),
             )
+            .field("has_claude_session", &self.claude_session.is_some())
+            .field("has_opencode_session", &self.opencode_session.is_some())
+            .field("has_cursor_session", &self.cursor_session.is_some())
             .finish()
     }
 }

@@ -444,6 +444,21 @@ async fn finalize_inner(
     if actor.organization_id() != id.organization_id {
         return Err(http(403, "Organization access denied"));
     }
+    // Claude, Cursor, and OpenCode observations are intentionally kept out of
+    // the Codex/Hermes/Pi finalizer until each provider has a typed terminal
+    // receipt plus cleanup proof. The Foundation worker returns an explicit
+    // unresolved result for those observations; this guard prevents an
+    // accidental call from coercing their provider-native IDs into the legacy
+    // finalization selectors.
+    if matches!(
+        fence.runtime_type(),
+        "claude_local" | "cursor" | "cursor_local" | "opencode_local"
+    ) {
+        return Err(http(
+            409,
+            "Native provider terminal finalization is not yet wired",
+        ));
+    }
     let cleanup_matches = cleanup.matches_claim(fence);
     let turn_matches = turn.is_none_or(|turn| {
         cleanup.proves_turn(turn)

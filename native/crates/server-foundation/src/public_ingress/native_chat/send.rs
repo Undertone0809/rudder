@@ -924,7 +924,15 @@ fn validate_first_send_conversation(value: &Value, expected_org: &str, expected_
             && runtime["runtimeAgentId"].as_str().is_some()
             && matches!(
                 runtime["agentRuntimeType"].as_str(),
-                Some("codex_local" | "hermes_local")
+                Some(
+                    "codex_local"
+                        | "hermes_local"
+                        | "claude_local"
+                        | "cursor"
+                        | "cursor_local"
+                        | "opencode_local"
+                        | "pi_local"
+                )
             )
             && runtime["error"].is_null())
             || (runtime["available"].as_bool() == Some(false)

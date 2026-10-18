@@ -1,11 +1,19 @@
 //! Private, single-owner Codex turn execution. No public HTTP activation or Run
 //! finalization authority lives here. Every exit retains the admission hold;
 //! provider terminal data and host receipts require a separate finalizer.
+mod claude;
+mod cursor;
 mod hermes;
 mod opencode;
 mod pi;
 mod profile;
 mod wire;
+pub use claude::{
+    ClaudeExecutionError, ClaudeExecutionObservation, execute_turn as execute_claude_turn,
+};
+pub use cursor::{
+    CursorExecutionError, CursorExecutionObservation, execute_turn as execute_cursor_turn,
+};
 pub use opencode::{
     OpenCodeCleanupStatus, OpenCodeExecutionError, OpenCodeExecutionObservation,
     execute_turn as execute_opencode_turn,
@@ -63,6 +71,12 @@ pub enum Error {
     HermesTransport(#[from] HermesTransportError),
     #[error(transparent)]
     PiTransport(#[from] PiAdapterError),
+    #[error(transparent)]
+    ClaudeTransport(#[from] ClaudeExecutionError),
+    #[error(transparent)]
+    CursorTransport(#[from] CursorExecutionError),
+    #[error("OpenCode execution failed: {0}")]
+    OpenCodeExecution(String),
     #[error("Native Chat operation deadline expired; reconcile the held attempt")]
     Deadline,
     #[error("Native Chat execution was cancelled; reconcile the held attempt")]
@@ -173,6 +187,34 @@ pub enum NativeExecutionObservation {
     /// have a Pi projection, so Foundation reports the observation as an
     /// explicit unresolved state until that boundary is added.
     Pi(PiNativeExecutionObservation),
+    /// Claude Code owns stream-json session and result identities.
+    Claude(ClaudeNativeExecutionObservation),
+    /// Cursor ACP owns JSON-RPC session identity and update observations.
+    Cursor(CursorNativeExecutionObservation),
+    /// OpenCode owns Server Session and assistant message identities.
+    OpenCode(OpenCodeNativeExecutionObservation),
+}
+
+/// Claude provider receipt paired with the D1 claim fence.
+pub struct ClaudeNativeExecutionObservation {
+    pub execution_principal: NativeChatExecutionPrincipal,
+    pub fence: ExecutionFence,
+    pub observation: ClaudeExecutionObservation,
+}
+
+/// Cursor provider receipt paired with the D1 claim fence.
+pub struct CursorNativeExecutionObservation {
+    pub execution_principal: NativeChatExecutionPrincipal,
+    pub fence: ExecutionFence,
+    pub observation: CursorExecutionObservation,
+}
+
+/// OpenCode provider receipt paired with the D1 claim fence. OpenCode Server
+/// is host-owned separately, so its cleanup status remains provider-native.
+pub struct OpenCodeNativeExecutionObservation {
+    pub execution_principal: NativeChatExecutionPrincipal,
+    pub fence: ExecutionFence,
+    pub observation: OpenCodeExecutionObservation,
 }
 
 pub struct HermesExecutionObservation {
@@ -486,9 +528,13 @@ where
         handle, pool, actor, host, paths, request, false,
     )? {
         NativeExecutionObservation::Codex(observation) => Ok(observation),
-        NativeExecutionObservation::Hermes(_) | NativeExecutionObservation::Pi(_) => Err(
-            ExecutionFailure::not_launched(Error::UnsupportedConfiguration),
-        ),
+        NativeExecutionObservation::Hermes(_)
+        | NativeExecutionObservation::Pi(_)
+        | NativeExecutionObservation::Claude(_)
+        | NativeExecutionObservation::Cursor(_)
+        | NativeExecutionObservation::OpenCode(_) => Err(ExecutionFailure::not_launched(
+            Error::UnsupportedConfiguration,
+        )),
     }
 }
 
@@ -597,6 +643,169 @@ where
             paths,
         )
         .map(NativeExecutionObservation::Pi);
+    }
+    // Claude Code, Cursor ACP, and OpenCode keep provider-native identity and
+    // receipts. The shared D1 worker owns the checkpoint transitions around
+    // this branch; this executor only dispatches the admitted input through
+    // the matching provider boundary and returns its typed observation.
+    if matches!(
+        claimed_config.identity.runtime_type.as_str(),
+        "claude_local" | "cursor" | "cursor_local" | "opencode_local"
+    ) {
+        let snapshot = match db(
+            handle,
+            deadline,
+            execution::current_checkpoint(pool, &execution_principal, &claimed_fence),
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return Err(ExecutionFailure::before_launch(
+                    error,
+                    execution_principal,
+                    claimed_fence,
+                ));
+            }
+        };
+        let input = match db(
+            handle,
+            deadline,
+            execution::load_submission(pool, &execution_principal, &claimed_fence),
+        ) {
+            Ok(input) => input,
+            Err(error) => {
+                return Err(ExecutionFailure::before_launch(
+                    error,
+                    execution_principal,
+                    claimed_fence,
+                ));
+            }
+        };
+        let body = input.body().to_owned();
+        let run_id = claimed_fence.identity().run_id.to_owned();
+        let attempt_id = claimed_fence.identity().attempt_id.to_owned();
+        let owner_token = claimed_fence.run_execution_owner_token().to_owned();
+        let existing_claude = snapshot
+            .claude_session
+            .as_ref()
+            .map(|session| session.as_str().to_owned());
+        let existing_cursor = snapshot
+            .cursor_session
+            .as_ref()
+            .map(|session| session.as_str().to_owned());
+        let existing_opencode = snapshot
+            .opencode_session
+            .as_ref()
+            .map(|session| session.as_str().to_owned());
+        let runtime = claimed_config.identity.runtime_type.clone();
+        return match runtime.as_str() {
+            "claude_local" => {
+                let Some(local) = claimed_config.claude.as_ref() else {
+                    return Err(ExecutionFailure::before_launch(
+                        Error::UnsupportedConfiguration,
+                        execution_principal,
+                        claimed_fence,
+                    ));
+                };
+                match execute_claude_turn(
+                    handle,
+                    &claimed_config,
+                    local,
+                    paths,
+                    connection_launch_permit,
+                    &run_id,
+                    &attempt_id,
+                    &owner_token,
+                    existing_claude.as_deref(),
+                    &body,
+                    deadline.saturating_duration_since(Instant::now()),
+                ) {
+                    Ok(observation) => Ok(NativeExecutionObservation::Claude(
+                        ClaudeNativeExecutionObservation {
+                            execution_principal,
+                            fence: claimed_fence,
+                            observation,
+                        },
+                    )),
+                    Err(error) => Err(ExecutionFailure::after_claim(
+                        Error::ClaudeTransport(error),
+                        execution_principal,
+                        claimed_fence,
+                        None,
+                    )),
+                }
+            }
+            "cursor" | "cursor_local" => {
+                let Some(local) = claimed_config.cursor.as_ref() else {
+                    return Err(ExecutionFailure::before_launch(
+                        Error::UnsupportedConfiguration,
+                        execution_principal,
+                        claimed_fence,
+                    ));
+                };
+                match execute_cursor_turn(
+                    &claimed_config,
+                    local,
+                    paths,
+                    connection_launch_permit,
+                    &run_id,
+                    &attempt_id,
+                    &owner_token,
+                    existing_cursor.as_deref(),
+                    &body,
+                    deadline.saturating_duration_since(Instant::now()),
+                ) {
+                    Ok(observation) => Ok(NativeExecutionObservation::Cursor(
+                        CursorNativeExecutionObservation {
+                            execution_principal,
+                            fence: claimed_fence,
+                            observation,
+                        },
+                    )),
+                    Err(error) => Err(ExecutionFailure::after_claim(
+                        Error::CursorTransport(error),
+                        execution_principal,
+                        claimed_fence,
+                        None,
+                    )),
+                }
+            }
+            "opencode_local" => {
+                drop(connection_launch_permit);
+                let Some(local) = claimed_config.opencode.as_ref() else {
+                    return Err(ExecutionFailure::before_launch(
+                        Error::UnsupportedConfiguration,
+                        execution_principal,
+                        claimed_fence,
+                    ));
+                };
+                match execute_opencode_turn(
+                    handle,
+                    local,
+                    existing_opencode.as_deref(),
+                    &body,
+                    deadline.saturating_duration_since(Instant::now()),
+                ) {
+                    Ok(observation) => Ok(NativeExecutionObservation::OpenCode(
+                        OpenCodeNativeExecutionObservation {
+                            execution_principal,
+                            fence: claimed_fence,
+                            observation,
+                        },
+                    )),
+                    Err(error) => Err(ExecutionFailure::after_claim(
+                        Error::OpenCodeExecution(error.to_string()),
+                        execution_principal,
+                        claimed_fence,
+                        None,
+                    )),
+                }
+            }
+            _ => Err(ExecutionFailure::before_launch(
+                Error::UnsupportedConfiguration,
+                execution_principal,
+                claimed_fence,
+            )),
+        };
     }
     let (launch, snapshot) = match (|| -> Result<_> {
         if request.cancelled.load(Ordering::Acquire) {

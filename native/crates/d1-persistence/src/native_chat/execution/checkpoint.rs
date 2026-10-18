@@ -6,7 +6,10 @@ use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activ
 use crate::native_chat::NativeChatExecutionActor;
 use rudder_codex_app_server::EffectResponseReceipt;
 use rudder_hermes_acp::{HermesSessionStartReceipt, HermesTurnReceipt};
-use rudder_runtime_core::native_chat::{HermesSessionSelector, PiSessionSelector};
+use rudder_runtime_core::native_chat::{
+    ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector, OpenCodeSessionSelector,
+    PiSessionSelector,
+};
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::json;
 use sqlx::PgPool;
@@ -18,6 +21,9 @@ pub enum CheckpointTransition {
     PrepareThreadStart,
     PrepareHermesSessionStart,
     PreparePiSessionStart,
+    PrepareClaudeSessionStart,
+    PrepareOpenCodeSessionStart,
+    PrepareCursorSessionStart,
     RecordThread {
         thread_id: String,
     },
@@ -54,6 +60,39 @@ pub enum CheckpointTransition {
         session_id: String,
         entry_id: String,
         next_leaf_id: String,
+    },
+    RecordClaudeSession {
+        session_id: String,
+    },
+    MarkClaudeInputIndeterminate {
+        request_id: String,
+    },
+    RecordClaudeTurn,
+    ObserveClaudeProviderTerminal {
+        session_id: String,
+        request_id: String,
+    },
+    RecordOpenCodeSession {
+        session_id: String,
+    },
+    MarkOpenCodeInputIndeterminate {
+        request_id: String,
+    },
+    RecordOpenCodeTurn,
+    ObserveOpenCodeProviderTerminal {
+        session_id: String,
+        request_id: String,
+    },
+    RecordCursorSession {
+        session_id: String,
+    },
+    MarkCursorInputIndeterminate {
+        request_id: String,
+    },
+    RecordCursorTurn,
+    ObserveCursorProviderTerminal {
+        session_id: String,
+        request_id: String,
     },
 }
 
@@ -118,6 +157,9 @@ impl CheckpointTransition {
             Self::PrepareThreadStart => checkpoint.prepare_thread_start(expected_revision),
             Self::PrepareHermesSessionStart => checkpoint.prepare_thread_start(expected_revision),
             Self::PreparePiSessionStart => checkpoint.prepare_thread_start(expected_revision),
+            Self::PrepareClaudeSessionStart
+            | Self::PrepareOpenCodeSessionStart
+            | Self::PrepareCursorSessionStart => checkpoint.prepare_thread_start(expected_revision),
             Self::RecordThread { thread_id } => {
                 checkpoint.record_thread(expected_revision, thread_id.clone())
             }
@@ -166,6 +208,57 @@ impl CheckpointTransition {
                 entry_id,
                 next_leaf_id.clone(),
             ),
+            Self::RecordClaudeSession { session_id } => checkpoint.record_claude_session(
+                expected_revision,
+                ClaudeSessionSelector::from_persisted(session_id)
+                    .map_err(|_| super::http(409, "Claude session selector is invalid"))?,
+            ),
+            Self::MarkClaudeInputIndeterminate { request_id } => {
+                checkpoint.mark_claude_input_indeterminate(expected_revision, request_id.clone())
+            }
+            Self::RecordClaudeTurn => checkpoint.record_claude_turn(expected_revision),
+            Self::ObserveClaudeProviderTerminal {
+                session_id,
+                request_id,
+            } => checkpoint.record_claude_provider_terminal(
+                expected_revision,
+                session_id,
+                request_id,
+            ),
+            Self::RecordOpenCodeSession { session_id } => checkpoint.record_opencode_session(
+                expected_revision,
+                OpenCodeSessionSelector::from_persisted(session_id)
+                    .map_err(|_| super::http(409, "OpenCode session selector is invalid"))?,
+            ),
+            Self::MarkOpenCodeInputIndeterminate { request_id } => {
+                checkpoint.mark_opencode_input_indeterminate(expected_revision, request_id.clone())
+            }
+            Self::RecordOpenCodeTurn => checkpoint.record_opencode_turn(expected_revision),
+            Self::ObserveOpenCodeProviderTerminal {
+                session_id,
+                request_id,
+            } => checkpoint.record_opencode_provider_terminal(
+                expected_revision,
+                session_id,
+                request_id,
+            ),
+            Self::RecordCursorSession { session_id } => checkpoint.record_cursor_session(
+                expected_revision,
+                CursorSessionSelector::from_persisted(session_id)
+                    .map_err(|_| super::http(409, "Cursor session selector is invalid"))?,
+            ),
+            Self::MarkCursorInputIndeterminate { request_id } => {
+                checkpoint.mark_cursor_input_indeterminate(expected_revision, request_id.clone())
+            }
+            Self::RecordCursorTurn => checkpoint.record_cursor_turn(expected_revision),
+            Self::ObserveCursorProviderTerminal {
+                session_id,
+                request_id,
+            } => checkpoint.record_cursor_provider_terminal(
+                expected_revision,
+                session_id,
+                request_id,
+            ),
         };
         proposed
             .map_err(|_| super::http(409, "Native Chat checkpoint transition is stale or invalid"))
@@ -176,9 +269,15 @@ impl CheckpointTransition {
             Self::PrepareThreadStart => Some(EffectKind::StartThread),
             Self::PrepareHermesSessionStart => Some(EffectKind::StartHermesSession),
             Self::PreparePiSessionStart => Some(EffectKind::StartPiSession),
+            Self::PrepareClaudeSessionStart => Some(EffectKind::StartClaudeSession),
+            Self::PrepareOpenCodeSessionStart => Some(EffectKind::StartOpenCodeSession),
+            Self::PrepareCursorSessionStart => Some(EffectKind::StartCursorSession),
             Self::MarkInputIndeterminate => Some(EffectKind::SubmitInput),
             Self::MarkHermesInputIndeterminate { .. } => Some(EffectKind::SubmitHermesInput),
             Self::MarkPiInputIndeterminate => Some(EffectKind::SubmitPiInput),
+            Self::MarkClaudeInputIndeterminate { .. } => Some(EffectKind::SubmitClaudeInput),
+            Self::MarkOpenCodeInputIndeterminate { .. } => Some(EffectKind::SubmitOpenCodeInput),
+            Self::MarkCursorInputIndeterminate { .. } => Some(EffectKind::SubmitCursorInput),
             _ => None,
         }
     }
@@ -224,6 +323,12 @@ pub enum EffectKind {
     SubmitHermesInput,
     StartPiSession,
     SubmitPiInput,
+    StartClaudeSession,
+    SubmitClaudeInput,
+    StartOpenCodeSession,
+    SubmitOpenCodeInput,
+    StartCursorSession,
+    SubmitCursorInput,
 }
 
 pub struct CheckpointReceipt {
@@ -517,7 +622,10 @@ pub(super) async fn advance(
         let (source_message_id, input_fingerprint, session_id) = match kind {
             EffectKind::StartThread
             | EffectKind::StartHermesSession
-            | EffectKind::StartPiSession => (None, None, None),
+            | EffectKind::StartPiSession
+            | EffectKind::StartClaudeSession
+            | EffectKind::StartOpenCodeSession
+            | EffectKind::StartCursorSession => (None, None, None),
             EffectKind::SubmitInput => (
                 locked.admitted_message_id.clone(),
                 locked.admitted_input_fingerprint.clone(),
@@ -538,6 +646,30 @@ pub(super) async fn advance(
                     .pi_session
                     .as_ref()
                     .map(|session| session.session_id.clone()),
+            ),
+            EffectKind::SubmitClaudeInput => (
+                locked.admitted_message_id.clone(),
+                locked.admitted_input_fingerprint.clone(),
+                snapshot
+                    .claude_session
+                    .as_ref()
+                    .map(|s| s.as_str().to_owned()),
+            ),
+            EffectKind::SubmitOpenCodeInput => (
+                locked.admitted_message_id.clone(),
+                locked.admitted_input_fingerprint.clone(),
+                snapshot
+                    .opencode_session
+                    .as_ref()
+                    .map(|s| s.as_str().to_owned()),
+            ),
+            EffectKind::SubmitCursorInput => (
+                locked.admitted_message_id.clone(),
+                locked.admitted_input_fingerprint.clone(),
+                snapshot
+                    .cursor_session
+                    .as_ref()
+                    .map(|s| s.as_str().to_owned()),
             ),
         };
         EffectPermit {
@@ -582,5 +714,11 @@ fn snapshot(checkpoint: &NativeChatProtocolCheckpoint) -> CheckpointSnapshot {
         pi_turn_entry_id: checkpoint.pi_turn_entry_id().map(str::to_owned),
         hermes_session: checkpoint.hermes_session().cloned(),
         hermes_prompt_request_id: checkpoint.hermes_prompt_request_id(),
+        claude_session: checkpoint.claude_session().cloned(),
+        claude_prompt_request_id: checkpoint.claude_prompt_request_id().map(str::to_owned),
+        opencode_session: checkpoint.opencode_session().cloned(),
+        opencode_prompt_request_id: checkpoint.opencode_prompt_request_id().map(str::to_owned),
+        cursor_session: checkpoint.cursor_session().cloned(),
+        cursor_prompt_request_id: checkpoint.cursor_prompt_request_id().map(str::to_owned),
     }
 }

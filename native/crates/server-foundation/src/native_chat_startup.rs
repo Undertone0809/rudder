@@ -20,6 +20,15 @@ struct Installation {
     workspace_home: PathBuf,
     operator_home: PathBuf,
     codex_home: Option<PathBuf>,
+    /// Optional provider executables are installation facts from the Rust
+    /// launcher. Their absence keeps the provider unavailable and never
+    /// triggers a fallback to another runtime.
+    claude_executable: Option<PathBuf>,
+    cursor_executable: Option<PathBuf>,
+    /// OpenCode is reached through an explicitly owned Server endpoint. The
+    /// endpoint and bearer token are never accepted from a chat request.
+    opencode_server_url: Option<String>,
+    opencode_bearer_token: Option<String>,
     executable_search_path: String,
     friendly_workspace_home: bool,
     deployment_mode: String,
@@ -43,6 +52,11 @@ pub(crate) fn configure(
     }
     let installation: Installation =
         serde_json::from_str(&raw).map_err(|_| invalid_at("invalid installation shape"))?;
+    if installation.opencode_server_url.is_none() && installation.opencode_bearer_token.is_some() {
+        return Err(invalid_at(
+            "OpenCode bearer token requires an OpenCode Server URL",
+        ));
+    }
     if config.browser_auth.is_none() {
         config.browser_auth = Some(
             BrowserAuthConfig::local_implicit(
@@ -74,14 +88,34 @@ pub(crate) fn configure(
 
     // Reading already accepted Native work does not require an installed CLI.
     // New admission is advertised when at least one supported native provider
-    // has an owned executable. Hermes must not be gated on Codex being present.
-    let codex = executable("codex", &installation.executable_search_path);
-    let hermes = executable("hermes", &installation.executable_search_path);
-    let Some(host_executable) = preferred_native_executable(codex.clone(), hermes.clone()) else {
-        return Ok(config);
-    };
+    // has an owned executable or an explicitly owned OpenCode Server endpoint.
+    // Hermes must not be gated on Codex being present.
     let current =
         std::env::current_exe().map_err(|_| invalid_at("invalid native runtime installation"))?;
+    let codex = executable("codex", &installation.executable_search_path);
+    let hermes = executable("hermes", &installation.executable_search_path);
+    let claude = installation
+        .claude_executable
+        .or_else(|| executable("claude", &installation.executable_search_path));
+    let cursor = installation
+        .cursor_executable
+        .or_else(|| executable("cursor-agent", &installation.executable_search_path));
+    let opencode_url = installation
+        .opencode_server_url
+        .as_deref()
+        .map(url::Url::parse)
+        .transpose()
+        .map_err(|_| invalid_at("invalid OpenCode Server URL"))?;
+    let has_opencode = opencode_url.is_some();
+    let Some(host_executable) = preferred_native_executable(
+        codex.clone(),
+        hermes.clone(),
+        claude.clone(),
+        cursor.clone(),
+    )
+    .or_else(|| has_opencode.then(|| current.clone())) else {
+        return Ok(config);
+    };
     let host_name = if cfg!(windows) {
         "rudder-process-host.exe"
     } else {
@@ -136,6 +170,23 @@ pub(crate) fn configure(
             .with_hermes_runtime(hermes, hermes_home)
             .map_err(|_| invalid_at("invalid installed Hermes paths"))?;
     }
+    if let Some(claude) = claude {
+        let profiles = owned_directory(&native_root.join("claude-profiles"))?;
+        host = host
+            .with_claude_runtime(claude, profiles)
+            .map_err(|_| invalid_at("invalid installed Claude Code paths"))?;
+    }
+    if let Some(cursor) = cursor {
+        let profiles = owned_directory(&native_root.join("cursor-profiles"))?;
+        host = host
+            .with_cursor_runtime(cursor, profiles)
+            .map_err(|_| invalid_at("invalid installed Cursor paths"))?;
+    }
+    if let Some(server_url) = opencode_url {
+        host = host
+            .with_opencode_runtime(server_url, installation.opencode_bearer_token)
+            .map_err(|_| invalid_at("invalid installed OpenCode Server paths"))?;
+    }
     config.native_chat_runtime = Some(
         NativeChatPublicRuntime::new(
             host,
@@ -157,8 +208,13 @@ fn executable(name: &str, search: &str) -> Option<PathBuf> {
         .find_map(|directory| canonical_executable(&directory.join(name)))
 }
 
-fn preferred_native_executable(codex: Option<PathBuf>, hermes: Option<PathBuf>) -> Option<PathBuf> {
-    codex.or(hermes)
+fn preferred_native_executable(
+    codex: Option<PathBuf>,
+    hermes: Option<PathBuf>,
+    claude: Option<PathBuf>,
+    cursor: Option<PathBuf>,
+) -> Option<PathBuf> {
+    codex.or(hermes).or(claude).or(cursor)
 }
 
 fn canonical_executable(path: &Path) -> Option<PathBuf> {
@@ -241,7 +297,7 @@ mod tests {
     fn hermes_can_activate_native_host_without_codex() {
         let hermes = PathBuf::from("/opt/rudder/bin/hermes");
         assert_eq!(
-            super::preferred_native_executable(None, Some(hermes.clone())),
+            super::preferred_native_executable(None, Some(hermes.clone()), None, None),
             Some(hermes)
         );
     }
