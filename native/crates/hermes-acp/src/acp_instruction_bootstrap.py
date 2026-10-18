@@ -50,6 +50,15 @@ def main():
             _fail_closed()
 
         def make_agent_with_ephemeral_instruction(self, *args, **kwargs):
+            # ACP persistence stores the provider route alongside the transcript.
+            # Native Chat selects the Hermes profile in trusted Rust before this
+            # child is launched, so a stale persisted route must not override the
+            # selected profile after a process restart.  Preserve the session
+            # UUID and model, but let Hermes resolve provider/base URL/API mode
+            # from the selected profile configuration again.
+            kwargs["requested_provider"] = None
+            kwargs["base_url"] = None
+            kwargs["api_mode"] = None
             agent = original_make_agent(self, *args, **kwargs)
             prior = getattr(agent, "ephemeral_system_prompt", None)
             if prior is not None and not isinstance(prior, str):

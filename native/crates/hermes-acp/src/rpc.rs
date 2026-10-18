@@ -889,6 +889,7 @@ impl HermesAcpTransport {
                         final_text.push_str(chunk);
                     }
                 }
+                Message::Notification { method, .. } if is_benign_acp_notification(&method) => {}
                 Message::Request {
                     id: request_id,
                     method,
@@ -908,6 +909,7 @@ impl HermesAcpTransport {
                         deadline,
                     )?;
                 }
+                Message::Notification { method, .. } if is_benign_acp_notification(&method) => {}
                 Message::Request { id, .. } => {
                     self.send_error_response(id, -32601, "Method not supported", deadline)?;
                 }
@@ -1358,6 +1360,10 @@ fn map_host_error(error: HostError) -> HermesTransportError {
     }
 }
 
+fn is_benign_acp_notification(method: &str) -> bool {
+    matches!(method, "available_commands_update" | "usage_update")
+}
+
 fn parse_prompt_response(
     value: &Value,
 ) -> Result<(HermesStopReason, Option<HermesUsage>, Option<&str>), HermesTransportError> {
@@ -1513,6 +1519,13 @@ mod tests {
         assert!(serde_json::from_str::<StrictValue>(r#"{"jsonrpc":"2.0","id":1,"id":2}"#).is_err());
         assert!(parse_message(json!({"jsonrpc":"1.0","id":1,"result":null})).is_err());
         assert!(parse_message(json!({"jsonrpc":"2.0","id":1,"result":null,"error":null})).is_err());
+    }
+
+    #[test]
+    fn accepts_only_bounded_metadata_notifications_as_benign() {
+        assert!(is_benign_acp_notification("available_commands_update"));
+        assert!(is_benign_acp_notification("usage_update"));
+        assert!(!is_benign_acp_notification("unknown_update"));
     }
 
     #[test]

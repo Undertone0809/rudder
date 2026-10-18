@@ -1045,6 +1045,26 @@ prompt, or create a new session. The fix belongs in the installed Hermes ACP
 restore contract or in a verified profile/relay route, followed by the same
 real two-turn restart acceptance and independent verifier rebind.
 
+### October 18 Hermes restore hardening follow-up
+
+The Rust Hermes candidate now applies the selected profile as the restore
+authority: the pinned ACP bootstrap clears persisted `requested_provider`,
+`base_url`, and `api_mode` before recreating the agent, while preserving the
+session UUID and model. The transport also accepts only Hermes' bounded
+`available_commands_update` and `usage_update` metadata notifications while
+waiting for load/model/prompt responses; unknown notifications remain a hard
+protocol error. Focused Hermes tests pass (6 passed, 2 ignored), the native
+executor tests pass (15 passed, 2 ignored), and a direct installed-ACP exact
+UUID load/set-model/prompt probe now uses `https://sub.zeeland.studio` and
+returns a real assistant response.
+
+The final public-ingress restart continuation is not yet re-bound to this
+candidate: the disposable instance's organization workspace map is currently
+rewritten by startup and its mapped library directory is removed, so the Rust
+config resolver reports `resolved cwd is unavailable` before launch. Keep the
+Hermes acceptance gate open until a clean task-owned instance completes first
+turn, Node/Rust restart, same-session second turn, and assistant projection.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.
