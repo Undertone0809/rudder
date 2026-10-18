@@ -46,7 +46,7 @@
         "server/src",
         "identity/src"
       ],
-      "source_files": 384,
+      "source_files": 385,
       "structural_surfaces": 90
     },
     {
@@ -4780,7 +4780,7 @@
     },
     {
       "path": "server/src/routes/chats.message-query-routes.ts",
-      "sha256": "3a621e5eef11b0ab124ac3192ba3cdd4e26f85a423b45fb20bf3e1dcbeb06a8d",
+      "sha256": "356dba3d9afeaaafeac9d4466514aaab14325c8186f04455540a18c0ae03812f",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -6409,6 +6409,13 @@
       ]
     },
     {
+      "path": "server/src/services/native-chat-message-reader-bridge.ts",
+      "sha256": "38d9378994060625131d0b7061006c988bd4ecb94706507b50f652a125325ec7",
+      "families": [
+        "server_lifecycle_and_workers"
+      ]
+    },
+    {
       "path": "server/src/services/native-chat-transcript-bridge.ts",
       "sha256": "fb033fda09d8f1789d7f65186f6acac7d5cbfd75461c221e3469ae176f0702b1",
       "families": [
@@ -6894,7 +6901,7 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "e02275b351cf5022ef50763c080e835605a59efaf20ad0d86a1871239b5bca63",
+      "sha256": "86193079c5b3eb517860d5cda18960a7b78bca19022f09e293b27e1b6b718cac",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -18041,7 +18048,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/chats.message-query-routes.ts",
-      "line": 22,
+      "line": 23,
       "signature": "server/src/routes/chats.message-query-routes.ts|http-route|router|GET|/chats/:id/messages",
       "receiver": "router",
       "method": "GET",
@@ -18051,7 +18058,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/chats.message-query-routes.ts",
-      "line": 51,
+      "line": 90,
       "signature": "server/src/routes/chats.message-query-routes.ts|http-route|router|GET|/chats/:id/messages/:messageId/transcript",
       "receiver": "router",
       "method": "GET",
@@ -57071,7 +57078,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 435,
+      "line": 437,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => finish(false)",
       "receiver": null,
       "method": "setTimeout",
@@ -57081,7 +57088,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1197,
+      "line": 1204,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -59065,7 +59072,7 @@
   "completion_gate": {
     "blocked": true,
     "blocking_unknown_count": 10,
-    "remaining_backend_node_source_files": 795,
+    "remaining_backend_node_source_files": 796,
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
