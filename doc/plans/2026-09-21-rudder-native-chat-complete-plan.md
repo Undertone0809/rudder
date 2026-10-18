@@ -1089,6 +1089,14 @@ login, with uncontrolled MCP/config layers removed; no provider credentials
 were changed. Receipts and NDJSON streams are retained under
 `/tmp/native-chat-current-acceptance/` and are bound to this exact SHA.
 
+### October 18 full-plan audit after Native Chat merge
+
+The current `main` head is `896721d24330cb24639bfb270347f210445c0ff5`. PR #324 merged the Rust Native Chat worker with provider dispatch branches for Codex, Hermes, Pi, Claude Code, Cursor, and OpenCode; PR #338 restored the durable Agent instruction-bundle reconciler; PR #339 corrected a stale authority fixture that still treated `claude_local` as a legacy runtime. The exact local Codex/Hermes acceptance remains the real installed-profile evidence under `/tmp/native-chat-current-acceptance/`; no equivalent installed-profile acceptance has been completed for Claude, OpenCode, Pi, or Cursor.
+
+The full-plan gates remain open. Main Chat uses the Rust Reader for native Chat conversations, but Side Chat, Run Detail, annotations, work-manifest, Messenger, automation, Feishu, export/search, and several UI panels still have direct Node/Drizzle transcript consumers. Retention claims and aliases model lifecycle state, while no generic worker yet prunes provider sessions, native transcript objects, or ledger/detached history under cleanup epochs; database and workspace backups are separate from provider-native session backup/restore. Native runtime unit tests and synthetic PostgreSQL/HTTP fixtures are implementation evidence only. W06/W07/W08/W09/W10 real-profile acceptance, W11 consumer migration, W12 duplicate-writer shutdown and GC/backup drills, and W13 second independent review remain unverified.
+
+A current audit must therefore report the bounded Codex/Hermes milestone as delivered while preserving the six-runtime, shared-Reader, retention/GC, backup/restore, product-consumer, and final-acceptance work as active scope.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.
