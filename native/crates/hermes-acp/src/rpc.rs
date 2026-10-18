@@ -510,7 +510,7 @@ impl HermesAcpTransport {
         env.insert("USERPROFILE".into(), operator_home);
         env.insert("HERMES_HOME".into(), hermes_home);
         env.insert("PATH".into(), launch.executable_search_path.clone());
-        let (executable, argv) = if let Some(prompt) = launch.ephemeral_system_prompt {
+        let (executable, argv) = if launch.python_executable.is_some() {
             let python = launch
                 .python_executable
                 .as_ref()
@@ -519,7 +519,10 @@ impl HermesAcpTransport {
                 .python_source_root
                 .as_ref()
                 .ok_or(HermesTransportError::InvalidLaunch)?;
-            env.insert(HERMES_INSTRUCTION_PROMPT_ENV.into(), prompt);
+            env.insert(
+                HERMES_INSTRUCTION_PROMPT_ENV.into(),
+                launch.ephemeral_system_prompt.unwrap_or_default(),
+            );
             env.insert(
                 HERMES_INSTRUCTION_ROOT_ENV.into(),
                 source_root.to_string_lossy().into_owned(),
@@ -1289,23 +1292,20 @@ fn validate_launch(launch: HermesLaunch) -> Result<HermesLaunch, HermesTransport
     {
         return Err(HermesTransportError::InvalidLaunch);
     }
-    let has_prompt = match launch.ephemeral_system_prompt.as_deref() {
-        None => false,
-        Some(prompt)
-            if !prompt.trim().is_empty()
-                && prompt.len() <= MAX_EPHEMERAL_INSTRUCTION_BYTES
-                && !prompt.chars().any(|character| character == '\0') =>
-        {
-            true
-        }
-        Some(_) => return Err(HermesTransportError::InvalidLaunch),
-    };
+    let bootstrap_requested =
+        launch.python_executable.is_some() || launch.python_source_root.is_some();
     match (
-        has_prompt,
+        bootstrap_requested,
         launch.python_executable.as_ref(),
         launch.python_source_root.as_ref(),
     ) {
         (true, Some(python), Some(source_root)) => {
+            if let Some(prompt) = launch.ephemeral_system_prompt.as_deref()
+                && (prompt.len() > MAX_EPHEMERAL_INSTRUCTION_BYTES
+                    || prompt.chars().any(|character| character == '\0'))
+            {
+                return Err(HermesTransportError::InvalidLaunch);
+            }
             let expected = resolve_instruction_bootstrap(&hermes_executable)?;
             let python = python
                 .canonicalize()
@@ -1317,7 +1317,7 @@ fn validate_launch(launch: HermesLaunch) -> Result<HermesLaunch, HermesTransport
                 return Err(HermesTransportError::UnsupportedInstructionAdapter);
             }
         }
-        (false, None, None) => {}
+        (false, None, None) if launch.ephemeral_system_prompt.is_none() => {}
         _ => return Err(HermesTransportError::InvalidLaunch),
     }
     Ok(HermesLaunch {

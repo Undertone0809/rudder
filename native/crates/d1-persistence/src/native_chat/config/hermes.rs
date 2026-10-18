@@ -221,16 +221,15 @@ pub(crate) async fn resolve_hermes_config(
             "resolved Agent instructions exceed the supported Hermes bootstrap bound",
         ));
     }
-    let instruction_bootstrap = if instruction_requires_bootstrap {
-        let executable = host
-            .hermes_executable()
-            .ok_or_else(|| unsupported("the trusted local Hermes installation is unavailable"))?;
-        Some(resolve_instruction_bootstrap(executable).map_err(|_| {
-            unsupported("the installed Hermes version cannot safely apply Agent instructions")
-        })?)
-    } else {
-        None
-    };
+    let executable = host
+        .hermes_executable()
+        .ok_or_else(|| unsupported("the trusted local Hermes installation is unavailable"))?;
+    // Always validate the pinned bootstrap. Native Hermes must canonicalize the
+    // selected profile route on every launch, including sessions with no extra
+    // Agent instruction, so persisted provider metadata cannot hijack a resume.
+    let instruction_bootstrap = Some(resolve_instruction_bootstrap(executable).map_err(|_| {
+        unsupported("the installed Hermes version cannot safely apply profile canonicalization")
+    })?);
 
     let profile_root = host.hermes_profiles_root().expect("checked above");
     let home = resolve_profile_home(profile_root, &profile_id)?;
@@ -318,19 +317,18 @@ impl HermesLocalConfig {
         requires_adapter: bool,
     ) -> bool {
         match (
-            requires_adapter,
             self.instruction_adapter_revision.as_deref(),
             self.instruction_python_executable.as_deref(),
             self.instruction_python_source_root.as_deref(),
         ) {
-            (false, None, None, None) => true,
-            (true, Some(revision), Some(python), Some(source_root)) => {
+            (Some(revision), Some(python), Some(source_root)) => {
                 resolve_instruction_bootstrap(hermes_executable).is_ok_and(|adapter| {
                     adapter.revision() == revision
                         && adapter.python_executable() == python
                         && adapter.source_root() == source_root
                 })
             }
+            (None, None, None) => !requires_adapter,
             _ => false,
         }
     }

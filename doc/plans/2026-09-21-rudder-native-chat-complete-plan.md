@@ -1048,25 +1048,26 @@ real two-turn restart acceptance and independent verifier rebind.
 ### October 18 Hermes restore hardening follow-up
 
 The Rust Hermes candidate now applies the selected profile as the restore
-authority: the pinned ACP bootstrap clears persisted `requested_provider`,
-`base_url`, and `api_mode` before recreating the agent, while preserving the
+authority on every launch: the pinned ACP bootstrap clears persisted
+`requested_provider`, `base_url`, and `api_mode` before recreating the agent,
+including sessions with no extra Agent instruction, while preserving the
 session UUID and model. The transport also accepts only Hermes' bounded
 `available_commands_update` and `usage_update` metadata notifications while
 waiting for load/model/prompt responses in every correlated request loop;
 unknown notifications remain a hard protocol error. The ignored process-host
-fixture now emits both notifications before session/load and session/set_model
+fixture emits both notifications before session/load and session/set_model
 responses, covering the restore ordering. Focused Hermes tests pass (6 passed,
-2 ignored), the native
-executor tests pass (15 passed, 2 ignored), and a direct installed-ACP exact
-UUID load/set-model/prompt probe now uses `https://sub.zeeland.studio` and
-returns a real assistant response.
+2 ignored), native-executor tests pass (15 passed, 2 ignored), Rust foundation
+and process-host build, format, and Hermes clippy checks pass.
 
-The final public-ingress restart continuation is not yet re-bound to this
-candidate: the disposable instance's organization workspace map is currently
-rewritten by startup and its mapped library directory is removed, so the Rust
-config resolver reports `resolved cwd is unavailable` before launch. Keep the
-Hermes acceptance gate open until a clean task-owned instance completes first
-turn, Node/Rust restart, same-session second turn, and assistant projection.
+On the clean task-owned real instance `real-native-c`, using the installed
+Hermes 0.21.0 venv entrypoint, Rust public ingress completed a first turn with
+the assistant projection `HERMES_CANONICAL_FIRST_OK`. After stopping and
+restarting the Node/Rust server, the same conversation/session completed a
+second turn with `HERMES_CANONICAL_RESTART_OK`; the earlier stale Kimi route was
+not used. This is the final-candidate Hermes first-turn plus restart-continuity
+evidence. Existing Codex first-turn and restart-continuity evidence remains
+content-equivalent because this follow-up changes only the Hermes launch path.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 

@@ -652,11 +652,10 @@ fn hermes_launch(
         hermes_executable: config.executable.clone(),
         python_executable: local.instruction_python_executable.clone(),
         python_source_root: local.instruction_python_source_root.clone(),
-        ephemeral_system_prompt: config
-            .instruction_content
+        ephemeral_system_prompt: local
+            .instruction_adapter_revision
             .as_ref()
-            .filter(|text| !text.trim().is_empty())
-            .cloned(),
+            .map(|_| config.instruction_content.clone().unwrap_or_default()),
         process_host: paths.process_host.clone(),
         runtime_root: paths.runtime_root.clone(),
         operator_home: config.operator_home.clone(),

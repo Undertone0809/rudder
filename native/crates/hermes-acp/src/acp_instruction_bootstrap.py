@@ -27,7 +27,7 @@ def main():
     sys.dont_write_bytecode = True
     source_root = os.environ.pop("RUDDER_HERMES_PYTHON_ROOT", "")
     instruction = os.environ.pop("RUDDER_HERMES_EPHEMERAL_SYSTEM_PROMPT", "")
-    if not source_root or not instruction or len(instruction.encode("utf-8")) > _MAX_PROMPT_BYTES:
+    if not source_root or len(instruction.encode("utf-8")) > _MAX_PROMPT_BYTES:
         _fail_closed()
     sys.path.insert(0, source_root)
 
@@ -68,11 +68,12 @@ def main():
             # inference time without adding it to persisted conversation
             # messages; setting it after construction also avoids the
             # constructor's diagnostic preview logging it.
-            agent.ephemeral_system_prompt = (
-                f"{prior.rstrip()}\n\n{instruction}"
-                if prior and prior.strip()
-                else instruction
-            )
+            if instruction:
+                agent.ephemeral_system_prompt = (
+                    f"{prior.rstrip()}\n\n{instruction}"
+                    if prior and prior.strip()
+                    else instruction
+                )
             return agent
 
         SessionManager._make_agent = make_agent_with_ephemeral_instruction
