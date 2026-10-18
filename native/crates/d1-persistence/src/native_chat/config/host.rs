@@ -23,6 +23,10 @@ pub struct LocalHostContext {
     pi_node_executable: Option<PathBuf>,
     pi_cli_entry: Option<PathBuf>,
     pi_profiles_root: Option<PathBuf>,
+    claude_executable: Option<PathBuf>,
+    claude_profiles_root: Option<PathBuf>,
+    cursor_executable: Option<PathBuf>,
+    cursor_profiles_root: Option<PathBuf>,
 }
 
 impl LocalHostContext {
@@ -69,6 +73,10 @@ impl LocalHostContext {
             pi_node_executable: None,
             pi_cli_entry: None,
             pi_profiles_root: None,
+            claude_executable: None,
+            claude_profiles_root: None,
+            cursor_executable: None,
+            cursor_profiles_root: None,
         })
     }
 
@@ -142,6 +150,20 @@ impl LocalHostContext {
         Ok(self)
     }
 
+    /// Attach the installed Claude Code executable and the Rust-owned profile
+    /// root discovered by the local host. These paths are installation facts
+    /// and cannot be supplied by HTTP or Agent config.
+    pub fn with_claude_runtime(
+        mut self,
+        executable: PathBuf,
+        profiles_root: PathBuf,
+    ) -> std::result::Result<Self, super::Error> {
+        self.claude_executable = Some(canonical_file(executable, "Claude executable")?);
+        self.claude_profiles_root =
+            Some(canonical_directory(profiles_root, "Claude profile root")?);
+        Ok(self)
+    }
+
     pub fn host_id(&self) -> &str {
         &self.host_id
     }
@@ -163,6 +185,34 @@ impl LocalHostContext {
             self.pi_node_executable.as_deref()?,
             self.pi_cli_entry.as_deref()?,
             self.pi_profiles_root.as_deref()?,
+        ))
+    }
+
+    pub fn claude_runtime(&self) -> Option<(&Path, &Path)> {
+        Some((
+            self.claude_executable.as_deref()?,
+            self.claude_profiles_root.as_deref()?,
+        ))
+    }
+
+    /// Attach the installed Cursor Agent executable and Rust-owned profile
+    /// root discovered by the local host. These paths are installation facts
+    /// and cannot be supplied by HTTP or Agent config.
+    pub fn with_cursor_runtime(
+        mut self,
+        executable: PathBuf,
+        profiles_root: PathBuf,
+    ) -> std::result::Result<Self, super::Error> {
+        self.cursor_executable = Some(canonical_file(executable, "Cursor executable")?);
+        self.cursor_profiles_root =
+            Some(canonical_directory(profiles_root, "Cursor profile root")?);
+        Ok(self)
+    }
+
+    pub fn cursor_runtime(&self) -> Option<(&Path, &Path)> {
+        Some((
+            self.cursor_executable.as_deref()?,
+            self.cursor_profiles_root.as_deref()?,
         ))
     }
 

@@ -6,6 +6,8 @@ publish.workspace = true
 
 [dependencies]
 rudder-codex-app-server = { path = "../codex-app-server" }
+rudder-claude-code = { path = "../claude-code" }
+rudder-cursor-acp-adapter = { path = "../cursor-acp-adapter" }
 rudder-auth-core = { path = "../auth-core" }
 rudder-hermes-acp = { path = "../hermes-acp" }
 rudder-pi-rpc = { path = "../pi-rpc" }

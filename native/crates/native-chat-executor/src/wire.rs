@@ -113,6 +113,8 @@ mod tests {
             instruction_content: Some("Use the selected profile.".into()),
             hermes: None,
             pi: None,
+            claude: None,
+            cursor: None,
         }
     }
 

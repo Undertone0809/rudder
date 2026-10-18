@@ -1,0 +1,576 @@
+//! Rust-owned Cursor ACP process transport.
+//!
+//! The protocol reducer in `lib.rs` is useful without a process, but a native
+//! Chat claim needs a real owner for the Cursor child.  This transport keeps
+//! that owner behind the same Rust process-host boundary used by the other
+//! local runtimes.  It intentionally stops at ACP observations: D1 admission,
+//! provider identity checkpoints, transcript projection and billing remain
+//! the caller's responsibility.
+
+use super::{
+    CursorAcpCommand, CursorAcpMessage, CursorAcpSession, JsonRpcResponse, RequestId, parse_message,
+};
+use rudder_native_process_transport::{
+    ConnectionLaunchPermit, HostCleanupProof, HostConnection, HostError, HostEvent, OwnedHost,
+};
+use rudder_native_protocol::{
+    Command, ProtocolVersion,
+    lines::{LineDecoder, LineError},
+};
+use serde_json::Value;
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+
+const MAX_EVENT_QUEUE: usize = 256;
+const MAX_EVENT_JSON_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum CursorAcpTransportError {
+    #[error("Cursor ACP process launch is invalid")]
+    InvalidLaunch,
+    #[error("Cursor ACP transport is closed")]
+    Closed,
+    #[error("Cursor ACP request is already in flight")]
+    Busy,
+    #[error("Cursor ACP response does not match the active request")]
+    MismatchedResponse,
+    #[error("Cursor ACP response was rejected")]
+    Rejected,
+    #[error("Cursor ACP stream is malformed")]
+    InvalidMessage,
+    #[error("Cursor ACP event buffer exceeded its limit")]
+    OutputOverflow,
+    #[error("Cursor ACP stdin write outcome is indeterminate")]
+    WriteIndeterminate,
+    #[error("Cursor ACP child exited before completing the request")]
+    ProcessExited,
+    #[error("Cursor ACP operation deadline expired")]
+    Timeout,
+}
+
+impl From<LineError> for CursorAcpTransportError {
+    fn from(_: LineError) -> Self {
+        Self::InvalidMessage
+    }
+}
+
+/// Trusted process data assembled by the Rust host.  No field is accepted
+/// directly from an HTTP request or serialized across the public API.
+pub struct CursorAcpProcessLaunch {
+    pub executable: PathBuf,
+    pub process_host: PathBuf,
+    pub runtime_root: PathBuf,
+    pub isolated_home: PathBuf,
+    pub cwd: PathBuf,
+    pub run_id: String,
+    pub attempt_id: String,
+    pub owner_token: String,
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// One owned Cursor ACP process and its bounded JSON-RPC line stream.
+pub struct CursorAcpTransport {
+    host: OwnedHost,
+    decoder: LineDecoder,
+    messages: VecDeque<CursorAcpMessage>,
+    pending: Option<RequestId>,
+    next_write_id: u64,
+    request_id: String,
+    owner_token: String,
+    spawned: bool,
+    terminal: bool,
+    host_failure: bool,
+    cleanup_proof: Option<HostCleanupProof>,
+    session: CursorAcpSession,
+}
+
+impl CursorAcpTransport {
+    /// Launch Cursor's documented ACP subcommand through the external Rust
+    /// process host. The one-use D1 permit is consumed by this owner.
+    pub fn launch(
+        launch: CursorAcpProcessLaunch,
+        permit: ConnectionLaunchPermit,
+    ) -> Result<Self, CursorAcpTransportError> {
+        let launch = validate_launch(launch)?;
+        let request_id = launch.attempt_id.clone();
+        let owner_token = launch.owner_token.clone();
+        let host = OwnedHost::launch_external(
+            HostConnection {
+                request_id: request_id.clone(),
+                run_id: launch.run_id.clone(),
+                attempt_id: launch.attempt_id.clone(),
+                owner_token: owner_token.clone(),
+            },
+            &launch.process_host,
+            Some(permit),
+        )
+        .map_err(map_host_error)?;
+
+        let mut env = launch.env;
+        // Cursor's ACP process needs an isolated HOME for credentials and
+        // state. The trusted host decides the path; callers cannot override
+        // these protected variables through Agent config.
+        env.insert(
+            "HOME".into(),
+            launch.isolated_home.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            "USERPROFILE".into(),
+            launch.isolated_home.to_string_lossy().into_owned(),
+        );
+        let start = Command::StartProcess {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some(request_id.clone()),
+            executable: launch.executable.to_string_lossy().into_owned(),
+            argv: vec!["acp".into()],
+            cwd: launch.cwd.to_string_lossy().into_owned(),
+            env,
+            owner_token: Some(owner_token.clone()),
+            runtime_root: Some(launch.runtime_root.to_string_lossy().into_owned()),
+            stdin: None,
+            interactive_stdin: true,
+            grace_ms: Some(500),
+        };
+        start
+            .validate()
+            .map_err(|_| CursorAcpTransportError::InvalidLaunch)?;
+        host.send(start).map_err(map_host_error)?;
+
+        Ok(Self {
+            host,
+            decoder: LineDecoder::default(),
+            messages: VecDeque::new(),
+            pending: None,
+            next_write_id: 0,
+            request_id,
+            owner_token,
+            spawned: false,
+            terminal: false,
+            host_failure: false,
+            cleanup_proof: None,
+            session: CursorAcpSession::new(),
+        })
+    }
+
+    pub fn session(&self) -> &CursorAcpSession {
+        &self.session
+    }
+
+    pub fn wait_spawned(&mut self, timeout: Duration) -> Result<(), CursorAcpTransportError> {
+        if self.spawned {
+            return Ok(());
+        }
+        let deadline = Instant::now() + timeout;
+        while !self.spawned {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(CursorAcpTransportError::Timeout);
+            }
+            self.receive_host(remaining)?;
+            if self.terminal {
+                return Err(CursorAcpTransportError::ProcessExited);
+            }
+        }
+        Ok(())
+    }
+
+    /// Queue one typed ACP request.  Only one request may have an outstanding
+    /// response; provider notifications and inbound extension requests can be
+    /// interleaved and are retained in the bounded observation queue.
+    pub fn request(
+        &mut self,
+        command: CursorAcpCommand,
+    ) -> Result<RequestId, CursorAcpTransportError> {
+        self.ensure_writable()?;
+        if self.pending.is_some() {
+            return Err(CursorAcpTransportError::Busy);
+        }
+        let id = self.session.new_request();
+        let request = command
+            .request(id.clone())
+            .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+        let bytes =
+            serde_json::to_vec(&request).map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+        self.pending = Some(id.clone());
+        if let Err(error) = self.write_frame(&bytes) {
+            self.pending = None;
+            return Err(error);
+        }
+        Ok(id)
+    }
+
+    /// Respond to a provider extension request (permission/question/plan).
+    /// A caller must choose an explicit typed response; this method never
+    /// synthesizes an approval for an unknown request.
+    pub fn respond(&mut self, response: JsonRpcResponse) -> Result<(), CursorAcpTransportError> {
+        self.ensure_spawned()?;
+        let bytes =
+            serde_json::to_vec(&response).map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+        self.write_frame(&bytes)
+    }
+
+    pub fn receive(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<CursorAcpMessage, CursorAcpTransportError> {
+        if let Some(message) = self.messages.pop_front() {
+            return Ok(message);
+        }
+        if self.host_failure || self.terminal {
+            return Err(CursorAcpTransportError::Closed);
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(CursorAcpTransportError::Timeout);
+            }
+            self.receive_host(remaining)?;
+            if let Some(message) = self.messages.pop_front() {
+                return Ok(message);
+            }
+        }
+    }
+
+    /// Wait for a specific response while preserving notifications and
+    /// extension requests for the caller. The matching response is returned;
+    /// unrelated responses fail closed.
+    pub fn wait_response(
+        &mut self,
+        request_id: &RequestId,
+        timeout: Duration,
+    ) -> Result<JsonRpcResponse, CursorAcpTransportError> {
+        let mut deferred = VecDeque::new();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.requeue_front(deferred);
+                return Err(CursorAcpTransportError::Timeout);
+            }
+            let message = match self.receive(remaining) {
+                Ok(message) => message,
+                Err(error) => {
+                    self.requeue_front(deferred);
+                    return Err(error);
+                }
+            };
+            match message {
+                CursorAcpMessage::Response(response) if &response.id == request_id => {
+                    self.requeue_front(deferred);
+                    if response.error.is_some() {
+                        return Err(CursorAcpTransportError::Rejected);
+                    }
+                    return Ok(response);
+                }
+                other => {
+                    deferred.push_back(other);
+                }
+            }
+        }
+    }
+
+    fn requeue_front(&mut self, mut deferred: VecDeque<CursorAcpMessage>) {
+        while let Some(message) = deferred.pop_back() {
+            self.messages.push_front(message);
+        }
+    }
+
+    pub fn take_cleanup_proof(&mut self) -> Option<HostCleanupProof> {
+        self.cleanup_proof
+            .take()
+            .or_else(|| self.host.take_cleanup_proof())
+    }
+
+    /// Request shutdown and wait for the exact host terminal lifecycle event.
+    /// EOF, Drop or host loss never produce cleanup proof.
+    pub fn stop(&mut self, timeout: Duration) -> Result<(), CursorAcpTransportError> {
+        if self.terminal {
+            self.cleanup_proof = self.host.take_cleanup_proof();
+            return self
+                .cleanup_proof
+                .as_ref()
+                .map(|_| ())
+                .ok_or(CursorAcpTransportError::Closed);
+        }
+        self.host
+            .send(Command::Stop {
+                protocol_version: Some(ProtocolVersion::default()),
+                request_id: Some(self.request_id.clone()),
+                grace_ms: Some(500),
+            })
+            .map_err(map_host_error)?;
+        let deadline = Instant::now() + timeout;
+        while !self.terminal {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(CursorAcpTransportError::Timeout);
+            }
+            self.receive_host(remaining)?;
+        }
+        self.cleanup_proof = self.host.take_cleanup_proof();
+        self.cleanup_proof
+            .as_ref()
+            .map(|_| ())
+            .ok_or(CursorAcpTransportError::Closed)
+    }
+
+    pub fn close(&mut self) {
+        self.host.close();
+        self.host_failure = true;
+    }
+
+    fn ensure_spawned(&self) -> Result<(), CursorAcpTransportError> {
+        if !self.spawned || self.terminal || self.host_failure {
+            Err(CursorAcpTransportError::Closed)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn ensure_writable(&self) -> Result<(), CursorAcpTransportError> {
+        self.ensure_spawned()?;
+        if self.pending.is_some() {
+            Err(CursorAcpTransportError::Busy)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn receive_host(&mut self, timeout: Duration) -> Result<(), CursorAcpTransportError> {
+        match self.host.receive(timeout) {
+            Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value),
+            Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes),
+            Ok(HostEvent::Failure) => {
+                self.host_failure = true;
+                Err(CursorAcpTransportError::Closed)
+            }
+            Err(HostError::Timeout) => Err(CursorAcpTransportError::Timeout),
+            Err(HostError::OutputOverflow) => Err(CursorAcpTransportError::OutputOverflow),
+            Err(HostError::Closed | HostError::InvalidLaunch) => {
+                self.host_failure = true;
+                Err(CursorAcpTransportError::Closed)
+            }
+        }
+    }
+
+    fn decode_stdout(&mut self, bytes: &[u8]) -> Result<(), CursorAcpTransportError> {
+        let parsed = self
+            .decoder
+            .push(bytes, |frame| {
+                if frame.len() > MAX_EVENT_JSON_BYTES {
+                    return Err(CursorAcpTransportError::InvalidMessage);
+                }
+                parse_message(frame).map_err(|_| CursorAcpTransportError::InvalidMessage)
+            })
+            .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+        if self.messages.len().saturating_add(parsed.len()) > MAX_EVENT_QUEUE {
+            return Err(CursorAcpTransportError::OutputOverflow);
+        }
+        for message in parsed {
+            if let CursorAcpMessage::Response(response) = &message {
+                let Some(pending) = self.pending.as_ref() else {
+                    return Err(CursorAcpTransportError::MismatchedResponse);
+                };
+                if &response.id != pending {
+                    return Err(CursorAcpTransportError::MismatchedResponse);
+                }
+                self.pending = None;
+            }
+            self.messages.push_back(message);
+        }
+        Ok(())
+    }
+
+    fn observe_lifecycle(&mut self, value: &Value) -> Result<(), CursorAcpTransportError> {
+        let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
+        if kind == "handshake" {
+            return Ok(());
+        }
+        if value.get("requestId").and_then(Value::as_str) != Some(&self.request_id)
+            || value.get("ownerToken").and_then(Value::as_str) != Some(&self.owner_token)
+        {
+            return Err(CursorAcpTransportError::InvalidMessage);
+        }
+        match kind {
+            "accepted" if !self.spawned && !self.terminal => {}
+            "spawned" if !self.spawned && !self.terminal => self.spawned = true,
+            "stop-accepted" | "stopped" | "app-exit" if self.spawned && !self.terminal => {}
+            "terminal" if self.spawned && !self.terminal => {
+                self.terminal = true;
+                self.cleanup_proof = self.host.take_cleanup_proof();
+            }
+            "stdin-write-complete" | "stdin-write-rejected" | "stdin-write-failed" => {}
+            _ => return Err(CursorAcpTransportError::InvalidMessage),
+        }
+        Ok(())
+    }
+
+    fn write_frame(&mut self, bytes: &[u8]) -> Result<(), CursorAcpTransportError> {
+        if bytes.len() > MAX_EVENT_JSON_BYTES {
+            return Err(CursorAcpTransportError::InvalidMessage);
+        }
+        let mut frame = bytes.to_vec();
+        frame.push(b'\n');
+        self.next_write_id = self
+            .next_write_id
+            .checked_add(1)
+            .ok_or(CursorAcpTransportError::InvalidMessage)?;
+        let write_id = format!("cursor-write-{}", self.next_write_id);
+        self.host
+            .send(Command::WriteStdin {
+                protocol_version: Some(ProtocolVersion::default()),
+                request_id: Some(self.request_id.clone()),
+                owner_token: Some(self.owner_token.clone()),
+                write_id: Some(write_id.clone()),
+                data: String::from_utf8(frame.clone())
+                    .map_err(|_| CursorAcpTransportError::InvalidMessage)?,
+            })
+            .map_err(map_host_error)?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(CursorAcpTransportError::WriteIndeterminate);
+            }
+            match self.host.receive(remaining) {
+                Ok(HostEvent::Lifecycle(value)) => {
+                    let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
+                    if value.get("requestId").and_then(Value::as_str) != Some(&self.request_id)
+                        || value.get("ownerToken").and_then(Value::as_str)
+                            != Some(&self.owner_token)
+                    {
+                        return Err(CursorAcpTransportError::InvalidMessage);
+                    }
+                    if kind == "stdin-write-complete"
+                        && value.get("writeId").and_then(Value::as_str) == Some(&write_id)
+                        && value.get("bytesWritten").and_then(Value::as_u64)
+                            == Some(frame.len() as u64)
+                    {
+                        return Ok(());
+                    }
+                    if kind == "stdin-write-rejected"
+                        && value.get("writeId").and_then(Value::as_str) == Some(&write_id)
+                    {
+                        return Err(CursorAcpTransportError::Rejected);
+                    }
+                    if kind == "stdin-write-failed"
+                        && value.get("writeId").and_then(Value::as_str) == Some(&write_id)
+                    {
+                        return Err(CursorAcpTransportError::WriteIndeterminate);
+                    }
+                    self.observe_lifecycle(&value)?;
+                }
+                Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
+                Ok(HostEvent::Failure) => return Err(CursorAcpTransportError::Closed),
+                Err(HostError::Timeout) => return Err(CursorAcpTransportError::WriteIndeterminate),
+                Err(HostError::OutputOverflow) => {
+                    return Err(CursorAcpTransportError::OutputOverflow);
+                }
+                Err(HostError::Closed | HostError::InvalidLaunch) => {
+                    return Err(CursorAcpTransportError::Closed);
+                }
+            }
+        }
+    }
+}
+
+fn validate_launch(
+    mut launch: CursorAcpProcessLaunch,
+) -> Result<CursorAcpProcessLaunch, CursorAcpTransportError> {
+    for path in [
+        &mut launch.executable,
+        &mut launch.process_host,
+        &mut launch.runtime_root,
+        &mut launch.isolated_home,
+        &mut launch.cwd,
+    ] {
+        if !path.is_absolute() {
+            return Err(CursorAcpTransportError::InvalidLaunch);
+        }
+    }
+    if !launch.executable.is_file()
+        || !launch.process_host.is_file()
+        || !launch.runtime_root.is_dir()
+        || !launch.isolated_home.is_dir()
+        || !launch.cwd.is_dir()
+        || launch.run_id.is_empty()
+        || launch.attempt_id.is_empty()
+        || launch.owner_token.is_empty()
+        || launch.env.keys().any(|name| {
+            name.is_empty()
+                || name.contains('=')
+                || name.chars().any(char::is_control)
+                || matches!(name.as_str(), "HOME" | "USERPROFILE")
+        })
+    {
+        return Err(CursorAcpTransportError::InvalidLaunch);
+    }
+    Ok(launch)
+}
+
+fn map_host_error(error: HostError) -> CursorAcpTransportError {
+    match error {
+        HostError::InvalidLaunch => CursorAcpTransportError::InvalidLaunch,
+        HostError::Closed => CursorAcpTransportError::Closed,
+        HostError::Timeout => CursorAcpTransportError::Timeout,
+        HostError::OutputOverflow => CursorAcpTransportError::OutputOverflow,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use tempfile::tempdir;
+
+    #[test]
+    fn rejects_ambient_protected_environment_overrides() {
+        let root = tempdir().unwrap();
+        let mut env = BTreeMap::new();
+        env.insert("HOME".into(), "/operator".into());
+        let launch = CursorAcpProcessLaunch {
+            executable: root.path().join("cursor-agent"),
+            process_host: root.path().join("process-host"),
+            runtime_root: root.path().join("runtime"),
+            isolated_home: root.path().join("home"),
+            cwd: root.path().join("cwd"),
+            run_id: "run".into(),
+            attempt_id: "attempt".into(),
+            owner_token: "owner".into(),
+            env,
+        };
+        assert!(matches!(
+            validate_launch(launch),
+            Err(CursorAcpTransportError::InvalidLaunch)
+        ));
+    }
+
+    #[test]
+    fn rejects_non_absolute_or_missing_paths() {
+        let launch = CursorAcpProcessLaunch {
+            executable: "cursor-agent".into(),
+            process_host: "/tmp/process-host".into(),
+            runtime_root: "/tmp/runtime".into(),
+            isolated_home: "/tmp/home".into(),
+            cwd: "/tmp".into(),
+            run_id: "run".into(),
+            attempt_id: "attempt".into(),
+            owner_token: "owner".into(),
+            env: BTreeMap::new(),
+        };
+        assert!(matches!(
+            validate_launch(launch),
+            Err(CursorAcpTransportError::InvalidLaunch)
+        ));
+    }
+
+    #[test]
+    fn response_error_is_not_projected_as_success() {
+        let response = JsonRpcResponse::error(RequestId::generated(1), -1, "rejected");
+        assert!(response.error.is_some());
+    }
+}

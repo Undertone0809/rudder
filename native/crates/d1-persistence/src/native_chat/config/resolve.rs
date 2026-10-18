@@ -61,6 +61,10 @@ pub struct ResolvedCodexConfig {
     /// Provider-neutral extension for the native Pi RPC branch. Pi session
     /// and leaf identities never use the Codex thread/turn fields above.
     pub pi: Option<super::PiLocalConfig>,
+    /// Provider-specific resolved data for the Rust Claude Code boundary.
+    pub claude: Option<super::ClaudeLocalConfig>,
+    /// Provider-specific resolved data for the Rust Cursor ACP boundary.
+    pub cursor: Option<super::CursorLocalConfig>,
 }
 
 /// Resolve the selected Agent and all identity-bearing runtime inputs from the
@@ -307,6 +311,8 @@ pub(crate) async fn resolve_codex_config(
         instruction_content: instructions.entry_content,
         hermes: None,
         pi: None,
+        claude: None,
+        cursor: None,
     })
 }
 

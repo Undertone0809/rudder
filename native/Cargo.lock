@@ -2007,8 +2007,11 @@ dependencies = [
 name = "rudder-cursor-acp-adapter"
 version = "0.7.24"
 dependencies = [
+ "rudder-native-process-transport",
+ "rudder-native-protocol",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "uuid",
 ]
@@ -2025,7 +2028,9 @@ dependencies = [
  "regex-lite",
  "ring",
  "rudder-auth-core",
+ "rudder-claude-code",
  "rudder-codex-app-server",
+ "rudder-cursor-acp-adapter",
  "rudder-hermes-acp",
  "rudder-organization-mutation-core",
  "rudder-pi-rpc",

@@ -1,6 +1,8 @@
 //! Trusted, read-only resolution of persisted Agent and Chat settings for the
 //! local Codex runtime. These Rust-only types are not wire DTOs.
 
+mod claude;
+mod cursor;
 mod fingerprint;
 mod hermes;
 mod host;
@@ -8,8 +10,12 @@ mod pi;
 mod resolve;
 mod runtime;
 
+pub use claude::ClaudeLocalConfig;
+pub(crate) use claude::resolve_claude_config;
+pub use cursor::CursorLocalConfig;
+pub(crate) use cursor::resolve_cursor_config;
 pub use hermes::HermesLocalConfig;
-pub(crate) use hermes::resolve_hermes_config;
+pub(crate) use hermes::{resolve_agent_env, resolve_hermes_config};
 pub use host::LocalHostContext;
 pub use pi::PiLocalConfig;
 pub(crate) use pi::resolve_pi_config;
@@ -64,6 +70,10 @@ pub(crate) async fn resolve_native_config(
     match runtime_type.as_str() {
         "codex_local" => resolve_codex_config(tx, organization_id, conversation_id, host).await,
         "hermes_local" => resolve_hermes_config(tx, organization_id, conversation_id, host).await,
+        "claude_local" => resolve_claude_config(tx, organization_id, conversation_id, host).await,
+        "cursor" | "cursor_local" => {
+            resolve_cursor_config(tx, organization_id, conversation_id, host).await
+        }
         "pi_local" => resolve_pi_config(tx, organization_id, conversation_id, host).await,
         _ => Err(unsupported(
             "selected local runtime is not supported by Native Chat",
