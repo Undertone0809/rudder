@@ -132,7 +132,7 @@ fn run_turn(
 ) -> Result<(SessionId, Value, u64), CursorExecutionError> {
     transport.wait_spawned(remaining(deadline, Duration::from_secs(10)))?;
     request_and_wait(
-        &mut transport,
+        transport,
         CursorAcpCommand::Initialize {
             params: InitializeParams::new(
                 "rudder-native-chat",
@@ -143,7 +143,7 @@ fn run_turn(
         remaining(deadline, Duration::from_secs(10)),
     )?;
     request_and_wait(
-        &mut transport,
+        transport,
         CursorAcpCommand::Authenticate {
             params: AuthenticateParams::cursor_login(),
         },
@@ -171,7 +171,7 @@ fn run_turn(
         }
     };
     let session_response = request_and_wait(
-        &mut transport,
+        transport,
         session_command,
         remaining(deadline, Duration::from_secs(10)),
     )?;
@@ -181,11 +181,11 @@ fn run_turn(
             .map_err(|_| CursorExecutionError::InvalidConfiguration)?,
     };
     let response = request_and_wait(
-        &mut transport,
+        transport,
         prompt,
         remaining(deadline, Duration::from_secs(60)),
     )?;
-    let updates = drain_updates(&mut transport, &session)?;
+    let updates = drain_updates(transport, &session)?;
     Ok((session, response.result.unwrap_or(Value::Null), updates))
 }
 

@@ -645,6 +645,27 @@ impl NativeChatProtocolCheckpoint {
                 ),
                 _ => unreachable!(),
             };
+            let has_foreign_native_identity = match self.provider {
+                Some(NativeChatProvider::ClaudeLocal) => {
+                    self.opencode_session.is_some()
+                        || self.opencode_prompt_request_id.is_some()
+                        || self.cursor_session.is_some()
+                        || self.cursor_prompt_request_id.is_some()
+                }
+                Some(NativeChatProvider::OpenCodeLocal) => {
+                    self.claude_session.is_some()
+                        || self.claude_prompt_request_id.is_some()
+                        || self.cursor_session.is_some()
+                        || self.cursor_prompt_request_id.is_some()
+                }
+                Some(NativeChatProvider::CursorLocal) => {
+                    self.claude_session.is_some()
+                        || self.claude_prompt_request_id.is_some()
+                        || self.opencode_session.is_some()
+                        || self.opencode_prompt_request_id.is_some()
+                }
+                _ => false,
+            };
             let session_required =
                 !matches!(self.phase, NoThreadRequest | ThreadStartIndeterminate);
             let request_required = matches!(
@@ -661,6 +682,7 @@ impl NativeChatProtocolCheckpoint {
                 || self.hermes_session.is_some()
                 || self.hermes_prompt_request_id.is_some()
                 || self.observation_only
+                || has_foreign_native_identity
                 || session != session_required
                 || request != request_required
             {
