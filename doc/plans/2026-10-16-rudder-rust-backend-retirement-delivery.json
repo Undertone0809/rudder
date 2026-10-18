@@ -2688,6 +2688,33 @@
       "merge_commit": "c43c0ada9e4064b271b9be00af4c4459dd284415",
       "merged_at": "2026-10-17T22:27:55Z",
       "ci_status": "protected CI green; auto-merge completed"
+    },
+    "agent_create_pr_336": {
+      "number": 336,
+      "url": "https://github.com/Undertone0809/rudder/pull/336",
+      "branch": "codex/rust-agent-create-intelligence-avatar",
+      "head": "470442a8bd4de2ccb586f69060cda42db11cc405",
+      "base_sha": "ce17c097351a959e7016c4f7c76ecf5353f54ff5",
+      "state": "merged",
+      "scope": "Private feature-gated typed nodeOwned Agent Create intelligence/avatar persistence foundation; public POST remains Node-owned and off.",
+      "stage_review": "conditional_accept_private_only",
+      "final_review": "accept",
+      "acceptance": {
+        "verdict": "PASS",
+        "head": "470442a8bd4de2ccb586f69060cda42db11cc405",
+        "local_checks": [
+          "cargo test -p rudder-d1-persistence --lib (111 passed)",
+          "cargo test -p rudder-d1-persistence --test agent_core (9 passed)",
+          "cargo clippy -p rudder-d1-persistence --all-targets -- -D warnings",
+          "cargo fmt --all -- --check",
+          "git diff --check"
+        ],
+        "ci": "all applicable protected checks passed; Affected qualification intentionally skipped",
+        "coverage": "legacy/default profile suppression, status/error/timestamp invariants, Codex defaults, avatar case-insensitive refs, organization/MIME validation, malformed input, and transaction rollback",
+        "limits": "No Node bridge wiring, runtime-chain probe, avatar binary upload, Hosted Identity/OAuth migration, public POST cutover, or no-Node acceptance. Private malformed avatar errors use 422 while public Node Zod errors use 400."
+      },
+      "merge_commit": "a1c574cadc52e02a931ae87080be76fda8abc1fd",
+      "merged_at": "2026-10-18T05:20:50Z"
     }
   }
 }
