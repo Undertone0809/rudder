@@ -6,6 +6,7 @@ use crate::runtime_bindings;
 use rudder_runtime_core::native_chat::{
     ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector,
     NativeChatProtocolCheckpoint, NativeChatProtocolStart, OpenCodeSessionSelector,
+    PiSessionSelector,
 };
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
@@ -714,6 +715,25 @@ pub(super) async fn submit_in_transaction<'a>(
                 .map_err(|_| http(409, "Native Chat Claude Code session locator is invalid"))?;
             (
                 NativeChatProtocolCheckpoint::new_claude_existing_session(selector),
+                "explicit",
+                "same_session",
+                json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":session_id,"sessionParams":null}),
+            )
+        }
+        ("pi_local", "pending", None) => (
+            NativeChatProtocolCheckpoint::new_pi_fresh_session(),
+            "none",
+            "fresh",
+            json!({"kind":"fresh","reuseScope":"none","sourceRunId":null,"sessionId":null,"sessionParams":null}),
+        ),
+        ("pi_local", "open", Some(session_id)) => {
+            let selector: PiSessionSelector = serde_json::from_str(session_id)
+                .map_err(|_| http(409, "Native Chat Pi session locator is invalid"))?;
+            selector
+                .validate()
+                .map_err(|_| http(409, "Native Chat Pi session locator is invalid"))?;
+            (
+                NativeChatProtocolCheckpoint::new_pi_existing_session(selector),
                 "explicit",
                 "same_session",
                 json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":session_id,"sessionParams":null}),
