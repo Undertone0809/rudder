@@ -65,6 +65,9 @@ pub struct ResolvedCodexConfig {
     pub claude: Option<super::ClaudeLocalConfig>,
     /// Provider-specific resolved data for the Rust Cursor ACP boundary.
     pub cursor: Option<super::CursorLocalConfig>,
+    /// Provider-native OpenCode Server configuration. OpenCode Session and
+    /// Message identities must remain separate from Codex Thread/Turn fields.
+    pub opencode: Option<super::OpenCodeLocalConfig>,
 }
 
 /// Resolve the selected Agent and all identity-bearing runtime inputs from the
@@ -313,6 +316,7 @@ pub(crate) async fn resolve_codex_config(
         pi: None,
         claude: None,
         cursor: None,
+        opencode: None,
     })
 }
 

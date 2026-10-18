@@ -1,6 +1,7 @@
 use super::{Result, invalid};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use url::Url;
 
 /// Local installation facts constructed by the Rust host. This type cannot be
 /// deserialized from a request, and intentionally has no `Debug` implementation.
@@ -27,6 +28,8 @@ pub struct LocalHostContext {
     claude_profiles_root: Option<PathBuf>,
     cursor_executable: Option<PathBuf>,
     cursor_profiles_root: Option<PathBuf>,
+    opencode_server_url: Option<Url>,
+    opencode_bearer_token: Option<String>,
 }
 
 impl LocalHostContext {
@@ -77,6 +80,8 @@ impl LocalHostContext {
             claude_profiles_root: None,
             cursor_executable: None,
             cursor_profiles_root: None,
+            opencode_server_url: None,
+            opencode_bearer_token: None,
         })
     }
 
@@ -164,6 +169,39 @@ impl LocalHostContext {
         Ok(self)
     }
 
+    /// Attach an explicitly owned OpenCode Server endpoint discovered by the
+    /// trusted Rust host. The URL and optional bearer token are installation
+    /// facts; neither may come from an HTTP request or Agent JSON.
+    pub fn with_opencode_runtime(
+        mut self,
+        server_url: Url,
+        bearer_token: Option<String>,
+    ) -> std::result::Result<Self, super::Error> {
+        if !matches!(server_url.scheme(), "http" | "https") || server_url.host_str().is_none() {
+            return Err(invalid("OpenCode Server URL is invalid"));
+        }
+        if bearer_token.as_deref().is_some_and(|token| {
+            token.is_empty() || token.len() > 16 * 1024 || token.contains('\0')
+        }) {
+            return Err(invalid("OpenCode bearer token is invalid"));
+        }
+        self.opencode_server_url = Some(server_url);
+        self.opencode_bearer_token = bearer_token;
+        Ok(self)
+    }
+
+    /// Attach the installed Cursor Agent executable and Rust-owned profile
+    /// root discovered by the local host.
+    pub fn with_cursor_runtime(
+        mut self,
+        executable: PathBuf,
+        profiles_root: PathBuf,
+    ) -> std::result::Result<Self, super::Error> {
+        self.cursor_executable = Some(canonical_file(executable, "Cursor executable")?);
+        self.cursor_profiles_root = Some(canonical_directory(profiles_root, "Cursor profile root")?);
+        Ok(self)
+    }
+
     pub fn host_id(&self) -> &str {
         &self.host_id
     }
@@ -189,31 +227,18 @@ impl LocalHostContext {
     }
 
     pub fn claude_runtime(&self) -> Option<(&Path, &Path)> {
-        Some((
-            self.claude_executable.as_deref()?,
-            self.claude_profiles_root.as_deref()?,
-        ))
+        Some((self.claude_executable.as_deref()?, self.claude_profiles_root.as_deref()?))
     }
 
-    /// Attach the installed Cursor Agent executable and Rust-owned profile
-    /// root discovered by the local host. These paths are installation facts
-    /// and cannot be supplied by HTTP or Agent config.
-    pub fn with_cursor_runtime(
-        mut self,
-        executable: PathBuf,
-        profiles_root: PathBuf,
-    ) -> std::result::Result<Self, super::Error> {
-        self.cursor_executable = Some(canonical_file(executable, "Cursor executable")?);
-        self.cursor_profiles_root =
-            Some(canonical_directory(profiles_root, "Cursor profile root")?);
-        Ok(self)
+    pub fn opencode_runtime(&self) -> Option<(&Url, Option<&str>)> {
+        Some((
+            self.opencode_server_url.as_ref()?,
+            self.opencode_bearer_token.as_deref(),
+        ))
     }
 
     pub fn cursor_runtime(&self) -> Option<(&Path, &Path)> {
-        Some((
-            self.cursor_executable.as_deref()?,
-            self.cursor_profiles_root.as_deref()?,
-        ))
+        Some((self.cursor_executable.as_deref()?, self.cursor_profiles_root.as_deref()?))
     }
 
     pub(super) fn instance_root(&self) -> &Path {

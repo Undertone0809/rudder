@@ -13,7 +13,10 @@
 use awc::{Client, ClientResponse, http::StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use url::Url;
 
@@ -118,6 +121,61 @@ pub enum OpenCodeUnsupported {
     NativeCommand,
     #[error("OpenCode 1.15.11 cannot guarantee an assistant-boundary fork")]
     ForkAtAssistantBoundary,
+}
+
+/// Provider-native identity for a persisted OpenCode Session.  This type is
+/// intentionally separate from Codex Thread/Turn identifiers; callers that
+/// persist it must keep it in an OpenCode-specific checkpoint field.
+#[derive(Clone, Eq, PartialEq)]
+pub struct OpenCodeSessionSelector(String);
+
+impl OpenCodeSessionSelector {
+    pub fn from_persisted(value: &str) -> Result<Self, OpenCodeError> {
+        validate_identifier(value, "ses")?;
+        if value.len() > 4096 {
+            return Err(OpenCodeError::InvalidIdentifier {
+                value: value.to_owned(),
+                prefix: "ses",
+            });
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for OpenCodeSessionSelector {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OpenCodeSessionSelector")
+            .field("present", &true)
+            .finish()
+    }
+}
+
+/// A completed assistant message selected from the exact OpenCode Session.
+/// A 204 response only proves input acceptance; this receipt is produced only
+/// after the corresponding completed assistant message is read back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenCodeTurnReceipt {
+    pub session_id: String,
+    pub user_message_id: Option<String>,
+    pub assistant_message_id: String,
+    pub final_text: String,
+    pub tokens: Option<TokenUsage>,
+    pub cost: Option<f64>,
+}
+
+#[derive(Debug, Error)]
+pub enum OpenCodeWaitError {
+    #[error("OpenCode wait deadline expired before an assistant terminal message")]
+    Deadline,
+    #[error("OpenCode assistant message reported a provider error: {0}")]
+    Provider(String),
+    #[error("OpenCode returned no assistant message for the submitted input")]
+    MissingAssistant,
 }
 
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
@@ -236,6 +294,90 @@ impl OpenCodeClient {
         Err(http_error(response).await)
     }
 
+    /// Poll the Session's message history until a newly produced assistant
+    /// message has a terminal marker. This is a bounded compatibility path
+    /// for hosts that have not enabled the native SSE reader yet; it never
+    /// treats `prompt_async`'s 204 as completion and never returns a message
+    /// already present in `known_assistant_ids`.
+    pub async fn wait_for_completed_assistant(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        deadline: Instant,
+        poll_interval: Duration,
+    ) -> Result<OpenCodeTurnReceipt, OpenCodeWaitError> {
+        let mut first_error = None;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(OpenCodeWaitError::Deadline);
+            }
+            let messages = self
+                .get_messages(
+                    session_id,
+                    MessageListQuery {
+                        directory: None,
+                        workspace: None,
+                        limit: Some(256),
+                        before: None,
+                    },
+                )
+                .await
+                .map_err(|error| OpenCodeWaitError::Provider(error.to_string()))?;
+            let mut latest: Option<(AssistantMessage, Option<String>)> = None;
+            for message in &messages {
+                let MessageInfo::Assistant(assistant) = &message.info else {
+                    continue;
+                };
+                if known_assistant_ids
+                    .iter()
+                    .any(|known| *known == assistant.id)
+                {
+                    continue;
+                }
+                if let Some(error) = assistant.error.as_ref() {
+                    first_error.get_or_insert_with(|| error.to_string());
+                    continue;
+                }
+                let terminal = assistant
+                    .time
+                    .as_ref()
+                    .and_then(|time| time.completed)
+                    .is_some()
+                    || assistant.finish.is_some();
+                if !terminal {
+                    continue;
+                }
+                let user_id = assistant
+                    .parent_id
+                    .clone()
+                    .or_else(|| latest_user_message_id(&messages));
+                if latest.as_ref().is_none_or(|(current, _)| {
+                    message_sort_key(&assistant) >= message_sort_key(current)
+                }) {
+                    latest = Some((assistant.as_ref().clone(), user_id));
+                }
+            }
+            if let Some((assistant, user_message_id)) = latest {
+                let assistant_message_id = assistant.id.clone();
+                return Ok(OpenCodeTurnReceipt {
+                    session_id: session_id.to_owned(),
+                    user_message_id,
+                    assistant_message_id: assistant_message_id.clone(),
+                    final_text: assistant_text(&messages, &assistant_message_id),
+                    tokens: assistant.tokens,
+                    cost: assistant.cost,
+                });
+            }
+            if let Some(error) = first_error.take() {
+                return Err(OpenCodeWaitError::Provider(error));
+            }
+            tokio::time::sleep(
+                poll_interval.min(deadline.saturating_duration_since(Instant::now())),
+            )
+            .await;
+        }
+    }
+
     pub async fn abort(&self, session_id: &str) -> Result<bool, OpenCodeError> {
         validate_identifier(session_id, "ses")?;
         let url = self.endpoint(&["session", session_id, "abort"])?;
@@ -313,6 +455,52 @@ impl OpenCodeClient {
             .await
             .map_err(OpenCodeError::Transport)
     }
+}
+
+fn message_sort_key(message: &AssistantMessage) -> u64 {
+    message
+        .time
+        .as_ref()
+        .map(|time| time.completed.unwrap_or(time.created))
+        .unwrap_or_default()
+}
+
+fn latest_user_message_id(messages: &[MessageEnvelope]) -> Option<String> {
+    messages
+        .iter()
+        .filter_map(|message| match &message.info {
+            MessageInfo::User(user) => Some((
+                user.time
+                    .as_ref()
+                    .map(|time| time.created)
+                    .unwrap_or_default(),
+                user.id.clone(),
+            )),
+            MessageInfo::Assistant(_) => None,
+        })
+        .max_by_key(|(created, _)| *created)
+        .map(|(_, id)| id)
+}
+
+fn assistant_text(messages: &[MessageEnvelope], assistant_id: &str) -> String {
+    messages
+        .iter()
+        .find(|message| match &message.info {
+            MessageInfo::Assistant(assistant) => assistant.id == assistant_id,
+            MessageInfo::User(_) => false,
+        })
+        .map(|message| {
+            message
+                .parts
+                .iter()
+                .filter_map(|part| match part {
+                    Part::Text(text) if !text.ignored.unwrap_or(false) => Some(text.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
 }
 
 async fn decode_json<T: DeserializeOwned>(
@@ -979,6 +1167,32 @@ mod tests {
         )
     }
 
+    fn sequence_server(bodies: &[&str]) -> (Url, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let bodies = bodies
+            .iter()
+            .map(|body| (*body).to_owned())
+            .collect::<Vec<_>>();
+        let handle = thread::spawn(move || {
+            for body in bodies {
+                let (mut stream, _) = listener.accept().expect("accept test request");
+                let _request = read_request(&mut stream);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write test response");
+            }
+        });
+        (
+            Url::parse(&format!("http://{address}/")).expect("test URL"),
+            handle,
+        )
+    }
+
     fn read_request(stream: &mut TcpStream) -> String {
         let mut bytes = Vec::new();
         let mut chunk = [0_u8; 4096];
@@ -1135,6 +1349,50 @@ mod tests {
                     request.starts_with("POST /session/ses_native/prompt_async HTTP/1.1"),
                     "unexpected request: {request}"
                 );
+                server.join().expect("server thread");
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn polling_waits_for_a_new_completed_assistant_message() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let completed = serde_json::json!([{
+                    "info": {
+                        "id": "msg_assistant",
+                        "sessionID": "ses_native",
+                        "role": "assistant",
+                        "time": {"created": 10, "completed": 11},
+                        "parentID": "msg_user",
+                        "modelID": "model",
+                        "providerID": "provider",
+                        "finish": "stop"
+                    },
+                    "parts": [{
+                        "id": "part_text",
+                        "sessionID": "ses_native",
+                        "messageID": "msg_assistant",
+                        "type": "text",
+                        "text": "done"
+                    }]
+                }])
+                .to_string();
+                let (url, server) = sequence_server(&["[]", &completed]);
+                let client = OpenCodeClient::new(url, None).expect("client");
+                let receipt = client
+                    .wait_for_completed_assistant(
+                        "ses_native",
+                        &["msg_old"],
+                        Instant::now() + Duration::from_secs(1),
+                        Duration::from_millis(1),
+                    )
+                    .await
+                    .expect("completed assistant");
+                assert_eq!(receipt.session_id, "ses_native");
+                assert_eq!(receipt.user_message_id.as_deref(), Some("msg_user"));
+                assert_eq!(receipt.assistant_message_id, "msg_assistant");
+                assert_eq!(receipt.final_text, "done");
                 server.join().expect("server thread");
             })
             .await;

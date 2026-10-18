@@ -6,6 +6,7 @@ mod cursor;
 mod fingerprint;
 mod hermes;
 mod host;
+mod opencode;
 mod pi;
 mod resolve;
 mod runtime;
@@ -17,6 +18,8 @@ pub(crate) use cursor::resolve_cursor_config;
 pub use hermes::HermesLocalConfig;
 pub(crate) use hermes::{resolve_agent_env, resolve_hermes_config};
 pub use host::LocalHostContext;
+pub use opencode::OpenCodeLocalConfig;
+pub(crate) use opencode::resolve_opencode_config;
 pub use pi::PiLocalConfig;
 pub(crate) use pi::resolve_pi_config;
 pub(crate) use resolve::resolve_codex_config;
@@ -73,6 +76,9 @@ pub(crate) async fn resolve_native_config(
         "claude_local" => resolve_claude_config(tx, organization_id, conversation_id, host).await,
         "cursor" | "cursor_local" => {
             resolve_cursor_config(tx, organization_id, conversation_id, host).await
+        }
+        "opencode_local" => {
+            resolve_opencode_config(tx, organization_id, conversation_id, host).await
         }
         "pi_local" => resolve_pi_config(tx, organization_id, conversation_id, host).await,
         _ => Err(unsupported(

@@ -10,6 +10,7 @@ rudder-claude-code = { path = "../claude-code" }
 rudder-cursor-acp-adapter = { path = "../cursor-acp-adapter" }
 rudder-auth-core = { path = "../auth-core" }
 rudder-hermes-acp = { path = "../hermes-acp" }
+rudder-opencode-native = { path = "../opencode-native" }
 rudder-pi-rpc = { path = "../pi-rpc" }
 rudder-runtime-core = { path = "../runtime-core" }
 getrandom = "0.2"

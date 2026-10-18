@@ -315,6 +315,7 @@ pub(crate) async fn resolve_pi_config(
         pi: Some(pi),
         claude: None,
         cursor: None,
+        opencode: None,
     })
 }
 

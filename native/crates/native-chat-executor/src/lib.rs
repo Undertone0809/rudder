@@ -2,9 +2,14 @@
 //! finalization authority lives here. Every exit retains the admission hold;
 //! provider terminal data and host receipts require a separate finalizer.
 mod hermes;
+mod opencode;
 mod pi;
 mod profile;
 mod wire;
+pub use opencode::{
+    OpenCodeCleanupStatus, OpenCodeExecutionError, OpenCodeExecutionObservation,
+    execute_turn as execute_opencode_turn,
+};
 pub use pi::{
     PiAdapterError, PiExecution, PiExecutionObservation, PiExecutionPhase, PiStateSnapshot,
     PiUnknownReason,

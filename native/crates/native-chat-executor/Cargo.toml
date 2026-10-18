@@ -9,6 +9,7 @@ rudder-auth-core = { path = "../auth-core" }
 rudder-codex-app-server = { path = "../codex-app-server" }
 rudder-d1-persistence = { path = "../d1-persistence" }
 rudder-hermes-acp = { path = "../hermes-acp" }
+rudder-opencode-native = { path = "../opencode-native" }
 rudder-pi-rpc = { path = "../pi-rpc" }
 rudder-runtime-core = { path = "../runtime-core" }
 serde_json = "1.0"

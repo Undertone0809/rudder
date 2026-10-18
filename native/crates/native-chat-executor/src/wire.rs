@@ -115,6 +115,7 @@ mod tests {
             pi: None,
             claude: None,
             cursor: None,
+            opencode: None,
         }
     }
 

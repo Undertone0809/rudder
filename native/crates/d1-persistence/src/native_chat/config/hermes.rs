@@ -300,6 +300,7 @@ pub(crate) async fn resolve_hermes_config(
         pi: None,
         claude: None,
         cursor: None,
+        opencode: None,
     })
 }
 
