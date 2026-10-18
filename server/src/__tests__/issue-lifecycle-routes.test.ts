@@ -371,6 +371,12 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.followIssue).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+
+    const unfollowRes = await request(await createApp()).delete(`/api/issues/${issue.id}/follow`);
+    expect(unfollowRes.status).toBe(503);
+    expect(mockIssueService.unfollowIssue).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
   it("does not synthesize the default goal when reading an explicitly goal-less issue", async () => {

@@ -838,7 +838,6 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
         ["patch", `/saved-views/${viewIds[0]}`, { title: "must not write" }], ["delete", `/saved-views/${viewIds[0]}`], ["patch", "/saved-views/reorder", { ids: [viewIds[0]] }],
         ["post", "/groups", { name: "must not write" }], ["patch", `/groups/${groupId}`, { name: "must not write" }], ["delete", `/groups/${groupId}`], ["post", `/groups/${groupId}/separate`],
         ["delete", `/groups/entries/${encodeURIComponent(`saved-view:${viewIds[0]}`)}`], ["post", "/threads/issues/user-state", { pinned: true }],
-        ["post", `/issues/${followedIssueId}/follow`], ["delete", `/issues/${followedIssueId}/follow`],
       ] as [Method, string, unknown?][]) {
         const response = await http(method, suffix, body, token, failingServer);
         expect(response.status, `${method} ${suffix}`).toBe(503);
