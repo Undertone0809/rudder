@@ -7,6 +7,23 @@ use crate::native_chat::NativeChatActor;
 use rudder_runtime_core::native_chat::HermesSessionSelector;
 use sqlx::Row;
 
+/// Runtime types that are admitted through the Rust Native Chat path. Keep
+/// this list aligned with `native_chat::config::resolve_native_config`; a
+/// binding may be created for any configured local provider, but it must not
+/// admit input if the worker has no Rust execution branch for that provider.
+fn supports_native_chat_runtime(runtime_type: &str) -> bool {
+    matches!(
+        runtime_type,
+        "codex_local"
+            | "hermes_local"
+            | "claude_local"
+            | "cursor"
+            | "cursor_local"
+            | "opencode_local"
+            | "pi_local"
+    )
+}
+
 pub(crate) struct EnsuredNativeChatBinding {
     pub binding_id: String,
     pub segment_id: String,
@@ -103,7 +120,7 @@ async fn locked_segment(
         ("hermes_local", "open", Some(id)) => HermesSessionSelector::from_persisted(id).is_ok(),
         _ => false,
     };
-    if !valid || sealed || !matches!(runtime_type.as_str(), "codex_local" | "hermes_local") {
+    if !valid || sealed || !supports_native_chat_runtime(&runtime_type) {
         return Err(http(409, "Native Chat segment cannot admit new input"));
     }
     Ok(EnsuredNativeChatBinding {
@@ -112,4 +129,27 @@ async fn locked_segment(
         native_session_id,
         state,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::supports_native_chat_runtime;
+
+    #[test]
+    fn all_rust_native_chat_runtimes_are_admissible() {
+        for runtime in [
+            "codex_local",
+            "hermes_local",
+            "claude_local",
+            "cursor",
+            "cursor_local",
+            "opencode_local",
+            "pi_local",
+        ] {
+            assert!(supports_native_chat_runtime(runtime), "{runtime}");
+        }
+        for runtime in ["process", "openclaw_gateway", "gemini_cli", ""] {
+            assert!(!supports_native_chat_runtime(runtime), "{runtime}");
+        }
+    }
 }
