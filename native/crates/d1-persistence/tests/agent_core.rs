@@ -11,7 +11,7 @@ use serde_json::json;
 use sqlx::PgConnection;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{future::Future, pin::Pin, sync::OnceLock};
+use std::{future::Future, path::Path, pin::Pin, sync::OnceLock};
 use support::{Database, ORG};
 use tokio::sync::Mutex;
 
@@ -470,12 +470,14 @@ async fn rust_create_persists_instruction_bundle_outbox_without_touching_filesys
     assert!(
         stored_state.1["instructionsRootPath"]
             .as_str()
-            .is_some_and(|path| path.ends_with("/instructions"))
+            .is_some_and(|path| Path::new(path).ends_with("instructions"))
     );
     assert!(
         stored_state.1["instructionsFilePath"]
             .as_str()
-            .is_some_and(|path| path.ends_with("/instructions/SOUL.md"))
+            .is_some_and(|path| {
+                Path::new(path).ends_with(Path::new("instructions").join("SOUL.md"))
+            })
     );
     assert!(stored_state.1["promptTemplate"].is_null());
     let workspace_key: String =
