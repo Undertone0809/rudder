@@ -384,7 +384,7 @@
         {
           "number": 332,
           "state": "open_ci_pending_stage_review_pending",
-          "head_sha": "c6b0ccd97051b61f0ca108e4d4c7279d58d29950",
+          "head_sha": "c76259b303fcb611deef93f464d5a95b06d3becd",
           "base_sha": "c43c0ada9e4064b271b9be00af4c4459dd284415",
           "scope": "private feature-gated managed MCP inheritance foundation for Agent create: canonical organization connections, provider defaults, active tools, idempotent binding/activity writes; public POST remains Node-owned and gate defaults off",
           "stage_review": "ACCEPT exact c6b0ccd97051b61f0ca108e4d4c7279d58d29950",
@@ -396,7 +396,8 @@
           ],
           "mergeability": "MERGEABLE at observation; protected CI pending; do not merge yet",
           "stage_review_limits": "Nonblocking parity follow-up: Node activeToolIdsForConnection does not filter removed_at; Rust does. Rollback-trigger failure and github/read_only branch not independently exercised.",
-          "final_review": "pending protected CI and final handoff review"
+          "final_review": "pending protected CI and final handoff review",
+          "ci_correction": "Original Ubuntu exact-head run exposed clippy::too_many_arguments in test fixture; fixed with SeedConnection struct, no allow. New exact head has fmt/check/clippy all-targets/PG tests PASS; protected CI rerun pending."
         }
       ],
       "managed_migration": {
