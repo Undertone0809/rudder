@@ -2,10 +2,10 @@
 //! empty strings and unknown fields retain the exact public Zod distinction.
 use super::{
     AgentCoreError, AgentCreateNodeOwned, AgentCreatePermissions, AgentCreateRequest,
-    common::{Result, Tx, uuid_like},
+    common::{Result, Tx, js_trim, uuid_like},
 };
 use serde_json::{Value, json};
-use std::env;
+use std::{collections::BTreeSet, env};
 fn received(value: Option<&Value>) -> &'static str {
     match value {
         None => "undefined",
@@ -312,6 +312,7 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                 | "budgetMonthlyCents"
                 | "permissions"
                 | "metadata"
+                | "desiredSkills"
                 | "nodeOwned"
         ) {
             return Err(unsupported_field(key));
@@ -518,6 +519,34 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             )]));
         }
     };
+    let desired_skills = match object.get("desiredSkills") {
+        None => Vec::new(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| match value {
+                Value::String(value) => Ok(value.clone()),
+                other => Err(validation_error(vec![wrong(
+                    "string",
+                    Some(other),
+                    json!(["desiredSkills", index]),
+                )])),
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|value| js_trim(&value).to_owned())
+            .filter(|value| !value.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        value => {
+            return Err(validation_error(vec![wrong(
+                "array",
+                value,
+                json!(["desiredSkills"]),
+            )]));
+        }
+    };
     let node_owned = match object.get("nodeOwned") {
         None => None,
         Some(Value::Object(node)) => {
@@ -570,6 +599,7 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
         budget_monthly_cents,
         permissions,
         metadata,
+        desired_skills,
         node_owned,
     })
 }
@@ -852,11 +882,7 @@ mod tests {
             .expect_err("fractional budget rejected");
         assert!(matches!(fractional, AgentCoreError::Http(400, _, _)));
 
-        for key in [
-            "icon",
-            "desiredSkills",
-            "seedOrganizationIntelligenceDefaults",
-        ] {
+        for key in ["icon", "seedOrganizationIntelligenceDefaults"] {
             let mut input = serde_json::Map::new();
             input.insert(key.to_owned(), json!("unsupported"));
             let error = parse_create(&Value::Object(input)).expect_err("unsupported field");
@@ -865,6 +891,14 @@ mod tests {
                 "{key}: {error:?}"
             );
         }
+        let request = parse_create(
+            &json!({"desiredSkills":["org:organization/org-1/alpha", "rudder/browser"]}),
+        )
+        .expect("desired skills are a Rust create input");
+        assert_eq!(
+            request.desired_skills,
+            ["org:organization/org-1/alpha", "rudder/browser"]
+        );
         let error = parse_create(&json!({
             "agentRuntimeConfig": {"apiKey": "secret"}
         }))
