@@ -1161,7 +1161,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       }
     },
     async issueCheckout(actor, orgId, input) {
-      return requestIssueCheckout({ ensureStarted, baseUrl, actorEnvelopeKey }, actor, orgId, input);
+      return requestIssueCheckout({ ensureStarted, getBaseUrl: () => baseUrl, actorEnvelopeKey }, actor, orgId, input);
     },
     async projectCreate(actor, orgId, data, idempotencyKey, activityDetails, roots) {
       if (projectGoalSetMode !== "required") {

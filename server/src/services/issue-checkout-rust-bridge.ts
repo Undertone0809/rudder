@@ -11,7 +11,7 @@ export type IssueCheckoutInput = {
 
 export type IssueCheckoutBridgeContext = {
   ensureStarted: () => Promise<void>;
-  baseUrl: string | null;
+  getBaseUrl: () => string | null;
   actorEnvelopeKey: string;
 };
 
@@ -22,7 +22,8 @@ export async function requestIssueCheckout(
   input: IssueCheckoutInput,
 ): Promise<RustFoundationResponse> {
   await context.ensureStarted();
-  if (!context.baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+  const baseUrl = context.getBaseUrl();
+  if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
   const requestPath = `/internal/orgs/${encodeURIComponent(orgId)}/issue-checkout`;
   const body = Buffer.from(JSON.stringify({
     orgId,
@@ -43,7 +44,7 @@ export async function requestIssueCheckout(
     requestId,
   });
   try {
-    const response = await fetch(`${context.baseUrl}${requestPath}`, {
+    const response = await fetch(`${baseUrl}${requestPath}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
