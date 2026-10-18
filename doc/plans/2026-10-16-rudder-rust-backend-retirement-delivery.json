@@ -419,10 +419,10 @@
             "skills unit tests 4/4",
             "focused PG rust_create_ suite 5/5 after ENOSPC recovery"
           ],
-          "stage_review": "ACCEPT exact 6bf0a672cd91af1425590a6e094c9fa5227b6655",
+          "stage_review": "ACCEPT exact b8b5de8efafc4f921556c20ac718d114ffa45caa",
           "mergeability": "MERGEABLE/CI queued at observation; do not merge yet",
           "correction": "Stage review rejected empty desiredSkills and unchecked bundled catalog; fixed in 6bf0a672c with parser/catalog regression tests and rerun local checks.",
-          "stage_review_limits": "No product verifier at this private artifact stage; protected CI and final handoff remain required.",
+          "stage_review_limits": "Private artifact stage; final protected CI and exact-candidate final handoff still required.",
           "final_review": "pending protected CI and final handoff review",
           "rebase": "Rebased after #332 merge onto main 8e946face; preserved managed MCP and normalization tests."
         }
