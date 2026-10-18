@@ -1097,6 +1097,34 @@ The OpenCode wire boundary now also exposes bounded SSE, Question/Permission, an
 
 A current audit must therefore report the bounded Codex/Hermes milestone as delivered while preserving the six-runtime, shared-Reader, retention/GC, backup/restore, product-consumer, and final-acceptance work as active scope.
 
+### October 18 current-main real ingress recheck
+
+The previous real Codex/Hermes receipts above remain bound to
+`9e5aa4e0f62cdc993b6cd70d832bfb52e4a7bb28`. They are not current-main
+acceptance: that SHA is not an ancestor of the current `origin/main`
+`8a5d623f271316817863991969585e332ee01e87`.
+
+I rebuilt the current `main` candidate in an isolated instance and started the
+actual Rust public ingress with `RUDDER_RUST_PUBLIC_INGRESS_MODE=required`.
+The foundation binary SHA-256 was
+`cb9c3eb89b949d6b5308d18ddd53c27361b386ef5f0217dac7265f0b4b0951e7` and the
+co-located process-host binary was
+`27f437445d29be77f1d36d87c3eef61269353a1227f81545a041c5fdfefc0251`.
+After adding the required process-host artifact, the public capability endpoint
+reported `firstSend: true`. A real local Codex first-send request through the
+public Rust listener, with the installed local Codex profile and a disposable
+PostgreSQL instance, returned HTTP 503 `native_chat_unavailable` and produced
+no assistant terminal receipt. This is a current-main real-environment
+**FAIL**, not a provider success. The isolated run also exposed recurring
+Node-side recovery queries with an empty SQL predicate (`where ( = $1 ...)`),
+which is recorded as a separate current-main runtime defect.
+
+Therefore Codex/Hermes are not accepted for the current `main` SHA, and no new
+merge is authorized from this recheck. PR #324 is already merged into `main`;
+the next fix must first make the current Rust worker admit and complete a real
+Codex turn, then repeat the same current-SHA first/continuation/restart matrix
+for Hermes before any additional merge claim.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.
