@@ -231,6 +231,16 @@ async fn submit_effect_dispatch_contains_exact_thread_message_and_admitted_body(
             EffectDispatch::SubmitPiInput { .. } => {
                 panic!("Submit permit produced Pi input")
             }
+            EffectDispatch::StartClaudeSession
+            | EffectDispatch::StartOpenCodeSession
+            | EffectDispatch::StartCursorSession => {
+                panic!("Submit permit produced provider session start")
+            }
+            EffectDispatch::SubmitClaudeInput { .. }
+            | EffectDispatch::SubmitOpenCodeInput { .. }
+            | EffectDispatch::SubmitCursorInput { .. } => {
+                panic!("Submit permit produced provider input")
+            }
         })
         .expect("dispatch exact Submit request");
     assert_eq!(dispatch.0, OPAQUE_THREAD);
