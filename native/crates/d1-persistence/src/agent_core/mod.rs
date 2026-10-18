@@ -8,6 +8,7 @@ mod json_boundary;
 mod managed_mcp;
 mod reads;
 mod redaction;
+mod skills;
 mod validation;
 mod writes;
 use common::*;
@@ -94,6 +95,11 @@ pub struct AgentCreateRequest {
     pub permissions: AgentCreatePermissions,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    /// Canonical or human-facing skill references requested for the new
+    /// agent. Bundled references are validated but never persisted because
+    /// bundled Rudder skills are always enabled at runtime.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub desired_skills: Vec<String>,
     /// Node-owned preparation is accepted only by the private Rust bridge.
     /// The public create route does not expose this field until parity is
     /// complete. Raw provider material and unsupported runtime fields are
