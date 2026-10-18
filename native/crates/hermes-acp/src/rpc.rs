@@ -1021,6 +1021,7 @@ impl HermesAcpTransport {
                     // replay notifications are bounded but are not treated as
                     // a new prompt or persisted output here.
                 }
+                Message::Notification { method, .. } if is_benign_acp_notification(&method) => {}
                 Message::Request { id, .. } => {
                     self.send_error_response(id, -32601, "Method not supported", deadline)?
                 }
@@ -1782,6 +1783,9 @@ mod tests {
         second
             .load_session(&session, &cwd, Duration::from_secs(30))
             .unwrap();
+        second
+            .set_model("custom:test-model", Duration::from_secs(30))
+            .unwrap();
         let second_cleanup = second.stop(Duration::from_secs(10)).unwrap();
         assert!(second_cleanup.matches_execution(
             run_id,
@@ -1807,6 +1811,12 @@ for line in sys.stdin:
     out({"jsonrpc":"2.0","id":m["id"],"result":{"sessionId":session}})
   elif method == "session/load":
     out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"history"}}}})
+    out({"jsonrpc":"2.0","method":"available_commands_update","params":{}})
+    out({"jsonrpc":"2.0","method":"usage_update","params":{}})
+    out({"jsonrpc":"2.0","id":m["id"],"result":{}})
+  elif method == "session/set_model":
+    out({"jsonrpc":"2.0","method":"available_commands_update","params":{}})
+    out({"jsonrpc":"2.0","method":"usage_update","params":{}})
     out({"jsonrpc":"2.0","id":m["id"],"result":{}})
   elif method == "session/prompt":
     user_id = m["params"]["messageId"]

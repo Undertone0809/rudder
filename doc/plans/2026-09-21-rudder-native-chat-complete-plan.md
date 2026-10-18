@@ -1052,8 +1052,11 @@ authority: the pinned ACP bootstrap clears persisted `requested_provider`,
 `base_url`, and `api_mode` before recreating the agent, while preserving the
 session UUID and model. The transport also accepts only Hermes' bounded
 `available_commands_update` and `usage_update` metadata notifications while
-waiting for load/model/prompt responses; unknown notifications remain a hard
-protocol error. Focused Hermes tests pass (6 passed, 2 ignored), the native
+waiting for load/model/prompt responses in every correlated request loop;
+unknown notifications remain a hard protocol error. The ignored process-host
+fixture now emits both notifications before session/load and session/set_model
+responses, covering the restore ordering. Focused Hermes tests pass (6 passed,
+2 ignored), the native
 executor tests pass (15 passed, 2 ignored), and a direct installed-ACP exact
 UUID load/set-model/prompt probe now uses `https://sub.zeeland.studio` and
 returns a real assistant response.
