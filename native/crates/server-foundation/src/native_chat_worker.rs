@@ -617,15 +617,8 @@ fn run(
         Ok(rudder_native_chat_executor::NativeExecutionObservation::Cursor(observation)) => {
             return finish_cursor_observation(handle, &pool, observation);
         }
-        // OpenCode currently proves only that its host-owned HTTP server is
-        // unowned. Keep the held attempt visible as unresolved until a
-        // provider-native server cleanup receipt and D1 finalizer exist; do
-        // not project its session/message IDs through Codex fields.
-        Ok(rudder_native_chat_executor::NativeExecutionObservation::OpenCode(_)) => {
-            return Completion {
-                status: Status::Unresolved(UnresolvedReason::ProviderTerminalUnsupported),
-                quiescent: false,
-            };
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::OpenCode(observation)) => {
+            return finish_opencode_observation(handle, &pool, observation);
         }
         Err(failure) => {
             let Some(execution_actor) = failure.execution_principal() else {
@@ -904,6 +897,53 @@ fn finish_cursor_observation(
         }),
     };
     finalize_native_observation(handle, pool, execution_principal, fence, turn, cleanup)
+}
+
+fn finish_opencode_observation(
+    handle: &tokio::runtime::Handle,
+    pool: &PgPool,
+    observation: rudder_native_chat_executor::OpenCodeNativeExecutionObservation,
+) -> Completion {
+    let rudder_native_chat_executor::OpenCodeNativeExecutionObservation {
+        execution_principal,
+        fence,
+        observation: provider,
+    } = observation;
+    if !fence.matches_host_cleanup_proof(&provider.cleanup) {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::ProviderCleanupUnknown),
+            quiescent: false,
+        };
+    }
+    let usage = provider
+        .turn
+        .tokens
+        .as_ref()
+        .and_then(|tokens| serde_json::to_value(tokens).ok());
+    let turn = rudder_d1_persistence::native_chat::execution::NativeProviderTurnReceipt {
+        provider: rudder_d1_persistence::native_chat::execution::NativeProviderKind::OpenCode,
+        session_id: provider.turn.session_id.clone(),
+        request_id: provider.turn.assistant_message_id.clone(),
+        final_text: (!provider.turn.final_text.trim().is_empty())
+            .then_some(provider.turn.final_text.clone()),
+        status: rudder_d1_persistence::native_chat::execution::NativeProviderStatus::Completed,
+        usage,
+        evidence: serde_json::json!({
+            "provider": "opencode_local",
+            "sessionId": provider.turn.session_id,
+            "userMessageId": provider.turn.user_message_id,
+            "assistantMessageId": provider.turn.assistant_message_id,
+            "cost": provider.turn.cost,
+        }),
+    };
+    finalize_native_observation(
+        handle,
+        pool,
+        execution_principal,
+        fence,
+        turn,
+        &provider.cleanup,
+    )
 }
 
 fn finalize_native_observation(

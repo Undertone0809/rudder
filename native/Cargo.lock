@@ -2147,6 +2147,7 @@ dependencies = [
  "rudder-d1-persistence",
  "rudder-hermes-acp",
  "rudder-native-process-transport",
+ "rudder-native-protocol",
  "rudder-opencode-native",
  "rudder-pi-rpc",
  "rudder-runtime-core",
@@ -2156,6 +2157,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "url",
 ]
 
 [[package]]

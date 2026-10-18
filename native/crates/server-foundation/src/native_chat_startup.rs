@@ -100,19 +100,26 @@ pub(crate) fn configure(
     let cursor = installation
         .cursor_executable
         .or_else(|| executable("cursor-agent", &installation.executable_search_path));
+    let opencode = executable("opencode", &installation.executable_search_path);
     let opencode_url = installation
         .opencode_server_url
         .as_deref()
         .map(url::Url::parse)
         .transpose()
-        .map_err(|_| invalid_at("invalid OpenCode Server URL"))?;
-    let has_opencode = opencode_url.is_some();
+        .map_err(|_| invalid_at("invalid OpenCode Server URL"))?
+        .or_else(|| {
+            opencode
+                .as_ref()
+                .and_then(|_| url::Url::parse("http://127.0.0.1:0/").ok())
+        });
+    let has_opencode = opencode.is_some() || opencode_url.is_some();
     let Some(host_executable) = preferred_native_executable(
         codex.clone(),
         hermes.clone(),
         claude.clone(),
         cursor.clone(),
     )
+    .or_else(|| opencode.clone())
     .or_else(|| has_opencode.then(|| current.clone())) else {
         return Ok(config);
     };
@@ -186,6 +193,11 @@ pub(crate) fn configure(
         host = host
             .with_opencode_runtime(server_url, installation.opencode_bearer_token)
             .map_err(|_| invalid_at("invalid installed OpenCode Server paths"))?;
+        if let Some(opencode) = opencode {
+            host = host
+                .with_opencode_executable(opencode)
+                .map_err(|_| invalid_at("invalid installed OpenCode executable"))?;
+        }
     }
     config.native_chat_runtime = Some(
         NativeChatPublicRuntime::new(

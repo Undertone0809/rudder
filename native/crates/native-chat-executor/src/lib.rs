@@ -15,8 +15,7 @@ pub use cursor::{
     CursorExecutionError, CursorExecutionObservation, execute_turn as execute_cursor_turn,
 };
 pub use opencode::{
-    OpenCodeCleanupStatus, OpenCodeExecutionError, OpenCodeExecutionObservation,
-    execute_turn as execute_opencode_turn,
+    OpenCodeExecutionError, OpenCodeExecutionObservation, execute_turn as execute_opencode_turn,
 };
 pub use pi::{
     PiAdapterError, PiExecution, PiExecutionObservation, PiExecutionPhase, PiStateSnapshot,
@@ -770,7 +769,6 @@ where
                 }
             }
             "opencode_local" => {
-                drop(connection_launch_permit);
                 let Some(local) = claimed_config.opencode.as_ref() else {
                     return Err(ExecutionFailure::before_launch(
                         Error::UnsupportedConfiguration,
@@ -781,6 +779,11 @@ where
                 match execute_opencode_turn(
                     handle,
                     local,
+                    paths,
+                    connection_launch_permit,
+                    &run_id,
+                    &attempt_id,
+                    &owner_token,
                     existing_opencode.as_deref(),
                     &body,
                     deadline.saturating_duration_since(Instant::now()),

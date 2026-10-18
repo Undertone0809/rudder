@@ -228,6 +228,15 @@ impl OpenCodeClient {
         OpenCodeCapabilityManifest::default()
     }
 
+    /// Probe the provider-native OpenCode Server document endpoint. A
+    /// successful response proves that the managed listener is serving the
+    /// calibrated API; it is not a turn or cleanup receipt.
+    pub async fn probe(&self) -> Result<(), OpenCodeError> {
+        let url = self.endpoint(&["doc"])?;
+        let _: Value = decode_json(self.get(url).await?).await?;
+        Ok(())
+    }
+
     pub async fn list_sessions(
         &self,
         query: SessionListQuery<'_>,

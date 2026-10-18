@@ -21,6 +21,8 @@ use url::Url;
 pub struct OpenCodeLocalConfig {
     server_url: Url,
     bearer_token: Option<String>,
+    executable: Option<PathBuf>,
+    pub executable_search_path: String,
     pub profile_id: String,
     pub cwd: PathBuf,
     pub model: Option<String>,
@@ -36,6 +38,10 @@ impl OpenCodeLocalConfig {
 
     pub fn bearer_token(&self) -> Option<&str> {
         self.bearer_token.as_deref()
+    }
+
+    pub fn executable(&self) -> Option<&Path> {
+        self.executable.as_deref()
     }
 
     /// Recheck the endpoint shape before provider effects. The host owns the
@@ -62,6 +68,7 @@ pub(crate) async fn resolve_opencode_config(
     let (server_url, bearer_token) = host.opencode_runtime().ok_or_else(|| {
         unsupported("the trusted local OpenCode Server installation is unavailable")
     })?;
+    let executable = host.opencode_executable().map(Path::to_path_buf);
     let row = sqlx::query(
         "/* native_chat_config_agent_lock */
          SELECT c.status AS conversation_status, c.conversation_kind,
@@ -249,6 +256,8 @@ pub(crate) async fn resolve_opencode_config(
     let opencode = OpenCodeLocalConfig {
         server_url: server_url.clone(),
         bearer_token: bearer_token.map(str::to_owned),
+        executable,
+        executable_search_path: host.executable_search_path().to_owned(),
         profile_id: profile_id.clone(),
         cwd: cwd.clone(),
         model: model.clone(),

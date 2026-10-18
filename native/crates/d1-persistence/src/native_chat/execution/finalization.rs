@@ -36,6 +36,7 @@ pub struct NativeProviderTurnReceipt {
 pub enum NativeProviderKind {
     Claude,
     Cursor,
+    OpenCode,
 }
 
 impl NativeProviderKind {
@@ -43,6 +44,7 @@ impl NativeProviderKind {
         match self {
             Self::Claude => "claude_local",
             Self::Cursor => "cursor_local",
+            Self::OpenCode => "opencode_local",
         }
     }
 
@@ -50,6 +52,7 @@ impl NativeProviderKind {
         match self {
             Self::Claude => "claude_local",
             Self::Cursor => "cursor_local",
+            Self::OpenCode => "open_code_local",
         }
     }
 }
@@ -457,24 +460,31 @@ impl<'a> ProviderTurn<'a> {
                     && checkpoint.pi_turn_entry_id() == Some(turn.input_entry_id())
             }
             Self::Native(turn) => {
-                let expected = match turn.provider {
-                    NativeProviderKind::Claude => {
-                        checkpoint.provider()
-                            == rudder_runtime_core::native_chat::NativeChatProvider::ClaudeLocal
-                            && checkpoint.claude_session().map(|s| s.as_str())
+                let expected =
+                    match turn.provider {
+                        NativeProviderKind::Claude => {
+                            checkpoint.provider()
+                                == rudder_runtime_core::native_chat::NativeChatProvider::ClaudeLocal
+                                && checkpoint.claude_session().map(|s| s.as_str())
+                                    == Some(turn.session_id.as_str())
+                                && checkpoint.claude_prompt_request_id()
+                                    == Some(turn.request_id.as_str())
+                        }
+                        NativeProviderKind::Cursor => {
+                            checkpoint.provider()
+                                == rudder_runtime_core::native_chat::NativeChatProvider::CursorLocal
+                                && checkpoint.cursor_session().map(|s| s.as_str())
+                                    == Some(turn.session_id.as_str())
+                                && checkpoint.cursor_prompt_request_id()
+                                    == Some(turn.request_id.as_str())
+                        }
+                        NativeProviderKind::OpenCode => checkpoint.provider()
+                            == rudder_runtime_core::native_chat::NativeChatProvider::OpenCodeLocal
+                            && checkpoint.opencode_session().map(|s| s.as_str())
                                 == Some(turn.session_id.as_str())
-                            && checkpoint.claude_prompt_request_id()
-                                == Some(turn.request_id.as_str())
-                    }
-                    NativeProviderKind::Cursor => {
-                        checkpoint.provider()
-                            == rudder_runtime_core::native_chat::NativeChatProvider::CursorLocal
-                            && checkpoint.cursor_session().map(|s| s.as_str())
-                                == Some(turn.session_id.as_str())
-                            && checkpoint.cursor_prompt_request_id()
-                                == Some(turn.request_id.as_str())
-                    }
-                };
+                            && checkpoint.opencode_prompt_request_id()
+                                == Some(turn.request_id.as_str()),
+                    };
                 // The current Claude/Cursor executor may return a terminal
                 // receipt from a combined session+prompt call. Before the
                 // provider-specific checkpoint fields are persisted, accept
@@ -487,7 +497,9 @@ impl<'a> ProviderTurn<'a> {
                             | NativeChatProtocolPhase::ThreadKnown
                     ) && matches!(
                         turn.provider,
-                        NativeProviderKind::Claude | NativeProviderKind::Cursor
+                        NativeProviderKind::Claude
+                            | NativeProviderKind::Cursor
+                            | NativeProviderKind::OpenCode
                     ) && checkpoint.provider()
                         == match turn.provider {
                             NativeProviderKind::Claude => {
@@ -495,6 +507,9 @@ impl<'a> ProviderTurn<'a> {
                             }
                             NativeProviderKind::Cursor => {
                                 rudder_runtime_core::native_chat::NativeChatProvider::CursorLocal
+                            }
+                            NativeProviderKind::OpenCode => {
+                                rudder_runtime_core::native_chat::NativeChatProvider::OpenCodeLocal
                             }
                         }
                         && checkpoint.thread_id().is_none()
@@ -514,7 +529,7 @@ impl<'a> ProviderTurn<'a> {
                 json!({"kind":"pi_turn","sessionDigest":hash(turn.session_id()),"sessionFileDigest":hash(turn.session_file()),"inputEntryId":turn.input_entry_id(),"assistantEntryId":turn.assistant_entry_id(),"leafId":turn.leaf_id()})
             }
             Self::Native(turn) => {
-                json!({"kind":match turn.provider { NativeProviderKind::Claude => "claude_turn", NativeProviderKind::Cursor => "cursor_turn" },"sessionId":turn.session_id,"requestId":turn.request_id,"evidence":turn.evidence})
+                json!({"kind":match turn.provider { NativeProviderKind::Claude => "claude_turn", NativeProviderKind::Cursor => "cursor_turn", NativeProviderKind::OpenCode => "opencode_turn" },"sessionId":turn.session_id,"requestId":turn.request_id,"evidence":turn.evidence})
             }
         }
     }
@@ -855,10 +870,12 @@ async fn finalize_inner(
                 let session_key = match provider {
                     NativeProviderKind::Claude => "claudeSession",
                     NativeProviderKind::Cursor => "cursorSession",
+                    NativeProviderKind::OpenCode => "opencodeSession",
                 };
                 let request_key = match provider {
                     NativeProviderKind::Claude => "claudePromptRequestId",
                     NativeProviderKind::Cursor => "cursorPromptRequestId",
+                    NativeProviderKind::OpenCode => "opencodePromptRequestId",
                 };
                 let query = format!(
                     "SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r
@@ -999,6 +1016,10 @@ async fn finalize_inner(
                 checkpoint["cursorSession"] = json!(turn.session_id);
                 checkpoint["cursorPromptRequestId"] = json!(turn.request_id);
             }
+            NativeProviderKind::OpenCode => {
+                checkpoint["opencodeSession"] = json!(turn.session_id);
+                checkpoint["opencodePromptRequestId"] = json!(turn.request_id);
+            }
         }
     }
     checkpoint["phase"] = json!("execution_terminal_committed");
@@ -1024,11 +1045,13 @@ async fn finalize_inner(
     if let Some(ProviderTurn::Native(turn)) = turn {
         if !matches!(
             fence.runtime_type(),
-            "claude_local" | "cursor" | "cursor_local"
+            "claude_local" | "cursor" | "cursor_local" | "opencode_local"
         ) || (fence.runtime_type() == "claude_local"
             && turn.provider != NativeProviderKind::Claude)
             || (matches!(fence.runtime_type(), "cursor" | "cursor_local")
                 && turn.provider != NativeProviderKind::Cursor)
+            || (fence.runtime_type() == "opencode_local"
+                && turn.provider != NativeProviderKind::OpenCode)
         {
             return Err(http(
                 409,
@@ -1417,12 +1440,20 @@ mod tests {
         assert_eq!(NativeProviderKind::Claude.runtime_type(), "claude_local");
         assert_eq!(NativeProviderKind::Cursor.runtime_type(), "cursor_local");
         assert_eq!(
+            NativeProviderKind::OpenCode.runtime_type(),
+            "opencode_local"
+        );
+        assert_eq!(
             NativeProviderKind::Claude.checkpoint_provider(),
             "claude_local"
         );
         assert_eq!(
             NativeProviderKind::Cursor.checkpoint_provider(),
             "cursor_local"
+        );
+        assert_eq!(
+            NativeProviderKind::OpenCode.checkpoint_provider(),
+            "open_code_local"
         );
     }
 

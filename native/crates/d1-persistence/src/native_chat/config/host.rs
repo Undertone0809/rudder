@@ -28,6 +28,7 @@ pub struct LocalHostContext {
     claude_profiles_root: Option<PathBuf>,
     cursor_executable: Option<PathBuf>,
     cursor_profiles_root: Option<PathBuf>,
+    opencode_executable: Option<PathBuf>,
     opencode_server_url: Option<Url>,
     opencode_bearer_token: Option<String>,
 }
@@ -80,6 +81,7 @@ impl LocalHostContext {
             claude_profiles_root: None,
             cursor_executable: None,
             cursor_profiles_root: None,
+            opencode_executable: None,
             opencode_server_url: None,
             opencode_bearer_token: None,
         })
@@ -190,6 +192,18 @@ impl LocalHostContext {
         Ok(self)
     }
 
+    /// Attach the installed OpenCode executable discovered by the trusted
+    /// Rust launcher. A managed OpenCode Server is started through the
+    /// process-host only when this executable is present; a URL by itself
+    /// remains an external endpoint and cannot produce cleanup proof.
+    pub fn with_opencode_executable(
+        mut self,
+        executable: PathBuf,
+    ) -> std::result::Result<Self, super::Error> {
+        self.opencode_executable = Some(canonical_file(executable, "OpenCode executable")?);
+        Ok(self)
+    }
+
     /// Attach the installed Cursor Agent executable and Rust-owned profile
     /// root discovered by the local host.
     pub fn with_cursor_runtime(
@@ -239,6 +253,10 @@ impl LocalHostContext {
             self.opencode_server_url.as_ref()?,
             self.opencode_bearer_token.as_deref(),
         ))
+    }
+
+    pub fn opencode_executable(&self) -> Option<&Path> {
+        self.opencode_executable.as_deref()
     }
 
     pub fn cursor_runtime(&self) -> Option<(&Path, &Path)> {
