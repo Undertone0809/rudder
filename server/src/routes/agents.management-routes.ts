@@ -23,6 +23,10 @@ import { redactCurrentUserValue } from "../log-redaction.js";
 import { validate } from "../middleware/validate.js";
 import { omitSecretPayloadFields, redactEventPayload } from "../redaction.js";
 import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
+import {
+  loadDefaultAgentInstructionsBundle,
+  resolveDefaultAgentInstructionsBundleRole,
+} from "../services/default-agent-instructions.js";
 import { delegationRunService } from "../services/delegation-runs.js";
 import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import {
@@ -32,6 +36,11 @@ import {
 } from "../services/index.js";
 import { sendLiveRunRead } from "../services/live-run-read-bridge.js";
 import { requireRunReadAccess, runReadRedaction, sendRunRead } from "../services/run-read-bridge.js";
+import {
+  buildRustAgentCreateCommand,
+  type RustAgentCreateIntelligenceDefaults,
+  type RustFoundationResponse,
+} from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
 
@@ -46,6 +55,83 @@ type IntelligenceRuntimeChainTestInput = {
   agentRuntimeType: string;
   agentRuntimeConfig: Record<string, unknown>;
 };
+
+const AGENT_CREATE_RUST_PUBLIC_GATE = "RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED";
+const AGENT_CREATE_RUST_SUBGATES = [
+  ["RUDDER_AGENT_CREATE_RUST_ENABLED", "identity/skills"],
+  ["RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED", "instructions"],
+  ["RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED", "managed-mcp"],
+  ["RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED", "intelligence/avatar"],
+] as const;
+
+function envFlagEnabled(name: string) {
+  return ["1", "true", "yes"].includes((process.env[name] ?? "").trim().toLowerCase());
+}
+
+function publicRustAgentCreateReadiness(bridgeAvailable: boolean) {
+  if (!envFlagEnabled(AGENT_CREATE_RUST_PUBLIC_GATE)) {
+    return { enabled: false, ready: false, missing: [] as string[] };
+  }
+  const missing: string[] = AGENT_CREATE_RUST_SUBGATES
+    .filter(([name]) => !envFlagEnabled(name))
+    .map(([, label]) => label);
+  if (!bridgeAvailable) missing.push("public-listener");
+  return {
+    enabled: true,
+    ready: missing.length === 0,
+    missing,
+  };
+}
+
+function stripRustNodeOwnedRuntimeKeys(config: Record<string, unknown>): Record<string, unknown> {
+  const nodeOwnedKeys = new Set([
+    "promptTemplate",
+    "bootstrapPromptTemplate",
+    "instructionsFilePath",
+    "instructionsRootPath",
+    "instructionsEntryFile",
+    "instructionsBundleMode",
+    "agentsMdPath",
+    "rudderBrowserEnabled",
+    "rudderBrowserCapability",
+    "rudderSkillSync",
+    "paperclipSkillSync",
+    "rudderRuntimeSkills",
+    "paperclipRuntimeSkills",
+    "workspaceStrategy",
+    "workspaceRuntime",
+    "cwd",
+  ]);
+  const output = { ...config };
+  for (const key of nodeOwnedKeys) delete output[key];
+  if (Array.isArray(output.modelFallbacks)) {
+    output.modelFallbacks = output.modelFallbacks.map((fallback) => {
+      if (!fallback || typeof fallback !== "object" || Array.isArray(fallback)) return fallback;
+      const record = fallback as Record<string, unknown>;
+      if (!record.config || typeof record.config !== "object" || Array.isArray(record.config)) return fallback;
+      return { ...record, config: stripRustNodeOwnedRuntimeKeys(record.config as Record<string, unknown>) };
+    });
+  }
+  return output;
+}
+
+function containsExplicitInstructionConfig(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((child) => containsExplicitInstructionConfig(child));
+  if (!value || typeof value !== "object") return false;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "promptTemplate"
+      || key === "bootstrapPromptTemplate"
+      || key === "instructionsRootPath"
+      || key === "instructionsFilePath"
+      || key === "agentsMdPath"
+      || key === "instructionsEntryFile"
+      || key === "instructionsBundleMode") {
+      return true;
+    }
+    if (containsExplicitInstructionConfig(child)) return true;
+  }
+  return false;
+}
 
 export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) {
   const {
@@ -105,6 +191,16 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   } = ctx;
   const delegation = delegationRunService(db, { heartbeat, access });
 
+  async function findFirstAgentId(orgId: string) {
+    const [firstAgent] = await db
+      .select({ id: agentsTable.id })
+      .from(agentsTable)
+      .where(eq(agentsTable.orgId, orgId))
+      .orderBy(asc(agentsTable.createdAt), asc(agentsTable.id))
+      .limit(1);
+    return firstAgent?.id;
+  }
+
   async function ensureFirstAgentIntelligenceDefaults(
     orgId: string,
     agent: {
@@ -113,13 +209,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       agentRuntimeConfig?: unknown;
     },
   ) {
-    const [firstAgent] = await db
-      .select({ id: agentsTable.id })
-      .from(agentsTable)
-      .where(eq(agentsTable.orgId, orgId))
-      .orderBy(asc(agentsTable.createdAt), asc(agentsTable.id))
-      .limit(1);
-    if (firstAgent?.id !== agent.id) return;
+    const firstAgentId = await findFirstAgentId(orgId);
+    if (firstAgentId !== agent.id) return;
     await intelligenceProfiles.ensureDefaultsFromRuntime({
       orgId,
       agentRuntimeType: agent.agentRuntimeType,
@@ -128,6 +219,29 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
         await intelligenceRuntimeChain.assertUsable(orgId, agentRuntimeType, agentRuntimeConfig);
       },
     });
+  }
+
+  async function prepareFirstAgentIntelligenceDefaults(
+    orgId: string,
+    agent: { agentRuntimeType: string; agentRuntimeConfig?: unknown },
+  ): Promise<RustAgentCreateIntelligenceDefaults | undefined> {
+    if (await findFirstAgentId(orgId)) return undefined;
+
+    const prepared = await intelligenceProfiles.prepareDefaultsFromRuntime({
+      orgId,
+      agentRuntimeType: agent.agentRuntimeType as any,
+      agentRuntimeConfig: (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>,
+      testRuntimeChain: async ({ agentRuntimeType, agentRuntimeConfig }: IntelligenceRuntimeChainTestInput) => {
+        await intelligenceRuntimeChain.assertUsable(orgId, agentRuntimeType, agentRuntimeConfig);
+      },
+    });
+    if (!prepared) return undefined;
+    return {
+      seed: true,
+      status: prepared.status,
+      lastError: prepared.lastError,
+      lastVerifiedAt: prepared.lastVerifiedAt?.toISOString() ?? null,
+    };
   }
 
   router.post("/orgs/:orgId/agent-hires", validate(createAgentHireSchema), async (req, res) => {
@@ -319,17 +433,22 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   router.post("/orgs/:orgId/agents", validate(createAgentSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-
-    if (req.actor.type === "agent") {
-      assertBoard(req);
-    }
+    await assertCanCreateAgentsForCompany(req, orgId);
 
     const {
       desiredSkills: requestedDesiredSkills,
       seedOrganizationIntelligenceDefaults,
       ...createInput
     } = req.body;
+    const rustReadiness = publicRustAgentCreateReadiness(Boolean(rustFoundationBridge?.agentCreate));
+    if (rustReadiness.enabled && !rustReadiness.ready) {
+      res.status(503).json({
+        error: "Rust Agent create cutover is not ready",
+        code: "rust_agent_create_cutover_not_ready",
+        missingGates: rustReadiness.missing,
+      });
+      return;
+    }
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       createInput.agentRuntimeType,
       ((createInput.agentRuntimeConfig ?? {}) as Record<string, unknown>),
@@ -354,11 +473,103 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       createInput.agentRuntimeType,
       normalizedAdapterConfig,
     );
-    await assertAgentAvatarAssetBelongsToOrg(orgId, createInput.icon);
+    const normalizedAvatarIcon = normalizeCreatedAgentAvatarIcon(createInput.icon);
+    await assertAgentAvatarAssetBelongsToOrg(orgId, normalizedAvatarIcon);
+
+    if (rustReadiness.enabled) {
+      const adapterConfig = (createInput.agentRuntimeConfig ?? {}) as Record<string, unknown>;
+      const instructionConfigForCheck = { ...adapterConfig };
+      if (DEFAULT_MANAGED_INSTRUCTIONS_ADAPTER_TYPES.has(createInput.agentRuntimeType)) {
+        delete instructionConfigForCheck.promptTemplate;
+      }
+      const hasExplicitInstructionsBundle = containsExplicitInstructionConfig(instructionConfigForCheck);
+      if (hasExplicitInstructionsBundle) {
+        res.status(503).json({
+          error: "Rust Agent create cutover cannot atomically prepare explicit instructions paths",
+          code: "rust_agent_create_instructions_preparation_unavailable",
+        });
+        return;
+      }
+      let instructionsBundle: {
+        entryFile: string;
+        files: Record<string, string>;
+        clearLegacyPromptTemplate: boolean;
+      } | undefined;
+      if (DEFAULT_MANAGED_INSTRUCTIONS_ADAPTER_TYPES.has(createInput.agentRuntimeType)) {
+        const promptTemplate = typeof adapterConfig.promptTemplate === "string" ? adapterConfig.promptTemplate : "";
+        const defaultFiles = await loadDefaultAgentInstructionsBundle(
+          resolveDefaultAgentInstructionsBundleRole(createInput.role),
+        );
+        instructionsBundle = {
+          entryFile: "SOUL.md",
+          files: promptTemplate.trim().length === 0 ? defaultFiles : { ...defaultFiles, "SOUL.md": promptTemplate },
+          clearLegacyPromptTemplate: true,
+        };
+      }
+      let intelligenceDefaults: RustAgentCreateIntelligenceDefaults | undefined;
+      if (seedOrganizationIntelligenceDefaults) {
+        try {
+          intelligenceDefaults = await prepareFirstAgentIntelligenceDefaults(orgId, {
+            agentRuntimeType: createInput.agentRuntimeType,
+            agentRuntimeConfig: normalizedAdapterConfig,
+          });
+        } catch {
+          res.status(503).json({
+            error: "Rust Agent create intelligence preflight failed",
+            code: "rust_agent_create_intelligence_preflight_failed",
+          });
+          return;
+        }
+      }
+      const rustAgentRuntimeConfig = stripRustNodeOwnedRuntimeKeys(normalizedAdapterConfig);
+      const command = buildRustAgentCreateCommand(orgId, {
+        ...(createInput.name !== undefined ? { name: createInput.name } : {}),
+        role: createInput.role,
+        title: createInput.title,
+        capabilities: createInput.capabilities,
+        agentRuntimeType: createInput.agentRuntimeType,
+        agentRuntimeConfig: rustAgentRuntimeConfig,
+        runtimeConfig: (createInput.runtimeConfig ?? {}) as Record<string, unknown>,
+        budgetMonthlyCents: createInput.budgetMonthlyCents,
+        permissions: {
+          canCreateAgents: createInput.permissions?.canCreateAgents ?? true,
+          canManageSkills: createInput.permissions?.canManageSkills ?? true,
+        },
+        metadata: createInput.metadata ?? null,
+        desiredSkills: Array.isArray(requestedDesiredSkills) ? desiredSkillAssignment.desiredSkills : [],
+        nodeOwned: {
+          normalizedAgentRuntimeConfig: rustAgentRuntimeConfig,
+          ...(instructionsBundle ? { instructionsBundle } : {}),
+          ...(normalizedAvatarIcon ? { avatarIcon: normalizedAvatarIcon } : {}),
+          ...(intelligenceDefaults ? { intelligenceDefaults } : {}),
+        },
+      });
+      let result: RustFoundationResponse;
+      try {
+        result = await rustFoundationBridge!.agentCreate!(req.actor, command);
+      } catch {
+        res.status(503).json({
+          error: "Rust Agent create bridge is unavailable",
+          code: "rust_agent_create_cutover_request_failed",
+        });
+        return;
+      }
+      if (result.status === 201) {
+        try {
+          const value = JSON.parse(result.body.toString("utf8")) as Awaited<ReturnType<typeof svc.getById>>;
+          res.status(result.status).json(redactAgentForResponse(value));
+          return;
+        } catch {
+          // Preserve the Rust response if a future contract changes shape.
+        }
+      }
+      res.status(result.status).set("content-type", result.contentType).send(result.body);
+      return;
+    }
 
     const createdAgent = await svc.create(orgId, {
       ...createInput,
-      icon: normalizeCreatedAgentAvatarIcon(createInput.icon),
+      icon: normalizedAvatarIcon,
       agentRuntimeConfig: normalizedAdapterConfig,
       status: "idle",
       spentMonthlyCents: 0,

@@ -58,6 +58,98 @@ export type RustFoundationResponse = {
   body: Buffer;
 };
 
+/** The only fields a public Agent create is allowed to hand to AgentCore. */
+export type RustAgentCreateInstructionsBundle = {
+  entryFile: string;
+  files: Record<string, string>;
+  clearLegacyPromptTemplate?: boolean;
+};
+
+export type RustAgentCreateIntelligenceDefaults = {
+  seed?: boolean;
+  status?: "disabled" | "configured" | "invalid";
+  lastError?: string | null;
+  lastVerifiedAt?: string | null;
+};
+
+export type RustAgentCreateNodeOwned = {
+  normalizedAgentRuntimeConfig: Record<string, unknown>;
+  instructionsBundle?: RustAgentCreateInstructionsBundle;
+  avatarIcon?: string;
+  intelligenceDefaults?: RustAgentCreateIntelligenceDefaults;
+};
+
+export type RustAgentCreateInput = {
+  name?: string;
+  role: string;
+  title?: string | null;
+  capabilities?: string | null;
+  agentRuntimeType: string;
+  agentRuntimeConfig: Record<string, unknown>;
+  runtimeConfig: Record<string, unknown>;
+  budgetMonthlyCents: number;
+  permissions: {
+    canCreateAgents: boolean;
+    canManageSkills: boolean;
+  };
+  metadata?: Record<string, unknown> | null;
+  desiredSkills?: string[];
+  nodeOwned?: RustAgentCreateNodeOwned;
+};
+
+export type RustAgentCreateCommand = {
+  operation: "create";
+  orgId: string;
+  input: RustAgentCreateInput;
+};
+
+/**
+ * Build the private AgentCore command from server-owned preparation facts.
+ * Keeping this as an explicit allowlist prevents a public request's `icon`,
+ * `status`, `nodeOwned`, secret, or instruction-shaped fields from crossing
+ * the bridge accidentally.
+ */
+export function buildRustAgentCreateCommand(
+  orgId: string,
+  input: RustAgentCreateInput,
+): RustAgentCreateCommand {
+  const output: RustAgentCreateInput = {
+    role: input.role,
+    agentRuntimeType: input.agentRuntimeType,
+    agentRuntimeConfig: input.agentRuntimeConfig,
+    runtimeConfig: input.runtimeConfig,
+    budgetMonthlyCents: input.budgetMonthlyCents,
+    permissions: {
+      canCreateAgents: input.permissions.canCreateAgents,
+      canManageSkills: input.permissions.canManageSkills,
+    },
+  };
+  if (input.name !== undefined) output.name = input.name;
+  if (input.title !== undefined) output.title = input.title;
+  if (input.capabilities !== undefined) output.capabilities = input.capabilities;
+  if (input.metadata !== undefined) output.metadata = input.metadata;
+  if (input.desiredSkills !== undefined) output.desiredSkills = [...input.desiredSkills];
+  if (input.nodeOwned !== undefined) {
+    output.nodeOwned = {
+      normalizedAgentRuntimeConfig: input.nodeOwned.normalizedAgentRuntimeConfig,
+      ...(input.nodeOwned.instructionsBundle
+        ? { instructionsBundle: {
+          entryFile: input.nodeOwned.instructionsBundle.entryFile,
+          files: { ...input.nodeOwned.instructionsBundle.files },
+          ...(input.nodeOwned.instructionsBundle.clearLegacyPromptTemplate !== undefined
+            ? { clearLegacyPromptTemplate: input.nodeOwned.instructionsBundle.clearLegacyPromptTemplate }
+            : {}),
+        } }
+        : {}),
+      ...(input.nodeOwned.avatarIcon !== undefined ? { avatarIcon: input.nodeOwned.avatarIcon } : {}),
+      ...(input.nodeOwned.intelligenceDefaults
+        ? { intelligenceDefaults: { ...input.nodeOwned.intelligenceDefaults } }
+        : {}),
+    };
+  }
+  return { operation: "create", orgId, input: output };
+}
+
 export interface RustFoundationBridge {
   runtimeBinding?(actor: RustFoundationActor, orgId: string, input: RuntimeBindingInput): Promise<RustFoundationResponse>;
   automationRead?(actor: RustFoundationActor, orgId: string, input: AutomationReadInput): Promise<RustFoundationResponse>;
@@ -71,6 +163,7 @@ export interface RustFoundationBridge {
   activityRead?(actor: RustFoundationActor, orgId: string, input: ActivityReadInput): Promise<RustFoundationResponse>;
   runWorkspaceOrdinaryUpdate?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   agentCore?(actor: RustFoundationActor, input: Record<string, unknown>): Promise<RustFoundationResponse>;
+  agentCreate?(actor: RustFoundationActor, command: RustAgentCreateCommand): Promise<RustFoundationResponse>;
   readonly mode: RustFoundationMode;
   readonly organizationBrandingMode: RustFoundationMode;
   readonly projectGoalSetMode: RustFoundationMode;
@@ -629,6 +722,34 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     await start();
   });
 
+  async function requestAgentCore(
+    actor: RustFoundationActor,
+    input: Record<string, unknown>,
+  ): Promise<RustFoundationResponse> {
+    await ensureStarted();
+    if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+    const requestPath = "/internal/agent-core";
+    const body = Buffer.from(JSON.stringify({ ...input, actorRunId: actor.runId ?? null,
+      localImplicit: actor.type === "board" && actor.source === "local_implicit", canonicalLocale: Intl.Collator().resolvedOptions().locale }), "utf8");
+    const requestId = randomUUID();
+    const envelope = createRustActorEnvelope({ actor, organizationId: "agent-core", method: "POST", path: requestPath,
+      action: "agent.core.execute", body, secret: actorEnvelopeKey, requestId, allowAnonymous: true });
+    try {
+      const response = await fetch(`${baseUrl}${requestPath}`, { method: "POST", headers: {
+        "content-type": "application/json", "x-rudder-actor-envelope": JSON.stringify(envelope), "x-rudder-request-id": requestId },
+        body: body as unknown as BodyInit,
+        // Detail/permissions and create retain the legacy lock wait. An
+        // admitted create may commit several organization-wide side effects;
+        // aborting the fetch would make a successful commit indistinguishable
+        // from a failed request and make a retry unsafe. Explicit caller
+        // timeouts remain available for read/resolve operations.
+        signal: input.operation === "create"
+          || (input.resolveOnly !== true && ["detail", "me", "permissions"].includes(String(input.operation)) && options.requestTimeoutMs === undefined)
+          ? undefined : AbortSignal.timeout(requestTimeoutMs) });
+      return { status: response.status, contentType: response.headers.get("content-type") ?? "application/json", body: Buffer.from(await response.arrayBuffer()) };
+    } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust Agent core request failed", { cause: error }); }
+  }
+
   const close = (): Promise<void> => enqueueLifecycle(async () => {
     lifecycleState = "closing";
     const current = child;
@@ -788,26 +909,21 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust run workspace update request failed", { cause: error }); }
     },
     async agentCore(actor, input) {
-      await ensureStarted();
-      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
-      const requestPath = "/internal/agent-core";
-      const body = Buffer.from(JSON.stringify({ ...input, actorRunId: actor.runId ?? null,
-        localImplicit: actor.type === "board" && actor.source === "local_implicit", canonicalLocale: Intl.Collator().resolvedOptions().locale }), "utf8");
-      const requestId = randomUUID();
-      const envelope = createRustActorEnvelope({ actor, organizationId: "agent-core", method: "POST", path: requestPath,
-        action: "agent.core.execute", body, secret: actorEnvelopeKey, requestId, allowAnonymous: true });
-      try {
-        const response = await fetch(`${baseUrl}${requestPath}`, { method: "POST", headers: {
-          "content-type": "application/json", "x-rudder-actor-envelope": JSON.stringify(envelope), "x-rudder-request-id": requestId },
-          body: body as unknown as BodyInit,
-          // These operations retain the legacy ten-second filesystem-lock wait
-          // and migration I/O without a new total deadline. A short timer can report a
-          // false failure while the admitted transaction is still committing.
-          // Explicit caller timeouts remain an opt-in with ambiguous outcomes.
-          signal: input.resolveOnly !== true && ["detail", "me", "permissions"].includes(String(input.operation)) && options.requestTimeoutMs === undefined
-            ? undefined : AbortSignal.timeout(requestTimeoutMs) });
-        return { status: response.status, contentType: response.headers.get("content-type") ?? "application/json", body: Buffer.from(await response.arrayBuffer()) };
-      } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust Agent core request failed", { cause: error }); }
+      return requestAgentCore(actor, input);
+    },
+    async agentCreate(actor, command) {
+      return requestAgentCore(actor, {
+        operation: command.operation,
+        orgId: command.orgId,
+        id: null,
+        revisionId: null,
+        keyId: null,
+        query: {},
+        input: command.input,
+        deploymentMode: options.publicIngress?.deploymentMode ?? "authenticated",
+        homeDirectory: homedir(),
+        processWorkingDirectory: process.cwd(),
+      });
     },
     async goalRead(actor, orgId, input) {
       await ensureStarted();

@@ -7,11 +7,54 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildRustAgentCreateCommand,
   createRustActorEnvelope,
   createRustFoundationBridge,
   type RustFoundationBridge,
   type RustPublicIngressOptions,
 } from "./rust-foundation-bridge.js";
+
+describe("Rust Agent create command boundary", () => {
+  it("copies only server-owned AgentCore fields and never forwards client pseudo-fields", () => {
+    const command = buildRustAgentCreateCommand("org-1", {
+      name: "Prepared",
+      role: "engineer",
+      title: null,
+      capabilities: null,
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: { model: "safe" },
+      runtimeConfig: {},
+      budgetMonthlyCents: 100,
+      permissions: { canCreateAgents: true, canManageSkills: true },
+      metadata: { source: "test" },
+      desiredSkills: ["org:org-1/skill"],
+      nodeOwned: {
+        normalizedAgentRuntimeConfig: { model: "safe" },
+        avatarIcon: "oreo:bloom:rose-milk:10000000-0000-4000-8000-000000000001",
+        instructionsBundle: {
+          entryFile: "SOUL.md",
+          files: { "SOUL.md": "# prepared" },
+          clearLegacyPromptTemplate: true,
+        },
+      },
+    });
+
+    expect(command).toEqual({
+      operation: "create",
+      orgId: "org-1",
+      input: expect.objectContaining({
+        name: "Prepared",
+        role: "engineer",
+        desiredSkills: ["org:org-1/skill"],
+        nodeOwned: expect.objectContaining({ avatarIcon: expect.stringContaining("oreo:") }),
+      }),
+    });
+    expect(command.input).not.toHaveProperty("icon");
+    expect(command.input).not.toHaveProperty("status");
+    expect(command.input).not.toHaveProperty("secret");
+    expect(command.input.nodeOwned).not.toHaveProperty("secret");
+  });
+});
 
 vi.mock("node:url", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:url")>();
@@ -76,7 +119,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url === "/internal/run-workspace-ordinary-update" || req.url?.includes("/goal-reads") || req.url?.includes("/workspace/backup-reads") || req.url?.includes("/cost-reads") || req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
+    if (req.url === "/internal/run-workspace-ordinary-update" || req.url === "/internal/agent-core" || req.url?.includes("/goal-reads") || req.url?.includes("/workspace/backup-reads") || req.url?.includes("/cost-reads") || req.url?.includes("/project-reads") || req.url?.includes("/members") || req.url?.includes("/workspace/backups") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -261,6 +304,40 @@ afterEach(async () => {
 
 describe("rust foundation bridge lifecycle", () => {
 
+  it("sends typed Agent create commands through the private AgentCore route", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture);
+    const actor = { type: "board" as const, userId: "local-board", source: "local_implicit" as const, sessionId: "local-implicit" };
+    const command = buildRustAgentCreateCommand("org-1", {
+      role: "engineer",
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      budgetMonthlyCents: 0,
+      permissions: { canCreateAgents: true, canManageSkills: true },
+      nodeOwned: { normalizedAgentRuntimeConfig: {}, avatarIcon: "oreo:bloom:rose-milk:10000000-0000-4000-8000-000000000001" },
+    });
+
+    const response = await bridge.agentCreate!(actor, command);
+    const captured = await fixture.readRequest();
+    expect(response.status).toBe(201);
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("/internal/agent-core");
+    const body = JSON.parse(captured.body);
+    expect(body.operation).toBe("create");
+    expect(body.orgId).toBe("org-1");
+    expect(body.input.nodeOwned.avatarIcon).toContain("oreo:");
+    expectEnvelopeSignedWith(captured, {
+      actor,
+      organizationId: "agent-core",
+      method: "POST",
+      path: "/internal/agent-core",
+      action: "agent.core.execute",
+      body: Buffer.from(captured.body),
+      allowAnonymous: true,
+    }, "bridge-test-secret");
+  });
+
   it("signs only a metadata stringify RangeError as a deferred encoding failure", async () => {
     const fixture = await createFixture("ready"); const bridge = createBridge(fixture);
     const actor = { type: "board" as const, userId: "local-board", source: "local_implicit" as const, sessionId: "local-implicit" };
@@ -397,6 +474,28 @@ describe("rust foundation bridge lifecycle", () => {
     await bridge.start();
     await expect(bridge.workspaceBackupList(req, "organization-backup-list"))
       .rejects.toMatchObject({ code: "request_failed" });
+  });
+
+  it("does not abort delayed Agent create commits at the bridge request timeout", async () => {
+    const fixture = await createFixture("delayed");
+    const bridge = createBridge(fixture, { requestTimeoutMs: 20 });
+    const actor = {
+      type: "board" as const,
+      userId: "board-user",
+      source: "local_implicit" as const,
+      sessionId: "board-session",
+      authEpoch: 7,
+    };
+
+    await expect(bridge.agentCreate!(actor, buildRustAgentCreateCommand("organization-1", {
+      name: "Delayed create",
+      role: "general",
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      budgetMonthlyCents: 0,
+      permissions: { canCreateAgents: true, canManageSkills: true },
+    }))).resolves.toMatchObject({ status: 201 });
   });
 
   it("owns an explicitly requested public listener and clears its identity on shutdown", async () => {
