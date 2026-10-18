@@ -996,17 +996,23 @@ W09 or the six-runtime completion requirement.
 
 ### October 18 Codex and Hermes acceptance status
 
-Candidate `5bb50b9ad` has passing synthetic Rust public-ingress journeys for
-Codex and Hermes, including continuation and restart persistence. Those tests
-use the repository's controlled provider fixtures and are supporting evidence
-only. An independent probe of the installed Codex App Server (`0.163.0-alpha.10.2`)
-with a disposable profile reached `initialize` and `thread/start`, but provider
-turn events returned HTTP 401 because the isolated process had no provider
-credential; no terminal reply was observed. Therefore the installed-runtime
-three-turn acceptance remains open and must be rerun with the user's authorized
-local profile without printing or copying credentials. This milestone does not
-close the remaining four adapters, full product journeys, independent final
-review, or required CI gates.
+The exact candidate `706e1c8b7` was exercised through the local Rust public
+ingress at `127.0.0.1:3318` against the user's installed profiles and embedded
+PostgreSQL. Codex (`0.163.0-alpha.10.2`) completed the first and continuation
+turns as `native_rust` Runs and projected both assistant replies. After the
+Node/Rust runtime restart, the next browser Send was rejected by the product;
+the UI showed the explicit retry banner and no third Run or assistant reply was
+persisted. Hermes (`0.21.0`) completed the first real ACP turn, but the same
+session continuation ended as a failed `native_rust` Run with no assistant
+projection; the UI placed the conversation under Failed runs.
+
+The independent verifier bound to the same SHA, build, runtime, and disposable
+database returned terminal `FAIL`. The real installed-runtime acceptance is
+therefore still open: Codex must accept and complete the post-restart turn, and
+Hermes must complete the same-session continuation with a projected assistant
+reply. Synthetic fixture passes remain supporting evidence only. This milestone
+does not close the remaining four adapters, full product journeys, independent
+final review, or required CI gates.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
