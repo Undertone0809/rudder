@@ -383,7 +383,6 @@ export function chatGenerationProtocolService(db: Db) {
       return { generation, checkpoint, projection };
     });
   }
-
   async function recordClientCheckpoint(input: {
     orgId: string;
     conversationId: string;
@@ -398,6 +397,7 @@ export function chatGenerationProtocolService(db: Db) {
     return db.transaction(async (tx) => {
       const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, input);
+      if (generation.executionAuthority === "native_rust") throw conflict("Native Rust owns Chat generation checkpoints");
       if (!(OUTPUT_ADMITTING_GENERATION_STATUSES as readonly string[]).includes(generation.status)) {
         throw conflict("Chat generation checkpoint arrived after output admission closed");
       }
@@ -1916,7 +1916,6 @@ export function chatGenerationProtocolService(db: Db) {
       return updated;
     });
   }
-
   async function recoverStaleControlOwners(input: {
     now?: Date;
     limit?: number;
@@ -1927,6 +1926,7 @@ export function chatGenerationProtocolService(db: Db) {
       .select({ id: chatGenerations.id, orgId: chatGenerations.orgId })
       .from(chatGenerations)
       .where(and(
+        eq(chatGenerations.executionAuthority, "legacy_ts"),
         inArray(chatGenerations.status, RECOVERABLE_CONTROL_GENERATION_STATUSES),
         isNotNull(chatGenerations.controlOwnerToken),
         input.assumeAllOwnersStale

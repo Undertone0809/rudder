@@ -116,7 +116,7 @@ function auditArchitecture(options) {
   const baseline = options.baseline ? readBaseline(options.baseline) : null;
   const baselineRegressions = baseline ? findRegressions(oversizedFiles, baseline) : [];
   const comparison = options.compareRef
-    ? compareOversizedFilesToRef(root, oversizedFiles, options.compareRef, options.maxLines)
+    ? compareOversizedFilesToRef(root, oversizedFiles, options.compareRef, options.maxLines, baseline?.comparisonDebtExceptions)
     : null;
   const regressions = comparison?.regressions ?? baselineRegressions;
   const governanceViolations = baseline
@@ -145,7 +145,7 @@ function auditArchitecture(options) {
   };
 }
 
-function compareOversizedFilesToRef(root, oversizedFiles, comparisonRef, maxLines) {
+function compareOversizedFilesToRef(root, oversizedFiles, comparisonRef, maxLines, comparisonDebtExceptions = new Map()) {
   let baseRef;
   try {
     baseRef = execFileSync("git", ["-C", root, "merge-base", comparisonRef, "HEAD"], {
@@ -168,6 +168,8 @@ function compareOversizedFilesToRef(root, oversizedFiles, comparisonRef, maxLine
   }
   const regressions = [];
   for (const entry of oversizedFiles) {
+    const exception = comparisonDebtExceptions.get(entry.path);
+    if (exception && entry.lines <= exception.lines) continue;
     const baselinePath = renamedPaths.get(entry.path) ?? entry.path;
     const baselineLines = readGitFileLineCount(root, baseRef, baselinePath);
     if (baselineLines === null) {
@@ -292,7 +294,12 @@ function readBaseline(filePath) {
     oversizedFileLines.set(entry.path, entry.lines);
   }
 
-  return { entries, maxLines: parsed?.maxLines, oversizedFileLines };
+  const comparisonDebtExceptions = new Map(
+    (Array.isArray(parsed?.comparisonDebtExceptions) ? parsed.comparisonDebtExceptions : [])
+      .filter((entry) => typeof entry?.path === "string" && Number.isInteger(entry.lines))
+      .map((entry) => [entry.path, entry]),
+  );
+  return { entries, maxLines: parsed?.maxLines, oversizedFileLines, comparisonDebtExceptions };
 }
 
 function validateDebtInventory({ baseline, baselinePath, comparisonBase, maxLines, oversizedFiles, root }) {
@@ -348,6 +355,30 @@ function validateDebtInventory({ baseline, baselinePath, comparisonBase, maxLine
   for (const entryPath of entriesByPath.keys()) {
     if (!oversizedPaths.has(entryPath)) {
       violations.push({ path: entryPath, reason: "stale debt exception for a file at or below the threshold" });
+    }
+  }
+
+  for (const [entryPath, entry] of baseline.comparisonDebtExceptions ?? new Map()) {
+    if (!oversizedPaths.has(entryPath)) {
+      violations.push({ path: entryPath, reason: "stale comparison debt exception for a file at or below the threshold" });
+      continue;
+    }
+    if (!Number.isInteger(entry.lines) || entry.lines <= maxLines) {
+      violations.push({ path: entryPath, reason: `comparison debt exception lines must be an integer above ${maxLines}` });
+    }
+    for (const field of ["owner", "rationale", "target"]) {
+      if (typeof entry[field] !== "string" || entry[field].trim().length === 0) {
+        violations.push({ path: entryPath, reason: `comparison debt exception is missing ${field}` });
+      }
+    }
+    const expiryTimestamp = typeof entry.expiry === "string" ? Date.parse(`${entry.expiry}T00:00:00Z`) : Number.NaN;
+    const normalizedExpiry = Number.isNaN(expiryTimestamp)
+      ? null
+      : new Date(expiryTimestamp).toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.expiry ?? "") || normalizedExpiry !== entry.expiry) {
+      violations.push({ path: entryPath, reason: "comparison debt exception expiry must use YYYY-MM-DD" });
+    } else if (entry.expiry < today) {
+      violations.push({ path: entryPath, reason: `comparison debt exception expired on ${entry.expiry}` });
     }
   }
 

@@ -97,6 +97,81 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
   }),
 });
 
+const LEGACY_FENCE_CHANGE_KINDS = new Set([
+  "target_advisory_lock",
+  "native_chat_queue_guard_helper",
+  "native_chat_conversation_authority_helper",
+  "native_chat_generation_hint_helper",
+  "native_chat_queued_message_hint_helper",
+  "native_chat_conversation_id_hint_helper",
+  "native_chat_queue_guard_callsite",
+  "native_chat_run_attempt_admission",
+  "native_chat_side_chat_retention",
+  "existing_operation_mapping",
+]);
+const TARGET_LOCK_RECEIVERS = new Set(["tx"]);
+
+// These body digests are the only code allowed to implement the temporary
+// Native Chat negative fence. They are trusted policy literals, not values
+// supplied by reviewed_legacy_fence_changes. Updating one requires a separate
+// exact-source review of the helper body.
+// Exact reviewed caller files bind each negative guard, its argument aliases,
+// and the existing writer to one source contract. Inventory records cannot
+// update these pins. A caller edit needs a separately reviewed policy change;
+// the lexical checks below do not attempt general argument/data-flow proof.
+const TRUSTED_NATIVE_CHAT_FENCE_CALLERS = Object.freeze({
+  "server/src/services/chats.annotation-persistence.ts": "94c30f2e90d6f79b5b71e101e683914bab0723140656b39b49624094e95aabfd",
+  "server/src/services/chats.ts": "0ee118bb6d19b12c53a90a1c862a419ca2d938b56bc67b9b0df70780592a97a2",
+  "server/src/services/chat-generation-protocol.ts": "96ea9f4e2cc1e8ed63a22ec7fda76311bfcfe3f2d6f724ba203a02f30072f04d",
+  "server/src/services/chats.queued-message-create.ts": "7ca4c03b504f383750d452d7e09e0a51c9e059e76879eaefd7527f6e38f910b6",
+  "server/src/services/chat-steer-messages.ts": "eac974850d555f7fe3e3001e1518954e1df67d7993d495d03c11639a92d78611"
+});
+
+const TRUSTED_NATIVE_CHAT_HELPERS = Object.freeze({
+  lockLegacyNativeChatQueueTarget: Object.freeze({
+    path: "server/src/services/organization-mutation-fence.ts",
+    parameters: ["tx: TransactionClient", "organizationId: string", "conversationId: string"],
+    body_sha256: "eec4d580d06e7beb1fad0eb0cf05fc4358eadc7614e6a0bbb9bc7fd9a20c44a4",
+    surfaces: [
+      ["database_call_candidate", "execute", 3],
+      ["database_write_candidate", "execute", 3],
+    ],
+  }),
+  assertLegacyChatConversationAuthority: Object.freeze({
+    path: "server/src/services/chats.ts",
+    parameters: ["tx: any", "orgId: string", "conversationId: string"],
+    body_sha256: "031405e0595b803c2c575541d6b9b873acc1967f96e9ff468f71ac26c32888c8",
+    surfaces: [],
+    record_kind: "native_chat_conversation_authority_helper",
+    helper_reference: "queue_helper_id",
+  }),
+  assertLegacyChatGenerationAuthority: Object.freeze({
+    path: "server/src/services/chats.ts",
+    parameters: ["tx: any", "orgId: string", "generationId: string"],
+    body_sha256: "376ee9a168d578a5165886a1ba68d0f7edb26c5dfdfde214cb0ea646b7725708",
+    surfaces: [["database_call_candidate", "select", 1]],
+    record_kind: "native_chat_generation_hint_helper",
+    helper_reference: "conversation_helper_id",
+  }),
+  assertLegacyQueuedMessageAuthority: Object.freeze({
+    path: "server/src/services/chats.ts",
+    parameters: ["tx: any", "itemId: string", "expected?: { orgId?: string; conversationId?: string }"],
+    body_sha256: "f34fcb0cfc5f4ac89af18089874104361ce703acba93bdaefb6a3111b57f8602",
+    surfaces: [["database_call_candidate", "select", 1]],
+    record_kind: "native_chat_queued_message_hint_helper",
+    helper_reference: "conversation_helper_id",
+  }),
+  assertLegacyChatConversationIdAuthority: Object.freeze({
+    path: "server/src/services/chats.ts",
+    parameters: ["tx: any", "conversationId: string"],
+    body_sha256: "6eb6475e91f99c34877657c1562e0988dfe7128889f318f1c7422cc139de2fa9",
+    surfaces: [["database_call_candidate", "select", 1]],
+    record_kind: "native_chat_conversation_id_hint_helper",
+    helper_reference: "conversation_helper_id",
+  }),
+});
+
+
 // These existing Electron identity-policy modules are retained client code,
 // not Node backend adapters. Keep this allowlist explicit so new Desktop
 // runtime files cannot enter through the retained-client review path.
@@ -749,7 +824,7 @@ function scanSource(relativePath, source) {
   return { surfaces, unknown };
 }
 
-function buildInventory(rootPath, reviewedNodeChanges = [], reviewedTransportAdmissions) {
+function buildInventory(rootPath, reviewedNodeChanges = [], reviewedTransportAdmissions, reviewedLegacyFenceChanges = []) {
   const sources = readCurrentSources(rootPath);
   const migrations = readCurrentMigrations(rootPath);
   const manifest = [];
@@ -838,6 +913,7 @@ function buildInventory(rootPath, reviewedNodeChanges = [], reviewedTransportAdm
       reason: "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance.",
     },
     reviewed_node_changes: reviewedNodeChanges,
+    reviewed_legacy_fence_changes: reviewedLegacyFenceChanges,
   };
   if (reviewedTransportAdmissions !== undefined) inventory.reviewed_transport_admissions = reviewedTransportAdmissions;
   return inventory;
@@ -853,13 +929,19 @@ function readInventory(inventoryPath) {
 }
 
 function stableGeneratedPart(inventory) {
-  const { reviewed_node_changes: _nodeRecords, reviewed_transport_admissions: _transportRecords, ...generated } = inventory;
+  const {
+    reviewed_node_changes: _nodeRecords,
+    reviewed_transport_admissions: _transportRecords,
+    reviewed_legacy_fence_changes: _legacyFenceRecords,
+    ...generated
+  } = inventory;
   return generated;
 }
 
 function writeInventory(inventoryPath, current, prior) {
   fs.mkdirSync(path.dirname(inventoryPath), { recursive: true });
   const output = { ...current, reviewed_node_changes: prior?.reviewed_node_changes ?? [] };
+  output.reviewed_legacy_fence_changes = prior?.reviewed_legacy_fence_changes ?? [];
   if (prior && Object.hasOwn(prior, "reviewed_transport_admissions")) {
     output.reviewed_transport_admissions = prior.reviewed_transport_admissions;
   }
@@ -1151,6 +1233,831 @@ function validateRetainedClientRecord(record, sourcePath, baseHash, headHash) {
   return problems;
 }
 
+const LEGACY_FENCE_RECORD_FIELDS = new Set([
+  "id", "path", "base_sha256", "head_sha256", "change_kind", "semantic_operation", "transaction_mapping_id",
+  "base_surface", "head_surface", "head_surfaces", "base_protected_surface", "head_protected_surface", "head_guard_callsite", "guard_helper_id",
+  "helper_name", "queue_helper_id", "conversation_helper_id",
+  "rust_authority", "compatibility_boundary", "retirement_criterion", "reviewer", "review_reference", "review_status",
+]);
+
+function exactSurfaceRef(surface) {
+  return surface && typeof surface === "object"
+    && typeof surface.type === "string" && typeof surface.signature === "string"
+    && Number.isInteger(surface.line) && surface.line > 0
+    && Object.keys(surface).length === 3
+    && Object.hasOwn(surface, "type") && Object.hasOwn(surface, "signature") && Object.hasOwn(surface, "line")
+    ? { type: surface.type, signature: surface.signature, line: surface.line }
+    : null;
+}
+
+function sameSurfaceRef(left, right) {
+  return Boolean(left && right && left.type === right.type
+    && left.signature === right.signature && left.line === right.line);
+}
+
+function hasSurface(inventory, sourcePath, reference) {
+  return inventory.structural_surfaces.some((surface) => surface.source === sourcePath
+    && sameSurfaceRef(surface, reference));
+}
+
+function findMappedTransactionSurface(record, baseInventory, headInventory) {
+  const mapping = (headInventory.reviewed_legacy_fence_changes ?? []).find((entry) => entry?.id === record.transaction_mapping_id
+    && entry?.path === record.path && entry?.change_kind === "existing_operation_mapping");
+  const reference = exactSurfaceRef(mapping?.head_surface);
+  if (!reference) return null;
+  return headInventory.structural_surfaces.find((surface) => surface.source === record.path
+    && surface.type === "database_call_candidate" && surface.method === "transaction" && sameSurfaceRef(surface, reference)) ?? null;
+}
+
+function sourceCallsiteForSurface(source, reference) {
+  if (typeof source !== "string" || !reference) return null;
+  const tokens = tokenize(source);
+  const getLine = lineLocator(source);
+  const matches = [];
+  for (let index = 1; index + 2 < tokens.length; index += 1) {
+    if (![".", "?."].includes(tokens[index].value)
+      || tokens[index + 1]?.value !== reference.method
+      || tokens[index + 2]?.value !== "(") continue;
+    const receiver = tokens[index - 1]?.value;
+    if (receiver !== reference.receiver || getLine(tokens[index + 1].start) !== reference.line) continue;
+    let args = callArguments(tokens, index + 2);
+    if (!args) continue;
+    let endIndex = args.closeIndex;
+    let cursor = endIndex + 1;
+    while ([".", "?."].includes(tokens[cursor]?.value)
+      && tokens[cursor + 1]?.kind === "identifier" && tokens[cursor + 2]?.value === "(") {
+      args = callArguments(tokens, cursor + 2);
+      if (!args) break;
+      endIndex = args.closeIndex;
+      cursor = endIndex + 1;
+    }
+    const receiverIndex = index - 1;
+    matches.push(normalizedTokens(tokens, source, receiverIndex, endIndex + 1));
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function sourceSpanForSurface(source, reference) {
+  if (typeof source !== "string" || !reference) return null;
+  const tokens = tokenize(source);
+  const getLine = lineLocator(source);
+  const matches = [];
+  for (let index = 1; index + 2 < tokens.length; index += 1) {
+    if (![".", "?."].includes(tokens[index].value)
+      || tokens[index + 1]?.value !== reference.method
+      || tokens[index + 2]?.value !== "(") continue;
+    if (tokens[index - 1]?.value !== reference.receiver || getLine(tokens[index + 1].start) !== reference.line) continue;
+    let args = callArguments(tokens, index + 2);
+    if (!args) continue;
+    let endIndex = args.closeIndex;
+    let cursor = endIndex + 1;
+    while ([".", "?."].includes(tokens[cursor]?.value)
+      && tokens[cursor + 1]?.kind === "identifier" && tokens[cursor + 2]?.value === "(") {
+      args = callArguments(tokens, cursor + 2);
+      if (!args) break;
+      endIndex = args.closeIndex;
+      cursor = endIndex + 1;
+    }
+    const startIndex = index - 1;
+    matches.push({
+      start: tokens[startIndex].start,
+      end: tokens[endIndex].end,
+      signature: normalizedTokens(tokens, source, startIndex, endIndex + 1),
+    });
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function splitCallArguments(tokens, openIndex) {
+  const closeIndex = findMatchingToken(tokens, openIndex, "(", ")");
+  if (closeIndex < 0) return null;
+  const result = [];
+  let start = openIndex + 1;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
+  for (let index = openIndex + 1; index < closeIndex; index += 1) {
+    const value = tokens[index].value;
+    if (value === "(") parenDepth += 1;
+    else if (value === ")") parenDepth -= 1;
+    else if (value === "[") bracketDepth += 1;
+    else if (value === "]") bracketDepth -= 1;
+    else if (value === "{") braceDepth += 1;
+    else if (value === "}") braceDepth -= 1;
+    else if (value === "," && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      result.push([start, index]);
+      start = index + 1;
+    }
+  }
+  if (start < closeIndex) result.push([start, closeIndex]);
+  return { ranges: result, closeIndex };
+}
+
+function normalizedRange(tokens, source, range) {
+  return range && range[0] < range[1] ? normalizedTokens(tokens, source, range[0], range[1]) : "";
+}
+
+function sourceCallByName(source, name, line) {
+  const tokens = tokenize(source);
+  const getLine = lineLocator(source);
+  const matches = [];
+  for (let index = 0; index + 1 < tokens.length; index += 1) {
+    if (tokens[index].value !== name || tokens[index + 1]?.value !== "(") continue;
+    if (getLine(tokens[index].start) !== line) continue;
+    const closeIndex = findMatchingToken(tokens, index + 1, "(", ")");
+    if (closeIndex < 0) continue;
+    let startIndex = index;
+    if ([".", "?."].includes(tokens[index - 1]?.value)) startIndex = index - 2;
+    const args = callArguments(tokens, index + 1);
+    matches.push({
+      start: tokens[startIndex].start,
+      end: tokens[closeIndex].end,
+      signature: normalizedTokens(tokens, source, startIndex, closeIndex + 1),
+      awaited: tokens[index - 1]?.value === "await",
+      argCount: args?.argCount ?? 0,
+      arguments: args ? Array.from({ length: args.argCount }, (_, argIndex) => {
+        const ranges = splitCallArguments(tokens, index + 1)?.ranges ?? [];
+        return normalizedRange(tokens, source, ranges[argIndex]);
+      }) : [],
+      tokens,
+      nameIndex: index,
+      openIndex: index + 1,
+      closeIndex,
+    });
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function functionBodyRange(source, functionName) {
+  const tokens = tokenize(source);
+  const matches = [];
+  for (let index = 0; index + 2 < tokens.length; index += 1) {
+    if (tokens[index].value !== "function" || tokens[index + 1]?.value !== functionName
+      || tokens[index + 2]?.value !== "(") continue;
+    const paramsEnd = findMatchingToken(tokens, index + 2, "(", ")");
+    if (paramsEnd < 0) continue;
+    let bodyStart = paramsEnd + 1;
+    while (bodyStart < tokens.length && tokens[bodyStart].value !== "{") bodyStart += 1;
+    const bodyEnd = findMatchingToken(tokens, bodyStart, "{", "}");
+    if (bodyEnd < 0) continue;
+    matches.push({ start: tokens[bodyStart].start, end: tokens[bodyEnd].end, tokens, bodyStart, bodyEnd });
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function exactAsyncFunctionParameters(source, functionName, expectedParameters) {
+  const tokens = tokenize(source);
+  const matches = [];
+  for (let index = 0; index + 2 < tokens.length; index += 1) {
+    if (tokens[index].value !== "function" || tokens[index + 1]?.value !== functionName
+      || tokens[index + 2]?.value !== "(") continue;
+    const args = splitCallArguments(tokens, index + 2);
+    if (!args) continue;
+    const parameters = args.ranges.map((range) => normalizedRange(tokens, source, range));
+    const isAsync = tokens[index - 1]?.value === "async";
+    matches.push({ parameters, isAsync });
+  }
+  return matches.length === 1 && matches[0].isAsync
+    && matches[0].parameters.length === expectedParameters.length
+    && matches[0].parameters.every((value, index) => value === expectedParameters[index]);
+}
+
+function trustedHelperKind(functionName) {
+  if (functionName === "lockLegacyNativeChatQueueTarget") return "native_chat_queue_guard_helper";
+  return TRUSTED_NATIVE_CHAT_HELPERS[functionName]?.record_kind ?? null;
+}
+
+function trustedHelperBodyMatches(source, sourcePath, functionName) {
+  const policy = TRUSTED_NATIVE_CHAT_HELPERS[functionName];
+  if (!policy || sourcePath !== policy.path || !exactAsyncFunctionParameters(source, functionName, policy.parameters)) return false;
+  const body = functionBodyRange(source, functionName);
+  return Boolean(body && sha256(source.slice(body.start, body.end)) === policy.body_sha256);
+}
+
+function helperSurfaceReferences(source, sourcePath, inventory, functionName) {
+  const body = functionBodyRange(source, functionName);
+  if (!body) return null;
+  return inventory.structural_surfaces
+    .filter((surface) => surface.source === sourcePath
+      && ["database_call_candidate", "database_write_candidate"].includes(surface.type))
+    .filter((surface) => {
+      const span = sourceSpanForSurface(source, surface);
+      return span && span.start >= body.start && span.end <= body.end;
+    })
+    .map((surface) => ({ type: surface.type, signature: surface.signature, line: surface.line }))
+    .sort((left, right) => left.type.localeCompare(right.type)
+      || left.signature.localeCompare(right.signature) || left.line - right.line);
+}
+
+function helperSurfacesMatchPolicy(source, sourcePath, inventory, functionName) {
+  const body = functionBodyRange(source, functionName);
+  const spec = TRUSTED_NATIVE_CHAT_HELPERS[functionName];
+  if (!body || !spec) return false;
+  const actual = inventory.structural_surfaces.filter((surface) => surface.source === sourcePath
+    && ["database_call_candidate", "database_write_candidate"].includes(surface.type))
+    .filter((surface) => {
+      const span = sourceSpanForSurface(source, surface);
+      return span && span.start >= body.start && span.end <= body.end;
+    });
+  const counts = new Map();
+  for (const surface of actual) {
+    const key = `${surface.type}\0${surface.method}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const expected = new Map(spec.surfaces.map(([type, method, count]) => [`${type}\0${method}`, count]));
+  return actual.length === [...expected.values()].reduce((sum, count) => sum + count, 0)
+    && counts.size === expected.size
+    && [...expected].every(([key, count]) => counts.get(key) === count);
+}
+
+function sameSurfaceReferenceLists(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  const sort = (items) => items.map(exactSurfaceRef).filter(Boolean)
+    .sort((a, b) => a.type.localeCompare(b.type) || a.signature.localeCompare(b.signature) || a.line - b.line);
+  const a = sort(left);
+  const b = sort(right);
+  return a.length === left.length && b.length === right.length
+    && a.every((entry, index) => sameSurfaceRef(entry, b[index]));
+}
+
+function transactionCallbackRange(source, transactionSurface) {
+  const tokens = tokenize(source);
+  const span = sourceSpanForSurface(source, transactionSurface);
+  if (!span) return null;
+  const startIndex = tokens.findIndex((token) => token.start === span.start);
+  const openIndex = startIndex + 3;
+  const parsed = splitCallArguments(tokens, openIndex);
+  if (!parsed || parsed.ranges.length < 1) return null;
+  const [firstStart, firstEnd] = parsed.ranges[0];
+  let arrowIndex = -1;
+  for (let index = firstStart; index < firstEnd; index += 1) {
+    if (tokens[index].value === "=>") { arrowIndex = index; break; }
+  }
+  if (arrowIndex < 0) return null;
+  const blockStart = arrowIndex + 1;
+  if (tokens[blockStart]?.value !== "{") return null;
+  const blockEnd = findMatchingToken(tokens, blockStart, "{", "}");
+  return blockEnd >= 0 ? { start: tokens[blockStart].start, end: tokens[blockEnd].end } : null;
+}
+
+function exactGuardCallsite(source, reference, helperName) {
+  if (!reference || reference.type !== "guard_callsite" || !Number.isInteger(reference.line) || reference.line < 1
+    || typeof reference.signature !== "string") return null;
+  const call = sourceCallByName(source, helperName, reference.line);
+  if (!call || call.signature !== reference.signature) return null;
+  return call;
+}
+
+function importsExactRawQueueHelper(source, helperName) {
+  const tokens = tokenize(source);
+  let matches = 0;
+  for (let index = 0; index + 2 < tokens.length; index += 1) {
+    if (tokens[index].value !== "import" || tokens[index + 1]?.value !== "{") continue;
+    const close = findMatchingToken(tokens, index + 1, "{", "}");
+    if (close < 0 || tokens[close + 1]?.value !== "from" || tokens[close + 2]?.kind !== "string") continue;
+    if (tokens[close + 2].value !== "./organization-mutation-fence.js") continue;
+    const specifiers = tokens.slice(index + 2, close);
+    const names = specifiers.filter((token) => token.kind === "identifier" && token.value === helperName);
+    if (!names.length) continue;
+    if (tokens[index + 1]?.value === "type" || names.length !== 1) return false;
+    const nameIndex = tokens.indexOf(names[0]);
+    if (tokens[nameIndex + 1]?.value === "as" || tokens[nameIndex - 1]?.value === "as") return false;
+    matches += 1;
+  }
+  return matches === 1;
+}
+
+function helperNameHasOnlyDirectUses(source, helperName) {
+  const tokens = tokenize(source);
+  // A pinned helper name may occur only at its exact declaration/import or
+  // as an awaited direct call. Reject every other identifier use, including
+  // parameters, destructuring, catch bindings and aliases; declaration-only
+  // scans cannot prove which binding a protected writer actually calls.
+  const importBindings = new Set();
+  for (let index = 0; index + 2 < tokens.length; index += 1) {
+    if (tokens[index].value !== "import" || tokens[index + 1]?.value !== "{") continue;
+    const close = findMatchingToken(tokens, index + 1, "{", "}");
+    if (close < 0 || tokens[close + 1]?.value !== "from"
+      || tokens[close + 2]?.value !== "./organization-mutation-fence.js") continue;
+    for (let item = index + 2; item < close; item += 1) {
+      if (tokens[item].value === helperName) importBindings.add(item);
+    }
+  }
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index].kind !== "identifier" || tokens[index].value !== helperName) continue;
+    if (importBindings.has(index) || tokens[index - 1]?.value === "function") continue;
+    if (tokens[index - 1]?.value === "await" && tokens[index + 1]?.value === "(") continue;
+    return false;
+  }
+  return true;
+}
+
+function hasOnlyTrustedHelperBinding(source, sourcePath, helperName, helperSource = source) {
+  const spec = TRUSTED_NATIVE_CHAT_HELPERS[helperName];
+  if (!spec || !trustedHelperBodyMatches(helperSource, spec.path, helperName)) return false;
+  if (!helperNameHasOnlyDirectUses(source, helperName)) return false;
+  const tokens = tokenize(source);
+  const declarations = [];
+  for (let index = 0; index + 1 < tokens.length; index += 1) {
+    if (["const", "let", "var", "class"].includes(tokens[index].value)
+      && tokens[index + 1]?.value === helperName) declarations.push("local");
+    if (tokens[index].value === "function" && tokens[index + 1]?.value === helperName) declarations.push("function");
+  }
+  if (helperName === "lockLegacyNativeChatQueueTarget") {
+    return declarations.length === 0 && importsExactRawQueueHelper(source, helperName);
+  }
+  return sourcePath === spec.path && declarations.length === 1 && declarations[0] === "function";
+}
+
+function terminalGuardBranch(tokens, ifIndex, variable, kind) {
+  if (tokens[ifIndex]?.value !== "if" || tokens[ifIndex + 1]?.value !== "(") return false;
+  const conditionEnd = findMatchingToken(tokens, ifIndex + 1, "(", ")");
+  if (conditionEnd < 0) return false;
+  const condition = tokens.slice(ifIndex + 2, conditionEnd);
+  const expected = kind === "unavailable"
+    ? condition.length === 3 && condition[0].value === variable && condition[1].value === "!=="
+      && condition[2].kind === "string" && condition[2].value === "available"
+    : condition.length === 3 && condition[0].value === variable && condition[1].value === "==="
+      && condition[2].kind === "string" && condition[2].value === kind;
+  if (!expected) return false;
+  const statement = conditionEnd + 1;
+  if (["throw", "return"].includes(tokens[statement]?.value)) return true;
+  if (tokens[statement]?.value !== "{") return false;
+  const blockEnd = findMatchingToken(tokens, statement, "{", "}");
+  if (blockEnd < 0 || !["throw", "return"].includes(tokens[statement + 1]?.value)) return false;
+  return tokens[blockEnd + 1]?.value !== "else";
+}
+
+function braceDepthBefore(tokens, endIndex) {
+  let depth = 0;
+  for (let index = 0; index < endIndex; index += 1) {
+    if (tokens[index].value === "{") depth += 1;
+    else if (tokens[index].value === "}") depth -= 1;
+  }
+  return depth;
+}
+
+function rawGuardResultIsRejected(source, call, writerSpan, transactionRange) {
+  const tokens = call?.tokens;
+  if (!tokens || !writerSpan || !transactionRange || !call.awaited) return false;
+  const variable = tokens[call.nameIndex - 3];
+  if (tokens[call.nameIndex - 4]?.value !== "const" || variable?.kind !== "identifier"
+    || tokens[call.nameIndex - 2]?.value !== "=" || tokens[call.nameIndex - 1]?.value !== "await") return false;
+  const scopeTokens = tokens.filter((token) => token.start >= transactionRange.start && token.end <= transactionRange.end);
+  let declarations = 0;
+  for (let index = 0; index + 1 < scopeTokens.length; index += 1) {
+    if (["const", "let", "var"].includes(scopeTokens[index].value) && scopeTokens[index + 1]?.value === variable.value) declarations += 1;
+  }
+  if (declarations !== 1) return false;
+  const writerIndex = tokens.findIndex((token) => token.start === writerSpan.start);
+  if (writerIndex < 0) return false;
+  const callDepth = braceDepthBefore(tokens, call.nameIndex);
+  if (braceDepthBefore(tokens, writerIndex) !== callDepth) return false;
+  let currentDepth = braceDepthBefore(tokens, call.closeIndex + 1);
+  const checks = new Set();
+  for (let index = call.closeIndex + 1; index < tokens.length && tokens[index].start < writerSpan.start; index += 1) {
+    if (currentDepth === callDepth) {
+      for (const kind of ["missing", "native_owned", "unavailable"]) {
+        if (terminalGuardBranch(tokens, index, variable.value, kind)) checks.add(kind);
+      }
+    }
+    if (tokens[index].value === "{") currentDepth += 1;
+    else if (tokens[index].value === "}") currentDepth -= 1;
+  }
+  return checks.has("unavailable") || (checks.has("missing") && checks.has("native_owned"));
+}
+
+function exactTargetKeyBinding(source, keyName) {
+  const tokens = tokenize(source);
+  const declarations = [];
+  for (let index = 0; index + 3 < tokens.length; index += 1) {
+    if (!["const", "let", "var"].includes(tokens[index].value)
+      || tokens[index + 1]?.value !== keyName || tokens[index + 2]?.value !== "=") continue;
+    declarations.push({ kind: tokens[index].value, valueToken: tokens[index + 3], index });
+  }
+  if (declarations.length !== 1 || declarations[0].kind !== "const") return false;
+  const binding = declarations[0];
+  const expected = /^`runtime-binding:target:chat_conversation:\$\{(?:organizationId|orgId|hint\.org_id)\}:\$\{(?:conversationId|hint\.id)\}`$/;
+  if (binding.valueToken?.kind !== "template" || !binding.valueToken.interpolated || !expected.test(binding.valueToken.raw)) return false;
+  const occurrences = tokens.filter((token) => token.kind === "identifier" && token.value === keyName);
+  if (occurrences.length !== 1 || occurrences[0].start !== tokens[binding.index + 1].start) return false;
+  const interpolation = new RegExp(`\\$\\{\\s*${keyName.replace(/[$]/g, "\\$")}\\s*\\}`, "g");
+  if ([...source.matchAll(interpolation)].length !== 1) return false;
+  if (tokens.some((token, index) => token.kind === "identifier" && token.value === keyName
+    && tokens[index + 1]?.value === "=" && index !== binding.index + 1)) return false;
+  return true;
+}
+
+function validateTrustedHelperRecord(record, before, after, headInventory, pathValue) {
+  const problems = [];
+  const spec = TRUSTED_NATIVE_CHAT_HELPERS[record.helper_name];
+  if (!spec || trustedHelperKind(record.helper_name) !== record.change_kind) {
+    return ["helper name and change_kind must match one fixed Native Chat helper policy"];
+  }
+  if (pathValue !== spec.path) problems.push("Native Chat helper is restricted to its fixed existing source module");
+  if (functionBodyRange(before, record.helper_name)) problems.push("Native Chat helper must be a newly added function");
+  if (!trustedHelperBodyMatches(after, pathValue, record.helper_name)) {
+    problems.push("helper body does not match the statically trusted exact-source digest and parameter contract");
+  }
+  const dependencyName = spec.helper_reference === "queue_helper_id"
+    ? "lockLegacyNativeChatQueueTarget"
+    : spec.helper_reference === "conversation_helper_id" ? "assertLegacyChatConversationAuthority" : null;
+  if (!helperNameHasOnlyDirectUses(after, record.helper_name)
+    || (dependencyName && !helperNameHasOnlyDirectUses(after, dependencyName))) {
+    problems.push("trusted helper or dependency has a shadowing binding or indirect identifier use");
+  }
+  if (record.helper_name === "assertLegacyChatConversationAuthority"
+    && !importsExactRawQueueHelper(after, "lockLegacyNativeChatQueueTarget")) {
+    problems.push("conversation wrapper must import the trusted raw queue helper directly from its fixed module");
+  }
+  if (!helperSurfacesMatchPolicy(after, pathValue, headInventory, record.helper_name)) {
+    problems.push("helper database call/write surface counts do not match the statically trusted helper contract");
+  }
+  if (record.head_surface || !Array.isArray(record.head_surfaces)) {
+    problems.push("helper records must pin head_surfaces only");
+  } else {
+    const actual = helperSurfaceReferences(after, pathValue, headInventory, record.helper_name);
+    if (!actual || !sameSurfaceReferenceLists(record.head_surfaces, actual)) {
+      problems.push("helper head_surfaces must exactly match every database call/write surface inside the trusted helper");
+    }
+  }
+  for (const field of ["transaction_mapping_id", "base_surface", "base_protected_surface", "head_protected_surface", "head_guard_callsite"]) {
+    if (record[field] !== undefined) problems.push(`helper records cannot set ${field}`);
+  }
+  if (spec.helper_reference) {
+    if (typeof record[spec.helper_reference] !== "string" || !record[spec.helper_reference].trim()) {
+      problems.push(`helper record must reference its exact ${spec.helper_reference}`);
+    }
+    const otherReference = spec.helper_reference === "queue_helper_id" ? "conversation_helper_id" : "queue_helper_id";
+    if (record[otherReference] !== undefined) problems.push(`helper record cannot set ${otherReference}`);
+  } else if (record.queue_helper_id !== undefined || record.conversation_helper_id !== undefined) {
+    problems.push("raw queue-fence helper record cannot reference another helper");
+  }
+  return problems;
+}
+
+function exactTargetAdvisoryLock(source, surface, callsite) {
+  if (!surface || surface.method !== "execute" || !TARGET_LOCK_RECEIVERS.has(surface.receiver) || !callsite) return false;
+  const call = callsite.match(/^(tx|transaction|dbOrTx)\.execute\(sql`([\s\S]*)`\)$/i);
+  if (!call) return false;
+  const sqlText = call[2];
+  const lock = sqlText.match(/^\s*select\s+pg_advisory_xact_lock\s*\(\s*hashtextextended\s*\(\s*\$\{\s*([A-Za-z_$][\w$]*)\s*\}\s*,\s*0\s*\)\s*\)\s*$/i);
+  if (!lock) return false;
+  return exactTargetKeyBinding(source, lock[1]);
+}
+
+function validateQueueGuardCallsite(record, before, after, baseInventory, headInventory, baseSurface, headSurface, baseProtectedSurface, headProtectedSurface, headContents, trustedCallers) {
+  if (typeof after !== "string" || trustedCallers[record.path] !== sha256(after)) {
+    return ["guard-to-writer target contract does not match an exact statically trusted caller source"];
+  }
+  const problems = [];
+  if (!before || !after) return ["queue guard callsite requires the same existing source file in base and head"];
+  if (record.transaction_mapping_id === undefined || typeof record.transaction_mapping_id !== "string") {
+    problems.push("queue guard callsite must reference its exact transaction_mapping_id");
+  }
+  if (typeof record.guard_helper_id !== "string" || !record.guard_helper_id.trim()) {
+    problems.push("queue guard callsite must reference its exact guard_helper_id");
+  }
+  if (baseSurface || headSurface || record.head_surfaces) problems.push("queue guard callsite uses head_guard_callsite, not database-call surfaces");
+  if (!baseProtectedSurface || !headProtectedSurface || baseProtectedSurface.type !== "database_write_candidate"
+    || headProtectedSurface.type !== "database_write_candidate") {
+    problems.push("queue guard callsite must pin the same existing protected writer in base and head");
+    return problems;
+  }
+  if (baseProtectedSurface.signature !== headProtectedSurface.signature
+    || !hasSurface(baseInventory, record.path, baseProtectedSurface)
+    || !hasSurface(headInventory, record.path, headProtectedSurface)) {
+    problems.push("queue guard callsite protected writer must be unchanged and exact in base and head");
+    return problems;
+  }
+  const callsiteRef = record.head_guard_callsite;
+  if (!callsiteRef || callsiteRef.type !== "guard_callsite" || !Number.isInteger(callsiteRef.line)
+    || typeof callsiteRef.signature !== "string" || Object.keys(callsiteRef).length !== 3) {
+    problems.push("head_guard_callsite must pin exact type, signature, and line");
+    return problems;
+  }
+  const allowedHelpers = Object.keys(TRUSTED_NATIVE_CHAT_HELPERS);
+  const matchingCalls = allowedHelpers.map((name) => ({ name, call: exactGuardCallsite(after, callsiteRef, name) }))
+    .filter((entry) => entry.call);
+  if (matchingCalls.length !== 1) {
+    problems.push("guard callsite must be one direct call to an approved Native Chat queue guard helper");
+    return problems;
+  }
+  const guardCall = matchingCalls[0].call;
+  if (!guardCall.awaited) problems.push("queue guard call must be awaited before the protected writer");
+  const helperSpec = TRUSTED_NATIVE_CHAT_HELPERS[matchingCalls[0].name];
+  const helperSource = helperSpec?.path === record.path ? after : headContents.get(helperSpec?.path)?.content;
+  if (!hasOnlyTrustedHelperBinding(after, record.path, matchingCalls[0].name, helperSource)) {
+    problems.push("guard call must resolve to the statically trusted helper in its fixed source module");
+  }
+  const transaction = findMappedTransactionSurface(record, baseInventory, headInventory);
+  const transactionRange = transaction && transactionCallbackRange(after, transaction);
+  const writer = headInventory.structural_surfaces.find((entry) => entry.source === record.path
+    && sameSurfaceRef(entry, headProtectedSurface));
+  const writerSpan = writer && sourceSpanForSurface(after, writer);
+  if (!transactionRange || !writerSpan || guardCall.start < transactionRange.start || guardCall.end > transactionRange.end
+    || writerSpan.start < transactionRange.start || writerSpan.end > transactionRange.end) {
+    problems.push("guard call and protected writer must share one mapped transaction callback");
+  }
+  else if (guardCall.start >= writerSpan.start) problems.push("guard call must precede the protected writer inside the exact transaction callback");
+  if (matchingCalls[0].name === "lockLegacyNativeChatQueueTarget"
+    && !rawGuardResultIsRejected(after, guardCall, writerSpan, transactionRange)) {
+    problems.push("direct queue helper result must be captured once and tokenized missing/native-owned or unavailable branches must terminate before the writer");
+  }
+  return problems;
+}
+
+function validateLegacyFenceRecord(record, baseInventory, headInventory, baseContents, headContents, trustedCallers) {
+  const problems = [];
+  if (!record || typeof record !== "object" || Array.isArray(record)) return ["record must be an object"];
+  for (const key of Object.keys(record)) if (!LEGACY_FENCE_RECORD_FIELDS.has(key)) problems.push(`unsupported record field ${key}`);
+  for (const field of ["id", "path", "base_sha256", "head_sha256", "semantic_operation", "rust_authority", "compatibility_boundary", "retirement_criterion"]) {
+    if (typeof record[field] !== "string" || !record[field].trim()) problems.push(`${field} is required`);
+  }
+  if (!/^[a-z][a-z0-9_.:-]{2,95}$/.test(record.id ?? "")) problems.push("id must be a stable lowercase identifier");
+  if (!/^[a-z][a-z0-9_.:-]{2,95}$/.test(record.semantic_operation ?? "")) problems.push("semantic_operation must identify one existing operation");
+  if (!LEGACY_FENCE_CHANGE_KINDS.has(record.change_kind)) problems.push("change_kind is not a supported legacy fence change");
+  if (typeof record.path !== "string" || !record.path.startsWith("server/src/services/") || isTestOrGeneratedPath(record.path)) {
+    problems.push("legacy Native Chat fences are limited to existing server/src/services production sources");
+  }
+
+  const before = baseContents.get(record.path);
+  const after = headContents.get(record.path);
+  if (!before || !after) problems.push("legacy fence records may only bind an existing source file present in base and head");
+  if (before && record.base_sha256 !== before.sha256) problems.push("base_sha256 does not match exact base source");
+  if (after && record.head_sha256 !== after.sha256) problems.push("head_sha256 does not match exact candidate source");
+  if (before && after && before.sha256 === after.sha256) problems.push("record is stale because the source file did not change");
+
+  const baseSurface = exactSurfaceRef(record.base_surface);
+  const headSurface = exactSurfaceRef(record.head_surface);
+  const baseProtectedSurface = exactSurfaceRef(record.base_protected_surface);
+  const headProtectedSurface = exactSurfaceRef(record.head_protected_surface);
+  if (record.base_surface && !baseSurface) problems.push("base_surface must pin type, exact signature, and line");
+  if (record.head_surface && !headSurface) problems.push("head_surface must pin type, exact signature, and line");
+  if (record.base_protected_surface && !baseProtectedSurface) problems.push("base_protected_surface must pin type, exact signature, and line");
+  if (record.head_protected_surface && !headProtectedSurface) problems.push("head_protected_surface must pin type, exact signature, and line");
+
+  const requireBeforeHead = (beforeRef, afterRef) => {
+    if (!beforeRef || !afterRef) return;
+    if (!hasSurface(baseInventory, record.path, beforeRef)) problems.push("base_surface does not identify an exact base callsite");
+    if (!hasSurface(headInventory, record.path, afterRef)) problems.push("head_surface does not identify an exact candidate callsite");
+  };
+  if (record.change_kind === "existing_operation_mapping") {
+    if (record.transaction_mapping_id) problems.push("existing_operation_mapping cannot reference another transaction mapping");
+    requireBeforeHead(baseSurface, headSurface);
+    if (record.head_surfaces) problems.push("existing_operation_mapping accepts one old-to-new transaction pair");
+    if (baseSurface?.type !== "database_call_candidate" || headSurface?.type !== "database_call_candidate") {
+      problems.push("existing_operation_mapping must map database call candidates");
+    } else {
+      const oldSurface = baseInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, baseSurface));
+      const newSurface = headInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, headSurface));
+      if (oldSurface?.method !== "transaction" || newSurface?.method !== "transaction"
+        || oldSurface.receiver !== newSurface.receiver) {
+        problems.push("existing_operation_mapping must preserve the same transaction receiver and operation");
+      }
+      if (sameSurfaceRef(baseSurface, headSurface)) problems.push("existing_operation_mapping must pin a changed callback surface");
+      if (!baseProtectedSurface || !headProtectedSurface
+        || baseProtectedSurface.type !== "database_write_candidate" || headProtectedSurface.type !== "database_write_candidate") {
+        problems.push("existing_operation_mapping must pin the existing writer that identifies the semantic operation");
+      } else {
+        if (baseProtectedSurface.signature !== headProtectedSurface.signature) problems.push("mapped semantic-operation writer must remain unchanged");
+        const oldWriter = baseInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, baseProtectedSurface));
+        const newWriter = headInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, headProtectedSurface));
+        if (!oldWriter || !newWriter) problems.push("semantic-operation writer must exist at the exact base and head callsites");
+        const oldTransactionCallsite = before && oldSurface && sourceCallsiteForSurface(before.content, oldSurface);
+        const newTransactionCallsite = after && newSurface && sourceCallsiteForSurface(after.content, newSurface);
+        const oldWriterCallsite = before && oldWriter && sourceCallsiteForSurface(before.content, oldWriter);
+        const newWriterCallsite = after && newWriter && sourceCallsiteForSurface(after.content, newWriter);
+        if (!oldTransactionCallsite || !oldWriterCallsite || !oldTransactionCallsite.includes(oldWriterCallsite)) {
+          problems.push("base transaction callback must contain its exact pinned semantic-operation writer");
+        }
+        if (!newTransactionCallsite || !newWriterCallsite || !newTransactionCallsite.includes(newWriterCallsite)) {
+          problems.push("candidate transaction callback must contain its exact pinned semantic-operation writer");
+        }
+        const oldRange = transactionCallbackRange(before.content, oldSurface);
+        const newRange = transactionCallbackRange(after.content, newSurface);
+        const oldWriterSpan = sourceSpanForSurface(before.content, oldWriter);
+        const newWriterSpan = sourceSpanForSurface(after.content, newWriter);
+        if (!oldRange || !oldWriterSpan || oldWriterSpan.start < oldRange.start || oldWriterSpan.end > oldRange.end) {
+          problems.push("base semantic-operation writer must be in the exact mapped callback body");
+        }
+        if (!newRange || !newWriterSpan || newWriterSpan.start < newRange.start || newWriterSpan.end > newRange.end) {
+          problems.push("candidate semantic-operation writer must be in the exact mapped callback body");
+        }
+      }
+    }
+  } else if (record.change_kind === "target_advisory_lock") {
+    if (typeof record.transaction_mapping_id !== "string" || !record.transaction_mapping_id.trim()) problems.push("target_advisory_lock must reference its exact transaction_mapping_id");
+    if (record.base_surface || record.head_surface || !Array.isArray(record.head_surfaces) || record.head_surfaces.length !== 2) {
+      problems.push("target_advisory_lock must pin exactly its database-call and write-candidate surfaces");
+    }
+    const refs = Array.isArray(record.head_surfaces) ? record.head_surfaces.map(exactSurfaceRef) : [];
+    if (refs.some((ref) => !ref)) problems.push("head_surfaces must pin exact type, signature, and line");
+    const callRef = refs.find((ref) => ref?.type === "database_call_candidate");
+    const writeRef = refs.find((ref) => ref?.type === "database_write_candidate");
+    if (!callRef || !writeRef) problems.push("target_advisory_lock requires one database call and its scanner write candidate");
+    if (callRef && !hasSurface(headInventory, record.path, callRef)) problems.push("advisory lock database call does not match the candidate inventory");
+    if (writeRef && !hasSurface(headInventory, record.path, writeRef)) problems.push("advisory lock write candidate does not match the candidate inventory");
+    if (callRef && writeRef) {
+      const call = headInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, callRef));
+      const write = headInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, writeRef));
+      const callsite = call && after && sourceCallsiteForSurface(after.content, call);
+      if (call?.method !== "execute" || write?.method !== "execute" || call.receiver !== write.receiver
+        || call.line !== write.line || call.signature.replace("|db-call|", "|db-write-candidate|") !== write.signature) {
+        problems.push("advisory lock references must be the same exact execute call");
+      }
+      if (!after || !exactTargetAdvisoryLock(after.content, call, callsite)) {
+        problems.push("target advisory lock must use the exact transaction-scoped Native target-key SQL contract");
+      }
+    }
+    if (!baseProtectedSurface || !headProtectedSurface || baseProtectedSurface.type !== "database_write_candidate" || headProtectedSurface.type !== "database_write_candidate") {
+      problems.push("target_advisory_lock must identify the exact existing write it fences with base_protected_surface and head_protected_surface");
+    }
+    if (baseProtectedSurface && headProtectedSurface) {
+      if (baseProtectedSurface.signature !== headProtectedSurface.signature) problems.push("protected write signature must remain the same across base and head");
+      if (!hasSurface(baseInventory, record.path, baseProtectedSurface) || !hasSurface(headInventory, record.path, headProtectedSurface)) {
+        problems.push("protected write must be the same pre-existing operation in base and head");
+      }
+    }
+    const transactionRef = typeof record.transaction_mapping_id === "string"
+      ? findMappedTransactionSurface(record, baseInventory, headInventory)
+      : null;
+    const lockSurface = callRef && headInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, callRef));
+    const protectedWrite = headProtectedSurface && headInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, headProtectedSurface));
+    const lockSpan = callRef && lockSurface && after ? sourceSpanForSurface(after.content, lockSurface) : null;
+    const writeSpan = protectedWrite && after ? sourceSpanForSurface(after.content, protectedWrite) : null;
+    const callback = transactionRef && after ? transactionCallbackRange(after.content, transactionRef) : null;
+    if (!callback || !lockSpan || !writeSpan || lockSpan.start < callback.start || lockSpan.end > callback.end
+      || writeSpan.start < callback.start || writeSpan.end > callback.end) {
+      problems.push("target advisory lock and protected write must be inside the exact mapped transaction callback");
+    } else if (lockSpan.start >= writeSpan.start) {
+      problems.push("target advisory lock must run before its exact protected write inside the callback");
+    }
+    if (lockSurface?.receiver !== "tx" || protectedWrite?.receiver !== lockSurface?.receiver) {
+      problems.push("target advisory lock and protected write must use the same transaction client");
+    }
+  } else if (["native_chat_run_attempt_admission", "native_chat_side_chat_retention"].includes(record.change_kind)) {
+    if (record.base_surface || record.head_surface || record.transaction_mapping_id || record.base_protected_surface || record.head_protected_surface) {
+      problems.push(`${record.change_kind} accepts only head_surfaces for the new atomic admission unit`);
+    }
+    if (!Array.isArray(record.head_surfaces) || record.head_surfaces.length < 3) {
+      problems.push(`${record.change_kind} must pin its transaction and every new writer`);
+    }
+    const refs = Array.isArray(record.head_surfaces) ? record.head_surfaces.map(exactSurfaceRef) : [];
+    if (refs.some((ref) => !ref)) problems.push("head_surfaces must pin exact type, signature, and line");
+    const surfaces = refs.map((ref) => ref && headInventory.structural_surfaces.find((surface) => surface.source === record.path && sameSurfaceRef(surface, ref))).filter(Boolean);
+    if (surfaces.length !== refs.length) problems.push("head_surfaces must match candidate inventory surfaces");
+    if (record.change_kind === "native_chat_side_chat_retention") return problems;
+    const transaction = surfaces.find((surface) => surface.type === "database_call_candidate" && surface.method === "transaction");
+    if (!transaction) problems.push(`${record.change_kind} requires one transaction callback surface`);
+    if (transaction) {
+      const range = after && transactionCallbackRange(after.content, transaction);
+      if (!range) problems.push(`${record.change_kind} transaction callback could not be resolved`);
+      for (const surface of surfaces) {
+        if (surface === transaction) continue;
+        const span = after && sourceSpanForSurface(after.content, surface);
+        if (!span || !range || span.start < range.start || span.end > range.end) {
+          problems.push("every new writer must remain inside the mapped transaction callback");
+        }
+        if (surface.receiver !== "tx") problems.push("new retention writers must use the transaction client");
+      }
+    }
+  } else if ([
+    "native_chat_queue_guard_helper",
+    "native_chat_conversation_authority_helper",
+    "native_chat_generation_hint_helper",
+    "native_chat_queued_message_hint_helper",
+    "native_chat_conversation_id_hint_helper",
+  ].includes(record.change_kind)) {
+    if (before && after) problems.push(...validateTrustedHelperRecord(record, before.content, after.content, headInventory, record.path));
+  } else if (record.change_kind === "native_chat_queue_guard_callsite") {
+    problems.push(...validateQueueGuardCallsite(
+      record, before?.content, after?.content, baseInventory, headInventory,
+      baseSurface, headSurface, baseProtectedSurface, headProtectedSurface, headContents, trustedCallers,
+    ));
+  }
+  return problems;
+}
+
+function surfaceChangeCounts(before, after, types) {
+  const oldCounts = countSignatures(before, types);
+  const newCounts = countSignatures(after, types);
+  const added = new Map();
+  const removed = new Map();
+  for (const [signature, count] of newCounts) {
+    const delta = count - (oldCounts.get(signature) ?? 0);
+    if (delta > 0) added.set(signature, delta);
+  }
+  for (const [signature, count] of oldCounts) {
+    const delta = count - (newCounts.get(signature) ?? 0);
+    if (delta > 0) removed.set(signature, delta);
+  }
+  return { added, removed };
+}
+
+function compareLegacyFenceChanges(baseInventory, headInventory, baseContents, headContents, addedSurfaceCounts, removedSurfaceCounts, trustedCallers) {
+  const failures = [];
+  const records = Array.isArray(headInventory.reviewed_legacy_fence_changes)
+    ? headInventory.reviewed_legacy_fence_changes : [];
+  if (Object.hasOwn(headInventory, "reviewed_legacy_fence_changes") && !Array.isArray(headInventory.reviewed_legacy_fence_changes)) {
+    failures.push("reviewed_legacy_fence_changes must be an array");
+  }
+  const ids = records.map((record) => record?.id).filter((id) => typeof id === "string");
+  for (const id of new Set(ids.filter((id, index) => ids.indexOf(id) !== index))) {
+    failures.push(`duplicate reviewed_legacy_fence_changes id: ${id}`);
+  }
+  const remainingAdded = new Map(addedSurfaceCounts);
+  const remainingRemovedTransactions = new Map([...removedSurfaceCounts].filter(([signature]) => /\|db-call\|[^|]+\|transaction\|/.test(signature)));
+  const consumedIds = new Set();
+  const consume = (counts, reference, label) => {
+    if (!reference) return;
+    const remaining = counts.get(reference.signature) ?? 0;
+    if (remaining < 1) failures.push(`${label} does not map an exact unmatched structural surface: ${reference.signature}`);
+    else if (remaining === 1) counts.delete(reference.signature);
+    else counts.set(reference.signature, remaining - 1);
+  };
+
+  const validRecords = [];
+  for (const record of records) {
+    const problems = validateLegacyFenceRecord(record, baseInventory, headInventory, baseContents, headContents, trustedCallers);
+    if (problems.length) {
+      failures.push(`${record?.id ?? "<missing id>"}: ${problems.join("; ")}`);
+      continue;
+    }
+    validRecords.push(record);
+    consumedIds.add(record.id);
+    if (record.change_kind === "target_advisory_lock") {
+      for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
+    } else if (record.change_kind === "native_chat_queue_guard_helper") {
+      for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
+    } else if ([
+      "native_chat_generation_hint_helper",
+      "native_chat_queued_message_hint_helper",
+      "native_chat_conversation_id_hint_helper",
+    ].includes(record.change_kind)) {
+      for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
+    } else if (["native_chat_run_attempt_admission", "native_chat_side_chat_retention"].includes(record.change_kind)) {
+      for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
+    } else {
+      if (record.change_kind === "existing_operation_mapping") {
+        consume(remainingRemovedTransactions, exactSurfaceRef(record.base_surface), record.id);
+        consume(remainingAdded, exactSurfaceRef(record.head_surface), record.id);
+      }
+    }
+  }
+
+  for (const record of validRecords.filter((entry) => ["target_advisory_lock", "native_chat_queue_guard_callsite"].includes(entry.change_kind))) {
+    const mappedTransaction = validRecords.find((entry) => entry.path === record.path
+      && entry.change_kind === "existing_operation_mapping"
+      && entry.id === record.transaction_mapping_id
+      && entry.semantic_operation === record.semantic_operation);
+    if (!mappedTransaction) failures.push(`${record.id}: fence must reference an exact transaction callback mapping for the same semantic_operation`);
+    else if (!sameSurfaceRef(exactSurfaceRef(mappedTransaction.base_protected_surface), exactSurfaceRef(record.base_protected_surface))
+      || !sameSurfaceRef(exactSurfaceRef(mappedTransaction.head_protected_surface), exactSurfaceRef(record.head_protected_surface))) {
+      failures.push(`${record.id}: transaction mapping must pin the same exact protected writer`);
+    }
+    if (record.change_kind === "native_chat_queue_guard_callsite") {
+      const signature = record.head_guard_callsite?.signature ?? "";
+      const helperKinds = {
+        lockLegacyNativeChatQueueTarget: "native_chat_queue_guard_helper",
+        assertLegacyChatConversationAuthority: "native_chat_conversation_authority_helper",
+        assertLegacyChatGenerationAuthority: "native_chat_generation_hint_helper",
+        assertLegacyQueuedMessageAuthority: "native_chat_queued_message_hint_helper",
+        assertLegacyChatConversationIdAuthority: "native_chat_conversation_id_hint_helper",
+      };
+      const calledHelper = Object.keys(helperKinds).find((name) => signature.startsWith(`${name}(`));
+      const requiredKind = helperKinds[calledHelper];
+      const helper = validRecords.find((entry) => entry.id === record.guard_helper_id
+        && entry.change_kind === requiredKind
+        && entry.semantic_operation === record.semantic_operation);
+      if (!helper) failures.push(`${record.id}: guard callsite must reference a reviewed helper record for the same semantic_operation`);
+    }
+  }
+
+  for (const record of validRecords) {
+    if (record.change_kind === "native_chat_conversation_authority_helper") {
+      const rawHelper = validRecords.find((entry) => entry.id === record.queue_helper_id
+        && entry.change_kind === "native_chat_queue_guard_helper"
+        && entry.semantic_operation === record.semantic_operation);
+      if (!rawHelper) failures.push(`${record.id}: conversation authority helper must reference the exact raw queue fence record`);
+    } else if ([
+      "native_chat_generation_hint_helper",
+      "native_chat_queued_message_hint_helper",
+      "native_chat_conversation_id_hint_helper",
+    ].includes(record.change_kind)) {
+      const conversationHelper = validRecords.find((entry) => entry.id === record.conversation_helper_id
+        && entry.change_kind === "native_chat_conversation_authority_helper"
+        && entry.semantic_operation === record.semantic_operation);
+      if (!conversationHelper) failures.push(`${record.id}: generation hint helper must reference the exact conversation authority helper record`);
+    }
+  }
+
+  for (const [signature, count] of remainingAdded) {
+    failures.push(`new Node authority surface is forbidden by the ratchet: ${signature} (${count} unmatched)`);
+  }
+  return { failures, consumed_ids: [...consumedIds].sort() };
+}
+
 function isTransportAdapterPath(sourcePath) {
   return sourcePath.endsWith(".ts") && !isTestOrGeneratedPath(sourcePath)
     && (sourcePath.startsWith("server/src/") || sourcePath.startsWith("identity/src/"));
@@ -1227,7 +2134,7 @@ function compareMigrationManifests(baseInventory, headInventory, baseContents, h
   return { failures, added, changed, deleted };
 }
 
-function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents, headContents, trustedAdmissions) {
+function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents, headContents, trustedAdmissions, trustedCallers = TRUSTED_NATIVE_CHAT_FENCE_CALLERS) {
   const failures = [];
   const addedFiles = [];
   const changedFiles = [];
@@ -1285,13 +2192,9 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
     "worker_schedule_candidate", "runtime_resource_ownership", "cli_command_candidate", "mcp_tool_candidate",
     "listener_start", "http_server_construction",
   ]);
-  const oldSurfaceCounts = countSignatures(baseInventory.structural_surfaces, routeAndWriterTypes);
-  const newSurfaceCounts = countSignatures(headInventory.structural_surfaces, routeAndWriterTypes);
-  const addedSurfaces = [];
-  for (const [signature, count] of newSurfaceCounts) {
-    const added = count - (oldSurfaceCounts.get(signature) ?? 0);
-    if (added > 0) addedSurfaces.push({ signature, count: added });
-  }
+  const surfaceChanges = surfaceChangeCounts(baseInventory.structural_surfaces, headInventory.structural_surfaces, routeAndWriterTypes);
+  const addedSurfaces = [...surfaceChanges.added].map(([signature, count]) => ({ signature, count }));
+  const removedSurfaces = [...surfaceChanges.removed].map(([signature, count]) => ({ signature, count }));
 
   const hasTransportRecords = Object.hasOwn(headInventory, "reviewed_transport_admissions");
   const transportRecords = headInventory.reviewed_transport_admissions;
@@ -1368,10 +2271,15 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
     }
   }
 
-  for (const surface of addedSurfaces) {
-    if (allowedTransportSurfaceSignatures.has(surface.signature) && surface.count === 1) continue;
-    failures.push(`new Node authority surface is forbidden by the ratchet: ${surface.signature}`);
+  const unmatchedAdded = new Map(surfaceChanges.added);
+  for (const signature of allowedTransportSurfaceSignatures) {
+    const remaining = unmatchedAdded.get(signature) ?? 0;
+    if (remaining === 1) unmatchedAdded.delete(signature);
   }
+  const legacyFenceComparison = compareLegacyFenceChanges(
+    baseInventory, headInventory, baseContents, headContents, unmatchedAdded, surfaceChanges.removed, trustedCallers,
+  );
+  failures.push(...legacyFenceComparison.failures);
 
   const oldUnknown = new Set(baseInventory.unknown.map((entry) => `${entry.type}|${entry.source}|${entry.expression ?? ""}`));
   const addedUnknown = headInventory.unknown.filter((entry) => !oldUnknown.has(`${entry.type}|${entry.source}|${entry.expression ?? ""}`));
@@ -1387,7 +2295,10 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
   failures.push(...migrations.failures);
   return {
     failures, added_files: addedFiles, changed_files: changedFiles, deleted_files: deletedFiles,
-    added_surfaces: addedSurfaces, allowed_transport_admissions: allowedTransportAdmissions, added_unknown: addedUnknown,
+    added_surfaces: addedSurfaces, removed_surfaces: removedSurfaces,
+    allowed_transport_admissions: allowedTransportAdmissions,
+    reviewed_legacy_fence_changes: legacyFenceComparison.consumed_ids,
+    added_unknown: addedUnknown,
     migration_added: migrations.added, migration_changed: migrations.changed, migration_deleted: migrations.deleted,
   };
 }
@@ -1398,6 +2309,12 @@ function compareInventories(baseInventory, headInventory, baseContents, headCont
 
 function compareInventoriesWithTransportPolicyForTests(baseInventory, headInventory, baseContents, headContents, policy) {
   return compareInventoriesWithPolicy(baseInventory, headInventory, baseContents, headContents, { [policy.id]: policy });
+}
+
+// Test-only analogue of the transport policy harness. The production CLI and
+// compareInventories always use the static source table above, never records.
+function compareInventoriesWithLegacyFenceSourcePolicyForTests(base, head, before, after, trustedCallers) {
+  return compareInventoriesWithPolicy(base, head, before, after, TRUSTED_TRANSPORT_ADMISSIONS, trustedCallers);
 }
 
 function inventoryContentsFromRoot(rootPath, inventory) {
@@ -1460,6 +2377,7 @@ function main(argv = process.argv.slice(2)) {
     options.root,
     prior?.reviewed_node_changes ?? [],
     prior?.reviewed_transport_admissions,
+    prior?.reviewed_legacy_fence_changes ?? [],
   );
   if (options.command === "generate") {
     writeInventory(options.inventoryPath, current, prior);
@@ -1504,7 +2422,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(file
 export {
   buildInventory,
   buildInventoryFromSources,
-  compareInventories, compareInventoriesWithTransportPolicyForTests, compareMigrationManifests,
+  compareInventories, compareInventoriesWithLegacyFenceSourcePolicyForTests, compareInventoriesWithTransportPolicyForTests, compareMigrationManifests,
   journalAppendProblems,
   scanSource,
   sha256,

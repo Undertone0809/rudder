@@ -19,7 +19,7 @@ export type PendingChatSteerRetry = {
 };
 type ChatStreamProgressEvent = Extract<
   ChatStreamEvent,
-  { type: "assistant_delta" | "assistant_state" | "waiting_for_network" | "transcript_entry" }
+  { type: "assistant_delta" | "assistant_snapshot" | "assistant_state" | "waiting_for_network" | "transcript_entry" }
 >;
 
 export const EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS = 250;
@@ -145,6 +145,29 @@ export function applyChatStreamProgressEvent(
   const eventGenerationId = "generationId" in event ? event.generationId : undefined;
   const eventAttemptEpoch = "attemptEpoch" in event ? event.attemptEpoch : undefined;
   const eventGenerationSeq = "generationSeq" in event ? event.generationSeq : undefined;
+  if (event.type === "assistant_delta" && typeof event.delta !== "string") return current;
+  if (eventGenerationId !== undefined && (
+    typeof eventGenerationId !== "string" || !eventGenerationId.trim()
+  )) return current;
+  if (eventAttemptEpoch !== undefined && (
+    !Number.isSafeInteger(eventAttemptEpoch) || eventAttemptEpoch < 0
+  )) return current;
+  if (eventGenerationSeq !== undefined && (
+    !Number.isSafeInteger(eventGenerationSeq) || eventGenerationSeq < 0
+  )) return current;
+  if (event.type === "assistant_snapshot" && (
+    typeof event.body !== "string"
+    || typeof event.generationId !== "string"
+    || !event.generationId.trim()
+    || !Number.isSafeInteger(event.attemptEpoch)
+    || event.attemptEpoch < 0
+    || !Number.isSafeInteger(event.generationSeq)
+    || event.generationSeq < 0
+    || typeof event.bodyHash !== "string"
+    || !/^[a-f0-9]{64}$/.test(event.bodyHash)
+  )) {
+    return current;
+  }
   if (
     current.generationId
     && eventGenerationId
@@ -177,6 +200,16 @@ export function applyChatStreamProgressEvent(
       attemptEpoch: event.attemptEpoch ?? current.attemptEpoch ?? null,
       lastCommittedRenderSeq: event.generationSeq ?? current.lastCommittedRenderSeq ?? 0,
       renderedBodyHash: event.bodyHash ?? current.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
+    };
+  }
+  if (event.type === "assistant_snapshot") {
+    return {
+      ...current,
+      body: event.body,
+      generationId: event.generationId,
+      attemptEpoch: event.attemptEpoch,
+      lastCommittedRenderSeq: event.generationSeq,
+      renderedBodyHash: event.bodyHash,
     };
   }
   if (event.type === "assistant_state") {

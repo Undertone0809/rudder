@@ -406,6 +406,7 @@ function createApp(
   },
   backgroundRuntime?: ChatBackgroundRuntime,
   registerNetworkWaitingRunHandler?: (handler: (run: any) => Promise<boolean>) => void,
+  rustFoundationBridge?: any,
 ) {
   const runtime = backgroundRuntime ?? createChatBackgroundRuntime();
   testBackgroundRuntimes.add(runtime);
@@ -417,7 +418,7 @@ function createApp(
   });
   app.use(
     "/api",
-    chatRoutes({} as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler),
+    chatRoutes({} as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler, rustFoundationBridge),
   );
   app.use(errorHandler);
   return app;
@@ -2954,7 +2955,7 @@ describe("chat routes", { retry: 2 }, () => {
   });
 
   it("marks stale streaming assistant messages interrupted when listing messages", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ mutability: "external_bound_chat" });
     const interruptedMessage = {
       ...createMessage("message-streaming", "assistant", "message", "Partial preserved reply"),
       status: "interrupted",
@@ -3515,7 +3516,7 @@ describe("chat routes", { retry: 2 }, () => {
   });
 
   it("can include full chat transcripts when explicitly requested", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ mutability: "external_bound_chat" });
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValueOnce([]);
 
@@ -3527,7 +3528,7 @@ describe("chat routes", { retry: 2 }, () => {
   });
 
   it("can return paginated chat message envelopes for CLI readers", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ mutability: "external_bound_chat" });
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValueOnce([
       createMessage("message-1", "user", "message", "first"),
@@ -3549,6 +3550,49 @@ describe("chat routes", { retry: 2 }, () => {
       order: "newest",
       returnedMessages: 1,
       totalMessages: 3,
+    });
+  });
+
+  it("keeps the native Rust reader compatible with array and envelope callers", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    const messages = [createMessage("native-message-1", "user", "message", "from rust")];
+    const nativeChatMessages = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({
+        messages,
+        source: "native_chat_reader",
+        availability: "complete",
+        nextCursor: null,
+      })),
+    });
+    const app = createApp(
+      undefined,
+      undefined,
+      undefined,
+      { nativeChatMessages },
+    );
+
+    const bare = await request(app)
+      .get("/api/chats/chat-1/messages?orgId=organization-1&includeTranscript=true&cursor=10000000-0000-4000-8000-000000000009");
+    expect(bare.status).toBe(200);
+    expect(bare.body).toEqual(JSON.parse(JSON.stringify(messages)));
+
+    const envelope = await request(app)
+      .get("/api/chats/chat-1/messages?orgId=organization-1&envelope=true");
+    expect(envelope.status).toBe(200);
+    expect(envelope.body).toEqual({ items: JSON.parse(JSON.stringify(messages)), nextCursor: null });
+    expect(nativeChatMessages).toHaveBeenCalledTimes(2);
+    expect(nativeChatMessages.mock.calls[0]?.[2]).toMatchObject({
+      operation: "read_conversation_messages",
+      conversationId: "chat-1",
+      cursor: "10000000-0000-4000-8000-000000000009",
+      includeTranscript: true,
+    });
+    expect(nativeChatMessages.mock.calls[1]?.[2]).toMatchObject({
+      operation: "read_conversation_messages",
+      includeTranscript: false,
     });
   });
 
@@ -4177,7 +4221,7 @@ describe("chat routes", { retry: 2 }, () => {
   });
 
   it("returns a single chat message transcript for lazy loading", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ mutability: "external_bound_chat" });
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.getMessageTranscript.mockResolvedValueOnce({
       messageId: "message-1",
@@ -4190,6 +4234,34 @@ describe("chat routes", { retry: 2 }, () => {
     expect(res.status).toBe(200);
     expect(mockChatService.getMessageTranscript).toHaveBeenCalledWith("chat-1", "message-1");
     expect(res.body.transcript).toHaveLength(1);
+  });
+
+  it("binds native transcript reads to the URL conversation", async () => {
+    const conversation = createConversation({ id: "chat-a" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    const nativeChatTranscript = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ messageId: "message-b", transcript: [] })),
+    });
+
+    const res = await request(createApp(
+      undefined,
+      undefined,
+      undefined,
+      { nativeChatTranscript },
+    )).get("/api/chats/chat-a/messages/message-b/transcript");
+
+    expect(res.status).toBe(200);
+    expect(nativeChatTranscript).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      expect.objectContaining({
+        operation: "read_message_transcript",
+        conversationId: "chat-a",
+        messageId: "message-b",
+      }),
+    );
   });
 
   it("persists server-owned queued continuation transcripts incrementally in the generation ledger", async () => {
@@ -8047,6 +8119,63 @@ describe("chat routes", { retry: 2 }, () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it("rejects legacy Native Chat sends and Stop before local or durable effects", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation());
+    mockChatService.getLatestGeneration.mockResolvedValue({
+      id: "native-generation-1",
+      executionAuthority: "native_rust",
+      status: "running",
+    });
+
+    const plainMessage = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "must be handled by Rust" });
+    expect(plainMessage.status).toBe(409);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.createQueuedMessage).not.toHaveBeenCalled();
+    expect(hasActiveChatGeneration("chat-1")).toBe(false);
+
+    const streamMessage = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "must be handled by Rust" });
+    expect(streamMessage.status).toBe(409);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(hasActiveChatGeneration("chat-1")).toBe(false);
+
+    const stop = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+    expect(stop.status).toBe(409);
+    expect(mockChatService.generationProtocol.getLatestVisibleCheckpoint).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.beginStopAction).not.toHaveBeenCalled();
+    expect(hasActiveChatGeneration("chat-1")).toBe(false);
+
+    const agentMessage = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "must not become a legacy assistant message" });
+    expect(agentMessage.status).toBe(409);
+    expect(mockChatService.addMessage).not.toHaveBeenCalled();
+
+    const agentStream = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "must be refused before the legacy stream policy" });
+    expect(agentStream.status).toBe(409);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
   });
 
   it("aborts the active stream only through the explicit stop endpoint", async () => {

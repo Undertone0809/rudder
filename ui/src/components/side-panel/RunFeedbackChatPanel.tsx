@@ -15,10 +15,12 @@ import {
   ChatProjectMenuContent,
   ChatProjectSelectorButton,
 } from "@/components/chat/ChatProjectSelector";
+import { ChatSendRecoveryNotice, ChatSendRecoveryProblem, type ChatSendRecovery } from "@/components/chat/ChatSendRecoveryNotice";
 import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
+import { useChatSendRecoveryDiscovery } from "@/components/chat/useChatSendRecoveryDiscovery";
 import { useToast } from "@/context/ToastContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
@@ -33,6 +35,7 @@ import {
   validateChatResponseAnnotationReplacement,
   validateChatResponseAnnotationState,
 } from "@/lib/chat-response-annotations";
+import { PendingChatSendAlreadyAcceptedError, preparePendingChatSendMutation } from "@/lib/chat-send-mutation-storage";
 import { queryKeys } from "@/lib/queryKeys";
 import { useNavigate } from "@/lib/router";
 import { consumeRunFeedbackPendingFiles } from "@/lib/run-feedback-pending-files";
@@ -154,17 +157,19 @@ type StreamFence = {
   generationId: string | null;
   attemptEpoch: number | null;
   lastCommittedRenderSeq: number;
+  hasCommittedRenderSeq: boolean;
   renderedBodyHash: string;
 };
 
 type StreamTargetIdentity = {
+  organizationId: string;
   conversationId: string | null;
   clientMutationId: string;
 };
 
 type StreamFenceEvent = Extract<
   ChatStreamEvent,
-  { type: "ack" | "assistant_delta" | "assistant_state" | "transcript_entry" }
+  { type: "ack" | "assistant_delta" | "assistant_snapshot" | "assistant_state" | "transcript_entry" }
 >;
 
 function newStreamFence(): StreamFence {
@@ -172,15 +177,68 @@ function newStreamFence(): StreamFence {
     generationId: null,
     attemptEpoch: null,
     lastCommittedRenderSeq: 0,
+    hasCommittedRenderSeq: false,
     renderedBodyHash: EMPTY_CHAT_BODY_SHA256,
   };
 }
 
+function canApplyRenderedStreamEvent(
+  fence: StreamFence,
+  event: Extract<ChatStreamEvent, { type: "assistant_delta" | "assistant_snapshot" }>,
+) {
+  if (event.type === "assistant_delta" && typeof event.delta !== "string") return false;
+  if (event.generationId !== undefined && (
+    typeof event.generationId !== "string" || !event.generationId.trim()
+  )) return false;
+  if (event.attemptEpoch !== undefined && (
+    !Number.isSafeInteger(event.attemptEpoch) || event.attemptEpoch < 0
+  )) return false;
+  if (event.generationSeq !== undefined && (
+    !Number.isSafeInteger(event.generationSeq) || event.generationSeq < 0
+  )) return false;
+  if (event.type === "assistant_snapshot" && (
+    typeof event.body !== "string"
+    || typeof event.generationId !== "string"
+    || !event.generationId.trim()
+    || !Number.isSafeInteger(event.attemptEpoch)
+    || event.attemptEpoch < 0
+    || !Number.isSafeInteger(event.generationSeq)
+    || event.generationSeq < 0
+    || typeof event.bodyHash !== "string"
+    || !/^[a-f0-9]{64}$/.test(event.bodyHash)
+  )) return false;
+  if (fence.generationId && event.generationId && fence.generationId !== event.generationId) return false;
+  if (
+    fence.attemptEpoch !== null
+    && event.attemptEpoch !== undefined
+    && event.attemptEpoch < fence.attemptEpoch
+  ) return false;
+  if (
+    fence.hasCommittedRenderSeq
+    && event.generationSeq !== undefined
+    && event.generationSeq <= fence.lastCommittedRenderSeq
+  ) return false;
+  return true;
+}
+
 function recordStreamFence(fence: StreamFence, event: StreamFenceEvent) {
-  if (event.generationId) fence.generationId = event.generationId;
-  if (event.attemptEpoch !== undefined) fence.attemptEpoch = event.attemptEpoch;
-  if (event.generationSeq !== undefined) fence.lastCommittedRenderSeq = event.generationSeq;
-  if (event.bodyHash) fence.renderedBodyHash = event.bodyHash;
+  if (event.generationId) {
+    if (fence.generationId && fence.generationId !== event.generationId) return;
+    fence.generationId = event.generationId;
+  }
+  if (event.attemptEpoch !== undefined) {
+    if (fence.attemptEpoch !== null && event.attemptEpoch < fence.attemptEpoch) return;
+    fence.attemptEpoch = event.attemptEpoch;
+  }
+  const isNewerSequence = event.generationSeq !== undefined
+    && (!fence.hasCommittedRenderSeq || event.generationSeq > fence.lastCommittedRenderSeq);
+  if (isNewerSequence) {
+    fence.lastCommittedRenderSeq = event.generationSeq!;
+    fence.hasCommittedRenderSeq = true;
+  }
+  if (event.bodyHash && (event.generationSeq === undefined || isNewerSequence)) {
+    fence.renderedBodyHash = event.bodyHash;
+  }
 }
 
 function stopQueueSnapshotIsTerminal(
@@ -239,6 +297,11 @@ export function RunFeedbackChatPanel({
   const [stopping, setStopping] = useState(debugRuntimeState.stopping);
   const [stopIndeterminate, setStopIndeterminate] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sendRecovery, setSendRecovery] = useState<ChatSendRecovery | null>(null);
+  const recoveryDiscovery = useChatSendRecoveryDiscovery(target.conversationId
+    ? { orgId: organizationId, conversationId: target.conversationId }
+    : null);
+  const activeSendRecovery = sendRecovery ?? recoveryDiscovery.recovery;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streamBody, setStreamBody] = useState("");
   const [annotationState, dispatchAnnotation] = useReducer(
@@ -256,6 +319,7 @@ export function RunFeedbackChatPanel({
   const editingAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mutationKeyRef = useRef(target.clientMutationId || makeId());
   const targetRef = useRef(target);
+  const organizationIdRef = useRef(organizationId);
   const activeConversationIdRef = useRef<string | null>(target.conversationId);
   const streamAbortControllerRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
@@ -266,9 +330,14 @@ export function RunFeedbackChatPanel({
   const pendingStreamEventsRef = useRef<ChatStreamEvent[]>([]);
   const streamEventHandlerRef = useRef<((event: ChatStreamEvent) => Promise<void> | void) | null>(null);
   const sendInFlightRef = useRef(false);
+  const retryUserMessageRef = useRef<{ organizationId: string; conversationId: string; messageId: string } | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const renderedTargetScopeRef = useRef(`${organizationId}:${sidePanelTargetKey(target)}`);
+  const targetScopeRevisionRef = useRef(0);
   const renderedTargetRef = useRef<Pick<RunChatTarget, "conversationId" | "clientMutationId">>(target);
+  const renderedOrganizationIdRef = useRef(organizationId);
   targetRef.current = target;
+  organizationIdRef.current = organizationId;
   mutationKeyRef.current = target.clientMutationId || mutationKeyRef.current;
 
   useEffect(() => {
@@ -282,22 +351,41 @@ export function RunFeedbackChatPanel({
 
   useEffect(() => {
     const previousTarget = renderedTargetRef.current;
+    const organizationChanged = renderedOrganizationIdRef.current !== organizationId;
+    const nextTargetScope = `${organizationId}:${sidePanelTargetKey(target)}`;
+    if (renderedTargetScopeRef.current !== nextTargetScope) {
+      renderedTargetScopeRef.current = nextTargetScope;
+      targetScopeRevisionRef.current += 1;
+      setDraft(target.body ?? "");
+      setSendRecovery(null);
+      retryUserMessageRef.current = null;
+    }
     const sameFirstTurnStream = streamTargetRef.current?.conversationId === target.conversationId
+      && streamTargetRef.current.organizationId === organizationId
       && streamTargetRef.current.clientMutationId === target.clientMutationId
       && previousTarget.conversationId === null
       && Boolean(target.conversationId);
     if (
       !sameFirstTurnStream
       && (
+        organizationChanged
+        ||
         previousTarget.conversationId !== target.conversationId
         || previousTarget.clientMutationId !== target.clientMutationId
       )
     ) {
       setMessages([]);
       setStreamBody("");
+      if (
+        retryUserMessageRef.current?.organizationId !== organizationId
+        || retryUserMessageRef.current?.conversationId !== target.conversationId
+      ) {
+        retryUserMessageRef.current = null;
+      }
     }
     renderedTargetRef.current = target;
-  }, [target.clientMutationId, target.conversationId]);
+    renderedOrganizationIdRef.current = organizationId;
+  }, [organizationId, target]);
   useEffect(() => {
     if (sending || streamTargetRef.current) return;
     activeConversationIdRef.current = target.conversationId ?? null;
@@ -494,6 +582,8 @@ export function RunFeedbackChatPanel({
     const streamTarget = streamTargetRef.current;
     if (!streamTarget) return false;
     const currentTarget = targetRef.current;
+    const currentOrganizationId = organizationIdRef.current;
+    if (streamTarget.organizationId !== currentOrganizationId) return false;
     if (streamTarget.conversationId) return currentTarget.conversationId === streamTarget.conversationId;
     return currentTarget.clientMutationId === streamTarget.clientMutationId;
   }, []);
@@ -674,13 +764,23 @@ export function RunFeedbackChatPanel({
     };
   }, [closeComposerMenu, composerMenu]);
 
-  const handleSend = async () => {
-    if (sendInFlightRef.current || sending || stopping || stopIndeterminate || !canSend) return;
+  const handleSend = async (bodyOverride?: string, resumeClientMutationId?: string) => {
+    const isResume = Boolean(resumeClientMutationId);
+    const body = (bodyOverride ?? draft).trim();
+    if (sendInFlightRef.current || sending || stopping || stopIndeterminate
+      || (recoveryDiscovery.checking && !isResume)
+      || (activeSendRecovery && !isResume) || (recoveryDiscovery.problem && !isResume)
+      || (!body || (!isResume && !canSend))) return;
     const sendTarget = targetRef.current;
-    const body = draft.trim();
-    const serialized = serializeChatResponseAnnotations(annotationState);
+    const sendScopeRevision = targetScopeRevisionRef.current;
+    const sendScope = `${organizationId}:${sidePanelTargetKey(sendTarget)}`;
+    const isCurrentSendScope = () => targetScopeRevisionRef.current === sendScopeRevision
+      && `${organizationIdRef.current}:${sidePanelTargetKey(targetRef.current)}` === sendScope;
+    const serialized = isResume
+      ? { files: [], inlineAnnotations: [] }
+      : serializeChatResponseAnnotations(annotationState);
     const sentAnnotationIds = new Set(serialized.inlineAnnotations.map((annotation) => annotation.id));
-    if (blockStaleAnnotationSubmission({
+    if (!isResume && blockStaleAnnotationSubmission({
       annotations: serialized.inlineAnnotations,
       devServer: healthQuery.data?.devServer,
       draftPersistence: "durable",
@@ -693,7 +793,7 @@ export function RunFeedbackChatPanel({
     if (sendTarget.kind === "run_debug_chat" && sendTarget.errorMessage) {
       updateTarget({ errorMessage: null });
     }
-    if (sendTarget.kind === "run_debug_chat") {
+    if (sendTarget.kind === "run_debug_chat" && !isResume) {
       setDraft("");
     }
     setSending(true);
@@ -713,8 +813,9 @@ export function RunFeedbackChatPanel({
     const streamRunId = streamRunIdRef.current + 1;
     streamRunIdRef.current = streamRunId;
     streamTargetRef.current = {
+      organizationId,
       conversationId: sendTarget.conversationId ?? null,
-      clientMutationId: sendTarget.clientMutationId ?? mutationKeyRef.current,
+      clientMutationId: resumeClientMutationId ?? sendTarget.clientMutationId ?? mutationKeyRef.current,
     };
     pendingStreamEventsRef.current = [];
     const streamAbortController = new AbortController();
@@ -725,9 +826,25 @@ export function RunFeedbackChatPanel({
     }
     const isCurrentStream = () => streamRunIdRef.current === streamRunId
       && streamTargetMatchesCurrentTarget();
+    const retryUserMessageId = !isResume && sendTarget.conversationId
+      && retryUserMessageRef.current?.organizationId === organizationId
+      && retryUserMessageRef.current?.conversationId === sendTarget.conversationId
+      ? retryUserMessageRef.current.messageId
+      : null;
+    let acknowledgedUserMessageId = retryUserMessageId;
+    let userMessageAcknowledged = false;
+    let pendingSend: Awaited<ReturnType<typeof preparePendingChatSendMutation>> | null = null;
+    let mutationAcknowledged = false;
+    let mutationTerminal = false;
+    let requestDispatched = false;
+    const isCurrentSendUiScope = () => isCurrentSendScope()
+      || (userMessageAcknowledged && isCurrentStream());
     const applyStreamEvent = async (event: ChatStreamEvent) => {
       if (!isCurrentStream() || stopCutoffAcceptedRef.current) return;
       if (event.type === "ack") {
+        userMessageAcknowledged = true;
+        mutationAcknowledged = true;
+        acknowledgedUserMessageId = event.userMessage.id;
         recordStreamFence(streamFenceRef.current, event);
         activeConversationIdRef.current = event.userMessage.conversationId;
         updateRunDebugRuntime(debugRuntime, {
@@ -741,15 +858,17 @@ export function RunFeedbackChatPanel({
           };
         }
         setMessages((current) => mergeChatMessages(current, [event.userMessage]));
-        for (const annotationId of sentAnnotationIds) {
-          dispatchAnnotation({ type: "delete", id: annotationId });
+        if (!isResume) {
+          for (const annotationId of sentAnnotationIds) {
+            dispatchAnnotation({ type: "delete", id: annotationId });
+          }
         }
         const current = targetRef.current;
         const remainingAnnotations = current.inlineAnnotations.filter((annotation) => !sentAnnotationIds.has(annotation.id));
         const nextTarget: RunChatTarget = sendTarget.conversationId
           ? {
               ...current,
-              body: current.body === body ? "" : current.body,
+              body: !isResume && current.body === body ? "" : current.body,
               inlineAnnotations: remainingAnnotations,
             }
           : current.kind === "run_feedback_chat" ? {
@@ -757,16 +876,16 @@ export function RunFeedbackChatPanel({
               conversationId: event.userMessage.conversationId,
               projectLocked: true,
               projectId: sendTarget.projectId,
-              body: current.body === body ? "" : current.body,
+              body: !isResume && current.body === body ? "" : current.body,
               inlineAnnotations: remainingAnnotations,
             } : {
               ...current,
               conversationId: event.userMessage.conversationId,
-              body: current.body === body ? "" : current.body,
+              body: !isResume && current.body === body ? "" : current.body,
               inlineAnnotations: remainingAnnotations,
             };
         updateTarget(nextTarget);
-        if (sendTarget.kind === "run_debug_chat") {
+        if (sendTarget.kind === "run_debug_chat" && !isResume) {
           queryClient.setQueryData<RunDebugSession>(
             runDebugSessionQueryKey(organizationId, sendTarget.clientMutationId),
             { autoSendConsumed: true, conversationId: event.userMessage.conversationId },
@@ -786,18 +905,45 @@ export function RunFeedbackChatPanel({
           }
         }
       }
-      if (event.type === "assistant_delta") {
-        recordStreamFence(streamFenceRef.current, event);
-        setStreamBody((current) => current + event.delta);
+      if (event.type === "assistant_delta" || event.type === "assistant_snapshot") {
+        const fence = streamFenceRef.current;
+        if (!canApplyRenderedStreamEvent(fence, event)) return;
+        recordStreamFence(fence, event);
+        if (event.type === "assistant_snapshot") setStreamBody(event.body);
+        else setStreamBody((current) => current + event.delta);
       }
       if (event.type === "assistant_state" || event.type === "transcript_entry") {
         recordStreamFence(streamFenceRef.current, event);
       }
       if (event.type === "final") {
+        mutationTerminal = true;
+        if (pendingSend) await pendingSend.settle();
+        setSendRecovery(null);
         setStreamBody("");
         setMessages((current) => mergeChatMessages(current, event.messages));
+        retryUserMessageRef.current = null;
       }
-      if (event.type === "error") throw new Error(event.error);
+      if (event.type === "queued") retryUserMessageRef.current = null;
+      if (event.type === "error") {
+        if (!userMessageAcknowledged && sendTarget.conversationId && event.messageId) {
+          acknowledgedUserMessageId = event.messageId;
+          userMessageAcknowledged = true;
+          mutationAcknowledged = true;
+        }
+        if (pendingSend && event.messageId) {
+          mutationAcknowledged = true;
+          await pendingSend.markAccepted();
+        }
+        if (pendingSend && event.terminal) {
+          mutationTerminal = true;
+          await pendingSend.settle();
+          setSendRecovery(null);
+        } else if (pendingSend && mutationAcknowledged) {
+          await pendingSend.markRecoverable();
+          setSendRecovery({ clientMutationId: pendingSend.clientMutationId, body });
+        }
+        throw new Error(event.error);
+      }
     };
     streamEventHandlerRef.current = applyStreamEvent;
     const onStreamEvent = async (event: ChatStreamEvent) => {
@@ -811,12 +957,107 @@ export function RunFeedbackChatPanel({
     let sendFailureMessage: string | null = null;
     try {
       if (sendTarget.conversationId) {
+        pendingSend = await preparePendingChatSendMutation({
+          orgId: organizationId,
+          conversationId: sendTarget.conversationId,
+          editUserMessageId: retryUserMessageId,
+          reconcilePendingMutation: (clientMutationId, exactBody) => chatsApi.reconcilePendingMessageSend(sendTarget.conversationId!, {
+            clientMutationId,
+            body: exactBody,
+          }),
+          body,
+          files: serialized.files,
+          inlineAnnotations: serialized.inlineAnnotations,
+          resumeClientMutationId,
+        });
+        if (!isCurrentSendScope()) return;
+        if (pendingSend.status === "recovered") {
+          const receipt = pendingSend.reconciliation;
+          if (receipt?.outcome === "accepted") setMessages((current) => mergeChatMessages(current, [receipt.message]));
+          if (!isResume) {
+            setDraft((current) => current || body);
+            if (sendTarget.kind === "run_debug_chat" && !targetRef.current.body) {
+              updateTarget({ ...targetRef.current, body });
+            }
+          }
+          setSendRecovery(null);
+          pushToast({ title: "Previous response recovered", body: "The earlier response already reached a terminal state. Your current draft was not sent.", tone: "info" });
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, sendTarget.conversationId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, sendTarget.conversationId) }),
+          ]).catch(() => undefined);
+          return;
+        }
+        if (pendingSend.status === "resume_required") {
+          if (!isResume) {
+            setDraft((current) => current || body);
+            if (sendTarget.kind === "run_debug_chat" && !targetRef.current.body) {
+              updateTarget({ ...targetRef.current, body });
+            }
+          }
+          setSendRecovery({
+            clientMutationId: pendingSend.clientMutationId,
+            body: pendingSend.recoveryBody ?? (pendingSend.reconciliation?.outcome === "accepted"
+              ? pendingSend.reconciliation.message.body
+              : body),
+            action: "resume",
+          });
+          const acceptedMessage = pendingSend.reconciliation?.outcome === "accepted"
+            ? pendingSend.reconciliation.message
+            : null;
+          if (acceptedMessage) setMessages((current) => mergeChatMessages(current, [acceptedMessage]));
+          pushToast({ title: "Response needs recovery", body: "The original message was accepted. Resume its response below; this draft was not sent again.", tone: "warn" });
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, sendTarget.conversationId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, sendTarget.conversationId) }),
+          ]).catch(() => undefined);
+          return;
+        }
+        if (pendingSend.status === "retry_required") {
+          if (!isResume) {
+            setDraft((current) => current || body);
+            if (sendTarget.kind === "run_debug_chat" && !targetRef.current.body) {
+              updateTarget({ ...targetRef.current, body });
+            }
+          }
+          setSendRecovery({
+            clientMutationId: pendingSend.clientMutationId,
+            body: pendingSend.recoveryBody ?? body,
+            action: "retry",
+          });
+          setError("Rudder confirmed the earlier message was not accepted. Retry that exact message below; your current draft was not sent.");
+          return;
+        }
+        requestDispatched = true;
         await chatsApi.sendMessageStream(sendTarget.conversationId, body, {
+          clientMutationId: pendingSend.clientMutationId,
+          editUserMessageId: retryUserMessageId,
           signal: streamAbortController.signal,
           files: serialized.files,
           inlineAnnotations: serialized.inlineAnnotations,
-          onEvent: onStreamEvent,
+          onEvent: async (event) => {
+            if (event.type === "ack" || event.type === "queued") {
+              mutationAcknowledged = true;
+              await pendingSend!.markAccepted();
+            } else if (event.type === "error" && event.messageId) {
+              mutationAcknowledged = true;
+              await pendingSend!.markAccepted();
+            }
+            if (event.type === "error" && event.terminal) {
+              mutationTerminal = true;
+              await pendingSend!.settle();
+              setSendRecovery(null);
+            } else if (event.type === "error" && mutationAcknowledged) {
+              await pendingSend!.markRecoverable();
+              setSendRecovery({ clientMutationId: pendingSend!.clientMutationId, body });
+            }
+            await onStreamEvent(event);
+          },
         });
+        if (mutationAcknowledged && !mutationTerminal) {
+          await pendingSend!.markRecoverable();
+          setSendRecovery({ clientMutationId: pendingSend!.clientMutationId, body });
+        }
       } else {
         await chatsApi.sendFirstMessageStream(organizationId, body, {
           signal: streamAbortController.signal,
@@ -843,10 +1084,39 @@ export function RunFeedbackChatPanel({
         ]);
       }
     } catch (sendError) {
+      if (pendingSend && requestDispatched && !mutationAcknowledged && !mutationTerminal) {
+        await pendingSend.markUnknown();
+      }
+      if (!isCurrentSendUiScope()) return;
+      if (pendingSend && requestDispatched && !mutationAcknowledged && !mutationTerminal) {
+        recoveryDiscovery.retry();
+      }
+      if (pendingSend && mutationAcknowledged && !mutationTerminal) {
+        await pendingSend.markRecoverable();
+        setSendRecovery({ clientMutationId: pendingSend.clientMutationId, body });
+      }
+      if (sendError instanceof PendingChatSendAlreadyAcceptedError && sendTarget.conversationId) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, sendTarget.conversationId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, sendTarget.conversationId) }),
+        ]).catch(() => undefined);
+      }
       const isAbort = sendError instanceof DOMException
         ? sendError.name === "AbortError"
         : sendError instanceof Error && sendError.name === "AbortError";
       const acceptedStop = stopCutoffAcceptedRef.current || debugRuntime?.state.stopAccepted;
+      if (
+        !acceptedStop
+        && (!isAbort || !stopRequestedRef.current)
+        && sendTarget.conversationId
+        && acknowledgedUserMessageId
+      ) {
+        retryUserMessageRef.current = {
+          organizationId,
+          conversationId: sendTarget.conversationId,
+          messageId: acknowledgedUserMessageId,
+        };
+      }
       if (!acceptedStop && (!isAbort || !stopRequestedRef.current)) {
         if (
           sendTarget.conversationId
@@ -854,9 +1124,11 @@ export function RunFeedbackChatPanel({
         ) {
           recoverUnavailableConversation(sendTarget.conversationId);
         } else {
-          sendFailureMessage = sendTarget.kind === "run_debug_chat"
-            ? `${chatErrorMessage(sendError)} Choose another agent or try again.`
-            : chatErrorMessage(sendError, "feedback");
+          sendFailureMessage = sendError instanceof PendingChatSendAlreadyAcceptedError
+            ? `${sendError.message} The recovered message is being refreshed below.`
+            : sendTarget.kind === "run_debug_chat"
+              ? `${chatErrorMessage(sendError)} Choose another agent or try again.`
+              : chatErrorMessage(sendError, "feedback");
         }
       }
     } finally {
@@ -880,7 +1152,7 @@ export function RunFeedbackChatPanel({
         pendingStreamEventsRef.current = [];
         stopRequestedRef.current = false;
       }
-      if (sendFailureMessage) {
+      if (sendFailureMessage && isCurrentSendUiScope()) {
         setError(sendFailureMessage);
         if (sendTarget.kind === "run_debug_chat") {
           setDraft(body);
@@ -953,6 +1225,9 @@ export function RunFeedbackChatPanel({
         ? "sending"
         : "send";
   const feedbackButtonDisabled = stopping || stopIndeterminate
+    || (!sending && recoveryDiscovery.checking)
+    || Boolean(activeSendRecovery && !sending)
+    || (!sending && Boolean(recoveryDiscovery.problem))
     || (!sending && !canSend)
     || (sending && !currentStreamCanBeStopped);
   return (
@@ -1044,6 +1319,29 @@ export function RunFeedbackChatPanel({
         <div role="alert" className="px-4 pb-2 text-sm text-destructive">
           {error ?? (target.kind === "run_feedback_chat" ? target.recoveryNotice : target.errorMessage) ?? annotationValidationError}
         </div>
+      ) : null}
+      {recoveryDiscovery.checking ? (
+        <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">
+          Checking the previous message before sending. Your current draft is preserved.
+        </div>
+      ) : null}
+      {recoveryDiscovery.problem ? (
+        <ChatSendRecoveryProblem message={recoveryDiscovery.problem} onRetry={recoveryDiscovery.retry} />
+      ) : null}
+      {recoveryDiscovery.completedNotice ? (
+        <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">{recoveryDiscovery.completedNotice}</div>
+      ) : null}
+      {activeSendRecovery ? (
+        <ChatSendRecoveryNotice
+          disabled={sending || stopping || stopIndeterminate}
+          action={activeSendRecovery.action}
+          onResume={() => {
+            setSendRecovery(null);
+            recoveryDiscovery.clearRecovery();
+            recoveryDiscovery.clearCompletedNotice();
+            void handleSend(activeSendRecovery.body, activeSendRecovery.clientMutationId);
+          }}
+        />
       ) : null}
       <div className="shrink-0 px-4 pb-4">
         <ChatComposerSurface ref={composerSurfaceRef} className="mx-auto max-w-3xl" testId="run-feedback-composer">

@@ -31,6 +31,14 @@ export function CodexLocalConfigFields({
 
   return (
     <>
+      <Field label="Native Chat Profile" hint="Uses the existing local Codex login and settings in place. Agent Profile keeps this Agent's existing Rudder Codex home.">
+        <select className={inputClass}
+          value={isCreate ? values!.codexProfileId ?? "operator-default" : eff("agentRuntimeConfig", "profileId", String(config.profileId ?? "default"))}
+          onChange={(event) => isCreate ? set!({ codexProfileId: event.target.value }) : mark("agentRuntimeConfig", "profileId", event.target.value)}>
+          <option value="operator-default">Operator native Profile</option>
+          <option value="default">Agent Profile</option>
+        </select>
+      </Field>
       {!hideInstructionsFile && (
         <Field label="Agent instructions file" hint={instructionsFileHint}>
           <div className="flex items-center gap-2">

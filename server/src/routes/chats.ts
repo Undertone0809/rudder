@@ -127,6 +127,7 @@ export function chatRoutes(
   backgroundRuntime: ChatBackgroundRuntime = createChatBackgroundRuntime(),
   registerNetworkWaitingRunHandler?: (handler: (run: NetworkWaitingRun) => Promise<boolean>) => void,
   rustFoundationBridge?: Parameters<typeof chatService>[2],
+  nativeLocalChatOwner?: "rust",
 ) {
   const router = Router();
   const svc = chatService(db, storage, rustFoundationBridge);
@@ -137,7 +138,9 @@ export function chatRoutes(
   const automationsSvc = automationService(db);
   const goalsSvc = goalService(db);
   const access = accessService(db);
-  const assistantSvc = chatAssistantService(db, storage);
+  const assistantSvc = chatAssistantService(db, storage, {
+    nativeLocalChatOwner: nativeLocalChatOwner ?? (rustFoundationBridge?.nativeChatHostEnabled ? "rust" : undefined),
+  });
   const chatRunsSvc = chatAgentRunService(db);
   const workManifestSvc = chatWorkManifestService(db);
   const operatorProfiles = operatorProfileService(db);
@@ -3159,7 +3162,7 @@ export function chatRoutes(
       transcriptEventId: null,
     });
   });
-  registerChatMessageQueryRoutes({ router, svc, assertConversationAccess });
+  registerChatMessageQueryRoutes({ router, svc, assertConversationAccess, rustFoundationBridge });
 
   router.post(
     "/chats/:id/messages",
@@ -3182,6 +3185,10 @@ export function chatRoutes(
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     if (actor.actorType === "agent") {
+      const latestGeneration = await svc.getLatestGeneration(conversation.id);
+      if (latestGeneration?.executionAuthority === "native_rust") {
+        throw conflict("This chat is controlled by the Rust Native Chat runtime");
+      }
       if (!req.body.body.trim()) {
         res.status(422).json({ error: "Agent-authored chat messages require a nonempty body" });
         return;
@@ -3213,6 +3220,11 @@ export function chatRoutes(
     if (replayedUserMessage) {
       res.status(200).json({ messages: [replayedUserMessage] });
       return;
+    }
+
+    const latestGeneration = await svc.getLatestGeneration(conversation.id);
+    if (latestGeneration?.executionAuthority === "native_rust") {
+      throw conflict("This chat is controlled by the Rust Native Chat runtime");
     }
 
     const preparedAnnotations = inlineAnnotationsProvided

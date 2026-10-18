@@ -126,7 +126,21 @@ jobs:
           else
             cp scripts/rust-backend-authority-inventory.mjs "$checker"
           fi
-          node "$checker" compare --root "$GITHUB_WORKSPACE" --compare-ref "$BASE_SHA"
+          if grep -q 'reviewed_legacy_fence_changes' "$checker"; then
+            node "$checker" compare --root "$GITHUB_WORKSPACE" --compare-ref "$BASE_SHA"
+          else
+            # One-time policy bootstrap: the base checker predates the
+            # reviewed legacy-fence record. Pin and test the candidate checker
+            # before asking it to compare; never silently skip the compare.
+            expected_checker_sha256="c890bc73c16067ea717b5af508add63a8594b5129b06474ad8921bed6ece2195"
+            candidate_checker_sha256="$(sha256sum scripts/rust-backend-authority-inventory.mjs | awk '{print $1}')"
+            if [[ "$candidate_checker_sha256" != "$expected_checker_sha256" ]]; then
+              echo "Candidate authority checker digest does not match the reviewed bootstrap pin" >&2
+              exit 1
+            fi
+            node --test scripts/rust-backend-authority-inventory.test.mjs
+            node scripts/rust-backend-authority-inventory.mjs compare --root "$GITHUB_WORKSPACE" --compare-ref "$BASE_SHA"
+          fi
 
       - name: Select deterministic qualification profile
         id: impact
@@ -519,6 +533,15 @@ jobs:
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1
 
+      - name: Verify external Rust host caller-death cleanup
+        if: runner.os != 'Windows'
+        env:
+          RUDDER_TEST_PROCESS_HOST: ${{ github.workspace }}/native/target/debug/rudder-process-host
+        run: |
+          cargo build --locked --manifest-path native/Cargo.toml -p rudder-process-host
+          cargo test --locked --manifest-path native/Cargo.toml -p rudder-codex-app-server --test external_transport -- --ignored --test-threads=1
+          cargo test --locked --manifest-path native/Cargo.toml -p rudder-native-chat-executor --test workflow -- --ignored --test-threads=1
+
       - name: Verify New York DST planner parity
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: >-
@@ -657,13 +680,16 @@ jobs:
           cargo build --manifest-path native/Cargo.toml --release \
             --target "$SERVER_FOUNDATION_TARGET" \
             -p rudder-server-foundation --bin rudder-server-foundation \
-            -p rudder-migration-service --bin migration-preflight
+            -p rudder-migration-service --bin migration-preflight \
+            -p rudder-process-host --bin rudder-process-host
           artifact_dir="dist/server-foundation-artifacts/$SERVER_FOUNDATION_TARGET"
           mkdir -p "$artifact_dir"
           cp "native/target/$SERVER_FOUNDATION_TARGET/release/rudder-server-foundation$SERVER_FOUNDATION_EXTENSION" \
             "$artifact_dir/rudder-server-foundation$SERVER_FOUNDATION_EXTENSION"
           cp "native/target/$SERVER_FOUNDATION_TARGET/release/migration-preflight$SERVER_FOUNDATION_EXTENSION" \
             "$artifact_dir/migration-preflight$SERVER_FOUNDATION_EXTENSION"
+          cp "native/target/$SERVER_FOUNDATION_TARGET/release/rudder-process-host$SERVER_FOUNDATION_EXTENSION" \
+            "$artifact_dir/rudder-process-host$SERVER_FOUNDATION_EXTENSION"
           {
             echo "target=$SERVER_FOUNDATION_TARGET"
             echo "build_mode=$SERVER_FOUNDATION_BUILD_MODE"

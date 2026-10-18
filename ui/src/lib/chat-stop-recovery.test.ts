@@ -96,12 +96,13 @@ describe("chat Stop recovery", () => {
     expect(readPendingChatStopRecovery("org-2", "chat-1")).not.toBeNull();
   });
 
-  it("drops stale recovery records instead of replaying an old generation fence", () => {
+  it("drops stale explicitly legacy recovery records", () => {
     savePendingChatStopRecovery(createPendingChatStopRecovery({
       orgId: "org-1",
       chatId: "chat-1",
       request: { controlActionId: "20000000-0000-4000-8000-000000000001" },
       frozenDraft: streamDraft(),
+      executionAuthority: "legacy_ts",
       now: new Date("2026-07-14T01:00:00.000Z"),
     }));
 
@@ -110,6 +111,16 @@ describe("chat Stop recovery", () => {
       "chat-1",
       new Date("2026-07-16T01:00:01.000Z"),
     )).toBeNull();
+  });
+
+  it.each(["native_rust", undefined] as const)("retains unresolved %s Stop identity after 24 hours", (executionAuthority) => {
+    const recovery = createPendingChatStopRecovery({
+      orgId: "org-1", chatId: "chat-1", executionAuthority,
+      request: { controlActionId: "20000000-0000-4000-8000-000000000001", expectedGenerationId: "generation-1" },
+      frozenDraft: streamDraft(), now: new Date("2026-07-14T01:00:00.000Z"),
+    });
+    savePendingChatStopRecovery(recovery);
+    expect(readPendingChatStopRecovery("org-1", "chat-1", new Date("2026-07-16T01:00:01.000Z"))).toEqual(recovery);
   });
 
   it("does not let an older acknowledgement clear a newer Stop action", () => {

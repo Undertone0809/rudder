@@ -7,6 +7,8 @@ import {
   agentWakeupRequests,
   applyPendingMigrations,
   chatConversations,
+  chatGenerations,
+  chatMessages,
   createDb,
   ensurePostgresDatabase,
   goals,
@@ -160,6 +162,15 @@ describe("heartbeat orphaned process recovery", () => {
     childProcesses.clear();
     for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+          await tx.delete(heartbeatRunEvents).where(sql`${heartbeatRunEvents.runId} in (
+            select id from heartbeat_runs where execution_authority = 'native_rust'
+          )`);
+          await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.executionAuthority, "native_rust"));
+          await tx.delete(chatGenerations).where(eq(chatGenerations.executionAuthority, "native_rust"));
+          await tx.delete(chatMessages);
+        });
         await db.delete(issues);
         await db.delete(activityLog);
         await db.delete(agentIssueCreationRequests);
@@ -213,6 +224,7 @@ describe("heartbeat orphaned process recovery", () => {
     chatConversationId?: string | null;
     startedAt?: Date;
     updatedAt?: Date;
+    nativeChat?: boolean;
   }) {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -220,6 +232,7 @@ describe("heartbeat orphaned process recovery", () => {
     const wakeupRequestId = randomUUID();
     const issueId = randomUUID();
     const goalId = input?.goalId ?? null;
+    const chatConversationId = input?.chatConversationId ?? (input?.nativeChat ? randomUUID() : null);
     const now = new Date("2026-03-19T00:00:00.000Z");
     const issuePrefix = `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const orgName = `Rudder ${orgId.slice(0, 6)}`;
@@ -290,38 +303,91 @@ describe("heartbeat orphaned process recovery", () => {
       claimedAt: now,
     });
 
-    if (input?.chatConversationId) {
+    if (chatConversationId) {
       await db.insert(chatConversations).values({
-        id: input.chatConversationId,
+        id: chatConversationId,
         orgId,
         preferredAgentId: agentId,
         title: "Network recovery test chat",
       });
     }
 
-    await db.insert(heartbeatRuns).values({
-      id: runId,
-      orgId,
-      agentId,
-      invocationSource: "assignment",
-      triggerDetail: "system",
-      status: input?.runStatus ?? "running",
-      runningSubstate: input?.runningSubstate ?? null,
-      wakeupRequestId,
-      chatConversationId: input?.chatConversationId ?? null,
-      contextSnapshot,
-      goalId,
-      processPid: input?.processPid ?? null,
-      processLossRetryCount: input?.processLossRetryCount ?? 0,
-      errorCode: input?.runErrorCode ?? null,
-      error: input?.runError ?? null,
-      networkWaitStartedAt: input?.networkWaitStartedAt ?? null,
-      networkWaitNextRetryAt: input?.networkWaitNextRetryAt ?? null,
-      networkWaitAttemptCount: input?.networkWaitAttemptCount ?? 0,
-      recoveryCheckpoint: input?.recoveryCheckpoint ?? null,
-      createdAt: input?.startedAt ?? now,
-      startedAt: input?.startedAt ?? now,
-      updatedAt: input?.updatedAt ?? new Date("2026-03-19T00:00:00.000Z"),
+    let chatGenerationId: string | null = null;
+    if (input?.nativeChat && chatConversationId) {
+      const [sourceMessage] = await db.insert(chatMessages).values({
+        orgId,
+        conversationId: chatConversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Native chat recovery fixture",
+      }).returning({ id: chatMessages.id });
+      if (!sourceMessage) throw new Error("Failed to create native chat source message");
+      const [generation] = await db.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+        return tx.insert(chatGenerations).values({
+          orgId,
+          conversationId: chatConversationId,
+          executionAuthority: "native_rust",
+          sourceMessageId: sourceMessage.id,
+          sourceTurnVariant: 0,
+          status: "running",
+          attemptEpoch: 1,
+          controlVersion: 1,
+          controlRuntimeType: "codex_local",
+        }).returning({ id: chatGenerations.id });
+      });
+      chatGenerationId = generation?.id ?? null;
+      if (!chatGenerationId) throw new Error("Failed to create native chat generation");
+    }
+
+    await db.transaction(async (tx) => {
+      if (input?.nativeChat) {
+        await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test', true)`);
+      }
+      await tx.insert(heartbeatRuns).values({
+        id: runId,
+        orgId,
+        agentId,
+        invocationSource: input?.nativeChat ? "chat" : "assignment",
+        triggerDetail: input?.nativeChat ? "chat_assistant_reply_stream" : "system",
+        status: input?.runStatus ?? "running",
+        runningSubstate: input?.runningSubstate ?? null,
+        wakeupRequestId,
+        chatConversationId,
+        ...(input?.nativeChat && chatConversationId && chatGenerationId
+          ? {
+            executionAuthority: "native_rust" as const,
+            chatGenerationId,
+            nativeAdmissionHold: false,
+            scene: "chat",
+            targetType: "chat_conversation",
+            targetId: chatConversationId,
+            idempotencyKey: `native-chat:${chatGenerationId}`,
+            sessionReuseScope: "none" as const,
+            sessionIntentJson: {
+              kind: "fresh",
+              reuseScope: "none",
+              sourceRunId: null,
+              sessionId: null,
+              sessionParams: null,
+            },
+          }
+          : {}),
+        contextSnapshot,
+        goalId,
+        processPid: input?.processPid ?? null,
+        processLossRetryCount: input?.processLossRetryCount ?? 0,
+        errorCode: input?.runErrorCode ?? null,
+        error: input?.runError ?? null,
+        networkWaitStartedAt: input?.networkWaitStartedAt ?? null,
+        networkWaitNextRetryAt: input?.networkWaitNextRetryAt ?? null,
+        networkWaitAttemptCount: input?.networkWaitAttemptCount ?? 0,
+        recoveryCheckpoint: input?.recoveryCheckpoint ?? null,
+        createdAt: input?.startedAt ?? now,
+        startedAt: input?.startedAt ?? now,
+        updatedAt: input?.updatedAt ?? new Date("2026-03-19T00:00:00.000Z"),
+      });
     });
 
     if (input?.includeIssue !== false) {
@@ -395,6 +461,44 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(agents.id, agentId))
       .then((rows) => rows[0] ?? null);
     expect(agent?.status).toBe("error");
+  });
+
+  it("keeps native chat runs out of legacy timeout and cancellation paths", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const legacy = await seedRunFixture({
+      runStatus: "running",
+      includeIssue: false,
+      processPid: null,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    const native = await seedRunFixture({
+      nativeChat: true,
+      runStatus: "running",
+      includeIssue: false,
+      processPid: null,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const timedOut = await heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 1_000,
+      now: new Date(startedAt.getTime() + 5_000),
+    });
+    expect(timedOut.runIds).toEqual([legacy.runId]);
+
+    await expect(heartbeat.cancelRun(native.runId)).rejects.toMatchObject({ status: 409 });
+    const nativeRun = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.runId))
+      .then((rows) => rows[0] ?? null);
+    expect(nativeRun).toMatchObject({
+      executionAuthority: "native_rust",
+      status: "running",
+      finishedAt: null,
+    });
+    const nativeEvents = await db.select().from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, native.runId));
+    expect(nativeEvents).toEqual([]);
   });
 
   it("does not impose an absolute duration limit unless one is configured", async () => {

@@ -18,7 +18,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 ring = "0.17.14"
 rudder-archive-core = { path = "../archive-core" }
 rudder-auth-core = { path = "../auth-core" }
+rudder-claude-code = { path = "../claude-code" }
 rudder-d1-persistence = { path = "../d1-persistence" }
+rudder-native-chat-executor = { path = "../native-chat-executor" }
+rudder-native-process-transport = { path = "../native-process-transport" }
 rudder-organization-mutation-core = { path = "../organization-mutation-core" }
 rudder-project-goal-link-core = { path = "../project-goal-link-core" }
 serde = { version = "1.0", features = ["derive"] }

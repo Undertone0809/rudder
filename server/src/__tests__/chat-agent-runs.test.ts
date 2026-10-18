@@ -6,6 +6,7 @@ import {
   createDb,
   ensurePostgresDatabase,
   goals,
+  heartbeatRunAttempts,
   heartbeatRunEvents,
   heartbeatRuns,
   organizations,
@@ -198,6 +199,27 @@ describe("chatAgentRunService", () => {
       goalId,
     });
     expect(firstRun.goalId).toBe(goalId);
+    const firstAttempts = await db
+      .select()
+      .from(heartbeatRunAttempts)
+      .where(eq(heartbeatRunAttempts.runId, firstRun.id));
+    expect(firstAttempts).toHaveLength(1);
+    expect(firstAttempts[0]).toMatchObject({
+      orgId,
+      agentId,
+      attemptIndex: 0,
+      runtimeType: "codex_local",
+      model: null,
+      isFallback: false,
+      resumeSource: "fresh",
+      status: "started",
+      ownerToken: expect.any(String),
+      attemptEpoch: 1,
+    });
+    expect(firstRun.contextSnapshot).toMatchObject({
+      attemptId: firstAttempts[0]?.id,
+      attemptEpoch: 1,
+    });
     await expect(svc.createRun({
       conversation,
       agentId,

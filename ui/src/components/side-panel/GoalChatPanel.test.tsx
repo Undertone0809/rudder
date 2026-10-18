@@ -3,6 +3,7 @@
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
+import * as chatSendMutationStorage from "@/lib/chat-send-mutation-storage";
 import { readPendingChatStopRecovery } from "@/lib/chat-stop-recovery";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
@@ -25,6 +26,7 @@ vi.mock("@/api/chats", () => ({
     listQueue: vi.fn(),
     sendFirstMessageStream: vi.fn(),
     sendMessageStream: vi.fn(),
+    reconcilePendingMessageSend: vi.fn(),
     stopMessageStream: vi.fn(),
   },
 }));
@@ -69,6 +71,28 @@ const target: Extract<SidePanelTarget, { kind: "goal_chat" }> = {
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
+const baseNavigator = globalThis.navigator;
+
+function installWebLocksStub() {
+  const queues = new Map<string, Promise<void>>();
+  const locks = {
+    request: async <T,>(name: string, _options: LockOptions, callback: (lock: Lock) => T | Promise<T>) => {
+      const previous = queues.get(name) ?? Promise.resolve();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      queues.set(name, previous.then(() => gate));
+      await previous;
+      try {
+        return await callback({ name, mode: "exclusive" } as Lock);
+      } finally {
+        release();
+      }
+    },
+  } as LockManager;
+  const navigatorStub = Object.create(baseNavigator) as Navigator;
+  Object.defineProperty(navigatorStub, "locks", { configurable: true, value: locks });
+  vi.stubGlobal("navigator", navigatorStub);
+}
 
 function renderPanel(
   onReplaceTarget = vi.fn(),
@@ -113,6 +137,13 @@ async function waitUntil(assertion: () => void) {
   }
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 function change(element: HTMLTextAreaElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
   act(() => {
@@ -122,6 +153,7 @@ function change(element: HTMLTextAreaElement, value: string) {
 }
 
 beforeEach(() => {
+  installWebLocksStub();
   vi.mocked(agentsApi.list).mockResolvedValue([{ id: "agent-1", name: "Goal owner" }] as never);
   vi.mocked(chatsApi.get).mockResolvedValue(null as never);
   vi.mocked(chatsApi.listMessages).mockResolvedValue([
@@ -146,6 +178,10 @@ beforeEach(() => {
     } as never);
   });
   vi.mocked(chatsApi.sendMessageStream).mockResolvedValue(undefined);
+  vi.mocked(chatsApi.reconcilePendingMessageSend).mockReset().mockImplementation(async (_conversationId, request) => ({
+    outcome: "not_found",
+    clientMutationId: request.clientMutationId,
+  }));
   vi.mocked(chatsApi.stopMessageStream).mockResolvedValue({ stopped: true } as never);
   window.localStorage.clear();
   navigate.mockReset();
@@ -158,9 +194,34 @@ afterEach(() => {
   container?.remove();
   container = null;
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("GoalChatPanel", () => {
+  it("hydrates the composer from the new Goal when the scope changes with the same body prop", async () => {
+    const initialTarget = { ...target, body: "Shared body" };
+    const nextTarget = { ...initialTarget, organizationId: "org-2", goalId: "goal-2" };
+    const onReplaceTarget = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const renderTarget = (value: typeof initialTarget) => root?.render(
+      <QueryClientProvider client={queryClient}>
+        <GoalChatPanel target={value} onReplaceTarget={onReplaceTarget} />
+      </QueryClientProvider>,
+    );
+
+    await act(async () => renderTarget(initialTarget));
+    const editor = container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!;
+    change(editor, "Unsaved text from the previous Goal");
+    expect(editor.value).toBe("Unsaved text from the previous Goal");
+
+    await act(async () => renderTarget(nextTarget));
+    expect(editor.value).toBe("Shared body");
+  });
+
   it("creates a real Chat anchored to the Goal and persists the resumed target", async () => {
     const onReplaceTarget = vi.fn();
     const rendered = renderPanel(onReplaceTarget);
@@ -189,6 +250,70 @@ describe("GoalChatPanel", () => {
       body: "",
     }));
     await waitUntil(() => expect(rendered.container.textContent).toContain("Working from the Goal context."));
+  });
+
+  it("replaces Goal stream text with the latest fenced snapshot", async () => {
+    const pending = deferred<void>();
+    vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async (_orgId, body, options) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { id: "message-user", conversationId: "chat-goal-1", role: "user", body },
+        generationId: "generation-snapshot",
+        attemptEpoch: 4,
+        generationSeq: 1,
+        bodyHash: "1".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: "obsolete partial",
+        generationId: "generation-snapshot",
+        attemptEpoch: 4,
+        generationSeq: 2,
+        bodyHash: "2".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_snapshot",
+        body: "canonical snapshot",
+        generationId: "generation-snapshot",
+        attemptEpoch: 4,
+        generationSeq: 3,
+        bodyHash: "3".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_snapshot",
+        body: "duplicate must not replace",
+        generationId: "generation-snapshot",
+        attemptEpoch: 4,
+        generationSeq: 3,
+        bodyHash: "4".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_snapshot",
+        body: "stale attempt must not replace",
+        generationId: "generation-snapshot",
+        attemptEpoch: 3,
+        generationSeq: 4,
+        bodyHash: "5".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: " plus tail",
+        generationId: "generation-snapshot",
+        attemptEpoch: 4,
+        generationSeq: 4,
+        bodyHash: "6".repeat(64),
+      } as never);
+      await pending.promise;
+    });
+
+    const rendered = renderPanel();
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Check snapshot replacement");
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+
+    await waitUntil(() => expect(rendered.container.querySelector('[data-testid="goal-chat-streaming"]')?.textContent)
+      .toBe("canonical snapshot plus tail"));
+    await act(async () => pending.resolve());
   });
 
   it("keeps a clear Agent working state visible while a Goal chat run is active", async () => {
@@ -403,6 +528,189 @@ describe("GoalChatPanel", () => {
       "Advance this Goal",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ));
+  });
+
+  it("retains the existing Goal chat send identity when acknowledgement is lost", async () => {
+    vi.mocked(chatsApi.listQueue).mockResolvedValue({ items: [] } as never);
+    vi.mocked(chatsApi.sendMessageStream).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Retry this Goal safely");
+    await act(async () => {
+      rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click();
+      await Promise.resolve();
+    });
+    await waitUntil(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(1));
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Retry previous message"));
+    await act(async () => {
+      Array.from(rendered.container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Retry previous message")?.click();
+      await Promise.resolve();
+    });
+    await waitUntil(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2));
+    expect(chatsApi.reconcilePendingMessageSend).toHaveBeenCalledOnce();
+    const calls = vi.mocked(chatsApi.sendMessageStream).mock.calls;
+    expect(calls[0][2].clientMutationId).toEqual(expect.any(String));
+    expect(calls[1][2].clientMutationId).toBe(calls[0][2].clientMutationId);
+    expect(calls[1][0]).toBe("chat-goal-1");
+    expect(calls[1][1]).toBe("Retry this Goal safely");
+  });
+
+  it("does not dispatch or restore an old Goal send after its target changes during identity preparation", async () => {
+    vi.stubGlobal("crypto", {
+      randomUUID: vi.fn(() => "mutation-goal-before-scope-change"),
+      subtle: { digest: vi.fn() },
+    } as unknown as Crypto);
+    const prepareStarted = deferred();
+    const releasePrepare = deferred();
+    const preparationFinished = deferred();
+    const prepare = chatSendMutationStorage.preparePendingChatSendMutation;
+    vi.spyOn(chatSendMutationStorage, "preparePendingChatSendMutation")
+      .mockImplementation(async (input) => {
+        prepareStarted.resolve();
+        await releasePrepare.promise;
+        try {
+          return await prepare(input);
+        } finally {
+          preparationFinished.resolve();
+        }
+      });
+    const firstTarget = { ...target, conversationId: "chat-goal-1" };
+    const nextTarget = {
+      ...firstTarget,
+      organizationId: "org-2",
+      goalId: "goal-2",
+      conversationId: "chat-goal-2",
+      body: "Draft for the new Goal",
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const renderTarget = (value: typeof firstTarget) => root?.render(
+      <QueryClientProvider client={queryClient}>
+        <GoalChatPanel target={value} onReplaceTarget={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    await act(async () => renderTarget(firstTarget));
+    await waitUntil(() => expect(container?.textContent).toContain("Goal owner"));
+    change(container!.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Old Goal body");
+    act(() => container!.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+    await prepareStarted.promise;
+    await act(async () => renderTarget(nextTarget));
+    releasePrepare.resolve();
+    await preparationFinished.promise;
+    await waitUntil(() => expect(container!.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Goal chat message"]',
+    )?.value).toBe("Draft for the new Goal"));
+
+    expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+    expect(chatSendMutationStorage.readPendingChatSendMutation(
+      "org-1",
+      "chat-goal-1",
+      null,
+    )?.id).toBe("mutation-goal-before-scope-change");
+    expect(container?.textContent).not.toContain("Old Goal body");
+    expect(container?.textContent).not.toContain("Something went wrong. Try again.");
+  });
+
+  it("does not restore a failed Goal preparation into the newly selected Goal", async () => {
+    const prepareStarted = deferred();
+    const rejectPrepare = deferred();
+    const preparationFinished = deferred();
+    vi.spyOn(chatSendMutationStorage, "preparePendingChatSendMutation")
+      .mockImplementation(async () => {
+        prepareStarted.resolve();
+        try {
+          await rejectPrepare.promise;
+          throw new Error("Expected the old Goal preparation to fail.");
+        } finally {
+          preparationFinished.resolve();
+        }
+      });
+    const firstTarget = { ...target, conversationId: "chat-goal-1" };
+    const nextTarget = {
+      ...firstTarget,
+      organizationId: "org-2",
+      goalId: "goal-2",
+      conversationId: "chat-goal-2",
+      body: "New Goal draft",
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const renderTarget = (value: typeof firstTarget) => root?.render(
+      <QueryClientProvider client={queryClient}>
+        <GoalChatPanel target={value} onReplaceTarget={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    await act(async () => renderTarget(firstTarget));
+    await waitUntil(() => expect(container?.textContent).toContain("Goal owner"));
+    change(container!.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Old failed body");
+    act(() => container!.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+    await prepareStarted.promise;
+    await act(async () => renderTarget(nextTarget));
+    rejectPrepare.reject(new Error("Old Goal identity preparation failed."));
+    await preparationFinished.promise;
+    await act(async () => { await Promise.resolve(); });
+    await waitUntil(() => expect(container!.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Goal chat message"]',
+    )?.value).toBe("New Goal draft"));
+
+    expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+    expect(container?.textContent).not.toContain("Old failed body");
+    expect(container?.textContent).not.toContain("Something went wrong. Try again.");
+  });
+
+  it("does not submit when durable send-identity storage is unavailable", async () => {
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Keep this retry safe");
+    vi.stubGlobal("localStorage", undefined);
+
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Something went wrong. Try again."));
+    expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+  });
+
+  it("retries a committed pre-ack Goal message as an edit of that message", async () => {
+    const committedMessageId = "70000000-0000-4000-8000-000000000011";
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      _conversationId,
+      _body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "error",
+        terminal: true,
+        error: "The saved message could not be hydrated.",
+        messageId: committedMessageId,
+      } as never);
+    });
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Retry this committed Goal message");
+
+    await act(async () => {
+      rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click();
+      await Promise.resolve();
+    });
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Something went wrong. Try again."));
+    const firstMutationId = vi.mocked(chatsApi.sendMessageStream).mock.calls[0][2].clientMutationId;
+
+    await act(async () => {
+      Array.from(rendered.container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Retry message")?.click();
+      await Promise.resolve();
+    });
+    await waitUntil(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2));
+    const retry = vi.mocked(chatsApi.sendMessageStream).mock.calls[1];
+    expect(retry[1]).toBe("Retry this committed Goal message");
+    expect(retry[2].editUserMessageId).toBe(committedMessageId);
+    expect(retry[2].clientMutationId).not.toBe(firstMutationId);
   });
 
   it("fails closed when the Goal Owner is unavailable", async () => {

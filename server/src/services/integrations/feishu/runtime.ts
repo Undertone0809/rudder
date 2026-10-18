@@ -760,7 +760,7 @@ export function feishuIntegrationRuntimeService(
         activeGeneration.release();
         return;
       }
-      await chats.markGenerationTerminal(activeGeneration.generationId, generationTerminalStatus).catch((error: unknown) => {
+      await chats.markGenerationTerminal(integration.orgId, activeGeneration.generationId, generationTerminalStatus).catch((error: unknown) => {
         logger.warn({ err: error, generationId: activeGeneration.generationId }, "failed to mark Feishu chat generation terminal");
       });
       activeGeneration.release();
@@ -865,7 +865,7 @@ export function feishuIntegrationRuntimeService(
       if (!didEnterReplyCompletion) {
         activeGeneration.release();
         const terminalStatus = activeGeneration.abortController.signal.aborted ? "stopped" : "failed";
-        await chats.markGenerationTerminal(activeGeneration.generationId, terminalStatus).catch((markError: unknown) => {
+        await chats.markGenerationTerminal(integration.orgId, activeGeneration.generationId, terminalStatus).catch((markError: unknown) => {
           logger.warn({
             err: markError,
             generationId: activeGeneration.generationId,

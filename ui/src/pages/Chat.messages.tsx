@@ -1978,6 +1978,8 @@ export function AskUserPanel({
   message,
   request,
   disabled,
+  submitDisabled = false,
+  checking = false,
   pendingFiles,
   onAddAttachment,
   onDropAttachments,
@@ -1988,6 +1990,8 @@ export function AskUserPanel({
   message: ChatMessage;
   request: ChatAskUserRequest;
   disabled: boolean;
+  submitDisabled?: boolean;
+  checking?: boolean;
   pendingFiles: File[];
   onAddAttachment: () => void;
   onDropAttachments: (files: Iterable<File>) => void | Promise<void>;
@@ -2143,6 +2147,11 @@ export function AskUserPanel({
       )}
     >
       {fileDragActive ? <ChatComposerFileDropOverlay /> : null}
+      {checking ? (
+        <div role="status" className="mb-2 text-sm text-muted-foreground">
+          Checking the previous message before sending. Your answers and attachments are preserved.
+        </div>
+      ) : null}
       {hasMultipleQuestions ? (
         <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>{reviewingAnswers ? "Review answers" : `Question ${boundedQuestionIndex + 1} of ${questionCount}`}</span>
@@ -2376,7 +2385,7 @@ export function AskUserPanel({
           <Button
             type="button"
             size="sm"
-            disabled={disabled || !canSubmit}
+            disabled={disabled || submitDisabled || !canSubmit}
             onClick={() => {
               onSubmit(formatAskUserAnswerMessage(request, answersWithAttachmentFallback));
             }}

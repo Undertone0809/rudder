@@ -3,6 +3,7 @@
 //! mode, legacy migration, default content and the returned Library reference.
 mod fs;
 mod lock;
+mod read_only;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -12,6 +13,7 @@ use super::{AgentCreateInstructionsBundle, common::*};
 use fs::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs as disk, io,
@@ -154,7 +156,27 @@ fn defaults(ceo: bool) -> BTreeMap<String, String> {
         .collect()
 }
 fn write_missing(root: &Path, relative_path: &str, body: &str) -> io::Result<()> {
-    let target = root.join(relative(relative_path)?);
+    let relative_path = relative(relative_path)?;
+    let target = root.join(&relative_path);
+    let parent = target
+        .parent()
+        .ok_or_else(|| invalid("Missing file parent"))?;
+
+    // Never follow a symlink while materializing a durable instruction bundle.
+    // Check every existing parent component as well as the final destination;
+    // `metadata` would follow a link and make an outside path writable.
+    let parent_relative = Path::new(&relative_path)
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
+    let mut current = root.to_path_buf();
+    for component in parent_relative.components() {
+        current.push(component.as_os_str());
+        if let Some(metadata) = lstat(&current)?
+            && (metadata.file_type().is_symlink() || !metadata.is_dir())
+        {
+            return Err(invalid("Instruction bundle parent must be a directory"));
+        }
+    }
     if let Some(metadata) = lstat(&target)? {
         if metadata.file_type().is_symlink() {
             return Err(invalid("Instruction bundle target must not be a symlink"));
@@ -162,40 +184,25 @@ fn write_missing(root: &Path, relative_path: &str, body: &str) -> io::Result<()>
         if metadata.is_file() {
             return Ok(());
         }
-        return Err(invalid("Instruction bundle target is not a file"));
+        return Err(invalid("Instruction bundle target must be a regular file"));
     }
-    let parent = target
-        .parent()
-        .ok_or_else(|| invalid("Missing file parent"))?;
-    assert_owned(root)?;
-    let relative_parent = parent
-        .strip_prefix(root)
-        .map_err(|_| invalid("Instruction bundle parent escaped root"))?;
-    let mut current = root.to_path_buf();
-    for component in relative_parent.components() {
-        current.push(component.as_os_str());
-        match lstat(&current)? {
-            Some(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-                return Err(invalid(
-                    "Instruction bundle parent is not an owned directory",
-                ));
-            }
-            Some(_) => (),
-            None => {
-                mkdir_private(&current)?;
-                assert_owned(&current)?;
-            }
-        }
-    }
+    disk::create_dir_all(parent)?;
     let temporary = parent.join(format!(".rudder-write-probe-{}", random()?));
     let result = (|| {
-        new_file(&temporary, body.as_bytes())?;
+        {
+            use std::io::Write;
+            let mut file = disk::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)?;
+            file.write_all(body.as_bytes())?;
+            file.sync_all()?;
+        }
         match publish_new(&temporary, &target) {
             Ok(()) => sync_dir(parent),
             Err(error)
                 if error.kind() == io::ErrorKind::AlreadyExists
-                    && lstat(&target)?
-                        .is_some_and(|m| m.is_file() && !m.file_type().is_symlink()) =>
+                    && stat(&target).is_some_and(|m| m.is_file()) =>
             {
                 Ok(())
             }
@@ -322,136 +329,30 @@ pub(super) fn create_feature_enabled() -> bool {
         })
 }
 
-fn decode_durable_bundle(
-    entry_file: &str,
-    files: &str,
-    clear_legacy_prompt_template: bool,
-) -> io::Result<DurableBundle> {
-    if files.len() > super::validation::MAX_INSTRUCTION_BUNDLE_BYTES {
-        return Err(invalid("Instruction bundle exceeds its size limits"));
-    }
-    let entry_file = bundle_path(entry_file)?;
-    let value = super::json_boundary::parse(files).map_err(io::Error::other)?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| invalid("Invalid persisted instruction bundle files"))?;
-    if object.len() > super::validation::MAX_INSTRUCTION_FILES {
-        return Err(invalid("Instruction bundle exceeds its size limits"));
-    }
-    let mut output = BTreeMap::new();
-    let mut casefolded = BTreeMap::new();
-    casefolded.insert(entry_file.to_lowercase(), entry_file.to_owned());
-    for (path, body) in object {
-        let path = bundle_path(path)?;
-        let body = body
-            .as_str()
-            .ok_or_else(|| invalid("Invalid persisted instruction bundle content"))?;
-        if let Some(previous) = casefolded.insert(path.to_lowercase(), path.clone())
-            && previous != path
-        {
-            return Err(invalid(
-                "Instruction bundle paths collide on a case-insensitive host",
-            ));
-        }
-        if output.insert(path, body.to_owned()).is_some() {
-            return Err(invalid("Duplicate persisted instruction bundle path"));
-        }
-    }
-    Ok(DurableBundle {
-        entry_file,
-        files: output,
-        clear_legacy_prompt_template,
-    })
-    .and_then(|bundle| {
-        validate_bundle_limits(&bundle.entry_file, &bundle.files)?;
-        Ok(bundle)
-    })
+struct BundleLocation {
+    workspace: String,
+    agent_root: PathBuf,
+    managed: PathBuf,
+    configured: Option<PathBuf>,
+    entry: String,
+    legacy_path: Option<PathBuf>,
+    mode: Option<&'static str>,
+    legacy_managed: bool,
 }
 
-fn materialize_bundle_locked(
+/// Shared, pure path and legacy-mode resolution. Both mutating Agent recovery
+/// and Native Chat's read-only identity resolver use this exact decision logic.
+fn bundle_location(
     host: &Host,
-    org: &str,
-    workspace_key: &str,
-    bundle: &DurableBundle,
-    cwd: &Path,
-) -> io::Result<PathBuf> {
-    if workspace_key.is_empty()
-        || !workspace_key
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return Err(invalid("Invalid Agent workspace key"));
-    }
-    // storage::ensure creates the organization layout. Reject a pre-existing
-    // agents symlink before that call can follow it while creating children.
-    if let Ok((storage_root, _)) = storage::root(host, org) {
-        let agents = storage_root.join("agents");
-        if lstat(&agents)?.is_some_and(|metadata| metadata.file_type().is_symlink()) {
-            return Err(invalid("Agent workspace root must not be a symlink"));
-        }
-    }
-    let agents = storage::ensure(host, org, cwd)?.join("agents");
-    assert_owned(&agents)?;
-    let workspace = agents.join(workspace_key);
-    let root = workspace.join("instructions");
-    for directory in [&workspace, &root] {
-        match lstat(directory)? {
-            Some(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-                return Err(invalid("Agent workspace is not an owned directory"));
-            }
-            Some(_) => assert_owned(directory)?,
-            None => {
-                mkdir_private(directory)?;
-                assert_owned(directory)?;
-            }
-        }
-    }
-    for (path, body) in &bundle.files {
-        write_missing(&root, path, body)?;
-    }
-    // Always pass the entry through write_missing so a symlink target is
-    // rejected instead of being accepted through metadata() following it.
-    write_missing(&root, &bundle.entry_file, "")?;
-    Ok(root)
-}
-
-#[cfg(test)]
-pub(super) fn materialize_bundle_for_test(
-    host: &Host,
-    org: &str,
-    workspace_key: &str,
-    bundle: &AgentCreateInstructionsBundle,
-    cwd: &Path,
-) -> io::Result<()> {
-    validate_host_paths(host, cwd)?;
-    let _guard = lock::Guard::acquire(Path::new(&host.workspace_home), &host.hostname)
-        .map_err(|_| invalid("Instruction workspace lock unavailable"))?;
-    let bundle = durable_bundle(bundle)?;
-    materialize_bundle_locked(host, org, workspace_key, &bundle, cwd).map(|_| ())
-}
-
-#[cfg(test)]
-fn validate_host_paths(host: &Host, cwd: &Path) -> io::Result<()> {
-    if host.hostname.is_empty()
-        || !cwd.is_absolute()
-        || [
-            &host.instance_root,
-            &host.workspace_home,
-            &host.previous_documents_root,
-        ]
-        .iter()
-        .any(|path| !Path::new(path).is_absolute())
-    {
-        return Err(invalid("Invalid Agent instruction host facts"));
-    }
-    Ok(())
-}
-fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value> {
+    row: &Value,
+    home: &str,
+    cwd: &str,
+    root: &Path,
+) -> io::Result<BundleLocation> {
     let org = text(row, "orgId");
-    // NULL keys are backfilled by the caller before recovery. A persisted
-    // blank key is intentionally not treated as missing: the Node adapter
-    // keeps that stored value and the existing workspace-path contract fails
-    // closed instead of writing into a derived directory.
+    // Preserve the persisted workspace-key semantics used by AgentCore: a
+    // missing key may be derived by the read helper, while an explicit blank
+    // key fails closed instead of selecting a derived workspace.
     let workspace = if row["workspaceKey"].is_null() {
         super::reads::workspace_key(row)
     } else {
@@ -460,16 +361,12 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
     if workspace.is_empty()
         || !workspace
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
     {
         return Err(invalid("Invalid Agent workspace key"));
     }
-    let root = storage::ensure(host, org, Path::new(cwd))?;
     let agent_root = root.join("agents").join(&workspace);
     let managed = agent_root.join("instructions");
-    for directory in ["instructions", "memory", "life", "skills"] {
-        disk::create_dir_all(agent_root.join(directory))?;
-    }
     let config = &row["agentRuntimeConfig"];
     let mut mode = match config["instructionsBundleMode"].as_str() {
         Some("managed") => Some("managed"),
@@ -549,47 +446,93 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
         let resolved = path(&candidate.to_string_lossy(), Path::new(cwd));
         resolved != managed && (known.contains(&resolved) || historical(&resolved))
     });
-    if legacy_managed {
-        mode = Some("managed");
-        if let Some(source) = &configured
+    Ok(BundleLocation {
+        workspace,
+        agent_root,
+        managed,
+        configured,
+        entry,
+        legacy_path,
+        mode,
+        legacy_managed,
+    })
+}
+
+fn validated_workspace_key(row: &Value) -> io::Result<String> {
+    let workspace = super::reads::workspace_key(row);
+    if workspace.is_empty()
+        || !workspace
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(invalid("Invalid Agent workspace key"));
+    }
+    Ok(workspace)
+}
+
+fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value> {
+    let org = text(row, "orgId");
+    let root = storage::ensure(host, org, Path::new(cwd))?;
+    // Preserve the legacy mutating resolver's workspace-key validation after
+    // factoring shared path selection into `bundle_location`.
+    validated_workspace_key(row)?;
+    let location = bundle_location(host, row, home, cwd, &root)?;
+    for directory in ["instructions", "memory", "life", "skills"] {
+        disk::create_dir_all(location.agent_root.join(directory))?;
+    }
+    let config = &row["agentRuntimeConfig"];
+    if location.legacy_managed {
+        if let Some(source) = &location.configured
             && stat(source).is_some_and(|m| m.is_dir())
         {
             for file in files(source)? {
                 let body = disk::read(source.join(&file))?;
-                write_missing(&managed, &file, &String::from_utf8_lossy(&body))?;
+                write_missing(&location.managed, &file, &String::from_utf8_lossy(&body))?;
             }
         }
         let mut content = defaults(text(row, "role") == "ceo");
-        let legacy_body = legacy_path
+        let legacy_body = location
+            .legacy_path
             .as_ref()
             .and_then(|path| disk::read(path).ok())
             .map(|body| String::from_utf8_lossy(&body).into_owned())
             .or_else(|| string(config, "promptTemplate").map(str::to_owned))
             .unwrap_or_default();
         if !js_trim(&legacy_body).is_empty() {
-            content.insert(entry.clone(), legacy_body);
-        } else if !content.contains_key(&entry) {
+            content.insert(location.entry.clone(), legacy_body);
+        } else if !content.contains_key(&location.entry) {
             content.insert(
-                entry.clone(),
+                location.entry.clone(),
                 content.get("SOUL.md").cloned().unwrap_or_default(),
             );
         }
         for (file, body) in content {
-            write_missing(&managed, &file, &body)?;
+            write_missing(&location.managed, &file, &body)?;
         }
-        if !stat(&managed.join("MEMORY.md")).is_some_and(|m| m.is_file())
-            && stat(&agent_root.join("MEMORY.md")).is_some_and(|m| m.is_file())
+        if !stat(&location.managed.join("MEMORY.md")).is_some_and(|m| m.is_file())
+            && stat(&location.agent_root.join("MEMORY.md")).is_some_and(|m| m.is_file())
         {
-            let memory = disk::read(agent_root.join("MEMORY.md"))?;
-            write_missing(&managed, "MEMORY.md", &String::from_utf8_lossy(&memory))?;
+            let memory = disk::read(location.agent_root.join("MEMORY.md"))?;
+            write_missing(
+                &location.managed,
+                "MEMORY.md",
+                &String::from_utf8_lossy(&memory),
+            )?;
         }
     }
-    if !files(&managed)?.is_empty() && (configured.is_none() || mode != Some("external")) {
+    let mut mode = if location.legacy_managed {
+        Some("managed")
+    } else {
+        location.mode
+    };
+    if !files(&location.managed)?.is_empty()
+        && (location.configured.is_none() || mode != Some("external"))
+    {
         mode = Some("managed");
     }
     // getBundle stats all referenced summaries even though detail only returns
     // this mode-derived path. Preserve observable filesystem failures.
-    if let Some(configured) = configured
+    if let Some(configured) = location.configured
         && mode == Some("external")
     {
         for file in files(&configured)? {
@@ -597,11 +540,212 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
         }
     }
     Ok(if mode == Some("managed") {
-        json!(format!("agents/{workspace}/instructions"))
+        json!(format!("agents/{}/instructions", location.workspace))
     } else {
         Value::Null
     })
 }
+
+pub(crate) struct RuntimeInstructionRevision {
+    pub revision: String,
+    pub source_path: Option<PathBuf>,
+    /// The selected entry path relative to `source_path` when a bundle root
+    /// exists. This is metadata only; the content is carried separately.
+    pub entry_file: String,
+    /// Bounded UTF-8 content the native supervisor may pass as instruction
+    /// text. This intentionally has no `Debug` or serialization implementation.
+    pub entry_content: Option<String>,
+}
+
+pub(crate) fn managed_agent_workspace_path(
+    instance_root: &Path,
+    workspace_home: &Path,
+    previous_documents_root: &Path,
+    friendly_workspace_home: bool,
+    org: &str,
+    row: &Value,
+) -> io::Result<PathBuf> {
+    let host = Host {
+        instance_root: instance_root.to_string_lossy().into_owned(),
+        workspace_home: workspace_home.to_string_lossy().into_owned(),
+        previous_documents_root: previous_documents_root.to_string_lossy().into_owned(),
+        friendly_workspace_home,
+        hostname: "native-chat".to_owned(),
+    };
+    if text(row, "orgId") != org
+        || [instance_root, workspace_home, previous_documents_root]
+            .iter()
+            .any(|path| !path.is_absolute())
+    {
+        return Err(invalid("Invalid Native Chat instruction host facts"));
+    }
+    let (root, _) = storage::root(&host, org)?;
+    storage::validate_readonly(&host, org, &root)?;
+    let workspace = validated_workspace_key(row)?;
+    Ok(root.join("agents").join(workspace))
+}
+
+/// Resolve effective instruction files without creating, migrating, or
+/// rewriting the Agent workspace. The selected entry content is returned only
+/// to the Rust supervisor; it has no `Debug` or serialization implementation.
+/// All discovered bundle files contribute to the identity digest, but only the
+/// configured entry is returned as content.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_readonly_for_runtime(
+    instance_root: &Path,
+    workspace_home: &Path,
+    previous_documents_root: &Path,
+    friendly_workspace_home: bool,
+    org: &str,
+    row: &Value,
+    home: &Path,
+    cwd: &Path,
+) -> io::Result<RuntimeInstructionRevision> {
+    let host = Host {
+        instance_root: instance_root.to_string_lossy().into_owned(),
+        workspace_home: workspace_home.to_string_lossy().into_owned(),
+        previous_documents_root: previous_documents_root.to_string_lossy().into_owned(),
+        friendly_workspace_home,
+        hostname: "native-chat".to_owned(),
+    };
+    if [
+        instance_root,
+        workspace_home,
+        previous_documents_root,
+        home,
+        cwd,
+    ]
+    .iter()
+    .any(|path| !path.is_absolute())
+        || text(row, "orgId") != org
+    {
+        return Err(invalid("Invalid Native Chat instruction host facts"));
+    }
+    let (root, _) = storage::root(&host, org)?;
+    storage::validate_readonly(&host, org, &root)?;
+    validated_workspace_key(row)?;
+    let location = bundle_location(
+        &host,
+        row,
+        &home.to_string_lossy(),
+        &cwd.to_string_lossy(),
+        &root,
+    )?;
+    storage::validate_readonly_path(&root, &location.managed)?;
+    let managed_files = read_only::file_count(&location.managed, true)?;
+    let mode = if location.legacy_managed
+        || (managed_files != 0
+            && (location.configured.is_none() || location.mode != Some("external")))
+    {
+        Some("managed")
+    } else {
+        location.mode
+    };
+
+    let mut contents = BTreeMap::<String, Vec<u8>>::new();
+    let source_path = match mode {
+        Some("managed") => {
+            read_only::read_bundle(&location.managed, true, &mut contents)?;
+            if location.legacy_managed {
+                if let Some(source) = &location.configured {
+                    read_only::read_bundle(source, true, &mut contents)?;
+                }
+                for (name, body) in defaults(text(row, "role") == "ceo") {
+                    contents.entry(name).or_insert_with(|| body.into_bytes());
+                }
+                let legacy_body = if contents.contains_key(&location.entry) {
+                    None
+                } else if let Some(path) = &location.legacy_path {
+                    read_only::read_single(path, &contents)?
+                } else {
+                    None
+                }
+                .or_else(|| {
+                    string(&row["agentRuntimeConfig"], "promptTemplate")
+                        .map(|value| value.as_bytes().to_vec())
+                })
+                .unwrap_or_default();
+                if !js_trim(&String::from_utf8_lossy(&legacy_body)).is_empty() {
+                    read_only::insert_bounded(&mut contents, location.entry.clone(), legacy_body)?;
+                } else if !contents.contains_key(&location.entry) {
+                    let soul = contents.get("SOUL.md").cloned().unwrap_or_default();
+                    contents.insert(location.entry.clone(), soul);
+                }
+            }
+            Some(location.managed)
+        }
+        Some("external") => {
+            let source = location
+                .configured
+                .as_ref()
+                .or_else(|| {
+                    location
+                        .legacy_path
+                        .as_ref()
+                        .and_then(|path| path.parent().map(|_| path))
+                })
+                .map(|path| {
+                    if path.is_file() {
+                        path.parent().unwrap_or(path)
+                    } else {
+                        path.as_path()
+                    }
+                });
+            if let Some(source) = source {
+                read_only::read_bundle(source, false, &mut contents)?;
+                Some(source.to_path_buf())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    let entry_content = if Path::new(&location.entry)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("HEARTBEAT.md"))
+    {
+        // The legacy TS loader explicitly ignores HEARTBEAT.md as an Agent
+        // instruction entry. Keep that behavior without reading it as prompt.
+        None
+    } else if let Some(bytes) = contents.get(&location.entry) {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| invalid("Instruction entry is not valid UTF-8"))?;
+        let effective = text.trim_end();
+        (!effective.is_empty()).then(|| effective.to_owned())
+    } else {
+        None
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"rudder-agent-instructions-v1\0");
+    hasher.update(mode.unwrap_or("none").as_bytes());
+    hasher.update([0]);
+    hasher.update(location.entry.as_bytes());
+    hasher.update([0]);
+    for (name, bytes) in contents {
+        hasher.update((name.len() as u64).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+    let digest = hasher.finalize();
+    let revision = format!(
+        "sha256:{}",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    Ok(RuntimeInstructionRevision {
+        revision,
+        source_path,
+        entry_file: location.entry,
+        entry_content,
+    })
+}
+
 pub(super) async fn library_path(
     tx: &mut Tx<'_>,
     ctx: &Context<'_>,
@@ -622,8 +766,7 @@ pub(super) async fn library_path(
     .map_err(|_| http(500, "Internal server error"))?
     .map_err(|_| http(500, "Internal server error"))?;
     // A credential can expire or be revoked while waiting for the filesystem
-    // lock. Revalidate before recover() performs host writes; denial also
-    // rolls back any uncommitted permissions update.
+    // lock. Revalidate before recover() performs host writes.
     super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
     // A filesystem lock wait is also an authorization boundary. A revoked key,
     // membership or administrator role cannot use pre-wait authority.
@@ -633,148 +776,51 @@ pub(super) async fn library_path(
     let row = row.clone();
     let home = ctx.request.home_directory.clone();
     let cwd = ctx.request.process_working_directory.clone();
-    // The read path is the current private reconciler trigger. A future
-    // background worker can claim rows using next_attempt_at, but this
-    // foundation intentionally keeps recovery coupled to an authorized
-    // detail request so host facts are always freshly signed.
-    let pending = sqlx::query_as::<_, (String, String, bool)>(
-        "SELECT entry_file,files::text,clear_legacy_prompt_template
-           FROM agent_instruction_bundles
-          WHERE org_id=$1::uuid AND agent_id=$2::uuid
-            AND EXISTS (SELECT 1 FROM agents a WHERE a.id=agent_instruction_bundles.agent_id AND a.org_id=$1::uuid)
-            AND state IN ('pending','repair')
-          ORDER BY created_at
-          LIMIT 1",
-    )
-    .bind(ctx.org)
-    .bind(text(&row, "id"))
-    .fetch_optional(&mut **tx)
-    .await?;
-    let has_pending = pending.is_some();
-    let agent_id = text(&row, "id").to_owned();
-    let org = ctx.org.to_owned();
-    let pending_for_materializer = pending.clone();
-    let materialized = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let _guard = guard;
-        let (materialize_error, materialized_root) = pending_for_materializer
-            .as_ref()
-            .map(|(entry_file, files, clear_legacy)| {
-                match decode_durable_bundle(entry_file, files, *clear_legacy) {
-                    Ok(bundle) => match materialize_bundle_locked(
-                        &host,
-                        &org,
-                        text(&row, "workspaceKey"),
-                        &bundle,
-                        Path::new(&cwd),
-                    ) {
-                        Ok(root) => (None, Some(root)),
-                        Err(error) => (Some(error.to_string()), None),
-                    },
-                    Err(error) => (Some(error.to_string()), None),
-                }
-            })
-            .unwrap_or((None, None));
-        // Do not let a failed or malformed private bundle trigger legacy
-        // default recovery writes. The durable row remains repairable and the
-        // next authorized detail request can retry it after the cause is fixed.
-        let recovered = if materialize_error.is_some() {
-            Ok(Value::Null)
-        } else {
-            recover(&host, &row, &home, &cwd)
-        };
-        let recovery_error = recovered.as_ref().err().map(ToString::to_string);
-        (
-            recovered,
-            materialize_error.or(recovery_error),
-            materialized_root,
-        )
+        recover(&host, &row, &home, &cwd)
     })
     .await
-    .map_err(|_| http(500, "Internal server error"))?;
-    let (recovered, materialize_error, materialized_root) = materialized;
-    if has_pending {
-        if let Some(error) = materialize_error {
-            // The filesystem operation is an authorization boundary even
-            // when it fails. Only the actor that started the request may
-            // commit the retry state; otherwise leave the pending row intact.
-            super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
-            let admin = ctx.user().is_some()
-                && sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
-                )
-                .bind(ctx.user())
-                .fetch_one(&mut **tx)
-                .await?;
-            let fresh = Context { admin, ..*ctx };
-            authorize_org(tx, &fresh).await?;
-            sqlx::query(
-                "UPDATE agent_instruction_bundles
-                    SET state='repair',attempts=attempts+1,next_attempt_at=now(),last_error=$3,updated_at=now()
-                  WHERE org_id=$1::uuid AND agent_id=$2::uuid AND state IN ('pending','repair')",
-            )
-            .bind(ctx.org)
-            .bind(&agent_id)
-            .bind(error.chars().take(1024).collect::<String>())
-            .execute(&mut **tx)
-            .await?;
-        } else {
-            // Filesystem work happens outside the transaction. Re-check the
-            // actor before committing the durable projection and its state;
-            // revocation during materialization must leave the row replayable.
-            super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
-            let admin = ctx.user().is_some()
-                && sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
-                )
-                .bind(ctx.user())
-                .fetch_one(&mut **tx)
-                .await?;
-            let fresh = Context { admin, ..*ctx };
-            authorize_org(tx, &fresh).await?;
-            let Some(managed_root) = materialized_root else {
-                return Err(http(
-                    500,
-                    "Instruction bundle materialization did not produce a root",
-                ));
-            };
-            let (entry_file, _, clear_legacy) = pending
-                .as_ref()
-                .expect("pending row exists when materializing");
-            let managed_root = managed_root.to_string_lossy().into_owned();
-            let managed_entry = Path::new(&managed_root).join(entry_file);
-            let managed_entry = managed_entry.to_string_lossy().into_owned();
-            sqlx::query(
-                "UPDATE agents
-                    SET agent_runtime_config =
-                      ((COALESCE(agent_runtime_config,'{}'::jsonb)
-                         || jsonb_build_object(
-                              'instructionsBundleMode','managed',
-                              'instructionsRootPath',$3::text,
-                              'instructionsEntryFile',$4::text,
-                              'instructionsFilePath',$5::text
-                            ))
-                        - CASE WHEN $6 THEN ARRAY['promptTemplate','bootstrapPromptTemplate']::text[] ELSE ARRAY[]::text[] END),
-                        updated_at=now()
-                  WHERE org_id=$1::uuid AND id=$2::uuid",
-            )
-            .bind(ctx.org)
-            .bind(&agent_id)
-            .bind(&managed_root)
-            .bind(entry_file)
-            .bind(&managed_entry)
-            .bind(*clear_legacy)
-            .execute(&mut **tx)
-            .await?;
-            sqlx::query(
-                "UPDATE agent_instruction_bundles
-                    SET state='materialized',attempts=attempts+1,next_attempt_at=now(),last_error=NULL,materialized_at=now(),updated_at=now()
-                  WHERE org_id=$1::uuid AND agent_id=$2::uuid AND state IN ('pending','repair')",
-            )
-            .bind(ctx.org)
-            .bind(&agent_id)
-            .execute(&mut **tx)
-            .await?;
+    .map_err(|_| http(500, "Internal server error"))?
+    .map_err(|_| http(500, "Internal server error"))
+}
+
+#[cfg(test)]
+fn materialize_bundle_for_test(
+    host: &Host,
+    org: &str,
+    agent_key: &str,
+    bundle: &AgentCreateInstructionsBundle,
+    _root: &Path,
+) -> io::Result<()> {
+    if host.workspace_home.is_empty() || !Path::new(&host.workspace_home).is_absolute() {
+        return Err(invalid("Invalid Agent instruction host facts"));
+    }
+    if agent_key.is_empty() || agent_key.contains('/') || agent_key.contains('\\') {
+        return Err(invalid("Invalid Agent workspace key"));
+    }
+    let (workspace, _) = storage::root(host, org)?;
+    let mut current = workspace.clone();
+    if lstat(&current)?.is_none() {
+        mkdir_private(&current)?;
+    }
+    for component in ["agents", agent_key, "instructions"] {
+        current.push(component);
+        match lstat(&current)? {
+            Some(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(invalid("Instruction bundle root is not an owned directory"));
+            }
+            Some(_) => {}
+            None => {
+                mkdir_private(&current)?;
+                assert_owned(&current)?;
+            }
         }
     }
-    recovered.map_err(|_| http(500, "Internal server error"))
+    let bundle =
+        durable_bundle(bundle).map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
+    for (path, body) in bundle.files {
+        write_missing(&current, &path, &body)?;
+    }
+    Ok(())
 }

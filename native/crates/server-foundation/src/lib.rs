@@ -68,6 +68,7 @@ mod activity_link_reads;
 mod activity_reads;
 mod approval_reads;
 mod automation_reads;
+pub mod browser_auth;
 mod cost_reads;
 mod goal_reads;
 mod issue_metadata_reads;
@@ -83,6 +84,13 @@ use native_agent_jwt::NativeAgentJwtIdentity;
 use native_session_auth::NativeSessionIdentity;
 pub use native_session_revocation::NativeSessionRevocationRegistry;
 use public_ingress_config::NativeSessionAuthKind;
+pub mod native_chat_worker;
+
+mod native_chat_startup;
+#[cfg(all(test, unix))]
+#[allow(unused_imports)]
+#[path = "../../native-chat-executor/tests/workflow/fixture.rs"]
+mod native_chat_test_fixture;
 mod organization_catalog_reads;
 mod overview_reads;
 mod private_host_gate;
@@ -97,7 +105,9 @@ mod run_workspace_reads;
 pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
 mod workspace_backup_reads;
-pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
+pub use public_ingress_config::{
+    NativeChatPublicRuntime, PublicIngressConfig, PublicIngressConfigError,
+};
 pub use workspace_backup_reads::WORKSPACE_BACKUP_READ_ACTION;
 
 pub use activity_link_reads::ACTIVITY_LINK_READ_ACTION;
@@ -986,6 +996,7 @@ struct AppState {
     database: DatabaseState,
     session_revocation: NativeSessionRevocationRegistry,
     d1_mutations: Option<MutationStore>,
+    native_chat_worker: Option<native_chat_worker::Supervisor>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
     actor_envelope_replay: Arc<Mutex<NonceReplayGuard>>,
@@ -1155,6 +1166,12 @@ impl AppState {
             DatabaseState::Configured(pool) => Some(MutationStore::new(pool.clone())),
             DatabaseState::Disabled => None,
         };
+        let native_chat_worker = match &database {
+            DatabaseState::Configured(pool) => {
+                Some(native_chat_worker::Supervisor::new(pool.clone()))
+            }
+            DatabaseState::Disabled => None,
+        };
         Ok(Self {
             admission: Arc::new(RequestAdmission::new(
                 config.workers,
@@ -1166,6 +1183,7 @@ impl AppState {
             database,
             session_revocation: NativeSessionRevocationRegistry::default(),
             d1_mutations,
+            native_chat_worker,
             started_at: Instant::now(),
         })
     }
@@ -3269,10 +3287,18 @@ impl ServerRuntime {
     }
 
     pub async fn run(mut self) -> std::io::Result<()> {
-        self.server
+        let result = self
+            .server
             .take()
             .ok_or_else(|| std::io::Error::other("server runtime already consumed"))?
-            .await
+            .await;
+        if let Some(worker) = &self.control.state.native_chat_worker {
+            worker
+                .shutdown(self.control.state.config.shutdown_grace)
+                .await
+                .map_err(std::io::Error::other)?;
+        }
+        result
     }
 
     pub async fn shutdown(&self) {
@@ -3291,7 +3317,20 @@ impl ServerRuntime {
 }
 
 impl ServerControl {
+    /// Private typed Rust dispatch only; no HTTP sender is activated here.
+    pub fn native_chat_worker(&self) -> Option<native_chat_worker::Supervisor> {
+        self.state.native_chat_worker.clone()
+    }
+
+    /// Close shared dispatch before either private or public listener drains.
+    pub fn begin_shutdown(&self) {
+        if let Some(worker) = &self.state.native_chat_worker {
+            worker.begin_shutdown();
+        }
+    }
+
     pub async fn shutdown(&self) {
+        self.begin_shutdown();
         warn!(
             event = "server_shutdown_requested",
             component = "server-foundation"

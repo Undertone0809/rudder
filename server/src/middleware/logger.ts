@@ -52,10 +52,9 @@ function isBrowserRequest(req: object): boolean {
     || pathname === "/api/instance/browser/broker";
 }
 
-function isLocalAccountCredentialRequest(req: object): boolean {
+function isAuthRequest(req: object): boolean {
   const pathname = requestPathname(req);
-  return pathname === "/api/auth/local-exchange"
-    || pathname === "/api/auth/local-offline";
+  return pathname === "/api/auth" || pathname.startsWith("/api/auth/");
 }
 
 function isSecretsMutationRequest(req: object): boolean {
@@ -163,14 +162,14 @@ export function markBrowserHttpRequestBodySensitive(
   _res: object,
   next: () => void,
 ): void {
-  if (isBrowserRequest(req)) markHttpRequestBodySensitive(req);
+  if (isBrowserRequest(req) || isAuthRequest(req)) markHttpRequestBodySensitive(req);
   next();
 }
 
 export function requestBodyForLogs(req: object, body: unknown): unknown {
   return (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody === true
     || isBrowserRequest(req)
-    || isLocalAccountCredentialRequest(req)
+    || isAuthRequest(req)
     || isSecretsMutationRequest(req)
     || containsInlineAnnotations(body)
     ? REDACTED_REQUEST_BODY

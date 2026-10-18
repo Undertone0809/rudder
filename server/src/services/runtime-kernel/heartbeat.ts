@@ -1204,6 +1204,7 @@ export function heartbeatService(
       return await cancelQueuedRunDuringClaim(budgetBlock.reason);
     }
 
+    if (run.executionAuthority === "native_rust") return null;
     const claimedAt = new Date();
     const claimed = await db.transaction(async (tx) => {
       // Wakeup/release transactions lock the Issue before the run advisory
@@ -1510,12 +1511,9 @@ export function heartbeatService(
         })
         .from(heartbeatRuns)
         .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-        .where(or(
-          and(
-            eq(heartbeatRuns.status, "running"),
-            or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
-          ),
-          eq(heartbeatRuns.terminalEffectsPending, true),
+        .where(and(
+          eq(heartbeatRuns.executionAuthority, "legacy_ts"),
+          or(and(eq(heartbeatRuns.status, "running"), or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network"))), eq(heartbeatRuns.terminalEffectsPending, true)),
         ));
 
       for (const { run, agentRuntimeType } of activeRuns) {
@@ -1666,6 +1664,7 @@ export function heartbeatService(
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
       .leftJoin(heartbeatRunEvents, eq(heartbeatRunEvents.runId, heartbeatRuns.id))
       .where(and(
+        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
         eq(heartbeatRuns.status, "running"),
         or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
       ))
@@ -1763,6 +1762,7 @@ export function heartbeatService(
       .from(heartbeatRuns)
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
       .where(and(
+        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
         eq(heartbeatRuns.status, "running"),
         or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
       ));

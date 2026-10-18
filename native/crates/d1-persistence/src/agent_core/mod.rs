@@ -3,7 +3,7 @@
 mod common;
 mod constants;
 mod detail;
-mod instructions;
+pub(crate) mod instructions;
 mod intelligence;
 mod json_boundary;
 mod managed_mcp;
@@ -80,7 +80,7 @@ pub struct AgentCoreRequest {
 
 /// The deliberately small Rust-owned portion of the Agent create contract.
 /// The public Express route still owns secret normalization, skills,
-/// instructions, managed MCP, runtime-chain probes, and avatar uploads.
+/// instructions, managed MCP, intelligence defaults, and avatar assets.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentCreateRequest {
@@ -125,13 +125,8 @@ pub struct AgentCreateNodeOwned {
     pub normalized_agent_runtime_config: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions_bundle: Option<AgentCreateInstructionsBundle>,
-    /// The normalized avatar reference selected by the Node boundary. Rust
-    /// validates uploaded asset ownership inside the create transaction, but
-    /// does not accept binary uploads or legacy named icons here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar_icon: Option<String>,
-    /// A Node-owned runtime-chain result. Rust persists the profile only when
-    /// this private slice is enabled; it never performs provider I/O.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intelligence_defaults: Option<AgentCreateIntelligenceDefaults>,
 }
@@ -152,15 +147,10 @@ pub struct AgentCreateIntelligenceDefaults {
 fn default_seed_intelligence_defaults() -> bool {
     true
 }
-
 fn default_intelligence_profile_status() -> String {
     "disabled".to_owned()
 }
 
-/// A private, bounded instruction plan. The plan is persisted as desired
-/// state during the Agent transaction and materialized after commit by the
-/// native recovery path. It intentionally carries only relative paths and
-/// plain text; secrets stay in the Node-owned runtime preparation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentCreateInstructionsBundle {

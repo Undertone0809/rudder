@@ -1,4 +1,20 @@
+import { resolve } from "node:path";
 import type { LocalAccountAuthOptions } from "../bootstrap/auth-runtime.js";
+
+export type RustBrowserSessionAuth = Readonly<{
+  issuer: "local_account";
+  secret: string;
+  secureCookie: boolean;
+} | {
+  issuer: "better_auth";
+  secret: string;
+  secureCookie: boolean;
+  sessionCookieName: string;
+  dontRememberCookieName: string;
+  expiresIn: number;
+  updateAge: number;
+  disableSessionRefresh: boolean;
+}>;
 
 export type RustLocalAccountLifecycleOptions = {
   installationId: string;
@@ -27,7 +43,49 @@ export type RustNativeIdentityAuthOptions = {
   localImplicitEnabled: boolean;
 };
 
+/** Installation facts only. Rust resolves Agents, Profiles and execution policy. */
+export type RustNativeChatHost = Readonly<{
+  instanceId: string;
+  instanceRoot: string;
+  workspaceHome: string;
+  operatorHome: string;
+  codexHome?: string;
+  /** Optional Rust-discovered local provider installation facts. */
+  claudeExecutable?: string;
+  cursorExecutable?: string;
+  /** Explicitly owned OpenCode Server endpoint; never request supplied. */
+  opencodeServerUrl?: string;
+  opencodeBearerToken?: string;
+  executableSearchPath: string;
+  friendlyWorkspaceHome: boolean;
+  deploymentMode: string;
+  deploymentExposure: string;
+  authRequirement: string;
+  trustedOrigins: readonly string[];
+}>;
+
+
+/** Resolve optional provider installation facts from trusted process configuration. */
+export function resolveNativeChatProviderHostFields(): Readonly<Record<string, string>> {
+  return {
+    ...(process.env.RUDDER_CLAUDE_EXECUTABLE?.trim()
+      ? { claudeExecutable: resolve(process.env.RUDDER_CLAUDE_EXECUTABLE.trim()) }
+      : {}),
+    ...(process.env.RUDDER_CURSOR_EXECUTABLE?.trim()
+      ? { cursorExecutable: resolve(process.env.RUDDER_CURSOR_EXECUTABLE.trim()) }
+      : {}),
+    ...(process.env.RUDDER_OPENCODE_SERVER_URL?.trim()
+      ? { opencodeServerUrl: process.env.RUDDER_OPENCODE_SERVER_URL.trim() }
+      : {}),
+    ...(process.env.RUDDER_OPENCODE_BEARER_TOKEN?.trim()
+      ? { opencodeBearerToken: process.env.RUDDER_OPENCODE_BEARER_TOKEN.trim() }
+      : {}),
+  };
+}
+
 export type RustPublicIngressOptions = {
+  browserSessionAuth?: RustBrowserSessionAuth;
+  nativeChatHost?: RustNativeChatHost;
   listenAddr: string;
   nodeUpstream: string;
   authorizationKey: string;

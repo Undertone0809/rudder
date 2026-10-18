@@ -21,6 +21,7 @@ describe("required Rudder Account session gate", () => {
     expect((await request(anonymous).get("/api/health")).status).toBe(200);
     expect((await request(anonymous).post("/api/auth/local-exchange")).status).toBe(200);
     expect((await request(anonymous).post("/api/auth/local-offline")).status).toBe(200);
+    expect((await request(anonymous).post("/api/auth/sign-up/email")).status).toBe(200);
   });
 
   it("preserves board sessions and agent bearer actors", async () => {

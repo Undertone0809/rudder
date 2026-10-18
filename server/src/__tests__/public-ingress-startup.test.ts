@@ -43,6 +43,8 @@ describe("explicit public ingress startup", () => {
     expect(() => assertPublicIngressExposure(config({ host: "0.0.0.0" }), false)).toThrow("implicit local Board");
     expect(() => assertPublicIngressExposure(config({ host: "localhost" }), false)).toThrow("numeric listener");
     expect(() => assertPublicIngressExposure(config(), false, "desktop")).toThrow("Desktop account authentication");
+    vi.stubEnv("RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH", "1");
+    expect(() => assertPublicIngressExposure(config(), false, "desktop")).not.toThrow();
     expect(() => assertPublicIngressExposure(config({ host: "::1" }), false)).not.toThrow();
     expect(() => assertPublicIngressExposure(config({ host: "0.0.0.0", deploymentMode: "authenticated" }), false)).not.toThrow();
   });
@@ -65,6 +67,29 @@ describe("explicit public ingress startup", () => {
       localImplicitEnabled: true,
       assertionKey: expect.any(String),
     });
+  });
+
+  it("transports the constructed issuer without selecting a different policy", async () => {
+    vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    const descriptor = Object.freeze({ issuer: "local_account" as const, secret: " raw-issuer-secret ", secureCookie: true });
+    const ingress = await preparePublicIngressStartup(config(), 3100, undefined, undefined, undefined, undefined, descriptor);
+    expect(ingress.appOptions.rustPublicIngress?.browserSessionAuth).toBe(descriptor);
+    const disabled = await preparePublicIngressStartup(config({ rustPublicIngressMode: "off" }), 3100, undefined, undefined, undefined, undefined, descriptor);
+    expect(disabled.appOptions).toEqual({});
+  });
+
+  it("uses the constructed issuer for both Rust resolvers and rejects conflicting local handoffs", async () => {
+    vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    vi.stubEnv("BETTER_AUTH_SECRET", "changed-after-issuer-construction");
+    const descriptor = Object.freeze({ issuer: "better_auth" as const, secret: "original-issuer-secret", secureCookie: true,
+      sessionCookieName: "better-auth.session_token", dontRememberCookieName: "better-auth.dont_remember",
+      expiresIn: 604800, updateAge: 86400, disableSessionRefresh: false });
+    const ingress = await preparePublicIngressStartup(config({ deploymentMode: "authenticated" }), 3100, undefined, undefined, undefined, undefined, descriptor);
+    expect(ingress.appOptions.rustPublicIngress?.sessionAuth).toMatchObject({
+      kind: descriptor.issuer, secret: descriptor.secret, secureCookie: true,
+    });
+    await expect(preparePublicIngressStartup(config(), 3100, { sessionSecret: "different" }, undefined, undefined, undefined, descriptor))
+      .rejects.toThrow("issuer settings disagree");
   });
 
   it("fails closed if private port selection collides with the public port", async () => {
@@ -132,6 +157,10 @@ describe("explicit public ingress startup", () => {
     });
     expect(ingress.appOptions.rustPublicIngress?.identityAuth?.localImplicitEnabled).toBe(false);
     expect(ingress.nodeListenHost).toBe("127.0.0.1");
+
+    vi.stubEnv("RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH", "1");
+    const smokeIngress = await preparePublicIngressStartup(config(), 3100, undefined, "desktop");
+    expect(smokeIngress.appOptions.rustPublicIngress?.identityAuth?.localImplicitEnabled).toBe(true);
   });
 
   it("waits for public readiness before reporting the listener and rejects missing identity", async () => {

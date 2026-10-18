@@ -2078,6 +2078,39 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(executeInput?.context).not.toHaveProperty("issueId");
   });
 
+  it.each(["codex_local", "hermes_local"])("reads existing %s conversations when Rust owns execution", async (agentRuntimeType) => {
+    const conversation = makeConversation();
+    mockAgentService.getInternalById.mockResolvedValue({
+      id: "agent-1", orgId: conversation.orgId, name: "Native Agent", role: "engineer", status: "active",
+      agentRuntimeType, agentRuntimeConfig: {}, runtimeConfig: {}, metadata: null,
+    });
+    const svc = chatAssistantService({} as any, undefined, { nativeLocalChatOwner: "rust" });
+    await expect(svc.enrichConversation(conversation)).resolves.toMatchObject({ chatRuntime: { agentRuntimeType } });
+    await expect(svc.enrichConversations([conversation])).resolves.toMatchObject([{ chatRuntime: { agentRuntimeType } }]);
+    await expect(svc.getChatAssistantAvailability(conversation)).resolves.toMatchObject({ agentRuntimeType, available: true });
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.createRun).not.toHaveBeenCalled();
+    expect(mockRunContextService.prepareRuntimeConfig).not.toHaveBeenCalled();
+    expect(mockRunContextService.materializeManagedInstructionsForRun).not.toHaveBeenCalled();
+  });
+
+  it.each(["codex_local", "hermes_local"])("refuses a newly %s target on the legacy execution boundary when Rust owns local Chat", async (agentRuntimeType) => {
+    // The Rust forwarding classification may have observed a legacy Agent.
+    // A later lookup here sees the concurrent edit; no Node execution follows.
+    mockAgentService.getInternalById.mockResolvedValueOnce({
+      id: "agent-1", orgId: makeConversation().orgId, name: "Changed Agent", role: "engineer", status: "active",
+      agentRuntimeType, agentRuntimeConfig: {}, runtimeConfig: {}, metadata: null,
+    });
+    const svc = chatAssistantService({} as any, undefined, { nativeLocalChatOwner: "rust" });
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(), messages: makeMessages(), contextLinks: [],
+    })).rejects.toBeDefined();
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.createRun).not.toHaveBeenCalled();
+    expect(mockRunContextService.materializeManagedInstructionsForRun).not.toHaveBeenCalled();
+    expect(mockRunContextService.prepareRuntimeConfig).not.toHaveBeenCalled();
+  });
+
   it("forwards adapter invocation metadata to the caller during streaming", async () => {
     const svc = chatAssistantService({} as any);
     const invocationMeta: unknown[] = [];
