@@ -419,3 +419,163 @@ async fn rust_create_normalizes_secret_refs_and_fallback_configs_with_org_isolat
     }
     unsafe { std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED") };
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rust_create_assigns_canonical_org_skills_and_omits_bundled_skills() {
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Skill User','skill-user@example.test',now(),now())",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed skill user");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(ORG)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed skill membership");
+    sqlx::query(
+        "INSERT INTO organization_skills(org_id,key,slug,name,markdown,source_type) VALUES
+         ($1::uuid,'rudder/browser','browser','Browser','bundled','rudder_bundled'),
+         ($1::uuid,'organization/' || $1::text || '/alpha','alpha','Alpha','alpha','local_path'),
+         ($1::uuid,'organization/' || $1::text || '/beta','beta','Beta','beta','local_path'),
+         ($1::uuid,'organization/' || $1::text || '/beta-copy','beta','Beta copy','beta','local_path')",
+    )
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .expect("seed skill catalog");
+
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    unsafe { std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1") };
+    let result = execute_create_body(
+        &database,
+        json!({
+            "operation":"create",
+            "orgId":ORG,
+            "input":{
+                "name":"Skill Create",
+                "desiredSkills":[
+                    "rudder/browser",
+                    "bundled:rudder/browser",
+                    "org:organization/10000000-0000-4000-8000-000000000001/alpha",
+                    "alpha",
+                    "alpha"
+                ]
+            }
+        }),
+    )
+    .await
+    .expect("skill create succeeds");
+    unsafe { std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED") };
+
+    let response: serde_json::Value = serde_json::from_str(&result.1).expect("response json");
+    let agent_id = response["id"].as_str().expect("created agent id");
+    let assigned = sqlx::query_scalar::<_, String>(
+        "SELECT skill_key FROM agent_enabled_skills WHERE org_id=$1::uuid AND agent_id=$2::uuid ORDER BY skill_key",
+    )
+    .bind(ORG)
+    .bind(agent_id)
+    .fetch_all(&database.pool)
+    .await
+    .expect("assigned skills");
+    assert_eq!(
+        assigned,
+        ["org:organization/10000000-0000-4000-8000-000000000001/alpha"]
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM agent_enabled_skills WHERE agent_id=$1::uuid"
+        )
+        .bind(agent_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("assignment count"),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rust_create_rejects_unknown_ambiguous_and_cross_org_skills_atomically() {
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Skill User 2','skill-user-2@example.test',now(),now())",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed skill user");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(ORG)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed skill membership");
+    let foreign_skill_id = sqlx::query_scalar::<_, String>(
+        "INSERT INTO organization_skills(org_id,key,slug,name,markdown,source_type) VALUES ($1::uuid,'organization/' || $1::text || '/shared','shared','Shared','shared','local_path') RETURNING id::text",
+    )
+    .bind(support::OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("seed foreign skill");
+    sqlx::query(
+        "INSERT INTO organization_skills(org_id,key,slug,name,markdown,source_type) VALUES
+         ($1::uuid,'organization/' || $1::text || '/dup-one','dup','Dup one','dup','local_path'),
+         ($1::uuid,'organization/' || $1::text || '/dup-two','dup','Dup two','dup','local_path')",
+    )
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .expect("seed ambiguous skills");
+
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    unsafe { std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1") };
+    for (name, reference) in [
+        (
+            "Unknown skill",
+            "org:organization/10000000-0000-4000-8000-000000000001/missing".to_owned(),
+        ),
+        ("Ambiguous skill", "dup".to_owned()),
+        (
+            "Unavailable bundled skill",
+            "bundled:rudder/browser".to_owned(),
+        ),
+        ("Cross org skill", foreign_skill_id),
+    ] {
+        let before =
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM agents WHERE org_id=$1::uuid")
+                .bind(ORG)
+                .fetch_one(&database.pool)
+                .await
+                .expect("agent count before");
+        let result = execute_create_body(
+            &database,
+            json!({"operation":"create","orgId":ORG,"input":{"name":name,"desiredSkills":[reference]}}),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AgentCoreError::Http(422, _, _))),
+            "{name}: {result:?}"
+        );
+        let after =
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM agents WHERE org_id=$1::uuid")
+                .bind(ORG)
+                .fetch_one(&database.pool)
+                .await
+                .expect("agent count after");
+        assert_eq!(before, after, "{name} must roll back the Agent row");
+    }
+    unsafe { std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED") };
+}

@@ -206,6 +206,14 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
         .execute(&mut **tx)
         .await?;
 
+    // Skill assignment is part of the same gated Agent-create transaction.
+    // The public POST remains Node-owned while this gate is disabled; when it
+    // is enabled, only canonical selection keys are persisted and bundled
+    // skills are validated then omitted as always-enabled runtime skills.
+    if super::agent_create_feature_enabled() {
+        super::skills::assign_desired_skills(tx, ctx.org, &id, &request).await?;
+    }
+
     if request.budget_monthly_cents > 0 {
         sqlx::query("INSERT INTO budget_policies(org_id,scope_type,scope_id,metric,window_kind,amount,warn_percent,hard_stop_enabled,notify_enabled,is_active,created_by_user_id,updated_by_user_id) VALUES($1::uuid,'agent',$2::uuid,'billed_cents','calendar_month_utc',$3,80,true,true,true,$4,$4) ON CONFLICT(org_id,scope_type,scope_id,metric,window_kind) DO UPDATE SET amount=excluded.amount,warn_percent=excluded.warn_percent,hard_stop_enabled=excluded.hard_stop_enabled,notify_enabled=excluded.notify_enabled,is_active=true,updated_by_user_id=excluded.updated_by_user_id,updated_at=now()")
             .bind(ctx.org)
