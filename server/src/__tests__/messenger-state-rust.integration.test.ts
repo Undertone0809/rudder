@@ -824,6 +824,7 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     expect(JSON.parse(unfollowed.body.toString())).toEqual({ ok: true });
     expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
     expect((await db.execute(sql`SELECT action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.unfollowed'`)).length).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(2);
   }, 30_000);
 
   it("keeps Node healthy and fails every migrated endpoint when the actual native binary cannot start", async () => {
@@ -837,6 +838,7 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
         ["patch", `/saved-views/${viewIds[0]}`, { title: "must not write" }], ["delete", `/saved-views/${viewIds[0]}`], ["patch", "/saved-views/reorder", { ids: [viewIds[0]] }],
         ["post", "/groups", { name: "must not write" }], ["patch", `/groups/${groupId}`, { name: "must not write" }], ["delete", `/groups/${groupId}`], ["post", `/groups/${groupId}/separate`],
         ["delete", `/groups/entries/${encodeURIComponent(`saved-view:${viewIds[0]}`)}`], ["post", "/threads/issues/user-state", { pinned: true }],
+        ["post", `/issues/${followedIssueId}/follow`], ["delete", `/issues/${followedIssueId}/follow`],
       ] as [Method, string, unknown?][]) {
         const response = await http(method, suffix, body, token, failingServer);
         expect(response.status, `${method} ${suffix}`).toBe(503);
