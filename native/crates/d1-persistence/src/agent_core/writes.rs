@@ -192,6 +192,18 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
     .execute(&mut **tx)
     .await?;
 
+    // The instruction plan is an outbox row in the same Agent transaction.
+    // No host filesystem call is allowed before commit; a later detail read
+    // or recovery worker can replay the row without changing Agent identity.
+    if super::instructions::create_feature_enabled()
+        && let Some(bundle) = request
+            .node_owned
+            .as_ref()
+            .and_then(|node| node.instructions_bundle.as_ref())
+    {
+        super::instructions::enqueue_create_bundle(tx, ctx.org, &id, bundle).await?;
+    }
+
     // Every created Agent is an active organization principal and receives
     // the same default task-assignment grant as the Node route.
     sqlx::query("INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES($1::uuid,'agent',$2,'member','active') ON CONFLICT(org_id,principal_type,principal_id) DO UPDATE SET membership_role='member',status='active',updated_at=now()")

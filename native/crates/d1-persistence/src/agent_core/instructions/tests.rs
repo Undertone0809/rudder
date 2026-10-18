@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 const ORG: &str = "10000000-0000-4000-8000-000000000001";
 #[test]
 fn canonical_workspace_tolerates_corrupt_optional_alias_probe() {
@@ -63,6 +64,116 @@ fn no_replace_publication_keeps_an_existing_destination() {
     assert_eq!(disk::read_to_string(&target).unwrap(), "existing");
     assert_eq!(disk::read_to_string(&source).unwrap(), "new");
 }
+
+#[test]
+fn durable_bundle_replays_after_partial_filesystem_progress_without_overwrite() {
+    let f = Fixture::new();
+    let bundle = AgentCreateInstructionsBundle {
+        entry_file: "SOUL.md".into(),
+        files: BTreeMap::from([
+            ("SOUL.md".into(), "desired soul".into()),
+            ("nested/TOOLS.md".into(), "desired tools".into()),
+        ]),
+        clear_legacy_prompt_template: false,
+    };
+    disk::create_dir_all(f.instructions().join("nested")).unwrap();
+    disk::write(f.instructions().join("SOUL.md"), "operator edit").unwrap();
+    materialize_bundle_for_test(&f.host, ORG, "builder-key", &bundle, f.root.path()).unwrap();
+    assert_eq!(
+        disk::read_to_string(f.instructions().join("SOUL.md")).unwrap(),
+        "operator edit"
+    );
+    assert_eq!(
+        disk::read_to_string(f.instructions().join("nested/TOOLS.md")).unwrap(),
+        "desired tools"
+    );
+    // A retry after a crash between file publication and the DB state update
+    // is a no-op and does not replace the existing bytes.
+    materialize_bundle_for_test(&f.host, ORG, "builder-key", &bundle, f.root.path()).unwrap();
+    assert_eq!(
+        disk::read_to_string(f.instructions().join("SOUL.md")).unwrap(),
+        "operator edit"
+    );
+}
+
+#[test]
+fn durable_bundle_rejects_traversal_and_relative_host_facts() {
+    let f = Fixture::new();
+    let bundle = AgentCreateInstructionsBundle {
+        entry_file: "nested/../SOUL.md".into(),
+        files: BTreeMap::new(),
+        clear_legacy_prompt_template: false,
+    };
+    assert!(
+        materialize_bundle_for_test(&f.host, ORG, "builder-key", &bundle, f.root.path()).is_err()
+    );
+    let mut host = f.host.clone();
+    host.workspace_home = "relative-workspace".into();
+    let bundle = AgentCreateInstructionsBundle {
+        entry_file: "SOUL.md".into(),
+        files: BTreeMap::new(),
+        clear_legacy_prompt_template: false,
+    };
+    assert!(
+        materialize_bundle_for_test(&host, ORG, "builder-key", &bundle, f.root.path()).is_err()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_bundle_rejects_symlinked_agent_root_before_writing() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    let workspace = f.workspace();
+    disk::create_dir_all(&workspace).unwrap();
+    let outside = f.root.path().join("outside");
+    disk::create_dir_all(&outside).unwrap();
+    symlink(&outside, workspace.join("agents")).unwrap();
+    let bundle = AgentCreateInstructionsBundle {
+        entry_file: "SOUL.md".into(),
+        files: BTreeMap::from([("SOUL.md".into(), "blocked".into())]),
+        clear_legacy_prompt_template: false,
+    };
+    assert!(
+        materialize_bundle_for_test(&f.host, ORG, "builder-key", &bundle, f.root.path()).is_err()
+    );
+    assert!(!outside.join("builder-key/instructions/SOUL.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_bundle_rejects_symlinked_targets_and_nested_parents() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    f.run().unwrap();
+    let outside = f.root.path().join("outside");
+    disk::create_dir_all(&outside).unwrap();
+    let target = outside.join("target.md");
+    disk::write(&target, "outside").unwrap();
+    symlink(&target, f.instructions().join("SOUL.md")).unwrap();
+    let bundle = AgentCreateInstructionsBundle {
+        entry_file: "SOUL.md".into(),
+        files: BTreeMap::from([("SOUL.md".into(), "blocked".into())]),
+        clear_legacy_prompt_template: false,
+    };
+    assert!(
+        materialize_bundle_for_test(&f.host, ORG, "builder-key", &bundle, f.root.path()).is_err()
+    );
+    assert_eq!(disk::read_to_string(target).unwrap(), "outside");
+
+    disk::remove_file(f.instructions().join("SOUL.md")).unwrap();
+    symlink(&outside, f.instructions().join("nested")).unwrap();
+    let bundle = AgentCreateInstructionsBundle {
+        entry_file: "nested/TOOLS.md".into(),
+        files: BTreeMap::from([("nested/TOOLS.md".into(), "blocked".into())]),
+        clear_legacy_prompt_template: false,
+    };
+    assert!(
+        materialize_bundle_for_test(&f.host, ORG, "builder-key", &bundle, f.root.path()).is_err()
+    );
+    assert!(!outside.join("TOOLS.md").exists());
+}
+
 #[test]
 fn legacy_absolute_file_normalizes_only_for_managed_root_matching() {
     let mut f = Fixture::new();

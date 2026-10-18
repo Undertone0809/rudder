@@ -2,6 +2,7 @@ export { activityLog } from "./activity_log.js";
 export { agentApiKeys } from "./agent_api_keys.js";
 export { agentConfigRevisions } from "./agent_config_revisions.js";
 export { agentEnabledSkills } from "./agent_enabled_skills.js";
+export { agentInstructionBundles } from "./agent_instruction_bundles.js";
 export { agentIntegrationBindingTokens } from "./agent_integration_binding_tokens.js";
 export { agentIntegrationChatBindings } from "./agent_integration_chat_bindings.js";
 export { agentIntegrationInboundAudit } from "./agent_integration_inbound_audit.js";

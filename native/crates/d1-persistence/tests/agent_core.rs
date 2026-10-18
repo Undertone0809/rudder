@@ -297,6 +297,170 @@ async fn rust_create_is_transactional_and_records_default_side_effects() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn rust_create_persists_instruction_bundle_outbox_without_touching_filesystem() {
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Bundle User','bundle-user@example.test',now(),now())",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed bundle user");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(ORG)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed bundle membership");
+
+    let input = json!({
+        "name": "Durable Bundle",
+        "nodeOwned": {
+            "normalizedAgentRuntimeConfig": {},
+            "instructionsBundle": {
+                "entryFile": "SOUL.md",
+                "files": {
+                    "SOUL.md": "# Durable",
+                    "nested/TOOLS.md": "tools"
+                },
+                "clearLegacyPromptTemplate": true
+            }
+        }
+    });
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    unsafe {
+        std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1");
+        std::env::set_var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED", "1");
+    }
+    let result = execute_create_body(
+        &database,
+        json!({
+            "operation": "create",
+            "orgId": ORG,
+            "input": input,
+        }),
+    )
+    .await
+    .expect("bundle create succeeds");
+    unsafe {
+        std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED");
+        std::env::remove_var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED");
+    }
+    assert_eq!(result.0, 201);
+    let agent_id: String = sqlx::query_scalar(
+        "SELECT id::text FROM agents WHERE org_id=$1::uuid AND name='Durable Bundle'",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .expect("created agent");
+    let row = sqlx::query_as::<_, (String, String, bool, String)>(
+        "SELECT entry_file,files::text,clear_legacy_prompt_template,state
+           FROM agent_instruction_bundles WHERE org_id=$1::uuid AND agent_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&agent_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("durable instruction bundle");
+    assert_eq!(row.0, "SOUL.md");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&row.1).unwrap()["nested/TOOLS.md"],
+        "tools"
+    );
+    assert!(row.2);
+    assert_eq!(row.3, "pending");
+    sqlx::query("UPDATE agents SET agent_runtime_config=$1::jsonb WHERE id=$2::uuid")
+        .bind(json!({
+            "promptTemplate": "legacy prompt",
+            "bootstrapPromptTemplate": "legacy boot"
+        }))
+        .bind(&agent_id)
+        .execute(&database.pool)
+        .await
+        .expect("seed legacy prompt config");
+
+    // A later detail read is the current private reconciler trigger. It
+    // materializes the pending row, consumes clearLegacyPromptTemplate, and
+    // records canonical runtime paths only after filesystem success.
+    let filesystem = tempfile::tempdir().expect("filesystem fixture");
+    let instance_root = filesystem.path().join("instances/default");
+    let workspace_home = instance_root.join("organizations");
+    let previous_documents_root = filesystem.path().join("Documents/organizations");
+    let detail_body = json!({
+        "operation": "detail",
+        "orgId": ORG,
+        "id": agent_id,
+        "homeDirectory": filesystem.path(),
+        "processWorkingDirectory": filesystem.path(),
+        "deploymentMode": "local_trusted",
+        "instructionsHost": {
+            "instanceRoot": instance_root,
+            "workspaceHome": workspace_home,
+            "previousDocumentsRoot": previous_documents_root,
+            "friendlyWorkspaceHome": false,
+            "hostname": "durable-bundle-test-host"
+        }
+    });
+    let detail_bytes = serde_json::to_vec(&detail_body).expect("serialize detail body");
+    let detail_request = AgentCoreRequest::parse(&detail_bytes).expect("valid detail request");
+    let detail_result = execute_agent_with_native_auth(
+        &database.pool,
+        &verified_create_user_with_body(&detail_bytes),
+        &detail_request,
+        &NoopNativeAuthorizer,
+    )
+    .await
+    .expect("detail reconciler succeeds");
+    assert_eq!(detail_result.0, 200);
+    let stored_state: (String, serde_json::Value) = sqlx::query_as(
+        "SELECT b.state, a.agent_runtime_config FROM agent_instruction_bundles b JOIN agents a ON a.id=b.agent_id WHERE b.org_id=$1::uuid AND b.agent_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&agent_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("materialized durable row");
+    assert_eq!(stored_state.0, "materialized");
+    assert_eq!(stored_state.1["instructionsBundleMode"], "managed");
+    assert_eq!(stored_state.1["instructionsEntryFile"], "SOUL.md");
+    assert!(
+        stored_state.1["instructionsRootPath"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/instructions"))
+    );
+    assert!(
+        stored_state.1["instructionsFilePath"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/instructions/SOUL.md"))
+    );
+    assert!(stored_state.1["promptTemplate"].is_null());
+    let workspace_key: String =
+        sqlx::query_scalar("SELECT workspace_key FROM agents WHERE id=$1::uuid")
+            .bind(&agent_id)
+            .fetch_one(&database.pool)
+            .await
+            .expect("workspace key");
+    let instructions = workspace_home
+        .join("100000000000/workspaces/agents")
+        .join(workspace_key)
+        .join("instructions");
+    assert_eq!(
+        std::fs::read_to_string(instructions.join("SOUL.md")).unwrap(),
+        "# Durable"
+    );
+    assert_eq!(
+        std::fs::read_to_string(instructions.join("nested/TOOLS.md")).unwrap(),
+        "tools"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn rust_create_normalizes_secret_refs_and_fallback_configs_with_org_isolation() {
     let database = Database::start().await;
     sqlx::query(

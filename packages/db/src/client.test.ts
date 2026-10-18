@@ -292,15 +292,15 @@ describe("migration catalog", () => {
 
     expect(latestEntry).toMatchObject({
       idx: journal.entries.length - 1,
-      tag: "0179_reflective_wallow",
+      tag: "0180_agent_instruction_bundles",
     });
     expect(fs.existsSync(new URL(`${latestEntry.tag}.sql`, migrationsUrl))).toBe(true);
 
     const latestSnapshot = JSON.parse(
-      fs.readFileSync(new URL("meta/0179_snapshot.json", migrationsUrl), "utf8"),
+      fs.readFileSync(new URL("meta/0180_snapshot.json", migrationsUrl), "utf8"),
     ) as { id: string; prevId: string };
     const previousSnapshot = JSON.parse(
-      fs.readFileSync(new URL("meta/0178_snapshot.json", migrationsUrl), "utf8"),
+      fs.readFileSync(new URL("meta/0179_snapshot.json", migrationsUrl), "utf8"),
     ) as { id: string };
     expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
   });
