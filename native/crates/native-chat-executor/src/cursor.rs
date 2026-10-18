@@ -114,12 +114,12 @@ pub fn execute_turn(
         .ok()
         .and_then(|_| transport.take_cleanup_proof());
     let (session, response, update_count) = result?;
-    return Ok(CursorExecutionObservation {
+    Ok(CursorExecutionObservation {
         session,
         response,
         update_count,
         cleanup,
-    });
+    })
 }
 
 fn run_turn(
