@@ -4305,6 +4305,40 @@ describe("chat routes", { retry: 2 }, () => {
     );
   });
 
+  it("routes native Side Chat transcript reads through the Rust Reader", async () => {
+    const conversation = createConversation({
+      id: "side-chat-transcript",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2026-03-26T09:00:00.000Z"),
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    const nativeChatTranscript = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ messageId: "side-message", transcript: [] })),
+    });
+
+    const res = await request(createApp(
+      undefined,
+      undefined,
+      undefined,
+      { nativeChatTranscript },
+    )).get("/api/chats/side-chat-transcript/messages/side-message/transcript");
+
+    expect(res.status).toBe(200);
+    expect(nativeChatTranscript).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      expect.objectContaining({
+        operation: "read_message_transcript",
+        conversationId: "side-chat-transcript",
+        messageId: "side-message",
+      }),
+    );
+    expect(mockChatService.getMessageTranscript).not.toHaveBeenCalled();
+  });
+
   it("persists server-owned queued continuation transcripts incrementally in the generation ledger", async () => {
     const priorQueueWorkerFlag = process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
     process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = "true";
