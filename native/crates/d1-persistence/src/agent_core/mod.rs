@@ -4,6 +4,7 @@ mod common;
 mod constants;
 mod detail;
 mod instructions;
+mod intelligence;
 mod json_boundary;
 mod managed_mcp;
 mod reads;
@@ -79,7 +80,7 @@ pub struct AgentCoreRequest {
 
 /// The deliberately small Rust-owned portion of the Agent create contract.
 /// The public Express route still owns secret normalization, skills,
-/// instructions, managed MCP, intelligence defaults, and avatar assets.
+/// instructions, managed MCP, runtime-chain probes, and avatar uploads.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentCreateRequest {
@@ -124,6 +125,36 @@ pub struct AgentCreateNodeOwned {
     pub normalized_agent_runtime_config: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions_bundle: Option<AgentCreateInstructionsBundle>,
+    /// The normalized avatar reference selected by the Node boundary. Rust
+    /// validates uploaded asset ownership inside the create transaction, but
+    /// does not accept binary uploads or legacy named icons here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_icon: Option<String>,
+    /// A Node-owned runtime-chain result. Rust persists the profile only when
+    /// this private slice is enabled; it never performs provider I/O.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intelligence_defaults: Option<AgentCreateIntelligenceDefaults>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentCreateIntelligenceDefaults {
+    #[serde(default = "default_seed_intelligence_defaults")]
+    pub seed: bool,
+    #[serde(default = "default_intelligence_profile_status")]
+    pub status: String,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub last_verified_at: Option<String>,
+}
+
+fn default_seed_intelligence_defaults() -> bool {
+    true
+}
+
+fn default_intelligence_profile_status() -> String {
+    "disabled".to_owned()
 }
 
 /// A private, bounded instruction plan. The plan is persisted as desired
@@ -280,6 +311,12 @@ async fn execute_agent_inner(
         }
         let id=resolve_id(&mut tx,actor,r,admin).await?;
         let input=validation::validate(&r.operation,(!r.input_missing).then_some(&r.input))?;
+        if r.operation == "create"
+            && intelligence::requested(&AgentCreateRequest::parse(&input)?)
+            && !intelligence::feature_enabled()
+        {
+            return Err(http(404, "Rust Agent intelligence/avatar authority is disabled"));
+        }
         early_authorization(actor,r)?;
         let current=if let Some(id)=&id{stored(&mut tx,id).await?}else{None};
         if id.is_some()&&current.is_none()&&!matches!(r.operation.as_str(),"keys"|"key-revoke"){return Err(http(404,"Agent not found"));}

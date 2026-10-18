@@ -1,8 +1,8 @@
 //! Schemas for the independently migrated Agent endpoints. Absent root, null,
 //! empty strings and unknown fields retain the exact public Zod distinction.
 use super::{
-    AgentCoreError, AgentCreateInstructionsBundle, AgentCreateNodeOwned, AgentCreatePermissions,
-    AgentCreateRequest,
+    AgentCoreError, AgentCreateInstructionsBundle, AgentCreateIntelligenceDefaults,
+    AgentCreateNodeOwned, AgentCreatePermissions, AgentCreateRequest,
     common::{Result, Tx, js_trim, uuid_like},
 };
 use serde_json::{Value, json};
@@ -15,6 +15,7 @@ pub(super) const MAX_INSTRUCTION_FILES: usize = 128;
 pub(super) const MAX_INSTRUCTION_PATH_BYTES: usize = 512;
 pub(super) const MAX_INSTRUCTION_FILE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_INSTRUCTION_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_INTELLIGENCE_LAST_ERROR_BYTES: usize = 2048;
 fn received(value: Option<&Value>) -> &'static str {
     match value {
         None => "undefined",
@@ -91,6 +92,14 @@ pub(super) fn validate(operation: &str, value: Option<&Value>) -> Result<Value> 
 
 fn validation_error(issues: Vec<Value>) -> AgentCoreError {
     AgentCoreError::Http(400, "Validation error".into(), Some(json!(issues)))
+}
+
+fn intelligence_constraint(message: &str) -> AgentCoreError {
+    AgentCoreError::Http(
+        422,
+        format!("Invalid nodeOwned.intelligenceDefaults: {message}"),
+        None,
+    )
 }
 
 fn unsupported_field(field: &str) -> AgentCoreError {
@@ -596,7 +605,10 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             if node.keys().any(|key| {
                 !matches!(
                     key.as_str(),
-                    "normalizedAgentRuntimeConfig" | "instructionsBundle"
+                    "normalizedAgentRuntimeConfig"
+                        | "instructionsBundle"
+                        | "avatarIcon"
+                        | "intelligenceDefaults"
                 )
             }) {
                 return Err(unsupported_field("nodeOwned"));
@@ -720,9 +732,154 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                     )]));
                 }
             };
+            let avatar_icon = match node.get("avatarIcon") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(value)) => Some(value.trim().to_owned()),
+                value => {
+                    return Err(validation_error(vec![wrong(
+                        "string",
+                        value,
+                        json!(["nodeOwned", "avatarIcon"]),
+                    )]));
+                }
+            };
+            let intelligence_defaults = match node.get("intelligenceDefaults") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(defaults)) => {
+                    if defaults.keys().any(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "seed" | "status" | "lastError" | "lastVerifiedAt"
+                        )
+                    }) {
+                        return Err(unsupported_field("nodeOwned.intelligenceDefaults"));
+                    }
+                    let seed = match defaults.get("seed") {
+                        None => true,
+                        Some(Value::Bool(value)) => *value,
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "boolean",
+                                value,
+                                json!(["nodeOwned", "intelligenceDefaults", "seed"]),
+                            )]));
+                        }
+                    };
+                    let status = match defaults.get("status") {
+                        None => "disabled".to_owned(),
+                        Some(Value::String(value))
+                            if matches!(value.as_str(), "disabled" | "configured" | "invalid") =>
+                        {
+                            value.clone()
+                        }
+                        _value => {
+                            return Err(validation_error(vec![json!({
+                                "code":"invalid_enum_value",
+                                "options":["disabled","configured","invalid"],
+                                "path":["nodeOwned","intelligenceDefaults","status"],
+                                "message":"Invalid enum value"
+                            })]));
+                        }
+                    };
+                    let last_error = match defaults.get("lastError") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(value))
+                            if value.len() <= MAX_INTELLIGENCE_LAST_ERROR_BYTES =>
+                        {
+                            Some(value.clone())
+                        }
+                        Some(Value::String(_)) => {
+                            return Err(intelligence_constraint(
+                                "lastError must be at most 2048 bytes",
+                            ));
+                        }
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "string",
+                                value,
+                                json!(["nodeOwned", "intelligenceDefaults", "lastError"]),
+                            )]));
+                        }
+                    };
+                    let last_verified_at = match defaults.get("lastVerifiedAt") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(value))
+                            if time::OffsetDateTime::parse(
+                                value,
+                                &time::format_description::well_known::Rfc3339,
+                            )
+                            .is_ok() =>
+                        {
+                            Some(value.clone())
+                        }
+                        Some(Value::String(_)) => {
+                            return Err(intelligence_constraint(
+                                "lastVerifiedAt must be an RFC3339 timestamp",
+                            ));
+                        }
+                        value => {
+                            return Err(validation_error(vec![wrong(
+                                "string",
+                                value,
+                                json!(["nodeOwned", "intelligenceDefaults", "lastVerifiedAt"]),
+                            )]));
+                        }
+                    };
+                    match status.as_str() {
+                        "disabled" if last_error.is_some() || last_verified_at.is_some() => {
+                            return Err(intelligence_constraint(
+                                "disabled status cannot include lastError or lastVerifiedAt",
+                            ));
+                        }
+                        "configured" => {
+                            if last_error.is_some() {
+                                return Err(intelligence_constraint(
+                                    "configured status cannot include lastError",
+                                ));
+                            }
+                            if last_verified_at.is_none() {
+                                return Err(intelligence_constraint(
+                                    "configured status requires lastVerifiedAt",
+                                ));
+                            }
+                        }
+                        "invalid" => {
+                            if last_error
+                                .as_deref()
+                                .is_none_or(|value| value.trim().is_empty())
+                            {
+                                return Err(intelligence_constraint(
+                                    "invalid status requires a non-empty lastError",
+                                ));
+                            }
+                            if last_verified_at.is_some() {
+                                return Err(intelligence_constraint(
+                                    "invalid status cannot include lastVerifiedAt",
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                    Some(AgentCreateIntelligenceDefaults {
+                        seed,
+                        status,
+                        last_error,
+                        last_verified_at,
+                    })
+                }
+                value => {
+                    return Err(validation_error(vec![wrong(
+                        "object",
+                        value,
+                        json!(["nodeOwned", "intelligenceDefaults"]),
+                    )]));
+                }
+            };
             Some(AgentCreateNodeOwned {
                 normalized_agent_runtime_config: config.clone(),
                 instructions_bundle,
+                avatar_icon,
+                intelligence_defaults,
             })
         }
         value => {
@@ -1150,5 +1307,80 @@ mod tests {
                 Err(AgentCoreError::Http(422, _, _))
             ));
         }
+
+        let prepared = parse_create(&json!({
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "avatarIcon": "asset:40000000-0000-4000-8000-000000000001?bg=mist",
+                "intelligenceDefaults": {
+                    "status": "configured",
+                    "lastError": null,
+                    "lastVerifiedAt": "2026-10-18T01:02:03Z"
+                }
+            }
+        }))
+        .expect("typed identity preparation");
+        let node = prepared.node_owned.expect("node-owned preparation");
+        assert_eq!(
+            node.avatar_icon.as_deref(),
+            Some("asset:40000000-0000-4000-8000-000000000001?bg=mist")
+        );
+        assert_eq!(
+            node.intelligence_defaults
+                .as_ref()
+                .map(|defaults| defaults.status.as_str()),
+            Some("configured")
+        );
+        for input in [
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"avatarIcon":42}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"enabled"}}}),
+        ] {
+            assert!(matches!(
+                parse_create(&input),
+                Err(AgentCoreError::Http(400, _, _))
+            ));
+        }
+    }
+
+    #[test]
+    fn intelligence_defaults_enforce_status_error_and_timestamp_invariants() {
+        let valid = parse_create(&json!({
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "intelligenceDefaults": {
+                    "status": "configured",
+                    "lastVerifiedAt": "2026-10-18T01:02:03Z"
+                }
+            }
+        }))
+        .expect("configured timestamp");
+        assert_eq!(
+            valid
+                .node_owned
+                .as_ref()
+                .and_then(|node| node.intelligence_defaults.as_ref())
+                .and_then(|defaults| defaults.last_verified_at.as_deref()),
+            Some("2026-10-18T01:02:03Z")
+        );
+
+        for input in [
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"configured","lastError":"probe failed"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"invalid"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"invalid","lastError":"probe failed","lastVerifiedAt":"2026-10-18T01:02:03Z"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"disabled","lastVerifiedAt":"2026-10-18T01:02:03Z"}}}),
+            json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"configured","lastVerifiedAt":"not-a-timestamp"}}}),
+        ] {
+            assert!(matches!(
+                parse_create(&input),
+                Err(AgentCoreError::Http(422, _, _))
+            ));
+        }
+        let oversized = "x".repeat(MAX_INTELLIGENCE_LAST_ERROR_BYTES + 1);
+        assert!(matches!(
+            parse_create(
+                &json!({"nodeOwned":{"normalizedAgentRuntimeConfig":{},"intelligenceDefaults":{"status":"invalid","lastError":oversized}}})
+            ),
+            Err(AgentCoreError::Http(422, _, _))
+        ));
     }
 }

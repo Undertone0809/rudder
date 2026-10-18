@@ -12,7 +12,7 @@ use sqlx::PgConnection;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{future::Future, path::Path, pin::Pin, sync::OnceLock};
-use support::{Database, ORG};
+use support::{ASSET, Database, FOREIGN_ASSET, ORG, OTHER};
 use tokio::sync::Mutex;
 
 const SECRET: &[u8] = b"native-agent-core-roster-revalidation-test-key";
@@ -72,13 +72,17 @@ fn verified_create_user() -> VerifiedActor {
 }
 
 fn verified_create_user_with_body(body: &[u8]) -> VerifiedActor {
+    verified_create_user_for_org(ORG, body)
+}
+
+fn verified_create_user_for_org(org: &str, body: &[u8]) -> VerifiedActor {
     let actor = ActorIdentity::new("user", CREATE_USER).expect("valid board user identity");
-    let path = format!("/internal/agent-core/{ORG}/create");
+    let path = format!("/internal/agent-core/{org}/create");
     let request_id = "agent-core-create-request";
     let nonce = "agent-core-create-nonce";
     let envelope = ActorEnvelope::new(
         actor.clone(),
-        ORG,
+        org,
         "board-session",
         1,
         "rudder-server-foundation",
@@ -96,7 +100,7 @@ fn verified_create_user_with_body(body: &[u8]) -> VerifiedActor {
     .expect("signed actor envelope");
     let request = RequestContext::new(
         &actor,
-        ORG,
+        org,
         "board-session",
         1,
         "rudder-server-foundation",
@@ -325,6 +329,334 @@ async fn rust_create_is_transactional_and_records_default_side_effects() {
         .fetch_one(&database.pool)
         .await
         .expect("creation activity"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rust_create_identity_slice_persists_profile_and_rejects_cross_org_avatar() {
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Identity User','identity-user@example.test',now(),now())",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed identity user");
+    for org in [ORG, OTHER] {
+        sqlx::query(
+            "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active')",
+        )
+        .bind(org)
+        .bind(CREATE_USER)
+        .execute(&database.pool)
+        .await
+        .expect("seed identity membership");
+    }
+
+    let body = serde_json::json!({
+        "operation": "create",
+        "orgId": OTHER,
+        "input": {
+            "name": "Identity Slice",
+            "agentRuntimeType": "codex_local",
+            "agentRuntimeConfig": {"model": "legacy-model", "reasoningEffort": "high"},
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {"model": "legacy-model", "reasoningEffort": "high"},
+                "avatarIcon": format!("ASSET:{FOREIGN_ASSET}?BG=MIST"),
+                "intelligenceDefaults": {
+                    "status": "configured",
+                    "lastVerifiedAt": "2026-10-18T01:02:03Z"
+                }
+            }
+        }
+    });
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    unsafe {
+        std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1");
+        std::env::set_var("RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED", "1");
+    }
+    let bytes = serde_json::to_vec(&body).expect("serialize identity create body");
+    let request = AgentCoreRequest::parse(&bytes).expect("valid identity create request");
+    let (status, response_body) = execute_agent_with_native_auth(
+        &database.pool,
+        &verified_create_user_for_org(OTHER, &bytes),
+        &request,
+        &NoopNativeAuthorizer,
+    )
+    .await
+    .expect("identity create succeeds");
+    assert_eq!(status, 201);
+    let response: serde_json::Value =
+        serde_json::from_str(&response_body).expect("identity create response");
+    assert_eq!(response["icon"], format!("ASSET:{FOREIGN_ASSET}?BG=MIST"));
+    let agent_id = response["id"].as_str().expect("identity agent id");
+    let profile: (
+        String,
+        serde_json::Value,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT agent_runtime_type,agent_runtime_config,status,last_error,last_verified_at::text
+         FROM organization_intelligence_profiles WHERE org_id=$1::uuid AND purpose='default'",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("identity profile");
+    assert_eq!(profile.0, "codex_local");
+    assert_eq!(profile.1["model"], "gpt-6-luna");
+    assert_eq!(profile.1["modelReasoningEffort"], "medium");
+    assert_eq!(profile.1.get("reasoningEffort"), None);
+    assert_eq!(profile.2, "configured");
+    assert_eq!(profile.3, None);
+    let verified_at = profile
+        .4
+        .as_deref()
+        .expect("verified timestamp")
+        .replace(' ', "T")
+        .replace("+00", "Z");
+    let parsed_verified_at =
+        time::OffsetDateTime::parse(&verified_at, &time::format_description::well_known::Rfc3339)
+            .expect("timestamp");
+    let expected_verified_at = time::OffsetDateTime::parse(
+        "2026-10-18T01:02:03Z",
+        &time::format_description::well_known::Rfc3339,
+    )
+    .expect("expected timestamp");
+    assert_eq!(parsed_verified_at, expected_verified_at);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM agents WHERE id=$1::uuid AND org_id=$2::uuid)",
+        )
+        .bind(agent_id)
+        .bind(OTHER)
+        .fetch_one(&database.pool)
+        .await
+        .expect("identity agent row")
+    );
+
+    let malformed_body = serde_json::json!({
+        "operation": "create",
+        "orgId": OTHER,
+        "input": {
+            "name": "Malformed Avatar",
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "avatarIcon": "notionists:legacy"
+            }
+        }
+    });
+    let malformed_bytes = serde_json::to_vec(&malformed_body).expect("serialize malformed body");
+    let malformed_request =
+        AgentCoreRequest::parse(&malformed_bytes).expect("valid malformed avatar request");
+    let malformed = execute_agent_with_native_auth(
+        &database.pool,
+        &verified_create_user_for_org(OTHER, &malformed_bytes),
+        &malformed_request,
+        &NoopNativeAuthorizer,
+    )
+    .await
+    .expect_err("malformed avatar must be rejected");
+    assert!(matches!(
+        malformed,
+        AgentCoreError::Http(422, ref message, _) if message == "Invalid avatar reference"
+    ));
+
+    sqlx::query("UPDATE assets SET content_type='application/octet-stream' WHERE id=$1::uuid")
+        .bind(ASSET)
+        .execute(&database.pool)
+        .await
+        .expect("make non-image avatar asset");
+    let non_image_body = serde_json::json!({
+        "operation": "create",
+        "orgId": ORG,
+        "input": {
+            "name": "Non Image Avatar",
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "avatarIcon": format!("asset:{ASSET}")
+            }
+        }
+    });
+    let non_image_bytes = serde_json::to_vec(&non_image_body).expect("serialize non-image body");
+    let non_image_request =
+        AgentCoreRequest::parse(&non_image_bytes).expect("valid non-image avatar request");
+    let non_image = execute_agent_with_native_auth(
+        &database.pool,
+        &verified_create_user_for_org(ORG, &non_image_bytes),
+        &non_image_request,
+        &NoopNativeAuthorizer,
+    )
+    .await
+    .expect_err("non-image avatar must be rejected");
+    assert!(matches!(
+        non_image,
+        AgentCoreError::Http(422, ref message, _) if message == "Avatar asset must be an image"
+    ));
+
+    let before_cross_org: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agents WHERE org_id=$1::uuid AND name='Cross Org Avatar'",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .expect("cross-org baseline");
+    let cross_org_body = serde_json::json!({
+        "operation": "create",
+        "orgId": ORG,
+        "input": {
+            "name": "Cross Org Avatar",
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "avatarIcon": format!("asset:{FOREIGN_ASSET}")
+            }
+        }
+    });
+    let cross_org_bytes = serde_json::to_vec(&cross_org_body).expect("serialize cross-org body");
+    let cross_org_request =
+        AgentCoreRequest::parse(&cross_org_bytes).expect("valid cross-org request");
+    let cross_org = execute_agent_with_native_auth(
+        &database.pool,
+        &verified_create_user_for_org(ORG, &cross_org_bytes),
+        &cross_org_request,
+        &NoopNativeAuthorizer,
+    )
+    .await
+    .expect_err("cross-org avatar must be rejected");
+    assert!(matches!(
+        cross_org,
+        AgentCoreError::Http(403, ref message, _) if message == "Avatar asset belongs to another organization"
+    ));
+    let after_cross_org: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agents WHERE org_id=$1::uuid AND name='Cross Org Avatar'",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .expect("cross-org rollback check");
+    assert_eq!(before_cross_org, after_cross_org);
+
+    unsafe {
+        std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED");
+        std::env::remove_var("RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rust_create_identity_slice_respects_legacy_default_profile() {
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Legacy User','legacy-user@example.test',now(),now())",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed legacy identity user");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(OTHER)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed legacy identity membership");
+    sqlx::query(
+        "INSERT INTO organization_intelligence_profiles
+         (org_id,purpose,agent_runtime_type,agent_runtime_config,status,last_error,last_verified_at)
+         VALUES ($1::uuid,'lightweight','codex_local','{}'::jsonb,'configured',NULL,now())",
+    )
+    .bind(OTHER)
+    .execute(&database.pool)
+    .await
+    .expect("seed legacy profile");
+
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    unsafe {
+        std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1");
+        std::env::set_var("RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED", "1");
+    }
+    let body = serde_json::json!({
+        "operation": "create",
+        "orgId": OTHER,
+        "input": {
+            "name": "Legacy Resolver",
+            "agentRuntimeType": "codex_local",
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "intelligenceDefaults": {
+                    "status": "configured",
+                    "lastVerifiedAt": "2026-10-18T01:02:03Z"
+                }
+            }
+        }
+    });
+    let bytes = serde_json::to_vec(&body).expect("serialize legacy create body");
+    let request = AgentCoreRequest::parse(&bytes).expect("valid legacy create request");
+    execute_agent_with_native_auth(
+        &database.pool,
+        &verified_create_user_for_org(OTHER, &bytes),
+        &request,
+        &NoopNativeAuthorizer,
+    )
+    .await
+    .expect("legacy profile does not block agent create");
+
+    let purposes: Vec<String> = sqlx::query_scalar(
+        "SELECT purpose FROM organization_intelligence_profiles WHERE org_id=$1::uuid ORDER BY purpose",
+    )
+    .bind(OTHER)
+    .fetch_all(&database.pool)
+    .await
+    .expect("read legacy profile purposes");
+    assert_eq!(purposes, vec!["lightweight"]);
+
+    let invalid_body = serde_json::json!({
+        "operation": "create",
+        "orgId": OTHER,
+        "input": {
+            "name": "Non Codex Invalid",
+            "agentRuntimeType": "gemini_local",
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {},
+                "intelligenceDefaults": {
+                    "status": "configured",
+                    "lastVerifiedAt": "2026-10-18T01:02:03Z"
+                }
+            }
+        }
+    });
+    let invalid_bytes = serde_json::to_vec(&invalid_body).expect("serialize invalid body");
+    let invalid_request = AgentCoreRequest::parse(&invalid_bytes).expect("valid invalid request");
+    let invalid = execute_agent_with_native_auth(
+        &database.pool,
+        &verified_create_user_for_org(OTHER, &invalid_bytes),
+        &invalid_request,
+        &NoopNativeAuthorizer,
+    )
+    .await
+    .expect_err("non-codex configured profile must reject");
+    assert!(matches!(
+        invalid,
+        AgentCoreError::Http(422, ref message, _)
+            if message == "Non-codex intelligence profiles must be disabled without error"
+    ));
+    assert!(!sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM agents WHERE org_id=$1::uuid AND name='Non Codex Invalid')",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read rejected agent"));
+    unsafe {
+        std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED");
+        std::env::remove_var("RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
