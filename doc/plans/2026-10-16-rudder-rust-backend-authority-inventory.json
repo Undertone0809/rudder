@@ -58591,34 +58591,7 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [
-    {
-      "path": "packages/db/src/schema/agents.ts",
-      "change_kind": "modified_node_compatibility",
-      "base_sha256": "43b074fcd23e3b5fe8924fc19207fc8d9ca0a583ff369c73f05f4314ccb39531",
-      "head_sha256": "f90b79ed5df9c4d9731fc2d06ad7f52c5a1e5d7f29e2b90ff7542fa3ef7b8627",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native::rudder_d1_persistence::agent_core::instructions",
-      "compatibility_boundary": "Node retains the Drizzle table declaration for the durable instruction outbox; Rust owns bundle validation, transactional enqueue, filesystem materialization, authorization revalidation, and state transitions.",
-      "retirement_criterion": "Remove this compatibility schema declaration only when the durable outbox storage contract is owned by a replacement shared schema authority and the Rust instruction materializer no longer depends on this table.",
-      "reviewer": "agent /root/agent_create_instructions_durable",
-      "review_reference": "PR #334 durable Agent Create instruction outbox review",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "packages/db/src/schema/index.ts",
-      "change_kind": "modified_node_compatibility",
-      "base_sha256": "cf99d8bcd50c40d78fd72d584b13a6c8a3967d559e6b3b954716ee8eeefe5747",
-      "head_sha256": "8d9b86b70689b4ae2d63cc8a2a211676bfe3bbdeda594313774885fd05c83f50",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native::rudder_d1_persistence::agent_core::instructions",
-      "compatibility_boundary": "Node exports the durable instruction outbox table for Drizzle migration/type consumers; Rust owns the private Agent Create authority and all runtime persistence/materialization behavior.",
-      "retirement_criterion": "Remove this export when the durable outbox schema is supplied by a replacement shared authority and no Node migration/type consumer imports it.",
-      "reviewer": "agent /root/agent_create_instructions_durable",
-      "review_reference": "PR #334 durable Agent Create instruction outbox review",
-      "review_status": "reviewed"
-    }
-  ],
+  "reviewed_node_changes": [],
   "reviewed_transport_admissions": [
     {
       "id": "rust-native-identity-proof-v1",
