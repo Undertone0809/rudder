@@ -403,6 +403,22 @@
           "ci_correction": "Original Ubuntu exact-head run exposed clippy::too_many_arguments in test fixture; fixed with SeedConnection struct, no allow. New exact head has fmt/check/clippy all-targets/PG tests PASS; protected CI rerun pending.",
           "rebase": "Rebased onto merged #331 main; one test insertion conflict resolved by retaining normalization tests and appending managed MCP tests; clean tree and force-with-lease push.",
           "ci": "New protected CI run 39082630484 pending; prior lint failure fixed in c76259b and rebase replay."
+        },
+        {
+          "number": 333,
+          "state": "open_ci_pending_stage_review_pending",
+          "head_sha": "d8e2d88d7e7100f333d65c976c7b48ef872601e5",
+          "base_sha": "9ba84ce6b20df6c938e28db0625fca0f93c3e52d",
+          "scope": "private feature-gated Agent create canonical skills foundation: desired ref trim/dedupe/sort, bundled always-enabled omission, org catalog canonicalization and unknown/ambiguous/cross-org rejection, same-transaction agent_enabled_skills idempotent writes; public POST unchanged and gate default off",
+          "validation": [
+            "cargo fmt --all -- --check",
+            "cargo check -p rudder-d1-persistence",
+            "cargo clippy -p rudder-d1-persistence --all-targets -- -D warnings",
+            "skills unit tests 3/3",
+            "focused PG rust_create_ tests 4/4"
+          ],
+          "stage_review": "pending exact-head independent review",
+          "mergeability": "MERGEABLE/CI queued at observation; do not merge yet"
         }
       ],
       "managed_migration": {
