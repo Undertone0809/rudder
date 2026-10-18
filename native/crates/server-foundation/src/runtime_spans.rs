@@ -20,6 +20,9 @@ pub(super) async fn command(
     {
         Some("open") => "runtime.span.open",
         Some("bind_locator") => "runtime.span.bind_locator",
+        Some("close") => "runtime.span.close",
+        Some("seal_segment") => "runtime.span.seal_segment",
+        Some("reconcile_segment") => "runtime.span.reconcile_segment",
         Some("read") => "runtime.span.read",
         Some("read_transcript") => "runtime.span.read_transcript",
         Some("read_message_transcript") => "runtime.span.read_message_transcript",

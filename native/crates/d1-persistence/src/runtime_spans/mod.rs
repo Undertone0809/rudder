@@ -8,6 +8,7 @@ use sqlx::PgPool;
 pub use crate::runtime_bindings::Error;
 
 mod admission;
+mod lifecycle;
 mod context;
 mod locator;
 mod projection;
@@ -49,6 +50,43 @@ pub enum Request {
         root_session_id: Option<String>,
         #[serde(default, rename = "leafId")]
         leaf_id: Option<String>,
+    },
+    Close {
+        #[serde(rename = "spanId")]
+        span_id: String,
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "attemptId")]
+        attempt_id: String,
+        #[serde(rename = "attemptEpoch")]
+        attempt_epoch: i32,
+        #[serde(rename = "ownerToken")]
+        owner_token: String,
+        completeness: String,
+    },
+    SealSegment {
+        #[serde(rename = "spanId")]
+        span_id: String,
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "attemptId")]
+        attempt_id: String,
+        #[serde(rename = "attemptEpoch")]
+        attempt_epoch: i32,
+        #[serde(rename = "ownerToken")]
+        owner_token: String,
+    },
+    ReconcileSegment {
+        #[serde(rename = "spanId")]
+        span_id: String,
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "attemptId")]
+        attempt_id: String,
+        #[serde(rename = "attemptEpoch")]
+        attempt_epoch: i32,
+        #[serde(rename = "ownerToken")]
+        owner_token: String,
     },
     Read {
         #[serde(rename = "spanId")]
@@ -107,6 +145,13 @@ pub async fn execute(
     match request {
         Request::Open { .. } => admission::open(pool, actor, &organization_id, request).await,
         Request::BindLocator { .. } => locator::bind(pool, actor, &organization_id, request).await,
+        Request::Close { .. } => lifecycle::close(pool, actor, &organization_id, request).await,
+        Request::SealSegment { .. } => {
+            lifecycle::seal_segment(pool, actor, &organization_id, request).await
+        }
+        Request::ReconcileSegment { .. } => {
+            lifecycle::reconcile_segment(pool, actor, &organization_id, request).await
+        }
         Request::Read { span_id } => reads::read(pool, actor, &organization_id, span_id).await,
         Request::ReadTranscript { .. } => {
             reads::read_transcript(pool, actor, &organization_id, request).await
@@ -138,6 +183,17 @@ mod wire_tests {
         }))
         .unwrap();
         assert!(matches!(parsed, Request::Open { .. }));
+        let close: Request = serde_json::from_value(json!({
+            "operation":"close",
+            "spanId":"60000000-0000-4000-8000-000000000001",
+            "runId":"60000000-0000-4000-8000-000000000002",
+            "attemptId":"61000000-0000-4000-8000-000000000001",
+            "attemptEpoch":3,
+            "ownerToken":"opaque-owner-token",
+            "completeness":"complete"
+        }))
+        .unwrap();
+        assert!(matches!(close, Request::Close { .. }));
         let transcript: Request = serde_json::from_value(json!({
             "operation":"read_transcript",
             "spanId":"60000000-0000-4000-8000-000000000001",
@@ -194,6 +250,8 @@ mod wire_tests {
             json!({"operation":"read_transcript","spanId":"x","afterSeq":0,"limit":100,"ownerToken":"must-not-be-accepted"}),
             json!({"operation":"read_message_transcript","messageId":"x","afterSeq":0,"limit":100,"ownerToken":"must-not-be-accepted"}),
             json!({"operation":"read_conversation_messages","conversationId":"x","ownerToken":"must-not-be-accepted"}),
+            json!({"operation":"close","spanId":"x","runId":"x","attemptId":"x","attemptEpoch":1,"ownerToken":"x"}),
+            json!({"operation":"seal_segment","spanId":"x","runId":"x","attemptId":"x","attemptEpoch":1,"ownerToken":"x","state":"sealed"}),
             json!({"operation":"delete","spanId":"x"}),
         ] {
             assert!(serde_json::from_value::<Request>(invalid).is_err());
