@@ -171,8 +171,8 @@ fn validate_native_receipt(turn: &NativeProviderTurnReceipt) -> Result<()> {
         return Err(http(422, "Native provider evidence exceeds its bound"));
     }
     if let Some(usage) = &turn.usage {
-        let usage_bytes = serde_json::to_vec(usage)
-            .map_err(|_| http(422, "Native provider usage is invalid"))?;
+        let usage_bytes =
+            serde_json::to_vec(usage).map_err(|_| http(422, "Native provider usage is invalid"))?;
         if usage_bytes.len() > MAX_PROJECTED_BODY_BYTES as usize {
             return Err(http(422, "Native provider usage exceeds its bound"));
         }
@@ -1394,4 +1394,48 @@ async fn finalize_inner(
 
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn receipt() -> NativeProviderTurnReceipt {
+        NativeProviderTurnReceipt {
+            provider: NativeProviderKind::Claude,
+            session_id: "claude-session".to_owned(),
+            request_id: "result-1".to_owned(),
+            final_text: Some("answer".to_owned()),
+            status: NativeProviderStatus::Completed,
+            usage: Some(json!({"inputTokens": 1, "outputTokens": 2})),
+            evidence: json!({"resultUuid": "result-1"}),
+        }
+    }
+
+    #[test]
+    fn native_provider_identity_never_uses_codex_fields() {
+        assert_eq!(NativeProviderKind::Claude.runtime_type(), "claude_local");
+        assert_eq!(NativeProviderKind::Cursor.runtime_type(), "cursor_local");
+        assert_eq!(
+            NativeProviderKind::Claude.checkpoint_provider(),
+            "claude_local"
+        );
+        assert_eq!(
+            NativeProviderKind::Cursor.checkpoint_provider(),
+            "cursor_local"
+        );
+    }
+
+    #[test]
+    fn native_receipt_bounds_are_checked_before_database_work() {
+        assert!(validate_native_receipt(&receipt()).is_ok());
+
+        let mut empty = receipt();
+        empty.request_id.clear();
+        assert!(validate_native_receipt(&empty).is_err());
+
+        let mut oversized = receipt();
+        oversized.final_text = Some("x".repeat(MAX_PROJECTED_BODY_BYTES as usize + 1));
+        assert!(validate_native_receipt(&oversized).is_err());
+    }
 }
