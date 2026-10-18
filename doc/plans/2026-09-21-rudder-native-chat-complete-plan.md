@@ -996,23 +996,23 @@ W09 or the six-runtime completion requirement.
 
 ### October 18 Codex and Hermes acceptance status
 
-The exact candidate `706e1c8b7` was exercised through the local Rust public
+The exact candidate `820e7a75b` was exercised through the local Rust public
 ingress at `127.0.0.1:3318` against the user's installed profiles and embedded
-PostgreSQL. Codex (`0.163.0-alpha.10.2`) completed the first and continuation
-turns as `native_rust` Runs and projected both assistant replies. After the
-Node/Rust runtime restart, the next browser Send was rejected by the product;
-the UI showed the explicit retry banner and no third Run or assistant reply was
-persisted. Hermes (`0.21.0`) completed the first real ACP turn, but the same
-session continuation ended as a failed `native_rust` Run with no assistant
-projection; the UI placed the conversation under Failed runs.
+PostgreSQL. A fresh Codex Chat (`288a6933…`) completed its first turn and its
+post-Node/Rust-restart continuation as `native_rust` Runs, with the same
+provider Thread ID (`01a14c65…`) and two projected assistant replies. An older
+Chat that showed a retry banner was traced to stale browser recovery state; it
+had no third durable Run and is not used as Codex provider-failure evidence.
 
-The independent verifier bound to the same SHA, build, runtime, and disposable
-database returned terminal `FAIL`. The real installed-runtime acceptance is
-therefore still open: Codex must accept and complete the post-restart turn, and
-Hermes must complete the same-session continuation with a projected assistant
-reply. Synthetic fixture passes remain supporting evidence only. This milestone
-does not close the remaining four adapters, full product journeys, independent
-final review, or required CI gates.
+Hermes (`0.21.0`) completed a fresh first ACP turn, but the same-session
+continuation after the runtime restart failed. The persisted Hermes session ID
+was the same (`64bf6ba8…`), while the failed `native_rust` Run had no assistant
+projection and the UI placed the conversation under Failed runs. The real
+installed-runtime acceptance is therefore still open only for Hermes in this
+two-runtime slice: its same-session continuation must succeed with a projected
+assistant reply. Synthetic fixture passes remain supporting evidence only. This
+milestone does not close the remaining four adapters, full product journeys,
+independent final review, or required CI gates.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
