@@ -202,7 +202,8 @@ pub async fn finalize_unclaimed_stop(
     .await?;
     let state = sqlx::query(
         "SELECT r.context_snapshot->>'runtimeBindingId' AS binding,
-        r.context_snapshot->>'nativeSegmentId' AS segment,a.checkpoint_json
+        r.context_snapshot->>'nativeSegmentId' AS segment,
+        a.checkpoint_json,a.runtime_type
       FROM heartbeat_runs r JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id
       WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND a.id=$3::uuid",
     )
@@ -217,6 +218,19 @@ pub async fn finalize_unclaimed_stop(
     let segment: String = state
         .try_get::<Option<String>, _>("segment")?
         .ok_or_else(conflict)?;
+    let runtime_type: String = state.try_get("runtime_type")?;
+    if !matches!(
+        runtime_type.as_str(),
+        "codex_local"
+            | "hermes_local"
+            | "pi_local"
+            | "claude_local"
+            | "cursor"
+            | "cursor_local"
+            | "opencode_local"
+    ) {
+        return Err(conflict());
+    }
     canonical_id(&binding, "binding id").map_err(|_| conflict())?;
     canonical_id(&segment, "segment id").map_err(|_| conflict())?;
     // Validate the admitted binding identity without resolving today's selected
@@ -224,7 +238,8 @@ pub async fn finalize_unclaimed_stop(
     sqlx::query(
         "SELECT id FROM runtime_bindings WHERE org_id=$1::uuid AND id=$2::uuid
       AND conversation_id=$3::uuid AND target_type='chat_conversation' AND target_id=$3
-      AND agent_id=$4::uuid AND principal_scope_ref=$5 AND runtime_type='codex_local'
+      AND agent_id=$4::uuid AND principal_scope_ref=$5
+      AND runtime_type IN ('codex_local','hermes_local','pi_local','claude_local','cursor','cursor_local','opencode_local')
       AND status='active' AND continuity='native' AND current_segment_id=$6::uuid FOR UPDATE",
     )
     .bind(org)
@@ -239,11 +254,12 @@ pub async fn finalize_unclaimed_stop(
     let segment_row = sqlx::query(
         "SELECT state,native_session_id FROM native_segments
       WHERE org_id=$1::uuid AND id=$2::uuid AND binding_id=$3::uuid
-        AND runtime_type='codex_local' AND sealed_at IS NULL FOR UPDATE",
+        AND runtime_type=$4 AND sealed_at IS NULL FOR UPDATE",
     )
     .bind(org)
     .bind(&segment)
     .bind(&binding)
+    .bind(&runtime_type)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(conflict)?;
@@ -259,10 +275,33 @@ pub async fn finalize_unclaimed_stop(
             ("pending", None) => {
                 checkpoint.phase() == NativeChatProtocolPhase::NoThreadRequest
                     && checkpoint.thread_id().is_none()
+                    && checkpoint.hermes_session().is_none()
+                    && checkpoint.pi_session().is_none()
+                    && checkpoint.claude_session().is_none()
+                    && checkpoint.opencode_session().is_none()
+                    && checkpoint.cursor_session().is_none()
             }
-            ("open", Some(thread)) => {
+            ("open", Some(session)) => {
                 checkpoint.phase() == NativeChatProtocolPhase::ThreadKnown
-                    && checkpoint.thread_id() == Some(thread)
+                    && match runtime_type.as_str() {
+                        "codex_local" => checkpoint.thread_id() == Some(session),
+                        "hermes_local" => {
+                            checkpoint.hermes_session().map(|s| s.as_str()) == Some(session)
+                        }
+                        "pi_local" => {
+                            checkpoint.pi_session().map(|s| s.session_id.as_str()) == Some(session)
+                        }
+                        "claude_local" => {
+                            checkpoint.claude_session().map(|s| s.as_str()) == Some(session)
+                        }
+                        "opencode_local" => {
+                            checkpoint.opencode_session().map(|s| s.as_str()) == Some(session)
+                        }
+                        "cursor" | "cursor_local" => {
+                            checkpoint.cursor_session().map(|s| s.as_str()) == Some(session)
+                        }
+                        _ => false,
+                    }
             }
             _ => false,
         }
@@ -558,7 +597,8 @@ async fn ensure_no_effects(
           g.status='stop_requested' AND g.control_state='stopping' AND g.attempt_epoch=1
           AND g.control_version=$5 AND g.accepted_through_seq=0 AND g.frozen_body_hash=$6
           AND g.native_admission_hold=$7 AND g.control_owner_token IS NULL
-          AND g.control_lease_expires_at IS NULL AND g.control_runtime_type='codex_local'
+          AND g.control_lease_expires_at IS NULL
+          AND g.control_runtime_type IN ('codex_local','hermes_local','pi_local','claude_local','cursor','cursor_local','opencode_local')
           AND g.provider_thread_id IS NULL AND g.provider_turn_id IS NULL
           AND g.runtime_terminal_at IS NULL AND g.completed_at IS NULL
           AND g.late_events_dropped=0 AND g.late_bytes=0
@@ -571,7 +611,8 @@ async fn ensure_no_effects(
           AND r.error IS NULL AND r.error_code IS NULL AND r.recovery_checkpoint IS NULL
           AND r.log_ref IS NULL AND r.log_bytes IS NULL AND r.stdout_excerpt IS NULL AND r.stderr_excerpt IS NULL
           AND NOT r.terminal_effects_pending AND r.terminal_effects_json IS NULL
-          AND a.status='started' AND a.attempt_index=1 AND a.runtime_type='codex_local'
+          AND a.status='started' AND a.attempt_index=1
+          AND a.runtime_type IN ('codex_local','hermes_local','pi_local','claude_local','cursor','cursor_local','opencode_local')
           AND a.agent_id=r.agent_id AND a.owner_token=r.execution_owner_token
           AND a.attempt_epoch=1 AND a.generation_attempt_epoch=1 AND a.connection_epoch=1
           AND a.finished_at IS NULL AND a.suspended_at IS NULL AND a.submission_phase IS NULL
@@ -581,14 +622,37 @@ async fn ensure_no_effects(
           AND a.checkpoint_json->'observationOnly'='false'::jsonb AND a.checkpoint_json->'turnId'='null'::jsonb
           AND r.session_intent_json->'sourceRunId'='null'::jsonb
           AND r.session_intent_json->'sessionParams'='null'::jsonb
-          AND ((a.protocol_phase='no_thread_request' AND a.provider_thread_id IS NULL
-              AND a.checkpoint_json->'threadId'='null'::jsonb AND r.session_reuse_scope='none'
+          AND ((a.runtime_type='codex_local' AND
+                (a.checkpoint_json->>'provider' IS NULL OR a.checkpoint_json->>'provider'='codex_local'))
+            OR (a.runtime_type='hermes_local' AND a.checkpoint_json->>'provider'='hermes_local')
+            OR (a.runtime_type='pi_local' AND a.checkpoint_json->>'provider'='pi_local')
+            OR (a.runtime_type='claude_local' AND a.checkpoint_json->>'provider'='claude_local')
+            OR (a.runtime_type='opencode_local' AND a.checkpoint_json->>'provider'='open_code_local')
+            OR (a.runtime_type IN ('cursor','cursor_local') AND a.checkpoint_json->>'provider'='cursor_local'))
+          AND ((a.protocol_phase='no_thread_request'
+              AND a.provider_thread_id IS NULL
+              AND a.checkpoint_json->'threadId'='null'::jsonb
+              AND (a.checkpoint_json->'hermesSession' IS NULL OR a.checkpoint_json->'hermesSession'='null'::jsonb)
+              AND (a.checkpoint_json->'piSession' IS NULL OR a.checkpoint_json->'piSession'='null'::jsonb)
+              AND (a.checkpoint_json->'claudeSession' IS NULL OR a.checkpoint_json->'claudeSession'='null'::jsonb)
+              AND (a.checkpoint_json->'opencodeSession' IS NULL OR a.checkpoint_json->'opencodeSession'='null'::jsonb)
+              AND (a.checkpoint_json->'cursorSession' IS NULL OR a.checkpoint_json->'cursorSession'='null'::jsonb)
+              AND r.session_reuse_scope='none'
               AND r.session_intent_json->>'kind'='fresh' AND r.session_intent_json->>'reuseScope'='none'
               AND r.session_intent_json->'sessionId'='null'::jsonb)
-            OR (a.protocol_phase='thread_known' AND a.provider_thread_id IS NOT NULL
-              AND a.checkpoint_json->>'threadId'=a.provider_thread_id AND r.session_reuse_scope='explicit'
+            OR (a.protocol_phase='thread_known'
+              AND r.session_reuse_scope='explicit'
               AND r.session_intent_json->>'kind'='resume' AND r.session_intent_json->>'reuseScope'='explicit'
-              AND r.session_intent_json->>'sessionId'=a.provider_thread_id))
+              AND r.session_intent_json->'sessionId' IS NOT NULL
+              AND (CASE a.runtime_type
+                WHEN 'codex_local' THEN a.provider_thread_id IS NOT NULL AND a.checkpoint_json->>'threadId'=a.provider_thread_id
+                WHEN 'hermes_local' THEN a.checkpoint_json->'hermesSession' IS NOT NULL AND a.checkpoint_json->'hermesSession' <> 'null'::jsonb
+                WHEN 'pi_local' THEN a.checkpoint_json->'piSession' IS NOT NULL AND a.checkpoint_json->'piSession' <> 'null'::jsonb
+                WHEN 'claude_local' THEN a.checkpoint_json->'claudeSession' IS NOT NULL AND a.checkpoint_json->'claudeSession' <> 'null'::jsonb
+                WHEN 'opencode_local' THEN a.checkpoint_json->'opencodeSession' IS NOT NULL AND a.checkpoint_json->'opencodeSession' <> 'null'::jsonb
+                WHEN 'cursor' THEN a.checkpoint_json->'cursorSession' IS NOT NULL AND a.checkpoint_json->'cursorSession' <> 'null'::jsonb
+                WHEN 'cursor_local' THEN a.checkpoint_json->'cursorSession' IS NOT NULL AND a.checkpoint_json->'cursorSession' <> 'null'::jsonb
+                ELSE false END)))
           AND (SELECT count(*) FROM heartbeat_run_attempts WHERE org_id=$1::uuid AND run_id=r.id)=1
           AND NOT EXISTS(SELECT 1 FROM run_runtime_spans WHERE org_id=$1::uuid AND run_id=r.id)
           AND NOT EXISTS(SELECT 1 FROM cost_events WHERE org_id=$1::uuid AND heartbeat_run_id=r.id)

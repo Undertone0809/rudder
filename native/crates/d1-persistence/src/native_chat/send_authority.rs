@@ -7,17 +7,16 @@ use crate::runtime_bindings;
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
-const NATIVE_RUNTIMES: &[&str] = &["codex_local", "hermes_local"];
-const LEGACY_RUNTIMES: &[&str] = &[
-    "process",
-    "http",
-    "claude_local",
-    "opencode_local",
+const NATIVE_RUNTIMES: &[&str] = &[
+    "codex_local",
+    "hermes_local",
     "pi_local",
+    "claude_local",
     "cursor",
-    "openclaw_gateway",
-    "hermes_gateway",
+    "cursor_local",
+    "opencode_local",
 ];
+const LEGACY_RUNTIMES: &[&str] = &["process", "http", "openclaw_gateway", "hermes_gateway"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SendAuthority {
@@ -195,7 +194,8 @@ async fn has_native_evidence(
                      WHERE b.org_id=$1::uuid
                        AND (b.conversation_id=$2::uuid
                          OR (b.target_type='chat_conversation' AND b.target_id=$2))
-                       AND b.runtime_type IN ('codex_local','hermes_local'))",
+                       AND b.runtime_type IN ('codex_local','hermes_local','pi_local',
+                                              'claude_local','cursor','cursor_local','opencode_local'))",
     )
     .bind(organization_id)
     .bind(conversation_id)

@@ -4,7 +4,8 @@ use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activ
 use crate::native_chat::config::{LocalHostContext, resolve_native_config};
 use crate::runtime_bindings;
 use rudder_runtime_core::native_chat::{
-    HermesSessionSelector, NativeChatProtocolCheckpoint, NativeChatProtocolStart,
+    ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector,
+    NativeChatProtocolCheckpoint, NativeChatProtocolStart, OpenCodeSessionSelector,
 };
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
@@ -246,9 +247,38 @@ pub async fn record_dispatch_unavailable(
         || attempt.try_get::<i32, _>("attempt_epoch")? != 1
         || attempt.try_get::<i32, _>("generation_attempt_epoch")? != 1
         || attempt.try_get::<i32, _>("connection_epoch")? != 1
-        || attempt.try_get::<String, _>("runtime_type")? != "codex_local"
+        || !matches!(
+            attempt.try_get::<String, _>("runtime_type")?.as_str(),
+            "codex_local"
+                | "hermes_local"
+                | "pi_local"
+                | "claude_local"
+                | "cursor"
+                | "cursor_local"
+                | "opencode_local"
+        )
         || !matches!(phase.as_str(), "no_thread_request" | "thread_known")
         || checkpoint.get("phase").and_then(Value::as_str) != Some(phase.as_str())
+        || match attempt.try_get::<String, _>("runtime_type")?.as_str() {
+            "codex_local" => checkpoint
+                .get("provider")
+                .and_then(Value::as_str)
+                .is_some_and(|provider| provider != "codex_local"),
+            "hermes_local" => {
+                checkpoint.get("provider").and_then(Value::as_str) != Some("hermes_local")
+            }
+            "pi_local" => checkpoint.get("provider").and_then(Value::as_str) != Some("pi_local"),
+            "claude_local" => {
+                checkpoint.get("provider").and_then(Value::as_str) != Some("claude_local")
+            }
+            "opencode_local" => {
+                checkpoint.get("provider").and_then(Value::as_str) != Some("open_code_local")
+            }
+            "cursor" | "cursor_local" => {
+                checkpoint.get("provider").and_then(Value::as_str) != Some("cursor_local")
+            }
+            _ => true,
+        }
         || attempt
             .try_get::<Option<String>, _>("provider_turn_id")?
             .is_some()
@@ -668,6 +698,60 @@ pub(super) async fn submit_in_transaction<'a>(
                 .map_err(|_| http(409, "Native Chat Hermes session locator is invalid"))?;
             (
                 NativeChatProtocolCheckpoint::new_hermes_existing_session(selector),
+                "explicit",
+                "same_session",
+                json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":session_id,"sessionParams":null}),
+            )
+        }
+        ("claude_local", "pending", None) => (
+            NativeChatProtocolCheckpoint::new_claude_fresh_session(),
+            "none",
+            "fresh",
+            json!({"kind":"fresh","reuseScope":"none","sourceRunId":null,"sessionId":null,"sessionParams":null}),
+        ),
+        ("claude_local", "open", Some(session_id)) => {
+            let selector = ClaudeSessionSelector::from_persisted(session_id)
+                .map_err(|_| http(409, "Native Chat Claude Code session locator is invalid"))?;
+            (
+                NativeChatProtocolCheckpoint::new_claude_existing_session(selector),
+                "explicit",
+                "same_session",
+                json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":session_id,"sessionParams":null}),
+            )
+        }
+        (runtime, "pending", None)
+            if matches!(runtime, "cursor" | "cursor_local" | "opencode_local") =>
+        {
+            let checkpoint = match runtime {
+                "opencode_local" => NativeChatProtocolCheckpoint::new_opencode_fresh_session(),
+                _ => NativeChatProtocolCheckpoint::new_cursor_fresh_session(),
+            };
+            (
+                checkpoint,
+                "none",
+                "fresh",
+                json!({"kind":"fresh","reuseScope":"none","sourceRunId":null,"sessionId":null,"sessionParams":null}),
+            )
+        }
+        (runtime, "open", Some(session_id))
+            if matches!(runtime, "cursor" | "cursor_local" | "opencode_local") =>
+        {
+            let checkpoint = match runtime {
+                "opencode_local" => {
+                    let selector =
+                        OpenCodeSessionSelector::from_persisted(session_id).map_err(|_| {
+                            http(409, "Native Chat OpenCode session locator is invalid")
+                        })?;
+                    NativeChatProtocolCheckpoint::new_opencode_existing_session(selector)
+                }
+                _ => {
+                    let selector = CursorSessionSelector::from_persisted(session_id)
+                        .map_err(|_| http(409, "Native Chat Cursor session locator is invalid"))?;
+                    NativeChatProtocolCheckpoint::new_cursor_existing_session(selector)
+                }
+            };
+            (
+                checkpoint,
                 "explicit",
                 "same_session",
                 json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":session_id,"sessionParams":null}),
