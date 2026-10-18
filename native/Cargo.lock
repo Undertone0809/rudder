@@ -1725,6 +1725,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-claude-code"
+version = "0.7.24"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
 name = "rudder-cli-mcp-contract-core"
 version = "0.7.24"
 dependencies = [
