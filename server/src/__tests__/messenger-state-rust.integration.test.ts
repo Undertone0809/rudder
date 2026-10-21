@@ -289,6 +289,7 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     database = new EmbeddedPostgres({ databaseDir: dataDir, user: "rudder", password: "rudder", port: databasePort, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], postgresFlags: ["-k", ""], onLog: () => {}, onError: () => {} });
     await database.initialise();
     await database.start();
+    process.stdout.write(`[messenger-state-test-db] ${JSON.stringify({ database: "rudder", host: "127.0.0.1", port: databasePort, dataDir, home, nativeBinary })}\n`);
     await ensurePostgresDatabase(`postgres://rudder:rudder@127.0.0.1:${databasePort}/postgres`, "rudder");
     connectionString = `postgres://rudder:rudder@127.0.0.1:${databasePort}/rudder`;
     await applyPendingMigrations(connectionString);
@@ -850,6 +851,50 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.unfollowed'`))[0].count).toBe(1);
     expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(3);
   }, 30_000);
+
+  it.each(["follow", "unfollow"] as const)("rolls back public Issue %s when durable event insertion fails, then retries once", async (operation) => {
+    const targetIssueId = operation === "follow" ? issueId : privateIssueId;
+    const action = operation === "follow" ? "issue.followed" : "issue.unfollowed";
+    const method: Method = operation === "follow" ? "post" : "delete";
+    await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${targetIssueId}::uuid AND user_id=${userId}`);
+    if (operation === "unfollow") await db.insert(issueFollows).values({ orgId, issueId: targetIssueId, userId, ...fixed });
+    await db.execute(sql`DELETE FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${targetIssueId} AND action IN ('issue.followed','issue.unfollowed')`);
+    await db.execute(sql`DELETE FROM organization_mutation_outbox`);
+
+    const effects = async () => ({
+      relations: await db.execute(sql`SELECT id::text FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${targetIssueId}::uuid AND user_id=${userId} ORDER BY id`),
+      activity: await db.execute(sql`SELECT id::text, action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${targetIssueId} AND action IN ('issue.followed','issue.unfollowed') ORDER BY id`),
+      outbox: await db.execute(sql`SELECT id::text, activity_id::text, event_type, payload FROM organization_mutation_outbox WHERE payload->>'entityId'=${targetIssueId} ORDER BY id`),
+    });
+    const before = await effects();
+
+    try {
+      await db.execute(sql`CREATE FUNCTION messenger_test_fail_issue_outbox() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test issue outbox failure'; END $$`);
+      await db.execute(sql.raw(`CREATE TRIGGER messenger_test_fail_issue_outbox BEFORE INSERT ON organization_mutation_outbox FOR EACH ROW WHEN (NEW.payload->>'action' = '${action}' AND NEW.payload->>'entityId' = '${targetIssueId}') EXECUTE FUNCTION messenger_test_fail_issue_outbox()`));
+      const failed = await http(method, `/api/issues/${targetIssueId}/follow`);
+      expect(failed.status).toBe(500);
+      expect(await effects()).toEqual(before);
+    } finally {
+      await db.execute(sql`DROP TRIGGER IF EXISTS messenger_test_fail_issue_outbox ON organization_mutation_outbox`);
+      await db.execute(sql`DROP FUNCTION IF EXISTS messenger_test_fail_issue_outbox()`);
+    }
+
+    const retried = await http(method, `/api/issues/${targetIssueId}/follow`);
+    if (operation === "follow") {
+      expect(retried.status).toBe(201);
+      expect(retried.body).toMatchObject({ orgId, issueId: targetIssueId, userId });
+      expect((await effects()).relations).toHaveLength(1);
+    } else {
+      expect(retried.status).toBe(200);
+      expect(retried.body).toEqual({ ok: true });
+      expect((await effects()).relations).toHaveLength(0);
+    }
+    const afterRetry = await effects();
+    expect(afterRetry.activity).toHaveLength(1);
+    expect(afterRetry.activity[0]).toMatchObject({ action });
+    expect(afterRetry.outbox).toHaveLength(1);
+    expect(afterRetry.outbox[0]?.payload).toMatchObject({ action, entityType: "issue", entityId: targetIssueId });
+  }, 20_000);
 
   it("keeps Node healthy and fails every migrated endpoint when the actual native binary cannot start", async () => {
     const unavailable = createRustFoundationBridge({ databaseUrl: connectionString, binaryPath: path.join(home, "foundation-does-not-exist"), mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off" });
