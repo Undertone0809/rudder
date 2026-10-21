@@ -111,6 +111,7 @@ pub fn execute_turn(
             executable: config.executable.clone(),
             process_host: paths.process_host.clone(),
             runtime_root: paths.runtime_root.clone(),
+            model: local.cli_model.clone(),
             home: if local.profile_id == "operator-default" {
                 CursorAcpHome::OperatorProfile(local.home.clone())
             } else {

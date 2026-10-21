@@ -503,6 +503,19 @@ impl PiRpcTransport {
     /// Ask the owned host to stop Pi and wait for its matching terminal
     /// lifecycle receipt. EOF/Drop cleanup is not promoted to proof here.
     pub fn stop(&mut self, timeout: Duration) -> Result<(), PiTransportError> {
+        self.stop_with_grace(Duration::from_millis(500), timeout)
+    }
+
+    /// Apply the configured process grace independently of the bounded wait
+    /// for the host's terminal cleanup receipt.
+    pub fn stop_with_grace(
+        &mut self,
+        grace: Duration,
+        timeout: Duration,
+    ) -> Result<(), PiTransportError> {
+        if grace.is_zero() || grace > Duration::from_secs(60) || timeout.is_zero() {
+            return Err(PiTransportError::InvalidLaunch);
+        }
         if self.terminal {
             self.cleanup_proof = self.host.take_cleanup_proof();
             return self
@@ -515,7 +528,7 @@ impl PiRpcTransport {
             .send(Command::Stop {
                 protocol_version: Some(ProtocolVersion::default()),
                 request_id: Some(self.request_id.clone()),
-                grace_ms: Some(500),
+                grace_ms: Some(grace.as_millis() as u64),
             })
             .map_err(map_host_error)?;
         let deadline = Instant::now() + timeout;

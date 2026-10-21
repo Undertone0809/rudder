@@ -196,8 +196,12 @@ pub(super) fn run_claimed(
         cancelled,
         deadline,
     );
-    let _cleanup_phase =
-        execution.cleanup(remaining_timeout(deadline, cleanup_grace).unwrap_or_default());
+    // Cleanup must still receive its bounded receipt wait when the execution
+    // deadline has elapsed. A zero remaining run timeout cannot prove cleanup.
+    let _cleanup_phase = execution.cleanup_with_grace(
+        cleanup_grace,
+        cleanup_grace.saturating_add(Duration::from_secs(2)),
+    );
     let observation = execution.into_observation();
     if let Err(error) = result {
         return Err(ExecutionFailure::after_claim_pi(
@@ -818,7 +822,15 @@ impl PiExecution {
     /// Stop the exact owned process and retain cleanup only when the host
     /// emitted its matching terminal receipt.
     pub fn cleanup(&mut self, timeout: Duration) -> Result<PiExecutionPhase, PiAdapterError> {
-        self.transport.stop(timeout)?;
+        self.cleanup_with_grace(Duration::from_millis(500), timeout)
+    }
+
+    pub fn cleanup_with_grace(
+        &mut self,
+        grace: Duration,
+        timeout: Duration,
+    ) -> Result<PiExecutionPhase, PiAdapterError> {
+        self.transport.stop_with_grace(grace, timeout)?;
         let Some(receipt) = self.transport.take_cleanup_receipt() else {
             self.mark_unknown(PiUnknownReason::CleanupNotProven);
             return Ok(self.phase);

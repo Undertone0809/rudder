@@ -15,6 +15,8 @@ const CHAT_CURSOR_SYMLINK: &str = "21000000-0000-4000-8000-000000000208";
 const CHAT_CURSOR_OPERATOR_DARK: &str = "21000000-0000-4000-8000-000000000209";
 const CHAT_CURSOR_OPERATOR_LIGHT: &str = "21000000-0000-4000-8000-000000000210";
 const CHAT_CURSOR_COMMAND: &str = "21000000-0000-4000-8000-000000000212";
+const CHAT_CURSOR_INSTRUCTIONS: &str = "21000000-0000-4000-8000-000000000216";
+const CHAT_CURSOR_BAD_MODEL: &str = "21000000-0000-4000-8000-000000000217";
 const CHAT_PI_MANAGED: &str = "21000000-0000-4000-8000-000000000213";
 const CHAT_PI_OPERATOR_DARK: &str = "21000000-0000-4000-8000-000000000214";
 const CHAT_PI_OPERATOR_LIGHT: &str = "21000000-0000-4000-8000-000000000215";
@@ -57,7 +59,7 @@ impl Provider {
             Self::Cursor => json!({
                 "profileId":profile_id,
                 "command":"cursor-agent",
-                "model":"fixture-model",
+                "model":"auto",
                 "timeoutSec":0,
                 "graceSec":15
             }),
@@ -72,6 +74,7 @@ struct OperatorProfileHost {
     claude_managed_home: PathBuf,
     cursor_managed_home: PathBuf,
     pi_profiles_root: PathBuf,
+    instructions: PathBuf,
 }
 
 impl OperatorProfileHost {
@@ -117,8 +120,6 @@ impl OperatorProfileHost {
         ] {
             fs::create_dir_all(directory).expect("create isolated operator profile fixture");
         }
-        fs::write(instructions.join("SOUL.md"), "synthetic instructions\n")
-            .expect("write synthetic Agent instructions");
         for binary in [&claude, &cursor, &node, &pi_cli, &codex] {
             fs::write(binary, b"fixture executable; never launched")
                 .expect("write inert provider executable fixture");
@@ -157,6 +158,7 @@ impl OperatorProfileHost {
             claude_managed_home,
             cursor_managed_home,
             pi_profiles_root: pi_profiles,
+            instructions,
         }
     }
 
@@ -435,6 +437,13 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
             format!("{}:{CEO}:{OPERATOR_PROFILE}", provider.binding_prefix())
         );
 
+        if matches!(provider, Provider::Cursor) {
+            let mut explicit_model = provider.runtime_config(OPERATOR_PROFILE);
+            explicit_model["model"] = json!("gpt-5.3-codex");
+            explicit_model["effort"] = json!("high");
+            configure_provider_config(&database.pool, provider, explicit_model).await;
+        }
+
         let light_settings = r#"{"appearance":"light","syntheticFixture":true}"#;
         fs::write(&settings, light_settings).expect("change only synthetic profile settings");
         seed_chat(&database.pool, light_chat).await;
@@ -459,6 +468,56 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
             "admission must leave operator-owned settings untouched"
         );
     }
+
+    // Cursor ACP has no proven Rudder instruction transfer mechanism. Do not
+    // silently admit a nonempty Agent instruction bundle that execution would
+    // ignore; rejection must happen before the user message or run is stored.
+    fs::write(
+        host.instructions.join("SOUL.md"),
+        "synthetic cursor instruction\n",
+    )
+    .expect("write synthetic Cursor Agent instruction");
+    configure_provider_config(
+        &database.pool,
+        Provider::Cursor,
+        Provider::Cursor.runtime_config(OPERATOR_PROFILE),
+    )
+    .await;
+    seed_chat(&database.pool, CHAT_CURSOR_INSTRUCTIONS).await;
+    let instruction_result = admit(
+        &database.pool,
+        &actor,
+        &host,
+        CHAT_CURSOR_INSTRUCTIONS,
+        "cursor-nonempty-instructions",
+    )
+    .await;
+    assert!(matches!(
+        instruction_result,
+        Err(Error::Http(409, message)) if message.contains("instructions cannot be applied")
+    ));
+    assert_eq!(
+        effect_counts(&database.pool, CHAT_CURSOR_INSTRUCTIONS).await,
+        (0, 0, 0, 0, 0)
+    );
+
+    let mut malformed_model = Provider::Cursor.runtime_config(OPERATOR_PROFILE);
+    malformed_model["model"] = json!("gpt-5.3-codex[");
+    configure_provider_config(&database.pool, Provider::Cursor, malformed_model).await;
+    seed_chat(&database.pool, CHAT_CURSOR_BAD_MODEL).await;
+    let malformed_result = admit(
+        &database.pool,
+        &actor,
+        &host,
+        CHAT_CURSOR_BAD_MODEL,
+        "cursor-malformed-model-selector",
+    )
+    .await;
+    assert_conflict(malformed_result);
+    assert_eq!(
+        effect_counts(&database.pool, CHAT_CURSOR_BAD_MODEL).await,
+        (0, 0, 0, 0, 0)
+    );
 
     // The normal Pi-local UI defaults select the installed `pi` command,
     // disable the outer timeout with zero, and keep the host cleanup grace.

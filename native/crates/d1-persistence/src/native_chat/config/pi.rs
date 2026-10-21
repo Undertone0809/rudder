@@ -357,7 +357,7 @@ fn numeric_policy(object: &serde_json::Map<String, Value>) -> Result<(Option<Dur
         let seconds = value
             .as_f64()
             .ok_or_else(|| invalid("Pi process grace period is invalid"))?;
-        if !(0.0..=3600.0).contains(&seconds) {
+        if !(1.0..=60.0).contains(&seconds) {
             return Err(invalid("Pi process grace period is invalid"));
         }
         grace = Duration::from_secs_f64(seconds);
@@ -573,6 +573,7 @@ mod tests {
             serde_json::json!({"graceSec":3601}),
             serde_json::json!({"timeoutSec":"10"}),
             serde_json::json!({"graceSec":null}),
+            serde_json::json!({"graceSec":0}),
         ] {
             assert!(policy(value).is_err());
         }

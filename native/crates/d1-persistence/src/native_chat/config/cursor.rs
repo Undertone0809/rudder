@@ -24,6 +24,9 @@ pub struct CursorLocalConfig {
     pub profile_id: String,
     pub executable_search_path: String,
     pub model: Option<String>,
+    /// CLI-ready Cursor model selector derived from the locked model and
+    /// effort values. `None` means inherit the selected operator profile.
+    pub cli_model: Option<String>,
     pub mode: Option<String>,
     pub env: BTreeMap<String, String>,
     pub profile_config_revision: String,
@@ -138,6 +141,7 @@ pub(crate) async fn resolve_cursor_config(
     if let Some(effort) = &effort {
         validate_effort(effort)?;
     }
+    let cli_model = cursor_cli_model(model.as_deref(), effort.as_deref())?;
     let configured_mode = bounded_string(object.get("mode"), "mode")?;
     let mode = if row.try_get::<bool, _>("plan_mode")? {
         Some("plan".to_owned())
@@ -229,6 +233,15 @@ pub(crate) async fn resolve_cursor_config(
             "resolved Agent instructions exceed the supported Cursor ACP bound",
         ));
     }
+    if instructions
+        .entry_content
+        .as_ref()
+        .is_some_and(|text| !text.is_empty())
+    {
+        return Err(unsupported(
+            "resolved Agent instructions cannot be applied through Cursor ACP yet",
+        ));
+    }
 
     let (_executable, profiles_root) = host.cursor_runtime().expect("checked above");
     let home = if profile_id == "operator-default" {
@@ -246,6 +259,7 @@ pub(crate) async fn resolve_cursor_config(
         "graceSec":grace_sec,
         "model":model,
         "effort":effort,
+        "cliModel":cli_model,
         "mode":mode,
         "workspaceBindingId":workspace_binding_id,
         "effectiveCwd":cwd.to_string_lossy(),
@@ -295,6 +309,7 @@ pub(crate) async fn resolve_cursor_config(
             profile_id,
             executable_search_path: host.executable_search_path().to_owned(),
             model: model.clone(),
+            cli_model,
             mode: mode.clone(),
             env_revision: fingerprint::json_revision(&json!(env_facts)),
             env,
@@ -389,10 +404,125 @@ fn optional_bounded_nonzero_seconds(
 }
 
 fn validate_model(value: &str) -> Result<()> {
-    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
+    if value.is_empty()
+        || value.len() > 512
+        || value.trim() != value
+        || value.chars().any(char::is_control)
+    {
         return Err(invalid("Cursor model selection is invalid"));
     }
     Ok(())
+}
+
+/// Cursor's CLI accepts a model and its optional model-specific parameters as
+/// one argument, e.g. `gpt-5.3-codex[effort=high]`. Resolve this while D1 still
+/// holds the admission transaction so unsupported values cannot create a
+/// message or run that the executor would later reject.
+fn cursor_cli_model(model: Option<&str>, effort: Option<&str>) -> Result<Option<String>> {
+    let Some(model) = model else {
+        if effort.is_some() {
+            return Err(unsupported(
+                "Cursor effort requires an explicit model selection",
+            ));
+        }
+        return Ok(None);
+    };
+    if model.is_empty()
+        || model.trim() != model
+        || model.len() > 512
+        || model.chars().any(char::is_control)
+    {
+        return Err(invalid("Cursor model selection is invalid"));
+    }
+
+    let (base, raw_parameters) = match model.find('[') {
+        None if model.contains(']') => return Err(invalid("Cursor model selection is invalid")),
+        None => (model, None),
+        Some(open) if model.ends_with(']') && open > 0 => {
+            let raw = &model[open + 1..model.len() - 1];
+            if raw.is_empty() || raw.contains('[') || raw.contains(']') {
+                return Err(invalid("Cursor model selection is invalid"));
+            }
+            (&model[..open], Some(raw))
+        }
+        Some(_) => return Err(invalid("Cursor model selection is invalid")),
+    };
+    if !base.bytes().enumerate().all(|(index, byte)| {
+        if index == 0 {
+            byte.is_ascii_alphanumeric()
+        } else {
+            byte.is_ascii_alphanumeric() || b"._:/-".contains(&byte)
+        }
+    }) {
+        return Err(invalid("Cursor model selection is invalid"));
+    }
+
+    let selected_effort = effort.map(str::to_ascii_lowercase);
+    if selected_effort
+        .as_deref()
+        .is_some_and(|value| !["low", "medium", "high", "xhigh", "max", "auto"].contains(&value))
+    {
+        return Err(invalid("Cursor effort is invalid"));
+    }
+
+    let mut parameters = Vec::<(String, String)>::new();
+    if let Some(raw_parameters) = raw_parameters
+        && !raw_parameters.is_empty()
+    {
+        for parameter in raw_parameters.split(',') {
+            let (raw_key, raw_value) = parameter
+                .split_once('=')
+                .ok_or_else(|| invalid("Cursor model parameter is invalid"))?;
+            let key = raw_key.trim();
+            let value = raw_value.trim();
+            if key.is_empty()
+                || value.is_empty()
+                || key != raw_key
+                || value != raw_value
+                || value.bytes().any(|byte| byte.is_ascii_whitespace())
+                || !key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+                || value.chars().any(char::is_control)
+            {
+                return Err(invalid("Cursor model parameter is invalid"));
+            }
+            let normalized_value = value.to_ascii_lowercase();
+            if key.eq_ignore_ascii_case("effort")
+                && !["low", "medium", "high", "xhigh", "max", "auto"]
+                    .contains(&normalized_value.as_str())
+            {
+                return Err(invalid("Cursor effort is invalid"));
+            }
+            parameters.push((key.to_owned(), value.to_owned()));
+        }
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    if parameters
+        .iter()
+        .any(|(key, _)| !seen.insert(key.to_ascii_lowercase()))
+    {
+        return Err(invalid("Cursor model parameters must be unique"));
+    }
+
+    if let Some(effort) = selected_effort {
+        parameters.retain(|(key, _)| !key.eq_ignore_ascii_case("effort"));
+        if effort != "auto" {
+            parameters.push(("effort".to_owned(), effort));
+        }
+    }
+
+    if parameters.is_empty() {
+        Ok(Some(base.to_owned()))
+    } else {
+        let values = parameters
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        Ok(Some(format!("{base}[{values}]")))
+    }
 }
 
 fn validate_effort(value: &str) -> Result<()> {
@@ -485,9 +615,9 @@ fn cursor_profile_revision(home: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cursor_profile_revision, optional_bounded_nonzero_seconds, optional_bounded_seconds,
-        resolve_operator_profile_home, validate_command, validate_effort, validate_mode,
-        validate_profile_id,
+        cursor_cli_model, cursor_profile_revision, optional_bounded_nonzero_seconds,
+        optional_bounded_seconds, resolve_operator_profile_home, validate_command, validate_effort,
+        validate_mode, validate_profile_id,
     };
     use serde_json::json;
     use std::fs;
@@ -550,5 +680,41 @@ mod tests {
         ));
         assert!(optional_bounded_seconds(Some(&json!(3601)), "timeoutSec", 3600).is_err());
         assert!(optional_bounded_nonzero_seconds(Some(&json!(0)), "graceSec", 60).is_err());
+    }
+
+    #[test]
+    fn cursor_cli_model_preserves_default_and_maps_parameterized_effort() {
+        assert_eq!(
+            cursor_cli_model(Some("auto"), None).unwrap().as_deref(),
+            Some("auto")
+        );
+        assert_eq!(
+            cursor_cli_model(Some("gpt-5.3-codex"), Some("high"))
+                .unwrap()
+                .as_deref(),
+            Some("gpt-5.3-codex[effort=high]")
+        );
+        assert_eq!(
+            cursor_cli_model(Some("gpt-5.3-codex[context=1m,effort=low]"), Some("high"))
+                .unwrap()
+                .as_deref(),
+            Some("gpt-5.3-codex[context=1m,effort=high]")
+        );
+        assert_eq!(
+            cursor_cli_model(Some("gpt-5.3-codex[context=1m,effort=low]"), Some("auto"))
+                .unwrap()
+                .as_deref(),
+            Some("gpt-5.3-codex[context=1m]")
+        );
+        assert!(cursor_cli_model(None, Some("high")).is_err());
+        for malformed in [
+            "model[",
+            "model]",
+            "model[]",
+            "model[a=1,a=2]",
+            "model[effort=turbo]",
+        ] {
+            assert!(cursor_cli_model(Some(malformed), None).is_err());
+        }
     }
 }

@@ -1291,6 +1291,16 @@ persisted-branch range reader is a provider primitive only until authorization,
 host dispatch, pagination and public-consumer tests are connected. SQL history
 mirrors remain enabled.
 
+The follow-up profile review found and fixed Cursor's accepted-but-unused model
+selection: the admitted model and effort now form a validated CLI selector.
+Nonempty Rudder instructions remain explicitly unsupported for Cursor ACP and
+are rejected before admission effects until a supported channel is proven.
+Pi now applies the configured process interrupt grace separately from the
+cleanup-receipt wait, including after an execution timeout. These changes do
+not establish installed-profile model acceptance or full native history parity.
+Pi interrupt grace is now bounded to the host protocol's 1–60 seconds; persisted
+values outside that range fail admission rather than being silently clamped.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.

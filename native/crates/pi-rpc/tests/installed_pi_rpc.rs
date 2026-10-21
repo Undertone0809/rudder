@@ -104,7 +104,7 @@ fn installed_pi_get_state(operator_layout: bool) {
     assert!(got_state, "Pi did not answer get_state");
 
     transport
-        .stop(Duration::from_secs(15))
+        .stop_with_grace(Duration::from_secs(1), Duration::from_secs(15))
         .expect("owned host must stop Pi and observe the terminal receipt");
     let proof = transport
         .take_cleanup_proof()

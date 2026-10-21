@@ -63,6 +63,10 @@ pub struct CursorAcpProcessLaunch {
     pub executable: PathBuf,
     pub process_host: PathBuf,
     pub runtime_root: PathBuf,
+    /// The provider/model selector is passed as the installed CLI's global
+    /// `--model` option before the `acp` subcommand. This value is resolved by
+    /// D1 and never comes from an arbitrary argv setting.
+    pub model: Option<String>,
     /// Native Chat selects between the existing isolated runtime home and an
     /// explicitly selected provider profile. This path is never supplied by
     /// a request.
@@ -119,6 +123,7 @@ impl CursorAcpTransport {
     ) -> Result<Self, CursorAcpTransportError> {
         let launch = validate_launch(launch)?;
         let env = cursor_process_environment(launch.env, launch.home.path())?;
+        let argv = cursor_acp_argv(launch.model.as_deref())?;
         let request_id = launch.attempt_id.clone();
         let owner_token = launch.owner_token.clone();
         let host = OwnedHost::launch_external(
@@ -137,7 +142,7 @@ impl CursorAcpTransport {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(request_id.clone()),
             executable: launch.executable.to_string_lossy().into_owned(),
-            argv: vec!["acp".into()],
+            argv,
             cwd: launch.cwd.to_string_lossy().into_owned(),
             env,
             owner_token: Some(owner_token.clone()),
@@ -586,6 +591,24 @@ fn cursor_process_environment(
     Ok(env)
 }
 
+fn cursor_acp_argv(model: Option<&str>) -> Result<Vec<String>, CursorAcpTransportError> {
+    let Some(model) = model else {
+        return Ok(vec!["acp".into()]);
+    };
+    if model.is_empty()
+        || model.trim() != model
+        || model.len() > 512
+        || model.chars().any(char::is_control)
+        || !model
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+    {
+        return Err(CursorAcpTransportError::InvalidLaunch);
+    }
+    Ok(vec!["--model".into(), model.into(), "acp".into()])
+}
+
 fn map_host_error(error: HostError) -> CursorAcpTransportError {
     match error {
         HostError::InvalidLaunch => CursorAcpTransportError::InvalidLaunch,
@@ -620,6 +643,7 @@ mod tests {
             executable,
             process_host,
             runtime_root,
+            model: None,
             home: CursorAcpHome::OperatorProfile(profile_home),
             cwd,
             run_id: "run".into(),
@@ -639,6 +663,7 @@ mod tests {
             executable: "cursor-agent".into(),
             process_host: "/tmp/process-host".into(),
             runtime_root: "/tmp/runtime".into(),
+            model: None,
             home: CursorAcpHome::OperatorProfile("/tmp/home".into()),
             cwd: "/tmp".into(),
             run_id: "run".into(),
@@ -669,6 +694,7 @@ mod tests {
             executable,
             process_host,
             runtime_root,
+            model: None,
             home: CursorAcpHome::OperatorProfile(profile_home.canonicalize().unwrap()),
             cwd,
             run_id: "run".into(),
@@ -712,6 +738,7 @@ mod tests {
             executable,
             process_host,
             runtime_root,
+            model: None,
             home: CursorAcpHome::OperatorProfile(profile_home.canonicalize().unwrap()),
             cwd,
             run_id: "run".into(),
@@ -742,6 +769,7 @@ mod tests {
             executable,
             process_host,
             runtime_root,
+            model: None,
             home: CursorAcpHome::IsolatedRuntime(isolated_home.canonicalize().unwrap()),
             cwd,
             run_id: "run".into(),
@@ -762,5 +790,16 @@ mod tests {
     fn response_error_is_not_projected_as_success() {
         let response = JsonRpcResponse::error(RequestId::generated(1), -1, "rejected");
         assert!(response.error.is_some());
+    }
+
+    #[test]
+    fn model_selection_uses_installed_cli_global_flag_before_acp() {
+        assert_eq!(
+            cursor_acp_argv(Some("gpt-5.3-codex[effort=high]")).unwrap(),
+            ["--model", "gpt-5.3-codex[effort=high]", "acp"]
+        );
+        assert_eq!(cursor_acp_argv(None).unwrap(), ["acp"]);
+        assert!(cursor_acp_argv(Some("model\n--force")).is_err());
+        assert!(cursor_acp_argv(Some("--yolo")).is_err());
     }
 }
