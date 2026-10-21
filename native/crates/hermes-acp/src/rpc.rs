@@ -1332,10 +1332,14 @@ impl HermesAcpTransport {
     ) -> Result<Value, HermesTransportError> {
         let id = self.send_request(method, params, deadline)?;
         loop {
-            match self
-                .receive_message(deadline, false)?
-                .ok_or(HermesTransportError::Timeout)?
-            {
+            let Some(message) = self.receive_message(deadline, false)? else {
+                // A host lifecycle event or a partial stdout frame may not
+                // produce a complete ACP message. Keep waiting against the
+                // same absolute deadline instead of treating that event as
+                // the end of the request.
+                continue;
+            };
+            match message {
                 Message::Response {
                     id: response_id,
                     result: Some(result),
@@ -2559,6 +2563,126 @@ for line in sys.stdin:
         assert_eq!(cancelled.stop_reason(), HermesStopReason::Cancelled);
         let cleanup = second.stop(Duration::from_secs(5)).unwrap();
         assert!(cleanup.proves_quiescence_for(&cancelled));
+    }
+
+    /// A host can deliver one ACP response over several stdout events. The
+    /// process host's lifecycle events may arrive between those fragments, so
+    /// a request must keep waiting until its original absolute deadline rather
+    /// than treating an incomplete line as a timeout.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires the built rudder-process-host executable"]
+    fn owned_fragmented_initialize_and_session_responses_wait_for_complete_frames() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let process_host = PathBuf::from(std::env::var("RUDDER_PROCESS_HOST").unwrap());
+        let temp = tempfile::tempdir().unwrap();
+        let hermes = temp.path().join("fragmented-hermes.py");
+        fs::write(
+            &hermes,
+            r##"#!/usr/bin/python3
+import json, sys, time
+session = "550e8400-e29b-41d4-a716-446655440000"
+def out(value):
+  sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
+  sys.stdout.flush()
+def fragmented(value):
+  encoded = json.dumps(value, separators=(",", ":"))
+  sys.stdout.write(encoded[:512])
+  sys.stdout.flush()
+  time.sleep(0.15)
+  sys.stdout.write(encoded[512:] + "\n")
+  sys.stdout.flush()
+for line in sys.stdin:
+  message = json.loads(line)
+  method = message.get("method")
+  if method == "initialize":
+    fragmented({"jsonrpc":"2.0","id":message["id"],"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":True},"fixturePadding":"x"*700}})
+  elif method == "initialized":
+    out({"jsonrpc":"2.0","method":"usage_update","params":{}})
+  elif method == "session/new":
+    fragmented({"jsonrpc":"2.0","id":message["id"],"result":{"sessionId":session,"fixturePadding":"x"*700}})
+  elif method == "session/set_model":
+    sys.stdout.write('{"jsonrpc":"2.0","id":' + str(message["id"]) + ',"result":')
+    sys.stdout.flush()
+    time.sleep(1.0)
+"##,
+        )
+        .unwrap();
+        fs::set_permissions(&hermes, fs::Permissions::from_mode(0o755)).unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir(&home).unwrap();
+        let run_id = "00000000-0000-4000-8000-000000000001";
+        let attempt_id = "attempt-fragmented-response";
+        let owner = "owner-fragmented-response";
+        let mut transport = HermesAcpTransport::launch(
+            HermesLaunch {
+                hermes_executable: hermes,
+                python_executable: None,
+                python_source_root: None,
+                ephemeral_system_prompt: None,
+                process_host: process_host.clone(),
+                runtime_root: temp.path().to_path_buf(),
+                operator_home: home.clone(),
+                hermes_home: home,
+                cwd: temp.path().to_path_buf(),
+                run_id: run_id.into(),
+                attempt_id: attempt_id.into(),
+                owner_token: owner.into(),
+                executable_search_path: fixture_search_path(),
+                env: Default::default(),
+            },
+            ConnectionLaunchPermit::from_claim(
+                run_id.into(),
+                attempt_id.into(),
+                owner.into(),
+                1,
+                "claim-fragmented-response".into(),
+            ),
+        )
+        .unwrap();
+        transport.wait_spawned(Duration::from_secs(5)).unwrap();
+
+        let initialize = transport.initialize(Duration::from_secs(5));
+        if let Err(error) = initialize {
+            let cleanup = transport.stop(Duration::from_secs(5)).unwrap();
+            assert!(cleanup.matches_connection_claim(
+                run_id,
+                attempt_id,
+                owner,
+                1,
+                "claim-fragmented-response"
+            ));
+            panic!("fragmented initialize response must complete: {error:?}");
+        }
+
+        let session = transport
+            .new_session(temp.path(), Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(session.as_str(), "550e8400-e29b-41d4-a716-446655440000");
+        let started = Instant::now();
+        let model_result = transport.set_model("fixture-model", Duration::from_millis(150));
+        let elapsed = started.elapsed();
+        let cleanup = transport.stop(Duration::from_secs(5)).unwrap();
+        assert!(cleanup.matches_connection_claim(
+            run_id,
+            attempt_id,
+            owner,
+            1,
+            "claim-fragmented-response"
+        ));
+        assert!(
+            matches!(model_result, Err(HermesTransportError::Timeout)),
+            "a silent partial response must time out at its original deadline: {model_result:?}"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "returned too early: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "deadline was not bounded: {elapsed:?}"
+        );
     }
 
     /// Keeps the cancellation regression deterministic: the ACP peer writes

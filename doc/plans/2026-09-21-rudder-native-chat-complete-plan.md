@@ -3,7 +3,7 @@ title: Complete Plan for Rudder Native Chat Experience and Agent Run Execution A
 date: 2026-09-21
 kind: implementation
 status: in_progress
-updated_at: 2026-10-21
+updated_at: 2026-10-22
 area: agent_runtimes
 entities:
   - agent_run
@@ -106,6 +106,17 @@ unknown usage; retain the frozen projection cutoff and validate the entire
 committed progress ledger. Generic errors without an exact Stop, transport
 loss, timeout, malformed responses, and mismatched identities remain held and
 must not replay input. Do not modify the installed Hermes profile or sources.
+
+The installed Hermes initialization response can span multiple process-host
+stdout events. A partial line or a lifecycle event is not an RPC timeout: keep
+receiving under the original absolute deadline until the matching complete
+response arrives. Preserve response/session correlation and propagate actual
+deadline, EOF and protocol errors. The October 22 acceptance failure retained
+a valid 644-byte initialize response in 512- and 132-byte chunks before session
+creation; the old request loop incorrectly stopped after the first fragment.
+Cover fragmented initialization and session replies, queued benign notifications,
+and an incomplete response deadline with owned-process tests before repeating
+the real installed Hermes journey. Do not relax finalization or replay gates.
 
 The composer has one primary response control. An active response with no
 queueable draft shows Stop; a queueable draft shows Send, using the existing
