@@ -6496,7 +6496,8 @@ describe("Chat streaming controls", () => {
       textarea!.dispatchEvent(new Event("input", { bubbles: true }));
       await Promise.resolve();
     });
-    await clickEnabledButtonByAriaLabel(container, "Queue");
+    expect(container.querySelector("button[aria-label='Stop streaming']")).toBeNull();
+    await clickEnabledButtonByAriaLabel(container, "Send");
 
     expect(mockState.createQueuedMessage).toHaveBeenCalledTimes(1);
     expect(mockState.createQueuedMessage).toHaveBeenCalledWith(
@@ -6563,7 +6564,8 @@ describe("Chat streaming controls", () => {
       await Promise.resolve();
     });
     await clickEnabledButton(document.body, "Save");
-    await clickEnabledButtonByAriaLabel(container, "Queue");
+    expect(container.querySelector("button[aria-label='Stop streaming']")).toBeNull();
+    await clickEnabledButtonByAriaLabel(container, "Send");
 
     expect(mockState.createQueuedMessage).not.toHaveBeenCalled();
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();

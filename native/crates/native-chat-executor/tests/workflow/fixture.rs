@@ -13,7 +13,7 @@ pub(crate) use rudder_d1_persistence::native_chat::{
 pub(crate) use rudder_native_chat_executor::Error as ExecutorError;
 use rudder_native_chat_executor::{
     ExecutionRequest, HostPaths, OwnedExecutionRequest, execute, provision_profile,
-    run_on_blocking_thread,
+    run_observed_native_with_request_actor_on_blocking_thread, run_on_blocking_thread,
 };
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -119,6 +119,155 @@ impl FixtureHost {
             context: Some(context),
             executable,
         }
+    }
+
+    pub(crate) fn enable_hermes_runtime(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+
+        // This transport fixture exercises owned-session ordering, not the
+        // separately pinned ephemeral-instruction bootstrap. Leave the
+        // synthetic workspace without an instruction entry so it uses the
+        // ordinary Hermes ACP adapter path.
+        let org_key = ORG
+            .chars()
+            .filter(|character| *character != '-')
+            .take(12)
+            .collect::<String>();
+        let instructions = self
+            .root
+            .path()
+            .join("workspaces")
+            .join(org_key)
+            .join("workspaces/agents/codex-agent/instructions/SOUL.md");
+        fs::remove_file(instructions).expect("disable fixture instruction bootstrap for Hermes");
+
+        let install = self.root.path().join("hermes-install");
+        let bin = install.join("venv/bin");
+        let profiles = self.root.path().join("hermes-profiles");
+        let profile = profiles.join(ORG).join(CEO).join("default");
+        for directory in [&bin, &profile] {
+            fs::create_dir_all(directory).expect("create Hermes fixture directories");
+        }
+
+        let executable = bin.join("hermes");
+        let wrapper = "#!/bin/sh\n'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")\"/'python3' \"$0\" \"$@\"\n' '''\n# -*- coding: utf-8 -*-\nimport sys\nfrom hermes_cli.main import main\nif __name__ == \"__main__\":\n";
+        fs::write(&executable, wrapper).expect("write supported Hermes console wrapper");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("make Hermes fixture executable");
+
+        let python = bin.join("python3");
+        let python_shim = format!(
+            "#!/bin/sh\nPYTHONPATH='{}' exec python3 \"$@\"\n",
+            install.display()
+        );
+        fs::write(&python, python_shim).expect("write Hermes fixture Python shim");
+        fs::set_permissions(&python, fs::Permissions::from_mode(0o700))
+            .expect("make Hermes fixture Python shim executable");
+
+        for relative in [
+            "hermes_bootstrap.py",
+            "hermes_cli/__init__.py",
+            "acp_adapter/entry.py",
+            "acp_adapter/session.py",
+            "agent/agent_init.py",
+            "agent/chat_completion_helpers.py",
+        ] {
+            let path = install.join(relative);
+            fs::create_dir_all(path.parent().expect("Hermes source parent"))
+                .expect("create Hermes fixture source directory");
+            let source = match relative {
+                "hermes_cli/__init__.py" => "__version__ = \"0.21.0\"\n",
+                "hermes_bootstrap.py" => "def harden_import_path(source_root):\n    return None\n",
+                "acp_adapter/session.py" => {
+                    "class SessionManager:\n    def _make_agent(self, session_id, cwd, model, requested_provider, base_url, api_mode):\n        return type('Agent', (), {'ephemeral_system_prompt': None})()\n"
+                }
+                _ => "# synthetic Hermes adapter fixture\n",
+            };
+            fs::write(path, source).expect("write Hermes adapter fixture source");
+        }
+
+        let home = self.root.path().join("isolated-home");
+        let entry = format!(
+            r#"import json, pathlib, signal, sys, time
+home = pathlib.Path({home:?})
+mode = home.joinpath("mode.txt").read_text(encoding="utf-8").strip()
+session = "550e8400-e29b-41d4-a716-446655440000"
+
+def main(argv=None):
+    from acp_adapter.session import SessionManager
+    home.joinpath("provider-started").write_text("started", encoding="utf-8")
+    events = home.joinpath("provider-events.jsonl")
+    def stop(signum, frame):
+        home.joinpath("provider-stopped").write_text("stopped", encoding="utf-8")
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, stop)
+    def out(value):
+        sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
+    manager = SessionManager()
+    for raw in sys.stdin:
+        message = json.loads(raw)
+        with events.open("a", encoding="utf-8") as log:
+            log.write(json.dumps({{"received": message}}) + "\n")
+        method = message.get("method")
+        if method == "initialize":
+            out({{"jsonrpc":"2.0","id":message["id"],"result":{{"protocolVersion":1,"agentCapabilities":{{"loadSession":True}}}}}})
+        elif method == "initialized":
+            continue
+        elif method == "session/new":
+            manager._make_agent(session, None, None)
+            home.joinpath("session-new-count").write_text("1", encoding="utf-8")
+            out({{"jsonrpc":"2.0","id":message["id"],"result":{{"sessionId":session}}}})
+        elif method == "session/load":
+            manager._make_agent(message["params"]["sessionId"], None, None)
+            out({{"jsonrpc":"2.0","id":message["id"],"result":{{"sessionId":session}}}})
+        elif method == "session/set_model":
+            out({{"jsonrpc":"2.0","id":message["id"],"result":{{}}}})
+        elif method == "session/prompt":
+            user_id = message["params"]["messageId"]
+            if mode == "hermes-stop-pending":
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_thought_chunk","content":{{"type":"text","text":"unflushed thought"}}}}}}}})
+                home.joinpath("progress-pending").write_text("pending", encoding="utf-8")
+                cancel = json.loads(sys.stdin.readline())
+                assert cancel.get("method") == "session/cancel"
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"late assistant chunk"}}}}}}}})
+                out({{"jsonrpc":"2.0","id":message["id"],"result":{{"stopReason":"cancelled","userMessageId":user_id}}}})
+            else:
+                if mode == "hermes-live-progress":
+                    home.joinpath("prompt-ready").write_text("ready", encoding="utf-8")
+                    while not home.joinpath("first-progress-release").exists():
+                        time.sleep(0.01)
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_thought_chunk","content":{{"type":"text","text":"Synthetic process thought."}}}}}}}})
+                if mode == "hermes-live-progress":
+                    home.joinpath("progress-pending").write_text("pending", encoding="utf-8")
+                    while not home.joinpath("progress-release").exists():
+                        time.sleep(0.01)
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"tool_call","toolCallId":"fixture-tool","title":"Inspecting fixture","rawInput":{{"private":"raw input sentinel"}}}}}}}})
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"tool_call_update","toolCallId":"fixture-tool","status":"completed","rawOutput":{{"private":"raw output sentinel"}}}}}}}})
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"synthetic "}}}}}}}})
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"answer"}}}}}}}})
+                out({{"jsonrpc":"2.0","id":message["id"],"result":{{"stopReason":"end_turn","userMessageId":user_id}}}})
+"#
+        );
+        let entry_path = install.join("acp_adapter/entry.py");
+        fs::write(entry_path, entry).expect("write synthetic Hermes ACP adapter entrypoint");
+        let main_path = install.join("hermes_cli/main.py");
+        fs::create_dir_all(main_path.parent().unwrap())
+            .expect("create Hermes fixture module directory");
+        fs::write(main_path, "from acp_adapter.entry import main\n")
+            .expect("write synthetic Hermes CLI module");
+
+        let context = self
+            .context
+            .take()
+            .expect("fixture host context is present");
+        self.context = Some(
+            context
+                .with_executable_search_path("/usr/bin:/bin".into())
+                .expect("trust fixture Hermes executable search path")
+                .with_hermes_runtime(executable.clone(), profiles)
+                .expect("attach Hermes fixture runtime"),
+        );
     }
 
     pub(crate) fn context(&self) -> &LocalHostContext {
@@ -243,6 +392,58 @@ pub(crate) async fn admitted(
     database: &Database,
     host: &FixtureHost,
 ) -> (VerifiedActor, String, String) {
+    admitted_with_runtime(database, host, "codex_local", host.persisted_agent_config()).await
+}
+
+pub(crate) async fn admitted_hermes(
+    database: &Database,
+    host: &FixtureHost,
+) -> (VerifiedActor, String, String) {
+    admitted_hermes_with_input(database, host, "native-chat-executor-workflow-1", BODY).await
+}
+
+pub(crate) async fn admitted_hermes_with_input(
+    database: &Database,
+    host: &FixtureHost,
+    client_mutation_id: &str,
+    body: &str,
+) -> (VerifiedActor, String, String) {
+    admitted_with_runtime_input(
+        database,
+        host,
+        "hermes_local",
+        json!({"profileId":"default","model":MODEL}),
+        client_mutation_id,
+        body,
+    )
+    .await
+}
+
+async fn admitted_with_runtime(
+    database: &Database,
+    host: &FixtureHost,
+    runtime_type: &str,
+    runtime_config: Value,
+) -> (VerifiedActor, String, String) {
+    admitted_with_runtime_input(
+        database,
+        host,
+        runtime_type,
+        runtime_config,
+        "native-chat-executor-workflow-1",
+        BODY,
+    )
+    .await
+}
+
+async fn admitted_with_runtime_input(
+    database: &Database,
+    host: &FixtureHost,
+    runtime_type: &str,
+    runtime_config: Value,
+    client_mutation_id: &str,
+    body: &str,
+) -> (VerifiedActor, String, String) {
     sqlx::query(
         "INSERT INTO \"user\"(id,name,email,created_at,updated_at)
          VALUES ($1,'Native Chat executor fixture','native-chat-executor@example.test',now(),now())
@@ -254,7 +455,8 @@ pub(crate) async fn admitted(
     .expect("seed executor fixture user row");
     sqlx::query(
         "INSERT INTO organization_memberships(org_id, principal_type, principal_id, membership_role, status)
-         VALUES ($1::uuid, 'user', $2, 'member', 'active')",
+         VALUES ($1::uuid, 'user', $2, 'member', 'active')
+         ON CONFLICT (org_id, principal_type, principal_id) DO NOTHING",
     )
     .bind(ORG)
     .bind(USER)
@@ -262,20 +464,22 @@ pub(crate) async fn admitted(
     .await
     .expect("seed active organization membership");
     sqlx::query(
-        "UPDATE agents SET agent_runtime_type='codex_local', status='idle',
-           workspace_key='codex-agent', agent_runtime_config=$1::jsonb
-         WHERE org_id=$2::uuid AND id=$3::uuid",
+        "UPDATE agents SET agent_runtime_type=$1, status='idle',
+           workspace_key='codex-agent', agent_runtime_config=$2::jsonb
+         WHERE org_id=$3::uuid AND id=$4::uuid",
     )
-    .bind(host.persisted_agent_config().to_string())
+    .bind(runtime_type)
+    .bind(runtime_config.to_string())
     .bind(ORG)
     .bind(CEO)
     .execute(&database.pool)
     .await
-    .expect("persist selected local Codex Agent config");
+    .expect("persist selected local Agent config");
     sqlx::query(
         "INSERT INTO chat_conversations
            (id, org_id, title, conversation_kind, created_by_user_id, status, preferred_agent_id)
-         VALUES ($1::uuid, $2::uuid, 'Executor workflow fixture', 'chat', $3, 'active', $4::uuid)",
+         VALUES ($1::uuid, $2::uuid, 'Executor workflow fixture', 'chat', $3, 'active', $4::uuid)
+         ON CONFLICT (id) DO NOTHING",
     )
     .bind(CHAT)
     .bind(ORG)
@@ -299,8 +503,8 @@ pub(crate) async fn admitted(
     let request: AdmissionRequest = serde_json::from_value(json!({
         "operation": "submit_native_chat_turn",
         "conversationId": CHAT,
-        "clientMutationId": "native-chat-executor-workflow-1",
-        "body": BODY,
+        "clientMutationId": client_mutation_id,
+        "body": body,
     }))
     .expect("typed ordinary Chat admission request");
     let receipt = admit(&database.pool, &actor, ORG, &request, host.context())
@@ -397,6 +601,16 @@ pub(crate) async fn database_and_admission(
     (database, host, actor, run_id, attempt_id)
 }
 
+pub(crate) async fn database_and_hermes_admission(
+    mode: &str,
+) -> (Database, FixtureHost, VerifiedActor, String, String) {
+    let database = Database::start().await;
+    let mut host = FixtureHost::new(mode);
+    host.enable_hermes_runtime();
+    let (actor, run_id, attempt_id) = admitted_hermes(&database, &host).await;
+    (database, host, actor, run_id, attempt_id)
+}
+
 pub(crate) async fn database_and_first_send_admission(
     mode: &str,
 ) -> (Database, FixtureHost, VerifiedActor, String, String, String) {
@@ -426,6 +640,60 @@ pub(crate) async fn execute_on_worker(
     )
     .await
     .expect("executor blocking worker must join")
+}
+
+pub(crate) async fn execute_native_on_worker(
+    database: &Database,
+    host: FixtureHost,
+    actor: VerifiedActor,
+    run_id: String,
+    attempt_id: String,
+) -> (
+    Result<
+        rudder_native_chat_executor::NativeExecutionObservation,
+        rudder_native_chat_executor::ExecutionFailure,
+    >,
+    FixtureHost,
+) {
+    spawn_native_executor_worker(database, host, actor, run_id, attempt_id)
+        .await
+        .expect("native executor blocking worker must join")
+}
+
+pub(crate) fn spawn_native_executor_worker(
+    database: &Database,
+    host: FixtureHost,
+    actor: VerifiedActor,
+    run_id: String,
+    attempt_id: String,
+) -> tokio::task::JoinHandle<(
+    Result<
+        rudder_native_chat_executor::NativeExecutionObservation,
+        rudder_native_chat_executor::ExecutionFailure,
+    >,
+    FixtureHost,
+)> {
+    let pool = database.pool.clone();
+    let handle = Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let paths = host.paths();
+        let cancelled = AtomicBool::new(false);
+        let result = run_observed_native_with_request_actor_on_blocking_thread(
+            &handle,
+            &pool,
+            actor,
+            host.context(),
+            &paths,
+            ExecutionRequest {
+                organization_id: ORG,
+                run_id: &run_id,
+                attempt_id: &attempt_id,
+                timeout: Duration::from_secs(30),
+                cancelled: &cancelled,
+            },
+        );
+        (result, host)
+    })
 }
 
 pub(crate) async fn execute_cancelled_on_worker(

@@ -55,7 +55,7 @@ pub async fn read_events(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
-    target(
+    let execution_target = target(
         &mut tx,
         actor,
         &request.conversation_id,
@@ -67,11 +67,14 @@ pub async fn read_events(
     // pagination honest without transferring the remaining large payloads.
     let rows = sqlx::query(
         "WITH bounded AS MATERIALIZED (
-           SELECT generation_seq,attempt_epoch,event_kind,assistant_message_id,control_action_id,
-             payload,octet_length(payload::text)::bigint AS payload_bytes
-           FROM chat_generation_events
-           WHERE org_id=$1::uuid AND generation_id=$2::uuid AND generation_seq>$3
-           ORDER BY generation_seq LIMIT $5
+           SELECT e.generation_seq,e.attempt_epoch,e.event_kind,e.assistant_message_id,e.control_action_id,
+             e.payload,octet_length(e.payload::text)::bigint AS payload_bytes
+           FROM chat_generation_events e
+           JOIN chat_generations g ON g.org_id=e.org_id AND g.id=e.generation_id
+           WHERE e.org_id=$1::uuid AND e.generation_id=$2::uuid AND e.generation_seq>$3
+             AND (e.event_kind<>'transcript' OR g.accepted_through_seq IS NULL
+                  OR e.generation_seq<=g.accepted_through_seq)
+           ORDER BY e.generation_seq LIMIT $5
          ), sized AS (
            SELECT *,COALESCE(SUM(payload_bytes) OVER (
              ORDER BY generation_seq ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0)
@@ -107,12 +110,23 @@ pub async fn read_events(
             break;
         };
         let kind: String = row.try_get("event_kind")?;
+        let generation_seq: i32 = row.try_get("generation_seq")?;
+        let attempt_epoch: i32 = row.try_get("attempt_epoch")?;
+        let assistant_message_id: Option<String> = row.try_get("assistant_message_id")?;
         let event = Event {
-            generation_seq: row.try_get("generation_seq")?,
-            attempt_epoch: row.try_get("attempt_epoch")?,
-            payload: public_payload(&kind, &raw)?,
+            generation_seq,
+            attempt_epoch,
+            payload: public_payload(
+                &kind,
+                &raw,
+                actor.organization_id(),
+                &request.generation_id,
+                &execution_target.run_id,
+                attempt_epoch,
+                assistant_message_id.as_deref(),
+            )?,
             event_kind: kind,
-            assistant_message_id: row.try_get("assistant_message_id")?,
+            assistant_message_id,
             control_action_id: row.try_get("control_action_id")?,
         };
         let encoded =
@@ -139,7 +153,32 @@ pub async fn read_events(
     Ok(page)
 }
 
-fn public_payload(kind: &str, raw: &Value) -> Result<Value> {
+fn public_payload(
+    kind: &str,
+    raw: &Value,
+    org: &str,
+    generation: &str,
+    run: &str,
+    attempt_epoch: i32,
+    assistant_message_id: Option<&str>,
+) -> Result<Value> {
+    if kind == "transcript" {
+        let assistant_message_id = assistant_message_id
+            .ok_or_else(|| http(409, "Hermes progress has no assistant projection"))?;
+        let projection = super::super::execution::hermes_progress::validate_public_projection(
+            raw,
+            org,
+            generation,
+            run,
+            attempt_epoch,
+            assistant_message_id,
+        )
+        .ok_or_else(|| http(409, "Hermes progress provenance is invalid"))?;
+        return Ok(json!({
+            "entry": projection.entry,
+            "bodyHash": projection.body_hash,
+        }));
+    }
     let keys: &[&str] = match kind {
         "generation_started" => &[],
         "client_checkpoint" => &["generationSeq", "renderedBodyHash"],

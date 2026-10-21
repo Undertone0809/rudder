@@ -4,7 +4,9 @@
 //! ACP session persisted in the Segment and never retries a prompt after the
 //! input-indeterminate checkpoint.
 
-use super::{Error, ExecutionFailure, HermesExecutionObservation, HostPaths, Result, db};
+use super::{
+    Error, ExecutionFailure, HermesExecutionObservation, HostPaths, Result, db, runtime_bindings,
+};
 use rudder_d1_persistence::native_chat::{
     NativeChatExecutionPrincipal,
     config::ResolvedCodexConfig,
@@ -17,6 +19,7 @@ use rudder_hermes_acp::{
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
 use sqlx::PgPool;
 use std::{
+    cell::RefCell,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
@@ -102,16 +105,8 @@ pub(super) fn run_claimed(
         ) {
             return Err(Error::UnsupportedConfiguration);
         }
-        db(
-            handle,
-            deadline,
-            execution::validate_submission_source(pool, &execution_principal, &fence),
-        )?;
-        let snapshot = db(
-            handle,
-            deadline,
-            execution::current_checkpoint(pool, &execution_principal, &fence),
-        )?;
+        let snapshot =
+            super::prelaunch_checkpoint(handle, pool, &execution_principal, &fence, deadline)?;
         if snapshot.provider != rudder_runtime_core::native_chat::NativeChatProvider::HermesLocal
             || !matches!(
                 snapshot.phase,
@@ -214,6 +209,12 @@ impl Driver<'_> {
         self.validate_configuration()?;
         self.transport
             .wait_spawned(self.remaining_timeout(RPC_TIMEOUT)?)?;
+        // Register and honor a Stop that landed while the owned Hermes host
+        // was starting, before initialization or any session operation.
+        self.poll_owner(true)?;
+        if self.stop.is_some() || self.cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled);
+        }
         self.transport
             .initialize(self.remaining_timeout(RPC_TIMEOUT)?)?;
         self.validate_configuration()?;
@@ -317,6 +318,7 @@ impl Driver<'_> {
         let stop_checked = &mut self.stop_checked;
         let renewed = &mut self.renewed;
         let poll_error = &mut self.poll_error;
+        let progress_error = RefCell::new(None);
         let request = effect
             .dispatch(|payload| match payload {
                 EffectDispatch::SubmitHermesInput {
@@ -331,7 +333,7 @@ impl Driver<'_> {
                     // trusted model re-application above. The D1 binding fence
                     // rejects configuration drift before this point.
                     transport
-                        .prompt_with_expected_request_id_and_poll(
+                        .prompt_with_expected_request_id_and_progress_poll(
                             body,
                             source_message_id,
                             expected_request_id,
@@ -380,22 +382,40 @@ impl Driver<'_> {
                                 }
                                 now < deadline
                             },
+                            |progress| match db(
+                                handle,
+                                deadline,
+                                execution::record_hermes_progress(
+                                    pool,
+                                    execution_principal,
+                                    fence,
+                                    progress,
+                                ),
+                            ) {
+                                Ok(_) => true,
+                                Err(error) => {
+                                    *progress_error.borrow_mut() = Some(error);
+                                    false
+                                }
+                            },
                         )
                         .map_err(Error::HermesTransport)
                 }
                 _ => Err(Error::InvalidProviderObservation),
             })
             .map_err(Error::Persistence)?;
-        let turn = request.map_err(|error| match error {
-            Error::Persistence(_) => error,
-            Error::HermesTransport(HermesTransportError::ApprovalRequired) => {
-                Error::ApprovalRequired
+        let turn = match request {
+            Ok(turn) => turn,
+            Err(Error::HermesTransport(HermesTransportError::ApprovalRequired)) => {
+                return Err(Error::ApprovalRequired);
             }
-            other => other,
-        })?;
-        if let Some(error) = self.poll_error.take() {
-            return Err(error);
-        }
+            Err(error) => {
+                if let Some(progress_error) = progress_error.into_inner() {
+                    return Err(progress_error);
+                }
+                return Err(error);
+            }
+        };
         if turn.session().as_str() != expected_session
             || turn.request_id() != expected_request_id
             || turn.user_message_id() != expected_source_message_id
@@ -404,6 +424,18 @@ impl Driver<'_> {
             return Err(Error::InvalidProviderObservation);
         }
         self.poll_owner(true)?;
+        if let Some(error) = self.poll_error.take() {
+            return Err(error);
+        }
+        if let Some(error) = progress_error.into_inner() {
+            // A progress write can lose a race to Stop after the owner poll
+            // but before its D1 transaction. Only an exact 409, an observed
+            // authorized Stop, and the provider's bound cancelled receipt let
+            // us treat that failed append as beyond the frozen cutoff.
+            if !is_stop_cutoff_conflict(&error, self.stop.is_some(), turn.stop_reason()) {
+                return Err(error);
+            }
+        }
         if let Some(stop) = &self.stop {
             let recorded = db(
                 self.handle,
@@ -685,11 +717,56 @@ fn remaining_timeout_at(deadline: Instant, max: Duration) -> Result<Duration> {
     remaining_timeout(deadline, max)
 }
 
+fn is_stop_cutoff_conflict(
+    error: &Error,
+    exact_stop_observed: bool,
+    receipt_reason: HermesStopReason,
+) -> bool {
+    exact_stop_observed
+        && receipt_reason == HermesStopReason::Cancelled
+        && matches!(
+            error,
+            Error::Persistence(runtime_bindings::Error::Http(409, _))
+        )
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use rudder_native_process_transport::ConnectionLaunchPermit;
     use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+
+    #[test]
+    fn progress_write_conflict_is_ignored_only_after_exact_cancelled_stop_receipt() {
+        let conflict = Error::Persistence(runtime_bindings::Error::Http(
+            409,
+            "progress crossed Stop cutoff".into(),
+        ));
+        assert!(is_stop_cutoff_conflict(
+            &conflict,
+            true,
+            HermesStopReason::Cancelled
+        ));
+        assert!(!is_stop_cutoff_conflict(
+            &conflict,
+            false,
+            HermesStopReason::Cancelled
+        ));
+        assert!(!is_stop_cutoff_conflict(
+            &conflict,
+            true,
+            HermesStopReason::EndTurn
+        ));
+        let other_failure = Error::Persistence(runtime_bindings::Error::Http(
+            500,
+            "durable progress write failed".into(),
+        ));
+        assert!(!is_stop_cutoff_conflict(
+            &other_failure,
+            true,
+            HermesStopReason::Cancelled
+        ));
+    }
 
     #[test]
     #[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses a delayed synthetic ACP peer, never a real provider"]

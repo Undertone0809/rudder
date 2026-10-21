@@ -24,5 +24,8 @@ mod resume_fixture;
 #[path = "workflow/live_stop.rs"]
 mod live_stop;
 
+#[path = "workflow/hermes_progress.rs"]
+mod hermes_progress;
+
 #[path = "workflow/browser_principal.rs"]
 mod browser_principal;

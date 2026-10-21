@@ -3,7 +3,7 @@
 use super::{ExecutionFence, Result, context::lock_current_execution, http, output};
 use crate::{
     activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activity_options},
-    native_chat::NativeChatExecutionActor,
+    native_chat::{NativeChatExecutionActor, auth},
     runtime_bindings,
 };
 use rudder_codex_app_server::{CleanupReceipt, TurnReceipt, TurnStatus};
@@ -17,6 +17,84 @@ use sqlx::{PgPool, Row};
 
 const MAX_PROJECTED_BODY_BYTES: i32 = 256 * 1024;
 const MAX_NATIVE_ID_BYTES: usize = 512;
+const MAX_HERMES_PROGRESS_EVENTS: usize = 512;
+const MAX_HERMES_PROGRESS_BYTES: usize = 2 * 1024 * 1024;
+
+async fn validate_hermes_progress_for_terminal(
+    tx: &mut auth::Tx<'_>,
+    fence: &ExecutionFence,
+    turn: &HermesTurnReceipt,
+    cleanup: &HermesCleanupReceipt,
+    assistant_message_id: &str,
+    require_progress: bool,
+) -> Result<()> {
+    let id = fence.identity();
+    if turn.connection_receipt_id() != cleanup.connection_receipt_id() {
+        return Err(http(409, "Hermes progress connection receipt changed"));
+    }
+    let rows = sqlx::query(
+        "SELECT generation_seq,attempt_epoch,assistant_message_id::text,
+                payload,octet_length(payload::text)::bigint AS payload_bytes
+         FROM chat_generation_events
+         WHERE org_id=$1::uuid AND generation_id=$2::uuid AND run_id=$3::uuid
+           AND attempt_epoch=$4 AND event_kind='transcript'
+         ORDER BY generation_seq LIMIT $5",
+    )
+    .bind(id.organization_id)
+    .bind(id.generation_id)
+    .bind(id.run_id)
+    .bind(id.generation_attempt_epoch)
+    .bind(MAX_HERMES_PROGRESS_EVENTS as i64 + 1)
+    .fetch_all(&mut **tx)
+    .await?;
+    if rows.len() > MAX_HERMES_PROGRESS_EVENTS {
+        return Err(http(409, "Hermes progress exceeds its event bound"));
+    }
+    let mut total_bytes = 0usize;
+    let mut expected_ordinal = 1u64;
+    for row in &rows {
+        // A progress commit can precede Stop while remaining ahead of the
+        // client's rendered cutoff. Validate its ownership too; readers and
+        // the frozen projection enforce visibility, not receipt finalization.
+        let attempt_epoch: i32 = row.try_get("attempt_epoch")?;
+        let message_id: Option<String> = row.try_get("assistant_message_id")?;
+        if message_id.as_deref() != Some(assistant_message_id) {
+            return Err(http(409, "Hermes progress assistant projection changed"));
+        }
+        let payload_bytes: i64 = row.try_get("payload_bytes")?;
+        total_bytes = total_bytes.saturating_add(payload_bytes.max(0) as usize);
+        if total_bytes > MAX_HERMES_PROGRESS_BYTES {
+            return Err(http(409, "Hermes progress exceeds its byte bound"));
+        }
+        let payload: Value = row.try_get("payload")?;
+        let projection = super::hermes_progress::validate_receipt_projection(
+            &payload,
+            id.organization_id,
+            id.generation_id,
+            id.run_id,
+            attempt_epoch,
+            assistant_message_id,
+            fence,
+            cleanup.connection_receipt_id(),
+            turn.session().as_str(),
+            turn.request_id(),
+            turn.user_message_id(),
+            turn.input_fingerprint(),
+        )
+        .ok_or_else(|| http(409, "Hermes progress does not match terminal receipts"))?;
+        if projection.ordinal != expected_ordinal {
+            return Err(http(409, "Hermes progress ordinal is not contiguous"));
+        }
+        expected_ordinal += 1;
+    }
+    if require_progress && rows.is_empty() {
+        return Err(http(
+            409,
+            "Hermes answer has no durable progress projection",
+        ));
+    }
+    Ok(())
+}
 
 /// Provider-native terminal evidence for adapters that do not expose Codex
 /// Thread/Turn identifiers. The worker must copy only bounded fields from the
@@ -1129,7 +1207,14 @@ async fn finalize_inner(
                     != chat_turn_id.as_deref()
                 || message.try_get::<i32, _>("turn_variant")? != turn_variant
                 || !message.try_get::<bool, _>("plain")?
-                || final_text.is_some_and(|text| text != body.as_str())
+                || (matches!(
+                    (turn, cleanup),
+                    (Some(ProviderTurn::Hermes(_)), ProviderCleanup::Hermes(_))
+                ) && !body.is_empty())
+                || (!matches!(
+                    (turn, cleanup),
+                    (Some(ProviderTurn::Hermes(_)), ProviderCleanup::Hermes(_))
+                ) && final_text.is_some_and(|text| text != body.as_str()))
             {
                 return Err(http(409, "Native Chat assistant projection changed"));
             }
@@ -1138,12 +1223,7 @@ async fn finalize_inner(
                     output::validate_final_projection(&mut tx, fence, cleanup, &message_id, &body)
                         .await?;
                 }
-                // The first Hermes adapter intentionally supports final-text
-                // projection only. Until it has a typed live-output receipt,
-                // it may not adopt a message written by another projector.
-                (Some(ProviderTurn::Hermes(_)), _) => {
-                    return Err(http(409, "Hermes live output projection is unsupported"));
-                }
+                (Some(ProviderTurn::Hermes(_)), ProviderCleanup::Hermes(_)) => {}
                 (Some(ProviderTurn::Pi(_)), _) => {
                     return Err(http(409, "Pi live output projection is unsupported"));
                 }
@@ -1156,7 +1236,7 @@ async fn finalize_inner(
                 _ => "failed",
             };
             let updated = sqlx::query(
-                "UPDATE chat_messages SET status=$4,updated_at=clock_timestamp()
+                "UPDATE chat_messages SET body=COALESCE($5,body),status=$4,updated_at=clock_timestamp()
                  WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id=$3::uuid
                    AND role='assistant' AND status='streaming'",
             )
@@ -1164,6 +1244,14 @@ async fn finalize_inner(
             .bind(id.conversation_id)
             .bind(&message_id)
             .bind(status)
+            .bind(match (turn, cleanup, stop) {
+                (
+                    Some(ProviderTurn::Hermes(turn)),
+                    ProviderCleanup::Hermes(_),
+                    None,
+                ) => Some(turn.final_text()),
+                _ => None,
+            })
             .execute(&mut *tx)
             .await?;
             if updated.rows_affected() != 1 {
@@ -1197,6 +1285,24 @@ async fn finalize_inner(
             None
         }
     };
+    // Both a frozen Stop projection and a newly inserted final answer must
+    // validate the same owned progress ledger. Keep this outside the ordinary
+    // streaming-row branch so neither path can bypass receipt validation.
+    if let (Some(ProviderTurn::Hermes(turn)), ProviderCleanup::Hermes(cleanup), Some(message_id)) =
+        (turn, cleanup, message_id.as_deref())
+    {
+        validate_hermes_progress_for_terminal(
+            &mut tx,
+            fence,
+            turn,
+            cleanup,
+            message_id,
+            stop.is_none()
+                && turn.stop_reason() == HermesStopReason::EndTurn
+                && !turn.final_text().trim().is_empty(),
+        )
+        .await?;
+    }
     let (span_completeness, native_execution_ref, input_correlation_ref, selector) = match turn {
         Some(turn) => (
             "terminal_only",

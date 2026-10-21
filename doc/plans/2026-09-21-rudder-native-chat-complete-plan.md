@@ -77,6 +77,31 @@ consumer cannot prevent owned-process cleanup. A relay error remains unresolved;
 it must never be converted into provider completion or release an ambiguous
 execution hold.
 
+Stop may also arrive after durable claim but before the process owner launches.
+Codex and Hermes must recognize that exact fenced Stop during prelaunch reads,
+then obtain actual owned-process cleanup before the existing unsubmitted-input
+finalizer closes the Run. A stopping-checkpoint read is limited to the same
+unsubmitted execution and grants no effect permit; unrelated configuration,
+permission, database, or ownership failures retain their original behavior.
+
+The composer has one primary response control. An active response with no
+queueable draft shows Stop; a queueable draft shows Send, using the existing
+queue callback. Clearing the draft restores Stop. A pending Stop shows one
+disabled Stopping control, and an idle empty composer shows disabled Send.
+Regular files remain in the draft because the existing queue cannot accept them.
+The queue endpoint is existing Node compatibility debt, not new Rust authority;
+this presentation change neither expands that backend nor claims its migration.
+Refresh and automatic stream reattachment must preserve the single-control rule.
+
+Hermes live progress must come from the current prompt's public ACP
+`session/update` notifications: bounded thought/reply text and tool titles/status,
+without raw tool arguments, outputs, or private transcript-file reads. Persist
+the normalized entries in Rust before projecting them to the existing transcript
+UI, bound to the exact connection/session/prompt/source/owner. Coalesce progress
+under a separate bounded budget without preventing the final answer. Refresh
+must recover committed progress; Stop must freeze the accepted sequence and
+reject subsequent progress from changing its visible result.
+
 Before merge, run the unchanged Agent core public regression suite plus external
 root no-traversal coverage. Freeze the candidate, then independently exercise
 real locally configured Codex and Hermes through Rust public ingress: fresh

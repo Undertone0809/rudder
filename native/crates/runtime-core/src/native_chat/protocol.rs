@@ -556,14 +556,21 @@ impl NativeChatProtocolCheckpoint {
         }
         if self.provider == Some(NativeChatProvider::HermesLocal) {
             use NativeChatProtocolPhase::*;
-            let session_required =
-                !matches!(self.phase, NoThreadRequest | ThreadStartIndeterminate);
+            // A fenced, pre-submission cancellation may terminalize before
+            // this attempt creates a session, or while resuming an existing
+            // session before allocating its prompt request ID. Persistence
+            // authenticates terminal edges through its fenced finalizer;
+            // pre-submission cancellation additionally requires the exact
+            // Stop and same-owner cleanup receipt. Provider-side phases still
+            // require their original identity.
+            let session_required = !matches!(
+                self.phase,
+                NoThreadRequest | ThreadStartIndeterminate | ExecutionTerminalCommitted
+            );
+            let terminal = self.phase == ExecutionTerminalCommitted;
             let request_required = matches!(
                 self.phase,
-                InputIndeterminate
-                    | TurnKnown
-                    | ProviderTerminalObserved
-                    | ExecutionTerminalCommitted
+                InputIndeterminate | TurnKnown | ProviderTerminalObserved
             );
             if self.thread_id.is_some()
                 || self.turn_id.is_some()
@@ -576,8 +583,9 @@ impl NativeChatProtocolCheckpoint {
                 || self.cursor_session.is_some()
                 || self.cursor_prompt_request_id.is_some()
                 || self.observation_only
-                || self.hermes_session.is_some() != session_required
-                || self.hermes_prompt_request_id.is_some() != request_required
+                || (!terminal && self.hermes_session.is_some() != session_required)
+                || (!terminal && self.hermes_prompt_request_id.is_some() != request_required)
+                || (self.hermes_prompt_request_id.is_some() && self.hermes_session.is_none())
             {
                 return Err(RuntimeError::invalid(
                     "Hermes ACP checkpoint contains a mismatched provider identity",
@@ -1424,5 +1432,36 @@ mod tests {
     fn opencode_selector_requires_native_session_prefix() {
         assert!(OpenCodeSessionSelector::from_persisted("ses_1").is_ok());
         assert!(OpenCodeSessionSelector::from_persisted("foo_session_1").is_err());
+    }
+
+    #[test]
+    fn hermes_terminal_checkpoint_allows_only_provider_identity_observed_before_prompt() {
+        let mut fresh = NativeChatProtocolCheckpoint::new_hermes_fresh_session().unwrap();
+        fresh.phase = NativeChatProtocolPhase::ExecutionTerminalCommitted;
+        fresh.validate().unwrap();
+
+        let selector =
+            HermesSessionSelector::from_persisted("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let mut resumed =
+            NativeChatProtocolCheckpoint::new_hermes_existing_session(selector).unwrap();
+        resumed.phase = NativeChatProtocolPhase::ExecutionTerminalCommitted;
+        resumed.validate().unwrap();
+
+        let mut resumed_after_prompt = resumed.clone();
+        resumed_after_prompt.hermes_prompt_request_id = Some(1);
+        resumed_after_prompt.validate().unwrap();
+
+        let mut request_without_session = fresh.clone();
+        request_without_session.hermes_prompt_request_id = Some(1);
+        assert!(request_without_session.validate().is_err());
+
+        let mut invalid_session = resumed.clone();
+        invalid_session.hermes_session.as_mut().unwrap().0 = "not-a-session".into();
+        assert!(invalid_session.validate().is_err());
+
+        let mut nonterminal_without_session =
+            NativeChatProtocolCheckpoint::new_hermes_fresh_session().unwrap();
+        nonterminal_without_session.phase = NativeChatProtocolPhase::ThreadKnown;
+        assert!(nonterminal_without_session.validate().is_err());
     }
 }

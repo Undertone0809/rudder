@@ -703,6 +703,33 @@ pub async fn current_checkpoint(
     Ok(result)
 }
 
+/// Re-read a checkpoint only after validating the exact active Stop action and
+/// the same claimed owner fence. This is a read-only continuation used to
+/// clean up an owner when Stop lands before provider submission; it grants no
+/// effect permit and intentionally refuses every phase beyond the last
+/// pre-submission states.
+pub async fn current_stopping_checkpoint(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    stop: &super::stopping::StopIntent,
+) -> Result<CheckpointSnapshot> {
+    let mut tx = pool.begin().await?;
+    let locked = super::context::lock_stopping_execution(&mut tx, actor, fence, stop).await?;
+    if !matches!(
+        locked.checkpoint.phase(),
+        NativeChatProtocolPhase::NoThreadRequest | NativeChatProtocolPhase::ThreadKnown
+    ) {
+        return Err(super::http(
+            409,
+            "Native Chat Stop checkpoint is no longer before submission",
+        ));
+    }
+    let result = snapshot(&locked.checkpoint);
+    tx.commit().await?;
+    Ok(result)
+}
+
 fn snapshot(checkpoint: &NativeChatProtocolCheckpoint) -> CheckpointSnapshot {
     CheckpointSnapshot {
         provider: checkpoint.provider(),

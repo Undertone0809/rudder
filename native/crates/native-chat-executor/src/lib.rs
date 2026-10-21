@@ -251,6 +251,50 @@ fn db<T>(
     })
 }
 
+/// Validate the admitted source and read the prelaunch checkpoint in normal
+/// execution state. A Stop can commit between claim and either read; only a
+/// 409 accompanied by the exact active Stop fence may use the read-only
+/// stopping snapshot, which is restricted to pre-submission phases.
+fn prelaunch_checkpoint(
+    handle: &Handle,
+    pool: &PgPool,
+    actor: &NativeChatExecutionPrincipal,
+    fence: &ExecutionFence,
+    deadline: Instant,
+) -> Result<CheckpointSnapshot> {
+    let normal = (|| {
+        db(
+            handle,
+            deadline,
+            execution::validate_submission_source(pool, actor, fence),
+        )?;
+        db(
+            handle,
+            deadline,
+            execution::current_checkpoint(pool, actor, fence),
+        )
+    })();
+    match normal {
+        Ok(snapshot) => Ok(snapshot),
+        Err(error @ Error::Persistence(runtime_bindings::Error::Http(409, _))) => {
+            let Some(stop) = db(
+                handle,
+                deadline,
+                execution::observe_stop(pool, actor, fence),
+            )?
+            else {
+                return Err(error);
+            };
+            db(
+                handle,
+                deadline,
+                execution::current_stopping_checkpoint(pool, actor, fence, &stop),
+            )
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Process containment only; none of these facts establishes the durable Run
 /// outcome, whether a claim committed, or permission to replay an attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -851,24 +895,41 @@ where
             )),
         };
     }
+    run_codex_claimed(
+        handle,
+        pool,
+        execution_principal,
+        claimed_fence,
+        claimed_config,
+        connection_launch_permit,
+        request.cancelled,
+        deadline,
+        paths,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_codex_claimed(
+    handle: &Handle,
+    pool: &PgPool,
+    execution_principal: NativeChatExecutionPrincipal,
+    claimed_fence: ExecutionFence,
+    claimed_config: ResolvedCodexConfig,
+    connection_launch_permit: rudder_codex_app_server::ConnectionLaunchPermit,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+    paths: &HostPaths,
+) -> std::result::Result<NativeExecutionObservation, ExecutionFailure> {
     let (launch, snapshot) = match (|| -> Result<_> {
-        if request.cancelled.load(Ordering::Acquire) {
+        if cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
         }
         if Instant::now() >= deadline {
             return Err(Error::Deadline);
         }
-        db(
-            handle,
-            deadline,
-            execution::validate_submission_source(pool, &execution_principal, &claimed_fence),
-        )?;
+        let snapshot =
+            prelaunch_checkpoint(handle, pool, &execution_principal, &claimed_fence, deadline)?;
         let launch = process_launch(&claimed_config, &claimed_fence, paths)?;
-        let snapshot = db(
-            handle,
-            deadline,
-            execution::current_checkpoint(pool, &execution_principal, &claimed_fence),
-        )?;
         Ok((launch, snapshot))
     })() {
         Ok(value) => value,
@@ -906,7 +967,7 @@ where
         config: claimed_config,
         transport,
         snapshot,
-        cancelled: request.cancelled,
+        cancelled,
         deadline,
         paths,
         renewed: Instant::now(),
@@ -1410,6 +1471,10 @@ impl Driver<'_> {
                 break;
             }
         }
+        // Close the launch-to-initialize window: Stop may have committed
+        // after the owner became durable but before the child reported spawn.
+        self.poll_stop()?;
+        self.check_cancelled()?;
         let initialized = self.rpc("initialize", json!({"clientInfo":{"name":"rudder-native-chat","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}}))?;
         if !initialized["userAgent"]
             .as_str()
@@ -1615,6 +1680,10 @@ extern crate self as rudder_native_chat_executor;
 #[cfg(all(test, unix))]
 #[path = "../tests/workflow/fixture.rs"]
 mod cleanup_claim_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "prelaunch_stop_tests.rs"]
+mod prelaunch_stop_tests;
 
 #[cfg(all(test, unix))]
 mod cleanup_claim_tests {

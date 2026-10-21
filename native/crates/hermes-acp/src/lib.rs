@@ -9,9 +9,9 @@ mod strict_json;
 
 pub use rpc::{
     HermesAcpTransport, HermesCancellation, HermesCleanupReceipt, HermesInstructionBootstrap,
-    HermesLaunch, HermesSessionSelector, HermesSessionStartReceipt, HermesStopReason,
-    HermesTransportError, HermesTurnReceipt, HermesUsage, HermesUsageScope,
-    MAX_EPHEMERAL_INSTRUCTION_BYTES, resolve_instruction_bootstrap,
+    HermesLaunch, HermesProgressKind, HermesProgressReceipt, HermesSessionSelector,
+    HermesSessionStartReceipt, HermesStopReason, HermesTransportError, HermesTurnReceipt,
+    HermesUsage, HermesUsageScope, MAX_EPHEMERAL_INSTRUCTION_BYTES, resolve_instruction_bootstrap,
 };
 pub use rudder_native_process_transport::{
     ConnectionIdentity, ConnectionLaunchPermit, ConnectionReceipt,

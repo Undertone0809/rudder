@@ -238,6 +238,7 @@ pub(super) async fn read_message_transcript(
     let mut tx = pool.begin().await?;
     let native_row = sqlx::query(
         "SELECT m.id::text AS message_id, m.conversation_id::text AS conversation_id,
+                m.run_id::text AS run_id,
                 r.chat_generation_id::text AS generation_id,
                 s.id::text AS span_id, s.binding_id::text AS binding_id,
                 s.segment_id::text AS segment_id, s.state, s.completeness,
@@ -342,6 +343,7 @@ pub(super) async fn read_message_transcript(
     };
     let message_id: String = row.try_get("message_id")?;
     let conversation_id: String = row.try_get("conversation_id")?;
+    let run_id: String = row.try_get("run_id")?;
     let generation_id: String = row.try_get("generation_id")?;
     let span_id: String = row.try_get("span_id")?;
     let binding_id: String = row.try_get("binding_id")?;
@@ -365,7 +367,8 @@ pub(super) async fn read_message_transcript(
         return Err(http(404, "Native transcript message not found"));
     }
     let events = sqlx::query(
-        "SELECT generation_seq, event_kind, payload, recorded_at::text AS recorded_at
+        "SELECT e.generation_seq, e.attempt_epoch, e.event_kind, e.assistant_message_id::text,
+                e.run_id::text, e.payload, e.recorded_at::text AS recorded_at
          FROM chat_generation_events e
          JOIN chat_generations g ON g.org_id=e.org_id AND g.id=e.generation_id
          WHERE e.org_id=$1::uuid AND e.generation_id=$2::uuid
@@ -391,8 +394,30 @@ pub(super) async fn read_message_transcript(
         let payload: Value = event.try_get("payload")?;
         let recorded_at: String = event.try_get("recorded_at")?;
         if kind == "transcript" {
-            let Some(mut entry) = payload.get("entry").cloned() else {
-                continue;
+            let mut entry = if payload.get("nativeSource").is_some() {
+                let attempt_epoch: i32 = event.try_get("attempt_epoch")?;
+                let event_run_id: Option<String> = event.try_get("run_id")?;
+                let assistant_message_id: Option<String> = event.try_get("assistant_message_id")?;
+                if event_run_id.as_deref() != Some(run_id.as_str())
+                    || assistant_message_id.as_deref() != Some(message_id.as_str())
+                {
+                    return Err(http(409, "Native Hermes transcript association changed"));
+                }
+                let projection = super::super::native_chat::execution::hermes_progress::validate_public_projection(
+                    &payload,
+                    organization_id,
+                    &generation_id,
+                    &run_id,
+                    attempt_epoch,
+                    &message_id,
+                )
+                .ok_or_else(|| http(409, "Native Hermes transcript provenance is invalid"))?;
+                projection.entry
+            } else {
+                let Some(entry) = payload.get("entry").cloned() else {
+                    continue;
+                };
+                entry
             };
             if let Value::Object(object) = &mut entry {
                 object.insert(
@@ -713,8 +738,9 @@ pub(super) async fn read_conversation_messages(
     }
     if *include_transcript && !generation_ids.is_empty() {
         let events = sqlx::query(
-            "SELECT generation_id::text AS generation_id, generation_seq, event_kind,
-                    payload, recorded_at::text AS recorded_at
+            "SELECT e.generation_id::text AS generation_id, e.generation_seq, e.attempt_epoch,
+                    e.event_kind, e.assistant_message_id::text, e.run_id::text, e.payload,
+                    e.recorded_at::text AS recorded_at
              FROM chat_generation_events e
              JOIN chat_generations g ON g.org_id=e.org_id AND g.id=e.generation_id
              WHERE e.org_id=$1::uuid AND e.generation_id=ANY($2::text[]::uuid[])
@@ -733,8 +759,30 @@ pub(super) async fn read_conversation_messages(
             let seq: i32 = event.try_get("generation_seq")?;
             let recorded_at: String = event.try_get("recorded_at")?;
             if kind == "transcript" {
-                let Some(mut entry) = payload.get("entry").cloned() else {
-                    continue;
+                let mut entry = if payload.get("nativeSource").is_some() {
+                    let attempt_epoch: i32 = event.try_get("attempt_epoch")?;
+                    let run_id: Option<String> = event.try_get("run_id")?;
+                    let assistant_message_id: Option<String> =
+                        event.try_get("assistant_message_id")?;
+                    let (Some(run_id), Some(assistant_message_id)) = (run_id, assistant_message_id)
+                    else {
+                        return Err(http(409, "Native Hermes transcript association is missing"));
+                    };
+                    let projection = super::super::native_chat::execution::hermes_progress::validate_public_projection(
+                        &payload,
+                        organization_id,
+                        &generation_id,
+                        &run_id,
+                        attempt_epoch,
+                        &assistant_message_id,
+                    )
+                    .ok_or_else(|| http(409, "Native Hermes transcript provenance is invalid"))?;
+                    projection.entry
+                } else {
+                    let Some(entry) = payload.get("entry").cloned() else {
+                        continue;
+                    };
+                    entry
                 };
                 if let Value::Object(object) = &mut entry {
                     object.insert(
