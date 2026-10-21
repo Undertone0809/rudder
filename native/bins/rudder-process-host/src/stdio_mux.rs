@@ -81,11 +81,19 @@ impl MuxSender {
     }
 
     fn finish(&self) -> bool {
+        self.finish_with_queue_full_observer(WRITER_DRAIN_TIMEOUT, || {})
+    }
+
+    fn finish_with_queue_full_observer(
+        &self,
+        drain_timeout: Duration,
+        mut on_full_queue: impl FnMut(),
+    ) -> bool {
         if self.is_closed() {
             return false;
         }
         let (ack_tx, ack_rx) = mpsc::channel();
-        let deadline = Instant::now() + WRITER_DRAIN_TIMEOUT;
+        let deadline = Instant::now() + drain_timeout;
         let mut finish = WriterMessage::Finish(ack_tx);
         loop {
             if self.is_closed() {
@@ -99,6 +107,7 @@ impl MuxSender {
                 }
                 Err(TrySendError::Full(returned)) => {
                     finish = returned;
+                    on_full_queue();
                     if self.is_closed() {
                         return false;
                     }
@@ -351,15 +360,18 @@ mod tests {
         }
 
         let (start_writer_tx, start_writer_rx) = mpsc::channel();
+        let (reader_drained_tx, reader_drained_rx) = mpsc::sync_channel(0);
         let writer_closed = Arc::clone(&sender.closed);
         let writer = thread::spawn(move || {
             start_writer_rx.recv().unwrap();
             let mut frames = Vec::with_capacity(MUX_QUEUE_FRAMES);
-            for _ in 0..MUX_QUEUE_FRAMES {
+            for index in 0..MUX_QUEUE_FRAMES {
                 match receiver.recv().unwrap() {
                     WriterMessage::Frame(frame) => {
                         frames.push(frame);
-                        thread::sleep(Duration::from_millis(1));
+                        if index == 0 {
+                            reader_drained_tx.send(()).unwrap();
+                        }
                     }
                     WriterMessage::Finish(_) => panic!("finish overtook a queued frame"),
                 }
@@ -375,14 +387,32 @@ mod tests {
         });
 
         let finish_sender = sender.clone();
-        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let (full_queue_tx, full_queue_rx) = mpsc::sync_channel(0);
+        let (resume_finish_tx, resume_finish_rx) = mpsc::channel();
         let finisher = thread::spawn(move || {
-            attempt_tx.send(()).unwrap();
-            finish_sender.finish()
+            let mut observed_full_queue = false;
+            // This test checks queue ordering, not the production deadline.
+            // Give the explicit handshakes their own bounded scheduling budget;
+            // the stalled-writer test below still checks the real deadline.
+            finish_sender.finish_with_queue_full_observer(Duration::from_secs(5), || {
+                if !observed_full_queue {
+                    observed_full_queue = true;
+                    full_queue_tx.send(()).unwrap();
+                    resume_finish_rx.recv().unwrap();
+                }
+            })
         });
-        attempt_rx.recv().unwrap();
-        thread::sleep(Duration::from_millis(10));
+
+        // Do not release the reader until finish has actually observed the
+        // full bounded queue and is waiting to retry its terminal message.
+        full_queue_rx
+            .recv_timeout(WRITER_DRAIN_TIMEOUT + Duration::from_secs(1))
+            .expect("finish never observed the full writer queue");
         start_writer_tx.send(()).unwrap();
+        reader_drained_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reader did not release a writer queue slot");
+        resume_finish_tx.send(()).unwrap();
 
         assert!(finisher.join().unwrap());
         assert_eq!(writer.join().unwrap(), expected);

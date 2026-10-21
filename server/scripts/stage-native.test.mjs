@@ -5,6 +5,7 @@ import { chmod, open, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   FOUNDATION_TARGETS,
   checkPackagedFoundationArtifacts,
@@ -17,7 +18,7 @@ import {
   validateFoundationBinary,
 } from "./stage-native.mjs";
 
-const serverRoot = path.resolve(import.meta.dirname, "..");
+const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageManifest = JSON.parse(readFileSync(path.join(serverRoot, "package.json"), "utf8"));
 
 function fakeBinary(target) {
