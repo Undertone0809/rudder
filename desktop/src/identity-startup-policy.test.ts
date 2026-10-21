@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   desktopAccountBypassAllowed,
   desktopIdentityProcessMemoryFallbackAllowed,
+  desktopLocalImplicitAuthAllowed,
   desktopStartupRequiresAccount,
   resolveDesktopPackagedSmokeIdentityPolicy,
 } from "./identity-startup-policy.js";
@@ -31,6 +32,29 @@ describe("Desktop account startup policy", () => {
       packagedSmokeBypassRequested: true,
       identityStatus: "signed-out",
     })).toBe(false);
+  });
+
+  it("enables local implicit auth only for dev bypass or marked packaged smoke", () => {
+    expect(desktopLocalImplicitAuthAllowed({
+      isPackaged: false,
+      developmentAuthBypassRequested: true,
+      packagedSmokeLocalImplicitAuthRequested: false,
+    })).toBe(true);
+    expect(desktopLocalImplicitAuthAllowed({
+      isPackaged: false,
+      developmentAuthBypassRequested: false,
+      packagedSmokeLocalImplicitAuthRequested: true,
+    })).toBe(false);
+    expect(desktopLocalImplicitAuthAllowed({
+      isPackaged: true,
+      developmentAuthBypassRequested: true,
+      packagedSmokeLocalImplicitAuthRequested: false,
+    })).toBe(false);
+    expect(desktopLocalImplicitAuthAllowed({
+      isPackaged: true,
+      developmentAuthBypassRequested: false,
+      packagedSmokeLocalImplicitAuthRequested: true,
+    })).toBe(true);
   });
 
   it("keeps storage-only smoke opt-in separate from the packaged auth bypass", () => {

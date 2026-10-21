@@ -29,6 +29,7 @@ import { createDesktopIdentitySessionStore } from "./identity-session-store.js";
 import {
   desktopAccountBypassAllowed,
   desktopIdentityProcessMemoryFallbackAllowed,
+  desktopLocalImplicitAuthAllowed,
   resolveDesktopPackagedSmokeIdentityPolicy,
 } from "./identity-startup-policy.js";
 import { loadOrCreateDesktopTelemetryState } from "./product-analytics-telemetry.js";
@@ -138,7 +139,12 @@ export function createDesktopIdentityRuntime(options: {
     ),
   });
   const packagedSmokeBypassRequested = packagedSmokePolicy.packagedSmokeBypassRequested;
-  process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH = packagedSmokePolicy.packagedSmokeLocalImplicitAuthRequested ? "1" : "0";
+  const developmentAuthBypassRequested = booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS);
+  process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH = desktopLocalImplicitAuthAllowed({
+    isPackaged: app.isPackaged,
+    developmentAuthBypassRequested,
+    packagedSmokeLocalImplicitAuthRequested: packagedSmokePolicy.packagedSmokeLocalImplicitAuthRequested,
+  }) ? "1" : "0";
   process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE ??= "required";
   const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,
@@ -215,7 +221,7 @@ export function createDesktopIdentityRuntime(options: {
   if (debug) console.info("[rudder-desktop] identity-runtime:ready");
   const accountRequired = !desktopAccountBypassAllowed({
     isPackaged: app.isPackaged,
-    bypassRequested: booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS),
+    bypassRequested: developmentAuthBypassRequested,
     packagedSmokeBypassRequested,
   });
   const sessionSecret = randomBytes(32).toString("base64url");

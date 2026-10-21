@@ -58,6 +58,16 @@ export function desktopAccountBypassAllowed(options: {
     || (options.isPackaged && options.packagedSmokeBypassRequested === true);
 }
 
+export function desktopLocalImplicitAuthAllowed(options: {
+  isPackaged: boolean;
+  developmentAuthBypassRequested: boolean;
+  packagedSmokeLocalImplicitAuthRequested: boolean;
+}): boolean {
+  return options.isPackaged
+    ? options.packagedSmokeLocalImplicitAuthRequested
+    : options.developmentAuthBypassRequested;
+}
+
 export function desktopStartupRequiresAccount(options: {
   isPackaged: boolean;
   bypassRequested: boolean;
