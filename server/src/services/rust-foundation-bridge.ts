@@ -363,6 +363,14 @@ function createFoundationChildEnvironment(input: {
     RUDDER_NATIVE_DATABASE_URL: input.databaseUrl,
     RUDDER_NATIVE_DATABASE_REQUIRED: "true",
     RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: input.actorEnvelopeKey,
+    // These existing feature gates must reach the native authority as well as
+    // the public transport. Do not inherit the rest of the ambient environment.
+    ...Object.fromEntries([
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
     RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
     RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
     RUDDER_NATIVE_HOST_HOSTNAME: hostname(),

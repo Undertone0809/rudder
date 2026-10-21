@@ -35,11 +35,38 @@ Invalid persisted workspace keys retain the existing generic 500 response and
 transaction rollback. The Claude project-path encoding repair remains only to
 clear the Windows baseline; it is not Claude runtime acceptance.
 
-Real operator-profile acceptance also exposed an initialization mismatch: Codex
-can retain the `Codex Desktop` display name in its user agent. Accept that display
-name while retaining the supported provider-version check, exact selected
-`CODEX_HOME`, and effective configuration/policy validation. Cover the desktop
-user agent in the owned first-send workflow and keep the wrong-version rejection.
+Operator-native Codex Profiles must inherit their own approval and sandbox
+policies unless an operator explicitly requests bypass. Agent creation must not
+silently inject bypass into an operator Profile configuration. Keep the existing
+matching-policy check for an explicit bypass request, without editing the native
+Profile or copying credentials.
+
+Configuration state inventory: the current decision is which existing Codex
+Profile to use; the visible Profile selector and bypass toggle remain together.
+Operator Profile starts with bypass off. Switching an untouched selection to
+Agent Profile restores its legacy default; an explicit toggle stays in the form
+values across later Profile changes. Create remains the focal action. Existing
+Back, Cancel, Close, reopen, and draft handling remain unchanged. No later-step
+controls or new permission grants are introduced.
+
+The Rust public-create path owns the persisted permission default, including
+Node-prepared configuration. Node retains only its existing compatibility default
+for legacy create, hire, and PATCH. Hermes session creation receives up to 30
+seconds, bounded by the overall run deadline; other RPC limits and the prohibition
+on replaying ambiguous effects are unchanged. Streamed Hermes turns have a
+separate bounded update budget (8,192 updates and 8 MiB total), so normal token
+streaming is not restricted to the instantaneous 256-message receive queue.
+The per-frame 1 MiB and final-text 256 KiB limits remain enforced; exceeding a
+limit remains unresolved and never permits prompt replay.
+
+The Messenger composer no longer presents accepted-message Resume instructions
+or a Resume button. The owning controller reconnects once per page and exact
+organization/chat/mutation identity, preserving the newer draft, files, and
+annotations. An already attached stream or pending Stop suppresses reconnection;
+a failed reconnect requires an explicit Check again. Confirmed not-admitted
+messages still require an explicit Retry. Reattachment must never allocate a new
+mutation after the original identity settles. Side Chat recovery UI is outside
+this screenshot correction's scope.
 
 Before merge, run the unchanged Agent core public regression suite plus external
 root no-traversal coverage. Freeze the candidate, then independently exercise

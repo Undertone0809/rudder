@@ -120,6 +120,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     let nativeWorkspaceHome = "";
     let nativeOrganizationAgents = "";
     const nativeIdentity = nativeIdentityIngressFixture();
+    const agentCreateGates = ["RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED", "RUDDER_AGENT_CREATE_RUST_ENABLED", "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED", "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED", "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED"];
     const org = randomUUID(), otherOrg = randomUUID(), agent = randomUUID(), peer = randomUUID(), foreignAgent = randomUUID(), revision = randomUUID();
     const owner = `agent-core-owner-${randomUUID()}`, other = `agent-core-peer-${randomUUID()}`, outsider = `agent-core-outsider-${randomUUID()}`;
     const ownerToken = `synthetic-board-${randomUUID()}`, otherToken = `synthetic-board-${randomUUID()}`, outsiderToken = `synthetic-board-${randomUUID()}`, agentToken = `synthetic-agent-${randomUUID()}`;
@@ -799,6 +800,39 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${id}::uuid,'synthetic detail',${hash(token)})`);
         return { id, token, workspace };
     }
+    it("persists Rust-owned Codex permission defaults for the selected Profile through public create", async () => {
+        const gates = agentCreateGates;
+        const previous = gates.map(key => process.env[key]);
+        try {
+            for (const key of gates) process.env[key] = "true";
+            // Earlier recovery cases restart this child. Apply the private
+            // authority gates to this exact process, not a superseded startup.
+            await bridge!.close();
+            await bridge!.start();
+            publicUrl = bridge!.publicIngressBaseUrl!;
+            for (const [config, expected] of [
+                [{ profileId: "operator-default" }, false],
+                [{ profileId: "default" }, true],
+                [{}, true],
+                [{ profileId: "operator-default", dangerouslyBypassApprovalsAndSandbox: true }, true],
+                [{ profileId: "default", dangerouslyBypassApprovalsAndSandbox: false }, false],
+                [{ profileId: "operator-default", dangerouslyBypassSandbox: false }, undefined],
+            ] as const) {
+                const result = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, { name: `Native Profile ${randomUUID()}`, role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: config, seedOrganizationIntelligenceDefaults: false });
+                expect(result.status, JSON.stringify(result.body)).toBe(201);
+                const saved = (await db.execute(sql`SELECT agent_runtime_config FROM agents WHERE id=${result.body.id}::uuid`))[0]!.agent_runtime_config as Record<string, unknown>;
+                expect(result.body.agentRuntimeConfig.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
+                expect(saved.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
+                if ("dangerouslyBypassSandbox" in config) expect(saved.dangerouslyBypassSandbox).toBe(false);
+            }
+        } finally {
+            gates.forEach((key, i) => previous[i] === undefined ? delete process.env[key] : process.env[key] = previous[i]);
+            await bridge!.close();
+            await bridge!.start();
+            publicUrl = bridge!.publicIngressBaseUrl!;
+        }
+    });
+
     it("Agent detail preserves complete self, explicit access, integrations and current spend through both public ingresses", async () => {
         const subject = await detailSubject();
         const secret = randomUUID();

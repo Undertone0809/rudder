@@ -25,6 +25,9 @@ use tokio::runtime::Handle;
 const OWNER_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const LEASE_RENEW_INTERVAL: Duration = Duration::from_secs(5);
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
+// Cold session creation may initialize provider configuration. Keep this
+// bounded by the overall execution deadline and never replay an ambiguous call.
+const SESSION_NEW_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) fn validate_config(
@@ -489,7 +492,7 @@ impl Driver<'_> {
                 EffectDispatch::StartHermesSession => {
                     let receipt = transport.new_session_with_receipt(
                         &cwd,
-                        remaining_timeout(self.deadline, RPC_TIMEOUT)?,
+                        remaining_timeout(self.deadline, SESSION_NEW_RPC_TIMEOUT)?,
                     )?;
                     if let Some(model) = model.as_deref() {
                         transport
@@ -680,4 +683,89 @@ fn remaining_timeout(deadline: Instant, max: Duration) -> Result<Duration> {
 
 fn remaining_timeout_at(deadline: Instant, max: Duration) -> Result<Duration> {
     remaining_timeout(deadline, max)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use rudder_native_process_transport::ConnectionLaunchPermit;
+    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+
+    #[test]
+    #[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses a delayed synthetic ACP peer, never a real provider"]
+    fn cold_session_creation_outlives_ten_seconds_but_respects_the_run_deadline_without_replay() {
+        let process_host = PathBuf::from(std::env::var("RUDDER_TEST_PROCESS_HOST").unwrap());
+        for (attempt, budget, completes) in [("cold", 40, true), ("deadline", 1, false)] {
+            let root = tempfile::tempdir().unwrap();
+            let cwd = root.path().canonicalize().unwrap();
+            let executable = cwd.join("hermes-fixture.py");
+            fs::write(
+                &executable,
+                r#"#!/usr/bin/python3
+import json, sys, time
+for line in sys.stdin:
+    m = json.loads(line)
+    if m.get('method') == 'initialize':
+        result = {'protocolVersion': 1, 'agentCapabilities': {'loadSession': True}}
+    elif m.get('method') == 'session/new':
+        with open('session-new-count', 'a') as f: f.write('1\n')
+        time.sleep(11)
+        result = {'sessionId': '550e8400-e29b-41d4-a716-446655440000'}
+    else:
+        continue
+    print(json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': result}), flush=True)
+"#,
+            )
+            .unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+            let run_id = "00000000-0000-4000-8000-000000000001";
+            let mut transport = HermesAcpTransport::launch(
+                HermesLaunch {
+                    hermes_executable: executable,
+                    python_executable: None,
+                    python_source_root: None,
+                    ephemeral_system_prompt: None,
+                    process_host: process_host.clone(),
+                    runtime_root: cwd.clone(),
+                    operator_home: cwd.clone(),
+                    hermes_home: cwd.clone(),
+                    cwd: cwd.clone(),
+                    run_id: run_id.into(),
+                    attempt_id: attempt.into(),
+                    owner_token: attempt.into(),
+                    executable_search_path: "/usr/bin:/bin".into(),
+                    env: Default::default(),
+                },
+                ConnectionLaunchPermit::from_claim(
+                    run_id.into(),
+                    attempt.into(),
+                    attempt.into(),
+                    1,
+                    format!("claim-{attempt}"),
+                ),
+            )
+            .unwrap();
+            transport.wait_spawned(Duration::from_secs(5)).unwrap();
+            transport.initialize(Duration::from_secs(5)).unwrap();
+            let timeout = remaining_timeout(
+                Instant::now() + Duration::from_secs(budget),
+                SESSION_NEW_RPC_TIMEOUT,
+            )
+            .unwrap();
+            let result = transport.new_session(&cwd, timeout);
+            if completes {
+                assert_eq!(
+                    result.unwrap().as_str(),
+                    "550e8400-e29b-41d4-a716-446655440000"
+                );
+            } else {
+                assert!(matches!(result, Err(HermesTransportError::Timeout)));
+            }
+            transport.stop(Duration::from_secs(5)).unwrap();
+            assert_eq!(
+                fs::read_to_string(cwd.join("session-new-count")).unwrap(),
+                "1\n"
+            );
+        }
+    }
 }

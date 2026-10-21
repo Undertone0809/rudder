@@ -34,7 +34,10 @@ export function CodexLocalConfigFields({
       <Field label="Native Chat Profile" hint="Uses the existing local Codex login and settings in place. Agent Profile keeps this Agent's existing Rudder Codex home.">
         <select className={inputClass}
           value={isCreate ? values!.codexProfileId ?? "operator-default" : eff("agentRuntimeConfig", "profileId", String(config.profileId ?? "default"))}
-          onChange={(event) => isCreate ? set!({ codexProfileId: event.target.value }) : mark("agentRuntimeConfig", "profileId", event.target.value)}>
+          onChange={(event) => isCreate ? set!({
+            codexProfileId: event.target.value,
+            ...(!values!.codexBypassCustomized ? { dangerouslyBypassSandbox: event.target.value === "default" } : {}),
+          }) : mark("agentRuntimeConfig", "profileId", event.target.value)}>
           <option value="operator-default">Operator native Profile</option>
           <option value="default">Agent Profile</option>
         </select>
@@ -86,7 +89,7 @@ export function CodexLocalConfigFields({
         }
         onChange={(v) =>
           isCreate
-            ? set!({ dangerouslyBypassSandbox: v })
+            ? set!({ dangerouslyBypassSandbox: v, codexBypassCustomized: true })
             : mark("agentRuntimeConfig", "dangerouslyBypassApprovalsAndSandbox", v)
         }
       />

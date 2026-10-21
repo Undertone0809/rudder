@@ -49,6 +49,9 @@ describe("AgentConfigForm runtime defaults", () => {
       modelReasoningEffort: "medium",
     });
     expect(createValuesForRuntime("codex_local").thinkingEffort).toBe("medium");
+    expect(createValuesForRuntime("codex_local").codexProfileId).toBe("operator-default");
+    expect(createValuesForRuntime("codex_local").dangerouslyBypassSandbox).toBe(false);
+    expect(defaultConfigForRuntime("codex_local").dangerouslyBypassApprovalsAndSandbox).toBe(false);
   });
 
   it.each([

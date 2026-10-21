@@ -155,9 +155,7 @@ test("resumes the exact accepted Run after reload without replacing a newer draf
     await page.reload();
     await expect(composer).toBeVisible();
     await expect(composer).toContainText(NEWER_DRAFT);
-    const resume = page.getByRole("button", { name: "Resume response", exact: true });
-    await expect(resume).toBeVisible({ timeout: 30_000 });
-    await resume.click();
+    await expect(page.getByRole("button", { name: "Resume response", exact: true })).toHaveCount(0);
 
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1]).toEqual(requests[0]);
@@ -211,9 +209,7 @@ test("resumes an active Run and then records an explicit Stop without another pr
 
     await page.reload();
     await expect(composer).toBeVisible();
-    const resume = page.getByRole("button", { name: "Resume response", exact: true });
-    await expect(resume).toBeVisible({ timeout: 30_000 });
-    await resume.click();
+    await expect(page.getByRole("button", { name: "Resume response", exact: true })).toHaveCount(0);
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1]).toEqual(requests[0]);
     await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toBeVisible({ timeout: 30_000 });

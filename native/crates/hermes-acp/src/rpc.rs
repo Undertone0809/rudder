@@ -20,6 +20,10 @@ use uuid::Uuid;
 
 const MAX_MESSAGES: usize = 256;
 const MAX_RPC_FRAME: usize = 1024 * 1024;
+// Queue size is an instantaneous transport bound. A streamed turn can contain
+// many more individually bounded token/tool updates without a larger frame.
+const MAX_TURN_UPDATES: usize = 8192;
+const MAX_TURN_UPDATE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PROMPT_BYTES: usize = 256 * 1024;
 const MAX_FINAL_BYTES: usize = 256 * 1024;
 pub const MAX_EPHEMERAL_INSTRUCTION_BYTES: usize = 64 * 1024;
@@ -861,7 +865,7 @@ impl HermesAcpTransport {
                         .map_err(|_| HermesTransportError::InvalidMessage)?
                         .len();
                     update_bytes = update_bytes.saturating_add(update_size);
-                    if updates.len() >= MAX_MESSAGES || update_bytes > MAX_RPC_FRAME {
+                    if updates.len() >= MAX_TURN_UPDATES || update_bytes > MAX_TURN_UPDATE_BYTES {
                         return Err(HermesTransportError::OutputOverflow);
                     }
                     updates.push(update.clone());
@@ -1713,6 +1717,99 @@ mod tests {
         assert_eq!(cancelled.stop_reason(), HermesStopReason::Cancelled);
         let cleanup = second.stop(Duration::from_secs(5)).unwrap();
         assert!(cleanup.proves_quiescence_for(&cancelled));
+    }
+
+    #[test]
+    #[ignore = "requires the built rudder-process-host executable"]
+    fn owned_streamed_turns_have_separate_bounded_update_and_frame_budgets() {
+        let process_host = PathBuf::from(std::env::var("RUDDER_PROCESS_HOST").unwrap());
+        let temp = tempfile::tempdir().unwrap();
+        let hermes = temp.path().join("bounded-hermes.py");
+        let fixture = FAKE_ACP_CHILD.replace("import json, sys", "import json, sys, time").replace(
+            r#"    if text == "cancel me":"#,
+            r#"    if text.startswith("budget:"):
+      mode = text[7:]
+      def update(kind, text):
+        out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":kind,"content":{"type":"text","text":text}}}})
+      if mode == "tokens":
+        for i in range(512):
+          update("agent_message_chunk", "ok")
+          time.sleep(0.001)
+      elif mode in ("tools", "aggregate"):
+        for i in range(4 if mode == "tools" else 29):
+          update("tool_call_update", "x" * 300000)
+        update("agent_message_chunk", "done")
+      elif mode == "frame":
+        update("tool_call_update", "x" * (1024 * 1024))
+      elif mode == "final":
+        update("agent_message_chunk", "x" * (256 * 1024 + 1))
+      elif mode == "count":
+        for i in range(8193):
+          update("tool_call_update", "")
+          time.sleep(0.001)
+        update("agent_message_chunk", "done")
+      out({"jsonrpc":"2.0","id":m["id"],"result":{"stopReason":"end_turn","userMessageId":user_id}})
+    elif text == "cancel me":"#,
+        );
+        assert_ne!(fixture, FAKE_ACP_CHILD);
+        fs::write(&hermes, fixture).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hermes, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        for (mode, expected) in [
+            ("tokens", Some("ok".repeat(512))),
+            ("tools", Some("done".into())),
+            ("aggregate", None),
+            ("frame", None),
+            ("final", None),
+            ("count", None),
+        ] {
+            let launch = HermesLaunch {
+                hermes_executable: hermes.clone(),
+                python_executable: None,
+                python_source_root: None,
+                ephemeral_system_prompt: None,
+                process_host: process_host.clone(),
+                runtime_root: temp.path().to_path_buf(),
+                operator_home: temp.path().to_path_buf(),
+                hermes_home: temp.path().to_path_buf(),
+                cwd: temp.path().to_path_buf(),
+                run_id: "00000000-0000-4000-8000-000000000021".into(),
+                attempt_id: mode.into(),
+                owner_token: format!("owner-{mode}"),
+                executable_search_path: fixture_search_path(),
+                env: Default::default(),
+            };
+            let permit = ConnectionLaunchPermit::from_claim(
+                launch.run_id.clone(),
+                mode.into(),
+                launch.owner_token.clone(),
+                1,
+                format!("claim-{mode}"),
+            );
+            let mut transport = HermesAcpTransport::launch(launch, permit).unwrap();
+            transport.wait_spawned(Duration::from_secs(5)).unwrap();
+            transport.initialize(Duration::from_secs(5)).unwrap();
+            transport
+                .new_session(temp.path(), Duration::from_secs(5))
+                .unwrap();
+            let result = transport.prompt(
+                &format!("budget:{mode}"),
+                "550e8400-e29b-41d4-a716-446655440001",
+                &HermesCancellation::default(),
+                Duration::from_secs(30),
+            );
+            match expected {
+                Some(text) => assert_eq!(result.unwrap().final_text(), text, "{mode}"),
+                None => assert!(
+                    matches!(result, Err(HermesTransportError::OutputOverflow)),
+                    "{mode}: {result:?}"
+                ),
+            }
+            transport.stop(Duration::from_secs(5)).unwrap();
+        }
     }
 
     /// Real installed Hermes protocol/session-store probe. It creates an empty

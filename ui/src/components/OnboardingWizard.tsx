@@ -3,7 +3,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
 import {
-  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   DEFAULT_CODEX_LOCAL_SEARCH
@@ -488,7 +487,7 @@ export function OnboardingWizard() {
           : undefined,
       dangerouslyBypassSandbox:
         agentRuntimeType === "codex_local"
-          ? DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX
+          ? false
           : defaultCreateValues.dangerouslyBypassSandbox,
       envBindings,
     });

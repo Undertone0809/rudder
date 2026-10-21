@@ -135,8 +135,10 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
         .as_ref()
         .map(|prepared| &prepared.normalized_agent_runtime_config)
         .unwrap_or(&request.agent_runtime_config);
+    let mut config_source = config_source.clone();
+    super::validation::apply_codex_create_defaults(&request.agent_runtime_type, &mut config_source);
     let normalized_runtime_config =
-        super::validation::normalize_runtime_config(tx, ctx.org, config_source).await?;
+        super::validation::normalize_runtime_config(tx, ctx.org, &config_source).await?;
     let requested_name = request
         .name
         .as_deref()

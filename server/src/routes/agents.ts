@@ -825,6 +825,7 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
   function applyCreateDefaultsByAdapterType(
     agentRuntimeType: string | null | undefined,
     agentRuntimeConfig: Record<string, unknown>,
+    includeLegacyBypassDefault = true,
   ): Record<string, unknown> {
     const next = agentRuntimeType === "codex_local"
       ? withCodexLocalModelDefaults(agentRuntimeConfig)
@@ -833,7 +834,7 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
       const hasBypassFlag =
         typeof next.dangerouslyBypassApprovalsAndSandbox === "boolean" ||
         typeof next.dangerouslyBypassSandbox === "boolean";
-      if (!hasBypassFlag) {
+      if (includeLegacyBypassDefault && !hasBypassFlag) {
         next.dangerouslyBypassApprovalsAndSandbox = DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
       }
       if (typeof next.search !== "boolean") {

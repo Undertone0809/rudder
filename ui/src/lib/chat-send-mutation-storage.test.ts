@@ -124,6 +124,22 @@ describe("chat send mutation storage", () => {
     vi.unstubAllGlobals();
   });
 
+  it("never allocates a new send for an attachment whose exact identity already settled", async () => {
+    installCryptoStub();
+    const input = { orgId: "settled-org", conversationId: "settled-chat", body: "Accepted input", files: [], inlineAnnotations: [] };
+    const pending = await preparePendingChatSendMutation(input);
+    await pending.markAccepted();
+    await pending.settle();
+    const randomUUID = vi.mocked(crypto.randomUUID);
+    const allocations = randomUUID.mock.calls.length;
+    await expect(preparePendingChatSendMutation({ ...input, resumeClientMutationId: pending.clientMutationId }))
+      .rejects.toThrow("no longer has a pending send");
+    expect(randomUUID).toHaveBeenCalledTimes(allocations);
+    expect(readPendingChatSendMutation(input.orgId, input.conversationId)?.status).toBe("settled");
+    const explicitNewSend = await preparePendingChatSendMutation(input);
+    expect(explicitNewSend.clientMutationId).not.toBe(pending.clientMutationId);
+  });
+
   it("survives a composer remount and retires only the acknowledged identity", async () => {
     installCryptoStub();
     const input = {

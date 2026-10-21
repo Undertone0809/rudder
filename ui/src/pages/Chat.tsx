@@ -292,6 +292,10 @@ async function settleStoppedChatInput(recovery: PendingChatStopRecovery): Promis
   }
 }
 
+// Page-local attachment claims survive Messenger remounts; they never authorize a new send.
+const acceptedResponseAttachments = new Set<string>();
+const acceptedResponseKey = (orgId: string, chatId: string, mutationId: string) => JSON.stringify([orgId, chatId, mutationId]);
+
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast, dismissToast } = useToast(); const { confirm, openNewProject } = useDialog();
   const firstTurnStore = useFirstChatTurnStore();
@@ -346,6 +350,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     value: initialComposerDraftRef.current?.body ?? "",
   }));
   const [chatSendRecovery, setChatSendRecovery] = useState<(ChatSendRecovery & { orgId: string; conversationId: string }) | null>(null);
+  const [responseReconnectVersion, setResponseReconnectVersion] = useState(0);
   const [confirmedStoppedChat, setConfirmedStoppedChat] = useState<{ orgId: string; chatId: string } | null>(null);
   const [responseAnnotationState, dispatchResponseAnnotation] = useReducer(
     responseAnnotationReducer,
@@ -633,7 +638,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const recoveryDiscovery = useChatSendRecoveryDiscovery(selectedConversation && selectedOrganizationId
     ? { orgId: selectedOrganizationId, conversationId: selectedConversation.id }
     : null);
-  const activeChatSendRecovery = chatSendRecovery ?? (recoveryDiscovery.recovery && selectedOrganizationId && selectedConversation
+  const activeChatSendRecovery = (chatSendRecovery?.orgId === selectedOrganizationId
+    && chatSendRecovery.conversationId === selectedConversation?.id ? chatSendRecovery : null) ?? (recoveryDiscovery.recovery && selectedOrganizationId && selectedConversation
     ? { ...recoveryDiscovery.recovery, orgId: selectedOrganizationId, conversationId: selectedConversation.id }
     : null);
   const customGroupsQuery = useQuery({
@@ -2102,7 +2108,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         });
         if (pendingSend.reconciliation?.outcome === "accepted") upsertMessages(chatId, [pendingSend.reconciliation.message]);
         await refreshChat(chatId);
-        pushToast({ title: "Response needs recovery", body: "The original message was accepted. Resume its response below; this draft was not sent again.", tone: "warn" });
         return;
       }
       if (pendingSend.status === "retry_required") {
@@ -2156,6 +2161,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         mutationTerminal = true;
         await pendingSend.settle();
         setChatSendRecovery((current) => current?.clientMutationId === pendingSend.clientMutationId ? null : current);
+        recoveryDiscovery.clearRecovery();
       };
       const { clientMutationId } = pendingSend;
       setConfirmedStoppedChat(null);
@@ -2297,6 +2303,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
       }
     } catch (error) {
+      if (isResume && !pendingSendMutation && conversation) {
+        // A preflight/storage failure must return to read-only discovery,
+        // preserving an explicit recovery action instead of silently unblocking Send.
+        recoveryDiscovery.retry();
+      }
       if (activeNativeFirstSend && requestDispatched && !userMessageAcknowledged) {
         await nativeFirstSend.markUnknown(activeNativeFirstSend.clientMutationId).catch(() => undefined);
       }
@@ -2431,7 +2442,39 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       if (activeChatId && chatSendLockAcquired) {
         releaseChatSendLock(activeChatId);
       }
-      if (newConversationLockAcquired && activeStreamKey) { firstTurnStore.finish(firstTurnOwner, activeStreamKey); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
+      if (newConversationLockAcquired && activeStreamKey) { firstTurnStore.finish(firstTurnOwner, activeStreamKey); } } };
+  useEffect(() => {
+    const recovery = activeChatSendRecovery;
+    if (!recovery || recovery.action === "retry" || !selectedConversation || !selectedOrganizationId
+      || recoveryDiscovery.checking) return;
+    const key = acceptedResponseKey(selectedOrganizationId, selectedConversation.id, recovery.clientMutationId);
+    const attached = Boolean(selectedConversationStreamScopeKey && sendInFlightByChatId[selectedConversationStreamScopeKey]);
+    const stopping = stoppingChatIds.has(selectedConversation.id)
+      || Boolean(readPendingChatStopRecovery(selectedOrganizationId, selectedConversation.id));
+    // Discovery can observe the send whose stream is already owned by this page.
+    // Consume it now, so it cannot become a fresh send after that stream settles.
+    if (!chatSendRecovery && (attached || stopping)) {
+      recoveryDiscovery.clearRecovery();
+      return;
+    }
+    if (attached || stopping || chatSendLocksRef.current[selectedConversation.id]
+      || acceptedResponseAttachments.has(key)) return;
+    acceptedResponseAttachments.add(key);
+    recoveryDiscovery.clearRecovery();
+    recoveryDiscovery.clearCompletedNotice();
+    setChatSendRecovery(null);
+    void sendMessage({
+      bodyOverride: recovery.body,
+      filesOverride: [],
+      inlineAnnotationsOverride: [],
+      conversationOverride: selectedConversation,
+      forceImmediateSend: true,
+      resumeClientMutationId: recovery.clientMutationId,
+    });
+  }, [activeChatSendRecovery, chatSendRecovery, selectedConversation, selectedOrganizationId,
+    selectedConversationStreamScopeKey, sendInFlightByChatId, stoppingChatIds, recoveryDiscovery,
+    responseReconnectVersion, sendMessage]);
+  const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
     return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]);
   const rawMessages = messagesQuery.data ?? [];
   useEffect(() => {
@@ -3946,29 +3989,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         && !serverActiveGenerationId && !activeSendInFlight ? (
         <p role="status" className="mt-2 text-sm text-muted-foreground">Stopped</p>
       ) : null}
-      {chatSendRecovery && selectedConversation?.id === chatSendRecovery.conversationId
-        && selectedOrganizationId === chatSendRecovery.orgId ? (
+      {activeChatSendRecovery?.action === "retry" ? (
         <ChatSendRecoveryNotice
+          action="retry"
           disabled={Boolean(selectedConversationStreamScopeKey && sendInFlightByChatId[selectedConversationStreamScopeKey])}
-          action={chatSendRecovery.action}
-          onResume={() => {
-            recoveryDiscovery.clearRecovery();
-            recoveryDiscovery.clearCompletedNotice();
-            setChatSendRecovery(null);
-            void sendMessage({
-              bodyOverride: chatSendRecovery.body,
-              filesOverride: [],
-              inlineAnnotationsOverride: [],
-              conversationOverride: selectedConversation,
-              forceImmediateSend: true,
-              resumeClientMutationId: chatSendRecovery.clientMutationId,
-            });
-          }}
-        />
-      ) : activeChatSendRecovery ? (
-        <ChatSendRecoveryNotice
-          disabled={Boolean(selectedConversationStreamScopeKey && sendInFlightByChatId[selectedConversationStreamScopeKey])}
-          action={activeChatSendRecovery.action}
           onResume={() => {
             recoveryDiscovery.clearRecovery();
             recoveryDiscovery.clearCompletedNotice();
@@ -3981,6 +4005,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               forceImmediateSend: true,
               resumeClientMutationId: activeChatSendRecovery.clientMutationId,
             });
+          }}
+        />
+      ) : activeChatSendRecovery && selectedConversation && selectedOrganizationId
+        && !activeSendInFlight && !stoppingChatIds.has(selectedConversation.id)
+        && !readPendingChatStopRecovery(selectedOrganizationId, selectedConversation.id)
+        && acceptedResponseAttachments.has(acceptedResponseKey(selectedOrganizationId, selectedConversation.id, activeChatSendRecovery.clientMutationId)) ? (
+        <ChatSendRecoveryProblem
+          message="The response connection was interrupted."
+          onRetry={() => {
+            acceptedResponseAttachments.delete(acceptedResponseKey(selectedOrganizationId, selectedConversation.id, activeChatSendRecovery.clientMutationId));
+            setResponseReconnectVersion((version) => version + 1);
           }}
         />
       ) : null}

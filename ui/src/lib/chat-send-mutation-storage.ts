@@ -1048,6 +1048,12 @@ export async function preparePendingChatSendMutation(input: {
       return { kind: "reconcile" as const, candidate: { identity, ...savedInput, acceptedPreviously: false, settledPreviously: false } };
     }
 
+    // Reattaching an earlier response must never allocate a new send after
+    // another stream or Stop has already settled/compacted its exact identity.
+    if (input.resumeClientMutationId) {
+      throw new Error("The earlier response no longer has a pending send. Refresh its status; no new message was sent.");
+    }
+
     // Settled rows can be compacted only after any durable recovery marker has
     // been reconciled. This preserves a safe fresh ID for a later explicit send.
     for (const [id, mutation] of Object.entries(document.mutations)) {

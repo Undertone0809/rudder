@@ -24,7 +24,7 @@ export const help: Record<string, string> = {
   cursorMode: "Cursor CLI execution mode passed through --mode. Plan is read-only planning; Ask is read-only Q&A. Leave on the runtime default for normal autonomous runs.",
   chrome: "Enable Claude's Chrome integration by passing --chrome.",
   dangerouslySkipPermissions: "Run Claude with the dangerous permission bypass. Leave off unless a trusted local agent explicitly needs unrestricted tool execution.",
-  dangerouslyBypassSandbox: "Run Codex without sandbox restrictions. Required for filesystem/network access.",
+  dangerouslyBypassSandbox: "Request unrestricted Codex execution. With Operator Profile, the native Profile must already permit bypass. Leave off to inherit its approval and sandbox settings.",
   search: "Enable Codex web search capability during runs.",
   countSubscriptionUsageAsCost: "Normally on for Codex subscription login runs. Known models are estimated as API-equivalent spend and count toward Rudder spend and budget hard stops. Turn this off only when this agent's subscription usage should remain $0.",
   workspaceStrategy: "How Rudder should realize a run workspace for this agent. Keep project_primary for normal cwd execution, or use git_worktree for issue-scoped isolated checkouts.",

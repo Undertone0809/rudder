@@ -4,7 +4,6 @@ import {
   DEFAULT_CLAUDE_LOCAL_MODEL,
 } from "@rudderhq/agent-runtime-claude-local";
 import {
-  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST,
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
@@ -183,7 +182,7 @@ export function createValuesForRuntime(agentRuntimeType: string): CreateConfigVa
     values.thinkingEffort = DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
     values.search = DEFAULT_CODEX_LOCAL_SEARCH;
     values.countSubscriptionUsageAsCost = DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST;
-    values.dangerouslyBypassSandbox = DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
+    values.dangerouslyBypassSandbox = false;
     values.codexProfileId = "operator-default";
   }
   if (agentRuntimeType === "claude_local") {
