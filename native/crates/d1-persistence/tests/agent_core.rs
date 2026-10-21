@@ -660,7 +660,7 @@ async fn rust_create_identity_slice_respects_legacy_default_profile() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn rust_create_persists_instruction_bundle_outbox_without_touching_filesystem() {
+async fn rust_create_materializes_instruction_bundle_after_commit_and_retries_safely() {
     let database = Database::start().await;
     sqlx::query(
         "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Bundle User','bundle-user@example.test',now(),now())",
@@ -678,6 +678,10 @@ async fn rust_create_persists_instruction_bundle_outbox_without_touching_filesys
     .await
     .expect("seed bundle membership");
 
+    let filesystem = tempfile::tempdir().expect("filesystem fixture");
+    let instance_root = filesystem.path().join("instances/default");
+    let workspace_home = instance_root.join("organizations");
+    let previous_documents_root = filesystem.path().join("Documents/organizations");
     let input = json!({
         "name": "Durable Bundle",
         "nodeOwned": {
@@ -705,6 +709,16 @@ async fn rust_create_persists_instruction_bundle_outbox_without_touching_filesys
         json!({
             "operation": "create",
             "orgId": ORG,
+            "homeDirectory": filesystem.path(),
+            "processWorkingDirectory": filesystem.path(),
+            "deploymentMode": "local_trusted",
+            "instructionsHost": {
+                "instanceRoot": instance_root,
+                "workspaceHome": workspace_home,
+                "previousDocumentsRoot": previous_documents_root,
+                "friendlyWorkspaceHome": false,
+                "hostname": "durable-bundle-test-host"
+            },
             "input": input,
         }),
     )
@@ -737,24 +751,189 @@ async fn rust_create_persists_instruction_bundle_outbox_without_touching_filesys
         "tools"
     );
     assert!(row.2);
-    assert_eq!(row.3, "pending");
-    sqlx::query("UPDATE agents SET agent_runtime_config=$1::jsonb WHERE id=$2::uuid")
-        .bind(json!({
-            "promptTemplate": "legacy prompt",
-            "bootstrapPromptTemplate": "legacy boot"
-        }))
-        .bind(&agent_id)
-        .execute(&database.pool)
-        .await
-        .expect("seed legacy prompt config");
+    assert_eq!(row.3, "materialized");
+    let workspace_key: String =
+        sqlx::query_scalar("SELECT workspace_key FROM agents WHERE id=$1::uuid")
+            .bind(&agent_id)
+            .fetch_one(&database.pool)
+            .await
+            .expect("workspace key");
+    let instructions = workspace_home
+        .join("100000000000/workspaces/agents")
+        .join(&workspace_key)
+        .join("instructions");
+    assert_eq!(
+        std::fs::read_to_string(instructions.join("SOUL.md")).unwrap(),
+        "# Durable"
+    );
+    assert_eq!(
+        std::fs::read_to_string(instructions.join("nested/TOOLS.md")).unwrap(),
+        "tools"
+    );
 
-    // A later detail read is the current private reconciler trigger. It
-    // materializes the pending row, consumes clearLegacyPromptTemplate, and
-    // records canonical runtime paths only after filesystem success.
-    let filesystem = tempfile::tempdir().expect("filesystem fixture");
-    let instance_root = filesystem.path().join("instances/default");
-    let workspace_home = instance_root.join("organizations");
-    let previous_documents_root = filesystem.path().join("Documents/organizations");
+    // The Agent transaction remains a 201 after a post-commit path failure.
+    // Its exact outbox row stays repairable, and an authorized detail read can
+    // finish projection after the obstruction is removed without creating a
+    // second Agent.
+    #[cfg(unix)]
+    {
+        let retry_fs = tempfile::tempdir().expect("retry filesystem fixture");
+        let retry_instance_root = retry_fs.path().join("instances/default");
+        let retry_workspace_home = retry_instance_root.join("organizations");
+        let retry_previous_documents_root = retry_fs.path().join("Documents/organizations");
+        std::fs::create_dir_all(&retry_workspace_home).expect("retry workspace home");
+        let outside = retry_fs.path().join("outside");
+        std::fs::create_dir_all(&outside).expect("outside path");
+        let org_root = retry_workspace_home.join("100000000000");
+        std::os::unix::fs::symlink(&outside, &org_root).expect("obstruct org root with symlink");
+
+        unsafe {
+            std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1");
+            std::env::set_var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED", "1");
+        }
+        let retry_create = execute_create_body(
+            &database,
+            json!({
+                "operation": "create",
+                "orgId": ORG,
+                "homeDirectory": retry_fs.path(),
+                "processWorkingDirectory": retry_fs.path(),
+                "deploymentMode": "local_trusted",
+                "instructionsHost": {
+                    "instanceRoot": retry_instance_root,
+                    "workspaceHome": retry_workspace_home,
+                    "previousDocumentsRoot": retry_previous_documents_root,
+                    "friendlyWorkspaceHome": false,
+                    "hostname": "retryable-create-test-host"
+                },
+                "input": {
+                    "name": "Retryable Materialization",
+                    "nodeOwned": {
+                        "normalizedAgentRuntimeConfig": {},
+                        "instructionsBundle": {
+                            "entryFile": "SOUL.md",
+                            "files": {"SOUL.md": "# Retryable"},
+                            "clearLegacyPromptTemplate": true
+                        }
+                    }
+                }
+            }),
+        )
+        .await
+        .expect("committed create must not surface post-commit provisioning error");
+        unsafe {
+            std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED");
+            std::env::remove_var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED");
+        }
+        assert_eq!(retry_create.0, 201);
+        let retry_agent_id: String = sqlx::query_scalar(
+            "SELECT id::text FROM agents WHERE org_id=$1::uuid AND name='Retryable Materialization'",
+        )
+        .bind(ORG)
+        .fetch_one(&database.pool)
+        .await
+        .expect("committed retryable Agent");
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM agents WHERE org_id=$1::uuid AND name='Retryable Materialization'",
+        )
+        .bind(ORG)
+        .fetch_one(&database.pool)
+        .await
+        .expect("one committed Agent");
+        assert_eq!(count, 1);
+        let (state, last_error): (String, Option<String>) = sqlx::query_as(
+            "SELECT state,last_error FROM agent_instruction_bundles WHERE org_id=$1::uuid AND agent_id=$2::uuid",
+        )
+        .bind(ORG)
+        .bind(&retry_agent_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("repairable outbox row");
+        assert_eq!(state, "repair");
+        assert!(
+            last_error.is_some(),
+            "repair failure must remain observable"
+        );
+        assert!(!outside.join("instructions/SOUL.md").exists());
+
+        std::fs::remove_file(&org_root).expect("remove obstructing symlink");
+        sqlx::query("UPDATE agents SET agent_runtime_config=$1::jsonb WHERE id=$2::uuid")
+            .bind(json!({
+                "promptTemplate": "legacy prompt",
+                "bootstrapPromptTemplate": "legacy boot"
+            }))
+            .bind(&retry_agent_id)
+            .execute(&database.pool)
+            .await
+            .expect("seed legacy prompt state before authorized repair");
+        let retry_detail = json!({
+            "operation": "detail",
+            "orgId": ORG,
+            "id": retry_agent_id,
+            "homeDirectory": retry_fs.path(),
+            "processWorkingDirectory": retry_fs.path(),
+            "deploymentMode": "local_trusted",
+            "instructionsHost": {
+                "instanceRoot": retry_instance_root,
+                "workspaceHome": retry_workspace_home,
+                "previousDocumentsRoot": retry_previous_documents_root,
+                "friendlyWorkspaceHome": false,
+                "hostname": "retryable-create-test-host"
+            }
+        });
+        let retry_detail_bytes = serde_json::to_vec(&retry_detail).expect("serialize retry detail");
+        let retry_detail_request =
+            AgentCoreRequest::parse(&retry_detail_bytes).expect("valid retry detail");
+        let retry_detail_result = execute_agent_with_native_auth(
+            &database.pool,
+            &verified_create_user_with_body(&retry_detail_bytes),
+            &retry_detail_request,
+            &NoopNativeAuthorizer,
+        )
+        .await
+        .expect("detail retry materializes the same Agent");
+        assert_eq!(retry_detail_result.0, 200);
+        let retry_detail_response: serde_json::Value =
+            serde_json::from_str(&retry_detail_result.1).expect("repair detail JSON");
+        assert!(retry_detail_response["agentRuntimeConfig"]["promptTemplate"].is_null());
+        assert!(retry_detail_response["agentRuntimeConfig"]["bootstrapPromptTemplate"].is_null());
+        let recovered_state: String = sqlx::query_scalar(
+            "SELECT state FROM agent_instruction_bundles WHERE org_id=$1::uuid AND agent_id=$2::uuid",
+        )
+        .bind(ORG)
+        .bind(&retry_agent_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("recovered outbox row");
+        assert_eq!(recovered_state, "materialized");
+        let retry_workspace_key: String =
+            sqlx::query_scalar("SELECT workspace_key FROM agents WHERE id=$1::uuid")
+                .bind(&retry_agent_id)
+                .fetch_one(&database.pool)
+                .await
+                .expect("same workspace key");
+        assert_eq!(
+            std::fs::read_to_string(
+                retry_workspace_home
+                    .join("100000000000/workspaces/agents")
+                    .join(retry_workspace_key)
+                    .join("instructions/SOUL.md")
+            )
+            .unwrap(),
+            "# Retryable"
+        );
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM agents WHERE org_id=$1::uuid AND name='Retryable Materialization'",
+        )
+        .bind(ORG)
+        .fetch_one(&database.pool)
+        .await
+        .expect("still exactly one Agent after repair");
+        assert_eq!(count, 1);
+    }
+
+    // Create materialized the bundle before returning 201. A subsequent detail
+    // read remains idempotent and reports the persisted canonical paths.
     let detail_body = json!({
         "operation": "detail",
         "orgId": ORG,

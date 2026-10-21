@@ -895,6 +895,16 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         deploymentMode: options.publicIngress?.deploymentMode ?? "authenticated",
         homeDirectory: homedir(),
         processWorkingDirectory: process.cwd(),
+        // Installation placement is selected by the local bridge, never by
+        // public create JSON. AgentCore uses it only after committing the
+        // Agent row to materialize the durable managed-workspace projection.
+        instructionsHost: {
+          instanceRoot: resolveRudderInstanceRoot(),
+          workspaceHome: resolveOrganizationWorkspaceHomeDir(),
+          previousDocumentsRoot: resolvePreviousDocumentsOrganizationWorkspaceRoot(command.orgId),
+          friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
+          hostname: hostname(),
+        },
       });
     },
     async goalRead(actor, orgId, input) {

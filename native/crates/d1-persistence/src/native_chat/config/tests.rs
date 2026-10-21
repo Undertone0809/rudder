@@ -1,11 +1,20 @@
 use super::runtime;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use super::{LocalHostContext, resolve_claude_config, resolve_codex_config, resolve_cursor_config};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::agent_core::{AgentCoreRequest, execute_agent};
 use crate::runtime_bindings::Error;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use rudder_auth_core::{ActorEnvelope, ActorIdentity, NonceReplayGuard, RequestContext};
 use serde_json::{Value, json};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::fs;
 use std::path::Path;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::OnceLock;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+static AGENT_CREATE_ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 #[allow(dead_code)]
 #[path = "../../../tests/support/mod.rs"]
@@ -55,6 +64,216 @@ fn assert_http_error<T>(result: std::result::Result<T, Error>, status: u16, secr
         }
         _ => panic!("expected a Native Chat configuration error"),
     }
+}
+
+#[tokio::test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn create_materializes_managed_workspace_before_read_only_native_resolver() {
+    use support::{Database, ORG};
+
+    const ACTOR_ID: &str = "native-chat-workspace-create-user";
+    const CHAT_ID: &str = "21000000-0000-4000-8000-000000000299";
+    const SECRET: &[u8] = b"native-chat-workspace-create-test-key";
+    let _env_guard = AGENT_CREATE_ENV_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at)
+         VALUES ($1,'Workspace User','workspace-user@example.test',now(),now())",
+    )
+    .bind(ACTOR_ID)
+    .execute(&database.pool)
+    .await
+    .expect("seed create actor");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status)
+         VALUES ($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(ORG)
+    .bind(ACTOR_ID)
+    .execute(&database.pool)
+    .await
+    .expect("authorize create actor for the organization");
+
+    let temp = tempfile::tempdir().expect("isolated create host");
+    let instance_root = temp.path().join("instance");
+    let workspace_home = temp.path().join("workspaces");
+    let previous_documents_root = temp.path().join("previous-documents");
+    let profiles_root = temp.path().join("managed-profiles");
+    let operator_home = temp.path().join("operator-home");
+    let executable = temp.path().join("bin/codex");
+    for directory in [
+        &instance_root,
+        &workspace_home,
+        &previous_documents_root,
+        &profiles_root,
+        &operator_home,
+        executable.parent().expect("binary directory"),
+    ] {
+        fs::create_dir_all(directory).expect("create trusted host directory");
+    }
+    fs::write(&executable, b"Codex test executable").expect("create executable fixture");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .expect("mark fixture executable");
+    }
+    let host = LocalHostContext::from_rust_host(
+        "create-workspace-host".into(),
+        instance_root.clone(),
+        workspace_home.clone(),
+        previous_documents_root.clone(),
+        false,
+        profiles_root,
+        operator_home,
+        executable,
+    )
+    .expect("construct trusted host context")
+    .with_executable_search_path("/usr/bin:/bin".into())
+    .expect("trusted executable search path");
+
+    let body = json!({
+        "operation": "create",
+        "orgId": ORG,
+        "homeDirectory": temp.path(),
+        "processWorkingDirectory": temp.path(),
+        "deploymentMode": "local_trusted",
+        "instructionsHost": {
+            "instanceRoot": instance_root,
+            "workspaceHome": workspace_home,
+            "previousDocumentsRoot": previous_documents_root,
+            "friendlyWorkspaceHome": false,
+            "hostname": "create-workspace-host"
+        },
+        "input": {
+            "name": "Immediately Ready Agent",
+            "agentRuntimeType": "codex_local",
+            "agentRuntimeConfig": {},
+            "nodeOwned": {
+                "normalizedAgentRuntimeConfig": {
+                    "dangerouslyBypassApprovalsAndSandbox": false
+                },
+                "instructionsBundle": {
+                    "entryFile": "SOUL.md",
+                    "files": {"SOUL.md": "Created before first send."},
+                    "clearLegacyPromptTemplate": true
+                }
+            }
+        }
+    });
+    let body_bytes = serde_json::to_vec(&body).expect("serialize signed Agent command");
+    let actor_identity = ActorIdentity::new("user", ACTOR_ID).expect("valid actor identity");
+    let path = format!("/internal/agent-core/{ORG}/create");
+    let envelope = ActorEnvelope::new(
+        actor_identity.clone(),
+        ORG,
+        "workspace-create-session",
+        1,
+        "rudder-server-foundation",
+        "POST",
+        &path,
+        "agent.core.execute",
+        &body_bytes,
+        "workspace-create-request",
+        "workspace-create-nonce",
+        1_000,
+        1_100,
+    )
+    .expect("construct trusted create envelope")
+    .sign(SECRET)
+    .expect("sign create envelope");
+    let request_context = RequestContext::new(
+        &actor_identity,
+        ORG,
+        "workspace-create-session",
+        1,
+        "rudder-server-foundation",
+        "POST",
+        &path,
+        "agent.core.execute",
+        &body_bytes,
+        "workspace-create-request",
+        1_050,
+    );
+    let actor = envelope
+        .verify_to_actor(SECRET, &request_context, &mut NonceReplayGuard::new())
+        .expect("verify Agent create authority");
+    let command = AgentCoreRequest::parse(&body_bytes).expect("parse trusted Agent command");
+    unsafe {
+        std::env::set_var("RUDDER_AGENT_CREATE_RUST_ENABLED", "1");
+        std::env::set_var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED", "1");
+    }
+    let create_result = execute_agent(&database.pool, &actor, &command).await;
+    unsafe {
+        std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED");
+        std::env::remove_var("RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED");
+    }
+    let result = create_result.expect("create Agent and synchronously project its bundle");
+    assert_eq!(result.0, 201);
+    let created: Value = serde_json::from_str(&result.1).expect("create response JSON");
+    let agent_id = created["id"].as_str().expect("created Agent id");
+    let workspace_key: String =
+        sqlx::query_scalar("SELECT workspace_key FROM agents WHERE id=$1::uuid")
+            .bind(agent_id)
+            .fetch_one(&database.pool)
+            .await
+            .expect("persisted Agent workspace key");
+    let expected_cwd = workspace_home
+        .join("100000000000/workspaces/agents")
+        .join(workspace_key);
+    let expected_instructions = expected_cwd.join("instructions/SOUL.md");
+    assert!(
+        expected_cwd.is_dir(),
+        "create must materialize Agent cwd before 201"
+    );
+    assert_eq!(
+        fs::read_to_string(&expected_instructions).expect("projected instruction file"),
+        "Created before first send."
+    );
+    let bundle_state: String = sqlx::query_scalar(
+        "SELECT state FROM agent_instruction_bundles WHERE org_id=$1::uuid AND agent_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(agent_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("durable instruction outbox row");
+    assert_eq!(bundle_state, "materialized");
+
+    sqlx::query(
+        "INSERT INTO chat_conversations
+           (id,org_id,title,conversation_kind,created_by_user_id,status,preferred_agent_id)
+         VALUES ($1::uuid,$2::uuid,'Fresh Agent Chat','chat',$3,'active',$4::uuid)",
+    )
+    .bind(CHAT_ID)
+    .bind(ORG)
+    .bind(ACTOR_ID)
+    .bind(agent_id)
+    .execute(&database.pool)
+    .await
+    .expect("seed Chat using the created Agent");
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin readonly resolution");
+    let resolved = super::resolve_native_config(&mut tx, ORG, CHAT_ID, &host)
+        .await
+        .expect("first-send resolver accepts the freshly created managed workspace");
+    tx.commit().await.expect("finish readonly resolution");
+    assert_eq!(resolved.cwd, expected_cwd.canonicalize().unwrap());
+    assert_eq!(
+        resolved.instruction_content.as_deref(),
+        Some("Created before first send.")
+    );
+    assert_eq!(
+        fs::read_to_string(&expected_instructions).expect("read after readonly resolution"),
+        "Created before first send.",
+        "runtime resolution consumes the committed projection without mutating it"
+    );
 }
 
 #[test]

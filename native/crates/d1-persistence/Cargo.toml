@@ -30,6 +30,7 @@ serde_json = { version = "1.0", features = ["unbounded_depth"] }
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2.0"
+tracing = "0.1"
 tokio = { version = "1.47", features = ["rt", "time"] }
 uuid = { version = "1", default-features = false, features = ["v5"] }
 
