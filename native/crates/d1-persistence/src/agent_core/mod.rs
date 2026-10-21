@@ -361,8 +361,7 @@ async fn execute_agent_inner(
                 // first-send resolution continues to fail closed until then.
                 if let (Some(agent_id), Some(_host)) =
                     (body["id"].as_str(), r.instructions_host.as_ref())
-                {
-                    if instructions::provision_created_agent_after_commit(
+                    && instructions::provision_created_agent_after_commit(
                         pool,
                         actor,
                         r,
@@ -373,15 +372,14 @@ async fn execute_agent_inner(
                     .await
                     .is_err()
                     {
-                        // The create is already committed, so returning an
-                        // error could cause a duplicate retry. Pending bundle
-                        // filesystem failures are durably marked `repair` by
-                        // library_path; transient authority/database failures
-                        // leave the outbox available to an authorized detail
-                        // read. Keep the failure observable without logging
-                        // host paths or instruction contents.
-                        tracing::warn!("created Agent workspace provisioning did not complete; durable recovery remains available");
-                    }
+                    // The create is already committed, so returning an
+                    // error could cause a duplicate retry. Pending bundle
+                    // filesystem failures are durably marked `repair` by
+                    // library_path; transient authority/database failures
+                    // leave the outbox available to an authorized detail
+                    // read. Keep the failure observable without logging
+                    // host paths or instruction contents.
+                    tracing::warn!("created Agent workspace provisioning did not complete; durable recovery remains available");
                 }
             } else if matches!(op,"instructions-bundle-patch"|"instructions-file-put"|"instructions-file-delete") {
                 instructions::replay_after_commit(pool, actor, r, &org, id.as_deref().unwrap_or_default(), native_auth).await?;
