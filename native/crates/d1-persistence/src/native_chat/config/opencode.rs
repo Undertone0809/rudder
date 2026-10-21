@@ -450,8 +450,8 @@ fn owned_endpoint_is_valid(url: &Url) -> bool {
         && url.password().is_none()
         && match url.host() {
             Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-            Some(url::Host::Ipv4(host)) => host.is_loopback(),
-            Some(url::Host::Ipv6(host)) => host.is_loopback(),
+            Some(url::Host::Ipv4(host)) => host == std::net::Ipv4Addr::LOCALHOST,
+            Some(url::Host::Ipv6(_)) => false,
             None => false,
         }
 }
@@ -529,11 +529,13 @@ mod policy_tests {
     use super::*;
     #[test]
     fn owned_server_endpoint_matches_the_process_host_transport() {
-        for value in ["http://127.0.0.1:0/", "http://localhost/", "http://[::1]/"] {
+        for value in ["http://127.0.0.1:0/", "http://localhost/"] {
             assert!(owned_endpoint_is_valid(&Url::parse(value).unwrap()));
         }
         for value in [
             "https://127.0.0.1/",
+            "http://[::1]/",
+            "http://127.0.0.2/",
             "http://example.com/",
             "http://127.0.0.1/api",
             "http://127.0.0.1/?x=y",

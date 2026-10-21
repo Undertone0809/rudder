@@ -1318,7 +1318,16 @@ including native settings/plugins, and configured timeout/grace/variant reach th
 Rust executor. Legacy local configs without a selector retain operator use;
 explicit managed mode requires an existing stable profile and unknown modes fail
 before admission. Custom config/XDG overrides remain unsupported rather than being
-silently ignored. These implementation checks still require exact-candidate real
+silently ignored.
+Rust Agent creation now awaits the existing authorized workspace projection after
+committing the Agent and durable instruction outbox. It uses the same ordered
+Agent locks and bundle recovery as detail reads. A projection failure retains
+201 for the committed Agent, records repair/log evidence and remains retryable
+through authorized detail reconciliation; Native Chat does not create execution
+effects before its read-only workspace prerequisites pass. This is the public
+default-managed create path. Explicit external-instruction create remains rejected
+by the existing public cutover and is not newly enabled.
+ These implementation checks still require exact-candidate real
 first-turn, continuation and restart acceptance; they do not close the full plan.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices

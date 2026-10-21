@@ -91,8 +91,8 @@ pub(crate) fn configure(
     );
 
     // Reading already accepted Native work does not require an installed CLI.
-    // New admission is advertised when at least one supported native provider
-    // has an owned executable or an explicitly owned OpenCode Server endpoint.
+    // New admission is advertised only when a supported native provider has
+    // an owned executable; an OpenCode URL alone cannot prove process cleanup.
     // Hermes must not be gated on Codex being present.
     let current =
         std::env::current_exe().map_err(|_| invalid_at("invalid native runtime installation"))?;
