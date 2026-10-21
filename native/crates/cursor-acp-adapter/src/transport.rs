@@ -9,10 +9,12 @@
 
 use super::rules::{CursorManagedInstructionRule, materialize};
 use super::{
-    CursorAcpCommand, CursorAcpMessage, CursorAcpSession, JsonRpcResponse, RequestId, parse_message,
+    CursorAcpCommand, CursorAcpMessage, CursorAcpSession, JsonRpcResponse, RequestId, SessionId,
+    parse_message,
 };
 use rudder_native_process_transport::{
-    ConnectionLaunchPermit, HostCleanupProof, HostConnection, HostError, HostEvent, OwnedHost,
+    ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof, HostConnection, HostError,
+    HostEvent, OwnedHost,
 };
 use rudder_native_protocol::{
     Command, ProtocolVersion,
@@ -188,6 +190,10 @@ impl CursorAcpTransport {
         &self.session
     }
 
+    pub fn connection_receipt(&self) -> ConnectionReceipt {
+        self.host.connection_identity().connection_receipt()
+    }
+
     pub fn wait_spawned(&mut self, timeout: Duration) -> Result<(), CursorAcpTransportError> {
         if self.spawned {
             return Ok(());
@@ -254,6 +260,36 @@ impl CursorAcpTransport {
             return Err(error);
         }
         Ok(id)
+    }
+
+    /// Send ACP's session-cancel notification without consuming or replacing
+    /// the outstanding `session/prompt` response ID. The return value is false
+    /// only when that exact prompt response was already received and queued;
+    /// callers must still read and validate the original response.
+    pub fn cancel_prompt(
+        &mut self,
+        session_id: SessionId,
+        prompt_request_id: &RequestId,
+    ) -> Result<bool, CursorAcpTransportError> {
+        self.ensure_spawned()?;
+        if self.pending.as_ref() != Some(prompt_request_id) {
+            if self.messages.iter().any(|message| {
+                matches!(message, CursorAcpMessage::Response(response)
+                    if &response.id == prompt_request_id)
+            }) {
+                return Ok(false);
+            }
+            return Err(CursorAcpTransportError::MismatchedResponse);
+        }
+        let notification = CursorAcpCommand::SessionCancel {
+            params: super::SessionCancelParams { session_id },
+        }
+        .notification()
+        .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+        let bytes = serde_json::to_vec(&notification)
+            .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+        self.write_frame(&bytes)?;
+        Ok(true)
     }
 
     /// Respond to a provider extension request (permission/question/plan).
@@ -352,11 +388,26 @@ impl CursorAcpTransport {
         grace: Duration,
         timeout: Duration,
     ) -> Result<(), CursorAcpTransportError> {
+        self.stop_with_grace_hook(grace, timeout, || {})
+    }
+
+    /// Request shutdown and invoke the bounded authority hook while waiting
+    /// for the exact host terminal event. Hook failures are handled by the
+    /// caller and do not suppress host cleanup proof collection.
+    pub fn stop_with_grace_hook(
+        &mut self,
+        grace: Duration,
+        timeout: Duration,
+        mut cleanup_tick: impl FnMut(),
+    ) -> Result<(), CursorAcpTransportError> {
         if grace.is_zero() || grace > Duration::from_secs(60) || timeout.is_zero() {
             return Err(CursorAcpTransportError::InvalidLaunch);
         }
         if self.terminal {
-            self.cleanup_proof = self.host.take_cleanup_proof();
+            cleanup_tick();
+            if self.cleanup_proof.is_none() {
+                self.cleanup_proof = self.host.take_cleanup_proof();
+            }
             return self
                 .cleanup_proof
                 .as_ref()
@@ -371,14 +422,18 @@ impl CursorAcpTransport {
             })
             .map_err(map_host_error)?;
         let deadline = Instant::now() + timeout;
+        cleanup_tick();
         while !self.terminal {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(CursorAcpTransportError::Timeout);
             }
-            self.receive_host(remaining)?;
+            self.receive_host(remaining.min(Duration::from_millis(200)))?;
+            cleanup_tick();
         }
-        self.cleanup_proof = self.host.take_cleanup_proof();
+        if self.cleanup_proof.is_none() {
+            self.cleanup_proof = self.host.take_cleanup_proof();
+        }
         self.cleanup_proof
             .as_ref()
             .map(|_| ())

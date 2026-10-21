@@ -1697,3 +1697,14 @@ The following are prior code baselines and official protocol references. They ar
 ---
 
 **Delivery principle: Completion requires all five: continuity and complete interaction in native Chat; unified execution and precise attribution through Agent Run; no regression in Side Chat product behavior; real integrations for all six Runtimes; and verifiable storage optimization.**
+
+
+### 2026-10-22 governed Stop convergence checkpoint
+
+The first-input ordering candidate `b619a5368` is frozen separately for configured-provider first-turn, same-chat and restart acceptance. Its full Rust baseline passed 1,175 tests across 91 suites with zero failures (97 ignored); the standalone Foundation/process-host build passed. Current native Stop implementation is a separate source candidate and cannot inherit that acceptance automatically.
+
+The remaining four adapters use the same Rust-owned Stop contract as the delivered Codex/Hermes slice: one durable Stop intent, one exact live connection, one provider-specific cancel authorization, then actual provider terminal evidence and matching host cleanup. Cursor sends `session/cancel` as a notification without replacing the pending prompt request. Claude uses a correlated interrupt control request but waits for an actual result. OpenCode records abort acknowledgement separately and accepts only a terminal assistant whose parent is the exact submitted input. Pi waits for exact session-tree input/assistant evidence and settled state after Abort. A cancel acknowledgement never releases admission.
+
+A Stop that wins against natural completion freezes the projection at its accepted cutoff while retaining the actual provider status in evidence. Pre-input Stop requires an empty frozen prefix and a durable phase proving input was not dispatched; combined Claude input and all input-indeterminate phases remain excluded. Cleanup can release process capacity without claiming a provider terminal or authorizing input replay. Lease renewal remains fenced during both normal and stopping waits.
+
+Ownership for this tranche: root owns D1 authorization/finalization, runtime checkpoint validation, executor result wiring, Foundation worker and shared workflow fixtures; adapter contributors own Claude, Cursor/OpenCode and Pi protocol loops and their focused process/PG workflows. All new authority is Rust. Acceptance requires primary public Stop journeys, pre-input and natural-completion races, acknowledgement without terminal evidence, exact-session/connection correlation, and preservation of historical unresolved inputs. Full packaged verification and the full Reader/retention/Fork/consumer goals remain open until independently observed for the final candidate.

@@ -15,7 +15,8 @@
 //! intentionally not exposed here.
 
 use rudder_native_process_transport::{
-    ConnectionLaunchPermit, HostCleanupProof, HostConnection, HostError, HostEvent, OwnedHost,
+    ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof, HostConnection, HostError,
+    HostEvent, OwnedHost,
 };
 use rudder_native_protocol::{Command, ProtocolVersion, lines::LineDecoder};
 use serde_json::{Map, Value, json};
@@ -451,6 +452,7 @@ pub enum ClaudeEvent {
         raw: Value,
     },
     ControlRequest(ClaudeControlRequest),
+    ControlResponse(ClaudeControlResponse),
     UserEcho {
         session_id: Option<ClaudeSessionSelector>,
         message: Value,
@@ -466,6 +468,44 @@ pub struct ClaudeControlRequest {
     request_id: String,
     subtype: String,
     request: Value,
+}
+
+/// Opaque id for the one interrupt request sent over a Claude stream-json
+/// connection. A request receipt is not evidence that Claude stopped; callers
+/// still need the matching terminal `result` and process-host cleanup proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaudeInterruptRequest {
+    request_id: String,
+}
+
+impl ClaudeInterruptRequest {
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClaudeControlResponseStatus {
+    Success,
+    Rejected,
+}
+
+/// The correlated acknowledgement for a client-originated control request.
+/// The provider response body and error text are intentionally discarded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaudeControlResponse {
+    request_id: String,
+    status: ClaudeControlResponseStatus,
+}
+
+impl ClaudeControlResponse {
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub fn status(&self) -> ClaudeControlResponseStatus {
+        self.status
+    }
 }
 
 /// Encode the installed Claude stream-json user envelope. The returned value
@@ -504,6 +544,23 @@ pub fn encode_control_response(
                 "request_id": request.request_id,
                 "response": response,
             },
+        }),
+        MAX_CONTROL_RESPONSE_BYTES,
+    )
+}
+
+/// Encode one client-originated interrupt request. The caller chooses a
+/// unique id and the transport records it before attempting the write, so an
+/// indeterminate host write cannot be retried as a second interrupt.
+pub fn encode_interrupt_request(request_id: &str) -> Result<String, ClaudeError> {
+    if request_id.is_empty() || request_id.len() > 256 || request_id.contains('\0') {
+        return Err(ClaudeError::InvalidControlResponse);
+    }
+    encode_json_line(
+        &json!({
+            "type": "control_request",
+            "request_id": request_id,
+            "request": {"subtype": "interrupt"},
         }),
         MAX_CONTROL_RESPONSE_BYTES,
     )
@@ -638,6 +695,40 @@ fn parse_event(value: Value) -> Result<ClaudeEvent, ClaudeError> {
                 request_id,
                 subtype,
                 request,
+            }))
+        }
+        "control_response" => {
+            let response = object
+                .get("response")
+                .and_then(Value::as_object)
+                .ok_or(ClaudeError::InvalidControlResponse)?;
+            let request_id = response
+                .get("request_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 256 && !value.contains('\0'))
+                .ok_or(ClaudeError::InvalidControlResponse)?
+                .to_owned();
+            let status = match response.get("subtype").and_then(Value::as_str) {
+                Some("success") => {
+                    if response
+                        .get("response")
+                        .is_some_and(|value| !value.is_object())
+                    {
+                        return Err(ClaudeError::InvalidControlResponse);
+                    }
+                    ClaudeControlResponseStatus::Success
+                }
+                Some("error") => {
+                    if response.get("error").and_then(Value::as_str).is_none() {
+                        return Err(ClaudeError::InvalidControlResponse);
+                    }
+                    ClaudeControlResponseStatus::Rejected
+                }
+                _ => return Err(ClaudeError::InvalidControlResponse),
+            };
+            Ok(ClaudeEvent::ControlResponse(ClaudeControlResponse {
+                request_id,
+                status,
             }))
         }
         "user" => Ok(ClaudeEvent::UserEcho {
@@ -783,6 +874,9 @@ pub struct ClaudeTransport {
     owner_token: String,
     session_id: Option<ClaudeSessionSelector>,
     control_lease: ClaudeControlLease,
+    user_input_sent: bool,
+    interrupt_request: Option<ClaudeInterruptRequest>,
+    interrupt_response_seen: bool,
     terminal: Option<ClaudeTurnReceipt>,
     terminal_received: bool,
 }
@@ -859,6 +953,9 @@ impl ClaudeTransport {
             owner_token,
             session_id: None,
             control_lease: ClaudeControlLease::default(),
+            user_input_sent: false,
+            interrupt_request: None,
+            interrupt_response_seen: false,
             terminal: None,
             terminal_received: false,
         })
@@ -888,9 +985,37 @@ impl ClaudeTransport {
         self.session_id.as_ref()
     }
 
+    pub fn connection_receipt(&self) -> ConnectionReceipt {
+        self.host.connection_identity().connection_receipt()
+    }
+
     pub fn send_user_message(&mut self, input: &str) -> Result<(), ClaudeError> {
+        if self.user_input_sent || self.terminal.is_some() || self.terminal_received {
+            return Err(ClaudeError::Busy);
+        }
         let frame = encode_user_message(input)?;
+        self.user_input_sent = true;
         self.write_frame(frame)
+    }
+
+    /// Send at most one Claude-native interrupt for the submitted user input.
+    /// A successful return means the process host accepted the framed write;
+    /// it is not a provider acknowledgement or a terminal observation.
+    pub fn send_interrupt(&mut self) -> Result<ClaudeInterruptRequest, ClaudeError> {
+        if !self.user_input_sent
+            || self.interrupt_request.is_some()
+            || self.terminal.is_some()
+            || self.terminal_received
+        {
+            return Err(ClaudeError::Busy);
+        }
+        let request = ClaudeInterruptRequest {
+            request_id: format!("req_stop_{}", Uuid::new_v4().simple()),
+        };
+        let frame = encode_interrupt_request(request.request_id())?;
+        self.interrupt_request = Some(request.clone());
+        self.write_frame(frame)?;
+        Ok(request)
     }
 
     /// Respond to a live Claude control request. The request id is copied from
@@ -1025,6 +1150,14 @@ impl ClaudeTransport {
                 self.terminal = Some(receipt_from_result(event.clone())?);
             }
             ClaudeEvent::ControlRequest(request) => self.control_lease.observe(request)?,
+            ClaudeEvent::ControlResponse(response) => {
+                validate_interrupt_response(
+                    self.interrupt_request.as_ref(),
+                    self.interrupt_response_seen,
+                    response,
+                )?;
+                self.interrupt_response_seen = true;
+            }
             ClaudeEvent::Unknown { .. } => {}
         }
         if self.events.len() >= MAX_EVENT_QUEUE {
@@ -1072,6 +1205,19 @@ impl ClaudeTransport {
         }
         Ok(())
     }
+}
+
+fn validate_interrupt_response(
+    request: Option<&ClaudeInterruptRequest>,
+    response_seen: bool,
+    response: &ClaudeControlResponse,
+) -> Result<(), ClaudeError> {
+    if request.map(ClaudeInterruptRequest::request_id) != Some(response.request_id())
+        || response_seen
+    {
+        return Err(ClaudeError::InvalidControlResponse);
+    }
+    Ok(())
 }
 
 fn encode_json_line(value: &Value, max_bytes: usize) -> Result<String, ClaudeError> {
@@ -1299,6 +1445,94 @@ mod tests {
         assert_eq!(receipt.status(), ClaudeTurnStatus::Completed);
         assert_eq!(receipt.summary(), Some("done"));
         assert_eq!(receipt.total_cost_usd_micros(), Some(1_000));
+    }
+
+    #[test]
+    fn interrupt_wire_shape_and_ack_are_correlated_and_nonterminal() {
+        let frame = encode_interrupt_request("req_stop_42").unwrap();
+        assert_eq!(frame.bytes().filter(|byte| *byte == b'\n').count(), 1);
+        let wire: Value = serde_json::from_str(frame.trim_end()).unwrap();
+        assert_eq!(wire["type"], "control_request");
+        assert_eq!(wire["request_id"], "req_stop_42");
+        assert_eq!(wire["request"], json!({"subtype":"interrupt"}));
+
+        let parsed = ClaudeEvent::parse(
+            br#"{"type":"control_response","response":{"subtype":"success","request_id":"req_stop_42","response":{"still_queued":[]}}}"#,
+        )
+        .unwrap();
+        let ClaudeEvent::ControlResponse(response) = parsed else {
+            panic!("an interrupt ACK must remain a control-response event");
+        };
+        assert_eq!(response.request_id(), "req_stop_42");
+        assert_eq!(response.status(), ClaudeControlResponseStatus::Success);
+        assert!(receipt_from_result(ClaudeEvent::ControlResponse(response.clone())).is_err());
+        assert!(
+            validate_interrupt_response(
+                Some(&ClaudeInterruptRequest {
+                    request_id: "req_stop_42".into(),
+                }),
+                false,
+                &response,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_interrupt_response(
+                Some(&ClaudeInterruptRequest {
+                    request_id: "req_other".into(),
+                }),
+                false,
+                &response,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_interrupt_response(
+                Some(&ClaudeInterruptRequest {
+                    request_id: "req_stop_42".into(),
+                }),
+                true,
+                &response,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rejected_interrupt_ack_is_typed_without_retaining_provider_text() {
+        let event = ClaudeEvent::parse(
+            br#"{"type":"control_response","response":{"subtype":"error","request_id":"req_stop_42","error":"private provider detail"}}"#,
+        )
+        .unwrap();
+        let ClaudeEvent::ControlResponse(response) = event else {
+            panic!("expected correlated control response");
+        };
+        assert_eq!(response.status(), ClaudeControlResponseStatus::Rejected);
+        assert_eq!(response.request_id(), "req_stop_42");
+        assert!(!format!("{response:?}").contains("private provider detail"));
+
+        for invalid in [
+            br#"{"type":"control_response","response":{"subtype":"success"}}"#.as_slice(),
+            br#"{"type":"control_response","response":{"subtype":"other","request_id":"req_stop_42"}}"#.as_slice(),
+            br#"{"type":"control_response","response":{"subtype":"success","request_id":"req_stop_42","response":[]}}"#.as_slice(),
+            br#"{"type":"control_response","response":{"subtype":"error","request_id":"req_stop_42"}}"#.as_slice(),
+        ] {
+            assert!(ClaudeEvent::parse(invalid).is_err());
+        }
+        assert!(encode_interrupt_request("").is_err());
+        assert!(encode_interrupt_request(&"x".repeat(257)).is_err());
+    }
+
+    #[test]
+    fn interrupted_execution_records_actual_terminal_result_not_ack_as_success() {
+        let terminal = ClaudeEvent::parse(
+            br#"{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"05a82e73-f42d-4a40-9323-e58356868e6b"}"#,
+        )
+        .unwrap();
+        let receipt = receipt_from_result(terminal).unwrap();
+        assert_eq!(receipt.status(), ClaudeTurnStatus::Failed);
+        assert_eq!(receipt.summary(), None);
+        assert_eq!(receipt.session_id().as_str(), session().as_str());
     }
 
     #[test]

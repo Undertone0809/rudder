@@ -277,6 +277,39 @@ def main(argv=None):
         );
     }
 
+    pub(crate) fn enable_claude_runtime(&mut self, executable: PathBuf, profiles: PathBuf) {
+        let context = self.context.take().expect("fixture context");
+        self.context = Some(
+            context
+                .with_executable_search_path("/usr/bin:/bin".into())
+                .expect("fixture trusted PATH")
+                .with_claude_runtime(executable, profiles)
+                .expect("attach Claude fixture runtime"),
+        );
+    }
+
+    pub(crate) fn enable_cursor_runtime(&mut self, executable: PathBuf, profiles: PathBuf) {
+        let context = self.context.take().expect("fixture context");
+        self.context = Some(
+            context
+                .with_executable_search_path("/usr/bin:/bin".into())
+                .expect("fixture trusted PATH")
+                .with_cursor_runtime(executable, profiles)
+                .expect("attach Cursor fixture runtime"),
+        );
+    }
+
+    pub(crate) fn enable_pi_runtime(&mut self, node: PathBuf, entry: PathBuf, profiles: PathBuf) {
+        let context = self.context.take().expect("fixture context");
+        self.context = Some(
+            context
+                .with_executable_search_path("/usr/bin:/bin".into())
+                .expect("fixture trusted PATH")
+                .with_pi_runtime(node, entry, profiles)
+                .expect("attach Pi fixture runtime"),
+        );
+    }
+
     pub(crate) fn enable_opencode_runtime(&mut self, executable: PathBuf) {
         let context = self
             .context

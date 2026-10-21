@@ -6,17 +6,23 @@
 //! callers receive a receipt only after a matching completed assistant message
 //! is read back from the same Session.
 
-use crate::{HostPaths, native_turn::NativeTurnAuthority};
-use rudder_d1_persistence::native_chat::config::OpenCodeLocalConfig;
-use rudder_d1_persistence::runtime_bindings;
+use crate::{HostExecutionFailure, HostPaths, native_turn::NativeTurnAuthority};
+use rudder_d1_persistence::{
+    native_chat::{
+        config::OpenCodeLocalConfig,
+        execution::{NativeInterruptTarget, StopIntent},
+    },
+    runtime_bindings,
+};
 use rudder_native_process_transport::{
-    ConnectionLaunchPermit, HostCleanupProof, HostConnection, HostError, HostEvent, OwnedHost,
+    ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof, HostConnection, HostError,
+    HostEvent, OwnedHost,
 };
 use rudder_native_protocol::{Command, ProtocolVersion};
 use rudder_opencode_native::{
     AsyncPromptOutcome, CreateSessionBody, CreateSessionRequest, MessageInfo, MessageListQuery,
-    OpenCodeClient, OpenCodeError, OpenCodeSessionSelector, OpenCodeTurnReceipt, OpenCodeWaitError,
-    Prompt, PromptPart, PromptQuery, SessionModel,
+    OpenCodeClient, OpenCodeError, OpenCodeInputProgress, OpenCodeInputTerminal,
+    OpenCodeSessionSelector, OpenCodeWaitError, Prompt, PromptPart, PromptQuery, SessionModel,
 };
 use serde_json::Value;
 use std::{
@@ -32,6 +38,8 @@ use uuid::Uuid;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
+const CLEANUP_TICK_INTERVAL: Duration = Duration::from_secs(4);
+const CLEANUP_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
 pub enum OpenCodeExecutionError {
@@ -75,10 +83,14 @@ pub struct OpenCodeExecutionObservation {
     pub session: OpenCodeSessionSelector,
     /// The native `msg_...` identifier assigned to the submitted user input.
     /// This is the D1 request correlation key; the assistant message ID remains
-    /// separate provider evidence in `turn`.
+    /// separate provider evidence in `terminal`.
     pub request_id: String,
-    pub turn: OpenCodeTurnReceipt,
+    pub terminal: OpenCodeInputTerminal,
+    pub connection: ConnectionReceipt,
     pub cleanup: HostCleanupProof,
+    pub stop: Option<StopIntent>,
+    /// Provider abort acknowledgment is evidence only; it is not a terminal.
+    pub cancel_acknowledged: Option<bool>,
 }
 
 /// Execute one OpenCode input from a trusted resolved configuration. The
@@ -95,7 +107,7 @@ pub(crate) fn execute_turn(
     owner_token: &str,
     authority: &mut NativeTurnAuthority<'_>,
     timeout: Duration,
-) -> Result<OpenCodeExecutionObservation, OpenCodeExecutionError> {
+) -> Result<OpenCodeExecutionObservation, HostExecutionFailure<OpenCodeExecutionError>> {
     if !config.endpoint_is_valid()
         || timeout.is_zero()
         || timeout > MAX_TURN_TIMEOUT
@@ -106,7 +118,7 @@ pub(crate) fn execute_turn(
         || attempt_id.is_empty()
         || owner_token.is_empty()
     {
-        return Err(OpenCodeExecutionError::InvalidConfiguration);
+        return Err(OpenCodeExecutionError::InvalidConfiguration.into());
     }
     // Validate the provider selection before launching any child. A malformed
     // model must never create an owned Server that can only be cleaned up via
@@ -138,7 +150,27 @@ pub(crate) fn execute_turn(
         attempt_id,
         owner_token,
         timeout,
-    )?;
+    )
+    .map_err(HostExecutionFailure::from)?;
+    let connection = server.host.connection_identity().connection_receipt();
+    let connection_id = connection.connection_receipt_id().to_owned();
+    if let Err(error) = authority.register_connection(connection) {
+        let mut next_cleanup_tick = Instant::now();
+        let cleanup_result = server.stop_with_tick(config.cleanup_grace, || {
+            let now = Instant::now();
+            if now >= next_cleanup_tick {
+                let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+                next_cleanup_tick = Instant::now() + CLEANUP_TICK_INTERVAL;
+            }
+        });
+        let cleanup = cleanup_result.ok();
+        let _ = authority.cleanup_tick(Instant::now() + CLEANUP_OPERATION_TIMEOUT);
+        return Err(HostExecutionFailure {
+            error: OpenCodeExecutionError::Persistence(error),
+            cleanup: cleanup.map(Box::new),
+        });
+    }
+
     let result = (|| {
         let client = OpenCodeClient::new(
             server.url().clone(),
@@ -149,6 +181,7 @@ pub(crate) fn execute_turn(
             OpenCodeSessionSelector::from_persisted(value)
                 .map_err(|_| OpenCodeExecutionError::InvalidSession)?
         } else {
+            ensure_not_stopped(authority)?;
             let created = authority.start_session(|| {
                 block_on_local(handle, async {
                     client
@@ -168,15 +201,23 @@ pub(crate) fn execute_turn(
             })??;
             let session = OpenCodeSessionSelector::from_persisted(&created.id)
                 .map_err(|_| OpenCodeExecutionError::InvalidSession)?;
-            authority.record_session(session.as_str())?;
+            authority
+                .record_session(session.as_str())
+                .map_err(OpenCodeExecutionError::from)?;
             session
         };
         if existing_session.is_some() {
-            authority.record_session(session.as_str())?;
+            authority
+                .record_session(session.as_str())
+                .map_err(OpenCodeExecutionError::from)?;
         }
+        ensure_not_stopped(authority)?;
         let directory = configured_directory(config);
-        let known_assistant_ids = block_on_local(handle, async {
+        let known_assistant_ids = block_on_local(
+            handle,
             client
+                .clone()
+                .with_timeout(timeout.min(Duration::from_secs(2)))
                 .get_messages(
                     session.as_str(),
                     MessageListQuery {
@@ -185,9 +226,8 @@ pub(crate) fn execute_turn(
                         limit: Some(256),
                         before: None,
                     },
-                )
-                .await
-        })?
+                ),
+        )?
         .into_iter()
         .filter_map(|message| match message.info {
             MessageInfo::Assistant(assistant) => Some(assistant.id),
@@ -195,6 +235,11 @@ pub(crate) fn execute_turn(
         })
         .collect::<Vec<_>>();
         let request_id = format!("msg_{}", Uuid::new_v4().simple());
+        // This read-only guard prevents a Stop already visible at this
+        // boundary from dispatching another input. If Stop races the D1
+        // one-use input authorization below, that single authorized request
+        // remains bound to this exact ID and is cancelled after acceptance.
+        ensure_not_stopped(authority)?;
         let outcome = authority.submit(&request_id, |body| {
             block_on_local(handle, async {
                 client
@@ -239,31 +284,182 @@ pub(crate) fn execute_turn(
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        let turn = block_on_local(handle, async {
-            client
-                .wait_for_completed_assistant_for_input(
-                    session.as_str(),
-                    &known_refs,
-                    &request_id,
-                    deadline,
-                    POLL_INTERVAL,
-                )
-                .await
-        })?;
-        if turn.user_message_id.as_deref() != Some(request_id.as_str()) {
-            return Err(OpenCodeExecutionError::PromptNotAccepted);
-        }
-        authority.terminal(session.as_str(), &request_id)?;
-        Ok::<_, OpenCodeExecutionError>((session, request_id, turn))
+        let (terminal, cancel_acknowledged) = wait_for_input_terminal(
+            handle,
+            &client,
+            authority,
+            &session,
+            &request_id,
+            &known_refs,
+            deadline,
+        )?;
+        Ok::<_, OpenCodeExecutionError>((session, request_id, terminal, cancel_acknowledged))
     })();
-    let cleanup = server.stop(config.cleanup_grace)?;
-    let (session, request_id, turn) = result?;
+    let mut next_cleanup_tick = Instant::now();
+    let cleanup_result = server.stop_with_tick(config.cleanup_grace, || {
+        let now = Instant::now();
+        if now >= next_cleanup_tick {
+            let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+            next_cleanup_tick = Instant::now() + CLEANUP_TICK_INTERVAL;
+        }
+    });
+    // This final bounded probe captures a Stop which raced the last lifecycle
+    // event. A DB tick failure must not discard the already-observed terminal
+    // message or the host cleanup proof; the fenced finalizer decides whether
+    // authority is still valid.
+    let _ = authority.cleanup_tick(Instant::now() + CLEANUP_OPERATION_TIMEOUT);
+    let cleanup = match cleanup_result {
+        Ok(cleanup) if cleanup.connection_receipt_id() == connection_id => cleanup,
+        Ok(_) => {
+            return Err(HostExecutionFailure {
+                error: OpenCodeExecutionError::CleanupUnavailable,
+                cleanup: None,
+            });
+        }
+        Err(error) => {
+            return Err(HostExecutionFailure {
+                error,
+                cleanup: None,
+            });
+        }
+    };
+    let (session, request_id, terminal, cancel_acknowledged) = match result {
+        Ok(result) => result,
+        Err(error) => {
+            return Err(HostExecutionFailure {
+                error,
+                cleanup: Some(Box::new(cleanup)),
+            });
+        }
+    };
+    // The cleanup hook above used a fresh DB deadline and only observes/binds
+    // Stop; do not use the possibly expired input deadline here and discard
+    // the exact provider terminal if this best-effort refresh failed.
+    let connection = match authority.take_connection() {
+        Ok(connection) if connection.connection_receipt_id() == connection_id => connection,
+        Ok(_) => {
+            return Err(HostExecutionFailure {
+                error: OpenCodeExecutionError::CleanupUnavailable,
+                cleanup: Some(Box::new(cleanup)),
+            });
+        }
+        Err(error) => {
+            return Err(HostExecutionFailure {
+                error: OpenCodeExecutionError::Persistence(error),
+                cleanup: Some(Box::new(cleanup)),
+            });
+        }
+    };
     Ok(OpenCodeExecutionObservation {
         session,
         request_id,
-        turn,
+        terminal,
+        connection,
         cleanup,
+        stop: authority.stop().cloned(),
+        cancel_acknowledged,
     })
+}
+
+fn ensure_not_stopped(
+    authority: &mut NativeTurnAuthority<'_>,
+) -> Result<(), OpenCodeExecutionError> {
+    let _ = authority
+        .poll_stop()
+        .map_err(OpenCodeExecutionError::from)?;
+    if authority.stop().is_some() {
+        return Err(OpenCodeExecutionError::Persistence(
+            runtime_bindings::Error::Http(409, "Native OpenCode execution is stopping".into()),
+        ));
+    }
+    Ok(())
+}
+
+fn wait_for_input_terminal(
+    handle: &Handle,
+    client: &OpenCodeClient,
+    authority: &mut NativeTurnAuthority<'_>,
+    session: &OpenCodeSessionSelector,
+    request_id: &str,
+    known_assistant_ids: &[&str],
+    deadline: Instant,
+) -> Result<(OpenCodeInputTerminal, Option<bool>), OpenCodeExecutionError> {
+    let target = NativeInterruptTarget::OpenCode {
+        session_id: session.as_str().to_owned(),
+        request_id: request_id.to_owned(),
+    };
+    let mut cancel_acknowledged = None;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(OpenCodeWaitError::Deadline.into());
+        }
+        // Read terminal state before reserving an interrupt. A provider
+        // completion that wins this race is authoritative and needs no abort.
+        let progress = block_on_local(
+            handle,
+            client
+                .clone()
+                .with_timeout(remaining.min(Duration::from_secs(2)))
+                .poll_input_terminal(session.as_str(), known_assistant_ids, request_id),
+        )?;
+        if let OpenCodeInputProgress::Terminal(terminal) = progress {
+            validate_terminal_identity(&terminal, session.as_str(), request_id)?;
+            authority
+                .terminal(session.as_str(), request_id)
+                .map_err(OpenCodeExecutionError::from)?;
+            return Ok((terminal, cancel_acknowledged));
+        }
+
+        if let Some(permit) = authority
+            .poll_stop()
+            .map_err(OpenCodeExecutionError::from)?
+        {
+            let connection = authority
+                .connection()
+                .ok_or(OpenCodeExecutionError::InvalidSession)?;
+            cancel_acknowledged = Some(
+                permit
+                    .dispatch(connection, &target, || {
+                        block_on_local(
+                            handle,
+                            client
+                                .clone()
+                                .with_timeout(remaining.min(Duration::from_secs(2)))
+                                .abort(session.as_str()),
+                        )
+                    })
+                    .map_err(OpenCodeExecutionError::from)??,
+            );
+        }
+
+        let sleep = POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now()));
+        if sleep.is_zero() {
+            return Err(OpenCodeWaitError::Deadline.into());
+        }
+        std::thread::sleep(sleep);
+    }
+}
+
+fn validate_terminal_identity(
+    terminal: &OpenCodeInputTerminal,
+    session_id: &str,
+    request_id: &str,
+) -> Result<(), OpenCodeExecutionError> {
+    let matches = match terminal {
+        OpenCodeInputTerminal::Completed(receipt) => {
+            receipt.session_id == session_id
+                && receipt.user_message_id.as_deref() == Some(request_id)
+        }
+        OpenCodeInputTerminal::Failed(receipt) => {
+            receipt.session_id == session_id && receipt.user_message_id == request_id
+        }
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(OpenCodeExecutionError::PromptNotAccepted)
+    }
 }
 
 /// A host-owned OpenCode Server. The Server is started as the process-host's
@@ -410,13 +606,18 @@ impl OpenCodeServerHost {
         &self.url
     }
 
-    fn stop(&mut self, timeout: Duration) -> Result<HostCleanupProof, OpenCodeExecutionError> {
+    fn stop_with_tick(
+        &mut self,
+        timeout: Duration,
+        mut cleanup_tick: impl FnMut(),
+    ) -> Result<HostCleanupProof, OpenCodeExecutionError> {
         self.host.send(Command::Stop {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(self.request_id.clone()),
             grace_ms: Some(timeout.as_millis().clamp(1, u64::MAX as u128) as u64),
         })?;
         let deadline = Instant::now() + timeout + Duration::from_secs(2);
+        cleanup_tick();
         while Instant::now() < deadline {
             match self.host.receive(Duration::from_millis(100)) {
                 Ok(HostEvent::Lifecycle(value))
@@ -434,6 +635,7 @@ impl OpenCodeServerHost {
                 Err(HostError::Timeout) => {}
                 Err(_) => return Err(OpenCodeExecutionError::CleanupUnavailable),
             }
+            cleanup_tick();
         }
         Err(OpenCodeExecutionError::CleanupUnavailable)
     }

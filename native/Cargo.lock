@@ -2336,6 +2336,7 @@ dependencies = [
  "rudder-d1-persistence",
  "rudder-native-chat-executor",
  "rudder-native-process-transport",
+ "rudder-opencode-native",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",
  "serde",

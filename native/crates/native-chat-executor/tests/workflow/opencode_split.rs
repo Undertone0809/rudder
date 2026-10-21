@@ -1,5 +1,6 @@
 use crate::fixture::*;
 use rudder_native_chat_executor::NativeExecutionObservation;
+use rudder_opencode_native::OpenCodeInputTerminal;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -142,18 +143,15 @@ async fn opencode_records_fresh_session_before_one_exact_input_dispatch() {
     };
 
     assert_eq!(observation.observation.session.as_str(), "ses_split");
+    let OpenCodeInputTerminal::Completed(turn) = &observation.observation.terminal else {
+        panic!("synthetic response should be a completed terminal");
+    };
     assert_eq!(
-        observation.observation.turn.user_message_id.as_deref(),
+        turn.user_message_id.as_deref(),
         Some(observation.observation.request_id.as_str())
     );
-    assert_eq!(
-        observation.observation.turn.assistant_message_id,
-        "msg_split_assistant"
-    );
-    assert_eq!(
-        observation.observation.turn.final_text,
-        "synthetic OpenCode answer"
-    );
+    assert_eq!(turn.assistant_message_id, "msg_split_assistant");
+    assert_eq!(turn.final_text, "synthetic OpenCode answer");
     assert_eq!(checkpoint_at_prompt.0, "input_indeterminate");
     assert_eq!(checkpoint_at_prompt.1["opencodeSession"], "ses_split");
     assert_eq!(
@@ -212,6 +210,41 @@ async fn opencode_records_fresh_session_before_one_exact_input_dispatch() {
     assert_eq!(phase, "provider_terminal_observed");
     assert_eq!(checkpoint["opencodeSession"], "ses_split");
     assert_eq!(checkpoint["opencodePromptRequestId"], prompt_id);
+    let provider = &observation.observation;
+    let rudder_opencode_native::OpenCodeInputTerminal::Completed(terminal) = &provider.terminal
+    else {
+        panic!("expected completed exact-input OpenCode terminal");
+    };
+    let turn = rudder_d1_persistence::native_chat::execution::NativeProviderTurnReceipt {
+        provider: rudder_d1_persistence::native_chat::execution::NativeProviderKind::OpenCode,
+        session_id: terminal.session_id.clone(),
+        request_id: provider.request_id.clone(),
+        final_text: Some(terminal.final_text.clone()),
+        status: rudder_d1_persistence::native_chat::execution::NativeProviderStatus::Completed,
+        usage: None,
+        evidence: json!({"assistantMessageId":terminal.assistant_message_id}),
+    };
+    let finalized = rudder_d1_persistence::native_chat::execution::finalize_native(
+        &database.pool,
+        &observation.execution_principal,
+        &observation.fence,
+        &turn,
+        &provider.cleanup,
+    )
+    .await
+    .expect("first native OpenCode input commits its terminal projection");
+    assert_eq!(finalized["status"], "succeeded");
+    assert_eq!(finalized["nativeAdmissionHold"], false);
+    let retry = rudder_d1_persistence::native_chat::execution::finalize_native(
+        &database.pool,
+        &observation.execution_principal,
+        &observation.fence,
+        &turn,
+        &provider.cleanup,
+    )
+    .await
+    .expect("same exact terminal receipt is idempotent");
+    assert_eq!(retry, finalized);
 }
 
 fn install_fake_opencode(directory: &Path) -> PathBuf {

@@ -173,6 +173,27 @@ pub struct OpenCodeTurnReceipt {
     pub cost: Option<f64>,
 }
 
+/// Exact assistant terminal for one client-assigned input. Provider errors
+/// carry only native identity, never the provider's arbitrary error payload.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OpenCodeInputTerminal {
+    Completed(OpenCodeTurnReceipt),
+    Failed(OpenCodeProviderErrorTerminal),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenCodeProviderErrorTerminal {
+    pub session_id: String,
+    pub user_message_id: String,
+    pub assistant_message_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum OpenCodeInputProgress {
+    Pending,
+    Terminal(OpenCodeInputTerminal),
+}
+
 #[derive(Debug, Error)]
 pub enum OpenCodeWaitError {
     #[error("OpenCode input message identifier is invalid")]
@@ -545,6 +566,83 @@ impl OpenCodeClient {
         .await
     }
 
+    /// Inspect one bounded message-history page for the exact terminal
+    /// assistant message correlated to a client-assigned input. Returning
+    /// `None` means the prompt is still pending; an HTTP prompt acceptance or
+    /// abort acknowledgment is never substituted for a terminal message.
+    pub async fn poll_completed_assistant_for_input(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        input_message_id: &str,
+    ) -> Result<Option<OpenCodeTurnReceipt>, OpenCodeWaitError> {
+        if validate_identifier(input_message_id, "msg").is_err() {
+            return Err(OpenCodeWaitError::InvalidInputMessageId);
+        }
+        self.poll_completed_assistant_inner(session_id, known_assistant_ids, Some(input_message_id))
+            .await
+    }
+
+    /// Poll one bounded history page for the exact input's terminal status.
+    /// An error is terminal only when it is on an assistant message for this
+    /// Session, its `parentID` is the client-assigned input ID, and the native
+    /// message carries a completion marker. No provider error text is copied
+    /// into the typed receipt.
+    pub async fn poll_input_terminal(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        input_message_id: &str,
+    ) -> Result<OpenCodeInputProgress, OpenCodeWaitError> {
+        if validate_identifier(input_message_id, "msg").is_err() {
+            return Err(OpenCodeWaitError::InvalidInputMessageId);
+        }
+        let messages = self
+            .get_messages(
+                session_id,
+                MessageListQuery {
+                    directory: None,
+                    workspace: None,
+                    limit: Some(256),
+                    before: None,
+                },
+            )
+            .await
+            .map_err(|error| OpenCodeWaitError::Provider(error.to_string()))?;
+        Ok(poll_input_terminal_from_messages(
+            &messages,
+            session_id,
+            known_assistant_ids,
+            input_message_id,
+        ))
+    }
+
+    async fn poll_completed_assistant_inner(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        expected_input_message_id: Option<&str>,
+    ) -> Result<Option<OpenCodeTurnReceipt>, OpenCodeWaitError> {
+        let messages = self
+            .get_messages(
+                session_id,
+                MessageListQuery {
+                    directory: None,
+                    workspace: None,
+                    limit: Some(256),
+                    before: None,
+                },
+            )
+            .await
+            .map_err(|error| OpenCodeWaitError::Provider(error.to_string()))?;
+        completed_assistant_from_messages(
+            &messages,
+            session_id,
+            known_assistant_ids,
+            expected_input_message_id,
+        )
+    }
+
     async fn wait_for_completed_assistant_inner(
         &self,
         session_id: &str,
@@ -553,78 +651,19 @@ impl OpenCodeClient {
         deadline: Instant,
         poll_interval: Duration,
     ) -> Result<OpenCodeTurnReceipt, OpenCodeWaitError> {
-        let mut first_error = None;
         loop {
             if Instant::now() >= deadline {
                 return Err(OpenCodeWaitError::Deadline);
             }
-            let messages = self
-                .get_messages(
+            if let Some(receipt) = self
+                .poll_completed_assistant_inner(
                     session_id,
-                    MessageListQuery {
-                        directory: None,
-                        workspace: None,
-                        limit: Some(256),
-                        before: None,
-                    },
+                    known_assistant_ids,
+                    expected_input_message_id,
                 )
-                .await
-                .map_err(|error| OpenCodeWaitError::Provider(error.to_string()))?;
-            let mut latest: Option<(AssistantMessage, Option<String>)> = None;
-            for message in &messages {
-                let MessageInfo::Assistant(assistant) = &message.info else {
-                    continue;
-                };
-                if known_assistant_ids
-                    .iter()
-                    .any(|known| *known == assistant.id)
-                {
-                    continue;
-                }
-                if let Some(expected) = expected_input_message_id
-                    && assistant.parent_id.as_deref() != Some(expected)
-                {
-                    continue;
-                }
-                if let Some(error) = assistant.error.as_ref() {
-                    first_error.get_or_insert_with(|| error.to_string());
-                    continue;
-                }
-                let terminal = assistant
-                    .time
-                    .as_ref()
-                    .and_then(|time| time.completed)
-                    .is_some()
-                    || assistant.finish.is_some();
-                if !terminal {
-                    continue;
-                }
-                let user_id = match expected_input_message_id {
-                    Some(expected) => Some(expected.to_owned()),
-                    None => assistant
-                        .parent_id
-                        .clone()
-                        .or_else(|| latest_user_message_id(&messages)),
-                };
-                if latest.as_ref().is_none_or(|(current, _)| {
-                    message_sort_key(assistant) >= message_sort_key(current)
-                }) {
-                    latest = Some((assistant.as_ref().clone(), user_id));
-                }
-            }
-            if let Some((assistant, user_message_id)) = latest {
-                let assistant_message_id = assistant.id.clone();
-                return Ok(OpenCodeTurnReceipt {
-                    session_id: session_id.to_owned(),
-                    user_message_id,
-                    assistant_message_id: assistant_message_id.clone(),
-                    final_text: assistant_text(&messages, &assistant_message_id),
-                    tokens: assistant.tokens,
-                    cost: assistant.cost,
-                });
-            }
-            if let Some(error) = first_error.take() {
-                return Err(OpenCodeWaitError::Provider(error));
+                .await?
+            {
+                return Ok(receipt);
             }
             tokio::time::sleep(
                 poll_interval.min(deadline.saturating_duration_since(Instant::now())),
@@ -712,6 +751,138 @@ fn message_sort_key(message: &AssistantMessage) -> u64 {
         .as_ref()
         .map(|time| time.completed.unwrap_or(time.created))
         .unwrap_or_default()
+}
+
+fn completed_assistant_from_messages(
+    messages: &[MessageEnvelope],
+    session_id: &str,
+    known_assistant_ids: &[&str],
+    expected_input_message_id: Option<&str>,
+) -> Result<Option<OpenCodeTurnReceipt>, OpenCodeWaitError> {
+    let mut first_error = None;
+    let mut latest: Option<(&AssistantMessage, Option<String>)> = None;
+    for message in messages {
+        let MessageInfo::Assistant(assistant) = &message.info else {
+            continue;
+        };
+        if known_assistant_ids
+            .iter()
+            .any(|known| *known == assistant.id)
+            || expected_input_message_id.is_some_and(|expected| {
+                assistant.session_id.as_deref() != Some(session_id)
+                    || assistant.parent_id.as_deref() != Some(expected)
+            })
+        {
+            continue;
+        }
+        if let Some(error) = assistant.error.as_ref() {
+            first_error.get_or_insert_with(|| error.to_string());
+            continue;
+        }
+        let terminal = assistant
+            .time
+            .as_ref()
+            .and_then(|time| time.completed)
+            .is_some()
+            || assistant.finish.is_some();
+        if !terminal {
+            continue;
+        }
+        let user_id = match expected_input_message_id {
+            Some(expected) => Some(expected.to_owned()),
+            None => assistant
+                .parent_id
+                .clone()
+                .or_else(|| latest_user_message_id(messages)),
+        };
+        if latest
+            .as_ref()
+            .is_none_or(|(current, _)| message_sort_key(assistant) >= message_sort_key(current))
+        {
+            latest = Some((assistant.as_ref(), user_id));
+        }
+    }
+    if let Some((assistant, user_message_id)) = latest {
+        let assistant_message_id = assistant.id.clone();
+        return Ok(Some(OpenCodeTurnReceipt {
+            session_id: session_id.to_owned(),
+            user_message_id,
+            assistant_message_id: assistant_message_id.clone(),
+            final_text: assistant_text(messages, &assistant_message_id),
+            tokens: assistant.tokens.clone(),
+            cost: assistant.cost,
+        }));
+    }
+    if let Some(error) = first_error {
+        return Err(OpenCodeWaitError::Provider(error));
+    }
+    Ok(None)
+}
+
+fn poll_input_terminal_from_messages(
+    messages: &[MessageEnvelope],
+    session_id: &str,
+    known_assistant_ids: &[&str],
+    input_message_id: &str,
+) -> OpenCodeInputProgress {
+    let mut latest: Option<(&AssistantMessage, bool)> = None;
+    for message in messages {
+        let MessageInfo::Assistant(assistant) = &message.info else {
+            continue;
+        };
+        if known_assistant_ids
+            .iter()
+            .any(|known| *known == assistant.id)
+            || assistant.session_id.as_deref() != Some(session_id)
+            || assistant.parent_id.as_deref() != Some(input_message_id)
+            || validate_identifier(&assistant.id, "msg").is_err()
+        {
+            continue;
+        }
+        let is_error = assistant.error.is_some();
+        // OpenCode stores one assistant message per model step. The native
+        // session loop treats `tool-calls` and `unknown` as nonterminal; keep
+        // that distinction when resolving this exact input's final outcome.
+        let terminal = assistant
+            .time
+            .as_ref()
+            .and_then(|time| time.completed)
+            .is_some()
+            && assistant
+                .finish
+                .as_deref()
+                .is_some_and(|finish| !matches!(finish, "tool-calls" | "unknown"));
+        if !terminal {
+            continue;
+        }
+        if latest
+            .as_ref()
+            .is_none_or(|(current, _)| message_sort_key(assistant) >= message_sort_key(current))
+        {
+            latest = Some((assistant.as_ref(), is_error));
+        }
+    }
+    match latest {
+        Some((assistant, true)) => OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Failed(
+            OpenCodeProviderErrorTerminal {
+                session_id: session_id.to_owned(),
+                user_message_id: input_message_id.to_owned(),
+                assistant_message_id: assistant.id.clone(),
+            },
+        )),
+        Some((assistant, false)) => {
+            let assistant_message_id = assistant.id.clone();
+            OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Completed(OpenCodeTurnReceipt {
+                session_id: session_id.to_owned(),
+                user_message_id: Some(input_message_id.to_owned()),
+                assistant_message_id: assistant_message_id.clone(),
+                final_text: assistant_text(messages, &assistant_message_id),
+                tokens: assistant.tokens.clone(),
+                cost: assistant.cost,
+            }))
+        }
+        None => OpenCodeInputProgress::Pending,
+    }
 }
 
 fn latest_user_message_id(messages: &[MessageEnvelope]) -> Option<String> {
@@ -1579,6 +1750,181 @@ mod tests {
             }
         );
         assert!(!outcome.is_terminal());
+    }
+
+    fn assistant_message(
+        id: &str,
+        session_id: &str,
+        parent_id: &str,
+        completed: Option<u64>,
+        finish: Option<&str>,
+        error: Option<Value>,
+        text: Option<&str>,
+    ) -> MessageEnvelope {
+        serde_json::from_value(serde_json::json!({
+            "info": {
+                "id": id,
+                "sessionID": session_id,
+                "role": "assistant",
+                "time": {"created": 20, "completed": completed},
+                "parentID": parent_id,
+                "modelID": "synthetic-model",
+                "providerID": "synthetic-provider",
+                "finish": finish,
+                "error": error
+            },
+            "parts": text.map(|text| vec![serde_json::json!({
+                "id": "prt_terminal",
+                "sessionID": session_id,
+                "messageID": id,
+                "type": "text",
+                "text": text
+            })]).unwrap_or_default()
+        }))
+        .expect("typed assistant fixture")
+    }
+
+    #[test]
+    fn stop_terminal_error_requires_exact_session_parent_and_completion_marker() {
+        let messages = vec![
+            assistant_message(
+                "msg_wrong_parent",
+                "ses_native",
+                "msg_other_input",
+                Some(21),
+                Some("error"),
+                Some(serde_json::json!({"message": "private provider error"})),
+                None,
+            ),
+            assistant_message(
+                "msg_wrong_session",
+                "ses_other",
+                "msg_exact_input",
+                Some(22),
+                Some("error"),
+                Some(serde_json::json!({"message": "private provider error"})),
+                None,
+            ),
+            assistant_message(
+                "msg_exact_error",
+                "ses_native",
+                "msg_exact_input",
+                Some(23),
+                Some("error"),
+                Some(serde_json::json!({"message": "private provider error"})),
+                None,
+            ),
+        ];
+
+        let OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Failed(receipt)) =
+            poll_input_terminal_from_messages(&messages, "ses_native", &[], "msg_exact_input")
+        else {
+            panic!("exact completed provider error is a typed terminal");
+        };
+        assert_eq!(receipt.session_id, "ses_native");
+        assert_eq!(receipt.user_message_id, "msg_exact_input");
+        assert_eq!(receipt.assistant_message_id, "msg_exact_error");
+        assert!(!format!("{receipt:?}").contains("private provider error"));
+    }
+
+    #[test]
+    fn stop_terminal_error_without_completion_marker_remains_pending() {
+        let messages = vec![assistant_message(
+            "msg_incomplete_error",
+            "ses_native",
+            "msg_exact_input",
+            None,
+            None,
+            Some(serde_json::json!({"message": "private provider error"})),
+            None,
+        )];
+
+        assert_eq!(
+            poll_input_terminal_from_messages(&messages, "ses_native", &[], "msg_exact_input",),
+            OpenCodeInputProgress::Pending,
+            "an error payload alone does not prove provider terminal"
+        );
+    }
+
+    #[test]
+    fn stop_terminal_completed_response_is_correlated_to_exact_input() {
+        let messages = vec![assistant_message(
+            "msg_exact_done",
+            "ses_native",
+            "msg_exact_input",
+            Some(24),
+            Some("stop"),
+            None,
+            Some("completed response"),
+        )];
+
+        let OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Completed(receipt)) =
+            poll_input_terminal_from_messages(&messages, "ses_native", &[], "msg_exact_input")
+        else {
+            panic!("exact completed assistant is a typed terminal");
+        };
+        assert_eq!(receipt.session_id, "ses_native");
+        assert_eq!(receipt.user_message_id.as_deref(), Some("msg_exact_input"));
+        assert_eq!(receipt.assistant_message_id, "msg_exact_done");
+        assert_eq!(receipt.final_text, "completed response");
+    }
+
+    #[test]
+    fn completed_tool_call_step_stays_pending_until_later_final_response() {
+        let mut tool_step = assistant_message(
+            "msg_tool_step",
+            "ses_native",
+            "msg_exact_input",
+            Some(21),
+            Some("tool-calls"),
+            None,
+            None,
+        );
+        tool_step.parts.push(Part::Tool(ToolPart {
+            id: "prt_tool".to_owned(),
+            session_id: Some("ses_native".to_owned()),
+            message_id: Some("msg_tool_step".to_owned()),
+            call_id: "call_1".to_owned(),
+            tool: "read".to_owned(),
+            state: serde_json::json!({
+                "status": "completed",
+                "input": {"filePath": "README.md"},
+                "output": "contents",
+                "title": "read README",
+                "metadata": {},
+                "time": {"start": 20, "end": 21}
+            }),
+            metadata: None,
+        }));
+
+        assert_eq!(
+            poll_input_terminal_from_messages(
+                std::slice::from_ref(&tool_step),
+                "ses_native",
+                &[],
+                "msg_exact_input",
+            ),
+            OpenCodeInputProgress::Pending,
+            "a completed tool-call step is not the input's turn terminal"
+        );
+
+        let final_response = assistant_message(
+            "msg_final",
+            "ses_native",
+            "msg_exact_input",
+            Some(22),
+            Some("stop"),
+            None,
+            Some("finished after the tool call"),
+        );
+        let messages = [tool_step, final_response];
+        let OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Completed(receipt)) =
+            poll_input_terminal_from_messages(&messages, "ses_native", &[], "msg_exact_input")
+        else {
+            panic!("the later exact-input final response is terminal");
+        };
+        assert_eq!(receipt.assistant_message_id, "msg_final");
+        assert_eq!(receipt.final_text, "finished after the tool call");
     }
 
     #[test]

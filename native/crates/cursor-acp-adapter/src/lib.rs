@@ -371,7 +371,11 @@ impl CursorAcpCommand {
             Self::SessionNew { params } => (SESSION_NEW, serde_json::to_value(params)),
             Self::SessionLoad { params } => (SESSION_LOAD, serde_json::to_value(params)),
             Self::SessionPrompt { params } => (SESSION_PROMPT, serde_json::to_value(params)),
-            Self::SessionCancel { params } => (SESSION_CANCEL, serde_json::to_value(params)),
+            Self::SessionCancel { .. } => {
+                return Err(CursorAcpError::InvalidTransition(
+                    "session/cancel must be sent as a notification",
+                ));
+            }
         };
         Ok(JsonRpcRequest {
             jsonrpc: "2.0".to_owned(),
@@ -379,6 +383,20 @@ impl CursorAcpCommand {
             method: method.to_owned(),
             params: params.map_err(|error| CursorAcpError::InvalidMessage(error.to_string()))?,
         })
+    }
+
+    pub fn notification(self) -> Result<JsonRpcNotification, CursorAcpError> {
+        match self {
+            Self::SessionCancel { params } => Ok(JsonRpcNotification {
+                jsonrpc: "2.0".to_owned(),
+                method: SESSION_CANCEL.to_owned(),
+                params: serde_json::to_value(params)
+                    .map_err(|error| CursorAcpError::InvalidMessage(error.to_string()))?,
+            }),
+            _ => Err(CursorAcpError::InvalidTransition(
+                "only session/cancel is a client notification",
+            )),
+        }
     }
 
     pub fn precise_fork(&self) -> Result<(), CursorAcpError> {
@@ -417,6 +435,20 @@ pub struct JsonRpcNotification {
     pub jsonrpc: String,
     pub method: String,
     pub params: Value,
+}
+
+impl JsonRpcNotification {
+    /// Build ACP's `session/cancel` notification. Cancellation is an
+    /// out-of-band signal for the still-pending `session/prompt` request; it
+    /// must not allocate a second JSON-RPC response ID.
+    pub fn session_cancel(session_id: SessionId) -> Result<Self, CursorAcpError> {
+        Ok(Self {
+            jsonrpc: "2.0".to_owned(),
+            method: SESSION_CANCEL.to_owned(),
+            params: serde_json::to_value(SessionCancelParams { session_id })
+                .map_err(|error| CursorAcpError::InvalidMessage(error.to_string()))?,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1085,7 +1117,7 @@ impl CursorAcpSession {
         .request(self.new_request())
     }
 
-    pub fn cancel(&mut self) -> Result<JsonRpcRequest, CursorAcpError> {
+    pub fn cancel(&mut self) -> Result<JsonRpcNotification, CursorAcpError> {
         let session_id = self
             .session_id
             .clone()
@@ -1098,10 +1130,7 @@ impl CursorAcpSession {
             ));
         }
         self.phase = SessionPhase::Cancelling;
-        CursorAcpCommand::SessionCancel {
-            params: SessionCancelParams { session_id },
-        }
-        .request(self.new_request())
+        JsonRpcNotification::session_cancel(session_id)
     }
 
     pub fn observe_update(&mut self, update: &SessionUpdate) -> Result<u64, CursorAcpError> {
@@ -1302,6 +1331,30 @@ mod tests {
         assert_eq!(reducer.observe_update(&update).unwrap(), 1);
         reducer.mark_prompt_settled().unwrap();
         assert!(reducer.cancel().is_err());
+    }
+
+    #[test]
+    fn session_cancel_is_a_notification_and_does_not_create_a_response_id() {
+        let mut reducer = CursorAcpSession::new();
+        reducer.observe_session_load(session()).unwrap();
+        let prompt = reducer.prompt("hello").unwrap();
+        assert_eq!(prompt.method, SESSION_PROMPT);
+        let cancel = reducer.cancel().unwrap();
+        assert_eq!(cancel.method, SESSION_CANCEL);
+        let serialized = serde_json::to_value(&cancel).unwrap();
+        assert_eq!(serialized["jsonrpc"], "2.0");
+        assert_eq!(serialized["method"], SESSION_CANCEL);
+        assert_eq!(serialized["params"]["sessionId"], session().as_str());
+        assert!(serialized.get("id").is_none());
+        let cancel_command = CursorAcpCommand::SessionCancel {
+            params: SessionCancelParams {
+                session_id: session(),
+            },
+        };
+        assert!(matches!(
+            cancel_command.request(RequestId::generated(99)),
+            Err(CursorAcpError::InvalidTransition(_))
+        ));
     }
 
     #[test]

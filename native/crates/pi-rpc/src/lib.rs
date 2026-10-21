@@ -16,5 +16,5 @@ pub use rpc::{
 pub use session::{PiSessionEntry, PiSessionTree, PiSessionTreeError, PiSessionView};
 
 pub use rudder_native_process_transport::{
-    ConnectionIdentity, ConnectionLaunchPermit, HostCleanupProof,
+    ConnectionIdentity, ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof,
 };

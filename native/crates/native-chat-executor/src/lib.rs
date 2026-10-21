@@ -99,6 +99,32 @@ pub struct HostPaths {
     pub isolated_home: PathBuf,
 }
 
+/// Error containment from one owned provider host. Cleanup is never a provider
+/// terminal receipt, but permits quarantined worker capacity to be reclaimed
+/// and a separately proven pre-input Stop to be finalized.
+pub(crate) struct HostExecutionFailure<E> {
+    pub(crate) error: E,
+    pub(crate) cleanup: Option<Box<rudder_native_process_transport::HostCleanupProof>>,
+}
+
+impl<E> From<E> for HostExecutionFailure<E> {
+    fn from(error: E) -> Self {
+        Self {
+            error,
+            cleanup: None,
+        }
+    }
+}
+
+impl<E> std::fmt::Debug for HostExecutionFailure<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HostExecutionFailure")
+            .field("hasCleanupProof", &self.cleanup.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 /// All IDs refer to an already admitted Run/Attempt. No prompt or client-selected
 /// runtime configuration is accepted here.
 pub struct ExecutionRequest<'a> {
@@ -228,6 +254,7 @@ pub struct PiNativeExecutionObservation {
     pub execution_principal: NativeChatExecutionPrincipal,
     pub fence: ExecutionFence,
     pub observation: PiExecutionObservation,
+    pub stop: Option<execution::StopIntent>,
 }
 
 fn db<T>(
@@ -314,6 +341,7 @@ struct ExecutionFailureEvidence {
     hermes_cleanup_receipt: Option<HermesCleanupReceipt>,
     hermes_prompt_error_after_cancel_receipt: Option<HermesPromptErrorAfterCancel>,
     pi_cleanup_receipt: Option<rudder_pi_rpc::PiCleanupReceipt>,
+    host_cleanup_proof: Option<rudder_native_process_transport::HostCleanupProof>,
 }
 
 impl fmt::Debug for ExecutionFailure {
@@ -415,6 +443,9 @@ impl ExecutionFailure {
     pub fn pi_cleanup_receipt(&self) -> Option<&rudder_pi_rpc::PiCleanupReceipt> {
         self.0.pi_cleanup_receipt.as_ref()
     }
+    pub fn host_cleanup_proof(&self) -> Option<&rudder_native_process_transport::HostCleanupProof> {
+        self.0.host_cleanup_proof.as_ref()
+    }
     pub fn into_error(self) -> Error {
         self.0.error
     }
@@ -446,6 +477,7 @@ impl ExecutionFailure {
             hermes_cleanup_receipt: None,
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
+            host_cleanup_proof: None,
         }))
     }
 
@@ -463,6 +495,7 @@ impl ExecutionFailure {
             hermes_cleanup_receipt: None,
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
+            host_cleanup_proof: None,
         }))
     }
 
@@ -488,6 +521,7 @@ impl ExecutionFailure {
             hermes_cleanup_receipt: None,
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
+            host_cleanup_proof: None,
         }))
     }
 
@@ -513,6 +547,7 @@ impl ExecutionFailure {
             hermes_cleanup_receipt: cleanup_receipt,
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
+            host_cleanup_proof: None,
         }))
     }
 
@@ -564,7 +599,25 @@ impl ExecutionFailure {
             hermes_cleanup_receipt: None,
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: cleanup_receipt,
+            host_cleanup_proof: None,
         }))
+    }
+
+    fn after_claim_host(
+        error: Error,
+        principal: NativeChatExecutionPrincipal,
+        fence: ExecutionFence,
+        cleanup: Option<Box<rudder_native_process_transport::HostCleanupProof>>,
+    ) -> Self {
+        let cleanup = cleanup
+            .map(|proof| *proof)
+            .filter(|proof| fence.matches_host_cleanup_proof(proof));
+        let mut failure = Self::after_claim(error, principal, fence, None);
+        if cleanup.is_some() {
+            failure.0.process = ProcessDisposition::CleanupProven;
+        }
+        failure.0.host_cleanup_proof = cleanup;
+        failure
     }
 
     #[cfg(all(test, unix))]
@@ -589,6 +642,7 @@ impl ExecutionFailure {
             hermes_cleanup_receipt: None,
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
+            host_cleanup_proof: None,
         }))
     }
 }
@@ -825,7 +879,10 @@ where
                     .claude_session
                     .as_ref()
                     .map(|session| session.as_str());
-                claude::execute_turn(
+                let mut observed_stop = None;
+                let mut last_renew = Instant::now();
+                let mut cleanup_started = false;
+                let result = claude::execute_turn(
                     handle,
                     &claimed_config,
                     local,
@@ -863,10 +920,124 @@ where
                             _ => Err(ClaudeExecutionError::InvalidConfiguration),
                         })?
                     },
+                    |transport, terminal_observed, cleanup_deadline| {
+                        let connection = transport.connection_receipt();
+                        let auth_deadline = cleanup_deadline.unwrap_or(deadline);
+                        let renew_due = if cleanup_deadline.is_some() {
+                            !cleanup_started || last_renew.elapsed() >= Duration::from_secs(5)
+                        } else {
+                            last_renew.elapsed() >= Duration::from_secs(10)
+                        };
+                        cleanup_started |= cleanup_deadline.is_some();
+                        let (stop, permit) = handle.block_on(async {
+                            tokio::time::timeout(
+                                Duration::from_secs(5)
+                                    .min(auth_deadline.saturating_duration_since(Instant::now())),
+                                async {
+                                    let mut stop = execution::observe_stop(
+                                        pool,
+                                        &execution_principal,
+                                        &claimed_fence,
+                                    )
+                                    .await?;
+                                    if stop.is_none() && renew_due {
+                                        match execution::renew_lease(
+                                            pool,
+                                            &execution_principal,
+                                            &claimed_fence,
+                                        )
+                                        .await
+                                        {
+                                            Ok(_) => {}
+                                            Err(error @ runtime_bindings::Error::Http(409, _)) => {
+                                                stop = execution::observe_stop(
+                                                    pool,
+                                                    &execution_principal,
+                                                    &claimed_fence,
+                                                )
+                                                .await?;
+                                                if stop.is_none() {
+                                                    return Err(error);
+                                                }
+                                            }
+                                            Err(error) => return Err(error),
+                                        }
+                                    }
+                                    if let Some(stop) = stop {
+                                        execution::bind_stopping_connection(
+                                            pool,
+                                            &execution_principal,
+                                            &claimed_fence,
+                                            &stop,
+                                            &connection,
+                                        )
+                                        .await?;
+                                        if renew_due {
+                                            execution::renew_stopping_lease(
+                                                pool,
+                                                &execution_principal,
+                                                &claimed_fence,
+                                                &stop,
+                                            )
+                                            .await?;
+                                        }
+                                        let permit = if terminal_observed {
+                                            None
+                                        } else {
+                                            execution::reserve_native_interrupt(
+                                                pool,
+                                                &execution_principal,
+                                                &claimed_fence,
+                                                &stop,
+                                                &connection,
+                                                &execution::NativeInterruptTarget::Claude {
+                                                    session_id: existing.map(str::to_owned),
+                                                },
+                                            )
+                                            .await?
+                                        };
+                                        Ok::<_, runtime_bindings::Error>((Some(stop), permit))
+                                    } else {
+                                        Ok((None, None))
+                                    }
+                                },
+                            )
+                            .await
+                            .map_err(|_| {
+                                runtime_bindings::Error::Http(
+                                    409,
+                                    "Claude control authorization deadline expired".into(),
+                                )
+                            })?
+                        })?;
+                        if renew_due {
+                            last_renew = Instant::now();
+                        }
+                        if stop.is_some() {
+                            observed_stop = stop;
+                        }
+                        if let Some(permit) = permit {
+                            let target = execution::NativeInterruptTarget::Claude {
+                                session_id: existing.map(str::to_owned),
+                            };
+                            permit
+                                .dispatch(&connection, &target, || transport.send_interrupt())?
+                                .map_err(ClaudeExecutionError::from)?;
+                            return Ok(true);
+                        }
+                        Ok(false)
+                    },
                     deadline.saturating_duration_since(Instant::now()),
-                )
-                .map(ProviderObservation::Claude)
-                .map_err(Error::ClaudeTransport)
+                );
+                result
+                    .map(|mut observation| {
+                        observation.stop = observed_stop;
+                        ProviderObservation::Claude(observation)
+                    })
+                    .map_err(|failure| HostExecutionFailure {
+                        error: Error::ClaudeTransport(failure.error),
+                        cleanup: failure.cleanup,
+                    })
             }
             "cursor" | "cursor_local" => {
                 let mut authority = match native_turn::NativeTurnAuthority::new(
@@ -903,7 +1074,10 @@ where
                 drop(authority);
                 result
                     .map(ProviderObservation::Cursor)
-                    .map_err(Error::CursorTransport)
+                    .map_err(|failure| HostExecutionFailure {
+                        error: Error::CursorTransport(failure.error),
+                        cleanup: failure.cleanup,
+                    })
             }
             "opencode_local" => {
                 let mut authority = match native_turn::NativeTurnAuthority::new(
@@ -940,7 +1114,10 @@ where
                 drop(authority);
                 result
                     .map(ProviderObservation::OpenCode)
-                    .map_err(|error| Error::OpenCodeExecution(error.diagnostic_code()))
+                    .map_err(|failure| HostExecutionFailure {
+                        error: Error::OpenCodeExecution(failure.error.diagnostic_code()),
+                        cleanup: failure.cleanup,
+                    })
             }
             _ => unreachable!("matched admitted native provider"),
         };
@@ -969,11 +1146,11 @@ where
                     observation,
                 }),
             ),
-            Err(error) => Err(ExecutionFailure::after_claim(
-                error,
+            Err(failure) => Err(ExecutionFailure::after_claim_host(
+                failure.error,
                 execution_principal,
                 claimed_fence,
-                None,
+                failure.cleanup,
             )),
         };
     }

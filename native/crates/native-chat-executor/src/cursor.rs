@@ -4,14 +4,20 @@
 //! session evidence. D1 claims, checkpoint persistence, and terminal billing
 //! stay in the shared worker.
 
-use crate::{HostPaths, native_turn::NativeTurnAuthority};
+use crate::{HostExecutionFailure, HostPaths, native_turn::NativeTurnAuthority};
 use rudder_cursor_acp_adapter::{
     AuthenticateParams, CursorAcpCommand, CursorAcpHome, CursorAcpMessage, CursorAcpProcessLaunch,
     CursorAcpSession, CursorAcpTransport, CursorAcpTransportError, CursorManagedInstructionRule,
-    InitializeParams, SessionId, SessionLoadParams, SessionNewParams, SessionPromptParams,
+    InitializeParams, RequestId, SessionId, SessionLoadParams, SessionNewParams,
+    SessionPromptParams,
 };
-use rudder_d1_persistence::native_chat::config::{CursorLocalConfig, ResolvedCodexConfig};
-use rudder_native_process_transport::{ConnectionLaunchPermit, HostCleanupProof};
+use rudder_d1_persistence::native_chat::{
+    config::{CursorLocalConfig, ResolvedCodexConfig},
+    execution::{NativeInterruptTarget, StopIntent},
+};
+use rudder_native_process_transport::{
+    ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof,
+};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -23,6 +29,8 @@ const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const PROCESS_GRACE: Duration = Duration::from_millis(500);
 const CLEANUP_RECEIPT_ALLOWANCE: Duration = Duration::from_secs(2);
+const CLEANUP_TICK_INTERVAL: Duration = Duration::from_secs(4);
+const CLEANUP_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
 pub enum CursorExecutionError {
@@ -38,6 +46,8 @@ pub enum CursorExecutionError {
     ControlRequest,
     #[error("Cursor ACP turn response did not arrive before the deadline")]
     Timeout,
+    #[error("Cursor ACP process cleanup proof was not observed")]
+    CleanupUnavailable,
 }
 
 impl CursorExecutionError {
@@ -47,6 +57,7 @@ impl CursorExecutionError {
             Self::InvalidSession => "cursor_invalid_session",
             Self::ControlRequest => "cursor_control_request",
             Self::Timeout | Self::Transport(CursorAcpTransportError::Timeout) => "cursor_timeout",
+            Self::CleanupUnavailable => "cursor_cleanup_unavailable",
             Self::Transport(CursorAcpTransportError::InstructionRuleUnavailable) => {
                 "cursor_instruction_rule_unavailable"
             }
@@ -82,8 +93,11 @@ pub struct CursorExecutionObservation {
     /// terminal receipt.
     pub final_text: Option<String>,
     pub response: Value,
+    pub stop_reason: String,
     pub update_count: u64,
-    pub cleanup: Option<HostCleanupProof>,
+    pub connection: ConnectionReceipt,
+    pub cleanup: HostCleanupProof,
+    pub stop: Option<StopIntent>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -97,7 +111,7 @@ pub(crate) fn execute_turn(
     owner_token: &str,
     authority: &mut NativeTurnAuthority<'_>,
     timeout: Duration,
-) -> Result<CursorExecutionObservation, CursorExecutionError> {
+) -> Result<CursorExecutionObservation, HostExecutionFailure<CursorExecutionError>> {
     if config.identity.runtime_type != "cursor" && config.identity.runtime_type != "cursor_local"
         || timeout.is_zero()
         || timeout > MAX_TURN_TIMEOUT
@@ -117,7 +131,7 @@ pub(crate) fn execute_turn(
         || attempt_id.is_empty()
         || owner_token.is_empty()
     {
-        return Err(CursorExecutionError::InvalidConfiguration);
+        return Err(CursorExecutionError::InvalidConfiguration.into());
     }
     let timeout = local
         .timeout_sec
@@ -132,7 +146,7 @@ pub(crate) fn execute_turn(
             || key.contains('\0')
             || value.contains('\0')
         {
-            return Err(CursorExecutionError::InvalidConfiguration);
+            return Err(CursorExecutionError::InvalidConfiguration.into());
         }
         env.insert(key.clone(), value.clone());
     }
@@ -149,7 +163,7 @@ pub(crate) fn execute_turn(
             .as_ref()
             .is_some_and(|content| !content.is_empty())
         {
-            return Err(CursorExecutionError::InvalidConfiguration);
+            return Err(CursorExecutionError::InvalidConfiguration.into());
         }
         None
     };
@@ -175,9 +189,17 @@ pub(crate) fn execute_turn(
             env,
         },
         permit,
-    )?;
+    )
+    .map_err(CursorExecutionError::from)?;
+    let connection = transport.connection_receipt();
     let deadline = Instant::now() + timeout;
-    let result = run_turn(&mut transport, config, local, authority, deadline);
+    let result = (|| {
+        authority
+            .register_connection(connection)
+            .map_err(CursorExecutionError::from)?;
+        ensure_not_stopped(authority)?;
+        run_turn(&mut transport, config, local, authority, deadline)
+    })();
     let process_grace = local
         .grace_sec
         .map(Duration::from_secs)
@@ -187,20 +209,62 @@ pub(crate) fn execute_turn(
     } else {
         CLEANUP_TIMEOUT
     };
-    let cleanup = transport
-        .stop_with_grace(process_grace, cleanup_wait)
-        .ok()
-        .and_then(|_| transport.take_cleanup_proof());
-    let (session, request_id, final_text, response, update_count) = result?;
-    Ok(CursorExecutionObservation {
-        session,
-        request_id,
-        final_text,
-        response,
-        update_count,
-        cleanup,
-    })
+    let mut next_cleanup_tick = Instant::now();
+    let cleanup_result = transport
+        .stop_with_grace_hook(process_grace, cleanup_wait, || {
+            let now = Instant::now();
+            if now >= next_cleanup_tick {
+                // Keep the lease live while bounded process-host cleanup
+                // waits, even after the provider-turn deadline. A failed tick
+                // must not prevent host termination or discard its proof;
+                // the fenced finalizer remains fail closed.
+                let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+                next_cleanup_tick = Instant::now() + CLEANUP_TICK_INTERVAL;
+            }
+        })
+        .ok();
+    let cleanup = cleanup_result.and_then(|_| transport.take_cleanup_proof());
+    // Capture a Stop that raced the last host lifecycle event. This bounded
+    // cleanup-authority probe uses a fresh DB deadline; its failure must not
+    // discard an already-proven provider terminal or host cleanup receipt.
+    let _ = authority.cleanup_tick(Instant::now() + CLEANUP_OPERATION_TIMEOUT);
+    match result {
+        Ok((session, request_id, final_text, response, stop_reason, update_count)) => {
+            let Some(cleanup) = cleanup else {
+                return Err(HostExecutionFailure {
+                    error: CursorExecutionError::CleanupUnavailable,
+                    cleanup: None,
+                });
+            };
+            let connection = match authority.take_connection() {
+                Ok(connection) => connection,
+                Err(error) => {
+                    return Err(HostExecutionFailure {
+                        error: CursorExecutionError::from(error),
+                        cleanup: Some(Box::new(cleanup)),
+                    });
+                }
+            };
+            Ok(CursorExecutionObservation {
+                session,
+                request_id,
+                final_text,
+                response,
+                stop_reason,
+                update_count,
+                connection,
+                cleanup,
+                stop: authority.stop().cloned(),
+            })
+        }
+        Err(error) => Err(HostExecutionFailure {
+            error,
+            cleanup: cleanup.map(Box::new),
+        }),
+    }
 }
+
+type CursorTurnObservation = (SessionId, String, Option<String>, Value, String, u64);
 
 fn run_turn(
     transport: &mut CursorAcpTransport,
@@ -208,7 +272,7 @@ fn run_turn(
     local: &CursorLocalConfig,
     authority: &mut NativeTurnAuthority<'_>,
     deadline: Instant,
-) -> Result<(SessionId, String, Option<String>, Value, u64), CursorExecutionError> {
+) -> Result<CursorTurnObservation, CursorExecutionError> {
     transport.wait_spawned(remaining(deadline, Duration::from_secs(10)))?;
     request_and_wait(
         transport,
@@ -281,13 +345,13 @@ fn run_turn(
     if sent != reserved {
         return Err(CursorExecutionError::InvalidSession);
     }
-    let response =
-        transport.wait_response(&reserved, remaining(deadline, Duration::from_secs(60)))?;
+    let response = wait_prompt_response(transport, authority, &session, &reserved, deadline)?;
     if response.error.is_some() {
         return Err(CursorExecutionError::Transport(
             CursorAcpTransportError::Rejected,
         ));
     }
+    let stop_reason = prompt_stop_reason(&response)?;
     let (updates, final_text) = drain_updates(transport, &session)?;
     authority.terminal(session.as_str(), &request_id)?;
     Ok((
@@ -295,8 +359,45 @@ fn run_turn(
         request_id,
         final_text,
         response.result.unwrap_or(Value::Null),
+        stop_reason,
         updates,
     ))
+}
+
+fn wait_prompt_response(
+    transport: &mut CursorAcpTransport,
+    authority: &mut NativeTurnAuthority<'_>,
+    session: &SessionId,
+    request_id: &RequestId,
+    deadline: Instant,
+) -> Result<rudder_cursor_acp_adapter::JsonRpcResponse, CursorExecutionError> {
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(CursorExecutionError::Timeout);
+        }
+        let slice = remaining.min(Duration::from_millis(100));
+        match transport.wait_response(request_id, slice) {
+            Ok(response) => return Ok(response),
+            Err(CursorAcpTransportError::Timeout) => {}
+            Err(error) => return Err(error.into()),
+        }
+        let Some(permit) = authority.poll_stop()? else {
+            continue;
+        };
+        let connection = authority
+            .connection()
+            .ok_or(CursorExecutionError::InvalidSession)?;
+        let target = NativeInterruptTarget::Cursor {
+            session_id: session.as_str().to_owned(),
+            request_id: request_id.as_string(),
+        };
+        permit.dispatch(connection, &target, || {
+            transport.cancel_prompt(session.clone(), request_id)
+        })??;
+        // ACP cancellation is a notification only. Keep waiting on the one
+        // original prompt request and accept only its typed stopReason.
+    }
 }
 
 fn request_and_wait(
@@ -327,6 +428,26 @@ fn session_from_response(
         .and_then(Value::as_str)
         .ok_or(CursorExecutionError::InvalidSession)?;
     SessionId::new(value).map_err(|_| CursorExecutionError::InvalidSession)
+}
+
+fn prompt_stop_reason(
+    response: &rudder_cursor_acp_adapter::JsonRpcResponse,
+) -> Result<String, CursorExecutionError> {
+    response
+        .result
+        .as_ref()
+        .and_then(|result| result.get("stopReason"))
+        .and_then(Value::as_str)
+        .filter(|reason| {
+            matches!(
+                *reason,
+                "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled"
+            )
+        })
+        .map(str::to_owned)
+        .ok_or(CursorExecutionError::Transport(
+            CursorAcpTransportError::InvalidMessage,
+        ))
 }
 
 fn drain_updates(
@@ -382,6 +503,59 @@ fn path_string(path: &std::path::Path) -> Result<String, CursorExecutionError> {
         .ok_or(CursorExecutionError::InvalidConfiguration)
 }
 
+fn ensure_not_stopped(authority: &mut NativeTurnAuthority<'_>) -> Result<(), CursorExecutionError> {
+    let _ = authority.poll_stop()?;
+    if authority.stop().is_some() {
+        return Err(CursorExecutionError::Persistence(
+            rudder_d1_persistence::runtime_bindings::Error::Http(
+                409,
+                "Native Cursor execution is stopping".into(),
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn remaining(deadline: Instant, cap: Duration) -> Duration {
     deadline.saturating_duration_since(Instant::now()).min(cap)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_prompt_requires_one_known_terminal_stop_reason() {
+        for reason in [
+            "end_turn",
+            "max_tokens",
+            "max_turn_requests",
+            "refusal",
+            "cancelled",
+        ] {
+            let response: rudder_cursor_acp_adapter::JsonRpcResponse =
+                serde_json::from_value(serde_json::json!({
+                    "jsonrpc":"2.0",
+                    "id":1,
+                    "result":{"stopReason":reason}
+                }))
+                .expect("typed ACP response");
+            assert_eq!(prompt_stop_reason(&response).unwrap(), reason);
+        }
+
+        for value in [
+            serde_json::json!({"jsonrpc":"2.0","id":1,"result":{}}),
+            serde_json::json!({"jsonrpc":"2.0","id":1,"result":{"stopReason":"other"}}),
+            serde_json::json!({"jsonrpc":"2.0","id":1,"result":{"stopReason":"future"}}),
+        ] {
+            let response: rudder_cursor_acp_adapter::JsonRpcResponse =
+                serde_json::from_value(value).expect("typed ACP response");
+            assert!(matches!(
+                prompt_stop_reason(&response),
+                Err(CursorExecutionError::Transport(
+                    CursorAcpTransportError::InvalidMessage
+                ))
+            ));
+        }
+    }
 }

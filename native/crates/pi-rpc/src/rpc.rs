@@ -2,8 +2,8 @@ use crate::session::PiSessionEntry;
 use crate::strict_json::StrictValue;
 use crate::{PiCleanupReceipt, PiSessionTree, PiTurnReceipt, PiTurnStatus};
 use rudder_native_process_transport::{
-    ConnectionIdentity, ConnectionLaunchPermit, HostCleanupProof, HostConnection, HostError,
-    HostEvent, OwnedHost,
+    ConnectionIdentity, ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof,
+    HostConnection, HostError, HostEvent, OwnedHost,
 };
 use rudder_native_protocol::{Command, ProtocolVersion, lines::LineDecoder};
 use serde_json::{Value, json};
@@ -54,6 +54,12 @@ impl From<rudder_native_protocol::lines::LineError> for PiTransportError {
 /// provider environment isolated without depending on ambient PATH.
 pub enum PiProfileMode {
     Managed,
+    /// Managed Pi profile whose one system-prompt entry was resolved and
+    /// authorized by the Rust host. The provider session remains confined to
+    /// the isolated home; only this exact prompt file may live outside it.
+    ManagedWithInstructions {
+        instruction_file: PathBuf,
+    },
     /// The host supplies an instance-owned session root independently of the
     /// operator HOME. Neither path is deserialized from a provider request.
     OperatorNative {
@@ -196,6 +202,7 @@ pub struct PiRpcTransport {
     prompt_accepted: bool,
     prompt_agent_started: bool,
     prompt_agent_ended: bool,
+    abort_requested: bool,
     turn_receipt_taken: bool,
 }
 
@@ -313,12 +320,20 @@ impl PiRpcTransport {
             prompt_accepted: false,
             prompt_agent_started: false,
             prompt_agent_ended: false,
+            abort_requested: false,
             turn_receipt_taken: false,
         })
     }
 
     pub fn connection_identity(&self) -> ConnectionIdentity {
         self.host.connection_identity()
+    }
+
+    /// Non-authoritative identity for binding a Stop action to this exact
+    /// Pi process-host connection. Cleanup and terminal authority remain
+    /// available only through their typed receipts.
+    pub fn connection_receipt(&self) -> ConnectionReceipt {
+        self.host.connection_identity().connection_receipt()
     }
 
     /// Bind a validated response from this owned RPC connection. A newly
@@ -416,6 +431,11 @@ impl PiRpcTransport {
         {
             return Err(PiTransportError::Busy);
         }
+        if matches!(&command, PiCommand::Abort)
+            && (!self.prompt_accepted || self.abort_requested || self.prompt_agent_ended)
+        {
+            return Err(PiTransportError::InvalidMessage);
+        }
         if !self.spawned || self.terminal || self.host_failure {
             return Err(PiTransportError::Closed);
         }
@@ -430,6 +450,11 @@ impl PiRpcTransport {
             self.prompt_accepted = false;
             self.prompt_agent_started = false;
             self.prompt_agent_ended = false;
+            self.abort_requested = false;
+        } else if name == "abort" {
+            // The write may be ambiguous. Never expose a retry on the same
+            // connection, even when the host rejects or cannot confirm it.
+            self.abort_requested = true;
         }
         let mut value = command.fields();
         let object = value
@@ -573,6 +598,18 @@ impl PiRpcTransport {
         grace: Duration,
         timeout: Duration,
     ) -> Result<(), PiTransportError> {
+        self.stop_with_grace_and_hook(grace, timeout, &mut || {})
+    }
+
+    /// Apply bounded process grace while allowing the caller to maintain its
+    /// independent execution authority. Hook failures are retained by the
+    /// caller and must not interrupt receipt collection or host cleanup.
+    pub fn stop_with_grace_and_hook(
+        &mut self,
+        grace: Duration,
+        timeout: Duration,
+        hook: &mut impl FnMut(),
+    ) -> Result<(), PiTransportError> {
         if grace.is_zero() || grace > Duration::from_secs(60) || timeout.is_zero() {
             return Err(PiTransportError::InvalidLaunch);
         }
@@ -592,15 +629,28 @@ impl PiRpcTransport {
             })
             .map_err(map_host_error)?;
         let deadline = Instant::now() + timeout;
+        let mut next_hook = Instant::now();
         while !self.terminal {
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let now = Instant::now();
+            let remaining = deadline.saturating_duration_since(now);
             if remaining.is_zero() {
                 return Err(PiTransportError::Timeout);
             }
-            match self.host.receive(remaining) {
+            if now >= next_hook {
+                hook();
+                next_hook = Instant::now() + Duration::from_secs(1);
+                if self.terminal {
+                    break;
+                }
+            }
+            let receive_timeout = deadline
+                .saturating_duration_since(Instant::now())
+                .min(next_hook.saturating_duration_since(Instant::now()));
+            match self.host.receive(receive_timeout) {
                 Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value)?,
                 Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
                 Ok(HostEvent::Failure) => return Err(PiTransportError::Closed),
+                Err(HostError::Timeout) if Instant::now() < deadline => continue,
                 Err(HostError::Timeout) => return Err(PiTransportError::Timeout),
                 Err(HostError::OutputOverflow) => return Err(PiTransportError::OutputOverflow),
                 Err(HostError::Closed) | Err(HostError::InvalidLaunch) => {
@@ -828,6 +878,13 @@ fn validate_launch(mut launch: ProcessLaunch) -> Result<ProcessLaunch, PiTranspo
     {
         return Err(PiTransportError::InvalidLaunch);
     }
+    if matches!(
+        &launch.profile_mode,
+        PiProfileMode::ManagedWithInstructions { .. }
+    ) && launch.system_prompt_file.is_none()
+    {
+        return Err(PiTransportError::InvalidLaunch);
+    }
     for (path, file_expected) in [
         (&mut launch.node_executable, true),
         (&mut launch.pi_cli_entry, true),
@@ -845,7 +902,9 @@ fn validate_launch(mut launch: ProcessLaunch) -> Result<ProcessLaunch, PiTranspo
         }
     }
     match &mut launch.profile_mode {
-        PiProfileMode::Managed if !launch.session_dir.starts_with(&launch.isolated_home) => {
+        PiProfileMode::Managed | PiProfileMode::ManagedWithInstructions { .. }
+            if !launch.session_dir.starts_with(&launch.isolated_home) =>
+        {
             return Err(PiTransportError::InvalidLaunch);
         }
         PiProfileMode::OperatorNative { session_root, .. } => {
@@ -880,7 +939,7 @@ fn validate_launch(mut launch: ProcessLaunch) -> Result<ProcessLaunch, PiTranspo
                 return Err(PiTransportError::InvalidLaunch);
             }
         }
-        PiProfileMode::Managed => {}
+        PiProfileMode::Managed | PiProfileMode::ManagedWithInstructions { .. } => {}
     }
     if let Some(path) = &mut launch.resume_session_file {
         if !path.is_absolute() {
@@ -907,10 +966,11 @@ fn validate_launch(mut launch: ProcessLaunch) -> Result<ProcessLaunch, PiTranspo
             .map_err(|_| PiTransportError::InvalidLaunch)?;
         let allowed = match &launch.profile_mode {
             PiProfileMode::Managed => path.starts_with(&launch.isolated_home),
-            PiProfileMode::OperatorNative {
-                instruction_file: Some(expected),
+            PiProfileMode::ManagedWithInstructions { instruction_file }
+            | PiProfileMode::OperatorNative {
+                instruction_file: Some(instruction_file),
                 ..
-            } => expected.is_absolute() && expected.canonicalize().ok().as_ref() == Some(path),
+            } => exact_instruction_file(instruction_file, path),
             PiProfileMode::OperatorNative {
                 instruction_file: None,
                 ..
@@ -921,6 +981,13 @@ fn validate_launch(mut launch: ProcessLaunch) -> Result<ProcessLaunch, PiTranspo
         }
     }
     Ok(launch)
+}
+
+fn exact_instruction_file(expected: &Path, actual: &Path) -> bool {
+    expected.is_absolute()
+        && std::fs::symlink_metadata(expected)
+            .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        && expected.canonicalize().ok().as_deref() == Some(actual)
 }
 
 fn parse_message(value: Value) -> Result<PiRpcMessage, PiTransportError> {
@@ -1075,6 +1142,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn managed_instructions_require_the_exact_host_resolved_file() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let mut launch = profile_launch(&root);
+        let instruction = root.join("workspace/AGENTS.md");
+        let other = root.join("workspace/OTHER.md");
+        std::fs::write(&instruction, "Authorized managed instructions").unwrap();
+        std::fs::write(&other, "Different file").unwrap();
+        launch.system_prompt_file = Some(instruction.clone());
+        launch.profile_mode = super::PiProfileMode::ManagedWithInstructions {
+            instruction_file: instruction.clone(),
+        };
+        assert!(super::validate_launch(launch).is_ok());
+
+        let mut mismatched = profile_launch(&root);
+        mismatched.system_prompt_file = Some(other);
+        mismatched.profile_mode = super::PiProfileMode::ManagedWithInstructions {
+            instruction_file: instruction.clone(),
+        };
+        assert!(matches!(
+            super::validate_launch(mismatched),
+            Err(PiTransportError::InvalidLaunch)
+        ));
+
+        let mut strict_managed = profile_launch(&root);
+        strict_managed.system_prompt_file = Some(instruction);
+        assert!(matches!(
+            super::validate_launch(strict_managed),
+            Err(PiTransportError::InvalidLaunch)
+        ));
+
+        let mut external_session = profile_launch(&root);
+        external_session.session_dir = root.join("owned-sessions");
+        external_session.system_prompt_file = Some(root.join("workspace/AGENTS.md"));
+        external_session.profile_mode = super::PiProfileMode::ManagedWithInstructions {
+            instruction_file: root.join("workspace/AGENTS.md"),
+        };
+        assert!(matches!(
+            super::validate_launch(external_session),
+            Err(PiTransportError::InvalidLaunch)
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn operator_launch_rejects_symlinked_provider_session_and_instruction_paths() {
@@ -1101,6 +1212,26 @@ mod tests {
             std::fs::remove_file(&target).unwrap();
             std::fs::rename(&moved, &target).unwrap();
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_instruction_capability_rejects_symlinked_authority_paths() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let mut launch = profile_launch(&root);
+        let instruction = root.join("workspace/AGENTS.md");
+        let target = root.join("workspace/REAL.md");
+        std::fs::write(&target, "Authorized contents").unwrap();
+        std::os::unix::fs::symlink(&target, &instruction).unwrap();
+        launch.system_prompt_file = Some(target.clone());
+        launch.profile_mode = super::PiProfileMode::ManagedWithInstructions {
+            instruction_file: instruction,
+        };
+        assert!(matches!(
+            super::validate_launch(launch),
+            Err(PiTransportError::InvalidLaunch)
+        ));
     }
 
     fn fixture_session_header() -> String {

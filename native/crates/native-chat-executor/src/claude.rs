@@ -4,14 +4,19 @@
 //! receipt.  Durable admission, provider checkpoints, transcript projection,
 //! and finalization remain in the shared Native Chat worker.
 
-use crate::HostPaths;
+use crate::{HostExecutionFailure, HostPaths};
 use rudder_claude_code::{
     ClaudeError, ClaudeEvent, ClaudeInvocation, ClaudeLaunch, ClaudeRuntimeProfile,
     ClaudeSessionMode, ClaudeSessionSelector, ClaudeTransport, ClaudeTransportEvent,
     ClaudeTurnReceipt,
 };
-use rudder_d1_persistence::native_chat::config::{ClaudeLocalConfig, ResolvedCodexConfig};
-use rudder_native_process_transport::{ConnectionLaunchPermit, HostCleanupProof};
+use rudder_d1_persistence::native_chat::{
+    config::{ClaudeLocalConfig, ResolvedCodexConfig},
+    execution::StopIntent,
+};
+use rudder_native_process_transport::{
+    ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof,
+};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -64,6 +69,8 @@ impl ClaudeExecutionError {
 pub struct ClaudeExecutionObservation {
     pub session: ClaudeSessionSelector,
     pub turn: ClaudeTurnReceipt,
+    pub connection: ConnectionReceipt,
+    pub stop: Option<StopIntent>,
     pub cleanup: Option<HostCleanupProof>,
 }
 
@@ -82,8 +89,13 @@ pub(crate) fn execute_turn(
     owner_token: &str,
     existing_session: Option<&str>,
     send_input: impl FnOnce(&mut ClaudeTransport) -> Result<(), ClaudeExecutionError>,
+    mut poll_control: impl FnMut(
+        &mut ClaudeTransport,
+        bool,
+        Option<Instant>,
+    ) -> Result<bool, ClaudeExecutionError>,
     timeout: Duration,
-) -> Result<ClaudeExecutionObservation, ClaudeExecutionError> {
+) -> Result<ClaudeExecutionObservation, HostExecutionFailure<ClaudeExecutionError>> {
     if config.identity.runtime_type != "claude_local"
         || timeout.is_zero()
         || timeout > MAX_TURN_TIMEOUT
@@ -97,7 +109,7 @@ pub(crate) fn execute_turn(
         || attempt_id.is_empty()
         || owner_token.is_empty()
     {
-        return Err(ClaudeExecutionError::InvalidConfiguration);
+        return Err(ClaudeExecutionError::InvalidConfiguration.into());
     }
     if local
         .grace_sec
@@ -106,7 +118,7 @@ pub(crate) fn execute_turn(
             .max_turns_per_run
             .is_some_and(|turns| !(1..=1000).contains(&turns))
     {
-        return Err(ClaudeExecutionError::InvalidConfiguration);
+        return Err(ClaudeExecutionError::InvalidConfiguration.into());
     }
     let timeout = local
         .timeout_sec
@@ -130,14 +142,14 @@ pub(crate) fn execute_turn(
             || key.contains('\0')
             || value.contains('\0')
         {
-            return Err(ClaudeExecutionError::InvalidConfiguration);
+            return Err(ClaudeExecutionError::InvalidConfiguration.into());
         }
         env.insert(key.clone(), value.clone());
     }
     env.insert("PATH".into(), local.executable_search_path.clone());
     let session = match existing_session {
         Some(value) => ClaudeSessionMode::Resume {
-            session_id: ClaudeSessionSelector::parse(value)?,
+            session_id: ClaudeSessionSelector::parse(value).map_err(ClaudeExecutionError::from)?,
         },
         None => ClaudeSessionMode::New {
             session_id: Some(ClaudeSessionSelector::new()),
@@ -164,9 +176,11 @@ pub(crate) fn execute_turn(
         owner_token: owner_token.to_owned(),
         invocation,
     };
-    let mut transport = ClaudeTransport::launch_for_execution(launch, permit)?;
+    let mut transport = ClaudeTransport::launch_for_execution(launch, permit)
+        .map_err(ClaudeExecutionError::from)?;
     let deadline = Instant::now() + timeout;
-    let result = run_turn(&mut transport, send_input, deadline);
+    let result = run_turn(&mut transport, send_input, &mut poll_control, deadline);
+    let connection = transport.connection_receipt();
 
     // A result is a provider receipt; the process remains owned until the
     // host emits its matching terminal cleanup lifecycle.
@@ -181,11 +195,29 @@ pub(crate) fn execute_turn(
         PROCESS_GRACE
     };
     let cleanup_deadline = Instant::now() + cleanup_wait;
+    // Host shutdown begins here, so cleanup ticks may observe/renew authority
+    // but may not dispatch any further provider effect, even if the turn ended
+    // with an error instead of a typed provider terminal result.
+    let _ = poll_control(&mut transport, true, Some(cleanup_deadline));
+    let mut next_cleanup_control_poll = Instant::now() + Duration::from_secs(5);
     while !cleanup_deadline
         .saturating_duration_since(Instant::now())
         .is_zero()
     {
-        match transport.poll(Duration::from_millis(100)) {
+        let now = Instant::now();
+        if now >= next_cleanup_control_poll {
+            // Cleanup is already bounded by its independent deadline. A failed
+            // control tick must not erase a provider terminal receipt or stop
+            // collection of the same-connection host cleanup proof.
+            let _ = poll_control(&mut transport, true, Some(cleanup_deadline));
+            next_cleanup_control_poll = Instant::now() + Duration::from_secs(5);
+        }
+        let wait = remaining(cleanup_deadline, Duration::from_millis(200))
+            .min(next_cleanup_control_poll.saturating_duration_since(Instant::now()));
+        if wait.is_zero() {
+            continue;
+        }
+        match transport.poll(wait) {
             Ok(Some(ClaudeTransportEvent::Lifecycle(value)))
                 if value.get("type").and_then(serde_json::Value::as_str) == Some("terminal") =>
             {
@@ -195,12 +227,22 @@ pub(crate) fn execute_turn(
             Err(_) => break,
         }
     }
-    let turn = result?;
+    let turn = match result {
+        Ok(turn) => turn,
+        Err(error) => {
+            return Err(HostExecutionFailure {
+                error,
+                cleanup: transport.take_cleanup_proof().map(Box::new),
+            });
+        }
+    };
     let session = turn.session_id().clone();
     let cleanup = transport.take_cleanup_proof();
     Ok(ClaudeExecutionObservation {
         session,
         turn,
+        connection,
+        stop: None,
         cleanup,
     })
 }
@@ -219,23 +261,48 @@ fn claude_instruction_entry_path(
 fn run_turn(
     transport: &mut ClaudeTransport,
     send_input: impl FnOnce(&mut ClaudeTransport) -> Result<(), ClaudeExecutionError>,
+    poll_control: &mut impl FnMut(
+        &mut ClaudeTransport,
+        bool,
+        Option<Instant>,
+    ) -> Result<bool, ClaudeExecutionError>,
     deadline: Instant,
 ) -> Result<ClaudeTurnReceipt, ClaudeExecutionError> {
     transport.wait_spawned(remaining(deadline, Duration::from_secs(10)))?;
     send_input(transport)?;
+    let mut next_control_poll = Instant::now();
     loop {
-        let wait = remaining(deadline, Duration::from_millis(250));
+        // Stop is polled on the same owned transport that received the one
+        // admitted input. A true result only says a permit-backed interrupt
+        // write was dispatched; terminal status still comes exclusively from
+        // the matching Claude `result` event below.
+        let now = Instant::now();
+        if now >= next_control_poll {
+            let _interrupt_dispatched = poll_control(transport, false, None)?;
+            next_control_poll = Instant::now() + Duration::from_millis(250);
+        }
+        let wait = remaining(
+            deadline,
+            next_control_poll.saturating_duration_since(Instant::now()),
+        );
         if wait.is_zero() {
             return Err(ClaudeExecutionError::Timeout);
         }
         match transport.poll(wait)? {
             Some(ClaudeTransportEvent::Provider(event)) => match event {
                 ClaudeEvent::Result { .. } => {
+                    // Take the typed terminal receipt before any cleanup-phase
+                    // database work. The cleanup hook will observe a racing
+                    // Stop without allowing a post-terminal interrupt.
                     return transport
                         .take_terminal()
                         .ok_or(ClaudeExecutionError::ProcessExited);
                 }
                 ClaudeEvent::ControlRequest(_) => return Err(ClaudeExecutionError::ControlRequest),
+                ClaudeEvent::ControlResponse(_) => {
+                    // The transport has correlated this ACK to the one
+                    // interrupt request. It is not a terminal provider result.
+                }
                 ClaudeEvent::Unknown { .. } => return Err(ClaudeExecutionError::UnknownEvent),
                 ClaudeEvent::SystemInit { .. }
                 | ClaudeEvent::Assistant { .. }

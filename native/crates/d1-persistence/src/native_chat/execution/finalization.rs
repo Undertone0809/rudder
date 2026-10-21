@@ -248,6 +248,89 @@ pub async fn finalize_native(
     .await
 }
 
+/// Finalize a native provider only after its actual terminal result and owned
+/// cleanup. Stop freezes projection; cancellation ACK alone cannot enter here.
+pub async fn finalize_native_stopped(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    turn: &NativeProviderTurnReceipt,
+    cleanup: &HostCleanupProof,
+    stop: &super::stopping::StopIntent,
+) -> Result<Value> {
+    validate_native_receipt(turn)?;
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Native(turn)),
+        ProviderCleanup::Host(cleanup),
+        Some(stop),
+        false,
+    )
+    .await
+}
+
+pub async fn finalize_pi_stopped(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    turn: &PiTurnReceipt,
+    cleanup: &PiCleanupReceipt,
+    stop: &super::stopping::StopIntent,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Pi(turn)),
+        ProviderCleanup::Pi(cleanup),
+        Some(stop),
+        false,
+    )
+    .await
+}
+
+/// Cleanup can settle a pre-input Stop only while the durable phase and empty
+/// frozen prefix still prove that no input permit was committed.
+pub async fn finalize_native_stopped_before_submission(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    cleanup: &HostCleanupProof,
+    stop: &super::stopping::StopIntent,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Host(cleanup),
+        Some(stop),
+        false,
+    )
+    .await
+}
+
+pub async fn finalize_pi_stopped_before_submission(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    cleanup: &PiCleanupReceipt,
+    stop: &super::stopping::StopIntent,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Pi(cleanup),
+        Some(stop),
+        false,
+    )
+    .await
+}
+
 fn validate_native_receipt(turn: &NativeProviderTurnReceipt) -> Result<()> {
     if turn.session_id.trim().is_empty()
         || turn.session_id.len() > MAX_NATIVE_ID_BYTES
@@ -590,7 +673,12 @@ impl<'a> ProviderTurn<'a> {
                     && checkpoint
                         .pi_session()
                         .is_some_and(|session| session.session_id == turn.session_id())
-                    && checkpoint.pi_turn_entry_id() == Some(turn.input_entry_id())
+                    && (checkpoint.pi_turn_entry_id() == Some(turn.input_entry_id())
+                        || (checkpoint.phase() == NativeChatProtocolPhase::InputIndeterminate
+                            && checkpoint.pi_session().is_some_and(|session| {
+                                session.session_file == turn.session_file()
+                                    && session.leaf_id.as_deref() == turn.prior_leaf_id()
+                            })))
             }
             Self::Native(turn) => {
                 let expected =
@@ -1086,6 +1174,12 @@ async fn finalize_inner(
                 | NativeChatProtocolPhase::ThreadKnown
                 | NativeChatProtocolPhase::InputPreSubmission
         ) && locked.checkpoint.turn_id().is_none()
+            || (locked.checkpoint.phase() == NativeChatProtocolPhase::ThreadStartIndeterminate
+                && !locked.checkpoint.claude_combined_input()
+                && matches!(
+                    fence.runtime_type(),
+                    "cursor" | "cursor_local" | "opencode_local" | "pi_local"
+                ))
     } else if let Some(turn) = turn {
         let claude_combined_phase = matches!(turn, ProviderTurn::Native(receipt) if receipt.provider == NativeProviderKind::Claude)
             && locked.checkpoint.claude_combined_input()
@@ -1098,6 +1192,9 @@ async fn finalize_inner(
             || (stop.is_some() && locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown)
             || (stop.is_some()
                 && matches!(turn, ProviderTurn::HermesPromptError(_))
+                && locked.checkpoint.phase() == NativeChatProtocolPhase::InputIndeterminate)
+            || (stop.is_some()
+                && matches!(turn, ProviderTurn::Pi(_) | ProviderTurn::Native(_))
                 && locked.checkpoint.phase() == NativeChatProtocolPhase::InputIndeterminate)
             || claude_combined_phase)
             && turn.checkpoint_matches(&locked.checkpoint)
@@ -1118,6 +1215,11 @@ async fn finalize_inner(
             409,
             "Hermes prompt error does not match the admitted input",
         ));
+    }
+    if let Some(ProviderTurn::Pi(turn)) = turn
+        && locked.admitted_input_fingerprint.as_deref() != Some(turn.input_fingerprint())
+    {
+        return Err(http(409, "Pi terminal does not match the admitted input"));
     }
     if pre_submission_stop {
         let stop = stop.ok_or_else(|| http(409, "Pre-submission finalization requires Stop"))?;
@@ -1176,6 +1278,10 @@ async fn finalize_inner(
             }
         }
     }
+    if let Some(ProviderTurn::Pi(turn)) = turn {
+        checkpoint["piTurnEntryId"] = json!(turn.input_entry_id());
+        checkpoint["piSession"]["leafId"] = json!(turn.leaf_id());
+    }
     checkpoint["phase"] = json!("execution_terminal_committed");
     checkpoint["revision"] = json!(
         locked
@@ -1192,55 +1298,6 @@ async fn finalize_inner(
     sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:finalize',true)")
         .execute(&mut *tx)
         .await?;
-
-    // Combined provider adapters may observe their session while sending the
-    // first prompt. Persist that provider-native locator before terminal state
-    // so replay and later sends share one immutable Segment identity.
-    if let Some(ProviderTurn::Native(turn)) = turn {
-        if !matches!(
-            fence.runtime_type(),
-            "claude_local" | "cursor" | "cursor_local" | "opencode_local"
-        ) || (fence.runtime_type() == "claude_local"
-            && turn.provider != NativeProviderKind::Claude)
-            || (matches!(fence.runtime_type(), "cursor" | "cursor_local")
-                && turn.provider != NativeProviderKind::Cursor)
-            || (fence.runtime_type() == "opencode_local"
-                && turn.provider != NativeProviderKind::OpenCode)
-        {
-            return Err(http(
-                409,
-                "Native provider runtime identity does not match receipt",
-            ));
-        }
-        if let Some(stored) = locked.native_session_id.as_deref() {
-            if stored != turn.session_id {
-                return Err(http(
-                    409,
-                    "Native provider session changed before finalization",
-                ));
-            }
-        } else {
-            let updated = sqlx::query(
-                "UPDATE native_segments
-                 SET native_session_id=$4,state='open',updated_at=clock_timestamp()
-                 WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$3::uuid
-                   AND state='pending' AND native_session_id IS NULL AND sealed_at IS NULL",
-            )
-            .bind(id.organization_id)
-            .bind(&fence.binding_id)
-            .bind(&fence.segment_id)
-            .bind(&turn.session_id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-            if updated != 1 {
-                return Err(http(
-                    409,
-                    "Native provider Segment changed before finalization",
-                ));
-            }
-        }
-    }
 
     let message_id: Option<String> = if forced_failure {
         None
@@ -1438,6 +1495,55 @@ async fn finalize_inner(
     } else {
         lock_current_execution(&mut tx, actor, fence).await?;
     }
+    // Combined provider adapters may observe their session while sending the
+    // first prompt. Persist that provider-native locator before terminal state
+    // so replay and later sends share one immutable Segment identity.
+    if let Some(ProviderTurn::Native(turn)) = turn {
+        if !matches!(
+            fence.runtime_type(),
+            "claude_local" | "cursor" | "cursor_local" | "opencode_local"
+        ) || (fence.runtime_type() == "claude_local"
+            && turn.provider != NativeProviderKind::Claude)
+            || (matches!(fence.runtime_type(), "cursor" | "cursor_local")
+                && turn.provider != NativeProviderKind::Cursor)
+            || (fence.runtime_type() == "opencode_local"
+                && turn.provider != NativeProviderKind::OpenCode)
+        {
+            return Err(http(
+                409,
+                "Native provider runtime identity does not match receipt",
+            ));
+        }
+        if let Some(stored) = locked.native_session_id.as_deref() {
+            if stored != turn.session_id {
+                return Err(http(
+                    409,
+                    "Native provider session changed before finalization",
+                ));
+            }
+        } else {
+            let updated = sqlx::query(
+                "UPDATE native_segments
+                 SET native_session_id=$4,state='open',updated_at=clock_timestamp()
+                 WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$3::uuid
+                   AND state='pending' AND native_session_id IS NULL AND sealed_at IS NULL",
+            )
+            .bind(id.organization_id)
+            .bind(&fence.binding_id)
+            .bind(&fence.segment_id)
+            .bind(&turn.session_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if updated != 1 {
+                return Err(http(
+                    409,
+                    "Native provider Segment changed before finalization",
+                ));
+            }
+        }
+    }
+
     let mut result = json!({"runId":id.run_id,"generationId":id.generation_id,"attemptId":id.attempt_id,
         "assistantMessageId":message_id,"spanId":span_id,"status":run_status,
         "generationStatus":generation_status,
@@ -1496,14 +1602,29 @@ async fn finalize_inner(
                     )
                     .await?;
                 }
-                ProviderCleanup::Pi(_) => {
-                    return Err(http(409, "Pi Stop finalization is unsupported"));
+                ProviderCleanup::Pi(cleanup) => {
+                    super::native_stopping::resolve_action_owned(
+                        &mut tx,
+                        actor,
+                        fence,
+                        stop,
+                        cleanup.connection_receipt_id(),
+                        None,
+                        &result,
+                    )
+                    .await?;
                 }
-                ProviderCleanup::Host(_) => {
-                    return Err(http(
-                        409,
-                        "Native provider pre-submission Stop finalization is unsupported",
-                    ));
+                ProviderCleanup::Host(cleanup) => {
+                    super::native_stopping::resolve_action_owned(
+                        &mut tx,
+                        actor,
+                        fence,
+                        stop,
+                        cleanup.connection_receipt_id(),
+                        None,
+                        &result,
+                    )
+                    .await?;
                 }
             }
         } else {
@@ -1532,14 +1653,29 @@ async fn finalize_inner(
                     )
                     .await?;
                 }
-                (ProviderTurn::Pi(_), ProviderCleanup::Pi(_)) => {
-                    return Err(http(409, "Pi Stop finalization is unsupported"));
+                (ProviderTurn::Pi(turn), ProviderCleanup::Pi(cleanup)) => {
+                    super::native_stopping::resolve_action_owned(
+                        &mut tx,
+                        actor,
+                        fence,
+                        stop,
+                        cleanup.connection_receipt_id(),
+                        Some(ProviderTurn::Pi(turn).provider_status()),
+                        &result,
+                    )
+                    .await?;
                 }
-                (ProviderTurn::Native(_), ProviderCleanup::Host(_)) => {
-                    return Err(http(
-                        409,
-                        "Native provider Stop finalization is unsupported",
-                    ));
+                (ProviderTurn::Native(turn), ProviderCleanup::Host(cleanup)) => {
+                    super::native_stopping::resolve_action_owned(
+                        &mut tx,
+                        actor,
+                        fence,
+                        stop,
+                        cleanup.connection_receipt_id(),
+                        Some(ProviderTurn::Native(turn).provider_status()),
+                        &result,
+                    )
+                    .await?;
                 }
                 _ => return Err(http(409, "Provider Stop evidence does not match")),
             }
