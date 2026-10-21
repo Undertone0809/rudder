@@ -964,7 +964,7 @@ impl ClaudeTransport {
     pub fn wait_spawned(&mut self, timeout: Duration) -> Result<(), ClaudeError> {
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            let event = self.receive_one(remaining(deadline))?;
+            let event = self.receive_one(remaining(deadline), true)?;
             match event {
                 ClaudeTransportEvent::Lifecycle(value)
                     if value.get("type").and_then(Value::as_str) == Some("spawned") =>
@@ -1054,7 +1054,21 @@ impl ClaudeTransport {
     }
 
     pub fn poll(&mut self, timeout: Duration) -> Result<Option<ClaudeTransportEvent>, ClaudeError> {
-        match self.receive_one(timeout) {
+        match self.receive_one(timeout, true) {
+            Ok(value) => Ok(Some(value)),
+            Err(ClaudeError::Timeout) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Receive already-produced output while the owned host is shutting down.
+    /// Unlike `poll`, this path never flushes a queued provider write, so
+    /// cleanup cannot replay or create a provider effect.
+    pub fn poll_cleanup(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<ClaudeTransportEvent>, ClaudeError> {
+        match self.receive_one(timeout, false) {
             Ok(value) => Ok(Some(value)),
             Err(ClaudeError::Timeout) => Ok(None),
             Err(error) => Err(error),
@@ -1062,7 +1076,7 @@ impl ClaudeTransport {
     }
 
     pub fn receive(&mut self, timeout: Duration) -> Result<ClaudeTransportEvent, ClaudeError> {
-        self.receive_one(timeout)
+        self.receive_one(timeout, true)
     }
 
     pub fn take_event(&mut self) -> Option<ClaudeEvent> {
@@ -1081,14 +1095,20 @@ impl ClaudeTransport {
         }
     }
 
-    fn receive_one(&mut self, timeout: Duration) -> Result<ClaudeTransportEvent, ClaudeError> {
+    fn receive_one(
+        &mut self,
+        timeout: Duration,
+        flush_pending: bool,
+    ) -> Result<ClaudeTransportEvent, ClaudeError> {
         if self.terminal_received {
             return Err(ClaudeError::Closed);
         }
         if let Some(event) = self.events.pop_front() {
             return Ok(ClaudeTransportEvent::Provider(event));
         }
-        self.flush_pending()?;
+        if flush_pending {
+            self.flush_pending()?;
+        }
         match self.host.receive(timeout).map_err(map_host_error)? {
             HostEvent::Failure => Err(ClaudeError::Closed),
             HostEvent::Lifecycle(value) => {
@@ -1100,7 +1120,13 @@ impl ClaudeTransport {
             HostEvent::Stdout(bytes) => {
                 let mut parsed = self.decoder.push(&bytes, ClaudeEvent::parse)?;
                 if parsed.is_empty() {
-                    return self.receive_one(timeout);
+                    if !flush_pending {
+                        // A cleanup receive is always nonblocking or bounded;
+                        // let its caller continue the bounded drain instead
+                        // of recursively consuming an unbounded stdout stream.
+                        return Err(ClaudeError::Timeout);
+                    }
+                    return self.receive_one(timeout, flush_pending);
                 }
                 for event in parsed.drain(..) {
                     self.observe(event)?;
@@ -1708,5 +1734,95 @@ mod tests {
         let other = root.path().join("other");
         fs::create_dir(&other).unwrap();
         assert!(reader.path_for_cwd(&projects, &other).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires RUDDER_TEST_PROCESS_HOST and a synthetic local child only"]
+    fn cleanup_poll_recovers_terminal_queued_during_slow_authority_tick() {
+        use std::{
+            os::unix::fs::PermissionsExt,
+            path::PathBuf,
+            time::{Duration, Instant},
+        };
+
+        let process_host = std::env::var_os("RUDDER_TEST_PROCESS_HOST")
+            .expect("set RUDDER_TEST_PROCESS_HOST to the Rust process-host binary");
+        let process_host = PathBuf::from(process_host)
+            .canonicalize()
+            .expect("canonical process host");
+        let root = tempfile::tempdir().unwrap();
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("cwd");
+        fs::create_dir_all(&runtime_root).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        let executable = root.path().join("synthetic-claude");
+        fs::write(
+            &executable,
+            b"#!/bin/sh\ntrap '' TERM\nwhile :; do /bin/sleep 1; done\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let run_id = "slow-claude-cleanup-run".to_owned();
+        let attempt_id = "slow-claude-cleanup-attempt".to_owned();
+        let owner_token = "slow-claude-cleanup-owner".to_owned();
+        let launch = ClaudeLaunch {
+            executable,
+            cwd: cwd.canonicalize().unwrap(),
+            env: BTreeMap::new(),
+            process_host,
+            runtime_root,
+            run_id: run_id.clone(),
+            attempt_id: attempt_id.clone(),
+            owner_token: owner_token.clone(),
+            invocation: ClaudeInvocation::new(ClaudeSessionMode::New {
+                session_id: Some(ClaudeSessionSelector::new()),
+            }),
+        };
+        let mut transport = ClaudeTransport::launch_for_execution(
+            launch,
+            ConnectionLaunchPermit::from_claim(
+                run_id.clone(),
+                attempt_id.clone(),
+                owner_token.clone(),
+                1,
+                "slow-claude-cleanup-claim".into(),
+            ),
+        )
+        .expect("launch synthetic CLI through owned process host");
+        transport
+            .wait_spawned(Duration::from_secs(5))
+            .expect("owned process reaches spawned lifecycle");
+        transport.stop(100).expect("send bounded host stop");
+
+        let started = Instant::now();
+        // Model a synchronous D1 cleanup tick that outlives the remaining
+        // host receive window. The terminal must still be collectable after
+        // the hook returns, without flushing a provider write.
+        std::thread::sleep(Duration::from_millis(700));
+        assert!(started.elapsed() >= Duration::from_millis(700));
+        let mut terminal_seen = false;
+        for _ in 0..128 {
+            match transport.poll_cleanup(Duration::ZERO) {
+                Ok(Some(ClaudeTransportEvent::Lifecycle(value)))
+                    if value.get("type").and_then(Value::as_str) == Some("terminal") =>
+                {
+                    terminal_seen = true;
+                    break;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(ClaudeError::Closed | ClaudeError::Timeout) => break,
+                Err(error) => panic!("cleanup receive failed: {error}"),
+            }
+        }
+        assert!(
+            terminal_seen,
+            "terminal emitted during tick must be observed"
+        );
+        let proof = transport
+            .take_cleanup_proof()
+            .expect("matching terminal yields the exact host cleanup proof");
+        assert!(proof.matches_execution(&run_id, &attempt_id, &owner_token));
     }
 }

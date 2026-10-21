@@ -4,7 +4,10 @@
 //! session evidence. D1 claims, checkpoint persistence, and terminal billing
 //! stay in the shared worker.
 
-use crate::{HostExecutionFailure, HostPaths, native_turn::NativeTurnAuthority};
+use crate::{
+    HostExecutionFailure, HostPaths,
+    native_turn::{NativeTurnAuthority, cleanup_tick_budget_is_safe},
+};
 use rudder_cursor_acp_adapter::{
     AuthenticateParams, CursorAcpCommand, CursorAcpHome, CursorAcpMessage, CursorAcpProcessLaunch,
     CursorAcpSession, CursorAcpTransport, CursorAcpTransportError, CursorManagedInstructionRule,
@@ -31,6 +34,7 @@ const PROCESS_GRACE: Duration = Duration::from_millis(500);
 const CLEANUP_RECEIPT_ALLOWANCE: Duration = Duration::from_secs(2);
 const CLEANUP_TICK_INTERVAL: Duration = Duration::from_secs(4);
 const CLEANUP_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
+const CLEANUP_RECEIVE_QUANTUM: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Error)]
 pub enum CursorExecutionError {
@@ -211,14 +215,16 @@ pub(crate) fn execute_turn(
     };
     let mut next_cleanup_tick = Instant::now();
     let cleanup_result = transport
-        .stop_with_grace_hook(process_grace, cleanup_wait, || {
+        .stop_with_grace_hook(process_grace, cleanup_wait, |remaining| {
             let now = Instant::now();
             if now >= next_cleanup_tick {
-                // Keep the lease live while bounded process-host cleanup
-                // waits, even after the provider-turn deadline. A failed tick
-                // must not prevent host termination or discard its proof;
-                // the fenced finalizer remains fail closed.
-                let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+                // Reserve the maximum D1 operation time and one host receive
+                // quantum for terminal lifecycle collection. The transport
+                // performs a final nonblocking drain if a tick nevertheless
+                // overruns its bound.
+                if cleanup_tick_budget_is_safe(remaining, CLEANUP_RECEIVE_QUANTUM) {
+                    let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+                }
                 next_cleanup_tick = Instant::now() + CLEANUP_TICK_INTERVAL;
             }
         })

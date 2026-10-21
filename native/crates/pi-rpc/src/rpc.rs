@@ -16,6 +16,11 @@ use std::{
 
 const MAX_PI_EVENT_QUEUE: usize = 128;
 const MAX_PI_EVENT_JSON_BYTES: usize = 1024 * 1024;
+// A Pi authority hook is backed by a bounded D1 operation of at most one
+// second. Keep one full receive interval after the last possible hook so a
+// terminal lifecycle event emitted while that hook is running can be drained.
+const PI_CLEANUP_HOOK_BUDGET: Duration = Duration::from_secs(1);
+const PI_CLEANUP_TERMINAL_DRAIN_RESERVE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PiTransportError {
@@ -637,8 +642,17 @@ impl PiRpcTransport {
                 return Err(PiTransportError::Timeout);
             }
             if now >= next_hook {
-                hook();
-                next_hook = Instant::now() + Duration::from_secs(1);
+                if remaining
+                    > PI_CLEANUP_HOOK_BUDGET.saturating_add(PI_CLEANUP_TERMINAL_DRAIN_RESERVE)
+                {
+                    hook();
+                    next_hook = Instant::now() + PI_CLEANUP_HOOK_BUDGET;
+                } else {
+                    // A synchronous authority tick cannot be cancelled once
+                    // started. Skip tail ticks and leave the remaining budget
+                    // exclusively to dequeue the host's terminal receipt.
+                    next_hook = deadline;
+                }
                 if self.terminal {
                     break;
                 }
@@ -1047,6 +1061,8 @@ fn is_known_event(kind: &str) -> bool {
             | "tool_execution_update"
             | "tool_execution_end"
             | "queue_update"
+            | "session_info_changed"
+            | "thinking_level_changed"
             | "compaction_start"
             | "compaction_end"
             | "auto_retry_start"
@@ -1377,7 +1393,8 @@ mod tests {
             }
             PiRpcMessage::Event(_) => panic!("response classified as event"),
         }
-        // Events are explicitly id-free in the installed RPC contract.
+        // This tolerated id-free event is not a response and cannot satisfy a
+        // pending command request.
         match parse_message(json!({"type":"session","sessionId":"pi-session","cwd":"/managed"}))
             .unwrap()
         {
@@ -1387,6 +1404,18 @@ mod tests {
         match parse_message(json!({"type":"agent_settled"})).unwrap() {
             PiRpcMessage::Event(event) => assert_eq!(event.kind(), "agent_settled"),
             PiRpcMessage::Response(_) => panic!("agent_settled classified as response"),
+        }
+        for value in [
+            json!({"type":"session_info_changed","name":"fixture"}),
+            json!({"type":"thinking_level_changed","level":"high"}),
+        ] {
+            match parse_message(value).unwrap() {
+                PiRpcMessage::Event(event) => assert!(matches!(
+                    event.kind(),
+                    "session_info_changed" | "thinking_level_changed"
+                )),
+                PiRpcMessage::Response(_) => panic!("session event classified as response"),
+            }
         }
         for value in [
             json!({"type":"mystery_event"}),

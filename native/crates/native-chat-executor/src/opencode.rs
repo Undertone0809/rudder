@@ -6,7 +6,10 @@
 //! callers receive a receipt only after a matching completed assistant message
 //! is read back from the same Session.
 
-use crate::{HostExecutionFailure, HostPaths, native_turn::NativeTurnAuthority};
+use crate::{
+    HostExecutionFailure, HostPaths,
+    native_turn::{NativeTurnAuthority, cleanup_tick_budget_is_safe},
+};
 use rudder_d1_persistence::{
     native_chat::{
         config::OpenCodeLocalConfig,
@@ -40,6 +43,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
 const CLEANUP_TICK_INTERVAL: Duration = Duration::from_secs(4);
 const CLEANUP_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
+const CLEANUP_RECEIVE_QUANTUM: Duration = Duration::from_millis(100);
+const MAX_FINAL_HOST_DRAIN_EVENTS: usize = 128;
 
 #[derive(Debug, Error)]
 pub enum OpenCodeExecutionError {
@@ -156,10 +161,12 @@ pub(crate) fn execute_turn(
     let connection_id = connection.connection_receipt_id().to_owned();
     if let Err(error) = authority.register_connection(connection) {
         let mut next_cleanup_tick = Instant::now();
-        let cleanup_result = server.stop_with_tick(config.cleanup_grace, || {
+        let cleanup_result = server.stop_with_tick(config.cleanup_grace, |remaining| {
             let now = Instant::now();
             if now >= next_cleanup_tick {
-                let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+                if cleanup_tick_budget_is_safe(remaining, CLEANUP_RECEIVE_QUANTUM) {
+                    let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+                }
                 next_cleanup_tick = Instant::now() + CLEANUP_TICK_INTERVAL;
             }
         });
@@ -296,10 +303,12 @@ pub(crate) fn execute_turn(
         Ok::<_, OpenCodeExecutionError>((session, request_id, terminal, cancel_acknowledged))
     })();
     let mut next_cleanup_tick = Instant::now();
-    let cleanup_result = server.stop_with_tick(config.cleanup_grace, || {
+    let cleanup_result = server.stop_with_tick(config.cleanup_grace, |remaining| {
         let now = Instant::now();
         if now >= next_cleanup_tick {
-            let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+            if cleanup_tick_budget_is_safe(remaining, CLEANUP_RECEIVE_QUANTUM) {
+                let _ = authority.cleanup_tick(now + CLEANUP_OPERATION_TIMEOUT);
+            }
             next_cleanup_tick = Instant::now() + CLEANUP_TICK_INTERVAL;
         }
     });
@@ -609,7 +618,7 @@ impl OpenCodeServerHost {
     fn stop_with_tick(
         &mut self,
         timeout: Duration,
-        mut cleanup_tick: impl FnMut(),
+        mut cleanup_tick: impl FnMut(Duration),
     ) -> Result<HostCleanupProof, OpenCodeExecutionError> {
         self.host.send(Command::Stop {
             protocol_version: Some(ProtocolVersion::default()),
@@ -617,9 +626,10 @@ impl OpenCodeServerHost {
             grace_ms: Some(timeout.as_millis().clamp(1, u64::MAX as u128) as u64),
         })?;
         let deadline = Instant::now() + timeout + Duration::from_secs(2);
-        cleanup_tick();
+        cleanup_tick(deadline.saturating_duration_since(Instant::now()));
         while Instant::now() < deadline {
-            match self.host.receive(Duration::from_millis(100)) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.host.receive(remaining.min(CLEANUP_RECEIVE_QUANTUM)) {
                 Ok(HostEvent::Lifecycle(value))
                     if value.get("type").and_then(Value::as_str) == Some("terminal") =>
                 {
@@ -635,7 +645,28 @@ impl OpenCodeServerHost {
                 Err(HostError::Timeout) => {}
                 Err(_) => return Err(OpenCodeExecutionError::CleanupUnavailable),
             }
-            cleanup_tick();
+            cleanup_tick(deadline.saturating_duration_since(Instant::now()));
+        }
+        // A bounded authority callback may still overrun. Recover a terminal
+        // lifecycle already queued while it was blocked before reporting a
+        // missing cleanup receipt.
+        for _ in 0..MAX_FINAL_HOST_DRAIN_EVENTS {
+            match self.host.receive(Duration::ZERO) {
+                Ok(HostEvent::Lifecycle(value))
+                    if value.get("type").and_then(Value::as_str) == Some("terminal") =>
+                {
+                    return self
+                        .host
+                        .take_cleanup_proof()
+                        .ok_or(OpenCodeExecutionError::CleanupUnavailable);
+                }
+                Ok(HostEvent::Lifecycle(_)) | Ok(HostEvent::Stdout(_)) => {}
+                Ok(HostEvent::Failure) => {
+                    return Err(OpenCodeExecutionError::CleanupUnavailable);
+                }
+                Err(HostError::Timeout) => break,
+                Err(_) => return Err(OpenCodeExecutionError::CleanupUnavailable),
+            }
         }
         Err(OpenCodeExecutionError::CleanupUnavailable)
     }
@@ -695,11 +726,108 @@ impl PromptRequestBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn model_selection_requires_provider_and_model() {
         assert!(parse_model("openai/gpt-5").is_ok());
         assert!(parse_model("gpt-5").is_err());
         assert!(parse_model("/gpt-5").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires RUDDER_TEST_PROCESS_HOST and a synthetic local child only"]
+    fn stop_drains_terminal_after_cleanup_hook_outlives_deadline() {
+        use std::{os::unix::fs::PermissionsExt, path::PathBuf, time::Instant};
+
+        let process_host = std::env::var_os("RUDDER_TEST_PROCESS_HOST")
+            .expect("set RUDDER_TEST_PROCESS_HOST to the Rust process-host binary");
+        let process_host = PathBuf::from(process_host)
+            .canonicalize()
+            .expect("canonical process host");
+        let root = tempdir().unwrap();
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("cwd");
+        std::fs::create_dir_all(&runtime_root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let executable = root.path().join("synthetic-opencode-server");
+        std::fs::write(
+            &executable,
+            b"#!/bin/sh\ntrap '' TERM\nwhile :; do /bin/sleep 1; done\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let run_id = "slow-opencode-cleanup-run".to_owned();
+        let attempt_id = "slow-opencode-cleanup-attempt".to_owned();
+        let owner_token = "slow-opencode-cleanup-owner".to_owned();
+        let mut host = OwnedHost::launch_external(
+            HostConnection {
+                request_id: attempt_id.clone(),
+                run_id: run_id.clone(),
+                attempt_id: attempt_id.clone(),
+                owner_token: owner_token.clone(),
+            },
+            &process_host,
+            Some(ConnectionLaunchPermit::from_claim(
+                run_id.clone(),
+                attempt_id.clone(),
+                owner_token.clone(),
+                1,
+                "slow-opencode-cleanup-claim".into(),
+            )),
+        )
+        .expect("launch owned synthetic host");
+        host.send(Command::StartProcess {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some(attempt_id.clone()),
+            executable: executable.to_string_lossy().into_owned(),
+            argv: Vec::new(),
+            cwd: cwd.to_string_lossy().into_owned(),
+            env: BTreeMap::new(),
+            owner_token: Some(owner_token.clone()),
+            runtime_root: Some(runtime_root.to_string_lossy().into_owned()),
+            stdin: None,
+            interactive_stdin: false,
+            grace_ms: Some(500),
+        })
+        .expect("start synthetic child");
+        loop {
+            match host
+                .receive(Duration::from_secs(5))
+                .expect("host lifecycle")
+            {
+                HostEvent::Lifecycle(value)
+                    if value.get("type").and_then(Value::as_str) == Some("spawned") =>
+                {
+                    break;
+                }
+                HostEvent::Failure => panic!("owned host failed before spawn"),
+                HostEvent::Lifecycle(_) | HostEvent::Stdout(_) => {}
+            }
+        }
+        let mut server = OpenCodeServerHost {
+            host,
+            url: url::Url::parse("http://127.0.0.1:1/").unwrap(),
+            request_id: attempt_id.clone(),
+        };
+
+        let started = Instant::now();
+        let mut hook_called = false;
+        let cleanup = server.stop_with_tick(Duration::from_millis(100), |remaining| {
+            assert!(!remaining.is_zero());
+            if !hook_called {
+                hook_called = true;
+                // The host kills the TERM-ignoring child during this blocked
+                // authority callback; the final zero-time drain must retain
+                // its exact matching cleanup receipt.
+                std::thread::sleep(Duration::from_millis(2_300));
+            }
+        });
+        assert!(hook_called);
+        assert!(started.elapsed() >= Duration::from_millis(2_300));
+        let proof = cleanup.expect("final drain sees terminal queued during hook");
+        assert!(proof.matches_execution(&run_id, &attempt_id, &owner_token));
     }
 }

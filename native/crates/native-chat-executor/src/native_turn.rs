@@ -22,6 +22,14 @@ use tokio::runtime::Handle;
 
 type Result<T> = std::result::Result<T, runtime_bindings::Error>;
 
+/// Leave enough time for the longest bounded D1 cleanup operation and one
+/// provider-host receive quantum before starting a synchronous cleanup tick.
+/// The tick caller remains responsible for a final nonblocking drain if the
+/// operation nevertheless outlives that budget.
+pub(crate) fn cleanup_tick_budget_is_safe(remaining: Duration, receive_quantum: Duration) -> bool {
+    remaining > Duration::from_secs(5) + receive_quantum
+}
+
 pub(crate) struct NativeTurnAuthority<'a> {
     handle: &'a Handle,
     pool: &'a PgPool,
@@ -471,4 +479,27 @@ fn wait<T>(
 
 fn conflict(message: &str) -> runtime_bindings::Error {
     runtime_bindings::Error::Http(409, message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cleanup_tick_budget_is_safe;
+    use std::time::Duration;
+
+    #[test]
+    fn cleanup_tick_keeps_operation_and_receive_time_in_reserve() {
+        let receive = Duration::from_millis(200);
+        assert!(!cleanup_tick_budget_is_safe(
+            Duration::from_millis(5_200),
+            receive
+        ));
+        assert!(cleanup_tick_budget_is_safe(
+            Duration::from_millis(5_201),
+            receive
+        ));
+        assert!(!cleanup_tick_budget_is_safe(
+            Duration::from_secs(5),
+            Duration::ZERO
+        ));
+    }
 }

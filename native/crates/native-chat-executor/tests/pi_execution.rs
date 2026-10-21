@@ -22,6 +22,8 @@ const sessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
 const lazy = process.env.RUDDER_TEST_PI_LAZY === '1';
 const suppressFlush = process.env.RUDDER_TEST_PI_SUPPRESS_FLUSH === '1';
 const eventsBeforeAck = process.env.RUDDER_TEST_PI_EVENTS_BEFORE_ACK === '1';
+const settingEventsBeforeResponse = process.env.RUDDER_TEST_PI_SETTING_EVENTS_BEFORE_RESPONSE === '1';
+const ignoreSigterm = process.env.RUDDER_TEST_PI_IGNORE_SIGTERM === '1';
 const noAgentSettled = process.env.RUDDER_TEST_PI_NO_AGENT_SETTLED === '1';
 const delayedIdleReads = Number(process.env.RUDDER_TEST_PI_DELAY_IDLE_READS || '0');
 const sessionFile = path.join(sessionDir, lazy ? 'timestamp_synthetic-session.jsonl' : 'synthetic-session.jsonl');
@@ -30,6 +32,9 @@ let active = false;
 let ended = false;
 let settlementStateReads = 0;
 let nextTurn = 0;
+let settingEventCount = 0;
+
+if (ignoreSigterm) process.on('SIGTERM', () => {});
 
 function header() {
   return JSON.stringify({type:'session',version:3,id:'synthetic-session',cwd});
@@ -48,6 +53,12 @@ function state(isStreaming = active) {
     messageCount:entries().length};
 }
 function send(request, success, data) {
+  if (settingEventsBeforeResponse && settingEventCount < 2) {
+    const event = settingEventCount++ === 0
+      ? {type:'session_info_changed',name:'fixture session'}
+      : {type:'thinking_level_changed',level:'high'};
+    process.stdout.write(JSON.stringify(event) + '\n');
+  }
   process.stdout.write(JSON.stringify({type:'response',id:request.id,command:request.type,success,data}) + '\n');
 }
 function appendTurn(text) {
@@ -123,8 +134,11 @@ struct PiFixtureOptions {
     lazy: bool,
     missing_terminal_file: bool,
     events_before_ack: bool,
+    setting_events_before_response: bool,
     no_agent_settled: bool,
     delayed_idle_reads: usize,
+    ignore_sigterm: bool,
+    slow_cleanup_hook: bool,
 }
 
 #[test]
@@ -143,6 +157,25 @@ fn synthetic_pi_polls_idle_state_after_agent_end_without_later_event() {
     synthetic_pi_execution_with_options(PiFixtureOptions {
         no_agent_settled: true,
         delayed_idle_reads: 1,
+        ..PiFixtureOptions::default()
+    });
+}
+
+#[test]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST and RUDDER_TEST_NODE_EXECUTABLE"]
+fn synthetic_pi_session_events_before_responses_preserve_request_correlation() {
+    synthetic_pi_execution_with_options(PiFixtureOptions {
+        setting_events_before_response: true,
+        ..PiFixtureOptions::default()
+    });
+}
+
+#[test]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST and RUDDER_TEST_NODE_EXECUTABLE"]
+fn synthetic_pi_cleanup_skips_slow_tail_tick_and_drains_terminal_receipt() {
+    synthetic_pi_execution_with_options(PiFixtureOptions {
+        ignore_sigterm: true,
+        slow_cleanup_hook: true,
         ..PiFixtureOptions::default()
     });
 }
@@ -192,6 +225,15 @@ fn synthetic_pi_execution_with_options(options: PiFixtureOptions) {
                 }
                 if options.events_before_ack {
                     env.insert("RUDDER_TEST_PI_EVENTS_BEFORE_ACK".into(), "1".into());
+                }
+                if options.setting_events_before_response {
+                    env.insert(
+                        "RUDDER_TEST_PI_SETTING_EVENTS_BEFORE_RESPONSE".into(),
+                        "1".into(),
+                    );
+                }
+                if options.ignore_sigterm {
+                    env.insert("RUDDER_TEST_PI_IGNORE_SIGTERM".into(), "1".into());
                 }
                 if options.no_agent_settled {
                     env.insert("RUDDER_TEST_PI_NO_AGENT_SETTLED".into(), "1".into());
@@ -269,10 +311,27 @@ fn synthetic_pi_execution_with_options(options: PiFixtureOptions) {
         execution.take_turn_receipt(None, "hello").unwrap();
         assert!(execution.state().unwrap().session_file_persisted());
     }
-    assert_eq!(
-        execution.cleanup(Duration::from_secs(5)).unwrap(),
-        PiExecutionPhase::Cleaned
-    );
+    let mut cleanup_hook_calls = 0;
+    let cleanup_phase = if options.slow_cleanup_hook {
+        execution
+            .cleanup_with_grace_and_hook(
+                Duration::from_millis(2_500),
+                Duration::from_secs(3),
+                &mut || {
+                    cleanup_hook_calls += 1;
+                    std::thread::sleep(Duration::from_secs(1));
+                },
+            )
+            .unwrap()
+    } else {
+        execution.cleanup(Duration::from_secs(5)).unwrap()
+    };
+    assert_eq!(cleanup_phase, PiExecutionPhase::Cleaned);
+    if options.slow_cleanup_hook {
+        // The second tick would occupy the terminal-drain window. It is skipped
+        // so the terminal event emitted after the SIGTERM grace can be drained.
+        assert_eq!(cleanup_hook_calls, 1);
+    }
     let observation = execution.into_observation();
     assert_eq!(observation.phase, PiExecutionPhase::Cleaned);
     assert_eq!(

@@ -4,7 +4,7 @@
 //! receipt.  Durable admission, provider checkpoints, transcript projection,
 //! and finalization remain in the shared Native Chat worker.
 
-use crate::{HostExecutionFailure, HostPaths};
+use crate::{HostExecutionFailure, HostPaths, native_turn::cleanup_tick_budget_is_safe};
 use rudder_claude_code::{
     ClaudeError, ClaudeEvent, ClaudeInvocation, ClaudeLaunch, ClaudeRuntimeProfile,
     ClaudeSessionMode, ClaudeSessionSelector, ClaudeTransport, ClaudeTransportEvent,
@@ -24,6 +24,10 @@ use tokio::runtime::Handle;
 const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
 const PROCESS_GRACE: Duration = Duration::from_secs(10);
 const CLEANUP_RECEIPT_ALLOWANCE: Duration = Duration::from_secs(2);
+const CLEANUP_TICK_INTERVAL: Duration = Duration::from_secs(5);
+const CLEANUP_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
+const CLEANUP_RECEIVE_QUANTUM: Duration = Duration::from_millis(200);
+const MAX_FINAL_CLEANUP_DRAIN_EVENTS: usize = 128;
 
 #[derive(Debug, Error)]
 pub enum ClaudeExecutionError {
@@ -198,26 +202,32 @@ pub(crate) fn execute_turn(
     // Host shutdown begins here, so cleanup ticks may observe/renew authority
     // but may not dispatch any further provider effect, even if the turn ended
     // with an error instead of a typed provider terminal result.
-    let _ = poll_control(&mut transport, true, Some(cleanup_deadline));
-    let mut next_cleanup_control_poll = Instant::now() + Duration::from_secs(5);
+    let mut next_cleanup_control_poll = Instant::now();
     while !cleanup_deadline
         .saturating_duration_since(Instant::now())
         .is_zero()
     {
         let now = Instant::now();
         if now >= next_cleanup_control_poll {
-            // Cleanup is already bounded by its independent deadline. A failed
-            // control tick must not erase a provider terminal receipt or stop
-            // collection of the same-connection host cleanup proof.
-            let _ = poll_control(&mut transport, true, Some(cleanup_deadline));
-            next_cleanup_control_poll = Instant::now() + Duration::from_secs(5);
+            let remaining = cleanup_deadline.saturating_duration_since(now);
+            if cleanup_tick_budget_is_safe(remaining, CLEANUP_RECEIVE_QUANTUM) {
+                // Preserve a host receive quantum after the longest bounded
+                // D1 operation. Tick failure must never erase a typed turn
+                // receipt or stop collection of the same-connection proof.
+                let _ = poll_control(
+                    &mut transport,
+                    true,
+                    Some(cleanup_deadline.min(now + CLEANUP_OPERATION_TIMEOUT)),
+                );
+            }
+            next_cleanup_control_poll = Instant::now() + CLEANUP_TICK_INTERVAL;
         }
-        let wait = remaining(cleanup_deadline, Duration::from_millis(200))
+        let wait = remaining(cleanup_deadline, CLEANUP_RECEIVE_QUANTUM)
             .min(next_cleanup_control_poll.saturating_duration_since(Instant::now()));
         if wait.is_zero() {
             continue;
         }
-        match transport.poll(wait) {
+        match transport.poll_cleanup(wait) {
             Ok(Some(ClaudeTransportEvent::Lifecycle(value)))
                 if value.get("type").and_then(serde_json::Value::as_str) == Some("terminal") =>
             {
@@ -227,17 +237,41 @@ pub(crate) fn execute_turn(
             Err(_) => break,
         }
     }
+    // A synchronous cleanup tick may have outlived its reserved budget. Drain
+    // the finite host queue without blocking before deciding that cleanup
+    // proof is missing. Never flush pending provider writes on this path.
+    for _ in 0..MAX_FINAL_CLEANUP_DRAIN_EVENTS {
+        match transport.poll_cleanup(Duration::ZERO) {
+            Ok(Some(ClaudeTransportEvent::Lifecycle(value)))
+                if value.get("type").and_then(serde_json::Value::as_str) == Some("terminal") =>
+            {
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(ClaudeError::Closed | ClaudeError::Timeout) => break,
+            Err(_) => break,
+        }
+    }
+    let cleanup = transport.take_cleanup_proof();
+    if cleanup.is_some() {
+        // The host proof is already captured, so this best-effort authority
+        // refresh cannot consume the final host receive/drain window.
+        let _ = poll_control(
+            &mut transport,
+            true,
+            Some(Instant::now() + CLEANUP_OPERATION_TIMEOUT),
+        );
+    }
     let turn = match result {
         Ok(turn) => turn,
         Err(error) => {
             return Err(HostExecutionFailure {
                 error,
-                cleanup: transport.take_cleanup_proof().map(Box::new),
+                cleanup: cleanup.map(Box::new),
             });
         }
     };
     let session = turn.session_id().clone();
-    let cleanup = transport.take_cleanup_proof();
     Ok(ClaudeExecutionObservation {
         session,
         turn,

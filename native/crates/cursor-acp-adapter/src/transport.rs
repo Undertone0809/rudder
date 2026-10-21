@@ -29,6 +29,8 @@ use std::{
 
 const MAX_EVENT_QUEUE: usize = 256;
 const MAX_EVENT_JSON_BYTES: usize = 1024 * 1024;
+const HOST_RECEIVE_QUANTUM: Duration = Duration::from_millis(200);
+const MAX_FINAL_HOST_DRAIN_EVENTS: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CursorAcpTransportError {
@@ -388,7 +390,7 @@ impl CursorAcpTransport {
         grace: Duration,
         timeout: Duration,
     ) -> Result<(), CursorAcpTransportError> {
-        self.stop_with_grace_hook(grace, timeout, || {})
+        self.stop_with_grace_hook(grace, timeout, |_| {})
     }
 
     /// Request shutdown and invoke the bounded authority hook while waiting
@@ -398,13 +400,12 @@ impl CursorAcpTransport {
         &mut self,
         grace: Duration,
         timeout: Duration,
-        mut cleanup_tick: impl FnMut(),
+        mut cleanup_tick: impl FnMut(Duration),
     ) -> Result<(), CursorAcpTransportError> {
         if grace.is_zero() || grace > Duration::from_secs(60) || timeout.is_zero() {
             return Err(CursorAcpTransportError::InvalidLaunch);
         }
         if self.terminal {
-            cleanup_tick();
             if self.cleanup_proof.is_none() {
                 self.cleanup_proof = self.host.take_cleanup_proof();
             }
@@ -422,14 +423,36 @@ impl CursorAcpTransport {
             })
             .map_err(map_host_error)?;
         let deadline = Instant::now() + timeout;
-        cleanup_tick();
+        cleanup_tick(deadline.saturating_duration_since(Instant::now()));
         while !self.terminal {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(CursorAcpTransportError::Timeout);
+                break;
             }
-            self.receive_host(remaining.min(Duration::from_millis(200)))?;
-            cleanup_tick();
+            match self.receive_host(remaining.min(HOST_RECEIVE_QUANTUM)) {
+                Ok(()) => {}
+                Err(CursorAcpTransportError::Timeout) => {}
+                Err(error) => return Err(error),
+            }
+            if !self.terminal {
+                cleanup_tick(deadline.saturating_duration_since(Instant::now()));
+            }
+        }
+        // A bounded authority hook can still overrun its intended deadline.
+        // Drain already-queued host events once without blocking so a terminal
+        // emitted during that hook can mint and retain its exact cleanup proof.
+        for _ in 0..MAX_FINAL_HOST_DRAIN_EVENTS {
+            if self.terminal {
+                break;
+            }
+            match self.receive_host(Duration::ZERO) {
+                Ok(()) => {}
+                Err(CursorAcpTransportError::Timeout) => break,
+                Err(error) => return Err(error),
+            }
+        }
+        if !self.terminal {
+            return Err(CursorAcpTransportError::Timeout);
         }
         if self.cleanup_proof.is_none() {
             self.cleanup_proof = self.host.take_cleanup_proof();
@@ -881,6 +904,91 @@ mod tests {
             isolated_home.canonicalize().unwrap().to_str().unwrap()
         );
         assert!(!isolated_home.join(".cursor").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires RUDDER_TEST_PROCESS_HOST and a synthetic local child only"]
+    fn final_drain_collects_terminal_emitted_during_slow_cleanup_hook() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Instant;
+
+        let process_host = std::env::var_os("RUDDER_TEST_PROCESS_HOST")
+            .expect("set RUDDER_TEST_PROCESS_HOST to the Rust process-host binary");
+        let process_host = PathBuf::from(process_host)
+            .canonicalize()
+            .expect("canonical process host");
+        let root = tempdir().unwrap();
+        let profile_home = root.path().join("profile-home");
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("cwd");
+        std::fs::create_dir_all(profile_home.join(".cursor")).unwrap();
+        std::fs::create_dir_all(&runtime_root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        let executable = root.path().join("synthetic-cursor");
+        std::fs::write(
+            &executable,
+            b"#!/bin/sh\ntrap '' TERM\nwhile :; do /bin/sleep 1; done\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let run_id = "slow-cleanup-run".to_owned();
+        let attempt_id = "slow-cleanup-attempt".to_owned();
+        let owner_token = "slow-cleanup-owner".to_owned();
+        let mut transport = CursorAcpTransport::launch(
+            CursorAcpProcessLaunch {
+                executable,
+                process_host,
+                runtime_root,
+                model: None,
+                home: CursorAcpHome::OperatorProfile(profile_home.canonicalize().unwrap()),
+                cwd: cwd.canonicalize().unwrap(),
+                instruction_rule: None,
+                run_id: run_id.clone(),
+                attempt_id: attempt_id.clone(),
+                owner_token: owner_token.clone(),
+                env: BTreeMap::new(),
+            },
+            ConnectionLaunchPermit::from_claim(
+                run_id.clone(),
+                attempt_id.clone(),
+                owner_token.clone(),
+                1,
+                "slow-cleanup-claim".into(),
+            ),
+        )
+        .expect("launch synthetic child through owned process host");
+        transport
+            .wait_spawned(Duration::from_secs(5))
+            .expect("owned process reaches spawned lifecycle");
+
+        let started = Instant::now();
+        let mut hook_called = false;
+        transport
+            .stop_with_grace_hook(
+                Duration::from_millis(100),
+                Duration::from_millis(300),
+                |remaining| {
+                    assert!(!remaining.is_zero());
+                    if !hook_called {
+                        hook_called = true;
+                        // The child ignores TERM, so the host emits its
+                        // terminal lifecycle while this synchronous hook is
+                        // stalled beyond the receive deadline.
+                        std::thread::sleep(Duration::from_millis(700));
+                    }
+                },
+            )
+            .expect("final nonblocking drain observes the queued terminal");
+
+        assert!(hook_called);
+        assert!(started.elapsed() >= Duration::from_millis(700));
+        let proof = transport
+            .take_cleanup_proof()
+            .expect("matching terminal lifecycle mints cleanup proof");
+        assert!(proof.matches_execution(&run_id, &attempt_id, &owner_token));
     }
 
     #[cfg(unix)]
