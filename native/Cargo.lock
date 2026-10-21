@@ -2007,13 +2007,16 @@ dependencies = [
 name = "rudder-cursor-acp-adapter"
 version = "0.7.24"
 dependencies = [
+ "libc",
  "rudder-native-process-transport",
  "rudder-native-protocol",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

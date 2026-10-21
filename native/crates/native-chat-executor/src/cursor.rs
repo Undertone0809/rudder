@@ -7,8 +7,8 @@
 use crate::HostPaths;
 use rudder_cursor_acp_adapter::{
     AuthenticateParams, CursorAcpCommand, CursorAcpHome, CursorAcpMessage, CursorAcpProcessLaunch,
-    CursorAcpSession, CursorAcpTransport, CursorAcpTransportError, InitializeParams, SessionId,
-    SessionLoadParams, SessionNewParams, SessionPromptParams,
+    CursorAcpSession, CursorAcpTransport, CursorAcpTransportError, CursorManagedInstructionRule,
+    InitializeParams, SessionId, SessionLoadParams, SessionNewParams, SessionPromptParams,
 };
 use rudder_d1_persistence::native_chat::config::{CursorLocalConfig, ResolvedCodexConfig};
 use rudder_native_process_transport::{ConnectionLaunchPermit, HostCleanupProof};
@@ -75,6 +75,8 @@ pub fn execute_turn(
         || timeout > MAX_TURN_TIMEOUT
         || !config.cwd.is_dir()
         || !local.home.is_dir()
+        || local.instruction_agent_id != config.identity.agent_id
+        || local.instruction_revision != config.identity.instructions_revision
         || !local.profile_revision_matches()
         || !paths.process_host.is_file()
         || !paths.runtime_root.is_dir()
@@ -106,6 +108,22 @@ pub fn execute_turn(
         }
         env.insert(key.clone(), value.clone());
     }
+    let instruction_rule = if local.managed_instruction_workspace {
+        Some(CursorManagedInstructionRule {
+            agent_id: local.instruction_agent_id.clone(),
+            revision: local.instruction_revision.clone(),
+            content: config.instruction_content.clone(),
+        })
+    } else {
+        if config
+            .instruction_content
+            .as_ref()
+            .is_some_and(|content| !content.is_empty())
+        {
+            return Err(CursorExecutionError::InvalidConfiguration);
+        }
+        None
+    };
     let mut transport = CursorAcpTransport::launch(
         CursorAcpProcessLaunch {
             executable: config.executable.clone(),
@@ -121,6 +139,7 @@ pub fn execute_turn(
                 CursorAcpHome::IsolatedRuntime(paths.isolated_home.clone())
             },
             cwd: config.cwd.clone(),
+            instruction_rule,
             run_id: run_id.to_owned(),
             attempt_id: attempt_id.to_owned(),
             owner_token: owner_token.to_owned(),

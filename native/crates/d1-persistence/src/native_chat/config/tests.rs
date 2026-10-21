@@ -1,6 +1,6 @@
 use super::runtime;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use super::{LocalHostContext, resolve_codex_config};
+use super::{LocalHostContext, resolve_claude_config, resolve_codex_config, resolve_cursor_config};
 use crate::runtime_bindings::Error;
 use serde_json::{Value, json};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -373,6 +373,178 @@ fn parser_rejects_instruction_path_values_that_the_legacy_resolver_would_fallbac
             runtime::parse_agent_config(config, None, None, false, fixture_operator_home());
         assert_http_error(result, 409, None);
     }
+}
+
+#[tokio::test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn cursor_and_claude_accept_public_instruction_bundles_only_in_the_managed_agent_cwd() {
+    use support::{CEO, Database, ORG};
+
+    const CHAT: &str = "21000000-0000-4000-8000-000000000251";
+    let database = Database::start().await;
+    let temp = tempfile::tempdir().expect("isolated Native Chat host tree");
+    let instance = temp.path().join("instance");
+    let workspace_home = temp.path().join("workspaces");
+    let previous_documents = temp.path().join("previous-documents");
+    let profiles = temp.path().join("managed-profiles");
+    let operator_home = temp.path().join("operator-home");
+    let cursor_executable = temp.path().join("bin/cursor-agent");
+    let claude_executable = temp.path().join("bin/claude");
+    for directory in [
+        &instance,
+        &workspace_home,
+        &profiles,
+        &operator_home,
+        cursor_executable.parent().unwrap(),
+    ] {
+        fs::create_dir_all(directory).expect("create trusted fixture directory");
+    }
+    fs::create_dir_all(operator_home.join(".cursor")).unwrap();
+    fs::create_dir_all(operator_home.join(".claude")).unwrap();
+    fs::write(&cursor_executable, b"cursor executable fixture").unwrap();
+    fs::write(&claude_executable, b"claude executable fixture").unwrap();
+    let instance = instance.canonicalize().unwrap();
+    let workspace_home = workspace_home.canonicalize().unwrap();
+    let previous_documents = previous_documents.canonicalize().unwrap_or_else(|_| {
+        fs::create_dir_all(&previous_documents).unwrap();
+        previous_documents.canonicalize().unwrap()
+    });
+    let profiles = profiles.canonicalize().unwrap();
+    let operator_home = operator_home.canonicalize().unwrap();
+    let cursor_executable = cursor_executable.canonicalize().unwrap();
+    let claude_executable = claude_executable.canonicalize().unwrap();
+
+    let agent_cwd = workspace_home.join("100000000000/workspaces/agents/cursor-agent");
+    let instructions_root = agent_cwd.join("instructions");
+    fs::create_dir_all(&instructions_root).unwrap();
+    let instructions_file = instructions_root.join("SOUL.md");
+    fs::write(&instructions_file, "Use the selected managed rules.\n").unwrap();
+    let agent_cwd = agent_cwd.canonicalize().unwrap();
+    let instructions_root = instructions_root.canonicalize().unwrap();
+    let instructions_file = instructions_file.canonicalize().unwrap();
+    let external_cwd = temp.path().join("user-project");
+    fs::create_dir_all(&external_cwd).unwrap();
+    let external_cwd = external_cwd.canonicalize().unwrap();
+    let host = LocalHostContext::from_rust_host(
+        "instructions-test-host".into(),
+        instance,
+        workspace_home,
+        previous_documents,
+        false,
+        profiles.clone(),
+        operator_home.clone(),
+        cursor_executable.clone(),
+    )
+    .unwrap()
+    .with_cursor_runtime(cursor_executable, profiles.clone())
+    .unwrap()
+    .with_claude_runtime(claude_executable, profiles)
+    .unwrap()
+    .with_executable_search_path("/usr/bin:/bin".into())
+    .unwrap();
+    let mut config = json!({
+        "profileId": "operator-default",
+        "command": "cursor-agent",
+        "instructionsBundleMode": "managed",
+        "instructionsRootPath": instructions_root,
+        "instructionsEntryFile": "SOUL.md",
+        "instructionsFilePath": instructions_file,
+    });
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_type='cursor', status='idle',
+           workspace_key='cursor-agent', agent_runtime_config=$1::jsonb
+         WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(config.to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO chat_conversations
+           (id, org_id, title, conversation_kind, created_by_user_id, status, preferred_agent_id)
+         VALUES ($1::uuid, $2::uuid, 'Cursor instructions', 'chat', 'config-test', 'active', $3::uuid)",
+    )
+    .bind(CHAT)
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
+    let mut tx = database.pool.begin().await.unwrap();
+    let resolved = resolve_cursor_config(&mut tx, ORG, CHAT, &host)
+        .await
+        .expect("public instruction bundle fields resolve for the managed Agent cwd");
+    tx.commit().await.unwrap();
+    assert!(
+        resolved
+            .cursor
+            .as_ref()
+            .unwrap()
+            .managed_instruction_workspace
+    );
+    assert_eq!(resolved.cwd, agent_cwd);
+    assert_eq!(
+        resolved.instruction_content.as_deref(),
+        Some("Use the selected managed rules.")
+    );
+    let original_instruction_revision = resolved.identity.instructions_revision.clone();
+
+    fs::write(&instructions_file, "Use the revised managed rules.\n").unwrap();
+    let mut tx = database.pool.begin().await.unwrap();
+    let changed = resolve_cursor_config(&mut tx, ORG, CHAT, &host)
+        .await
+        .expect("changed managed bundle remains resolvable");
+    tx.commit().await.unwrap();
+    assert_ne!(
+        changed.identity.instructions_revision,
+        original_instruction_revision
+    );
+    assert_eq!(
+        changed.instruction_content.as_deref(),
+        Some("Use the revised managed rules.")
+    );
+
+    config["cwd"] = json!(external_cwd.to_string_lossy());
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(config.to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let mut tx = database.pool.begin().await.unwrap();
+    let external = resolve_cursor_config(&mut tx, ORG, CHAT, &host).await;
+    assert_http_error(external, 409, None);
+    tx.rollback().await.unwrap();
+
+    config.as_object_mut().unwrap().remove("cwd");
+    config["command"] = json!("claude");
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_type='claude_local', agent_runtime_config=$1::jsonb
+         WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(config.to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let mut tx = database.pool.begin().await.unwrap();
+    let claude = resolve_claude_config(&mut tx, ORG, CHAT, &host)
+        .await
+        .expect(
+            "Claude accepts public instruction bundle fields through its existing file channel",
+        );
+    tx.commit().await.unwrap();
+    assert_eq!(
+        claude.instruction_content.as_deref(),
+        Some("Use the revised managed rules.")
+    );
 }
 
 #[tokio::test]

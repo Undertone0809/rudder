@@ -3,7 +3,7 @@
 //! returned through this carrier.
 
 use super::resolve::{issue_workspace_binding, resolve_issue_workspace, validate_managed_cwd};
-use super::{LocalHostContext, Result, fingerprint, invalid, unsupported};
+use super::{LocalHostContext, Result, fingerprint, invalid, runtime, unsupported};
 use crate::agent_core::instructions;
 use crate::native_chat::config::resolve_agent_env;
 use rudder_claude_code::MAX_USER_INPUT_BYTES;
@@ -106,6 +106,10 @@ pub(crate) async fn resolve_claude_config(
         "maxTurnsPerRun",
         "timeoutSec",
         "graceSec",
+        "instructionsBundleMode",
+        "instructionsRootPath",
+        "instructionsEntryFile",
+        "instructionsFilePath",
         "env",
         "heartbeat",
     ];
@@ -114,6 +118,7 @@ pub(crate) async fn resolve_claude_config(
             "an unrecognized Claude Agent runtime setting is present",
         ));
     }
+    runtime::validate_instruction_settings(object)?;
     let profile_id = bounded_string(object.get("profileId"), "profileId")?
         .unwrap_or_else(|| "default".to_owned());
     validate_profile_id(&profile_id)?;

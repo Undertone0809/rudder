@@ -878,6 +878,21 @@ where
                 }
             }
             "cursor" | "cursor_local" => {
+                if let Err(error) = db(
+                    handle,
+                    deadline,
+                    execution::validate_submission_source(
+                        pool,
+                        &execution_principal,
+                        &claimed_fence,
+                    ),
+                ) {
+                    return Err(ExecutionFailure::before_launch(
+                        error,
+                        execution_principal,
+                        claimed_fence,
+                    ));
+                }
                 let Some(local) = claimed_config.cursor.as_ref() else {
                     return Err(ExecutionFailure::before_launch(
                         Error::UnsupportedConfiguration,

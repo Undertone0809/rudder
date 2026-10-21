@@ -18,8 +18,10 @@ use std::fmt;
 use thiserror::Error;
 use uuid::Uuid;
 
+mod rules;
 mod transport;
 
+pub use rules::CursorManagedInstructionRule;
 pub use transport::{
     CursorAcpHome, CursorAcpProcessLaunch, CursorAcpTransport, CursorAcpTransportError,
 };

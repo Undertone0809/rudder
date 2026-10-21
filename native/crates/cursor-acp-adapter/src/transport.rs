@@ -7,6 +7,7 @@
 //! provider identity checkpoints, transcript projection and billing remain
 //! the caller's responsibility.
 
+use super::rules::{CursorManagedInstructionRule, materialize};
 use super::{
     CursorAcpCommand, CursorAcpMessage, CursorAcpSession, JsonRpcResponse, RequestId, parse_message,
 };
@@ -49,6 +50,8 @@ pub enum CursorAcpTransportError {
     ProcessExited,
     #[error("Cursor ACP operation deadline expired")]
     Timeout,
+    #[error("Cursor managed instruction rule could not be safely materialized")]
+    InstructionRuleUnavailable,
 }
 
 impl From<LineError> for CursorAcpTransportError {
@@ -72,6 +75,9 @@ pub struct CursorAcpProcessLaunch {
     /// a request.
     pub home: CursorAcpHome,
     pub cwd: PathBuf,
+    /// Claim-resolved data for the per-Agent managed fallback workspace.
+    /// The adapter writes it before starting the process host.
+    pub instruction_rule: Option<CursorManagedInstructionRule>,
     pub run_id: String,
     pub attempt_id: String,
     pub owner_token: String,
@@ -122,6 +128,10 @@ impl CursorAcpTransport {
         permit: ConnectionLaunchPermit,
     ) -> Result<Self, CursorAcpTransportError> {
         let launch = validate_launch(launch)?;
+        if let Some(rule) = &launch.instruction_rule {
+            materialize(&launch.cwd, rule)
+                .map_err(|_| CursorAcpTransportError::InstructionRuleUnavailable)?;
+        }
         let env = cursor_process_environment(launch.env, launch.home.path())?;
         let argv = cursor_acp_argv(launch.model.as_deref())?;
         let request_id = launch.attempt_id.clone();
@@ -646,6 +656,7 @@ mod tests {
             model: None,
             home: CursorAcpHome::OperatorProfile(profile_home),
             cwd,
+            instruction_rule: None,
             run_id: "run".into(),
             attempt_id: "attempt".into(),
             owner_token: "owner".into(),
@@ -666,6 +677,7 @@ mod tests {
             model: None,
             home: CursorAcpHome::OperatorProfile("/tmp/home".into()),
             cwd: "/tmp".into(),
+            instruction_rule: None,
             run_id: "run".into(),
             attempt_id: "attempt".into(),
             owner_token: "owner".into(),
@@ -697,6 +709,7 @@ mod tests {
             model: None,
             home: CursorAcpHome::OperatorProfile(profile_home.canonicalize().unwrap()),
             cwd,
+            instruction_rule: None,
             run_id: "run".into(),
             attempt_id: "attempt".into(),
             owner_token: "owner".into(),
@@ -741,6 +754,7 @@ mod tests {
             model: None,
             home: CursorAcpHome::OperatorProfile(profile_home.canonicalize().unwrap()),
             cwd,
+            instruction_rule: None,
             run_id: "run".into(),
             attempt_id: "attempt".into(),
             owner_token: "owner".into(),
@@ -772,6 +786,7 @@ mod tests {
             model: None,
             home: CursorAcpHome::IsolatedRuntime(isolated_home.canonicalize().unwrap()),
             cwd,
+            instruction_rule: None,
             run_id: "run".into(),
             attempt_id: "attempt".into(),
             owner_token: "owner".into(),
@@ -784,6 +799,64 @@ mod tests {
             isolated_home.canonicalize().unwrap().to_str().unwrap()
         );
         assert!(!isolated_home.join(".cursor").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn materializes_managed_rule_before_starting_the_owned_host() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempdir().unwrap();
+        let profile_home = root.path().join("operator-home");
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("managed-agent");
+        std::fs::create_dir_all(profile_home.join(".cursor")).unwrap();
+        std::fs::create_dir_all(&runtime_root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let executable = root.path().join("cursor-agent");
+        let process_host = root.path().join("process-host");
+        std::fs::write(&executable, b"fixture").unwrap();
+        std::fs::write(&process_host, b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&process_host, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let agent_id = uuid::Uuid::new_v4().to_string();
+        let run_id = "run".to_owned();
+        let attempt_id = "attempt".to_owned();
+        let owner_token = "owner".to_owned();
+        let rule_path = cwd
+            .join(".cursor/rules")
+            .join(format!("rudder-agent-{agent_id}.mdc"));
+
+        let transport = CursorAcpTransport::launch(
+            CursorAcpProcessLaunch {
+                executable,
+                process_host,
+                runtime_root,
+                model: Some("auto".into()),
+                home: CursorAcpHome::OperatorProfile(profile_home.canonicalize().unwrap()),
+                cwd: cwd.canonicalize().unwrap(),
+                instruction_rule: Some(CursorManagedInstructionRule {
+                    agent_id,
+                    revision: format!("sha256:{}", "c".repeat(64)),
+                    content: Some("Always include this managed instruction.".into()),
+                }),
+                run_id: run_id.clone(),
+                attempt_id: attempt_id.clone(),
+                owner_token: owner_token.clone(),
+                env: BTreeMap::new(),
+            },
+            ConnectionLaunchPermit::from_claim(run_id, attempt_id, owner_token, 1, "claim".into()),
+        );
+
+        assert!(
+            rule_path.is_file(),
+            "rule must be durable before host start"
+        );
+        assert!(
+            std::fs::read_to_string(&rule_path)
+                .unwrap()
+                .contains("Always include this managed instruction.")
+        );
+        drop(transport);
     }
 
     #[test]

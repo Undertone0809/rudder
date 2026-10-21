@@ -5,7 +5,7 @@
 //! identity checkpoints remain separate Rust authorities.
 
 use super::resolve::{issue_workspace_binding, resolve_issue_workspace, validate_managed_cwd};
-use super::{LocalHostContext, Result, fingerprint, invalid, unsupported};
+use super::{LocalHostContext, Result, fingerprint, invalid, runtime, unsupported};
 use crate::agent_core::instructions;
 use crate::native_chat::config::resolve_agent_env;
 use rudder_cursor_acp_adapter::MAX_TEXT_BYTES;
@@ -33,6 +33,12 @@ pub struct CursorLocalConfig {
     pub env_revision: String,
     pub timeout_sec: Option<u64>,
     pub grace_sec: Option<u64>,
+    /// True only when this run uses the canonical managed Agent fallback
+    /// workspace without issue/project binding or an Agent-supplied cwd.
+    /// Cursor rules are materialized there, never in external/user workspaces.
+    pub managed_instruction_workspace: bool,
+    pub instruction_agent_id: String,
+    pub instruction_revision: String,
 }
 
 pub(crate) async fn resolve_cursor_config(
@@ -110,6 +116,10 @@ pub(crate) async fn resolve_cursor_config(
         "mode",
         "timeoutSec",
         "graceSec",
+        "instructionsBundleMode",
+        "instructionsRootPath",
+        "instructionsEntryFile",
+        "instructionsFilePath",
         "env",
         "heartbeat",
     ];
@@ -118,6 +128,7 @@ pub(crate) async fn resolve_cursor_config(
             "an unrecognized Cursor Agent runtime setting is present",
         ));
     }
+    runtime::validate_instruction_settings(object)?;
     let profile_id = bounded_string(object.get("profileId"), "profileId")?
         .unwrap_or_else(|| "default".to_owned());
     validate_profile_id(&profile_id)?;
@@ -206,9 +217,10 @@ pub(crate) async fn resolve_cursor_config(
         &agent_row,
     )
     .map_err(|_| invalid("managed Agent workspace is unavailable"))?;
+    let configured_cwd = object.get("cwd").and_then(Value::as_str);
     let cwd = if let Some(workspace) = workspace.as_ref() {
         workspace.cwd.clone()
-    } else if let Some(configured) = object.get("cwd").and_then(Value::as_str) {
+    } else if let Some(configured) = configured_cwd {
         super::resolve::canonical_cwd(Path::new(configured))?
     } else {
         validate_managed_cwd(&fallback_cwd, host.workspace_home())?
@@ -233,13 +245,18 @@ pub(crate) async fn resolve_cursor_config(
             "resolved Agent instructions exceed the supported Cursor ACP bound",
         ));
     }
+    let managed_instruction_workspace = issue_id.is_none()
+        && workspace.is_none()
+        && configured_cwd.is_none()
+        && cwd == fallback_cwd;
     if instructions
         .entry_content
         .as_ref()
         .is_some_and(|text| !text.is_empty())
+        && !managed_instruction_workspace
     {
         return Err(unsupported(
-            "resolved Agent instructions cannot be applied through Cursor ACP yet",
+            "resolved Cursor instructions require the managed Agent fallback workspace",
         ));
     }
 
@@ -273,7 +290,7 @@ pub(crate) async fn resolve_cursor_config(
         host_id: host.host_id().to_owned(),
         profile_id: format!("cursor-local:{}:{}", agent_id, profile_id),
         workspace_binding_id,
-        instructions_revision: instructions.revision,
+        instructions_revision: instructions.revision.clone(),
         capability_revision: fingerprint::json_revision(&revision),
     };
     Ok(super::ResolvedCodexConfig {
@@ -316,6 +333,9 @@ pub(crate) async fn resolve_cursor_config(
             profile_config_revision,
             timeout_sec,
             grace_sec,
+            managed_instruction_workspace,
+            instruction_agent_id: agent_id,
+            instruction_revision: instructions.revision,
         }),
     })
 }
