@@ -196,6 +196,35 @@ fn instruction_read_preflight_rejects_symlinked_entries_and_parents() {
     let nested_file = linked_parent.join("TOOLS.md");
     assert!(preflight_root(&f.instructions(), false).is_err());
     assert!(preflight_file(&nested_file).is_err());
+
+    let linked_ancestor = f.root.path().join("linked-parent");
+    disk::create_dir_all(outside.join("instructions")).unwrap();
+    symlink(&outside, &linked_ancestor).unwrap();
+    assert!(preflight_root(&linked_ancestor.join("instructions"), false).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn historical_recovery_rejects_symlink_ancestors_before_managed_writes() {
+    use std::os::unix::fs::symlink;
+    let mut f = Fixture::new();
+    let outside = f.root.path().join("outside-history");
+    let suffix = "organizations/100000000000/workspaces/agents/builder-key/instructions";
+    let source = outside.join(suffix);
+    disk::create_dir_all(&source).unwrap();
+    disk::write(source.join("SOUL.md"), "Must not copy this").unwrap();
+    let instances = Path::new(&f.host.instance_root).parent().unwrap();
+    disk::create_dir_all(instances).unwrap();
+    let historical = instances.join("historical");
+    symlink(&outside, &historical).unwrap();
+    f.row["agentRuntimeConfig"] =
+        json!({"instructionsFilePath":historical.join(suffix).join("SOUL.md")});
+    assert!(f.run().is_err());
+    assert!(!f.instructions().exists());
+    assert_eq!(
+        disk::read_to_string(source.join("SOUL.md")).unwrap(),
+        "Must not copy this"
+    );
 }
 
 #[test]

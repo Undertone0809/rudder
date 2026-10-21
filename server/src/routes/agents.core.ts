@@ -46,12 +46,12 @@ export function agentCoreRoutes(
             res.status(503).json({ error: "Rust Agent core is unavailable", code: "rust_foundation_agent_core_request_failed" });
         }
     };
-    router.get("/agents/me", forward("me"));
-    router.get("/agents/:id", forward("detail"));
-    // The managed public listener owns these two paths when native identity
+    // The managed public listener owns these paths when native identity
     // is enabled. Keep their private Node adapters only for compatibility
     // deployments that have not selected that ingress.
     if (!nativeAgentCorePaths) {
+        router.get("/agents/me", forward("me"));
+        router.get("/agents/:id", forward("detail"));
         router.patch("/agents/:id/permissions", forward("permissions"));
         router.get("/orgs/:orgId/agents", forward("list"));
     }

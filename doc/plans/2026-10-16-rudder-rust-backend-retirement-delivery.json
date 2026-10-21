@@ -256,5 +256,70 @@
       "migration_clippy_cleanup": "Reviewer ACCEPT semantic equivalence; full-workspace Clippy/rustfmt PASS, 30 default tests PASS, supplemental isolated PostgreSQL 4 apply tests and 1 real CLI backup/restore PASS",
       "content_rebase": "Native tree byte-identical to reviewed 86271a131 checkpoint; no replay required per independent reviewer; inventory regenerated for #292 main sources; final PR CI pending"
     }
+  },
+  "current_execution": {
+    "updated_at": "2026-10-21T18:43:39.629109+00:00",
+    "observed_main": "b38b171364c1d83f4db5c495a7d0df8552ffcf3e",
+    "branch": "codex/rust-main-qualification-20261022",
+    "status": "not_delivered_remaining_qualification_and_merge_gates",
+    "candidate_source_fingerprint": "31ee9f5d638ed951fcfacbf72ee3bbb97357dd4e9cc7ba3d01ed1b1f2daffcd6",
+    "batch_plan": "2026-10-22-agent-detail-native-ingress-qualification.md",
+    "packet": "/private/tmp/rudder-main-qualification-20261022/api-only/packet-v5.json",
+    "artifact_sha256": "5d5c2ebca0ad9937995544462abf592606dccff1cbba05973c3f4872662f51a5",
+    "scope": "Agent detail/me GET/HEAD native public ingress, credential lock-race revalidation, instruction recovery/error qualification; reused Claude Windows history path fix. No Desktop/startup changes in this candidate.",
+    "author_checks": {
+      "public_http": "Rebased frozen v5 release44/44 PASS101.713s; no skipped cases",
+      "native": "Rebased release buildPASS115.663s, fmtPASS, scoped all-target clippyPASS33.543s; targeted instruction edge checks tracked in current v5 packet",
+      "inventory": "check/compare PASS; Node compatibility file independently reviewed",
+      "full_repository": "Rebased full typecheckPASS43.491s. Full lintFAIL22 unchanged paths, changed TS paths not listed. Pre-rebase full build/composite test evidence remains historical; current protectedCI gates merge.",
+      "review_and_acceptance": "Independent stage accepts bounded v5 qualification. Consult current packet-v5 for remaining runtime/final verdicts; old v3/v4 receipts remain historical."
+    },
+    "pr_reuse_queue": [
+      {
+        "pr": 352,
+        "head": "c92caa2996e9cc54b8c4b7bbcdb87706bd7c09c4",
+        "decision": "Merged upstream as b38b171364; Claude repair already on base and absent from this diff. Not a merge performed by this controller.",
+        "merge_ready": false,
+        "reused_source_commit": "17e947736428e8ebca73aef3c795ccf894a82bf5"
+      },
+      {
+        "pr": 351,
+        "head": "798063db0a28bc90574c614585c1ea6b684d3a7e",
+        "decision": "retain; four missing public real-entry regression cases implemented in isolated existing worktree, not yet executed",
+        "merge_ready": false
+      },
+      {
+        "pr": 347,
+        "head": "471edc2d2e112c2eb97930001d444d39087aa5c6",
+        "decision": "retain; feature still Node-owned on main. Only inventory content conflict; real public POST/DELETE to Rust/PG proof still needed; current CI red",
+        "merge_ready": false
+      },
+      {
+        "pr": 305,
+        "decision": "retain: main still has unsafe shell scanner/error-to-success and passWithNoTests gaps. Rebase; fix node:test files incorrectly included by strict Vitest discovery, then exact-head checks/review.",
+        "merge_ready": false,
+        "head": "bc4033227ac1be7c0dd742409db74e40b6163e47"
+      }
+    ],
+    "historical_receipt_boundary": "Original8873539ba published branch only; main b38 advanced before PR creation. Old frozen v3 binary is historical and cannot be called the combined new artifact.",
+    "time_audit": {
+      "evidence": "/Users/zeeland/.codex/visualizations/2026/10/16/01a143e6-be90-79a0-9327-dac7179f6871/audit-20261022/report.md",
+      "measured_scope": "89 closed main-controller turns, Oct16-Oct18; not full fortnight or momo/subagent hours",
+      "active_hours": 43.416787,
+      "explicit_wait_hours": 19.099197,
+      "claims_withdrawn": "18%/30% overall completion and prior ETA lacked a weighted retirement denominator. No replacement global percentage or completion date asserted.",
+      "iteration_status": "Two commitments effective in bounded slices; stable project throughput improvement not yet demonstrated."
+    },
+    "full_desktop_gate": {
+      "status": "FAIL",
+      "evidence": "/private/tmp/rudder-main-qualification-20261022/desktop-verify-v3.log.json",
+      "boundary": "Known existing startup/smoke fixture failures remain merge blockers. Draft publication only after exact API-only final review; no complete Desktop claim."
+    },
+    "excluded_wip": [
+      "desktop/src/identity-runtime.ts",
+      "desktop/src/identity-startup-policy.test.ts",
+      "native/crates/server-foundation/src/native_chat_startup.rs",
+      "desktop/scripts/smoke.mjs"
+    ]
   }
 }

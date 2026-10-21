@@ -142,6 +142,24 @@ fn files(root: &Path) -> io::Result<Vec<String>> {
 /// ordinary discovery but unsafe as an authority boundary: a link or special
 /// file should fail closed instead of silently changing the projected bundle.
 fn preflight_root(root: &Path, allow_missing: bool) -> io::Result<()> {
+    // A regular root can still be reached through a symbolic-link ancestor.
+    // Inspect parents in traversal order, including raw `folder/..` paths,
+    // before any directory discovery or recovery reads follow the root.
+    for parent in root
+        .ancestors()
+        .skip(1)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        if let Some(metadata) = lstat(parent)?
+            && (metadata.file_type().is_symlink() || !metadata.is_dir())
+        {
+            return Err(invalid(
+                "Instruction bundle parent is not an owned directory",
+            ));
+        }
+    }
     let Some(metadata) = lstat(root)? else {
         return if allow_missing {
             Ok(())
@@ -802,6 +820,19 @@ fn validated_workspace_key(row: &Value) -> io::Result<String> {
     Ok(workspace)
 }
 
+fn legacy_recovery_source(location: &BundleLocation) -> Option<&Path> {
+    location.configured.as_deref().map(|source| {
+        // storage::ensure may have moved this exact directory and left a
+        // compatibility alias. Read the validated managed target directly;
+        // arbitrary historical aliases still go through parent preflight.
+        if same_directory(source, &location.managed) {
+            location.managed.as_path()
+        } else {
+            source
+        }
+    })
+}
+
 fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value> {
     let org = text(row, "orgId");
     // Validate all existing path components before storage::ensure can create,
@@ -809,6 +840,13 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
     let workspace = validated_workspace_key(row)?;
     let (storage_root, _) = storage::root(host, org)?;
     validate_workspace_for_io(host, org, &storage_root, &workspace)?;
+    let initial = bundle_location(host, row, home, cwd, &storage_root)?;
+    if initial.legacy_managed
+        && let Some(source) = legacy_recovery_source(&initial)
+    {
+        // Reject unsafe historical roots before creating the managed layout.
+        preflight_root(source, true)?;
+    }
     let root = storage::ensure(host, org, Path::new(cwd))?;
     validate_workspace_for_io(host, org, &root, &workspace)?;
     let location = bundle_location(host, row, home, cwd, &root)?;
@@ -817,7 +855,7 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
     }
     let config = &row["agentRuntimeConfig"];
     if location.legacy_managed {
-        if let Some(source) = &location.configured
+        if let Some(source) = legacy_recovery_source(&location)
             && stat(source).is_some_and(|m| m.is_dir())
         {
             preflight_root(source, false)?;
@@ -830,9 +868,16 @@ fn recover(host: &Host, row: &Value, home: &str, cwd: &str) -> io::Result<Value>
         let legacy_body = location
             .legacy_path
             .as_ref()
-            .map(|path| {
-                preflight_file(path)?;
-                disk::read(path)
+            .map(|legacy| {
+                let canonical = location.managed.join(&location.entry);
+                let source =
+                    if legacy_recovery_source(&location) == Some(location.managed.as_path()) {
+                        canonical.as_path()
+                    } else {
+                        legacy.as_path()
+                    };
+                preflight_file(source)?;
+                disk::read(source)
             })
             .transpose()?
             .map(|body| String::from_utf8_lossy(&body).into_owned())
@@ -1870,6 +1915,23 @@ pub(super) async fn write_operation(
         json!({"agentId":id,"orgId":ctx.org,"mode":"managed","rootPath":root,"managedRootPath":root,"entryFile":entry,"resolvedEntryPath":root.join(&entry),"editable":true,"warnings":[],"legacyPromptTemplateActive":legacy_prompt_active(&config,"promptTemplate"),"legacyBootstrapPromptTemplateActive":legacy_prompt_active(&config,"bootstrapPromptTemplate"),"files":response_files}),
     )
 }
+async fn revalidate_library_actor(
+    tx: &mut Tx<'_>,
+    ctx: &Context<'_>,
+    native_auth: Option<&dyn super::NativeAgentAuthorizer>,
+) -> Result<()> {
+    super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
+    let admin = ctx.user().is_some()
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
+        )
+        .bind(ctx.user())
+        .fetch_one(&mut **tx)
+        .await?;
+    let fresh = Context { admin, ..*ctx };
+    authorize_org(tx, &fresh).await
+}
+
 pub(super) async fn library_path(
     tx: &mut Tx<'_>,
     ctx: &Context<'_>,
@@ -1882,10 +1944,8 @@ pub(super) async fn library_path(
         .clone()
         .ok_or_else(|| http(503, "Rust Agent instruction placement is unavailable"))?;
     validate_host(&host, ctx)?;
-    // Agent detail only projects a Library path. An external bundle has no
-    // managed Library path, so do not traverse it or fail the entire detail
-    // response. Recognized historical managed roots still need recovery.
-    // Explicit instruction reads/writes retain their managed-only gate.
+    // These failures describe corrupt persisted/server state, not invalid
+    // request input. Preserve the existing detail and permissions 500 contract.
     let (storage_root, _) =
         storage::root(&host, ctx.org).map_err(|_| http(500, "Internal server error"))?;
     let location = bundle_location(
@@ -1895,10 +1955,15 @@ pub(super) async fn library_path(
         &ctx.request.process_working_directory,
         &storage_root,
     )
-    // This is persisted placement, not request validation. Keep the legacy
-    // internal-error contract and roll back permissions for corrupt keys.
     .map_err(|_| http(500, "Internal server error"))?;
     if location.mode == Some("external") && !location.legacy_managed {
+        // The Agent row lock may have delayed this request after ingress
+        // authentication. Even an opaque projection must reject credentials
+        // that expired or were revoked while it waited.
+        revalidate_library_actor(tx, ctx, native_auth).await?;
+        // Detail projects only the managed Library reference. External bundles
+        // have no such reference; do not stat/read them or reconcile their
+        // files. External instruction operations still fail closed separately.
         return Ok(Value::Null);
     }
     let guard_host = host.clone();
@@ -1911,18 +1976,7 @@ pub(super) async fn library_path(
     // A credential can expire or be revoked while waiting for the filesystem
     // lock. Revalidate before recover() performs host writes; denial also
     // rolls back any uncommitted permissions update.
-    super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
-    // A filesystem lock wait is also an authorization boundary. A revoked key,
-    // membership or administrator role cannot use pre-wait authority.
-    let admin = ctx.user().is_some()
-        && sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
-        )
-        .bind(ctx.user())
-        .fetch_one(&mut **tx)
-        .await?;
-    let fresh = Context { admin, ..*ctx };
-    authorize_org(tx, &fresh).await?;
+    revalidate_library_actor(tx, ctx, native_auth).await?;
 
     // The row is the durable source of truth for a private create bundle. A
     // detail read is the current authorized reconciliation trigger; filesystem
@@ -1999,16 +2053,7 @@ pub(super) async fn library_path(
             // The filesystem operation is an authorization boundary even
             // when it fails. Only the actor that started the request may
             // commit the retry state; otherwise leave the pending row intact.
-            super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
-            let admin = ctx.user().is_some()
-                && sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
-                )
-                .bind(ctx.user())
-                .fetch_one(&mut **tx)
-                .await?;
-            let fresh = Context { admin, ..*ctx };
-            authorize_org(tx, &fresh).await?;
+            revalidate_library_actor(tx, ctx, native_auth).await?;
             sqlx::query(
                 "UPDATE agent_instruction_bundles
                     SET state='repair',attempts=attempts+1,next_attempt_at=now(),last_error=$3,updated_at=now()
@@ -2023,16 +2068,7 @@ pub(super) async fn library_path(
             // Filesystem work happens outside the transaction. Re-check the
             // actor before committing the durable projection and its state;
             // revocation during materialization must leave the row replayable.
-            super::revalidate_native_auth(native_auth, tx, ctx.org).await?;
-            let admin = ctx.user().is_some()
-                && sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
-                )
-                .bind(ctx.user())
-                .fetch_one(&mut **tx)
-                .await?;
-            let fresh = Context { admin, ..*ctx };
-            authorize_org(tx, &fresh).await?;
+            revalidate_library_actor(tx, ctx, native_auth).await?;
             let Some(managed_root) = materialized_root else {
                 return Err(http(
                     500,
