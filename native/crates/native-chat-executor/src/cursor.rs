@@ -136,6 +136,7 @@ pub(crate) fn execute_turn(
         }
         env.insert(key.clone(), value.clone());
     }
+    env.insert("PATH".into(), local.executable_search_path.clone());
     let instruction_rule = if local.managed_instruction_workspace {
         Some(CursorManagedInstructionRule {
             agent_id: local.instruction_agent_id.clone(),

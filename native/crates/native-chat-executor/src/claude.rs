@@ -134,6 +134,7 @@ pub(crate) fn execute_turn(
         }
         env.insert(key.clone(), value.clone());
     }
+    env.insert("PATH".into(), local.executable_search_path.clone());
     let session = match existing_session {
         Some(value) => ClaudeSessionMode::Resume {
             session_id: ClaudeSessionSelector::parse(value)?,
