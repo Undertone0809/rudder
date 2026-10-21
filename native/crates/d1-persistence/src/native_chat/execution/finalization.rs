@@ -3,11 +3,13 @@
 use super::{ExecutionFence, Result, context::lock_current_execution, http, output};
 use crate::{
     activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activity_options},
-    native_chat::NativeChatExecutionActor,
+    native_chat::{NativeChatExecutionActor, auth},
     runtime_bindings,
 };
 use rudder_codex_app_server::{CleanupReceipt, TurnReceipt, TurnStatus};
-use rudder_hermes_acp::{HermesCleanupReceipt, HermesStopReason, HermesTurnReceipt};
+use rudder_hermes_acp::{
+    HermesCleanupReceipt, HermesPromptErrorAfterCancel, HermesStopReason, HermesTurnReceipt,
+};
 use rudder_native_process_transport::HostCleanupProof;
 use rudder_pi_rpc::{PiCleanupReceipt, PiTurnReceipt, PiTurnStatus};
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
@@ -17,6 +19,99 @@ use sqlx::{PgPool, Row};
 
 const MAX_PROJECTED_BODY_BYTES: i32 = 256 * 1024;
 const MAX_NATIVE_ID_BYTES: usize = 512;
+const MAX_HERMES_PROGRESS_EVENTS: usize = 512;
+const MAX_HERMES_PROGRESS_BYTES: usize = 2 * 1024 * 1024;
+
+async fn validate_hermes_progress_for_terminal(
+    tx: &mut auth::Tx<'_>,
+    fence: &ExecutionFence,
+    turn: ProviderTurn<'_>,
+    cleanup: &HermesCleanupReceipt,
+    assistant_message_id: &str,
+    require_progress: bool,
+) -> Result<()> {
+    let id = fence.identity();
+    let (connection, session, request_id, source_message_id, input_fingerprint) = match turn {
+        ProviderTurn::Hermes(turn) => (
+            turn.connection_receipt_id(),
+            turn.session().as_str(),
+            turn.request_id(),
+            turn.user_message_id(),
+            turn.input_fingerprint(),
+        ),
+        ProviderTurn::HermesPromptError(error) => (
+            error.connection_receipt_id(),
+            error.session().as_str(),
+            error.request_id(),
+            error.user_message_id(),
+            error.input_fingerprint(),
+        ),
+        _ => return Err(http(409, "Hermes progress requires a typed prompt receipt")),
+    };
+    if connection != cleanup.connection_receipt_id() {
+        return Err(http(409, "Hermes progress connection receipt changed"));
+    }
+    let rows = sqlx::query(
+        "SELECT generation_seq,attempt_epoch,assistant_message_id::text,
+                payload,octet_length(payload::text)::bigint AS payload_bytes
+         FROM chat_generation_events
+         WHERE org_id=$1::uuid AND generation_id=$2::uuid AND run_id=$3::uuid
+           AND attempt_epoch=$4 AND event_kind='transcript'
+         ORDER BY generation_seq LIMIT $5",
+    )
+    .bind(id.organization_id)
+    .bind(id.generation_id)
+    .bind(id.run_id)
+    .bind(id.generation_attempt_epoch)
+    .bind(MAX_HERMES_PROGRESS_EVENTS as i64 + 1)
+    .fetch_all(&mut **tx)
+    .await?;
+    if rows.len() > MAX_HERMES_PROGRESS_EVENTS {
+        return Err(http(409, "Hermes progress exceeds its event bound"));
+    }
+    let mut total_bytes = 0usize;
+    for (expected_ordinal, row) in (1u64..).zip(rows.iter()) {
+        // A progress commit can precede Stop while remaining ahead of the
+        // client's rendered cutoff. Validate its ownership too; readers and
+        // the frozen projection enforce visibility, not receipt finalization.
+        let attempt_epoch: i32 = row.try_get("attempt_epoch")?;
+        let message_id: Option<String> = row.try_get("assistant_message_id")?;
+        if message_id.as_deref() != Some(assistant_message_id) {
+            return Err(http(409, "Hermes progress assistant projection changed"));
+        }
+        let payload_bytes: i64 = row.try_get("payload_bytes")?;
+        total_bytes = total_bytes.saturating_add(payload_bytes.max(0) as usize);
+        if total_bytes > MAX_HERMES_PROGRESS_BYTES {
+            return Err(http(409, "Hermes progress exceeds its byte bound"));
+        }
+        let payload: Value = row.try_get("payload")?;
+        let projection = super::hermes_progress::validate_receipt_projection(
+            &payload,
+            id.organization_id,
+            id.generation_id,
+            id.run_id,
+            attempt_epoch,
+            assistant_message_id,
+            fence,
+            cleanup.connection_receipt_id(),
+            session,
+            request_id,
+            source_message_id,
+            input_fingerprint,
+        )
+        .ok_or_else(|| http(409, "Hermes progress does not match terminal receipts"))?;
+        if projection.ordinal != expected_ordinal {
+            return Err(http(409, "Hermes progress ordinal is not contiguous"));
+        }
+    }
+    if require_progress && rows.is_empty() {
+        return Err(http(
+            409,
+            "Hermes answer has no durable progress projection",
+        ));
+    }
+    Ok(())
+}
 
 /// Provider-native terminal evidence for adapters that do not expose Codex
 /// Thread/Turn identifiers. The worker must copy only bounded fields from the
@@ -227,6 +322,29 @@ pub async fn finalize_hermes_stopped(
     .await
 }
 
+/// Resolve an exact operator Stop after the current prompt RPC ended with an
+/// error response following cancellation. This is neither a cancelled turn nor
+/// a pre-submission result; the numeric provider error remains explicit.
+pub async fn finalize_hermes_prompt_error_stopped(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    error: &HermesPromptErrorAfterCancel,
+    cleanup: &HermesCleanupReceipt,
+    stop: &super::stopping::StopIntent,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::HermesPromptError(error)),
+        ProviderCleanup::Hermes(cleanup),
+        Some(stop),
+        false,
+    )
+    .await
+}
+
 /// Cancel a claimed execution only when the durable checkpoint proves the
 /// user input never crossed its effect-permit boundary. This is not a provider
 /// terminal receipt; it preserves the frozen Stop projection and reports no
@@ -316,6 +434,7 @@ pub async fn finalize_hermes_stopped_before_submission(
 enum ProviderTurn<'a> {
     Codex(&'a TurnReceipt),
     Hermes(&'a HermesTurnReceipt),
+    HermesPromptError(&'a HermesPromptErrorAfterCancel),
     Pi(&'a PiTurnReceipt),
     Native(&'a NativeProviderTurnReceipt),
 }
@@ -348,6 +467,7 @@ impl<'a> ProviderTurn<'a> {
                 HermesStopReason::Cancelled => TerminalStatus::Interrupted,
                 HermesStopReason::ApprovalRequired => TerminalStatus::Failed,
             },
+            Self::HermesPromptError(_) => TerminalStatus::Failed,
             Self::Pi(turn) => match turn.status() {
                 PiTurnStatus::Completed => TerminalStatus::Completed,
                 PiTurnStatus::Failed => TerminalStatus::Failed,
@@ -365,6 +485,7 @@ impl<'a> ProviderTurn<'a> {
         match self {
             Self::Codex(turn) => turn.final_text(),
             Self::Hermes(turn) => Some(turn.final_text()),
+            Self::HermesPromptError(_) => None,
             Self::Pi(turn) => turn.final_text(),
             Self::Native(turn) => turn.final_text.as_deref(),
         }
@@ -383,6 +504,7 @@ impl<'a> ProviderTurn<'a> {
                 HermesStopReason::Refusal => "refusal",
                 HermesStopReason::ApprovalRequired => "approval_required",
             },
+            Self::HermesPromptError(_) => "error_response",
             Self::Pi(turn) => match turn.status() {
                 PiTurnStatus::Completed => "completed",
                 PiTurnStatus::Failed => "failed",
@@ -406,7 +528,7 @@ impl<'a> ProviderTurn<'a> {
             })),
             // Hermes reports session-cumulative usage. Do not mislabel it as a
             // per-Run increment or use it to release a billed-cost hold.
-            Self::Hermes(_) => None,
+            Self::Hermes(_) | Self::HermesPromptError(_) => None,
             Self::Pi(_) => None,
             Self::Native(turn) => turn.usage.clone().map(|usage| json!({
                 "source":"provider_terminal_receipt",
@@ -425,6 +547,10 @@ impl<'a> ProviderTurn<'a> {
             Self::Hermes(turn) => ProviderRetryPredicate::Hermes {
                 session_id: turn.session().as_str(),
                 request_id: turn.request_id(),
+            },
+            Self::HermesPromptError(error) => ProviderRetryPredicate::Hermes {
+                session_id: error.session().as_str(),
+                request_id: error.request_id(),
             },
             Self::Pi(turn) => ProviderRetryPredicate::Pi {
                 session_id: turn.session_id(),
@@ -450,6 +576,13 @@ impl<'a> ProviderTurn<'a> {
                     && checkpoint.hermes_session().map(|session| session.as_str())
                         == Some(turn.session().as_str())
                     && checkpoint.hermes_prompt_request_id() == Some(turn.request_id())
+            }
+            Self::HermesPromptError(error) => {
+                checkpoint.provider()
+                    == rudder_runtime_core::native_chat::NativeChatProvider::HermesLocal
+                    && checkpoint.hermes_session().map(|session| session.as_str())
+                        == Some(error.session().as_str())
+                    && checkpoint.hermes_prompt_request_id() == Some(error.request_id())
             }
             Self::Pi(turn) => {
                 checkpoint.provider()
@@ -525,6 +658,9 @@ impl<'a> ProviderTurn<'a> {
             Self::Hermes(turn) => {
                 json!({"kind":"hermes_acp_prompt","sessionDigest":hash(turn.session().as_str()),"requestId":turn.request_id()})
             }
+            Self::HermesPromptError(error) => {
+                json!({"kind":"hermes_acp_prompt_error", "sessionDigest":hash(error.session().as_str()), "requestId":error.request_id(), "errorCode":error.error_code(), "cancelSent":true, "providerCancelAcknowledged":false})
+            }
             Self::Pi(turn) => {
                 json!({"kind":"pi_turn","sessionDigest":hash(turn.session_id()),"sessionFileDigest":hash(turn.session_file()),"inputEntryId":turn.input_entry_id(),"assistantEntryId":turn.assistant_entry_id(),"leafId":turn.leaf_id()})
             }
@@ -538,6 +674,9 @@ impl<'a> ProviderTurn<'a> {
         match self {
             Self::Codex(turn) => Some(turn.turn_id().to_owned()),
             Self::Hermes(turn) => Some(format!("hermes-acp-request:{}", turn.request_id())),
+            Self::HermesPromptError(error) => {
+                Some(format!("hermes-acp-request:{}", error.request_id()))
+            }
             Self::Pi(turn) => Some(format!("pi-leaf:{}", turn.leaf_id())),
             Self::Native(turn) => Some(format!(
                 "{}:{}",
@@ -551,6 +690,7 @@ impl<'a> ProviderTurn<'a> {
         match self {
             Self::Codex(_) => None,
             Self::Hermes(turn) => Some(turn.user_message_id().to_owned()),
+            Self::HermesPromptError(error) => Some(error.user_message_id().to_owned()),
             Self::Pi(turn) => Some(turn.input_entry_id().to_owned()),
             Self::Native(turn) => Some(turn.request_id.clone()),
         }
@@ -565,6 +705,9 @@ impl<'a> ProviderTurn<'a> {
                 json!({"provider":"hermes_local","sessionId":turn.session().as_str(),"requestId":turn.request_id(),
                 "userMessageId":turn.user_message_id(),"inputFingerprint":turn.input_fingerprint(),
                 "providerStatus":self.provider_status(),"finalTextDigest":hash(turn.final_text())})
+            }
+            Self::HermesPromptError(error) => {
+                json!({"provider":"hermes_local", "sessionId":error.session().as_str(), "requestId":error.request_id(), "userMessageId":error.user_message_id(), "inputFingerprint":error.input_fingerprint(), "providerStatus":"error_response", "errorCode":error.error_code(), "cancelSent":true, "providerCancelAcknowledged":false, "usageAvailable":false})
             }
             Self::Pi(turn) => {
                 json!({"provider":"pi_local","sessionId":turn.session_id(),"sessionFileDigest":hash(turn.session_file()),"inputEntryId":turn.input_entry_id(),"assistantEntryId":turn.assistant_entry_id(),"leafId":turn.leaf_id(),"inputFingerprint":turn.input_fingerprint(),"providerStatus":self.provider_status(),"finalTextDigest":turn.final_text().map(hash)})
@@ -593,6 +736,9 @@ impl<'a> ProviderCleanup<'a> {
             }
             (Self::Hermes(cleanup), ProviderTurn::Hermes(turn)) => {
                 cleanup.proves_quiescence_for(turn)
+            }
+            (Self::Hermes(cleanup), ProviderTurn::HermesPromptError(error)) => {
+                cleanup.proves_quiescence_for_prompt_error(error)
             }
             (Self::Pi(cleanup), ProviderTurn::Pi(turn)) => cleanup.proves_quiescence_for(turn),
             // `matches_claim` above already binds HostCleanupProof to the
@@ -663,6 +809,11 @@ async fn finalize_inner(
                     id.attempt_id,
                     fence.run_execution_owner_token(),
                 ),
+                ProviderTurn::HermesPromptError(error) => error.matches_execution(
+                    id.run_id,
+                    id.attempt_id,
+                    fence.run_execution_owner_token(),
+                ),
                 ProviderTurn::Pi(turn) => turn.matches_execution(
                     id.run_id,
                     id.attempt_id,
@@ -675,6 +826,14 @@ async fn finalize_inner(
                 }
             }
     });
+    if matches!(turn, Some(ProviderTurn::HermesPromptError(_)))
+        && (stop.is_none() || forced_failure)
+    {
+        return Err(http(
+            409,
+            "Hermes prompt error requires an exact operator Stop",
+        ));
+    }
     let pre_submission_stop = stop.is_some() && turn.is_none();
     if !cleanup_matches || !turn_matches || (turn.is_none() && stop.is_none() && !forced_failure) {
         return Err(http(
@@ -702,7 +861,7 @@ async fn finalize_inner(
         }
     };
     if turn.is_some_and(|turn| {
-        matches!(turn, ProviderTurn::Hermes(_)) && turn.status() == TerminalStatus::Failed
+        matches!(turn, ProviderTurn::Hermes(value) if value.stop_reason() == HermesStopReason::ApprovalRequired)
     }) {
         return Err(http(409, "Hermes requires a governed approval decision"));
     }
@@ -954,6 +1113,9 @@ async fn finalize_inner(
             );
         (locked.checkpoint.phase() == NativeChatProtocolPhase::ProviderTerminalObserved
             || (stop.is_some() && locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown)
+            || (stop.is_some()
+                && matches!(turn, ProviderTurn::HermesPromptError(_))
+                && locked.checkpoint.phase() == NativeChatProtocolPhase::InputIndeterminate)
             || native_combined_phase)
             && turn.checkpoint_matches(&locked.checkpoint)
     } else {
@@ -963,6 +1125,15 @@ async fn finalize_inner(
         return Err(http(
             409,
             "Native Chat terminal does not match the durable checkpoint",
+        ));
+    }
+    if let Some(ProviderTurn::HermesPromptError(error)) = turn
+        && (locked.admitted_message_id.as_deref() != Some(error.user_message_id())
+            || locked.admitted_input_fingerprint.as_deref() != Some(error.input_fingerprint()))
+    {
+        return Err(http(
+            409,
+            "Hermes prompt error does not match the admitted input",
         ));
     }
     if pre_submission_stop {
@@ -1129,7 +1300,14 @@ async fn finalize_inner(
                     != chat_turn_id.as_deref()
                 || message.try_get::<i32, _>("turn_variant")? != turn_variant
                 || !message.try_get::<bool, _>("plain")?
-                || final_text.is_some_and(|text| text != body.as_str())
+                || (matches!(
+                    (turn, cleanup),
+                    (Some(ProviderTurn::Hermes(_)), ProviderCleanup::Hermes(_))
+                ) && !body.is_empty())
+                || (!matches!(
+                    (turn, cleanup),
+                    (Some(ProviderTurn::Hermes(_)), ProviderCleanup::Hermes(_))
+                ) && final_text.is_some_and(|text| text != body.as_str()))
             {
                 return Err(http(409, "Native Chat assistant projection changed"));
             }
@@ -1138,12 +1316,7 @@ async fn finalize_inner(
                     output::validate_final_projection(&mut tx, fence, cleanup, &message_id, &body)
                         .await?;
                 }
-                // The first Hermes adapter intentionally supports final-text
-                // projection only. Until it has a typed live-output receipt,
-                // it may not adopt a message written by another projector.
-                (Some(ProviderTurn::Hermes(_)), _) => {
-                    return Err(http(409, "Hermes live output projection is unsupported"));
-                }
+                (Some(ProviderTurn::Hermes(_)), ProviderCleanup::Hermes(_)) => {}
                 (Some(ProviderTurn::Pi(_)), _) => {
                     return Err(http(409, "Pi live output projection is unsupported"));
                 }
@@ -1156,7 +1329,7 @@ async fn finalize_inner(
                 _ => "failed",
             };
             let updated = sqlx::query(
-                "UPDATE chat_messages SET status=$4,updated_at=clock_timestamp()
+                "UPDATE chat_messages SET body=COALESCE($5,body),status=$4,updated_at=clock_timestamp()
                  WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id=$3::uuid
                    AND role='assistant' AND status='streaming'",
             )
@@ -1164,6 +1337,14 @@ async fn finalize_inner(
             .bind(id.conversation_id)
             .bind(&message_id)
             .bind(status)
+            .bind(match (turn, cleanup, stop) {
+                (
+                    Some(ProviderTurn::Hermes(turn)),
+                    ProviderCleanup::Hermes(_),
+                    None,
+                ) => Some(turn.final_text()),
+                _ => None,
+            })
             .execute(&mut *tx)
             .await?;
             if updated.rows_affected() != 1 {
@@ -1197,6 +1378,32 @@ async fn finalize_inner(
             None
         }
     };
+    // Both a frozen Stop projection and a newly inserted final answer must
+    // validate the same owned progress ledger. Keep this outside the ordinary
+    // streaming-row branch so neither path can bypass receipt validation.
+    if let (Some(receipt), ProviderCleanup::Hermes(cleanup), Some(message_id)) =
+        (turn, cleanup, message_id.as_deref())
+        && matches!(
+            receipt,
+            ProviderTurn::Hermes(_) | ProviderTurn::HermesPromptError(_)
+        )
+    {
+        validate_hermes_progress_for_terminal(&mut tx, fence, receipt, cleanup, message_id,
+            stop.is_none() && matches!(receipt, ProviderTurn::Hermes(value)
+                if value.stop_reason() == HermesStopReason::EndTurn && !value.final_text().trim().is_empty())).await?;
+    }
+    if message_id.is_none()
+        && matches!(
+            turn,
+            Some(ProviderTurn::Hermes(_) | ProviderTurn::HermesPromptError(_))
+        )
+    {
+        let orphaned_progress: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid AND run_id=$3::uuid AND event_kind='transcript')")
+            .bind(id.organization_id).bind(id.generation_id).bind(id.run_id).fetch_one(&mut *tx).await?;
+        if orphaned_progress {
+            return Err(http(409, "Hermes progress lost its assistant projection"));
+        }
+    }
     let (span_completeness, native_execution_ref, input_correlation_ref, selector) = match turn {
         Some(turn) => (
             "terminal_only",
@@ -1254,6 +1461,13 @@ async fn finalize_inner(
         "cost":cost,"usage":usage,"nativeAdmissionHold":held,
         "projectionDisposition":if forced_failure { "failed_without_terminal_receipt" } else if stop.is_some() { "frozen_at_stop" } else if unprojectable { "unsupported_final_answer" } else { "projected" },
         "budgetDisposition":if budget_held { "reconciliation_required" } else { "unbudgeted_unknown_cost" }});
+    if let Some(ProviderTurn::HermesPromptError(error)) = turn {
+        result["providerStatus"] = json!("error_response");
+        result["providerErrorCode"] = json!(error.error_code());
+        result["cancelSent"] = json!(true);
+        result["providerCancelAcknowledged"] = json!(false);
+        result["usageAvailable"] = json!(false);
+    }
     if pre_submission_stop {
         result["inputDisposition"] = json!("not_submitted");
     }
@@ -1326,6 +1540,12 @@ async fn finalize_inner(
                 (ProviderTurn::Hermes(turn), ProviderCleanup::Hermes(cleanup)) => {
                     super::stopping::resolve_action_hermes(
                         &mut tx, actor, fence, stop, turn, cleanup, &result,
+                    )
+                    .await?;
+                }
+                (ProviderTurn::HermesPromptError(error), ProviderCleanup::Hermes(cleanup)) => {
+                    super::stopping::resolve_action_hermes_prompt_error(
+                        &mut tx, actor, fence, stop, error, cleanup, &result,
                     )
                     .await?;
                 }

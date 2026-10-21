@@ -22,8 +22,13 @@ const MAX_MESSAGES: usize = 256;
 const MAX_RPC_FRAME: usize = 1024 * 1024;
 const MAX_PROMPT_BYTES: usize = 256 * 1024;
 const MAX_FINAL_BYTES: usize = 256 * 1024;
+const MAX_PROGRESS_EVENTS: usize = 512;
+const MAX_PROGRESS_TEXT_BYTES: usize = 256 * 1024;
+const PROGRESS_BATCH_BYTES: usize = 4 * 1024;
+const PROGRESS_BATCH_INTERVAL: Duration = Duration::from_millis(200);
 pub const MAX_EPHEMERAL_INSTRUCTION_BYTES: usize = 64 * 1024;
 const PROTOCOL_VERSION_ACP: u64 = 1;
+const MAX_SAFE_JSON_INTEGER: i64 = 9_007_199_254_740_991;
 const INSTRUCTION_BOOTSTRAP_EXIT_CODE: i64 = 78;
 const HERMES_INSTRUCTION_PROMPT_ENV: &str = "RUDDER_HERMES_EPHEMERAL_SYSTEM_PROMPT";
 const HERMES_INSTRUCTION_ROOT_ENV: &str = "RUDDER_HERMES_PYTHON_ROOT";
@@ -299,9 +304,106 @@ pub struct HermesTurnReceipt {
     user_message_id: String,
     input_fingerprint: String,
     final_text: String,
-    updates: Vec<Value>,
     stop_reason: HermesStopReason,
     usage: Option<HermesUsage>,
+}
+
+/// Opaque evidence that the exact prompt received a well-formed JSON-RPC
+/// error after this owned connection successfully sent `session/cancel`.
+/// This is not a provider terminal receipt and does not assert cancellation.
+pub struct HermesPromptErrorAfterCancel {
+    identity: ConnectionIdentity,
+    session: HermesSessionSelector,
+    request_id: u64,
+    user_message_id: String,
+    input_fingerprint: String,
+    error_code: i64,
+}
+
+/// Public, bounded ACP progress. The raw ACP update and its content/arguments
+/// are intentionally not retained in a turn receipt.
+pub enum HermesProgressKind {
+    ThinkingChunk(String),
+    AssistantChunk(String),
+    ToolCall {
+        tool_call_id: String,
+        title: String,
+    },
+    ToolCallUpdate {
+        tool_call_id: String,
+        status: String,
+    },
+    Truncated,
+}
+
+/// Opaque evidence for one normalized update from the exact prompt on the
+/// current owned Hermes connection. It is not a provider Thread/Turn ID.
+pub struct HermesProgressReceipt {
+    identity: ConnectionIdentity,
+    session: HermesSessionSelector,
+    request_id: u64,
+    source_message_id: String,
+    input_fingerprint: String,
+    ordinal: u64,
+    kind: HermesProgressKind,
+}
+
+impl HermesProgressReceipt {
+    pub fn session(&self) -> &HermesSessionSelector {
+        &self.session
+    }
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+    pub fn connection_receipt_id(&self) -> &str {
+        self.identity.connection_receipt_id()
+    }
+    pub fn source_message_id(&self) -> &str {
+        &self.source_message_id
+    }
+    pub fn input_fingerprint(&self) -> &str {
+        &self.input_fingerprint
+    }
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+    pub fn kind(&self) -> &HermesProgressKind {
+        &self.kind
+    }
+    pub fn matches_connection_claim(
+        &self,
+        run_id: &str,
+        attempt_id: &str,
+        owner_token: &str,
+        epoch: i32,
+        claim_id: &str,
+    ) -> bool {
+        self.identity
+            .matches_connection_claim(run_id, attempt_id, owner_token, epoch, claim_id)
+    }
+}
+
+impl fmt::Debug for HermesProgressReceipt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HermesProgressReceipt")
+            .field("has_owned_connection", &true)
+            .field("has_session", &true)
+            .field("request_id", &self.request_id)
+            .field("has_source_message", &true)
+            .field("has_input_fingerprint", &true)
+            .field("ordinal", &self.ordinal)
+            .field(
+                "kind",
+                &match self.kind {
+                    HermesProgressKind::ThinkingChunk(_) => "thinking_chunk",
+                    HermesProgressKind::AssistantChunk(_) => "assistant_chunk",
+                    HermesProgressKind::ToolCall { .. } => "tool_call",
+                    HermesProgressKind::ToolCallUpdate { .. } => "tool_call_update",
+                    HermesProgressKind::Truncated => "truncated",
+                },
+            )
+            .finish()
+    }
 }
 
 /// Opaque proof that this owned ACP connection created a new exact session.
@@ -367,11 +469,6 @@ impl HermesTurnReceipt {
     pub fn final_text(&self) -> &str {
         &self.final_text
     }
-    /// Exact bounded ACP updates from this prompt. These are provider data;
-    /// callers must apply a separate public projection before exposing them.
-    pub fn updates(&self) -> &[Value] {
-        &self.updates
-    }
     pub fn stop_reason(&self) -> HermesStopReason {
         self.stop_reason
     }
@@ -394,6 +491,62 @@ impl HermesTurnReceipt {
             .matches_connection_claim(run_id, attempt_id, owner_token, epoch, claim_id)
     }
 }
+
+impl HermesPromptErrorAfterCancel {
+    pub fn session(&self) -> &HermesSessionSelector {
+        &self.session
+    }
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+    pub fn connection_receipt_id(&self) -> &str {
+        self.identity.connection_receipt_id()
+    }
+    pub fn correlation(&self) -> String {
+        format!(
+            "session/prompt-error-after-cancel:{}:{}",
+            self.session.as_str(),
+            self.request_id
+        )
+    }
+    pub fn user_message_id(&self) -> &str {
+        &self.user_message_id
+    }
+    pub fn input_fingerprint(&self) -> &str {
+        &self.input_fingerprint
+    }
+    pub fn error_code(&self) -> i64 {
+        self.error_code
+    }
+    pub fn matches_execution(&self, run_id: &str, attempt_id: &str, owner_token: &str) -> bool {
+        self.identity
+            .matches_execution(run_id, attempt_id, owner_token)
+    }
+    pub fn matches_connection_claim(
+        &self,
+        run_id: &str,
+        attempt_id: &str,
+        owner_token: &str,
+        epoch: i32,
+        claim_id: &str,
+    ) -> bool {
+        self.identity
+            .matches_connection_claim(run_id, attempt_id, owner_token, epoch, claim_id)
+    }
+}
+
+impl fmt::Debug for HermesPromptErrorAfterCancel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HermesPromptErrorAfterCancel")
+            .field("has_owned_connection", &true)
+            .field("has_session", &true)
+            .field("request_id", &self.request_id)
+            .field("has_user_message_id", &true)
+            .field("has_input_fingerprint", &true)
+            .field("error_code", &self.error_code)
+            .finish()
+    }
+}
 impl fmt::Debug for HermesTurnReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HermesTurnReceipt")
@@ -403,7 +556,6 @@ impl fmt::Debug for HermesTurnReceipt {
             .field("has_user_message_id", &true)
             .field("has_input_fingerprint", &true)
             .field("final_text_bytes", &self.final_text.len())
-            .field("update_count", &self.updates.len())
             .field("stop_reason", &self.stop_reason)
             .field("has_usage", &self.usage.is_some())
             .finish()
@@ -435,6 +587,9 @@ impl HermesCleanupReceipt {
     }
     pub fn proves_quiescence_for(&self, turn: &HermesTurnReceipt) -> bool {
         self.proof.matches_identity(&turn.identity)
+    }
+    pub fn proves_quiescence_for_prompt_error(&self, error: &HermesPromptErrorAfterCancel) -> bool {
+        self.proof.matches_identity(&error.identity)
     }
     pub fn connection_receipt_id(&self) -> &str {
         self.proof.connection_receipt_id()
@@ -488,6 +643,7 @@ pub struct HermesAcpTransport {
     active_session: Option<HermesSessionSelector>,
     prompt_started: bool,
     turn_receipt_taken: bool,
+    prompt_error_after_cancel_receipt: Option<HermesPromptErrorAfterCancel>,
     instruction_bootstrap_active: bool,
 }
 
@@ -583,6 +739,7 @@ impl HermesAcpTransport {
             active_session: None,
             prompt_started: false,
             turn_receipt_taken: false,
+            prompt_error_after_cancel_receipt: None,
             instruction_bootstrap_active,
         })
     }
@@ -747,10 +904,36 @@ impl HermesAcpTransport {
         message_id: &str,
         cancellation: &HermesCancellation,
         timeout: Duration,
-        mut poll_owner: F,
+        poll_owner: F,
     ) -> Result<HermesTurnReceipt, HermesTransportError>
     where
         F: FnMut(&HermesCancellation) -> bool,
+    {
+        self.prompt_with_poll_and_progress(
+            input,
+            message_id,
+            cancellation,
+            timeout,
+            poll_owner,
+            |_| true,
+        )
+    }
+
+    /// Prompt with lease/Stop polling and a callback for a bounded normalized
+    /// subset of the ACP public progress stream. Returning false cancels the
+    /// provider request and leaves terminal ownership to the caller.
+    pub fn prompt_with_poll_and_progress<F, G>(
+        &mut self,
+        input: &str,
+        message_id: &str,
+        cancellation: &HermesCancellation,
+        timeout: Duration,
+        mut poll_owner: F,
+        mut on_progress: G,
+    ) -> Result<HermesTurnReceipt, HermesTransportError>
+    where
+        F: FnMut(&HermesCancellation) -> bool,
+        G: FnMut(&HermesProgressReceipt) -> bool,
     {
         let session = self
             .active_session
@@ -773,8 +956,11 @@ impl HermesAcpTransport {
         if cancellation.0.load(Ordering::Acquire) {
             return Err(HermesTransportError::Cancelled);
         }
+        self.prompt_error_after_cancel_receipt = None;
         self.prompt_started = true;
         let request_id = self.next_request_id;
+        let digest = Sha256::digest(input.as_bytes());
+        let fingerprint = format!("native-chat-v1:{}", hex_lower(&digest));
         let deadline = Instant::now() + timeout;
         let prompt_json = json!({
             "sessionId":session.as_str(),
@@ -784,8 +970,10 @@ impl HermesAcpTransport {
         let id = self.send_request("session/prompt", prompt_json, deadline)?;
         let mut final_text = String::new();
         let mut message_id_seen: Option<String> = None;
-        let mut updates = Vec::new();
-        let mut update_bytes = 0usize;
+        let mut progress_count = 0usize;
+        let mut progress_text_bytes = 0usize;
+        let mut progress_truncated = false;
+        let mut pending_progress: Option<(HermesProgressKind, Instant)> = None;
         let mut approval_required = false;
         let mut cancel_sent = false;
         loop {
@@ -793,6 +981,10 @@ impl HermesAcpTransport {
                 cancellation.cancel();
             }
             if cancellation.0.load(Ordering::Acquire) && !cancel_sent {
+                // Stop freezes the D1 projection before the poll hook returns
+                // false. Uncommitted text is beyond that cutoff and must be
+                // discarded rather than flushed into the stopped turn.
+                pending_progress = None;
                 self.send_notification(
                     "session/cancel",
                     json!({"sessionId":session.as_str()}),
@@ -801,6 +993,24 @@ impl HermesAcpTransport {
                 cancel_sent = true;
             }
             let Some(message) = self.receive_message(deadline, true)? else {
+                if pending_progress
+                    .as_ref()
+                    .is_some_and(|(_, started)| started.elapsed() >= PROGRESS_BATCH_INTERVAL)
+                {
+                    flush_pending_progress(
+                        &self.host,
+                        &session,
+                        request_id,
+                        message_id,
+                        &fingerprint,
+                        &mut pending_progress,
+                        &mut progress_count,
+                        &mut progress_text_bytes,
+                        &mut progress_truncated,
+                        cancellation,
+                        &mut on_progress,
+                    );
+                }
                 // A cancelable receive is a bounded poll. Return control to
                 // this loop so it can observe cancellation and send
                 // `session/cancel`; receive_message must not sleep until the
@@ -813,6 +1023,19 @@ impl HermesAcpTransport {
                     result: Some(result),
                     error: None,
                 } if response_id == id => {
+                    flush_pending_progress(
+                        &self.host,
+                        &session,
+                        request_id,
+                        message_id,
+                        &fingerprint,
+                        &mut pending_progress,
+                        &mut progress_count,
+                        &mut progress_text_bytes,
+                        &mut progress_truncated,
+                        cancellation,
+                        &mut on_progress,
+                    );
                     let (reason, usage, echoed_message) = parse_prompt_response(&result)?;
                     if echoed_message.is_some_and(|echo| echo != message_id) {
                         return Err(HermesTransportError::InvalidMessage);
@@ -826,8 +1049,6 @@ impl HermesAcpTransport {
                         return Err(HermesTransportError::UnsupportedOutput);
                     }
                     let identity = self.host.connection_identity();
-                    let digest = Sha256::digest(input.as_bytes());
-                    let fingerprint = format!("native-chat-v1:{}", hex_lower(&digest));
                     self.turn_receipt_taken = true;
                     return Ok(HermesTurnReceipt {
                         identity,
@@ -836,16 +1057,31 @@ impl HermesAcpTransport {
                         user_message_id: message_id.to_owned(),
                         input_fingerprint: fingerprint,
                         final_text,
-                        updates,
                         stop_reason,
                         usage,
                     });
                 }
                 Message::Response {
                     id: response_id,
-                    error: Some(_),
+                    error: Some(error),
                     ..
-                } if response_id == id => return Err(HermesTransportError::Rejected),
+                } if response_id == id => {
+                    if cancel_sent
+                        && let Some(error_code) =
+                            error.get("code").and_then(safe_json_rpc_error_code)
+                    {
+                        self.prompt_error_after_cancel_receipt =
+                            Some(HermesPromptErrorAfterCancel {
+                                identity: self.host.connection_identity(),
+                                session: HermesSessionSelector(session.0.clone()),
+                                request_id,
+                                user_message_id: message_id.to_owned(),
+                                input_fingerprint: fingerprint,
+                                error_code,
+                            });
+                    }
+                    return Err(HermesTransportError::Rejected);
+                }
                 Message::Notification { method, params } if method == "session/update" => {
                     let update_session = params
                         .get("sessionId")
@@ -854,42 +1090,99 @@ impl HermesAcpTransport {
                     if update_session != session.as_str() {
                         return Err(HermesTransportError::InvalidMessage);
                     }
+                    if cancel_sent || cancellation.0.load(Ordering::Acquire) {
+                        // Provider updates can race `session/cancel`. Never
+                        // append a late assistant chunk to the terminal receipt
+                        // or attempt to persist beyond the frozen cutoff.
+                        continue;
+                    }
                     let update = params
                         .get("update")
                         .ok_or(HermesTransportError::InvalidMessage)?;
-                    let update_size = serde_json::to_vec(update)
-                        .map_err(|_| HermesTransportError::InvalidMessage)?
-                        .len();
-                    update_bytes = update_bytes.saturating_add(update_size);
-                    if updates.len() >= MAX_MESSAGES || update_bytes > MAX_RPC_FRAME {
-                        return Err(HermesTransportError::OutputOverflow);
-                    }
-                    updates.push(update.clone());
-                    if update.get("sessionUpdate").and_then(Value::as_str)
-                        == Some("agent_message_chunk")
-                    {
-                        let chunk = update
-                            .pointer("/content/text")
-                            .and_then(Value::as_str)
-                            .ok_or(HermesTransportError::UnsupportedOutput)?;
-                        if let Some(id) = update.get("messageId").and_then(Value::as_str) {
-                            let parsed = Uuid::parse_str(id)
-                                .map_err(|_| HermesTransportError::InvalidMessage)?;
-                            if parsed.hyphenated().to_string() != id {
-                                return Err(HermesTransportError::InvalidMessage);
+                    let normalized = normalize_progress_update(update)?;
+                    if let Some(kind) = normalized {
+                        if let HermesProgressKind::AssistantChunk(chunk) = &kind {
+                            if let Some(id) = update.get("messageId").and_then(Value::as_str) {
+                                let parsed = Uuid::parse_str(id)
+                                    .map_err(|_| HermesTransportError::InvalidMessage)?;
+                                if parsed.hyphenated().to_string() != id {
+                                    return Err(HermesTransportError::InvalidMessage);
+                                }
+                                if message_id_seen
+                                    .as_deref()
+                                    .is_some_and(|previous| previous != id)
+                                {
+                                    return Err(HermesTransportError::UnsupportedOutput);
+                                }
+                                message_id_seen.get_or_insert_with(|| id.to_owned());
                             }
-                            if message_id_seen
-                                .as_deref()
-                                .is_some_and(|previous| previous != id)
-                            {
-                                return Err(HermesTransportError::UnsupportedOutput);
+                            if final_text.len().saturating_add(chunk.len()) > MAX_FINAL_BYTES {
+                                return Err(HermesTransportError::OutputOverflow);
                             }
-                            message_id_seen.get_or_insert_with(|| id.to_owned());
+                            final_text.push_str(chunk);
                         }
-                        if final_text.len().saturating_add(chunk.len()) > MAX_FINAL_BYTES {
-                            return Err(HermesTransportError::OutputOverflow);
+                        if !progress_truncated {
+                            match kind {
+                                HermesProgressKind::ThinkingChunk(text) => queue_text_progress(
+                                    &self.host,
+                                    &session,
+                                    request_id,
+                                    message_id,
+                                    &fingerprint,
+                                    true,
+                                    text,
+                                    &mut pending_progress,
+                                    &mut progress_count,
+                                    &mut progress_text_bytes,
+                                    &mut progress_truncated,
+                                    cancellation,
+                                    &mut on_progress,
+                                ),
+                                HermesProgressKind::AssistantChunk(text) => queue_text_progress(
+                                    &self.host,
+                                    &session,
+                                    request_id,
+                                    message_id,
+                                    &fingerprint,
+                                    false,
+                                    text,
+                                    &mut pending_progress,
+                                    &mut progress_count,
+                                    &mut progress_text_bytes,
+                                    &mut progress_truncated,
+                                    cancellation,
+                                    &mut on_progress,
+                                ),
+                                other => {
+                                    flush_pending_progress(
+                                        &self.host,
+                                        &session,
+                                        request_id,
+                                        message_id,
+                                        &fingerprint,
+                                        &mut pending_progress,
+                                        &mut progress_count,
+                                        &mut progress_text_bytes,
+                                        &mut progress_truncated,
+                                        cancellation,
+                                        &mut on_progress,
+                                    );
+                                    emit_progress_kind(
+                                        &self.host,
+                                        &session,
+                                        request_id,
+                                        message_id,
+                                        &fingerprint,
+                                        other,
+                                        &mut progress_count,
+                                        &mut progress_text_bytes,
+                                        &mut progress_truncated,
+                                        cancellation,
+                                        &mut on_progress,
+                                    );
+                                }
+                            }
                         }
-                        final_text.push_str(chunk);
                     }
                 }
                 Message::Notification { method, .. } if is_benign_acp_notification(&method) => {}
@@ -954,14 +1247,55 @@ impl HermesAcpTransport {
     where
         F: FnMut(&HermesCancellation) -> bool,
     {
+        self.prompt_with_expected_request_id_and_progress_poll(
+            input,
+            message_id,
+            expected_request_id,
+            cancellation,
+            timeout,
+            poll_owner,
+            |_| true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prompt_with_expected_request_id_and_progress_poll<F, G>(
+        &mut self,
+        input: &str,
+        message_id: &str,
+        expected_request_id: u64,
+        cancellation: &HermesCancellation,
+        timeout: Duration,
+        poll_owner: F,
+        on_progress: G,
+    ) -> Result<HermesTurnReceipt, HermesTransportError>
+    where
+        F: FnMut(&HermesCancellation) -> bool,
+        G: FnMut(&HermesProgressReceipt) -> bool,
+    {
         if self.next_request_id != expected_request_id {
             return Err(HermesTransportError::WriteIndeterminate);
         }
-        self.prompt_with_poll(input, message_id, cancellation, timeout, poll_owner)
+        self.prompt_with_poll_and_progress(
+            input,
+            message_id,
+            cancellation,
+            timeout,
+            poll_owner,
+            on_progress,
+        )
     }
 
     pub fn take_cleanup_receipt(&mut self) -> Option<HermesCleanupReceipt> {
         self.take_cleanup_proof().map(HermesCleanupReceipt::new)
+    }
+
+    /// Take one bounded observation for a matching prompt error received only
+    /// after the owned transport successfully wrote `session/cancel`.
+    pub fn take_prompt_error_after_cancel_receipt(
+        &mut self,
+    ) -> Option<HermesPromptErrorAfterCancel> {
+        self.prompt_error_after_cancel_receipt.take()
     }
 
     pub fn stop(
@@ -998,10 +1332,14 @@ impl HermesAcpTransport {
     ) -> Result<Value, HermesTransportError> {
         let id = self.send_request(method, params, deadline)?;
         loop {
-            match self
-                .receive_message(deadline, false)?
-                .ok_or(HermesTransportError::Timeout)?
-            {
+            let Some(message) = self.receive_message(deadline, false)? else {
+                // A host lifecycle event or a partial stdout frame may not
+                // produce a complete ACP message. Keep waiting against the
+                // same absolute deadline instead of treating that event as
+                // the end of the request.
+                continue;
+            };
+            match message {
                 Message::Response {
                     id: response_id,
                     result: Some(result),
@@ -1236,6 +1574,280 @@ impl HermesAcpTransport {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn queue_text_progress<F>(
+    host: &OwnedHost,
+    session: &HermesSessionSelector,
+    request_id: u64,
+    source_message_id: &str,
+    input_fingerprint: &str,
+    thinking: bool,
+    text: String,
+    pending: &mut Option<(HermesProgressKind, Instant)>,
+    progress_count: &mut usize,
+    progress_text_bytes: &mut usize,
+    progress_truncated: &mut bool,
+    cancellation: &HermesCancellation,
+    on_progress: &mut F,
+) where
+    F: FnMut(&HermesProgressReceipt) -> bool,
+{
+    if text.len() > MAX_PROGRESS_TEXT_BYTES {
+        flush_pending_progress(
+            host,
+            session,
+            request_id,
+            source_message_id,
+            input_fingerprint,
+            pending,
+            progress_count,
+            progress_text_bytes,
+            progress_truncated,
+            cancellation,
+            on_progress,
+        );
+        emit_progress_kind(
+            host,
+            session,
+            request_id,
+            source_message_id,
+            input_fingerprint,
+            HermesProgressKind::Truncated,
+            progress_count,
+            progress_text_bytes,
+            progress_truncated,
+            cancellation,
+            on_progress,
+        );
+        return;
+    }
+
+    let same_kind = pending.as_ref().is_some_and(|(kind, _)| {
+        matches!(kind, HermesProgressKind::ThinkingChunk(_)) == thinking
+            && matches!(kind, HermesProgressKind::AssistantChunk(_)) != thinking
+    });
+    if !same_kind {
+        flush_pending_progress(
+            host,
+            session,
+            request_id,
+            source_message_id,
+            input_fingerprint,
+            pending,
+            progress_count,
+            progress_text_bytes,
+            progress_truncated,
+            cancellation,
+            on_progress,
+        );
+        *pending = Some((
+            if thinking {
+                HermesProgressKind::ThinkingChunk(text)
+            } else {
+                HermesProgressKind::AssistantChunk(text)
+            },
+            Instant::now(),
+        ));
+    } else if let Some((kind, _)) = pending.as_mut() {
+        match kind {
+            HermesProgressKind::ThinkingChunk(buffer)
+            | HermesProgressKind::AssistantChunk(buffer) => buffer.push_str(&text),
+            _ => unreachable!("only text progress is batched"),
+        }
+    }
+    if pending
+        .as_ref()
+        .is_some_and(|(kind, _)| progress_kind_text_bytes(kind) >= PROGRESS_BATCH_BYTES)
+    {
+        flush_pending_progress(
+            host,
+            session,
+            request_id,
+            source_message_id,
+            input_fingerprint,
+            pending,
+            progress_count,
+            progress_text_bytes,
+            progress_truncated,
+            cancellation,
+            on_progress,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flush_pending_progress<F>(
+    host: &OwnedHost,
+    session: &HermesSessionSelector,
+    request_id: u64,
+    source_message_id: &str,
+    input_fingerprint: &str,
+    pending: &mut Option<(HermesProgressKind, Instant)>,
+    progress_count: &mut usize,
+    progress_text_bytes: &mut usize,
+    progress_truncated: &mut bool,
+    cancellation: &HermesCancellation,
+    on_progress: &mut F,
+) where
+    F: FnMut(&HermesProgressReceipt) -> bool,
+{
+    if let Some((kind, _)) = pending.take() {
+        emit_progress_kind(
+            host,
+            session,
+            request_id,
+            source_message_id,
+            input_fingerprint,
+            kind,
+            progress_count,
+            progress_text_bytes,
+            progress_truncated,
+            cancellation,
+            on_progress,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_progress_kind<F>(
+    host: &OwnedHost,
+    session: &HermesSessionSelector,
+    request_id: u64,
+    source_message_id: &str,
+    input_fingerprint: &str,
+    mut kind: HermesProgressKind,
+    progress_count: &mut usize,
+    progress_text_bytes: &mut usize,
+    progress_truncated: &mut bool,
+    cancellation: &HermesCancellation,
+    on_progress: &mut F,
+) where
+    F: FnMut(&HermesProgressReceipt) -> bool,
+{
+    if *progress_truncated || *progress_count >= MAX_PROGRESS_EVENTS {
+        return;
+    }
+    let text_bytes = progress_kind_text_bytes(&kind);
+    if !matches!(kind, HermesProgressKind::Truncated)
+        && (*progress_count >= MAX_PROGRESS_EVENTS - 1
+            || progress_text_bytes.saturating_add(text_bytes) > MAX_PROGRESS_TEXT_BYTES)
+    {
+        kind = HermesProgressKind::Truncated;
+        *progress_truncated = true;
+    } else if matches!(kind, HermesProgressKind::Truncated) {
+        *progress_truncated = true;
+    } else {
+        *progress_text_bytes = progress_text_bytes.saturating_add(text_bytes);
+    }
+    *progress_count += 1;
+    let receipt = HermesProgressReceipt {
+        identity: host.connection_identity(),
+        session: session.clone(),
+        request_id,
+        source_message_id: source_message_id.to_owned(),
+        input_fingerprint: input_fingerprint.to_owned(),
+        ordinal: *progress_count as u64,
+        kind,
+    };
+    if !on_progress(&receipt) {
+        cancellation.cancel();
+    }
+}
+
+fn normalize_progress_update(
+    update: &Value,
+) -> Result<Option<HermesProgressKind>, HermesTransportError> {
+    let Some(kind) = update.get("sessionUpdate").and_then(Value::as_str) else {
+        return Err(HermesTransportError::InvalidMessage);
+    };
+    match kind {
+        "agent_thought_chunk" | "agent_message_chunk" => {
+            let text = update
+                .pointer("/content/text")
+                .and_then(Value::as_str)
+                .ok_or(HermesTransportError::UnsupportedOutput)?;
+            if update.pointer("/content/type").and_then(Value::as_str) != Some("text") {
+                return Err(HermesTransportError::UnsupportedOutput);
+            }
+            if text.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(if kind == "agent_thought_chunk" {
+                HermesProgressKind::ThinkingChunk(text.to_owned())
+            } else {
+                HermesProgressKind::AssistantChunk(text.to_owned())
+            }))
+        }
+        "tool_call" => {
+            let tool_call_id = public_tool_call_id(update)?;
+            let title = update
+                .get("title")
+                .and_then(Value::as_str)
+                .ok_or(HermesTransportError::UnsupportedOutput)?;
+            let title = bounded_public_title(title);
+            if title.is_empty() {
+                return Err(HermesTransportError::UnsupportedOutput);
+            }
+            Ok(Some(HermesProgressKind::ToolCall {
+                tool_call_id,
+                title,
+            }))
+        }
+        "tool_call_update" => {
+            let tool_call_id = public_tool_call_id(update)?;
+            let Some(status) = update.get("status").and_then(Value::as_str) else {
+                return Ok(None);
+            };
+            match status {
+                "completed" | "failed" => Ok(Some(HermesProgressKind::ToolCallUpdate {
+                    tool_call_id,
+                    status: status.to_owned(),
+                })),
+                "pending" | "in_progress" => Ok(None),
+                _ => Err(HermesTransportError::InvalidMessage),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+fn public_tool_call_id(update: &Value) -> Result<String, HermesTransportError> {
+    let value = update
+        .get("toolCallId")
+        .or_else(|| update.get("tool_call_id"))
+        .and_then(Value::as_str)
+        .ok_or(HermesTransportError::InvalidMessage)?;
+    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
+        return Err(HermesTransportError::InvalidMessage);
+    }
+    Ok(value.to_owned())
+}
+
+fn bounded_public_title(title: &str) -> String {
+    let mut bounded = String::new();
+    for character in title.trim().chars() {
+        if character.is_control() && character != '\n' && character != '\t' {
+            continue;
+        }
+        if bounded.len().saturating_add(character.len_utf8()) > 1024 {
+            break;
+        }
+        bounded.push(character);
+    }
+    bounded.trim().to_owned()
+}
+
+fn progress_kind_text_bytes(kind: &HermesProgressKind) -> usize {
+    match kind {
+        HermesProgressKind::ThinkingChunk(text) | HermesProgressKind::AssistantChunk(text) => {
+            text.len()
+        }
+        HermesProgressKind::ToolCall { title, .. } => title.len(),
+        HermesProgressKind::ToolCallUpdate { status, .. } => status.len(),
+        HermesProgressKind::Truncated => 0,
+    }
+}
+
 fn validate_launch(launch: HermesLaunch) -> Result<HermesLaunch, HermesTransportError> {
     let canonical_file = |path: &Path| -> Result<PathBuf, HermesTransportError> {
         if !path.is_absolute() {
@@ -1381,6 +1993,11 @@ fn parse_prompt_response(
     let usage = value.get("usage").map(parse_usage).transpose()?;
     Ok((reason, usage, user_message_id))
 }
+fn safe_json_rpc_error_code(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .filter(|code| (-MAX_SAFE_JSON_INTEGER..=MAX_SAFE_JSON_INTEGER).contains(code))
+}
 fn parse_usage(value: &Value) -> Result<HermesUsage, HermesTransportError> {
     let obj = value
         .as_object()
@@ -1468,7 +2085,10 @@ fn parse_message(value: Value) -> Result<Message, HermesTransportError> {
                 return Err(HermesTransportError::InvalidMessage);
             }
             if let Some(error) = object.get("error")
-                && (!error.get("code").is_some_and(Value::is_i64)
+                && (error
+                    .get("code")
+                    .and_then(safe_json_rpc_error_code)
+                    .is_none()
                     || !error.get("message").is_some_and(Value::is_string))
             {
                 return Err(HermesTransportError::InvalidMessage);
@@ -1487,6 +2107,27 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn public_text_progress_requires_an_acp_text_content_block() {
+        let thought = json!({
+            "sessionUpdate":"agent_thought_chunk",
+            "content":{"type":"text","text":"visible public thought"}
+        });
+        assert!(matches!(
+            normalize_progress_update(&thought).unwrap(),
+            Some(HermesProgressKind::ThinkingChunk(text)) if text == "visible public thought"
+        ));
+
+        let non_text = json!({
+            "sessionUpdate":"agent_thought_chunk",
+            "content":{"type":"image","text":"must not be projected"}
+        });
+        assert!(matches!(
+            normalize_progress_update(&non_text),
+            Err(HermesTransportError::UnsupportedOutput)
+        ));
+    }
 
     fn fixture_search_path() -> String {
         std::env::join_paths([std::env::current_dir().expect("test working directory")])
@@ -1520,6 +2161,32 @@ mod tests {
         assert!(serde_json::from_str::<StrictValue>(r#"{"jsonrpc":"2.0","id":1,"id":2}"#).is_err());
         assert!(parse_message(json!({"jsonrpc":"1.0","id":1,"result":null})).is_err());
         assert!(parse_message(json!({"jsonrpc":"2.0","id":1,"result":null,"error":null})).is_err());
+    }
+
+    #[test]
+    fn json_rpc_error_receipts_accept_only_well_formed_safe_integer_codes() {
+        assert_eq!(safe_json_rpc_error_code(&json!(-32603)), Some(-32603));
+        assert_eq!(
+            safe_json_rpc_error_code(&json!(9_007_199_254_740_992_i64)),
+            None
+        );
+        assert_eq!(safe_json_rpc_error_code(&json!(1.5)), None);
+        assert!(
+            parse_message(json!({
+                "jsonrpc":"2.0",
+                "id":7,
+                "error":{"code":-32603}
+            }))
+            .is_err()
+        );
+        assert!(
+            parse_message(json!({
+                "jsonrpc":"2.0",
+                "id":7,
+                "error":{"code":9_007_199_254_740_992_i64,"message":"rejected"}
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -1619,6 +2286,189 @@ mod tests {
         );
     }
 
+    /// Exercises the exact cancel-write / correlated-error boundary with an owned peer.
+    /// A JSON-RPC error after a progress-triggered cancel gets distinct opaque evidence;
+    /// ordinary rejection, wrong id, malformed error and timeout do not.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires the built rudder-process-host executable"]
+    fn owned_prompt_error_after_cancel_is_bound_to_prompt_and_cleanup() {
+        use std::{cell::Cell, os::unix::fs::PermissionsExt};
+
+        let process_host = PathBuf::from(std::env::var("RUDDER_PROCESS_HOST").unwrap());
+        let temp = tempfile::tempdir().unwrap();
+        let hermes = temp.path().join("prompt-error-hermes.py");
+        fs::write(
+            &hermes,
+            r##"#!/usr/bin/python3
+import json, sys, time
+session = "550e8400-e29b-41d4-a716-446655440000"
+def out(value):
+  sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
+  sys.stdout.flush()
+for line in sys.stdin:
+  message = json.loads(line)
+  method = message.get("method")
+  if method == "initialized":
+    continue
+  if method == "initialize":
+    out({"jsonrpc":"2.0","id":message["id"],"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":True}}})
+  elif method == "session/new":
+    out({"jsonrpc":"2.0","id":message["id"],"result":{"sessionId":session}})
+  elif method == "session/prompt":
+    mode = message["params"]["prompt"][0]["text"]
+    if mode == "error_without_cancel":
+      out({"jsonrpc":"2.0","id":message["id"],"error":{"code":-32603,"message":"provider error sentinel","data":{"private":"payload sentinel"}}})
+      continue
+    out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"tool_call","toolCallId":"fixture-tool-call","title":"Run fixture command","rawInput":{"command":"no-op fixture"}}}})
+    cancel = json.loads(sys.stdin.readline())
+    assert cancel.get("method") == "session/cancel"
+    if mode == "timeout_after_cancel":
+      time.sleep(2)
+    elif mode == "wrong_id_after_cancel":
+      out({"jsonrpc":"2.0","id":message["id"] + 1,"error":{"code":-32603,"message":"provider error sentinel"}})
+    elif mode == "malformed_after_cancel":
+      out({"jsonrpc":"2.0","id":message["id"],"error":{"code":-32603}})
+    else:
+      out({"jsonrpc":"2.0","id":message["id"],"error":{"code":-32603,"message":"provider error sentinel","data":{"private":"payload sentinel"}}})
+"##,
+        )
+        .unwrap();
+        fs::set_permissions(&hermes, fs::Permissions::from_mode(0o755)).unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir(&home).unwrap();
+        let run_id = "00000000-0000-4000-8000-000000000021";
+
+        for (attempt, mode, expected_error, timeout) in [
+            (
+                "cancelled",
+                "matching_error_after_cancel",
+                HermesTransportError::Rejected,
+                Duration::from_secs(5),
+            ),
+            (
+                "no-cancel",
+                "error_without_cancel",
+                HermesTransportError::Rejected,
+                Duration::from_secs(5),
+            ),
+            (
+                "wrong-id",
+                "wrong_id_after_cancel",
+                HermesTransportError::InvalidMessage,
+                Duration::from_secs(5),
+            ),
+            (
+                "malformed",
+                "malformed_after_cancel",
+                HermesTransportError::InvalidMessage,
+                Duration::from_secs(5),
+            ),
+            (
+                "timeout",
+                "timeout_after_cancel",
+                HermesTransportError::Timeout,
+                Duration::from_millis(250),
+            ),
+        ] {
+            let owner = format!("owner-{attempt}");
+            let claim = format!("claim-{attempt}");
+            let launch = HermesLaunch {
+                hermes_executable: hermes.clone(),
+                python_executable: None,
+                python_source_root: None,
+                ephemeral_system_prompt: None,
+                process_host: process_host.clone(),
+                runtime_root: temp.path().to_path_buf(),
+                operator_home: home.clone(),
+                hermes_home: home.clone(),
+                cwd: temp.path().to_path_buf(),
+                run_id: run_id.into(),
+                attempt_id: attempt.into(),
+                owner_token: owner.clone(),
+                executable_search_path: fixture_search_path(),
+                env: Default::default(),
+            };
+            let permit = ConnectionLaunchPermit::from_claim(
+                run_id.into(),
+                attempt.into(),
+                owner.clone(),
+                1,
+                claim.clone(),
+            );
+            let mut transport = HermesAcpTransport::launch(launch, permit).unwrap();
+            transport.wait_spawned(Duration::from_secs(5)).unwrap();
+            transport.initialize(Duration::from_secs(5)).unwrap();
+            let session = transport
+                .new_session(temp.path(), Duration::from_secs(5))
+                .unwrap();
+
+            let saw_tool_call = Cell::new(false);
+            let message_id = "550e8400-e29b-41d4-a716-446655440001";
+            let request_id = transport.next_request_id();
+            let result = transport.prompt_with_expected_request_id_and_progress_poll(
+                mode,
+                message_id,
+                request_id,
+                &HermesCancellation::default(),
+                timeout,
+                |_| mode == "error_without_cancel" || !saw_tool_call.get(),
+                |progress| {
+                    if matches!(progress.kind(), HermesProgressKind::ToolCall { .. }) {
+                        saw_tool_call.set(true);
+                    }
+                    true
+                },
+            );
+            assert!(
+                matches!(result, Err(error) if error == expected_error),
+                "{mode}: {result:?}"
+            );
+            assert_eq!(
+                saw_tool_call.get(),
+                mode != "error_without_cancel",
+                "cancel cases first observe public tool progress"
+            );
+
+            let receipt = transport.take_prompt_error_after_cancel_receipt();
+            if mode == "matching_error_after_cancel" {
+                let receipt = receipt.expect("matching cancelled prompt error is distinguished");
+                assert_eq!(receipt.session().as_str(), session.as_str());
+                assert_eq!(receipt.request_id(), request_id);
+                assert_eq!(receipt.user_message_id(), message_id);
+                assert_eq!(receipt.error_code(), -32603);
+                assert_eq!(
+                    receipt.correlation(),
+                    format!(
+                        "session/prompt-error-after-cancel:{}:{request_id}",
+                        session.as_str()
+                    )
+                );
+                assert!(receipt.matches_execution(run_id, attempt, &owner));
+                assert!(receipt.matches_connection_claim(run_id, attempt, &owner, 1, &claim));
+                let input_fingerprint = format!(
+                    "native-chat-v1:{}",
+                    hex_lower(&Sha256::digest(mode.as_bytes()))
+                );
+                assert_eq!(receipt.input_fingerprint(), input_fingerprint);
+                let debug = format!("{receipt:?}");
+                assert!(!debug.contains("provider error sentinel"));
+                assert!(!debug.contains("payload sentinel"));
+
+                let cleanup = transport.stop(Duration::from_secs(5)).unwrap();
+                assert!(cleanup.proves_quiescence_for_prompt_error(&receipt));
+                assert!(cleanup.matches_connection_claim(run_id, attempt, &owner, 1, &claim));
+            } else {
+                assert!(
+                    receipt.is_none(),
+                    "{mode} must not mint a cancel-error receipt"
+                );
+                let cleanup = transport.stop(Duration::from_secs(5)).unwrap();
+                assert!(cleanup.matches_connection_claim(run_id, attempt, &owner, 1, &claim));
+            }
+        }
+    }
+
     /// Exercises real OS process ownership and full ACP request correlation
     /// against a small protocol peer. Set RUDDER_PROCESS_HOST and run this test
     /// explicitly; normal unit tests stay process-free.
@@ -1713,6 +2563,337 @@ mod tests {
         assert_eq!(cancelled.stop_reason(), HermesStopReason::Cancelled);
         let cleanup = second.stop(Duration::from_secs(5)).unwrap();
         assert!(cleanup.proves_quiescence_for(&cancelled));
+    }
+
+    /// A host can deliver one ACP response over several stdout events. The
+    /// process host's lifecycle events may arrive between those fragments, so
+    /// a request must keep waiting until its original absolute deadline rather
+    /// than treating an incomplete line as a timeout.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires the built rudder-process-host executable"]
+    fn owned_fragmented_initialize_and_session_responses_wait_for_complete_frames() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let process_host = PathBuf::from(std::env::var("RUDDER_PROCESS_HOST").unwrap());
+        let temp = tempfile::tempdir().unwrap();
+        let hermes = temp.path().join("fragmented-hermes.py");
+        fs::write(
+            &hermes,
+            r##"#!/usr/bin/python3
+import json, sys, time
+session = "550e8400-e29b-41d4-a716-446655440000"
+def out(value):
+  sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
+  sys.stdout.flush()
+def fragmented(value):
+  encoded = json.dumps(value, separators=(",", ":"))
+  sys.stdout.write(encoded[:512])
+  sys.stdout.flush()
+  time.sleep(0.15)
+  sys.stdout.write(encoded[512:] + "\n")
+  sys.stdout.flush()
+for line in sys.stdin:
+  message = json.loads(line)
+  method = message.get("method")
+  if method == "initialize":
+    fragmented({"jsonrpc":"2.0","id":message["id"],"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":True},"fixturePadding":"x"*700}})
+  elif method == "initialized":
+    out({"jsonrpc":"2.0","method":"usage_update","params":{}})
+  elif method == "session/new":
+    fragmented({"jsonrpc":"2.0","id":message["id"],"result":{"sessionId":session,"fixturePadding":"x"*700}})
+  elif method == "session/set_model":
+    sys.stdout.write('{"jsonrpc":"2.0","id":' + str(message["id"]) + ',"result":')
+    sys.stdout.flush()
+    time.sleep(1.0)
+"##,
+        )
+        .unwrap();
+        fs::set_permissions(&hermes, fs::Permissions::from_mode(0o755)).unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir(&home).unwrap();
+        let run_id = "00000000-0000-4000-8000-000000000001";
+        let attempt_id = "attempt-fragmented-response";
+        let owner = "owner-fragmented-response";
+        let mut transport = HermesAcpTransport::launch(
+            HermesLaunch {
+                hermes_executable: hermes,
+                python_executable: None,
+                python_source_root: None,
+                ephemeral_system_prompt: None,
+                process_host: process_host.clone(),
+                runtime_root: temp.path().to_path_buf(),
+                operator_home: home.clone(),
+                hermes_home: home,
+                cwd: temp.path().to_path_buf(),
+                run_id: run_id.into(),
+                attempt_id: attempt_id.into(),
+                owner_token: owner.into(),
+                executable_search_path: fixture_search_path(),
+                env: Default::default(),
+            },
+            ConnectionLaunchPermit::from_claim(
+                run_id.into(),
+                attempt_id.into(),
+                owner.into(),
+                1,
+                "claim-fragmented-response".into(),
+            ),
+        )
+        .unwrap();
+        transport.wait_spawned(Duration::from_secs(5)).unwrap();
+
+        let initialize = transport.initialize(Duration::from_secs(5));
+        if let Err(error) = initialize {
+            let cleanup = transport.stop(Duration::from_secs(5)).unwrap();
+            assert!(cleanup.matches_connection_claim(
+                run_id,
+                attempt_id,
+                owner,
+                1,
+                "claim-fragmented-response"
+            ));
+            panic!("fragmented initialize response must complete: {error:?}");
+        }
+
+        let session = transport
+            .new_session(temp.path(), Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(session.as_str(), "550e8400-e29b-41d4-a716-446655440000");
+        let started = Instant::now();
+        let model_result = transport.set_model("fixture-model", Duration::from_millis(150));
+        let elapsed = started.elapsed();
+        let cleanup = transport.stop(Duration::from_secs(5)).unwrap();
+        assert!(cleanup.matches_connection_claim(
+            run_id,
+            attempt_id,
+            owner,
+            1,
+            "claim-fragmented-response"
+        ));
+        assert!(
+            matches!(model_result, Err(HermesTransportError::Timeout)),
+            "a silent partial response must time out at its original deadline: {model_result:?}"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "returned too early: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "deadline was not bounded: {elapsed:?}"
+        );
+    }
+
+    /// Keeps the cancellation regression deterministic: the ACP peer writes
+    /// one small thought chunk and waits. The owner poll observes the barrier
+    /// before the 200ms batch timer, then Stop cancels the prompt; a late
+    /// assistant chunk must not flush the pending thought or reach the callback.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires the built rudder-process-host executable"]
+    fn owned_cancel_discards_pending_progress_and_ignores_late_chunks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let process_host = PathBuf::from(std::env::var("RUDDER_PROCESS_HOST").unwrap());
+        let temp = tempfile::tempdir().unwrap();
+        let hermes = temp.path().join("pending-progress-hermes.py");
+        fs::write(
+            &hermes,
+            r##"#!/usr/bin/python3
+import json, pathlib, sys
+session = "550e8400-e29b-41d4-a716-446655440000"
+def out(value):
+  sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
+  sys.stdout.flush()
+for line in sys.stdin:
+  message = json.loads(line)
+  method = message.get("method")
+  if method == "initialized":
+    continue
+  if method == "initialize":
+    out({"jsonrpc":"2.0","id":message["id"],"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":True}}})
+  elif method == "session/new":
+    out({"jsonrpc":"2.0","id":message["id"],"result":{"sessionId":session}})
+  elif method == "session/prompt":
+    user_id = message["params"]["messageId"]
+    out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"small pending thought"}}}})
+    pathlib.Path("pending-progress-ready").write_text("ready", encoding="utf-8")
+    cancel = json.loads(sys.stdin.readline())
+    assert cancel.get("method") == "session/cancel"
+    out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"late assistant chunk"}}}})
+    out({"jsonrpc":"2.0","id":message["id"],"result":{"stopReason":"cancelled","userMessageId":user_id}})
+  elif method == "session/cancel":
+    out({"jsonrpc":"2.0","id":message["id"],"result":{}})
+"##,
+        )
+        .unwrap();
+        fs::set_permissions(&hermes, fs::Permissions::from_mode(0o755)).unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir(&home).unwrap();
+        let run_id = "00000000-0000-4000-8000-000000000021";
+        let attempt_id = "00000000-0000-4000-8000-000000000022";
+        let launch = HermesLaunch {
+            hermes_executable: hermes,
+            python_executable: None,
+            python_source_root: None,
+            ephemeral_system_prompt: None,
+            process_host,
+            runtime_root: temp.path().to_path_buf(),
+            operator_home: home.clone(),
+            hermes_home: home,
+            cwd: temp.path().to_path_buf(),
+            run_id: run_id.into(),
+            attempt_id: attempt_id.into(),
+            owner_token: "pending-progress-owner".into(),
+            executable_search_path: fixture_search_path(),
+            env: Default::default(),
+        };
+        let permit = ConnectionLaunchPermit::from_claim(
+            run_id.into(),
+            attempt_id.into(),
+            "pending-progress-owner".into(),
+            1,
+            "pending-progress-claim".into(),
+        );
+        let mut transport = HermesAcpTransport::launch(launch, permit).unwrap();
+        transport.wait_spawned(Duration::from_secs(5)).unwrap();
+        transport.initialize(Duration::from_secs(5)).unwrap();
+        transport
+            .new_session(temp.path(), Duration::from_secs(5))
+            .unwrap();
+
+        let pending_barrier = temp.path().join("pending-progress-ready");
+        let mut callback_ordinals = Vec::new();
+        let cancellation = HermesCancellation::default();
+        let request_id = transport.next_request_id();
+        let turn = transport
+            .prompt_with_expected_request_id_and_progress_poll(
+                "cancel pending progress",
+                "550e8400-e29b-41d4-a716-446655440001",
+                request_id,
+                &cancellation,
+                Duration::from_secs(5),
+                |_| !pending_barrier.exists(),
+                |progress| {
+                    callback_ordinals.push(progress.ordinal());
+                    true
+                },
+            )
+            .unwrap();
+        assert!(
+            pending_barrier.exists(),
+            "ACP peer reached the pending update barrier"
+        );
+        assert_eq!(turn.stop_reason(), HermesStopReason::Cancelled);
+        assert!(
+            turn.final_text().is_empty(),
+            "late assistant content is ignored"
+        );
+        assert!(
+            callback_ordinals.is_empty(),
+            "unflushed thought is beyond the cutoff"
+        );
+        let cleanup = transport.stop(Duration::from_secs(5)).unwrap();
+        assert!(cleanup.proves_quiescence_for(&turn));
+    }
+
+    #[test]
+    #[ignore = "requires the built rudder-process-host executable"]
+    fn owned_streamed_turns_bound_public_progress_without_rejecting_long_update_streams() {
+        let process_host = PathBuf::from(std::env::var("RUDDER_PROCESS_HOST").unwrap());
+        let temp = tempfile::tempdir().unwrap();
+        let hermes = temp.path().join("bounded-hermes.py");
+        let fixture = FAKE_ACP_CHILD.replace("import json, sys", "import json, sys, time").replace(
+            r#"    if text == "cancel me":"#,
+            r#"    if text.startswith("budget:"):
+      mode = text[7:]
+      def update(kind, text, tool_id="tool"):
+        event = {"sessionUpdate":kind}
+        if kind == "tool_call_update":
+          event.update({"toolCallId":tool_id,"status":"completed","content":[{"type":"content","content":{"type":"text","text":text}}]})
+        else:
+          event["content"] = {"type":"text","text":text}
+        out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":event}})
+      if mode == "tokens":
+        for i in range(512):
+          update("agent_message_chunk", "ok")
+          time.sleep(0.001)
+      elif mode in ("tools", "aggregate"):
+        for i in range(4 if mode == "tools" else 29):
+          update("tool_call_update", "x" * 300000, "tool-" + str(i))
+        update("agent_message_chunk", "done")
+      elif mode == "frame":
+        update("tool_call_update", "x" * (1024 * 1024), "frame-tool")
+      elif mode == "final":
+        update("agent_message_chunk", "x" * (256 * 1024 + 1))
+      elif mode == "count":
+        for i in range(8193):
+          update("tool_call_update", "", "tool-" + str(i))
+          time.sleep(0.001)
+        update("agent_message_chunk", "done")
+      out({"jsonrpc":"2.0","id":m["id"],"result":{"stopReason":"end_turn","userMessageId":user_id}})
+    elif text == "cancel me":"#,
+        );
+        assert_ne!(fixture, FAKE_ACP_CHILD);
+        fs::write(&hermes, fixture).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hermes, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        for (mode, expected) in [
+            ("tokens", Some("ok".repeat(512))),
+            ("tools", Some("done".into())),
+            ("aggregate", Some("done".into())),
+            ("frame", None),
+            ("final", None),
+            ("count", Some("done".into())),
+        ] {
+            let launch = HermesLaunch {
+                hermes_executable: hermes.clone(),
+                python_executable: None,
+                python_source_root: None,
+                ephemeral_system_prompt: None,
+                process_host: process_host.clone(),
+                runtime_root: temp.path().to_path_buf(),
+                operator_home: temp.path().to_path_buf(),
+                hermes_home: temp.path().to_path_buf(),
+                cwd: temp.path().to_path_buf(),
+                run_id: "00000000-0000-4000-8000-000000000021".into(),
+                attempt_id: mode.into(),
+                owner_token: format!("owner-{mode}"),
+                executable_search_path: fixture_search_path(),
+                env: Default::default(),
+            };
+            let permit = ConnectionLaunchPermit::from_claim(
+                launch.run_id.clone(),
+                mode.into(),
+                launch.owner_token.clone(),
+                1,
+                format!("claim-{mode}"),
+            );
+            let mut transport = HermesAcpTransport::launch(launch, permit).unwrap();
+            transport.wait_spawned(Duration::from_secs(5)).unwrap();
+            transport.initialize(Duration::from_secs(5)).unwrap();
+            transport
+                .new_session(temp.path(), Duration::from_secs(5))
+                .unwrap();
+            let result = transport.prompt(
+                &format!("budget:{mode}"),
+                "550e8400-e29b-41d4-a716-446655440001",
+                &HermesCancellation::default(),
+                Duration::from_secs(30),
+            );
+            match expected {
+                Some(text) => assert_eq!(result.unwrap().final_text(), text, "{mode}"),
+                None => assert!(
+                    matches!(result, Err(HermesTransportError::OutputOverflow)),
+                    "{mode}: {result:?}"
+                ),
+            }
+            transport.stop(Duration::from_secs(5)).unwrap();
+        }
     }
 
     /// Real installed Hermes protocol/session-store probe. It creates an empty

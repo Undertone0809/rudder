@@ -8,6 +8,7 @@ mod claim;
 mod context;
 mod effect;
 mod finalization;
+pub(crate) mod hermes_progress;
 mod lease;
 mod output;
 mod stopping;
@@ -16,16 +17,17 @@ mod types;
 
 pub use checkpoint::{
     CheckpointReceipt, CheckpointTransition, EffectKind, EffectPermit, advance_checkpoint,
-    current_checkpoint,
+    current_checkpoint, current_stopping_checkpoint,
 };
 pub use claim::{ClaimedExecution, claim, claim_with_preflight};
 pub use effect::{AuthorizedEffect, EffectDispatch, authorize_effect};
 pub use finalization::{
     NativeProviderKind, NativeProviderStatus, NativeProviderTurnReceipt, finalize, finalize_failed,
-    finalize_hermes, finalize_hermes_failed, finalize_hermes_stopped,
-    finalize_hermes_stopped_before_submission, finalize_native, finalize_pi, finalize_stopped,
-    finalize_stopped_before_submission,
+    finalize_hermes, finalize_hermes_failed, finalize_hermes_prompt_error_stopped,
+    finalize_hermes_stopped, finalize_hermes_stopped_before_submission, finalize_native,
+    finalize_pi, finalize_stopped, finalize_stopped_before_submission,
 };
+pub use hermes_progress::{HermesProgressCommit, record_hermes_progress};
 pub use lease::{LeaseReceipt, renew_lease};
 pub use output::{OutputCommit, record_visible_output};
 pub use stopping::{

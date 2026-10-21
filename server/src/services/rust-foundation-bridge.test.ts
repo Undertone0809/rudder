@@ -665,8 +665,18 @@ describe("rust foundation bridge lifecycle", () => {
       RUDDER_PRIVATE_TEST_SECRET: process.env.RUDDER_PRIVATE_TEST_SECRET,
       RUDDER_SECRETS_MASTER_KEY: process.env.RUDDER_SECRETS_MASTER_KEY,
       RUDDER_SECRETS_MASTER_KEY_FILE: process.env.RUDDER_SECRETS_MASTER_KEY_FILE,
+      RUDDER_AGENT_CREATE_RUST_ENABLED: process.env.RUDDER_AGENT_CREATE_RUST_ENABLED,
+      RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED: process.env.RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED,
+      RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED: process.env.RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED,
+      RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED: process.env.RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED,
+      RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED: process.env.RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED,
     };
     process.env.TZ = "Asia/Shanghai";
+    process.env.RUDDER_AGENT_CREATE_RUST_ENABLED = "true";
+    process.env.RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED = "true";
+    process.env.RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED = "true";
+    process.env.RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED = "true";
+    process.env.RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED = "true";
     process.env.AWS_SECRET_ACCESS_KEY = "should-not-reach-rust";
     process.env.DATABASE_URL = "postgres://unrelated-parent-secret";
     process.env.RUDDER_PRIVATE_TEST_SECRET = "should-not-reach-rust-either";
@@ -681,6 +691,10 @@ describe("rust foundation bridge lifecycle", () => {
       const childEnv = await fixture.readEnv();
       const requiredEnv = {
         TZ: "Asia/Shanghai",
+        RUDDER_AGENT_CREATE_RUST_ENABLED: "true",
+        RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED: "true",
+        RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED: "true",
+        RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED: "true",
         RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: "bridge-test-secret",
         RUDDER_NATIVE_DATABASE_REQUIRED: "true",
         RUDDER_NATIVE_DATABASE_URL: "postgres://bridge-test",

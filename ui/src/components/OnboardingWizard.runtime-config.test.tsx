@@ -65,6 +65,8 @@ vi.mock("../agent-runtimes", () => ({
       args?: string;
       url?: string;
       dangerouslySkipPermissions?: boolean;
+      dangerouslyBypassSandbox?: boolean;
+      codexProfileId?: string;
       permissionMode?: string;
       envBindings?: Record<string, unknown>;
     }) => {
@@ -75,6 +77,10 @@ vi.mock("../agent-runtimes", () => ({
       if (values.url) config.url = values.url;
       if (typeof values.dangerouslySkipPermissions === "boolean") {
         config.dangerouslySkipPermissions = values.dangerouslySkipPermissions;
+      }
+      if (agentRuntimeType === "codex_local") {
+        config.profileId = values.codexProfileId ?? "operator-default";
+        config.dangerouslyBypassApprovalsAndSandbox = values.dangerouslyBypassSandbox;
       }
       if (values.permissionMode) config.permissionMode = values.permissionMode;
       if (values.envBindings && Object.keys(values.envBindings).length > 0) {
@@ -254,6 +260,7 @@ describe("OnboardingWizard runtime config", () => {
   });
 
   it("defaults Codex onboarding to GPT-5.6 Luna with Medium reasoning", async () => {
+    vi.mocked(agentsApi.testEnvironment).mockResolvedValue({ agentRuntimeType: "codex_local", status: "pass", testedAt: "2026-06-18T00:00:00.000Z", checks: [] });
     const { OnboardingWizard } = await import("./OnboardingWizard");
     await render(<OnboardingWizard />);
     const surface = document.body;
@@ -271,6 +278,10 @@ describe("OnboardingWizard runtime config", () => {
 
     expect(findButton(surface, "GPT-5.6-luna")).toBeTruthy();
     expect(findButton(surface, "Medium")).toBeTruthy();
+    await act(async () => { click(findButton(surface, "Create")); await flush(); });
+    await vi.waitFor(() => expect(agentsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
+      agentRuntimeType: "codex_local", agentRuntimeConfig: expect.objectContaining({ profileId: "operator-default", dangerouslyBypassApprovalsAndSandbox: false }),
+    })));
   }, 15_000);
 
   it("creates the default Claude agent with auto permission mode instead of dangerous bypass", async () => {

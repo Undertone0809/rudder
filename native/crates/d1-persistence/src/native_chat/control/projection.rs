@@ -21,13 +21,13 @@ pub(super) async fn hash_at(
     if seq == 0 {
         return Ok(Some(body_hash("")));
     }
-    let hash: Option<String> = sqlx::query_scalar(
-        "SELECT CASE WHEN jsonb_typeof(payload->'bodyHash')='string'
-           AND length(payload->>'bodyHash')=64 THEN payload->>'bodyHash' END
+    let row = sqlx::query(
+        "SELECT event_kind,payload,assistant_message_id::text
          FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid
            AND attempt_epoch=$3 AND generation_seq=$4 AND run_id=$5::uuid
            AND ((event_kind='assistant_delta' AND jsonb_typeof(payload->'delta')='string')
-             OR (event_kind='runtime_output' AND jsonb_typeof(payload->'body')='string'))",
+             OR (event_kind='runtime_output' AND jsonb_typeof(payload->'body')='string')
+             OR event_kind='transcript')",
     )
     .bind(org)
     .bind(generation)
@@ -35,14 +35,33 @@ pub(super) async fn hash_at(
     .bind(seq)
     .bind(run)
     .fetch_optional(&mut **tx)
-    .await?
-    .flatten();
-    Ok(hash.and_then(|hash| normalize_hash(&hash).ok()))
+    .await?;
+    let Some(row) = row else { return Ok(None) };
+    let kind: String = row.try_get("event_kind")?;
+    let payload: Value = row.try_get("payload")?;
+    if kind == "transcript" {
+        let assistant_message_id: Option<String> = row.try_get("assistant_message_id")?;
+        let Some(assistant_message_id) = assistant_message_id else {
+            return Ok(None);
+        };
+        let Some(projection) = super::super::execution::hermes_progress::validate_public_projection(
+            &payload,
+            org,
+            generation,
+            run,
+            epoch,
+            &assistant_message_id,
+        ) else {
+            return Ok(None);
+        };
+        return Ok(Some(projection.body_hash));
+    }
+    let hash = payload.get("bodyHash").and_then(Value::as_str);
+    Ok(hash.and_then(|hash| normalize_hash(hash).ok()))
 }
 
-/// A bounded text projection, including cutoff zero. No native transcript or
-/// tool event writer exists yet; encountering one fails closed until its typed
-/// projection is implemented. Never retain an unprojected structured payload.
+/// A bounded text projection plus validated Hermes transcript entries, including
+/// cutoff zero. Generic or unsupported transcript payloads fail closed.
 pub(super) async fn freeze(
     tx: &mut auth::Tx<'_>,
     org: &str,
@@ -108,6 +127,7 @@ pub(super) async fn freeze(
     }
     let mut body = String::new();
     let mut projected_message_id: Option<String> = None;
+    let mut last_hermes_ordinal = 0u64;
     for row in rows {
         let kind: String = row.try_get("event_kind")?;
         let payload: Value = row.try_get::<Option<Value>, _>("payload")?.ok_or_else(|| {
@@ -150,6 +170,35 @@ pub(super) async fn freeze(
                 }
                 body.push_str(text);
             }
+            "transcript" => {
+                let message_id: String = row
+                    .try_get::<Option<String>, _>("assistant_message_id")?
+                    .ok_or_else(|| http(409, "Hermes transcript has no assistant projection"))?;
+                let projection =
+                    super::super::execution::hermes_progress::validate_public_projection(
+                        &payload,
+                        org,
+                        &request.generation_id,
+                        run,
+                        request.expected_attempt_epoch,
+                        &message_id,
+                    )
+                    .ok_or_else(|| http(409, "Hermes transcript provenance is invalid"))?;
+                if projection.ordinal != last_hermes_ordinal + 1 {
+                    return Err(http(409, "Hermes transcript sequence is not contiguous"));
+                }
+                last_hermes_ordinal = projection.ordinal;
+                if projected_message_id
+                    .as_ref()
+                    .is_some_and(|id| id != &message_id)
+                {
+                    return Err(http(409, "Hermes transcript changed assistant projection"));
+                }
+                projected_message_id = Some(message_id);
+                if projection.body_hash != body_hash(&body) {
+                    return Err(http(409, "Hermes transcript changed the assistant body"));
+                }
+            }
             "generation_started" | "client_checkpoint" | "stop_requested" | "output_cutoff" => {}
             _ => {
                 return Err(http(
@@ -186,7 +235,7 @@ pub(super) async fn freeze(
     let output_messages: Vec<Option<String>> = sqlx::query_scalar(
         "SELECT DISTINCT assistant_message_id::text FROM chat_generation_events
          WHERE org_id=$1::uuid AND generation_id=$2::uuid AND attempt_epoch=$3
-           AND run_id=$4::uuid AND event_kind IN ('assistant_delta','runtime_output') LIMIT 2",
+           AND run_id=$4::uuid AND event_kind IN ('assistant_delta','runtime_output','transcript') LIMIT 2",
     )
     .bind(org)
     .bind(&request.generation_id)

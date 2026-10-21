@@ -46,6 +46,10 @@ function fixtureEnvironment(root: string): NodeJS.ProcessEnv {
   return env;
 }
 
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 async function command(executable: string, args: string[], env: NodeJS.ProcessEnv) {
   const child = spawn(executable, args, { env, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
@@ -79,21 +83,48 @@ function launch(executable: string, args: string[], root: string, label: string,
   return { child, getStartupError: () => startupError };
 }
 
-async function stopChild(child?: ChildProcess) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+function describeCleanupError(error: unknown) {
+  if (!(error instanceof Error)) return String(error);
+  const details = error as NodeJS.ErrnoException & { signal?: string };
+  return `${error.name}: ${error.message} (code=${details.code ?? "none"}, signal=${details.signal ?? "none"})`;
+}
+
+async function stopChild(label: string, child?: ChildProcess) {
+  if (!child?.pid) return `${label}: no owned process (pid=unavailable)`;
+  const pid = child.pid;
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return `${label}: exited before cleanup (pid=${pid}, exitCode=${child.exitCode ?? "none"}, signalCode=${child.signalCode ?? "none"})`;
+  }
   const exited = once(child, "exit");
+  const signals: string[] = [];
   const signal = (value: NodeJS.Signals) => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      signals.push(`${value}=already-exited`);
+      return;
+    }
     try {
-      if (process.platform !== "win32" && child.pid) process.kill(-child.pid, value);
+      if (process.platform !== "win32") process.kill(-pid, value);
       else child.kill(value);
+      signals.push(`${value}=sent`);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      const details = error as NodeJS.ErrnoException;
+      if (details.code === "ESRCH") signals.push(`${value}=ESRCH`);
+      else throw new Error(`${label}: could not send ${value} to owned process group pid=${pid}: ${describeCleanupError(error)}`, { cause: error });
     }
   };
   signal("SIGTERM");
-  const timer = setTimeout(() => signal("SIGKILL"), 10_000);
-  try { await exited; } finally { clearTimeout(timer); }
+  let forceKillError: unknown;
+  const timer = setTimeout(() => {
+    try { signal("SIGKILL"); } catch (error) { forceKillError = error; }
+  }, 10_000);
+  try {
+    await exited;
+  } finally {
+    clearTimeout(timer);
+  }
+  const receipt = `${label}: exit receipt (pid=${pid}, exitCode=${child.exitCode ?? "none"}, signalCode=${child.signalCode ?? "none"}, signals=${signals.join(",") || "none"})`;
+  if (forceKillError) throw new Error(`${receipt}; forced termination failed: ${describeCleanupError(forceKillError)}`, { cause: forceKillError });
+  return receipt;
 }
 
 async function waitForHealth(url: string, process_: ReturnType<typeof launch>) {
@@ -130,25 +161,86 @@ export async function startNativeChatFixture(options: FixtureOptions) {
   let node: ReturnType<typeof launch> | undefined;
   let rust: ReturnType<typeof launch> | undefined;
   const stop = async ({ preserveRoot = true } = {}) => {
-    const cleanup = await Promise.allSettled([stopChild(rust?.child), stopChild(node?.child)]);
-    const failures: unknown[] = cleanup.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+    const receipts: string[] = [];
+    const failures: unknown[] = [];
+    for (const [label, child] of [["rust-authority", rust?.child], ["node-ancillary", node?.child]] as const) {
+      try {
+        receipts.push(await stopChild(label, child));
+      } catch (error) {
+        failures.push(new Error(
+          `${label} cleanup failed (pid=${child?.pid ?? "unavailable"}, exitCode=${child?.exitCode ?? "none"}, signalCode=${child?.signalCode ?? "none"}): ${describeCleanupError(error)}`,
+          { cause: error },
+        ));
+      }
+    }
     if (pgStarted) {
+      let postgresPid = "unavailable";
+      try { postgresPid = (await readFile(path.join(pgData, "postmaster.pid"), "utf8")).split(/\s+/u, 1)[0] ?? postgresPid; }
+      catch { /* The pid file may already be gone when PostgreSQL has exited. */ }
       try {
         await command(path.join(options.postgresBinDir, "pg_ctl"), ["-D", pgData, "-m", "fast", "-w", "-t", "10", "stop"], env);
         pgStarted = false;
-      } catch (error) { failures.push(error); }
+        receipts.push(`postgres: stop receipt (pid=${postgresPid})`);
+      } catch (error) {
+        failures.push(new Error(`postgres cleanup failed (pid=${postgresPid}): ${describeCleanupError(error)}`, { cause: error }));
+      }
     }
-    if (failures.length > 0) throw new AggregateError(failures, `Fixture cleanup incomplete; preserve ${root}`);
+    if (failures.length > 0) {
+      const failureSummary = failures.map(describeCleanupError).join("; ");
+      throw new AggregateError(failures, `Fixture cleanup incomplete; preserve ${root}; receipts=[${receipts.join("; ")}]; failures=[${failureSummary}]`);
+    }
     if (!preserveRoot) await rm(root, { recursive: true, force: true });
   };
   try {
     for (const directory of ["instance", "workspaces", "previous-documents", "profiles", "operator-home",
       "isolated-home", "runtime-root", "agent-cwd", "bin"]) await mkdir(path.join(root, directory));
-    const python = await command("python3", ["-I", "-S", "-c", "import sys; print(sys.executable)"], env);
+    const python = await realpath(await command(
+      "python3",
+      ["-I", "-S", "-c", "import sys; print(sys.executable)"],
+      env,
+    ));
     const provider = path.join(root, "bin/provider");
-    const source = await readFile(path.join(REPO, options.runtimeType === "hermes_local" ? "tests/e2e/fixtures/fake-hermes.py" : "native/crates/native-chat-executor/tests/fixtures/fake_codex.py"));
-    await writeFile(provider, Buffer.concat([Buffer.from(`#!${await realpath(python)}\n`), source]));
+    const source = await readFile(path.join(
+      REPO,
+      options.runtimeType === "hermes_local"
+        ? "tests/e2e/fixtures/fake-hermes.py"
+        : "native/crates/native-chat-executor/tests/fixtures/fake_codex.py",
+    ));
+    await writeFile(provider, Buffer.concat([Buffer.from(`#!${python}\n`), source]));
     await chmod(provider, 0o700);
+    if (options.runtimeType === "hermes_local") {
+      const install = path.join(root, "hermes-install");
+      const bin = path.join(install, "venv/bin");
+      await mkdir(bin, { recursive: true });
+      const hermes = path.join(bin, "hermes");
+      const wrapper = "#!/bin/sh\n'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")\"/'python3' \"$0\" \"$@\"\n' '''\n# -*- coding: utf-8 -*-\nimport sys\nfrom hermes_cli.main import main\nif __name__ == \"__main__\":\n    sys.exit(main())\n";
+      await writeFile(hermes, wrapper, { mode: 0o700 });
+      await chmod(hermes, 0o700);
+
+      const pythonShim = path.join(bin, "python3");
+      await writeFile(
+        pythonShim,
+        `#!/bin/sh\nPYTHONPATH=${shellQuote(install)} exec ${shellQuote(python)} "$@"\n`,
+        { mode: 0o700 },
+      );
+      await chmod(pythonShim, 0o700);
+
+      const hermesSources: Record<string, string> = {
+        "hermes_bootstrap.py": "def harden_import_path(source_root):\n    return None\n",
+        "hermes_cli/__init__.py": "__version__ = \"0.21.0\"\n",
+        "hermes_cli/main.py": "from acp_adapter.entry import main\n",
+        "acp_adapter/entry.py":
+          `import runpy\n\ndef main(argv=None):\n    runpy.run_path(${JSON.stringify(provider)}, run_name="__main__")\n`,
+        "acp_adapter/session.py": "class SessionManager:\n    def _make_agent(self, session_id, cwd, model, requested_provider, base_url, api_mode):\n        return type('Agent', (), {'ephemeral_system_prompt': None})()\n",
+        "agent/agent_init.py": "# synthetic Hermes 0.21 adapter fixture\n",
+        "agent/chat_completion_helpers.py": "# synthetic Hermes 0.21 adapter fixture\n",
+      };
+      for (const [relative, text] of Object.entries(hermesSources)) {
+        const target = path.join(install, relative);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, text, { mode: 0o600 });
+      }
+    }
     await writeFile(path.join(root, "isolated-home/mode.txt"), options.mode ?? "complete");
     const ports = new Set<number>();
     for (let attempt = 0; ports.size < 3 && attempt < 20; attempt += 1) ports.add(await freePort());
@@ -223,7 +315,7 @@ export async function startNativeChatFixture(options: FixtureOptions) {
       rust!.child.once("error", (error) => { clearTimeout(timer); reject(error); });
     }).finally(() => lines.close());
     const restartRust = async () => {
-      await stopChild(rust?.child);
+      await stopChild("rust-authority", rust?.child);
       rust = launch(options.exampleBinary, [fixtureConfigPath], root, "rust-authority-restarted", env);
       await waitForHealth(startup.publicUrl, rust);
     };

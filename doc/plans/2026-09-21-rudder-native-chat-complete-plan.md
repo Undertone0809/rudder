@@ -3,7 +3,7 @@ title: Complete Plan for Rudder Native Chat Experience and Agent Run Execution A
 date: 2026-09-21
 kind: implementation
 status: in_progress
-updated_at: 2026-10-17
+updated_at: 2026-10-22
 area: agent_runtimes
 entities:
   - agent_run
@@ -24,7 +24,127 @@ Do not make Pi, Claude, OpenCode, Cursor, a new policy framework, or all 97 fina
 
 The delay came from coupling all runtime and storage work to extensive foundation and evidence machinery before proving the installed user journey. Correct the execution order: finish the real Codex/Hermes path, run the focused workflow and failure cases, resolve the necessary independent review findings, and publish a reviewable PR. Additional infrastructure must have a concrete dependency on that milestone.
 
-### October 17 closure evidence
+### October 21 merge closure scope
+
+PR #352 is narrowed to the Codex/Hermes milestone. Preserve the broader
+all-runtime admission and span lifecycle candidate at `17e947736` for later
+acceptance; do not include those changes in this merge. The immediate candidate
+repairs Agent detail projection for external instruction configuration and known
+historical managed roots without enabling external instruction reads or writes.
+Invalid persisted workspace keys retain the existing generic 500 response and
+transaction rollback. The Claude project-path encoding repair remains only to
+clear the Windows baseline; it is not Claude runtime acceptance.
+
+Operator-native Codex Profiles must inherit their own approval and sandbox
+policies unless an operator explicitly requests bypass. Agent creation must not
+silently inject bypass into an operator Profile configuration. Keep the existing
+matching-policy check for an explicit bypass request, without editing the native
+Profile or copying credentials.
+
+Configuration state inventory: the current decision is which existing Codex
+Profile to use; the visible Profile selector and bypass toggle remain together.
+Operator Profile starts with bypass off. Switching an untouched selection to
+Agent Profile restores its legacy default; an explicit toggle stays in the form
+values across later Profile changes. Create remains the focal action. Existing
+Back, Cancel, Close, reopen, and draft handling remain unchanged. No later-step
+controls or new permission grants are introduced.
+
+The Rust public-create path owns the persisted permission default, including
+Node-prepared configuration. Node retains only its existing compatibility default
+for legacy create, hire, and PATCH. Hermes session creation receives up to 30
+seconds, bounded by the overall run deadline; other RPC limits and the prohibition
+on replaying ambiguous effects are unchanged. Streamed Hermes turns have a
+separate bounded update budget (8,192 updates and 8 MiB total), so normal token
+streaming is not restricted to the instantaneous 256-message receive queue.
+The per-frame 1 MiB and final-text 256 KiB limits remain enforced; exceeding a
+limit remains unresolved and never permits prompt replay.
+
+The Messenger composer no longer presents accepted-message Resume instructions
+or a Resume button. The owning controller reconnects once per page and exact
+organization/chat/mutation identity, preserving the newer draft, files, and
+annotations. An already attached stream or pending Stop suppresses reconnection;
+a failed reconnect requires an explicit Check again. Confirmed not-admitted
+messages still require an explicit Retry. Reattachment must never allocate a new
+mutation after the original identity settles. Side Chat recovery UI is outside
+this screenshot correction's scope.
+
+First-send admission and response recovery have separate lifetimes. After a
+validated acknowledgement opens a saved chat, transfer the exact mutation ID
+and payload identity to that chat's durable send-recovery record before
+settling the browser-wide creation intent. New Chat must then be usable without
+resurrecting the admitted prompt, while the original active response retains
+its exact reconnect and Stop identity. A lost acknowledgement or failed durable
+handoff remains guarded; neither navigation nor an accepted receipt alone
+proves runtime completion. Verify active acknowledgement, New Chat, draft
+reload, return to the original chat, terminal Stop and a distinct second Send
+through the browser, with one provider start per admitted input.
+
+Codex acceptance exposed a process-host output relay failure before a later Stop
+request reached the executor. The process-host mux and ownership transport keep
+their existing bounded queue capacities, but brief consumer backlogs must apply
+backpressure instead of immediately closing an otherwise valid stream. Queue
+waits remain cancellable and have a local deadline so a permanently stalled
+consumer cannot prevent owned-process cleanup. A relay error remains unresolved;
+it must never be converted into provider completion or release an ambiguous
+execution hold.
+
+Stop may also arrive after durable claim but before the process owner launches.
+Codex and Hermes must recognize that exact fenced Stop during prelaunch reads,
+then obtain actual owned-process cleanup before the existing unsubmitted-input
+finalizer closes the Run. A stopping-checkpoint read is limited to the same
+unsubmitted execution and grants no effect permit; unrelated configuration,
+permission, database, or ownership failures retain their original behavior.
+
+Installed Hermes can end an active tool prompt with a correlated JSON-RPC
+internal error after receiving `session/cancel`. Preserve that error as a
+separate typed prompt-error receipt, never as a cancelled provider turn. Only
+an exact durable operator Stop, the precommitted session/request/source/input
+identity, and matching owned-process cleanup can use this receipt to close the
+Run and release its admission hold. Record `providerStatus=error_response`, the
+numeric error code, `cancelSent=true`, `providerCancelAcknowledged=false`, and
+unknown usage; retain the frozen projection cutoff and validate the entire
+committed progress ledger. Generic errors without an exact Stop, transport
+loss, timeout, malformed responses, and mismatched identities remain held and
+must not replay input. Do not modify the installed Hermes profile or sources.
+
+The installed Hermes initialization response can span multiple process-host
+stdout events. A partial line or a lifecycle event is not an RPC timeout: keep
+receiving under the original absolute deadline until the matching complete
+response arrives. Preserve response/session correlation and propagate actual
+deadline, EOF and protocol errors. The October 22 acceptance failure retained
+a valid 644-byte initialize response in 512- and 132-byte chunks before session
+creation; the old request loop incorrectly stopped after the first fragment.
+Cover fragmented initialization and session replies, queued benign notifications,
+and an incomplete response deadline with owned-process tests before repeating
+the real installed Hermes journey. Do not relax finalization or replay gates.
+
+The composer has one primary response control. An active response with no
+queueable draft shows Stop; a queueable draft shows Send, using the existing
+queue callback. Clearing the draft restores Stop. A pending Stop shows one
+disabled Stopping control, and an idle empty composer shows disabled Send.
+Regular files remain in the draft because the existing queue cannot accept them.
+The queue endpoint is existing Node compatibility debt, not new Rust authority;
+this presentation change neither expands that backend nor claims its migration.
+Refresh and automatic stream reattachment must preserve the single-control rule.
+
+Hermes live progress must come from the current prompt's public ACP
+`session/update` notifications: bounded thought/reply text and tool titles/status,
+without raw tool arguments, outputs, or private transcript-file reads. Persist
+the normalized entries in Rust before projecting them to the existing transcript
+UI, bound to the exact connection/session/prompt/source/owner. Coalesce progress
+under a separate bounded budget without preventing the final answer. Refresh
+must recover committed progress; Stop must freeze the accepted sequence and
+reject subsequent progress from changing its visible result.
+
+Before merge, run the unchanged Agent core public regression suite plus external
+root no-traversal coverage. Freeze the candidate, then independently exercise
+real locally configured Codex and Hermes through Rust public ingress: fresh
+send, same-session continuation, runtime restart, persisted transcript readback,
+Stop, and a native failure without Node business fallback. Reconcile the final
+review and verifier receipts and require protected CI to pass. This milestone
+does not complete the six-runtime, storage, or span lifecycle plan below.
+
+### October 17 observed integration baseline
 
 The refreshed integration branch now has a public Native Reader bridge for native
 Chat message transcripts, with a real PostgreSQL test covering event projection,

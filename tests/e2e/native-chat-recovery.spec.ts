@@ -147,7 +147,11 @@ test("resumes the exact accepted Run after reload without replacing a newer draf
     expect(requests[0].body).toBe(ORIGINAL_MESSAGE);
 
     await expect.poll(async () => (await composer.innerText()).trim()).toBe("");
+    await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
     await composer.fill(NEWER_DRAFT);
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0);
 
     // A full page reload closes the actual HTTP stream. Rust keeps the owned
     // worker and database state; no route interception or API success mock is
@@ -155,9 +159,9 @@ test("resumes the exact accepted Run after reload without replacing a newer draf
     await page.reload();
     await expect(composer).toBeVisible();
     await expect(composer).toContainText(NEWER_DRAFT);
-    const resume = page.getByRole("button", { name: "Resume response", exact: true });
-    await expect(resume).toBeVisible({ timeout: 30_000 });
-    await resume.click();
+    await expect(page.getByRole("button", { name: "Resume response", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0);
 
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1]).toEqual(requests[0]);
@@ -211,15 +215,19 @@ test("resumes an active Run and then records an explicit Stop without another pr
 
     await page.reload();
     await expect(composer).toBeVisible();
-    const resume = page.getByRole("button", { name: "Resume response", exact: true });
-    await expect(resume).toBeVisible({ timeout: 30_000 });
-    await resume.click();
+    await expect(page.getByRole("button", { name: "Resume response", exact: true })).toHaveCount(0);
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1]).toEqual(requests[0]);
     await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toBeVisible({ timeout: 30_000 });
     const afterStopDraft = "Keep this unsent draft while the stopped Run settles.";
     await composer.fill(afterStopDraft);
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0);
+    await composer.fill("");
+    await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Stop streaming", exact: true }).click();
+    await composer.fill(afterStopDraft);
     await expect(page.getByRole("button", { name: "Stop streaming", exact: true })).toHaveCount(0, { timeout: 45_000 });
     await expect(page.getByText("Stopped", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
     await page.screenshot({ path: testInfo.outputPath("native-chat-stop-confirmed.png"), fullPage: true });

@@ -39,7 +39,9 @@ use rudder_d1_persistence::{
     },
     runtime_bindings,
 };
-use rudder_hermes_acp::{HermesCleanupReceipt, HermesTransportError, HermesTurnReceipt};
+use rudder_hermes_acp::{
+    HermesCleanupReceipt, HermesPromptErrorAfterCancel, HermesTransportError, HermesTurnReceipt,
+};
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -251,6 +253,50 @@ fn db<T>(
     })
 }
 
+/// Validate the admitted source and read the prelaunch checkpoint in normal
+/// execution state. A Stop can commit between claim and either read; only a
+/// 409 accompanied by the exact active Stop fence may use the read-only
+/// stopping snapshot, which is restricted to pre-submission phases.
+fn prelaunch_checkpoint(
+    handle: &Handle,
+    pool: &PgPool,
+    actor: &NativeChatExecutionPrincipal,
+    fence: &ExecutionFence,
+    deadline: Instant,
+) -> Result<CheckpointSnapshot> {
+    let normal = (|| {
+        db(
+            handle,
+            deadline,
+            execution::validate_submission_source(pool, actor, fence),
+        )?;
+        db(
+            handle,
+            deadline,
+            execution::current_checkpoint(pool, actor, fence),
+        )
+    })();
+    match normal {
+        Ok(snapshot) => Ok(snapshot),
+        Err(error @ Error::Persistence(runtime_bindings::Error::Http(409, _))) => {
+            let Some(stop) = db(
+                handle,
+                deadline,
+                execution::observe_stop(pool, actor, fence),
+            )?
+            else {
+                return Err(error);
+            };
+            db(
+                handle,
+                deadline,
+                execution::current_stopping_checkpoint(pool, actor, fence, &stop),
+            )
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Process containment only; none of these facts establishes the durable Run
 /// outcome, whether a claim committed, or permission to replay an attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -271,6 +317,7 @@ struct ExecutionFailureEvidence {
     execution_principal: Option<NativeChatExecutionPrincipal>,
     cleanup_receipt: Option<CleanupReceipt>,
     hermes_cleanup_receipt: Option<HermesCleanupReceipt>,
+    hermes_prompt_error_after_cancel_receipt: Option<HermesPromptErrorAfterCancel>,
     pi_cleanup_receipt: Option<rudder_pi_rpc::PiCleanupReceipt>,
 }
 
@@ -290,12 +337,56 @@ impl fmt::Debug for ExecutionFailure {
                 "hasHermesCleanupReceipt",
                 &self.0.hermes_cleanup_receipt.is_some(),
             )
+            .field(
+                "hasHermesPromptErrorAfterCancelReceipt",
+                &self.0.hermes_prompt_error_after_cancel_receipt.is_some(),
+            )
             .field("hasPiCleanupReceipt", &self.0.pi_cleanup_receipt.is_some())
             .finish()
     }
 }
 
 impl ExecutionFailure {
+    /// Bounded diagnostic classification. Never expose provider payloads,
+    /// environment values, filesystem paths or durable owner capabilities.
+    pub fn diagnostic_code(&self) -> &'static str {
+        match &self.0.error {
+            Error::Transport(TransportError::OutputOverflow) => "codex_output_queue_full",
+            Error::Transport(TransportError::InvalidTurnReceipt) => "codex_invalid_turn_receipt",
+            Error::Transport(_) => "codex_transport",
+            Error::Persistence(runtime_bindings::Error::Http(409, _)) => "persistence_conflict",
+            Error::Persistence(_) => "persistence",
+            Error::WorkerInterrupted => "worker_interrupted",
+            Error::HermesTransport(HermesTransportError::InvalidMessage) => {
+                "hermes_invalid_message"
+            }
+            Error::HermesTransport(HermesTransportError::Rejected) => "hermes_rejected",
+            Error::HermesTransport(HermesTransportError::Timeout) => "hermes_timeout",
+            Error::HermesTransport(HermesTransportError::Closed) => "hermes_closed",
+            Error::HermesTransport(HermesTransportError::OutputOverflow) => {
+                "hermes_output_overflow"
+            }
+            Error::HermesTransport(HermesTransportError::UnsupportedOutput) => {
+                "hermes_unsupported_output"
+            }
+            Error::HermesTransport(HermesTransportError::WriteIndeterminate) => {
+                "hermes_write_indeterminate"
+            }
+            Error::HermesTransport(_) => "hermes_transport",
+            Error::PiTransport(_) => "pi_transport",
+            Error::ClaudeTransport(_) => "claude_transport",
+            Error::CursorTransport(_) => "cursor_transport",
+            Error::OpenCodeExecution(_) => "opencode_execution",
+            Error::Deadline => "deadline",
+            Error::Cancelled => "cancelled",
+            Error::UnsupportedConfiguration => "unsupported_configuration",
+            Error::InvalidProviderObservation => "invalid_provider_observation",
+            Error::ApprovalRequired => "approval_required",
+            Error::ProviderRejected => "provider_rejected",
+            Error::ProcessExited => "process_exited",
+        }
+    }
+
     pub fn process_disposition(&self) -> ProcessDisposition {
         self.0.process
     }
@@ -320,6 +411,11 @@ impl ExecutionFailure {
     }
     pub fn hermes_cleanup_receipt(&self) -> Option<&HermesCleanupReceipt> {
         self.0.hermes_cleanup_receipt.as_ref()
+    }
+    pub fn hermes_prompt_error_after_cancel_receipt(
+        &self,
+    ) -> Option<&HermesPromptErrorAfterCancel> {
+        self.0.hermes_prompt_error_after_cancel_receipt.as_ref()
     }
     pub fn pi_cleanup_receipt(&self) -> Option<&rudder_pi_rpc::PiCleanupReceipt> {
         self.0.pi_cleanup_receipt.as_ref()
@@ -353,6 +449,7 @@ impl ExecutionFailure {
             execution_principal: None,
             cleanup_receipt: None,
             hermes_cleanup_receipt: None,
+            hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
         }))
     }
@@ -369,6 +466,7 @@ impl ExecutionFailure {
             execution_principal: Some(execution_principal),
             cleanup_receipt: None,
             hermes_cleanup_receipt: None,
+            hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
         }))
     }
@@ -393,6 +491,7 @@ impl ExecutionFailure {
             execution_principal: Some(execution_principal),
             cleanup_receipt,
             hermes_cleanup_receipt: None,
+            hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
         }))
     }
@@ -417,8 +516,35 @@ impl ExecutionFailure {
             execution_principal: Some(execution_principal),
             cleanup_receipt: None,
             hermes_cleanup_receipt: cleanup_receipt,
+            hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
         }))
+    }
+
+    fn after_claim_hermes_prompt_error_after_cancel(
+        error: Error,
+        execution_principal: NativeChatExecutionPrincipal,
+        fence: ExecutionFence,
+        cleanup_receipt: Option<HermesCleanupReceipt>,
+        prompt_error_receipt: Option<HermesPromptErrorAfterCancel>,
+    ) -> Self {
+        let mut failure =
+            Self::after_claim_hermes(error, execution_principal, fence, cleanup_receipt);
+        if matches!(
+            &failure.0.error,
+            Error::HermesTransport(HermesTransportError::Rejected)
+        ) && let (Some(fence), Some(receipt)) = (failure.0.fence.as_ref(), prompt_error_receipt)
+        {
+            let identity = fence.identity();
+            if receipt.matches_execution(
+                identity.run_id,
+                identity.attempt_id,
+                fence.run_execution_owner_token(),
+            ) {
+                failure.0.hermes_prompt_error_after_cancel_receipt = Some(receipt);
+            }
+        }
+        failure
     }
 
     fn after_claim_pi(
@@ -441,6 +567,7 @@ impl ExecutionFailure {
             execution_principal: Some(execution_principal),
             cleanup_receipt: None,
             hermes_cleanup_receipt: None,
+            hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: cleanup_receipt,
         }))
     }
@@ -465,6 +592,7 @@ impl ExecutionFailure {
             execution_principal: None,
             cleanup_receipt,
             hermes_cleanup_receipt: None,
+            hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
         }))
     }
@@ -826,24 +954,41 @@ where
             )),
         };
     }
+    run_codex_claimed(
+        handle,
+        pool,
+        execution_principal,
+        claimed_fence,
+        claimed_config,
+        connection_launch_permit,
+        request.cancelled,
+        deadline,
+        paths,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_codex_claimed(
+    handle: &Handle,
+    pool: &PgPool,
+    execution_principal: NativeChatExecutionPrincipal,
+    claimed_fence: ExecutionFence,
+    claimed_config: ResolvedCodexConfig,
+    connection_launch_permit: rudder_codex_app_server::ConnectionLaunchPermit,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+    paths: &HostPaths,
+) -> std::result::Result<NativeExecutionObservation, ExecutionFailure> {
     let (launch, snapshot) = match (|| -> Result<_> {
-        if request.cancelled.load(Ordering::Acquire) {
+        if cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
         }
         if Instant::now() >= deadline {
             return Err(Error::Deadline);
         }
-        db(
-            handle,
-            deadline,
-            execution::validate_submission_source(pool, &execution_principal, &claimed_fence),
-        )?;
+        let snapshot =
+            prelaunch_checkpoint(handle, pool, &execution_principal, &claimed_fence, deadline)?;
         let launch = process_launch(&claimed_config, &claimed_fence, paths)?;
-        let snapshot = db(
-            handle,
-            deadline,
-            execution::current_checkpoint(pool, &execution_principal, &claimed_fence),
-        )?;
         Ok((launch, snapshot))
     })() {
         Ok(value) => value,
@@ -881,7 +1026,7 @@ where
         config: claimed_config,
         transport,
         snapshot,
-        cancelled: request.cancelled,
+        cancelled,
         deadline,
         paths,
         renewed: Instant::now(),
@@ -1385,6 +1530,10 @@ impl Driver<'_> {
                 break;
             }
         }
+        // Close the launch-to-initialize window: Stop may have committed
+        // after the owner became durable but before the child reported spawn.
+        self.poll_stop()?;
+        self.check_cancelled()?;
         let initialized = self.rpc("initialize", json!({"clientInfo":{"name":"rudder-native-chat","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}}))?;
         if !initialized["userAgent"]
             .as_str()
@@ -1590,6 +1739,10 @@ extern crate self as rudder_native_chat_executor;
 #[cfg(all(test, unix))]
 #[path = "../tests/workflow/fixture.rs"]
 mod cleanup_claim_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "prelaunch_stop_tests.rs"]
+mod prelaunch_stop_tests;
 
 #[cfg(all(test, unix))]
 mod cleanup_claim_tests {

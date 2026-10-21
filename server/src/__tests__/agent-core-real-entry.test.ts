@@ -120,6 +120,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     let nativeWorkspaceHome = "";
     let nativeOrganizationAgents = "";
     const nativeIdentity = nativeIdentityIngressFixture();
+    const agentCreateGates = ["RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED", "RUDDER_AGENT_CREATE_RUST_ENABLED", "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED", "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED", "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED"];
     const org = randomUUID(), otherOrg = randomUUID(), agent = randomUUID(), peer = randomUUID(), foreignAgent = randomUUID(), revision = randomUUID();
     const owner = `agent-core-owner-${randomUUID()}`, other = `agent-core-peer-${randomUUID()}`, outsider = `agent-core-outsider-${randomUUID()}`;
     const ownerToken = `synthetic-board-${randomUUID()}`, otherToken = `synthetic-board-${randomUUID()}`, outsiderToken = `synthetic-board-${randomUUID()}`, agentToken = `synthetic-agent-${randomUUID()}`;
@@ -799,6 +800,68 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${id}::uuid,'synthetic detail',${hash(token)})`);
         return { id, token, workspace };
     }
+    it("persists Rust-owned Codex permission defaults for the selected Profile through public create", async () => {
+        const gates = agentCreateGates;
+        const previous = gates.map(key => process.env[key]);
+        try {
+            for (const key of gates) process.env[key] = "true";
+            // Earlier recovery cases restart this child. Apply the private
+            // authority gates to this exact process, not a superseded startup.
+            await bridge!.close();
+            await bridge!.start();
+            publicUrl = bridge!.publicIngressBaseUrl!;
+            for (const [config, expected] of [
+                [{ profileId: "operator-default" }, false],
+                [{ profileId: "default" }, true],
+                [{}, true],
+                [{ profileId: "operator-default", dangerouslyBypassApprovalsAndSandbox: true }, true],
+                [{ profileId: "default", dangerouslyBypassApprovalsAndSandbox: false }, false],
+                [{ profileId: "operator-default", dangerouslyBypassSandbox: false }, undefined],
+            ] as const) {
+                const result = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, { name: `Native Profile ${randomUUID()}`, role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: config, seedOrganizationIntelligenceDefaults: false });
+                expect(result.status, JSON.stringify(result.body)).toBe(201);
+                const saved = (await db.execute(sql`SELECT agent_runtime_config FROM agents WHERE id=${result.body.id}::uuid`))[0]!.agent_runtime_config as Record<string, unknown>;
+                expect(result.body.agentRuntimeConfig.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
+                expect(saved.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
+                if ("dangerouslyBypassSandbox" in config) expect(saved.dangerouslyBypassSandbox).toBe(false);
+            }
+            // Keep the real public listener and Node preflight running, but fail
+            // the actual native-create process dependency after valid admission.
+            const beforeFailure = await db.execute(sql`SELECT
+                (SELECT count(*) FROM agents) AS agents,
+                (SELECT count(*) FROM agent_enabled_skills) AS skills,
+                (SELECT count(*) FROM organization_skills) AS catalog,
+                (SELECT count(*) FROM agent_config_revisions) AS revisions,
+                (SELECT count(*) FROM activity_log) AS activity,
+                (SELECT count(*) FROM organization_mutation_outbox) AS outbox`);
+            const directories = fs.existsSync(nativeOrganizationAgents) ? fs.readdirSync(nativeOrganizationAgents).sort() : null;
+            const unavailable = createRustFoundationBridge({ databaseUrl, binaryPath: path.join(root, "missing-create-foundation"), mode: "required", actorEnvelopeKey: "synthetic-unavailable-create-key-32bytes" });
+            const originalCreate = bridge!.agentCreate;
+            bridge!.agentCreate = unavailable.agentCreate;
+            try {
+                const failed = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, { name: `Unavailable native create ${randomUUID()}`, role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: { profileId: "operator-default" }, desiredSkills: [], seedOrganizationIntelligenceDefaults: false });
+                expect(failed.status, JSON.stringify(failed.body)).toBe(503);
+                expect(failed.body.code).toBe("rust_agent_create_cutover_request_failed");
+                expect(await db.execute(sql`SELECT
+                    (SELECT count(*) FROM agents) AS agents,
+                    (SELECT count(*) FROM agent_enabled_skills) AS skills,
+                    (SELECT count(*) FROM organization_skills) AS catalog,
+                    (SELECT count(*) FROM agent_config_revisions) AS revisions,
+                    (SELECT count(*) FROM activity_log) AS activity,
+                    (SELECT count(*) FROM organization_mutation_outbox) AS outbox`)).toEqual(beforeFailure);
+                expect(fs.existsSync(nativeOrganizationAgents) ? fs.readdirSync(nativeOrganizationAgents).sort() : null).toEqual(directories);
+            } finally {
+                bridge!.agentCreate = originalCreate;
+                await unavailable.close();
+            }
+        } finally {
+            gates.forEach((key, i) => previous[i] === undefined ? delete process.env[key] : process.env[key] = previous[i]);
+            await bridge!.close();
+            await bridge!.start();
+            publicUrl = bridge!.publicIngressBaseUrl!;
+        }
+    });
+
     it("Agent detail preserves complete self, explicit access, integrations and current spend through both public ingresses", async () => {
         const subject = await detailSubject();
         const secret = randomUUID();
@@ -867,6 +930,38 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             for (const base of [publicUrl]) { const response = await call(base, "get", `/api/agents/${subject.id}`); expect(response.status, response.text).toBe(200); expect(response.body.instructionsLibraryPath).toBe(expected); }
         }
         expect(fs.readFileSync(path.join(directory, "USER.md"), "utf8")).toBe("Do not replace my instructions");
+    });
+    it("Agent detail never traverses external instruction roots and keeps instruction access fail-closed", async () => {
+        const subject = await detailSubject();
+        const externalFile = path.join(root, "external-root-is-a-file");
+        fs.writeFileSync(externalFile, "External bytes must stay untouched");
+        const missingRoot = path.join(root, "external-root-does-not-exist");
+        const externalRoots = [externalFile, missingRoot];
+        if (process.platform !== "win32") {
+            const linkedRoot = path.join(root, "external-root-is-a-link");
+            fs.symlinkSync(externalFile, linkedRoot);
+            externalRoots.push(linkedRoot);
+        }
+        for (const externalRoot of externalRoots) {
+            const config = { instructionsBundleMode: "external", instructionsRootPath: externalRoot, instructionsEntryFile: "SOUL.md" };
+            await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify(config)}::jsonb WHERE id=${subject.id}::uuid`);
+            const response = await call(publicUrl, "get", `/api/agents/${subject.id}`);
+            expect(response.status, response.text).toBe(200);
+            expect(response.body.instructionsLibraryPath).toBeNull();
+            expect(response.body.agentRuntimeConfig).toEqual(config);
+            const bundle = await call(publicUrl, "get", `/api/agents/${subject.id}/instructions-bundle`);
+            expect(bundle.status, bundle.text).toBe(503);
+            const file = await call(publicUrl, "get", `/api/agents/${subject.id}/instructions-bundle/file?path=SOUL.md`);
+            expect(file.status, file.text).toBe(503);
+            const mutation = await call(publicUrl, "patch", `/api/agents/${subject.id}/instructions-bundle`, ownerToken, { mode: "external", rootPath: externalRoot });
+            expect(mutation.status, mutation.text).toBe(503);
+            expect((await db.execute(sql`SELECT agent_runtime_config FROM agents WHERE id=${subject.id}::uuid`))[0]?.agent_runtime_config).toEqual(config);
+        }
+        expect(fs.readFileSync(externalFile, "utf8")).toBe("External bytes must stay untouched");
+        expect(fs.existsSync(missingRoot)).toBe(false);
+        expect(fs.existsSync(path.join(nativeOrganizationAgents, subject.workspace))).toBe(false);
+        expect(await scalar(sql`SELECT count(*) AS value FROM agent_instruction_bundles WHERE agent_id=${subject.id}::uuid`)).toBe(0);
+        expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
     });
     it("Agent detail recovers historical files without a size cap and matches public default template bytes", async () => {
         const subject=await detailSubject();const legacy=path.join(path.dirname(resolveRudderInstanceRoot()),"historical-fixture","organizations",org.replaceAll("-","").slice(0,12),"workspaces","agents",subject.workspace,"instructions");

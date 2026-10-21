@@ -31,8 +31,8 @@ import {
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
 import { sendLiveRunRead } from "../services/live-run-read-bridge.js";
-import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { requireRunReadAccess, runReadRedaction, sendRunRead } from "../services/run-read-bridge.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import {
   ensureFirstAgentIntelligenceDefaults,
@@ -343,6 +343,9 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       createInput.agentRuntimeType,
       ((createInput.agentRuntimeConfig ?? {}) as Record<string, unknown>),
+      // Rust owns permission defaults for its public create path. Existing
+      // hire, legacy create, and PATCH callers retain their compatibility default.
+      !rustReadiness.enabled,
     );
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       orgId,

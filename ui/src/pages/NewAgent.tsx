@@ -13,7 +13,6 @@ import {
 } from "@/lib/organization-skill-source-label";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import {
-  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   DEFAULT_CODEX_LOCAL_SEARCH,
@@ -73,8 +72,7 @@ function createValuesForAdapterType(
     nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
     nextValues.thinkingEffort = DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
     nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
-    nextValues.dangerouslyBypassSandbox =
-      DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
+    nextValues.dangerouslyBypassSandbox = false;
     nextValues.codexProfileId = "operator-default";
   } else if (agentRuntimeType === "cursor") {
     nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;

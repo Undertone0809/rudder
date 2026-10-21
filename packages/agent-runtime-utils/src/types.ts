@@ -614,8 +614,9 @@ export interface ModelFallbackConfig {
 
 export interface CreateConfigValues {
   agentRuntimeType: string;
-  /** Existing local Hermes profile; omitted selects its default profile. */
+  /** Existing local Codex profile; new Agents use the operator's native Profile. */
   codexProfileId?: string;
+  /** Existing local Hermes profile; omitted selects its default profile. */
   hermesProfileId?: string;
   cwd: string;
   instructionsFilePath?: string;
@@ -631,6 +632,8 @@ export interface CreateConfigValues {
   search: boolean;
   countSubscriptionUsageAsCost?: boolean;
   dangerouslyBypassSandbox: boolean;
+  /** Preserve an explicit Codex toggle when changing the selected Profile. */
+  codexBypassCustomized?: boolean;
   command: string;
   args: string;
   extraArgs: string;

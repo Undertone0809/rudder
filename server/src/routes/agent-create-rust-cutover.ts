@@ -1,4 +1,11 @@
+import {
+  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
+  DEFAULT_CODEX_LOCAL_SEARCH,
+  withCodexLocalModelDefaults,
+} from "@rudderhq/agent-runtime-codex-local";
+import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import type { Request, Response } from "express";
+import { generateKeyPairSync } from "node:crypto";
 import type {
   RustAgentCreateCommand,
   RustAgentCreateIntelligenceDefaults,
@@ -81,6 +88,77 @@ const AGENT_CREATE_RUST_SUBGATES = [
 
 function envFlagEnabled(name: string) {
   return ["1", "true", "yes"].includes((process.env[name] ?? "").trim().toLowerCase());
+}
+
+// This preserves the preexisting Node create compatibility defaults. Rust's
+// public create path opts out of the legacy permission default at its caller.
+export function createApplyCreateDefaultsByAdapterType() {
+  function asNonEmptyString(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  function parseBooleanLike(value: unknown): boolean | null {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") {
+      if (value === 1) return true;
+      if (value === 0) return false;
+      return null;
+    }
+    if (typeof value !== "string") return null;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+      return false;
+    }
+    return null;
+  }
+
+  function generateEd25519PrivateKeyPem(): string {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  }
+
+  function ensureGatewayDeviceKey(
+    agentRuntimeType: string | null | undefined,
+    agentRuntimeConfig: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (agentRuntimeType !== "openclaw_gateway") return agentRuntimeConfig;
+    const disableDeviceAuth = parseBooleanLike(agentRuntimeConfig.disableDeviceAuth) === true;
+    if (disableDeviceAuth) return agentRuntimeConfig;
+    if (asNonEmptyString(agentRuntimeConfig.devicePrivateKeyPem)) return agentRuntimeConfig;
+    return { ...agentRuntimeConfig, devicePrivateKeyPem: generateEd25519PrivateKeyPem() };
+  }
+
+  return function applyCreateDefaultsByAdapterType(
+    agentRuntimeType: string | null | undefined,
+    agentRuntimeConfig: Record<string, unknown>,
+    includeLegacyBypassDefault = true,
+  ): Record<string, unknown> {
+    const next = agentRuntimeType === "codex_local"
+      ? withCodexLocalModelDefaults(agentRuntimeConfig)
+      : { ...agentRuntimeConfig };
+    if (agentRuntimeType === "codex_local") {
+      const hasBypassFlag =
+        typeof next.dangerouslyBypassApprovalsAndSandbox === "boolean" ||
+        typeof next.dangerouslyBypassSandbox === "boolean";
+      if (includeLegacyBypassDefault && !hasBypassFlag) {
+        next.dangerouslyBypassApprovalsAndSandbox = DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
+      }
+      if (typeof next.search !== "boolean") {
+        next.search = DEFAULT_CODEX_LOCAL_SEARCH;
+      }
+      return ensureGatewayDeviceKey(agentRuntimeType, next);
+    }
+    // OpenCode requires explicit model selection — no default
+    if (agentRuntimeType === "cursor" && !asNonEmptyString(next.model)) {
+      next.model = DEFAULT_CURSOR_LOCAL_MODEL;
+    }
+    return ensureGatewayDeviceKey(agentRuntimeType, next);
+  };
 }
 
 export function publicRustAgentCreateReadiness(bridgeAvailable: boolean) {

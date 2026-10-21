@@ -6,6 +6,7 @@ import {
   preparePendingChatSendMutation,
   readPendingChatSendMutation,
   recoverPendingChatSendMutation,
+  seedAcceptedChatSendMutation,
   settlePendingChatSendMutationIdentity,
   type ChatSendReconciliationResult,
 } from "./chat-send-mutation-storage";
@@ -124,6 +125,22 @@ describe("chat send mutation storage", () => {
     vi.unstubAllGlobals();
   });
 
+  it("never allocates a new send for an attachment whose exact identity already settled", async () => {
+    installCryptoStub();
+    const input = { orgId: "settled-org", conversationId: "settled-chat", body: "Accepted input", files: [], inlineAnnotations: [] };
+    const pending = await preparePendingChatSendMutation(input);
+    await pending.markAccepted();
+    await pending.settle();
+    const randomUUID = vi.mocked(crypto.randomUUID);
+    const allocations = randomUUID.mock.calls.length;
+    await expect(preparePendingChatSendMutation({ ...input, resumeClientMutationId: pending.clientMutationId }))
+      .rejects.toThrow("no longer has a pending send");
+    expect(randomUUID).toHaveBeenCalledTimes(allocations);
+    expect(readPendingChatSendMutation(input.orgId, input.conversationId)?.status).toBe("settled");
+    const explicitNewSend = await preparePendingChatSendMutation(input);
+    expect(explicitNewSend.clientMutationId).not.toBe(pending.clientMutationId);
+  });
+
   it("survives a composer remount and retires only the acknowledged identity", async () => {
     installCryptoStub();
     const input = {
@@ -200,6 +217,63 @@ describe("chat send mutation storage", () => {
 
     const later = await preparePendingChatSendMutation(input);
     expect(later.clientMutationId).not.toBe(captured?.clientMutationId);
+  });
+
+  it("hands an accepted first-send ID into the chat ledger without replacing another unresolved send", async () => {
+    installCryptoStub();
+    const input = {
+      orgId: "org-first-send-handoff",
+      conversationId: "chat-first-send-handoff",
+      clientMutationId: "first-send-accepted-id",
+      body: "The exact accepted first message",
+      modelOverride: "provider/model-a",
+      effortOverride: "high",
+    } as const;
+
+    const identity = await seedAcceptedChatSendMutation(input);
+    expect(identity).toMatchObject({
+      clientMutationId: input.clientMutationId,
+      ordinal: 1,
+      editUserMessageId: null,
+      fingerprint: JSON.stringify({
+        body: input.body,
+        editUserMessageId: null,
+        files: [],
+        inlineAnnotations: [],
+        modelOverride: input.modelOverride,
+        effortOverride: input.effortOverride,
+      }),
+    });
+    expect(readPendingChatSendMutation(input.orgId, input.conversationId)).toMatchObject({
+      id: input.clientMutationId,
+      status: "accepted",
+    });
+    expect(await capturePendingChatSendMutationIdentity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      body: input.body,
+    })).toEqual(identity);
+
+    await expect(seedAcceptedChatSendMutation({ ...input, body: "A different body" }))
+      .rejects.toThrow("different send already uses this identity");
+    expect(await settlePendingChatSendMutationIdentity({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      identity,
+    })).toBe(true);
+    const conflicting = await preparePendingChatSendMutation({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      body: "Another unresolved send",
+      files: [],
+      inlineAnnotations: [],
+    });
+    await expect(seedAcceptedChatSendMutation({
+      ...input,
+      clientMutationId: "different-first-send-id",
+    })).rejects.toThrow("Another send is unresolved");
+    expect(readPendingChatSendMutation(input.orgId, input.conversationId)?.id)
+      .toBe(conflicting.clientMutationId);
   });
 
   it("does not capture a different body or ambiguous unresolved mutation", async () => {

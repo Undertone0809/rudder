@@ -1093,6 +1093,14 @@ fn project_durable_event(
             "generationSeq":event.generation_seq,
             "bodyHash":event.payload["bodyHash"],
         })),
+        "transcript" => DurableEventProjection::Emit(json!({
+            "type":"transcript_entry",
+            "entry":event.payload["entry"],
+            "generationId":generation_id,
+            "attemptEpoch":event.attempt_epoch,
+            "generationSeq":event.generation_seq,
+            "bodyHash":event.payload["bodyHash"],
+        })),
         "dispatch_unavailable" => DurableEventProjection::Emit(json!({
             "type":"error",
             "error":"dispatch_unavailable",

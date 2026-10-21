@@ -20,13 +20,16 @@ import {
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
+import * as chatSendMutationStorage from "@/lib/chat-send-mutation-storage";
 import {
   preparePendingChatSendMutation,
   readPendingChatSendMutation,
   type ChatSendReconciliationResult,
 } from "@/lib/chat-send-mutation-storage";
 import {
+  createPendingChatStopRecovery,
   readPendingChatStopRecovery,
+  savePendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
 import type { DesktopBrowserShortcutRequest } from "@/lib/desktop-shell";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
@@ -1391,8 +1394,9 @@ function installWebLocksMock() {
   vi.stubGlobal("navigator", navigatorStub);
 }
 
+let previousPageMutationSequence = 0;
 function seedUnknownChatSend(orgId: string, conversationId: string, body: string) {
-  const clientMutationId = "mutation-from-previous-page";
+  const clientMutationId = `mutation-from-previous-page-${++previousPageMutationSequence}`;
   const scopeKey = `${orgId}:${conversationId}:new`;
   const fingerprint = JSON.stringify({
     body,
@@ -6492,7 +6496,8 @@ describe("Chat streaming controls", () => {
       textarea!.dispatchEvent(new Event("input", { bubbles: true }));
       await Promise.resolve();
     });
-    await clickEnabledButtonByAriaLabel(container, "Queue");
+    expect(container.querySelector("button[aria-label='Stop streaming']")).toBeNull();
+    await clickEnabledButtonByAriaLabel(container, "Send");
 
     expect(mockState.createQueuedMessage).toHaveBeenCalledTimes(1);
     expect(mockState.createQueuedMessage).toHaveBeenCalledWith(
@@ -6559,7 +6564,8 @@ describe("Chat streaming controls", () => {
       await Promise.resolve();
     });
     await clickEnabledButton(document.body, "Save");
-    await clickEnabledButtonByAriaLabel(container, "Queue");
+    expect(container.querySelector("button[aria-label='Stop streaming']")).toBeNull();
+    await clickEnabledButtonByAriaLabel(container, "Send");
 
     expect(mockState.createQueuedMessage).not.toHaveBeenCalled();
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
@@ -9110,6 +9116,69 @@ describe("Atomic new-chat drafts", () => {
     expect(mockState.navigate).not.toHaveBeenCalled();
   });
 
+  it.each(["attached", "stopping"])("hides accepted recovery without reconnecting while %s owns the response", async (owner) => {
+    mockState.messagesByChatId = { "chat-1": [message({ id: "recovery-history", body: "Prior chat history" })] };
+    const body = "A response already owned by this page";
+    const mutationId = seedUnknownChatSend("org-1", "chat-1", body);
+    const reconciliation = deferred<ChatSendReconciliationResult>();
+    mockState.reconcilePendingMessageSend.mockReturnValue(reconciliation.promise);
+    if (owner === "attached") {
+      mockState.sendInFlightByChatId = { "chat-1": true };
+    } else {
+      mockState.stopMessageStream.mockReturnValue(new Promise(() => {}));
+      savePendingChatStopRecovery(createPendingChatStopRecovery({
+        orgId: "org-1", chatId: "chat-1", request: { controlActionId: "stop-during-discovery" }, frozenDraft: null,
+      }));
+    }
+    const { container, rerender } = renderChat();
+    await vi.waitFor(() => expect(mockState.reconcilePendingMessageSend).toHaveBeenCalled());
+    await act(async () => { reconciliation.resolve(acceptedSendReceipt(mutationId, body, false)); });
+    await vi.waitFor(() => expect(container.textContent).not.toContain("Checking the previous message before sending"));
+    expect(container.textContent).not.toContain("Resume response");
+    expect(container.textContent).not.toContain("A previous message was accepted");
+    rerender();
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    if (owner === "attached") {
+      mockState.sendInFlightByChatId = {};
+      rerender();
+      expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    }
+  });
+
+  it("keeps one automatic attachment across rerenders and Messenger remounts", async () => {
+    mockState.messagesByChatId = { "chat-1": [message({ id: "recovery-history", body: "Prior chat history" })] };
+    const body = "Reconnect this exact accepted input once";
+    const mutationId = seedUnknownChatSend("org-1", "chat-1", body);
+    mockState.reconcilePendingMessageSend.mockResolvedValue(acceptedSendReceipt(mutationId, body, false));
+    mockState.sendMessageStream.mockReturnValue(new Promise(() => {}));
+    const first = renderChat();
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    first.rerender();
+    cleanupFn?.(); cleanupFn = null;
+    const second = renderChat();
+    await vi.waitFor(() => expect(second.container.textContent).not.toContain("Checking the previous message before sending"));
+    second.rerender();
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(second.container.textContent).not.toContain("Resume response");
+    expect(mockState.sendMessageStream).toHaveBeenCalledWith("chat-1", body, expect.objectContaining({ clientMutationId: mutationId }));
+  });
+
+  it("restores an explicit status check after an automatic attachment fails before dispatch", async () => {
+    mockState.messagesByChatId = { "chat-1": [message({ id: "recovery-history", body: "Prior chat history" })] };
+    const body = "Keep this accepted identity after preflight fails";
+    const mutationId = seedUnknownChatSend("org-1", "chat-1", body);
+    const receipt = acceptedSendReceipt(mutationId, body, false);
+    mockState.reconcilePendingMessageSend.mockResolvedValue(receipt);
+    vi.spyOn(chatSendMutationStorage, "preparePendingChatSendMutation")
+      .mockRejectedValueOnce(new Error("Recovery preflight disconnected"));
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(container.textContent).toContain("The response connection was interrupted"));
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "Check again")).toBe(true);
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(readPendingChatSendMutation("org-1", "chat-1")?.id).toBe(mutationId);
+    expect(container.textContent).not.toContain("Resume response");
+  });
+
   it.each([
     { label: "an accepted response", outcome: "accepted_active" as const, notice: "Resume response" },
     { label: "a confirmed missing message", outcome: "not_found" as const, notice: "Retry previous message" },
@@ -9199,7 +9268,16 @@ describe("Atomic new-chat drafts", () => {
       reconciliation.resolve(receipt);
       await reconciliation.promise;
     });
-    await vi.waitFor(() => expect(container.textContent).toContain(notice));
+    if (outcome === "accepted_active") {
+      await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+      expect(mockState.sendMessageStream).toHaveBeenCalledWith("chat-1", previousBody, expect.objectContaining({
+        clientMutationId: pendingMutationId, files: [], inlineAnnotations: [],
+      }));
+      expect(container.textContent).not.toContain("Resume response");
+      expect(container.textContent).not.toContain("A previous message was accepted");
+    } else {
+      await vi.waitFor(() => expect(container.textContent).toContain(notice));
+    }
 
     expect(editor?.value).toBe("New message that must remain a draft.");
     expect(container.textContent).toContain("new-draft.txt");
@@ -9209,18 +9287,20 @@ describe("Atomic new-chat drafts", () => {
     expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
     expect(readChatPendingAttachmentsForScope(resolveChatPendingAttachmentScopeKey("org-1", "chat-1")))
       .toEqual([attachment]);
-    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
-    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
-    expect(mockState.setStreamDraftForChat.mock.calls.some((call) => (
-      Boolean(call[1]) && typeof call[1] === "object" && "streamKey" in call[1]
-    ))).toBe(false);
+    if (outcome !== "accepted_active") {
+      expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+      expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
+      expect(mockState.setStreamDraftForChat.mock.calls.some((call) => (
+        Boolean(call[1]) && typeof call[1] === "object" && "streamKey" in call[1]
+      ))).toBe(false);
+    }
   });
 
   it.each([
     { label: "a recovered send", outcome: "accepted_terminal" as const },
     { label: "an accepted send", outcome: "accepted_active" as const },
     { label: "a send that was not admitted", outcome: "not_found" as const },
-  ])("does not create a phantom stream when send preflight returns $label", async ({ outcome }) => {
+  ])("sends only an exact recovery when preflight returns $label", async ({ outcome }) => {
     installWebLocksMock();
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "existing-user-message", body: "Existing chat history." })],
@@ -9250,21 +9330,27 @@ describe("Atomic new-chat drafts", () => {
       await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
         title: "Previous message recovered",
       })));
+    } else if (outcome === "accepted_active") {
+      await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+      expect(mockState.sendMessageStream).toHaveBeenCalledWith("chat-1", previousBody, expect.objectContaining({
+        clientMutationId: pendingMutationId, files: [], inlineAnnotations: [],
+      }));
+      expect(container.textContent).not.toContain("Resume response");
     } else {
-      await vi.waitFor(() => expect(container.textContent).toContain(
-        outcome === "accepted_active" ? "Resume response" : "Retry previous message",
-      ));
+      await vi.waitFor(() => expect(container.textContent).toContain("Retry previous message"));
     }
 
     expect(editor?.value).toBe("New composer text remains unsent.");
     expect(container.textContent).toContain("current-draft.txt");
     expect(readChatPendingAttachmentsForScope(resolveChatPendingAttachmentScopeKey("org-1", "chat-1")))
       .toEqual([attachment]);
-    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
-    expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
-    expect(mockState.setStreamDraftForChat.mock.calls.some((call) => (
-      Boolean(call[1]) && typeof call[1] === "object" && "streamKey" in call[1]
-    ))).toBe(false);
+    if (outcome !== "accepted_active") {
+      expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+      expect(mockState.setChatSendInFlight).not.toHaveBeenCalledWith(expect.any(String), true);
+      expect(mockState.setStreamDraftForChat.mock.calls.some((call) => (
+        Boolean(call[1]) && typeof call[1] === "object" && "streamKey" in call[1]
+      ))).toBe(false);
+    }
   });
 
   it("restores an existing-chat draft before slow failure reconciliation finishes", async () => {
@@ -9409,7 +9495,11 @@ describe("Atomic new-chat drafts", () => {
     });
 
     await clickEnabledButtonByAriaLabel(container, "Send");
-    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(2));
+    expect(mockState.sendMessageStream.mock.calls[1]?.[1]).toBe("Do not send this twice.");
+    expect(mockState.sendMessageStream.mock.calls[1]?.[2].clientMutationId)
+      .toBe(mockState.sendMessageStream.mock.calls[0]?.[2].clientMutationId);
+    expect(container.textContent).not.toContain("Resume response");
     await vi.waitFor(() => {
       expect(editor?.value).toBe("");
       expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({

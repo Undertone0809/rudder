@@ -15,7 +15,10 @@ import type { SkillMentionOption } from "@/lib/agent-skill-mentions";
 import { cn } from "@/lib/utils";
 import { ArrowUp, Boxes, Loader2, Paperclip, Plus, Square } from "lucide-react";
 import {
+  Children,
   forwardRef,
+  Fragment,
+  isValidElement,
   useCallback,
   type ClipboardEventHandler,
   type CSSProperties,
@@ -115,6 +118,19 @@ export function ChatComposerToolbar({
   actions: ReactNode;
   testId?: string;
 }) {
+  const actionNodes = flattenComposerActionFragments(actions);
+  const submitIndex = actionNodes.findIndex(isComposerSubmitAction);
+  const submit = actionNodes[submitIndex];
+  const hasStopAction = actionNodes.some(isComposerStopAction);
+  const submitDisabled = isValidElement<{ disabled?: boolean }>(submit)
+    && submit.props.disabled === true;
+  // Keep the existing queue/stop callbacks, but show only the action that is currently usable.
+  const visibleActions = hasStopAction && submitDisabled
+    ? actionNodes.filter((node) => !isComposerSubmitAction(node))
+    : isQueueComposerSendAction(submit)
+      ? actionNodes.filter((node) => !isComposerStopAction(node))
+      : actions;
+
   return (
     <div
       className="mt-3 flex flex-wrap items-center justify-between gap-2.5"
@@ -123,9 +139,35 @@ export function ChatComposerToolbar({
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         {children}
       </div>
-      {actions}
+      {visibleActions}
     </div>
   );
+}
+
+function flattenComposerActionFragments(actions: ReactNode): ReactNode[] {
+  return Children.toArray(actions).flatMap((node) => (
+    isValidElement<{ children?: ReactNode }>(node) && node.type === Fragment
+      ? flattenComposerActionFragments(node.props.children)
+      : [node]
+  ));
+}
+
+function isQueueComposerSendAction(node: ReactNode) {
+  return isValidElement<{ mode?: ChatComposerSendMode }>(node)
+    && node.type === ChatComposerSendButton
+    && node.props.mode === "queue";
+}
+
+function isComposerSubmitAction(node: ReactNode) {
+  return isValidElement<{ mode?: ChatComposerSendMode }>(node)
+    && node.type === ChatComposerSendButton
+    && (node.props.mode === "send" || node.props.mode === "queue");
+}
+
+function isComposerStopAction(node: ReactNode) {
+  return isValidElement<{ "aria-label"?: string }>(node)
+    && node.type === Button
+    && node.props["aria-label"] === "Stop streaming";
 }
 
 export function ChatComposerAddMenu({
@@ -344,7 +386,7 @@ export function ChatComposerSendButton({
         : mode === "stop"
           ? "Stop streaming"
           : mode === "queue"
-            ? "Queue"
+            ? "Send"
             : mode === "continue"
               ? "Continue"
               : "Send"

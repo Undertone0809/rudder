@@ -457,6 +457,19 @@ fn reject_secret_like(value: &Value, path: &str) -> Result<()> {
 /// Parse and normalize the Rust-owned create subset. Defaults mirror
 /// createAgentSchema; fields with side effects still owned by Node are
 /// rejected instead of being silently discarded.
+pub(super) fn apply_codex_create_defaults(runtime_type: &str, config: &mut Value) {
+    if runtime_type != "codex_local" {
+        return;
+    }
+    if config["dangerouslyBypassApprovalsAndSandbox"].is_boolean()
+        || config["dangerouslyBypassSandbox"].is_boolean()
+    {
+        return;
+    }
+    config["dangerouslyBypassApprovalsAndSandbox"] =
+        json!(config["profileId"] != "operator-default");
+}
+
 pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
     let Some(object) = value.as_object() else {
         return Err(validation_error(vec![wrong(
@@ -1241,6 +1254,36 @@ pub(super) fn integration_settings(value: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn codex_create_defaults_inherit_operator_policy_and_preserve_explicit_flags() {
+        for (mut config, expected) in [
+            (json!({"profileId":"operator-default"}), Some(false)),
+            (json!({"profileId":"default"}), Some(true)),
+            (json!({}), Some(true)),
+            (
+                json!({"profileId":"operator-default","dangerouslyBypassApprovalsAndSandbox":true}),
+                Some(true),
+            ),
+            (
+                json!({"profileId":"default","dangerouslyBypassApprovalsAndSandbox":false}),
+                Some(false),
+            ),
+            (
+                json!({"profileId":"operator-default","dangerouslyBypassSandbox":false}),
+                None,
+            ),
+        ] {
+            apply_codex_create_defaults("codex_local", &mut config);
+            assert_eq!(
+                config["dangerouslyBypassApprovalsAndSandbox"].as_bool(),
+                expected
+            );
+        }
+        let mut other_runtime = json!({"profileId":"operator-default"});
+        apply_codex_create_defaults("hermes_local", &mut other_runtime);
+        assert_eq!(other_runtime, json!({"profileId":"operator-default"}));
+    }
+
     #[test]
     fn matches_detail_permission_and_integration_zod() {
         let corpus: Value = serde_json::from_str(include_str!(

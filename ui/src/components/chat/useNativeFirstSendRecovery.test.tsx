@@ -1,16 +1,21 @@
 // @vitest-environment jsdom
 
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatConversation, ChatMessage } from "@rudderhq/shared";
 import type { NativeChatCapabilities, NativeFirstSendReconciliation } from "@/api/chats";
-import { useNativeFirstSendRecovery } from "./useNativeFirstSendRecovery";
+import {
+  capturePendingChatSendMutationIdentity,
+  readPendingChatSendMutation,
+  settlePendingChatSendMutationIdentity,
+} from "@/lib/chat-send-mutation-storage";
 import {
   prepareNativeFirstSendIntent,
   readNativeFirstSendIntent,
   type NativeFirstSendDraft,
 } from "@/lib/native-chat-first-send-storage";
+import type { ChatConversation, ChatMessage } from "@rudderhq/shared";
+import { act, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useNativeFirstSendRecovery } from "./useNativeFirstSendRecovery";
 
 const api = vi.hoisted(() => ({
   getNativeChatCapabilities: vi.fn(),
@@ -166,11 +171,99 @@ describe("useNativeFirstSendRecovery", () => {
       draft: firstDraft,
       conversationId: "chat-1",
     });
+    expect(readPendingChatSendMutation("org-1", "chat-1")).toMatchObject({
+      id: saved.intent.clientMutationId,
+      status: "accepted",
+    });
     expect(api.sendFirstMessageStream).not.toHaveBeenCalled();
     expect(api.sendMessageStream).not.toHaveBeenCalled();
 
     await act(async () => { await hook.current.openAccepted(); });
     expect(readNativeFirstSendIntent("org-1", "user-1")?.status).toBe("settled");
+  });
+
+  it("hands off the acknowledged ID before releasing New Chat and lets Stop settle it after a newer first send", async () => {
+    const saved = await savePending("org-1", "user-1");
+    api.getNativeChatCapabilities.mockResolvedValue(nativeCapabilities);
+    api.reconcileNativeFirstSend.mockResolvedValue({
+      outcome: "not_found",
+      clientMutationId: saved.intent.clientMutationId,
+    } satisfies NativeFirstSendReconciliation);
+    const hook = mount("org-1", "user-1");
+    await hook.flush();
+
+    expect(hook.current.recovery.kind).toBe("not_found");
+    let acceptedIdentity: Awaited<ReturnType<typeof hook.current.markAccepted>> | undefined;
+    await act(async () => {
+      acceptedIdentity = await hook.current.markAccepted(saved.intent.clientMutationId, "chat-1");
+    });
+    expect(readPendingChatSendMutation("org-1", "chat-1")).toMatchObject({
+      id: saved.intent.clientMutationId,
+      status: "accepted",
+      fingerprint: JSON.stringify({
+        body: firstDraft.body,
+        editUserMessageId: null,
+        files: [],
+        inlineAnnotations: [],
+        modelOverride: firstDraft.modelOverride,
+        effortOverride: firstDraft.effortOverride,
+      }),
+    });
+
+    await act(async () => {
+      await hook.current.markSettled(saved.intent.clientMutationId, "chat-1");
+    });
+    expect(readNativeFirstSendIntent("org-1", "user-1")).toMatchObject({
+      clientMutationId: saved.intent.clientMutationId,
+      status: "settled",
+      conversationId: "chat-1",
+    });
+
+    vi.mocked(crypto.randomUUID).mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
+    let next: unknown;
+    await act(async () => {
+      next = await hook.current.prepare({
+        ...firstDraft,
+        body: "A separate new conversation",
+      });
+    });
+    expect(next).toMatchObject({
+      clientMutationId: "00000000-0000-4000-8000-000000000002",
+      body: "A separate new conversation",
+    });
+    expect(readNativeFirstSendIntent("org-1", "user-1")).toMatchObject({
+      clientMutationId: "00000000-0000-4000-8000-000000000002",
+      status: "pending",
+    });
+
+    // A late terminal event for the first chat only owns its per-chat ledger;
+    // it must not settle the newly allocated global first-send intent.
+    await act(async () => {
+      await hook.current.markSettled(saved.intent.clientMutationId, "chat-1");
+    });
+    expect(readNativeFirstSendIntent("org-1", "user-1")).toMatchObject({
+      clientMutationId: "00000000-0000-4000-8000-000000000002",
+      status: "pending",
+    });
+
+    const stopIdentity = await capturePendingChatSendMutationIdentity({
+      orgId: "org-1",
+      conversationId: "chat-1",
+      body: firstDraft.body,
+    });
+    expect(stopIdentity).toEqual(acceptedIdentity);
+    expect(await settlePendingChatSendMutationIdentity({
+      orgId: "org-1",
+      conversationId: "chat-1",
+      identity: stopIdentity!,
+    })).toBe(true);
+    expect(readPendingChatSendMutation("org-1", "chat-1")?.status).toBe("settled");
+    expect(readNativeFirstSendIntent("org-1", "user-1")).toMatchObject({
+      clientMutationId: "00000000-0000-4000-8000-000000000002",
+      status: "pending",
+    });
+    expect(api.sendFirstMessageStream).not.toHaveBeenCalled();
+    expect(api.sendMessageStream).not.toHaveBeenCalled();
   });
 
   it("exposes not-found and explicit retry returns the exact saved payload without dispatch", async () => {

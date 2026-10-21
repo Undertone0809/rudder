@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import {
   chatsApi,
+  type NativeChatCapabilities,
   type NativeFirstSendInput,
   type NativeFirstSendReconciliation,
-  type NativeChatCapabilities,
 } from "@/api/chats";
+import { seedAcceptedChatSendMutation } from "@/lib/chat-send-mutation-storage";
 import {
   prepareNativeFirstSendIntent,
   readNativeFirstSendIntent,
@@ -12,6 +12,7 @@ import {
   type NativeFirstSendDraft,
   type NativeFirstSendIntent,
 } from "@/lib/native-chat-first-send-storage";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type NativeFirstSendRecoveryView =
   | { kind: "idle" }
@@ -115,6 +116,17 @@ export function useNativeFirstSendRecovery(
           throw new Error("Native Chat returned a different first-message identity. Recovery is paused.");
         }
         if (receipt.outcome === "accepted") {
+          if (receipt.message.body !== intent.draft.body) {
+            throw new Error("Native Chat returned a different accepted message body. Recovery is paused.");
+          }
+          await seedAcceptedChatSendMutation({
+            orgId,
+            conversationId: receipt.conversation.id,
+            clientMutationId: intent.clientMutationId,
+            body: intent.draft.body,
+            modelOverride: intent.draft.modelOverride,
+            effortOverride: intent.draft.effortOverride,
+          });
           const accepted = await updateNativeFirstSendIntent(
             orgId,
             userId,
@@ -218,19 +230,34 @@ export function useNativeFirstSendRecovery(
 
   const markAccepted = useCallback(async (clientMutationId: string, conversationId: string) => {
     const intent = await updateNativeFirstSendIntent(orgId!, userId!, clientMutationId, "accepted", conversationId);
-    setRecoveryState({ kind: "blocked", message: "The first message was accepted by Native Chat.", intent });
-  }, [orgId, setRecoveryState, userId]);
+    const identity = await seedAcceptedChatSendMutation({
+      orgId: orgId!,
+      conversationId,
+      clientMutationId,
+      body: intent.draft.body,
+      modelOverride: intent.draft.modelOverride,
+      effortOverride: intent.draft.effortOverride,
+    });
+    if (scopeRef.current === scopeKey) {
+      setRecoveryState({ kind: "blocked", message: "The first message was accepted by Native Chat.", intent });
+    }
+    return identity;
+  }, [orgId, scopeKey, setRecoveryState, userId]);
 
   const markSettled = useCallback(async (clientMutationId: string, conversationId: string) => {
-    // A direct stream acknowledgement records accepted before a terminal event
-    // can settle the identity. Reconciliation may already have done that step.
     const current = readNativeFirstSendIntent(orgId!, userId!);
-    if (current?.clientMutationId === clientMutationId && current.status !== "accepted" && current.status !== "settled") {
-      await updateNativeFirstSendIntent(orgId!, userId!, clientMutationId, "accepted", conversationId);
+    // A late terminal callback must never settle a newer New Chat identity.
+    // The global slot is only a fallback for attempts that were not handed off.
+    if (!current || current.clientMutationId !== clientMutationId
+      || current.conversationId !== conversationId) return;
+    if (current.status === "settled") {
+      if (scopeRef.current === scopeKey) setRecoveryState({ kind: "idle" });
+      return;
     }
+    if (current.status !== "accepted") return;
     await updateNativeFirstSendIntent(orgId!, userId!, clientMutationId, "settled", conversationId);
-    setRecoveryState({ kind: "idle" });
-  }, [orgId, setRecoveryState, userId]);
+    if (scopeRef.current === scopeKey) setRecoveryState({ kind: "idle" });
+  }, [orgId, scopeKey, setRecoveryState, userId]);
 
   const retry = useCallback(async () => {
     await check();
@@ -238,6 +265,16 @@ export function useNativeFirstSendRecovery(
 
   const openAccepted = useCallback(async () => {
     if (recovery.kind !== "accepted") return null;
+    if (scopeRef.current !== scopeKey) return null;
+    await seedAcceptedChatSendMutation({
+      orgId: orgId!,
+      conversationId: recovery.receipt.conversation.id,
+      clientMutationId: recovery.intent.clientMutationId,
+      body: recovery.intent.draft.body,
+      modelOverride: recovery.intent.draft.modelOverride,
+      effortOverride: recovery.intent.draft.effortOverride,
+    });
+    if (scopeRef.current !== scopeKey) return null;
     const intent = await updateNativeFirstSendIntent(
       orgId!,
       userId!,
@@ -245,9 +282,9 @@ export function useNativeFirstSendRecovery(
       "settled",
       recovery.receipt.conversation.id,
     );
-    setRecoveryState({ kind: "idle" });
+    if (scopeRef.current === scopeKey) setRecoveryState({ kind: "idle" });
     return { intent, receipt: recovery.receipt };
-  }, [orgId, recovery, setRecoveryState, userId]);
+  }, [orgId, recovery, scopeKey, setRecoveryState, userId]);
 
   const retryOriginal = useCallback(async () => {
     if (recovery.kind !== "not_found") return null;
