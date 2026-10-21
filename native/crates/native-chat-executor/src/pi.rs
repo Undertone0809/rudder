@@ -1084,11 +1084,11 @@ struct PiLaunchFailure {
 }
 
 impl PiLaunchFailure {
-    fn new(error: PiAdapterError, cleanup_receipt: Option<PiCleanupReceipt>) -> Self {
-        Self {
+    fn new(error: PiAdapterError, cleanup_receipt: Option<PiCleanupReceipt>) -> Box<Self> {
+        Box::new(Self {
             error,
             cleanup_receipt,
-        }
+        })
     }
 }
 
@@ -1146,7 +1146,7 @@ impl PiExecution {
         launch: ProcessLaunch,
         permit: ConnectionLaunchPermit,
         timeout: Duration,
-    ) -> Result<Self, PiLaunchFailure> {
+    ) -> Result<Self, Box<PiLaunchFailure>> {
         let session_dir = canonical_session_dir(&launch.session_dir)
             .map_err(|error| PiLaunchFailure::new(error, None))?;
         let mut transport = PiRpcTransport::launch(launch, permit)

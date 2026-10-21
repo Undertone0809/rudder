@@ -485,6 +485,9 @@ impl PiRpcTransport {
     }
 
     pub fn wait_spawned(&mut self, timeout: Duration) -> Result<(), PiTransportError> {
+        if self.terminal || self.host_reported_failure {
+            return Err(self.terminal_error());
+        }
         if self.spawned {
             return Ok(());
         }
@@ -514,6 +517,9 @@ impl PiRpcTransport {
     }
 
     pub fn request(&mut self, command: PiCommand<'_>) -> Result<String, PiTransportError> {
+        if self.host_reported_failure {
+            return Err(PiTransportError::HostFailure);
+        }
         if self.pending.is_some() {
             return Err(PiTransportError::Busy);
         }
@@ -829,6 +835,9 @@ impl PiRpcTransport {
                             PiInvalidMessageStage::HostIdentity,
                         ));
                     }
+                    // A correlated host error permanently closes normal RPC.
+                    // Validate lifecycle order before any write-ACK fast path.
+                    self.observe_lifecycle(&value)?;
                     if kind == "stdin-write-complete"
                         && value.get("writeId").and_then(Value::as_str) == Some(&write_id)
                         && value.get("bytesWritten").and_then(Value::as_u64)
@@ -846,7 +855,6 @@ impl PiRpcTransport {
                     {
                         return Err(PiTransportError::WriteIndeterminate);
                     }
-                    self.observe_lifecycle(&value)?;
                     if self.terminal {
                         return Err(self.terminal_error());
                     }
@@ -958,8 +966,12 @@ fn observe_lifecycle_value(
     let action = match kind {
         // The host announces acceptance before it spawns the child. Keep this
         // informational and wait for `spawned` before permitting RPC writes.
-        "accepted" if !state.spawned && !state.terminal => PiLifecycleAction::Accepted,
-        "spawned" if !state.spawned && !state.terminal => PiLifecycleAction::Spawned,
+        "accepted" if !state.spawned && !state.terminal && !state.reported_failure => {
+            PiLifecycleAction::Accepted
+        }
+        "spawned" if !state.spawned && !state.terminal && !state.reported_failure => {
+            PiLifecycleAction::Spawned
+        }
         "stop-accepted" if state.spawned && !state.terminal => PiLifecycleAction::StopAccepted,
         "stopped" if state.spawned && !state.terminal => PiLifecycleAction::Stopped,
         "app-exit" if state.spawned && !state.terminal => PiLifecycleAction::AppExit,
@@ -988,7 +1000,7 @@ fn observe_lifecycle_value(
             PiLifecycleAction::Terminal
         }
         "stdin-write-complete" | "stdin-write-rejected" | "stdin-write-failed"
-            if state.spawned && !state.terminal =>
+            if state.spawned && !state.terminal && !state.reported_failure =>
         {
             PiLifecycleAction::StdinWrite
         }
@@ -1778,6 +1790,79 @@ mod tests {
                 .diagnostic_code()
                 .contains("not_submitted")
         );
+    }
+
+    #[test]
+    fn process_host_failure_never_reopens_launch_or_rpc() {
+        let error = json!({"type":"error","requestId":"attempt","ownerToken":"owner",
+            "errorCode":"spawn_failed","message":"spawn_failed"});
+        for accepted_first in [false, true] {
+            let mut state = PiLifecycleState::default();
+            if accepted_first {
+                observe_lifecycle_value(
+                    &json!({"type":"accepted","requestId":"attempt",
+                    "ownerToken":"owner"}),
+                    "attempt",
+                    "owner",
+                    &mut state,
+                )
+                .unwrap();
+            }
+            observe_lifecycle_value(&error, "attempt", "owner", &mut state).unwrap();
+            for kind in ["accepted", "spawned"] {
+                assert_eq!(
+                    observe_lifecycle_value(
+                        &json!({"type":kind,"requestId":"attempt",
+                    "ownerToken":"owner"}),
+                        "attempt",
+                        "owner",
+                        &mut state
+                    ),
+                    Err(PiTransportError::InvalidMessageAt(
+                        PiInvalidMessageStage::HostState
+                    ))
+                );
+                assert!(!state.spawned);
+                assert!(state.reported_failure);
+            }
+        }
+        let mut state = PiLifecycleState {
+            spawned: true,
+            ..PiLifecycleState::default()
+        };
+        observe_lifecycle_value(&error, "attempt", "owner", &mut state).unwrap();
+        for kind in [
+            "stdin-write-complete",
+            "stdin-write-rejected",
+            "stdin-write-failed",
+        ] {
+            assert_eq!(
+                observe_lifecycle_value(
+                    &json!({"type":kind,"requestId":"attempt",
+                "ownerToken":"owner"}),
+                    "attempt",
+                    "owner",
+                    &mut state
+                ),
+                Err(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::HostState
+                ))
+            );
+        }
+        for kind in ["stop-accepted", "stopped", "app-exit", "terminal"] {
+            assert!(
+                observe_lifecycle_value(
+                    &json!({"type":kind,"requestId":"attempt",
+                "ownerToken":"owner"}),
+                    "attempt",
+                    "owner",
+                    &mut state
+                )
+                .is_ok()
+            );
+        }
+        assert!(state.terminal);
+        assert!(state.reported_failure);
     }
 
     #[test]
