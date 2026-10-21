@@ -108,7 +108,6 @@ pub(crate) async fn resolve_pi_config(
         .as_object()
         .ok_or_else(|| invalid("Pi Agent runtime configuration must be an object"))?;
     const ALLOWED: &[&str] = &[
-        "profileId",
         "cwd",
         "command",
         "model",

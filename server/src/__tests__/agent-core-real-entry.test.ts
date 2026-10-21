@@ -868,6 +868,38 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
         expect(fs.readFileSync(path.join(directory, "USER.md"), "utf8")).toBe("Do not replace my instructions");
     });
+    it("Agent detail never traverses external instruction roots and keeps instruction access fail-closed", async () => {
+        const subject = await detailSubject();
+        const externalFile = path.join(root, "external-root-is-a-file");
+        fs.writeFileSync(externalFile, "External bytes must stay untouched");
+        const missingRoot = path.join(root, "external-root-does-not-exist");
+        const externalRoots = [externalFile, missingRoot];
+        if (process.platform !== "win32") {
+            const linkedRoot = path.join(root, "external-root-is-a-link");
+            fs.symlinkSync(externalFile, linkedRoot);
+            externalRoots.push(linkedRoot);
+        }
+        for (const externalRoot of externalRoots) {
+            const config = { instructionsBundleMode: "external", instructionsRootPath: externalRoot, instructionsEntryFile: "SOUL.md" };
+            await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify(config)}::jsonb WHERE id=${subject.id}::uuid`);
+            const response = await call(publicUrl, "get", `/api/agents/${subject.id}`);
+            expect(response.status, response.text).toBe(200);
+            expect(response.body.instructionsLibraryPath).toBeNull();
+            expect(response.body.agentRuntimeConfig).toEqual(config);
+            const bundle = await call(publicUrl, "get", `/api/agents/${subject.id}/instructions-bundle`);
+            expect(bundle.status, bundle.text).toBe(503);
+            const file = await call(publicUrl, "get", `/api/agents/${subject.id}/instructions-bundle/file?path=SOUL.md`);
+            expect(file.status, file.text).toBe(503);
+            const mutation = await call(publicUrl, "patch", `/api/agents/${subject.id}/instructions-bundle`, ownerToken, { mode: "external", rootPath: externalRoot });
+            expect(mutation.status, mutation.text).toBe(503);
+            expect((await db.execute(sql`SELECT agent_runtime_config FROM agents WHERE id=${subject.id}::uuid`))[0]?.agent_runtime_config).toEqual(config);
+        }
+        expect(fs.readFileSync(externalFile, "utf8")).toBe("External bytes must stay untouched");
+        expect(fs.existsSync(missingRoot)).toBe(false);
+        expect(fs.existsSync(path.join(nativeOrganizationAgents, subject.workspace))).toBe(false);
+        expect(await scalar(sql`SELECT count(*) AS value FROM agent_instruction_bundles WHERE agent_id=${subject.id}::uuid`)).toBe(0);
+        expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
+    });
     it("Agent detail recovers historical files without a size cap and matches public default template bytes", async () => {
         const subject=await detailSubject();const legacy=path.join(path.dirname(resolveRudderInstanceRoot()),"historical-fixture","organizations",org.replaceAll("-","").slice(0,12),"workspaces","agents",subject.workspace,"instructions");
         fs.mkdirSync(path.join(legacy,"folder"),{recursive:true});const body="synthetic-large-file\n".repeat(70000);fs.writeFileSync(path.join(legacy,"SOUL.md"),body);

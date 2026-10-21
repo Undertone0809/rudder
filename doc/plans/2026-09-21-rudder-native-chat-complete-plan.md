@@ -3,7 +3,7 @@ title: Complete Plan for Rudder Native Chat Experience and Agent Run Execution A
 date: 2026-09-21
 kind: implementation
 status: in_progress
-updated_at: 2026-10-17
+updated_at: 2026-10-21
 area: agent_runtimes
 entities:
   - agent_run
@@ -24,7 +24,26 @@ Do not make Pi, Claude, OpenCode, Cursor, a new policy framework, or all 97 fina
 
 The delay came from coupling all runtime and storage work to extensive foundation and evidence machinery before proving the installed user journey. Correct the execution order: finish the real Codex/Hermes path, run the focused workflow and failure cases, resolve the necessary independent review findings, and publish a reviewable PR. Additional infrastructure must have a concrete dependency on that milestone.
 
-### October 17 closure evidence
+### October 21 merge closure scope
+
+PR #352 is narrowed to the Codex/Hermes milestone. Preserve the broader
+all-runtime admission and span lifecycle candidate at `17e947736` for later
+acceptance; do not include those changes in this merge. The immediate candidate
+repairs Agent detail projection for external instruction configuration and known
+historical managed roots without enabling external instruction reads or writes.
+Invalid persisted workspace keys retain the existing generic 500 response and
+transaction rollback. The Claude project-path encoding repair remains only to
+clear the Windows baseline; it is not Claude runtime acceptance.
+
+Before merge, run the unchanged Agent core public regression suite plus external
+root no-traversal coverage. Freeze the candidate, then independently exercise
+real locally configured Codex and Hermes through Rust public ingress: fresh
+send, same-session continuation, runtime restart, persisted transcript readback,
+Stop, and a native failure without Node business fallback. Reconcile the final
+review and verifier receipts and require protected CI to pass. This milestone
+does not complete the six-runtime, storage, or span lifecycle plan below.
+
+### October 17 observed integration baseline
 
 The refreshed integration branch now has a public Native Reader bridge for native
 Chat message transcripts, with a real PostgreSQL test covering event projection,

@@ -1882,11 +1882,12 @@ pub(super) async fn library_path(
         .clone()
         .ok_or_else(|| http(503, "Rust Agent instruction placement is unavailable"))?;
     validate_host(&host, ctx)?;
-    // Do not let the read reconciler traverse an external root. The public
-    // Rust slice is intentionally managed-only until an external-root owner
-    // and its descriptor-relative security contract are implemented.
+    // Agent detail only projects a Library path. An external bundle has no
+    // managed Library path, so do not traverse it or fail the entire detail
+    // response. Recognized historical managed roots still need recovery.
+    // Explicit instruction reads/writes retain their managed-only gate.
     let (storage_root, _) =
-        storage::root(&host, ctx.org).map_err(|error| http(422, error.to_string()))?;
+        storage::root(&host, ctx.org).map_err(|_| http(500, "Internal server error"))?;
     let location = bundle_location(
         &host,
         row,
@@ -1894,9 +1895,11 @@ pub(super) async fn library_path(
         &ctx.request.process_working_directory,
         &storage_root,
     )
-    .map_err(|error| http(422, error.to_string()))?;
-    if location.mode == Some("external") {
-        return Err(managed_only_error());
+    // This is persisted placement, not request validation. Keep the legacy
+    // internal-error contract and roll back permissions for corrupt keys.
+    .map_err(|_| http(500, "Internal server error"))?;
+    if location.mode == Some("external") && !location.legacy_managed {
+        return Ok(Value::Null);
     }
     let guard_host = host.clone();
     let guard = tokio::task::spawn_blocking(move || {
