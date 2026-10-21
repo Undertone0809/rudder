@@ -64,8 +64,8 @@ impl OpenCodeLocalConfig {
     /// endpoint; this method only protects against an accidentally malformed
     /// in-memory value after resolution.
     pub fn endpoint_is_valid(&self) -> bool {
-        matches!(self.server_url.scheme(), "http" | "https")
-            && self.server_url.host_str().is_some()
+        self.executable.is_some()
+            && owned_endpoint_is_valid(&self.server_url)
             && OpenCodeClient::new(self.server_url.clone(), self.bearer_token.clone()).is_ok()
     }
 }
@@ -85,6 +85,11 @@ pub(crate) async fn resolve_opencode_config(
         unsupported("the trusted local OpenCode Server installation is unavailable")
     })?;
     let executable = host.opencode_executable().map(Path::to_path_buf);
+    if executable.is_none() || !owned_endpoint_is_valid(server_url) {
+        return Err(unsupported(
+            "OpenCode native Chat requires an owned local Server executable and endpoint",
+        ));
+    }
     let row = sqlx::query(
         "/* native_chat_config_agent_lock */
          SELECT c.status AS conversation_status, c.conversation_kind,
@@ -436,6 +441,21 @@ fn validate_profile_id(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn owned_endpoint_is_valid(url: &Url) -> bool {
+    url.scheme() == "http"
+        && matches!(url.path(), "" | "/")
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && match url.host() {
+            Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(host)) => host.is_loopback(),
+            Some(url::Host::Ipv6(host)) => host.is_loopback(),
+            None => false,
+        }
+}
+
 fn cleanup_grace(value: Option<&Value>) -> Result<Duration> {
     Ok(Duration::from_secs(
         bounded_seconds(value, 1, 60)?.unwrap_or(20),
@@ -507,6 +527,22 @@ fn validate_provider_id(value: &str, label: &'static str) -> Result<()> {
 #[cfg(test)]
 mod policy_tests {
     use super::*;
+    #[test]
+    fn owned_server_endpoint_matches_the_process_host_transport() {
+        for value in ["http://127.0.0.1:0/", "http://localhost/", "http://[::1]/"] {
+            assert!(owned_endpoint_is_valid(&Url::parse(value).unwrap()));
+        }
+        for value in [
+            "https://127.0.0.1/",
+            "http://example.com/",
+            "http://127.0.0.1/api",
+            "http://127.0.0.1/?x=y",
+            "http://name:secret@127.0.0.1/",
+        ] {
+            assert!(!owned_endpoint_is_valid(&Url::parse(value).unwrap()));
+        }
+    }
+
     #[test]
     fn cleanup_grace_preserves_native_default_and_rejects_invalid_values() {
         assert_eq!(cleanup_grace(None).unwrap(), Duration::from_secs(20));

@@ -120,7 +120,7 @@ pub(crate) fn configure(
                 .as_ref()
                 .and_then(|_| url::Url::parse("http://127.0.0.1:0/").ok())
         });
-    let has_opencode = opencode.is_some() || opencode_url.is_some();
+    let has_opencode = opencode.is_some();
     let has_pi = pi_node.is_some() && pi_cli_entry.is_some();
     let Some(host_executable) = preferred_native_executable(
         codex.clone(),

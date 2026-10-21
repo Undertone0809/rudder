@@ -82,6 +82,10 @@ struct ProviderHost {
 
 impl ProviderHost {
     fn new() -> Self {
+        Self::with_opencode_owned(true)
+    }
+
+    fn with_opencode_owned(owned: bool) -> Self {
         let root = tempfile::tempdir().expect("create isolated provider admission host");
         let instance = root.path().join("instance");
         let workspace_home = root.path().join("workspaces");
@@ -112,6 +116,16 @@ impl ProviderHost {
             &workspace_other,
             &previous_documents,
             &managed_profiles,
+            &managed_profiles
+                .join("opencode")
+                .join(ORG)
+                .join(CEO)
+                .join("default"),
+            &managed_profiles
+                .join("opencode")
+                .join(ORG)
+                .join(WRONG_AGENT)
+                .join("default"),
             &operator_home,
             &binaries,
             &cwd,
@@ -179,6 +193,12 @@ impl ProviderHost {
             None,
         )
         .expect("attach non-contacted OpenCode endpoint");
+        let context = if owned {
+            let executable = context.codex_executable().to_path_buf();
+            context.with_opencode_executable(executable).unwrap()
+        } else {
+            context
+        };
 
         Self {
             _root: root,
@@ -611,7 +631,7 @@ async fn opencode_operator_profile_requires_an_owned_calibrated_host_and_accepts
  {
     let database = Database::start().await;
     prepare(&database).await;
-    let mut host = ProviderHost::new();
+    let mut host = ProviderHost::with_opencode_owned(false);
     let actor = verified_actor(USER, "opencode-operator-profile");
     configure_agent(
         &database.pool,
@@ -639,6 +659,7 @@ async fn opencode_operator_profile_requires_an_owned_calibrated_host_and_accepts
         "instructionsBundleMode":"managed", "instructionsRootPath":instructions,
         "instructionsEntryFile":"SOUL.md", "instructionsFilePath":instructions.join("SOUL.md")});
     for (label, profile) in [
+        ("url-only", "default"),
         ("unknown", "unknown-profile"),
         ("external-server", "operator-default"),
     ] {
@@ -659,11 +680,25 @@ async fn opencode_operator_profile_requires_an_owned_calibrated_host_and_accepts
     assert_conflict(admit(&database.pool, &actor, &host, &chat, "custom-xdg").await);
     assert_eq!(row_counts(&database.pool, &chat).await, before);
     host.context = host.context.with_opencode_operator_profile_supported(true);
+    fs::remove_dir(
+        host._root
+            .path()
+            .join("managed-profiles/opencode")
+            .join(ORG)
+            .join(CEO)
+            .join("default"),
+    )
+    .unwrap();
     for (field, value, label) in [
         ("command", json!("/untrusted/opencode"), "custom-command"),
         ("timeoutSec", json!(3601), "unbounded-timeout"),
         ("graceSec", json!(0), "zero-grace"),
         ("profileId", json!("default"), "unprovisioned-managed"),
+        (
+            "profileId",
+            json!("unknown-profile"),
+            "unknown-owned-profile",
+        ),
     ] {
         let mut invalid_config = config.clone();
         invalid_config[field] = value;
