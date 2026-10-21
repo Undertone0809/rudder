@@ -633,6 +633,21 @@ fn run(
                     quiescent: failure.process_quiescent(),
                 };
             };
+            if let Some(fence) = failure.fence() {
+                // Transport stderr is private and may be unavailable after
+                // cleanup. Persist only the closed classification through the
+                // same Rust execution fence; never release an ambiguous input.
+                let _ = handle.block_on(tokio::time::timeout(
+                    Duration::from_secs(5),
+                    execution::record_execution_diagnostic(
+                        &pool,
+                        execution_actor,
+                        fence,
+                        failure.diagnostic_code(),
+                        failure.process_quiescent(),
+                    ),
+                ));
+            }
             if failure.process_disposition()
                 == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) =
@@ -942,7 +957,7 @@ fn finish_opencode_observation(
     let turn = rudder_d1_persistence::native_chat::execution::NativeProviderTurnReceipt {
         provider: rudder_d1_persistence::native_chat::execution::NativeProviderKind::OpenCode,
         session_id: provider.turn.session_id.clone(),
-        request_id: provider.turn.assistant_message_id.clone(),
+        request_id: provider.request_id.clone(),
         final_text: (!provider.turn.final_text.trim().is_empty())
             .then_some(provider.turn.final_text.clone()),
         status: rudder_d1_persistence::native_chat::execution::NativeProviderStatus::Completed,

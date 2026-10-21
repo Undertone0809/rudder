@@ -27,6 +27,11 @@ pub enum EffectDispatch<'a> {
     StartClaudeSession,
     StartOpenCodeSession,
     StartCursorSession,
+    SubmitClaudeCombinedInput {
+        session_id: Option<&'a str>,
+        source_message_id: &'a str,
+        body: &'a str,
+    },
     SubmitInput {
         thread_id: &'a str,
         source_message_id: &'a str,
@@ -81,6 +86,11 @@ enum Payload {
     StartClaudeSession,
     StartOpenCodeSession,
     StartCursorSession,
+    SubmitClaudeCombinedInput {
+        session_id: Option<String>,
+        source_message_id: String,
+        body: String,
+    },
     SubmitClaudeInput {
         session_id: String,
         source_message_id: String,
@@ -130,6 +140,15 @@ impl AuthorizedEffect {
             Payload::StartClaudeSession => callback(EffectDispatch::StartClaudeSession),
             Payload::StartOpenCodeSession => callback(EffectDispatch::StartOpenCodeSession),
             Payload::StartCursorSession => callback(EffectDispatch::StartCursorSession),
+            Payload::SubmitClaudeCombinedInput {
+                session_id,
+                source_message_id,
+                body,
+            } => callback(EffectDispatch::SubmitClaudeCombinedInput {
+                session_id: session_id.as_deref(),
+                source_message_id: &source_message_id,
+                body: &body,
+            }),
             Payload::SubmitHermesInput {
                 session_id,
                 source_message_id,
@@ -210,6 +229,33 @@ pub async fn authorize_effect(
     }
 
     let payload = match (permit.kind(), input) {
+        (EffectKind::SubmitClaudeCombinedInput, Some(input)) => {
+            let session = locked.checkpoint.claude_session().map(|s| s.as_str());
+            if locked.checkpoint.provider() != NativeChatProvider::ClaudeLocal
+                || !locked.checkpoint.claude_combined_input()
+                || !matches!(
+                    permit.phase,
+                    NativeChatProtocolPhase::ThreadStartIndeterminate
+                        | NativeChatProtocolPhase::InputIndeterminate
+                )
+                || permit.session_id.as_deref() != session
+                || locked.native_session_id.as_deref() != session
+                || locked.segment_state != if session.is_some() { "open" } else { "pending" }
+                || permit.source_message_id.as_deref() != Some(input.message_id())
+                || permit.input_fingerprint.as_deref() != Some(input.fingerprint())
+                || locked.admitted_message_id.as_deref() != Some(input.message_id())
+                || locked.admitted_input_fingerprint.as_deref() != Some(input.fingerprint())
+                || input.checkpoint_revision().checked_add(1) != Some(permit.committed_revision())
+            {
+                return Err(http(409, "Claude combined input authorization is stale"));
+            }
+            super::submission::revalidate_input(&mut tx, fence, &input).await?;
+            Payload::SubmitClaudeCombinedInput {
+                session_id: session.map(str::to_owned),
+                source_message_id: input.message_id().to_owned(),
+                body: input.body().to_owned(),
+            }
+        }
         (EffectKind::StartThread, None) => {
             if permit.phase != NativeChatProtocolPhase::ThreadStartIndeterminate
                 || permit.thread_id.is_some()
@@ -702,4 +748,31 @@ pub async fn authorize_effect(
 
     tx.commit().await?;
     Ok(AuthorizedEffect { deadline, payload })
+}
+
+/// A distinct first-write boundary for the installed Claude stream-json CLI.
+/// A restored pending checkpoint cannot recreate the move-only authorization.
+pub async fn prepare_claude_combined_input(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+) -> Result<AuthorizedEffect> {
+    let input = super::submission::load_claude_combined_input(pool, actor, fence).await?;
+    let snapshot = super::current_checkpoint(pool, actor, fence).await?;
+    if snapshot.revision != input.checkpoint_revision() {
+        return Err(http(409, "Claude input predecessor changed"));
+    }
+    let mut receipt = super::advance_checkpoint(
+        pool,
+        actor,
+        fence,
+        snapshot.phase,
+        snapshot.revision,
+        super::CheckpointTransition::PrepareClaudeCombinedInput,
+    )
+    .await?;
+    let permit = receipt
+        .take_effect_permit()
+        .ok_or_else(|| http(409, "Claude input permit missing"))?;
+    authorize_effect(pool, actor, permit, Some(input)).await
 }

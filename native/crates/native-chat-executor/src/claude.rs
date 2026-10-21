@@ -26,6 +26,8 @@ pub enum ClaudeExecutionError {
     InvalidConfiguration,
     #[error(transparent)]
     Transport(#[from] ClaudeError),
+    #[error("Claude Code durable execution fence rejected dispatch")]
+    Persistence(#[from] rudder_d1_persistence::runtime_bindings::Error),
     #[error("Claude Code requested an interactive control decision")]
     ControlRequest,
     #[error("Claude Code emitted an unknown stream event")]
@@ -34,6 +36,27 @@ pub enum ClaudeExecutionError {
     Timeout,
     #[error("Claude Code process exited before a terminal result")]
     ProcessExited,
+}
+
+impl ClaudeExecutionError {
+    pub(crate) fn diagnostic_code(&self) -> &'static str {
+        match self {
+            Self::InvalidConfiguration => "claude_invalid_configuration",
+            Self::Transport(ClaudeError::InvalidLaunch) => "claude_invalid_launch",
+            Self::Transport(ClaudeError::InvalidSession) => "claude_invalid_session",
+            Self::Transport(ClaudeError::Closed) => "claude_closed",
+            Self::Transport(ClaudeError::Timeout) | Self::Timeout => "claude_timeout",
+            Self::Transport(ClaudeError::OutputOverflow) => "claude_output_overflow",
+            Self::Transport(ClaudeError::WriteIndeterminate) => "claude_write_indeterminate",
+            Self::Transport(ClaudeError::InvalidEvent) => "claude_invalid_event",
+            Self::Transport(ClaudeError::Framing | ClaudeError::Json(_)) => "claude_framing",
+            Self::Transport(_) => "claude_transport",
+            Self::ControlRequest => "claude_control_request",
+            Self::UnknownEvent => "claude_unknown_event",
+            Self::ProcessExited => "claude_process_exited",
+            Self::Persistence(_) => "claude_persistence_conflict",
+        }
+    }
 }
 
 /// Typed provider observation. The session and result IDs stay Claude-native
@@ -48,7 +71,7 @@ pub struct ClaudeExecutionObservation {
 /// The caller supplies D1-owned identity strings and the one-use process-host
 /// permit; this function never reads request data or ambient credentials.
 #[allow(clippy::too_many_arguments)]
-pub fn execute_turn(
+pub(crate) fn execute_turn(
     _handle: &Handle,
     config: &ResolvedCodexConfig,
     local: &ClaudeLocalConfig,
@@ -58,11 +81,10 @@ pub fn execute_turn(
     attempt_id: &str,
     owner_token: &str,
     existing_session: Option<&str>,
-    input: &str,
+    send_input: impl FnOnce(&mut ClaudeTransport) -> Result<(), ClaudeExecutionError>,
     timeout: Duration,
 ) -> Result<ClaudeExecutionObservation, ClaudeExecutionError> {
     if config.identity.runtime_type != "claude_local"
-        || input.trim().is_empty()
         || timeout.is_zero()
         || timeout > MAX_TURN_TIMEOUT
         || !config.cwd.is_dir()
@@ -143,7 +165,7 @@ pub fn execute_turn(
     };
     let mut transport = ClaudeTransport::launch_for_execution(launch, permit)?;
     let deadline = Instant::now() + timeout;
-    let result = run_turn(&mut transport, input, deadline);
+    let result = run_turn(&mut transport, send_input, deadline);
 
     // A result is a provider receipt; the process remains owned until the
     // host emits its matching terminal cleanup lifecycle.
@@ -195,11 +217,11 @@ fn claude_instruction_entry_path(
 
 fn run_turn(
     transport: &mut ClaudeTransport,
-    input: &str,
+    send_input: impl FnOnce(&mut ClaudeTransport) -> Result<(), ClaudeExecutionError>,
     deadline: Instant,
 ) -> Result<ClaudeTurnReceipt, ClaudeExecutionError> {
     transport.wait_spawned(remaining(deadline, Duration::from_secs(10)))?;
-    transport.send_user_message(input)?;
+    send_input(transport)?;
     loop {
         let wait = remaining(deadline, Duration::from_millis(250));
         if wait.is_zero() {

@@ -54,9 +54,39 @@ pub async fn load_submission(
     actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
 ) -> Result<SubmissionInput> {
+    load(pool, actor, fence, false).await
+}
+
+// Private to the one-use combined Claude authorization. The general input
+// reader remains strict and cannot return text from a pre-session checkpoint.
+pub(super) async fn load_claude_combined_input(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+) -> Result<SubmissionInput> {
+    load(pool, actor, fence, true).await
+}
+
+async fn load(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    claude_combined: bool,
+) -> Result<SubmissionInput> {
     let mut tx = pool.begin().await?;
     let locked = lock_current_execution(&mut tx, actor, fence).await?;
-    if locked.checkpoint.phase() != NativeChatProtocolPhase::InputPreSubmission {
+    let phase_valid = if claude_combined {
+        locked.checkpoint.provider()
+            == rudder_runtime_core::native_chat::NativeChatProvider::ClaudeLocal
+            && !locked.checkpoint.claude_combined_input()
+            && matches!(
+                locked.checkpoint.phase(),
+                NativeChatProtocolPhase::NoThreadRequest | NativeChatProtocolPhase::ThreadKnown
+            )
+    } else {
+        locked.checkpoint.phase() == NativeChatProtocolPhase::InputPreSubmission
+    };
+    if !phase_valid {
         return Err(http(
             409,
             "Native Chat input is not awaiting first submission",
@@ -76,6 +106,23 @@ pub async fn load_submission(
     };
     tx.commit().await?;
     Ok(input)
+}
+
+pub(super) async fn revalidate_input(
+    tx: &mut Transaction<'_, Postgres>,
+    fence: &ExecutionFence,
+    input: &SubmissionInput,
+) -> Result<()> {
+    let source = lock_validated_source(tx, fence).await?;
+    if source.message_id != input.message_id
+        || source.fingerprint != input.fingerprint
+        || source.body != input.body
+        || input.run_id != fence.run_id
+        || input.attempt_id != fence.attempt_id
+    {
+        return Err(http(409, "Native Chat admitted input changed"));
+    }
+    Ok(())
 }
 
 /// Validate the admitted source before any provider process or Thread effect.

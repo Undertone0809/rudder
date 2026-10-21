@@ -175,6 +175,8 @@ pub struct OpenCodeTurnReceipt {
 
 #[derive(Debug, Error)]
 pub enum OpenCodeWaitError {
+    #[error("OpenCode input message identifier is invalid")]
+    InvalidInputMessageId,
     #[error("OpenCode wait deadline expired before an assistant terminal message")]
     Deadline,
     #[error("OpenCode assistant message reported a provider error: {0}")]
@@ -508,6 +510,49 @@ impl OpenCodeClient {
         deadline: Instant,
         poll_interval: Duration,
     ) -> Result<OpenCodeTurnReceipt, OpenCodeWaitError> {
+        self.wait_for_completed_assistant_inner(
+            session_id,
+            known_assistant_ids,
+            None,
+            deadline,
+            poll_interval,
+        )
+        .await
+    }
+
+    /// Wait for a terminal assistant message whose `parentID` names the exact
+    /// client-assigned user message submitted for this turn. Unlike the legacy
+    /// compatibility reader above, this method never falls back to whichever
+    /// user message happens to be newest in the Session.
+    pub async fn wait_for_completed_assistant_for_input(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        input_message_id: &str,
+        deadline: Instant,
+        poll_interval: Duration,
+    ) -> Result<OpenCodeTurnReceipt, OpenCodeWaitError> {
+        if validate_identifier(input_message_id, "msg").is_err() {
+            return Err(OpenCodeWaitError::InvalidInputMessageId);
+        }
+        self.wait_for_completed_assistant_inner(
+            session_id,
+            known_assistant_ids,
+            Some(input_message_id),
+            deadline,
+            poll_interval,
+        )
+        .await
+    }
+
+    async fn wait_for_completed_assistant_inner(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        expected_input_message_id: Option<&str>,
+        deadline: Instant,
+        poll_interval: Duration,
+    ) -> Result<OpenCodeTurnReceipt, OpenCodeWaitError> {
         let mut first_error = None;
         loop {
             if Instant::now() >= deadline {
@@ -536,6 +581,11 @@ impl OpenCodeClient {
                 {
                     continue;
                 }
+                if let Some(expected) = expected_input_message_id
+                    && assistant.parent_id.as_deref() != Some(expected)
+                {
+                    continue;
+                }
                 if let Some(error) = assistant.error.as_ref() {
                     first_error.get_or_insert_with(|| error.to_string());
                     continue;
@@ -549,10 +599,13 @@ impl OpenCodeClient {
                 if !terminal {
                     continue;
                 }
-                let user_id = assistant
-                    .parent_id
-                    .clone()
-                    .or_else(|| latest_user_message_id(&messages));
+                let user_id = match expected_input_message_id {
+                    Some(expected) => Some(expected.to_owned()),
+                    None => assistant
+                        .parent_id
+                        .clone()
+                        .or_else(|| latest_user_message_id(&messages)),
+                };
                 if latest.as_ref().is_none_or(|(current, _)| {
                     message_sort_key(assistant) >= message_sort_key(current)
                 }) {
@@ -1672,6 +1725,7 @@ mod tests {
                     body["system"],
                     "Native instructions\nKeep user input separate."
                 );
+                assert_eq!(body["messageID"], "msg_input");
                 assert_eq!(body["parts"][0]["text"], "hello");
                 server.join().expect("server thread");
             })
@@ -1747,6 +1801,91 @@ mod tests {
                 server.join().expect("server thread");
             })
             .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn correlated_wait_ignores_other_terminal_messages_in_the_session() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let messages = serde_json::json!([
+                    {
+                        "info": {
+                            "id": "msg_other_assistant",
+                            "sessionID": "ses_native",
+                            "role": "assistant",
+                            "time": {"created": 100, "completed": 101},
+                            "parentID": "msg_other_input",
+                            "modelID": "model",
+                            "providerID": "provider",
+                            "finish": "stop"
+                        },
+                        "parts": [{
+                            "id": "part_other",
+                            "sessionID": "ses_native",
+                            "messageID": "msg_other_assistant",
+                            "type": "text",
+                            "text": "unrelated newer turn"
+                        }]
+                    },
+                    {
+                        "info": {
+                            "id": "msg_expected_assistant",
+                            "sessionID": "ses_native",
+                            "role": "assistant",
+                            "time": {"created": 10, "completed": 11},
+                            "parentID": "msg_expected_input",
+                            "modelID": "model",
+                            "providerID": "provider",
+                            "finish": "stop"
+                        },
+                        "parts": [{
+                            "id": "part_expected",
+                            "sessionID": "ses_native",
+                            "messageID": "msg_expected_assistant",
+                            "type": "text",
+                            "text": "the submitted turn"
+                        }]
+                    }
+                ])
+                .to_string();
+                let (url, server) = sequence_server(&[&messages]);
+                let client = OpenCodeClient::new(url, None).expect("client");
+                let receipt = client
+                    .wait_for_completed_assistant_for_input(
+                        "ses_native",
+                        &["msg_known_assistant"],
+                        "msg_expected_input",
+                        Instant::now() + Duration::from_secs(1),
+                        Duration::from_millis(1),
+                    )
+                    .await
+                    .expect("assistant correlated to exact input");
+                assert_eq!(
+                    receipt.user_message_id.as_deref(),
+                    Some("msg_expected_input")
+                );
+                assert_eq!(receipt.assistant_message_id, "msg_expected_assistant");
+                assert_eq!(receipt.final_text, "the submitted turn");
+                server.join().expect("server thread");
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn correlated_wait_rejects_an_invalid_input_id_before_polling() {
+        let client =
+            OpenCodeClient::new(Url::parse("http://127.0.0.1:1/").unwrap(), None).expect("client");
+        let error = client
+            .wait_for_completed_assistant_for_input(
+                "ses_native",
+                &[],
+                "not-a-message-id",
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_millis(1),
+            )
+            .await
+            .expect_err("invalid input ID rejected before network I/O");
+        assert!(matches!(error, OpenCodeWaitError::InvalidInputMessageId));
     }
 
     #[tokio::test(flavor = "current_thread")]

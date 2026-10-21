@@ -26,6 +26,8 @@ mod live_stop;
 
 #[path = "workflow/hermes_progress.rs"]
 mod hermes_progress;
+#[path = "workflow/opencode_split.rs"]
+mod opencode_split;
 
 #[path = "workflow/browser_principal.rs"]
 mod browser_principal;

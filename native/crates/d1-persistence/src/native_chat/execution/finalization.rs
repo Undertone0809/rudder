@@ -618,34 +618,22 @@ impl<'a> ProviderTurn<'a> {
                             && checkpoint.opencode_prompt_request_id()
                                 == Some(turn.request_id.as_str()),
                     };
-                // The current Claude/Cursor executor may return a terminal
-                // receipt from a combined session+prompt call. Before the
-                // provider-specific checkpoint fields are persisted, accept
-                // only the exact admitted provider phase and let finalization
-                // write the session/request identity atomically.
+                // Only Claude has a combined first-write protocol. Its
+                // marker is committed with the exact source identity before
+                // dispatch; the provider session/result IDs arrive terminal.
                 expected
-                    || matches!(
-                        checkpoint.phase(),
-                        NativeChatProtocolPhase::NoThreadRequest
-                            | NativeChatProtocolPhase::ThreadKnown
-                    ) && matches!(
-                        turn.provider,
-                        NativeProviderKind::Claude
-                            | NativeProviderKind::Cursor
-                            | NativeProviderKind::OpenCode
-                    ) && checkpoint.provider()
-                        == match turn.provider {
-                            NativeProviderKind::Claude => {
-                                rudder_runtime_core::native_chat::NativeChatProvider::ClaudeLocal
-                            }
-                            NativeProviderKind::Cursor => {
-                                rudder_runtime_core::native_chat::NativeChatProvider::CursorLocal
-                            }
-                            NativeProviderKind::OpenCode => {
-                                rudder_runtime_core::native_chat::NativeChatProvider::OpenCodeLocal
-                            }
-                        }
-                        && checkpoint.thread_id().is_none()
+                    || (turn.provider == NativeProviderKind::Claude
+                        && checkpoint.provider()
+                            == rudder_runtime_core::native_chat::NativeChatProvider::ClaudeLocal
+                        && checkpoint.claude_combined_input()
+                        && matches!(
+                            checkpoint.phase(),
+                            NativeChatProtocolPhase::ThreadStartIndeterminate
+                                | NativeChatProtocolPhase::InputIndeterminate
+                        )
+                        && checkpoint
+                            .claude_session()
+                            .is_none_or(|s| s.as_str() == turn.session_id))
             }
         }
     }
@@ -1099,24 +1087,19 @@ async fn finalize_inner(
                 | NativeChatProtocolPhase::InputPreSubmission
         ) && locked.checkpoint.turn_id().is_none()
     } else if let Some(turn) = turn {
-        // Claude/Cursor currently return a typed terminal receipt from a
-        // combined session+prompt adapter call. Their provider-native session
-        // and request IDs are therefore first observed at this boundary, so
-        // the admitted pre-effect phases are accepted once and the finalizer
-        // atomically records those IDs below. Codex/Hermes/Pi still require
-        // their explicit terminal-observed transition (or a governed Stop
-        // from TurnKnown).
-        let native_combined_phase = matches!(turn, ProviderTurn::Native(_))
+        let claude_combined_phase = matches!(turn, ProviderTurn::Native(receipt) if receipt.provider == NativeProviderKind::Claude)
+            && locked.checkpoint.claude_combined_input()
             && matches!(
                 locked.checkpoint.phase(),
-                NativeChatProtocolPhase::NoThreadRequest | NativeChatProtocolPhase::ThreadKnown
+                NativeChatProtocolPhase::ThreadStartIndeterminate
+                    | NativeChatProtocolPhase::InputIndeterminate
             );
         (locked.checkpoint.phase() == NativeChatProtocolPhase::ProviderTerminalObserved
             || (stop.is_some() && locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown)
             || (stop.is_some()
                 && matches!(turn, ProviderTurn::HermesPromptError(_))
                 && locked.checkpoint.phase() == NativeChatProtocolPhase::InputIndeterminate)
-            || native_combined_phase)
+            || claude_combined_phase)
             && turn.checkpoint_matches(&locked.checkpoint)
     } else {
         false

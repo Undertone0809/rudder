@@ -110,6 +110,7 @@ pub struct CursorAcpTransport {
     decoder: LineDecoder,
     messages: VecDeque<CursorAcpMessage>,
     pending: Option<RequestId>,
+    reserved: Option<RequestId>,
     next_write_id: u64,
     request_id: String,
     owner_token: String,
@@ -171,6 +172,7 @@ impl CursorAcpTransport {
             decoder: LineDecoder::default(),
             messages: VecDeque::new(),
             pending: None,
+            reserved: None,
             next_write_id: 0,
             request_id,
             owner_token,
@@ -211,11 +213,36 @@ impl CursorAcpTransport {
         &mut self,
         command: CursorAcpCommand,
     ) -> Result<RequestId, CursorAcpTransportError> {
+        self.reserve_request()?;
+        self.request_reserved(command)
+    }
+
+    /// Allocate a native JSON-RPC correlation ID without writing to the child.
+    /// D1 can durably fence that exact prompt before consuming this reservation.
+    pub fn reserve_request(&mut self) -> Result<RequestId, CursorAcpTransportError> {
+        self.ensure_writable()?;
+        if self.pending.is_some() || self.reserved.is_some() {
+            return Err(CursorAcpTransportError::Busy);
+        }
+        let id = self.session.new_request();
+        self.reserved = Some(id.clone());
+        Ok(id)
+    }
+
+    /// Consume the sole local reservation once. A failed/ambiguous write must
+    /// never recreate it or resend the prompt.
+    pub fn request_reserved(
+        &mut self,
+        command: CursorAcpCommand,
+    ) -> Result<RequestId, CursorAcpTransportError> {
         self.ensure_writable()?;
         if self.pending.is_some() {
             return Err(CursorAcpTransportError::Busy);
         }
-        let id = self.session.new_request();
+        let id = self
+            .reserved
+            .take()
+            .ok_or(CursorAcpTransportError::InvalidMessage)?;
         let request = command
             .request(id.clone())
             .map_err(|_| CursorAcpTransportError::InvalidMessage)?;

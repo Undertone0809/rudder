@@ -4,7 +4,7 @@
 //! session evidence. D1 claims, checkpoint persistence, and terminal billing
 //! stay in the shared worker.
 
-use crate::HostPaths;
+use crate::{HostPaths, native_turn::NativeTurnAuthority};
 use rudder_cursor_acp_adapter::{
     AuthenticateParams, CursorAcpCommand, CursorAcpHome, CursorAcpMessage, CursorAcpProcessLaunch,
     CursorAcpSession, CursorAcpTransport, CursorAcpTransportError, CursorManagedInstructionRule,
@@ -30,12 +30,42 @@ pub enum CursorExecutionError {
     InvalidConfiguration,
     #[error(transparent)]
     Transport(#[from] CursorAcpTransportError),
+    #[error("Cursor ACP durable execution fence rejected dispatch")]
+    Persistence(#[from] rudder_d1_persistence::runtime_bindings::Error),
     #[error("Cursor ACP returned an invalid session identity")]
     InvalidSession,
     #[error("Cursor ACP requested an interactive control decision")]
     ControlRequest,
     #[error("Cursor ACP turn response did not arrive before the deadline")]
     Timeout,
+}
+
+impl CursorExecutionError {
+    pub(crate) fn diagnostic_code(&self) -> &'static str {
+        match self {
+            Self::InvalidConfiguration => "cursor_invalid_configuration",
+            Self::InvalidSession => "cursor_invalid_session",
+            Self::ControlRequest => "cursor_control_request",
+            Self::Timeout | Self::Transport(CursorAcpTransportError::Timeout) => "cursor_timeout",
+            Self::Transport(CursorAcpTransportError::InstructionRuleUnavailable) => {
+                "cursor_instruction_rule_unavailable"
+            }
+            Self::Transport(CursorAcpTransportError::InvalidLaunch) => "cursor_invalid_launch",
+            Self::Transport(CursorAcpTransportError::Closed) => "cursor_closed",
+            Self::Transport(CursorAcpTransportError::Rejected) => "cursor_rejected",
+            Self::Transport(CursorAcpTransportError::InvalidMessage) => "cursor_invalid_message",
+            Self::Transport(CursorAcpTransportError::MismatchedResponse) => {
+                "cursor_mismatched_response"
+            }
+            Self::Transport(CursorAcpTransportError::OutputOverflow) => "cursor_output_overflow",
+            Self::Transport(CursorAcpTransportError::WriteIndeterminate) => {
+                "cursor_write_indeterminate"
+            }
+            Self::Transport(CursorAcpTransportError::ProcessExited) => "cursor_process_exited",
+            Self::Transport(CursorAcpTransportError::Busy) => "cursor_busy",
+            Self::Persistence(_) => "cursor_persistence_conflict",
+        }
+    }
 }
 
 /// Provider-native ACP observation. The response and session ID are kept
@@ -57,7 +87,7 @@ pub struct CursorExecutionObservation {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn execute_turn(
+pub(crate) fn execute_turn(
     config: &ResolvedCodexConfig,
     local: &CursorLocalConfig,
     paths: &HostPaths,
@@ -65,12 +95,10 @@ pub fn execute_turn(
     run_id: &str,
     attempt_id: &str,
     owner_token: &str,
-    existing_session: Option<&str>,
-    input: &str,
+    authority: &mut NativeTurnAuthority<'_>,
     timeout: Duration,
 ) -> Result<CursorExecutionObservation, CursorExecutionError> {
     if config.identity.runtime_type != "cursor" && config.identity.runtime_type != "cursor_local"
-        || input.trim().is_empty()
         || timeout.is_zero()
         || timeout > MAX_TURN_TIMEOUT
         || !config.cwd.is_dir()
@@ -148,14 +176,7 @@ pub fn execute_turn(
         permit,
     )?;
     let deadline = Instant::now() + timeout;
-    let result = run_turn(
-        &mut transport,
-        config,
-        local,
-        existing_session,
-        input,
-        deadline,
-    );
+    let result = run_turn(&mut transport, config, local, authority, deadline);
     let process_grace = local
         .grace_sec
         .map(Duration::from_secs)
@@ -184,8 +205,7 @@ fn run_turn(
     transport: &mut CursorAcpTransport,
     config: &ResolvedCodexConfig,
     local: &CursorLocalConfig,
-    existing_session: Option<&str>,
-    input: &str,
+    authority: &mut NativeTurnAuthority<'_>,
     deadline: Instant,
 ) -> Result<(SessionId, String, Option<String>, Value, u64), CursorExecutionError> {
     transport.wait_spawned(remaining(deadline, Duration::from_secs(10)))?;
@@ -208,7 +228,8 @@ fn run_turn(
         remaining(deadline, Duration::from_secs(10)),
     )?;
 
-    let session_command = if let Some(value) = existing_session {
+    let existing_session = authority.existing_session().map(str::to_owned);
+    let session_command = if let Some(value) = existing_session.as_deref() {
         let session = SessionId::new(value).map_err(|_| CursorExecutionError::InvalidSession)?;
         CursorAcpCommand::SessionLoad {
             params: {
@@ -228,23 +249,46 @@ fn run_turn(
             },
         }
     };
-    let session_response = request_and_wait(
-        transport,
-        session_command,
-        remaining(deadline, Duration::from_secs(10)),
-    )?;
-    let session = session_from_response(&session_response)?;
-    let prompt = CursorAcpCommand::SessionPrompt {
-        params: SessionPromptParams::new(session.clone(), input)
-            .map_err(|_| CursorExecutionError::InvalidConfiguration)?,
+    let session_response = if existing_session.is_some() {
+        request_and_wait(
+            transport,
+            session_command,
+            remaining(deadline, Duration::from_secs(10)),
+        )?
+    } else {
+        authority.start_session(|| {
+            request_and_wait(
+                transport,
+                session_command,
+                remaining(deadline, Duration::from_secs(10)),
+            )
+        })??
     };
-    let response = request_and_wait(
-        transport,
-        prompt,
-        remaining(deadline, Duration::from_secs(60)),
-    )?;
-    let request_id = response.id.as_string();
+    let session = session_from_response(&session_response)?;
+    authority.record_session(session.as_str())?;
+    let reserved = transport.reserve_request()?;
+    let request_id = reserved.as_string();
+    let sent = authority.submit(&request_id, |input| {
+        let prompt = CursorAcpCommand::SessionPrompt {
+            params: SessionPromptParams::new(session.clone(), input)
+                .map_err(|_| CursorExecutionError::InvalidConfiguration)?,
+        };
+        transport
+            .request_reserved(prompt)
+            .map_err(CursorExecutionError::from)
+    })??;
+    if sent != reserved {
+        return Err(CursorExecutionError::InvalidSession);
+    }
+    let response =
+        transport.wait_response(&reserved, remaining(deadline, Duration::from_secs(60)))?;
+    if response.error.is_some() {
+        return Err(CursorExecutionError::Transport(
+            CursorAcpTransportError::Rejected,
+        ));
+    }
     let (updates, final_text) = drain_updates(transport, &session)?;
+    authority.terminal(session.as_str(), &request_id)?;
     Ok((
         session,
         request_id,

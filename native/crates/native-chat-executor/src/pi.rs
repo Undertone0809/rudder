@@ -36,6 +36,7 @@ use tokio::runtime::Handle;
 const MAX_SESSION_ID_BYTES: usize = 256;
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
+const SETTLEMENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 type ExecResult<T> = std::result::Result<T, Error>;
 
 pub(super) fn validate_config(
@@ -391,7 +392,12 @@ fn execute_pi_turn(
         .map_err(Error::PiTransport)?
         .is_provider_terminal()
     {
-        return Err(Error::InvalidProviderObservation);
+        let reason = execution
+            .unknown_reason()
+            .ok_or(Error::InvalidProviderObservation)?;
+        return Err(Error::PiTransport(PiAdapterError::UnknownObservation(
+            reason,
+        )));
     }
     execution
         .take_turn_receipt(prior_leaf_id.as_deref(), &input_body)
@@ -492,6 +498,21 @@ pub enum PiUnknownReason {
     CleanupNotProven,
 }
 
+impl PiUnknownReason {
+    /// Bounded, payload-free classification for diagnostics.
+    pub const fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::CommandRejected => "pi_command_rejected",
+            Self::MalformedState => "pi_malformed_state",
+            Self::SessionPathUnavailable => "pi_session_path_unavailable",
+            Self::AgentSettledBeforeAgentEnd => "pi_agent_settled_before_agent_end",
+            Self::AgentEndedWithoutSettlement => "pi_agent_ended_without_settlement",
+            Self::ExtensionError => "pi_extension_error",
+            Self::CleanupNotProven => "pi_cleanup_not_proven",
+        }
+    }
+}
+
 /// Bounded `get_state` data. The raw response is intentionally not retained.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PiStateSnapshot {
@@ -575,10 +596,26 @@ pub enum PiAdapterError {
     CommandRejected { command: String },
     #[error("Pi adapter operation deadline expired")]
     Deadline,
+    #[error("Pi provider observation was inconclusive")]
+    UnknownObservation(PiUnknownReason),
     #[error("Pi adapter is not ready for this operation")]
     InvalidPhase,
     #[error("Pi session path is outside the managed session directory")]
     InvalidSessionPath,
+}
+
+impl PiAdapterError {
+    pub(crate) fn diagnostic_code(&self) -> &'static str {
+        match self {
+            Self::Transport(_) => "pi_transport",
+            Self::SessionTree(_) => "pi_session_tree",
+            Self::CommandRejected { .. } => "pi_command_rejected",
+            Self::Deadline => "pi_deadline",
+            Self::UnknownObservation(reason) => reason.diagnostic_code(),
+            Self::InvalidPhase => "pi_invalid_phase",
+            Self::InvalidSessionPath => "pi_invalid_session_path",
+        }
+    }
 }
 
 /// One owned Pi process and its provider-specific lifecycle reducer.
@@ -729,16 +766,22 @@ impl PiExecution {
         if input.is_empty() || !matches!(self.phase, PiExecutionPhase::SessionReady) {
             return Err(PiAdapterError::InvalidPhase);
         }
-        let request_id = self.command_response(PiCommand::Prompt(input), timeout)?;
-        if !request_id.success() {
-            self.mark_unknown(PiUnknownReason::CommandRejected);
-            return Ok(self.phase);
-        }
-        self.input_request_id = Some(request_id.id().to_owned());
+        // Bind lifecycle observations to the one prompt before waiting for its
+        // preflight response. Pi may emit run events while that response is
+        // pending; command_response consumes those events from the same RPC
+        // stream, so initializing after it returns would lose valid evidence.
+        let request_id = self.transport.request(PiCommand::Prompt(input))?;
+        self.input_request_id = Some(request_id.clone());
         self.agent_started = false;
         self.agent_ended = false;
         self.agent_settled = false;
         self.phase = PiExecutionPhase::InputAccepted;
+
+        let response = self.response_for_request(&request_id, timeout)?;
+        if !response.success() {
+            self.mark_unknown(PiUnknownReason::CommandRejected);
+            return Ok(self.phase);
+        }
         Ok(self.phase)
     }
 
@@ -781,6 +824,42 @@ impl PiExecution {
                 self.mark_unknown(PiUnknownReason::MalformedState);
                 return Ok(self.phase);
             }
+            if self.agent_ended {
+                // Pi 0.76 emits agent_end before its awaited lifecycle
+                // listeners have settled, and documents agent_end as the last
+                // event for a run. A single active get_state followed by a
+                // wait for another event can therefore lose the wakeup. Poll
+                // only the read-only state command until idle proof or the
+                // existing execution deadline; never resubmit the prompt.
+                let state_phase = self.get_state(remaining(deadline).min(RPC_TIMEOUT))?;
+                if state_phase == PiExecutionPhase::Unknown {
+                    return Ok(state_phase);
+                }
+                if self
+                    .state
+                    .as_ref()
+                    .is_some_and(PiStateSnapshot::proves_idle_queue)
+                {
+                    self.phase = PiExecutionPhase::Settled;
+                    return Ok(self.phase);
+                }
+                if self.agent_settled
+                    || !self.state.as_ref().is_some_and(|state| {
+                        state.is_streaming.is_some()
+                            && state.is_compacting.is_some()
+                            && state.pending_message_count.is_some()
+                    })
+                {
+                    self.mark_unknown(PiUnknownReason::MalformedState);
+                    return Ok(self.phase);
+                }
+                let pause = remaining(deadline).min(SETTLEMENT_POLL_INTERVAL);
+                if pause.is_zero() {
+                    break;
+                }
+                std::thread::sleep(pause);
+                continue;
+            }
             let message = match self.transport.receive(remaining(deadline)) {
                 Ok(message) => message,
                 Err(PiTransportError::Timeout) => break,
@@ -796,36 +875,6 @@ impl PiExecution {
                     ));
                 }
                 PiRpcMessage::Event(event) => self.observe_event(&event),
-            }
-            if self.phase == PiExecutionPhase::AgentEnded && !self.agent_settled {
-                // Older Pi versions have no agent_settled event. Their state
-                // endpoint must prove that streaming, compaction and queued
-                // follow-up input are all idle before we promote completion.
-                let state_phase = self.get_state(remaining(deadline))?;
-                if state_phase == PiExecutionPhase::Unknown {
-                    return Ok(state_phase);
-                }
-                if state_phase == PiExecutionPhase::AgentEnded {
-                    if self
-                        .state
-                        .as_ref()
-                        .is_some_and(PiStateSnapshot::proves_idle_queue)
-                    {
-                        self.phase = PiExecutionPhase::Settled;
-                        return Ok(self.phase);
-                    }
-                    if self.state.as_ref().is_some_and(|state| {
-                        state.is_streaming.is_some()
-                            && state.is_compacting.is_some()
-                            && state.pending_message_count.is_some()
-                    }) {
-                        // A valid but still active state can continue to emit
-                        // retries/compaction events. Keep waiting.
-                        continue;
-                    }
-                    self.mark_unknown(PiUnknownReason::AgentEndedWithoutSettlement);
-                    return Ok(self.phase);
-                }
             }
         }
         self.mark_unknown(PiUnknownReason::AgentEndedWithoutSettlement);
@@ -889,6 +938,14 @@ impl PiExecution {
         timeout: Duration,
     ) -> Result<PiResponse, PiAdapterError> {
         let request_id = self.transport.request(command)?;
+        self.response_for_request(&request_id, timeout)
+    }
+
+    fn response_for_request(
+        &mut self,
+        request_id: &str,
+        timeout: Duration,
+    ) -> Result<PiResponse, PiAdapterError> {
         let deadline = Instant::now() + timeout;
         loop {
             let message = self.transport.receive(remaining(deadline))?;
@@ -1055,9 +1112,22 @@ fn parse_state_with_new_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{PiExecutionPhase, PiUnknownReason, parse_new_session_state, parse_state};
+    use super::{
+        PiAdapterError, PiExecutionPhase, PiUnknownReason, parse_new_session_state, parse_state,
+    };
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn inconclusive_provider_diagnostics_preserve_only_safe_reason_code() {
+        let error =
+            PiAdapterError::UnknownObservation(PiUnknownReason::AgentEndedWithoutSettlement);
+        assert_eq!(error.diagnostic_code(), "pi_agent_ended_without_settlement");
+        assert_eq!(
+            error.to_string(),
+            "Pi provider observation was inconclusive"
+        );
+    }
 
     #[test]
     fn state_parser_requires_an_exact_managed_session_file() {

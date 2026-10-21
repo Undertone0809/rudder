@@ -6,8 +6,9 @@
 //! callers receive a receipt only after a matching completed assistant message
 //! is read back from the same Session.
 
-use crate::HostPaths;
+use crate::{HostPaths, native_turn::NativeTurnAuthority};
 use rudder_d1_persistence::native_chat::config::OpenCodeLocalConfig;
+use rudder_d1_persistence::runtime_bindings;
 use rudder_native_process_transport::{
     ConnectionLaunchPermit, HostCleanupProof, HostConnection, HostError, HostEvent, OwnedHost,
 };
@@ -20,11 +21,14 @@ use rudder_opencode_native::{
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
+    future::Future,
     net::TcpListener,
     time::{Duration, Instant},
 };
 use thiserror::Error;
 use tokio::runtime::Handle;
+use tokio::task::LocalSet;
+use uuid::Uuid;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -39,6 +43,8 @@ pub enum OpenCodeExecutionError {
     Transport(#[from] OpenCodeError),
     #[error("OpenCode provider did not reach a terminal assistant message: {0}")]
     Wait(#[from] OpenCodeWaitError),
+    #[error("OpenCode durable execution fence rejected dispatch")]
+    Persistence(#[from] runtime_bindings::Error),
     #[error("OpenCode asynchronous prompt was not accepted")]
     PromptNotAccepted,
     #[error("OpenCode Server host lifecycle failed: {0}")]
@@ -49,8 +55,28 @@ pub enum OpenCodeExecutionError {
     CleanupUnavailable,
 }
 
+impl OpenCodeExecutionError {
+    pub(crate) fn diagnostic_code(&self) -> &'static str {
+        match self {
+            Self::InvalidConfiguration => "opencode_invalid_configuration",
+            Self::InvalidSession => "opencode_invalid_session",
+            Self::Transport(_) => "opencode_transport",
+            Self::Wait(_) => "opencode_terminal_wait",
+            Self::Persistence(_) => "opencode_persistence_conflict",
+            Self::PromptNotAccepted => "opencode_prompt_not_accepted",
+            Self::Host(_) => "opencode_host",
+            Self::ServerNotReady => "opencode_server_not_ready",
+            Self::CleanupUnavailable => "opencode_cleanup_unavailable",
+        }
+    }
+}
+
 pub struct OpenCodeExecutionObservation {
     pub session: OpenCodeSessionSelector,
+    /// The native `msg_...` identifier assigned to the submitted user input.
+    /// This is the D1 request correlation key; the assistant message ID remains
+    /// separate provider evidence in `turn`.
+    pub request_id: String,
     pub turn: OpenCodeTurnReceipt,
     pub cleanup: HostCleanupProof,
 }
@@ -59,7 +85,7 @@ pub struct OpenCodeExecutionObservation {
 /// function is synchronous at the worker boundary so it can run on the same
 /// blocking executor as Codex/Hermes/Pi while using Tokio for HTTP polling.
 #[allow(clippy::too_many_arguments)]
-pub fn execute_turn(
+pub(crate) fn execute_turn(
     handle: &Handle,
     config: &OpenCodeLocalConfig,
     paths: &HostPaths,
@@ -67,12 +93,10 @@ pub fn execute_turn(
     run_id: &str,
     attempt_id: &str,
     owner_token: &str,
-    existing_session: Option<&str>,
-    body: &str,
+    authority: &mut NativeTurnAuthority<'_>,
     timeout: Duration,
 ) -> Result<OpenCodeExecutionObservation, OpenCodeExecutionError> {
     if !config.endpoint_is_valid()
-        || body.trim().is_empty()
         || timeout.is_zero()
         || timeout > MAX_TURN_TIMEOUT
         || !paths.process_host.is_file()
@@ -100,7 +124,8 @@ pub fn execute_turn(
     // The persisted provider-native session locator is also validated before
     // launch. This keeps corrupt durable state from starting a Server that
     // cannot produce a terminal turn receipt.
-    if let Some(value) = existing_session {
+    let existing_session = authority.existing_session().map(str::to_owned);
+    if let Some(value) = existing_session.as_deref() {
         OpenCodeSessionSelector::from_persisted(value)
             .map_err(|_| OpenCodeExecutionError::InvalidSession)?;
     }
@@ -114,76 +139,93 @@ pub fn execute_turn(
         owner_token,
         timeout,
     )?;
-    let client = OpenCodeClient::new(
-        server.url().clone(),
-        config.bearer_token().map(str::to_owned),
-    )?
-    .with_timeout(timeout.min(Duration::from_secs(30)));
-    let result = handle.block_on(async {
-        let session = if let Some(value) = existing_session {
+    let result = (|| {
+        let client = OpenCodeClient::new(
+            server.url().clone(),
+            config.bearer_token().map(str::to_owned),
+        )?
+        .with_timeout(timeout.min(Duration::from_secs(30)));
+        let session = if let Some(value) = existing_session.as_deref() {
             OpenCodeSessionSelector::from_persisted(value)
                 .map_err(|_| OpenCodeExecutionError::InvalidSession)?
         } else {
-            let created = client
-                .create_session(&CreateSessionRequest {
-                    query: rudder_opencode_native::SessionCreateQuery {
-                        directory: Some(configured_directory(config)),
-                        workspace: config.workspace.clone(),
-                    },
-                    body: CreateSessionBody {
-                        agent: config.agent.clone(),
-                        model: model.clone(),
-                        ..CreateSessionBody::default()
-                    },
+            let created = authority.start_session(|| {
+                block_on_local(handle, async {
+                    client
+                        .create_session(&CreateSessionRequest {
+                            query: rudder_opencode_native::SessionCreateQuery {
+                                directory: Some(configured_directory(config)),
+                                workspace: config.workspace.clone(),
+                            },
+                            body: CreateSessionBody {
+                                agent: config.agent.clone(),
+                                model: model.clone(),
+                                ..CreateSessionBody::default()
+                            },
+                        })
+                        .await
                 })
-                .await?;
-            OpenCodeSessionSelector::from_persisted(&created.id)
-                .map_err(|_| OpenCodeExecutionError::InvalidSession)?
+            })??;
+            let session = OpenCodeSessionSelector::from_persisted(&created.id)
+                .map_err(|_| OpenCodeExecutionError::InvalidSession)?;
+            authority.record_session(session.as_str())?;
+            session
         };
+        if existing_session.is_some() {
+            authority.record_session(session.as_str())?;
+        }
         let directory = configured_directory(config);
-        let known_assistant_ids = client
-            .get_messages(
-                session.as_str(),
-                MessageListQuery {
-                    directory: Some(directory.as_str()),
-                    workspace: config.workspace.as_deref(),
-                    limit: Some(256),
-                    before: None,
-                },
-            )
-            .await?
-            .into_iter()
-            .filter_map(|message| match message.info {
-                MessageInfo::Assistant(assistant) => Some(assistant.id),
-                MessageInfo::User(_) => None,
-            })
-            .collect::<Vec<_>>();
-        let outcome = client
-            .prompt_async(
-                session.as_str(),
-                &PromptRequestBuilder {
-                    directory: configured_directory(config),
-                    workspace: config.workspace.clone(),
-                    prompt: Prompt {
-                        system: config.system_instructions().map(str::to_owned),
-                        model: model
-                            .as_ref()
-                            .map(|model| rudder_opencode_native::ModelSelection {
-                                provider_id: model.provider_id.clone(),
-                                model_id: model.id.clone(),
-                                variant: model.variant.clone(),
-                            }),
-                        agent: config.agent.clone(),
-                        parts: vec![PromptPart::Text {
-                            id: None,
-                            text: body.to_owned(),
-                        }],
-                        ..Prompt::default()
+        let known_assistant_ids = block_on_local(handle, async {
+            client
+                .get_messages(
+                    session.as_str(),
+                    MessageListQuery {
+                        directory: Some(directory.as_str()),
+                        workspace: config.workspace.as_deref(),
+                        limit: Some(256),
+                        before: None,
                     },
-                }
-                .build(),
-            )
-            .await?;
+                )
+                .await
+        })?
+        .into_iter()
+        .filter_map(|message| match message.info {
+            MessageInfo::Assistant(assistant) => Some(assistant.id),
+            MessageInfo::User(_) => None,
+        })
+        .collect::<Vec<_>>();
+        let request_id = format!("msg_{}", Uuid::new_v4().simple());
+        let outcome = authority.submit(&request_id, |body| {
+            block_on_local(handle, async {
+                client
+                    .prompt_async(
+                        session.as_str(),
+                        &PromptRequestBuilder {
+                            directory: configured_directory(config),
+                            workspace: config.workspace.clone(),
+                            prompt: Prompt {
+                                system: config.system_instructions().map(str::to_owned),
+                                message_id: Some(request_id.clone()),
+                                model: model.as_ref().map(|model| {
+                                    rudder_opencode_native::ModelSelection {
+                                        provider_id: model.provider_id.clone(),
+                                        model_id: model.id.clone(),
+                                        variant: model.variant.clone(),
+                                    }
+                                }),
+                                agent: config.agent.clone(),
+                                parts: vec![PromptPart::Text {
+                                    id: None,
+                                    text: body.to_owned(),
+                                }],
+                                ..Prompt::default()
+                            },
+                        }
+                        .build(),
+                    )
+                    .await
+            })
+        })??;
         if !matches!(
             outcome,
             AsyncPromptOutcome::Accepted {
@@ -197,15 +239,28 @@ pub fn execute_turn(
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        let turn = client
-            .wait_for_completed_assistant(session.as_str(), &known_refs, deadline, POLL_INTERVAL)
-            .await?;
-        Ok::<_, OpenCodeExecutionError>((session, turn))
-    });
+        let turn = block_on_local(handle, async {
+            client
+                .wait_for_completed_assistant_for_input(
+                    session.as_str(),
+                    &known_refs,
+                    &request_id,
+                    deadline,
+                    POLL_INTERVAL,
+                )
+                .await
+        })?;
+        if turn.user_message_id.as_deref() != Some(request_id.as_str()) {
+            return Err(OpenCodeExecutionError::PromptNotAccepted);
+        }
+        authority.terminal(session.as_str(), &request_id)?;
+        Ok::<_, OpenCodeExecutionError>((session, request_id, turn))
+    })();
     let cleanup = server.stop(config.cleanup_grace)?;
-    let (session, turn) = result?;
+    let (session, request_id, turn) = result?;
     Ok(OpenCodeExecutionObservation {
         session,
+        request_id,
         turn,
         cleanup,
     })
@@ -333,7 +388,7 @@ impl OpenCodeServerHost {
             }
             let client = OpenCodeClient::new(url.clone(), config.bearer_token().map(str::to_owned))
                 .map_err(OpenCodeExecutionError::Transport)?;
-            let ready = handle.block_on(async {
+            let ready = block_on_local(handle, async {
                 tokio::time::timeout(Duration::from_millis(250), client.probe())
                     .await
                     .ok()
@@ -389,6 +444,11 @@ fn reserve_port() -> Option<u16> {
         .ok()
         .and_then(|listener| listener.local_addr().ok())
         .map(|address| address.port())
+}
+
+fn block_on_local<T>(handle: &Handle, future: impl Future<Output = T>) -> T {
+    let local = LocalSet::new();
+    handle.block_on(local.run_until(future))
 }
 
 fn configured_directory(config: &OpenCodeLocalConfig) -> String {

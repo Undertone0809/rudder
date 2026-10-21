@@ -16,6 +16,293 @@ const PI_SESSION: &str = "pi-admission-session";
 const PI_LEAF: &str = "a1b2c3d4";
 const PI_NEXT_LEAF: &str = "d4c3b2a1";
 
+#[tokio::test(flavor = "multi_thread")]
+async fn native_first_input_requires_its_provider_checkpoint_and_one_use_permit() {
+    use rudder_d1_persistence::native_chat::execution::{
+        self, CheckpointTransition as T, EffectDispatch,
+    };
+    let database = Database::start().await;
+    prepare(&database).await;
+    sqlx::query("INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES($1,'Native input fixture','native-input@example.test',now(),now())")
+        .bind(USER).execute(&database.pool).await.unwrap();
+    let host = ProviderHost::new();
+    let actor = verified_actor(USER, "provider-input-order");
+    for (index, provider) in [Provider::Claude, Provider::Cursor, Provider::OpenCode]
+        .into_iter()
+        .enumerate()
+    {
+        let chat = format!("21000000-0000-4000-8000-0000000009{:02}", index);
+        seed_chat(&database.pool, &chat).await;
+        configure_agent(&database.pool, CEO, provider, "provider-admission-ceo").await;
+        let admitted = admit(
+            &database.pool,
+            &actor,
+            &host,
+            &chat,
+            &format!("input-order-{index}"),
+        )
+        .await
+        .unwrap();
+        let rows = run_rows(&database.pool, &admitted).await;
+        let claimed = execution::claim(
+            &database.pool,
+            &actor,
+            ORG,
+            &rows.run_id,
+            &rows.attempt_id,
+            &host.context,
+        )
+        .await
+        .unwrap();
+        let (principal, fence, _, _launch) = claimed.into_execution_parts();
+        match execution::load_submission(&database.pool, &principal, &fence).await {
+            Err(Error::Http(409, _)) => {}
+            Err(error) => panic!("unexpected pre-session load denial: {error}"),
+            Ok(_) => panic!("ordinary load must remain closed before a native session"),
+        }
+        if matches!(provider, Provider::Claude) {
+            let effect =
+                execution::prepare_claude_combined_input(&database.pool, &principal, &fence)
+                    .await
+                    .unwrap();
+            let sent = effect
+                .dispatch(|payload| match payload {
+                    EffectDispatch::SubmitClaudeCombinedInput {
+                        session_id: None,
+                        body,
+                        ..
+                    } => body == "fixture-only admission input",
+                    _ => false,
+                })
+                .unwrap();
+            assert!(sent);
+            assert!(
+                matches!(
+                    execution::prepare_claude_combined_input(&database.pool, &principal, &fence)
+                        .await,
+                    Err(Error::Http(409, _))
+                ),
+                "reading a pending combined checkpoint cannot recreate a send permit"
+            );
+            let snapshot = execution::current_checkpoint(&database.pool, &principal, &fence)
+                .await
+                .unwrap();
+            assert_eq!(
+                snapshot.phase,
+                NativeChatProtocolPhase::ThreadStartIndeterminate
+            );
+            assert!(
+                snapshot.claude_session.is_none(),
+                "no generated ID becomes a provider session"
+            );
+            continue;
+        }
+        let start = match provider {
+            Provider::Cursor => T::PrepareCursorSessionStart,
+            _ => T::PrepareOpenCodeSessionStart,
+        };
+        let mut receipt = execution::advance_checkpoint(
+            &database.pool,
+            &principal,
+            &fence,
+            NativeChatProtocolPhase::NoThreadRequest,
+            0,
+            start,
+        )
+        .await
+        .unwrap();
+        let effect = execution::authorize_effect(
+            &database.pool,
+            &principal,
+            receipt.take_effect_permit().unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            effect
+                .dispatch(|payload| matches!(
+                    payload,
+                    EffectDispatch::StartCursorSession | EffectDispatch::StartOpenCodeSession
+                ))
+                .unwrap()
+        );
+        let record = match provider {
+            Provider::Cursor => T::RecordCursorSession {
+                session_id: provider.session_id().into(),
+            },
+            _ => T::RecordOpenCodeSession {
+                session_id: provider.session_id().into(),
+            },
+        };
+        let recorded = execution::advance_checkpoint(
+            &database.pool,
+            &principal,
+            &fence,
+            receipt.snapshot().phase,
+            receipt.snapshot().revision,
+            record,
+        )
+        .await
+        .unwrap();
+        let segment: (String, Option<String>) =
+            sqlx::query_as("SELECT state,native_session_id FROM native_segments WHERE id=$1::uuid")
+                .bind(&rows.segment_id)
+                .fetch_one(&database.pool)
+                .await
+                .unwrap();
+        assert_eq!(segment, ("open".into(), Some(provider.session_id().into())));
+        let prepared = execution::advance_checkpoint(
+            &database.pool,
+            &principal,
+            &fence,
+            recorded.snapshot().phase,
+            recorded.snapshot().revision,
+            T::PrepareInput,
+        )
+        .await
+        .unwrap();
+        let input = execution::load_submission(&database.pool, &principal, &fence)
+            .await
+            .unwrap();
+        let mark = match provider {
+            Provider::Cursor => T::MarkCursorInputIndeterminate {
+                request_id: "request-one".into(),
+            },
+            _ => T::MarkOpenCodeInputIndeterminate {
+                request_id: "msg_request_one".into(),
+            },
+        };
+        let mut marked = execution::advance_checkpoint(
+            &database.pool,
+            &principal,
+            &fence,
+            prepared.snapshot().phase,
+            prepared.snapshot().revision,
+            mark,
+        )
+        .await
+        .unwrap();
+        let effect = execution::authorize_effect(
+            &database.pool,
+            &principal,
+            marked.take_effect_permit().unwrap(),
+            Some(input),
+        )
+        .await
+        .unwrap();
+        assert!(
+            effect
+                .dispatch(|payload| match payload {
+                    EffectDispatch::SubmitCursorInput {
+                        session_id, body, ..
+                    }
+                    | EffectDispatch::SubmitOpenCodeInput {
+                        session_id, body, ..
+                    } =>
+                        session_id == provider.session_id()
+                            && body == "fixture-only admission input",
+                    _ => false,
+                })
+                .unwrap()
+        );
+        assert!(matches!(
+            execution::load_submission(&database.pool, &principal, &fence).await,
+            Err(Error::Http(409, _))
+        ));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_between_native_session_response_and_record_cannot_submit_input() {
+    use rudder_d1_persistence::native_chat::{
+        control::{self, StopRequest},
+        execution::{self, CheckpointTransition as T},
+    };
+    use sha2::{Digest, Sha256};
+    let database = Database::start().await;
+    prepare(&database).await;
+    sqlx::query("INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES($1,'Native input fixture','native-input@example.test',now(),now())")
+        .bind(USER).execute(&database.pool).await.unwrap();
+    let host = ProviderHost::new();
+    let actor = verified_actor(USER, "provider-stop-before-record");
+    let chat = "21000000-0000-4000-8000-000000000910";
+    seed_chat(&database.pool, chat).await;
+    configure_agent(
+        &database.pool,
+        CEO,
+        Provider::Cursor,
+        "provider-admission-ceo",
+    )
+    .await;
+    let admitted = admit(&database.pool, &actor, &host, chat, "stop-before-record")
+        .await
+        .unwrap();
+    let rows = run_rows(&database.pool, &admitted).await;
+    let claimed = execution::claim(
+        &database.pool,
+        &actor,
+        ORG,
+        &rows.run_id,
+        &rows.attempt_id,
+        &host.context,
+    )
+    .await
+    .unwrap();
+    let (principal, fence, _, _launch) = claimed.into_execution_parts();
+    let receipt = execution::advance_checkpoint(
+        &database.pool,
+        &principal,
+        &fence,
+        NativeChatProtocolPhase::NoThreadRequest,
+        0,
+        T::PrepareCursorSessionStart,
+    )
+    .await
+    .unwrap();
+    control::request_stop(
+        &database.pool,
+        &actor,
+        &StopRequest {
+            conversation_id: chat.into(),
+            generation_id: rows.generation_id.clone(),
+            control_action_id: unique_id("stop-before-record"),
+            expected_attempt_epoch: 1,
+            expected_control_version: 0,
+            requested_render_seq: 0,
+            requested_body_hash: format!("{:x}", Sha256::digest(b"")),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        execution::advance_checkpoint(
+            &database.pool,
+            &principal,
+            &fence,
+            receipt.snapshot().phase,
+            receipt.snapshot().revision,
+            T::RecordCursorSession {
+                session_id: "actual-provider-session".into()
+            }
+        )
+        .await,
+        Err(Error::Http(409, _))
+    ));
+    assert!(
+        execution::load_submission(&database.pool, &principal, &fence)
+            .await
+            .is_err()
+    );
+    let state: (bool, bool, Option<String>) = sqlx::query_as("SELECT r.native_admission_hold,g.native_admission_hold,s.native_session_id FROM heartbeat_runs r JOIN chat_generations g ON g.id=r.chat_generation_id JOIN native_segments s ON s.id=$2::uuid WHERE r.id=$1::uuid")
+        .bind(&rows.run_id).bind(&rows.segment_id).fetch_one(&database.pool).await.unwrap();
+    assert_eq!(
+        state,
+        (true, true, None),
+        "ambiguous session start stays held and no prompt is authorized"
+    );
+}
+
 #[derive(Clone, Copy)]
 enum Provider {
     Claude,

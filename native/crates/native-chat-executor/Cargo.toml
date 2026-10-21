@@ -21,6 +21,7 @@ sqlx = { version = "0.8", default-features = false, features = ["postgres", "run
 thiserror = "2.0"
 tokio = { version = "1.47", features = ["rt", "time"] }
 url = "2.5"
+uuid = { version = "1", default-features = false, features = ["v4"] }
 
 [dev-dependencies]
 sha2 = "0.10"

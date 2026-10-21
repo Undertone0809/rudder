@@ -21,9 +21,14 @@ const readline = require('readline');
 const sessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
 const lazy = process.env.RUDDER_TEST_PI_LAZY === '1';
 const suppressFlush = process.env.RUDDER_TEST_PI_SUPPRESS_FLUSH === '1';
+const eventsBeforeAck = process.env.RUDDER_TEST_PI_EVENTS_BEFORE_ACK === '1';
+const noAgentSettled = process.env.RUDDER_TEST_PI_NO_AGENT_SETTLED === '1';
+const delayedIdleReads = Number(process.env.RUDDER_TEST_PI_DELAY_IDLE_READS || '0');
 const sessionFile = path.join(sessionDir, lazy ? 'timestamp_synthetic-session.jsonl' : 'synthetic-session.jsonl');
 const cwd = process.cwd();
 let active = false;
+let ended = false;
+let settlementStateReads = 0;
 let nextTurn = 0;
 
 function header() {
@@ -37,8 +42,8 @@ function entries() {
   if (!fs.existsSync(sessionFile)) return [];
   return fs.readFileSync(sessionFile, 'utf8').trim().split('\n').filter(Boolean).slice(1);
 }
-function state() {
-  return {sessionId:'synthetic-session',sessionFile,isStreaming:active,isCompacting:false,
+function state(isStreaming = active) {
+  return {sessionId:'synthetic-session',sessionFile,isStreaming,isCompacting:false,
     steeringMode:'one-at-a-time',followUpMode:'one-at-a-time',pendingMessageCount:0,
     messageCount:entries().length};
 }
@@ -61,16 +66,25 @@ const rl = readline.createInterface({input:process.stdin,crlfDelay:Infinity});
 rl.on('line', raw => {
   const request = JSON.parse(raw);
   if (!lazy) ensureSession();
-  if (request.type === 'get_state') return send(request, true, state());
+  if (request.type === 'get_state') {
+    let isStreaming = active;
+    if (ended && settlementStateReads < delayedIdleReads) {
+      settlementStateReads += 1;
+      isStreaming = true;
+    }
+    return send(request, true, state(isStreaming));
+  }
   if (request.type === 'new_session' || request.type === 'switch_session') return send(request, true, state());
   if (request.type === 'prompt') {
     active = true;
-    send(request, true, {});
+    if (!eventsBeforeAck) send(request, true, {});
     process.stdout.write(JSON.stringify({type:'agent_start'}) + '\n');
     if (!suppressFlush) appendTurn(request.message);
     active = false;
+    ended = true;
     process.stdout.write(JSON.stringify({type:'agent_end'}) + '\n');
-    process.stdout.write(JSON.stringify({type:'agent_settled'}) + '\n');
+    if (!noAgentSettled) process.stdout.write(JSON.stringify({type:'agent_settled'}) + '\n');
+    if (eventsBeforeAck) send(request, true, {});
     return;
   }
   if (request.type === 'abort') return send(request, true, {});
@@ -97,6 +111,43 @@ fn synthetic_pi_terminal_without_native_file_cannot_mint_a_turn_receipt() {
 }
 
 fn synthetic_pi_execution(lazy: bool, missing_terminal_file: bool) {
+    synthetic_pi_execution_with_options(PiFixtureOptions {
+        lazy,
+        missing_terminal_file,
+        ..PiFixtureOptions::default()
+    });
+}
+
+#[derive(Default)]
+struct PiFixtureOptions {
+    lazy: bool,
+    missing_terminal_file: bool,
+    events_before_ack: bool,
+    no_agent_settled: bool,
+    delayed_idle_reads: usize,
+}
+
+#[test]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST and RUDDER_TEST_NODE_EXECUTABLE"]
+fn synthetic_pi_lifecycle_before_prompt_ack_is_retained() {
+    synthetic_pi_execution_with_options(PiFixtureOptions {
+        events_before_ack: true,
+        no_agent_settled: true,
+        ..PiFixtureOptions::default()
+    });
+}
+
+#[test]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST and RUDDER_TEST_NODE_EXECUTABLE"]
+fn synthetic_pi_polls_idle_state_after_agent_end_without_later_event() {
+    synthetic_pi_execution_with_options(PiFixtureOptions {
+        no_agent_settled: true,
+        delayed_idle_reads: 1,
+        ..PiFixtureOptions::default()
+    });
+}
+
+fn synthetic_pi_execution_with_options(options: PiFixtureOptions) {
     let process_host = required_path("RUDDER_TEST_PROCESS_HOST");
     let node = required_path("RUDDER_TEST_NODE_EXECUTABLE");
     let root = tempfile::tempdir().unwrap();
@@ -133,11 +184,23 @@ fn synthetic_pi_execution(lazy: bool, missing_terminal_file: bool) {
             owner_token: "pi-adapter-owner".into(),
             env: {
                 let mut env = BTreeMap::new();
-                if lazy {
+                if options.lazy {
                     env.insert("RUDDER_TEST_PI_LAZY".into(), "1".into());
                 }
-                if missing_terminal_file {
+                if options.missing_terminal_file {
                     env.insert("RUDDER_TEST_PI_SUPPRESS_FLUSH".into(), "1".into());
+                }
+                if options.events_before_ack {
+                    env.insert("RUDDER_TEST_PI_EVENTS_BEFORE_ACK".into(), "1".into());
+                }
+                if options.no_agent_settled {
+                    env.insert("RUDDER_TEST_PI_NO_AGENT_SETTLED".into(), "1".into());
+                }
+                if options.delayed_idle_reads > 0 {
+                    env.insert(
+                        "RUDDER_TEST_PI_DELAY_IDLE_READS".into(),
+                        options.delayed_idle_reads.to_string(),
+                    );
                 }
                 env
             },
@@ -154,7 +217,7 @@ fn synthetic_pi_execution(lazy: bool, missing_terminal_file: bool) {
     .unwrap();
     assert_eq!(execution.phase(), PiExecutionPhase::Spawned);
     assert_eq!(
-        if lazy {
+        if options.lazy {
             execution.new_session(Duration::from_secs(5)).unwrap()
         } else {
             execution.get_state(Duration::from_secs(5)).unwrap()
@@ -162,7 +225,7 @@ fn synthetic_pi_execution(lazy: bool, missing_terminal_file: bool) {
         PiExecutionPhase::SessionReady
     );
     let session_file = execution.state().unwrap().session_file().to_owned();
-    if lazy {
+    if options.lazy {
         assert!(!execution.state().unwrap().session_file_persisted());
         assert!(!session_file.exists());
         assert!(
@@ -178,23 +241,28 @@ fn synthetic_pi_execution(lazy: bool, missing_terminal_file: bool) {
             PiExecutionPhase::SessionReady
         );
     }
+    let submitted_phase = execution
+        .submit_input("hello", Duration::from_secs(5))
+        .unwrap();
     assert_eq!(
-        execution
-            .submit_input("hello", Duration::from_secs(5))
-            .unwrap(),
-        PiExecutionPhase::InputAccepted
+        submitted_phase,
+        if options.events_before_ack {
+            PiExecutionPhase::AgentEnded
+        } else {
+            PiExecutionPhase::InputAccepted
+        }
     );
     assert_eq!(
         execution
             .wait_until_settled(Duration::from_secs(5))
             .unwrap(),
-        if missing_terminal_file {
+        if options.missing_terminal_file {
             PiExecutionPhase::Unknown
         } else {
             PiExecutionPhase::Settled
         }
     );
-    if missing_terminal_file {
+    if options.missing_terminal_file {
         assert!(execution.take_turn_receipt(None, "hello").is_err());
         assert!(!session_file.exists());
     } else {
@@ -207,11 +275,16 @@ fn synthetic_pi_execution(lazy: bool, missing_terminal_file: bool) {
     );
     let observation = execution.into_observation();
     assert_eq!(observation.phase, PiExecutionPhase::Cleaned);
-    assert_eq!(observation.turn_receipt.is_some(), !missing_terminal_file);
+    assert_eq!(
+        observation.turn_receipt.is_some(),
+        !options.missing_terminal_file
+    );
     assert!(observation.cleanup_receipt.is_some());
     assert_eq!(
         observation.unknown_reason,
-        missing_terminal_file.then_some(PiUnknownReason::SessionPathUnavailable)
+        options
+            .missing_terminal_file
+            .then_some(PiUnknownReason::SessionPathUnavailable)
     );
 }
 
@@ -223,6 +296,26 @@ fn unknown_phase_is_not_terminal() {
         PiUnknownReason::AgentEndedWithoutSettlement,
         PiUnknownReason::AgentEndedWithoutSettlement
     );
+    for (reason, code) in [
+        (PiUnknownReason::CommandRejected, "pi_command_rejected"),
+        (PiUnknownReason::MalformedState, "pi_malformed_state"),
+        (
+            PiUnknownReason::SessionPathUnavailable,
+            "pi_session_path_unavailable",
+        ),
+        (
+            PiUnknownReason::AgentSettledBeforeAgentEnd,
+            "pi_agent_settled_before_agent_end",
+        ),
+        (
+            PiUnknownReason::AgentEndedWithoutSettlement,
+            "pi_agent_ended_without_settlement",
+        ),
+        (PiUnknownReason::ExtensionError, "pi_extension_error"),
+        (PiUnknownReason::CleanupNotProven, "pi_cleanup_not_proven"),
+    ] {
+        assert_eq!(reason.diagnostic_code(), code);
+    }
 }
 
 fn required_path(name: &str) -> PathBuf {

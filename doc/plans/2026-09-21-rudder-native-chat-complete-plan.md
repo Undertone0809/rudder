@@ -1327,8 +1327,30 @@ through authorized detail reconciliation; Native Chat does not create execution
 effects before its read-only workspace prerequisites pass. This is the public
 default-managed create path. Explicit external-instruction create remains rejected
 by the existing public cutover and is not newly enabled.
- These implementation checks still require exact-candidate real
+These implementation checks still require exact-candidate real
 first-turn, continuation and restart acceptance; they do not close the full plan.
+
+The `259fec332` real acceptance failed for Claude, Cursor, Pi and OpenCode;
+Codex/Hermes fresh and same-session continuation passed. The first three
+combined adapters attempted `load_submission` while still at `NoThreadRequest`,
+which correctly rejects prompt reads. Cursor/OpenCode now persist their real
+session-create response before `PrepareInput` and consume a fresh single-use
+submission permit. Cursor reserves its native JSON-RPC request ID before the
+write; OpenCode supplies a native client message ID and accepts only an assistant
+whose parent matches it. Claude stream-json creates its session with the first
+input, so its separate combined-effect marker commits the exact admitted source
+before that one write. It never stores a generated ID as an observed provider
+session. Restored pending checkpoints cannot mint another permit, and Stop
+winning between session response and persistence prevents prompt dispatch.
+
+Pi preserves prompt lifecycle events arriving before the preflight response and
+polls strict native state after `agent_end` until idle, rather than requiring a
+later event that the installed version does not promise. Synthetic owned-process
+regressions cover both orderings; a fresh real acceptance is still required.
+Unresolved execution audits contain only bounded static classifications under
+the exact live owner fence. Cleanup alone never proves provider completion or
+releases an ambiguous input. These fixes do not complete the four additional
+providers' governed Stop, interaction, Fork, full Reader or storage gates.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 

@@ -6,6 +6,7 @@
 mod checkpoint;
 mod claim;
 mod context;
+mod diagnostic;
 mod effect;
 mod finalization;
 pub(crate) mod hermes_progress;
@@ -20,7 +21,10 @@ pub use checkpoint::{
     current_checkpoint, current_stopping_checkpoint,
 };
 pub use claim::{ClaimedExecution, claim, claim_with_preflight};
-pub use effect::{AuthorizedEffect, EffectDispatch, authorize_effect};
+pub use diagnostic::record_execution_diagnostic;
+pub use effect::{
+    AuthorizedEffect, EffectDispatch, authorize_effect, prepare_claude_combined_input,
+};
 pub use finalization::{
     NativeProviderKind, NativeProviderStatus, NativeProviderTurnReceipt, finalize, finalize_failed,
     finalize_hermes, finalize_hermes_failed, finalize_hermes_prompt_error_stopped,
