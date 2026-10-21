@@ -85,13 +85,40 @@ impl MuxSender {
             return false;
         }
         let (ack_tx, ack_rx) = mpsc::channel();
-        if self.sender.try_send(WriterMessage::Finish(ack_tx)).is_err() {
-            self.closed.store(true, Ordering::Release);
-            return false;
+        let deadline = Instant::now() + WRITER_DRAIN_TIMEOUT;
+        let mut finish = WriterMessage::Finish(ack_tx);
+        loop {
+            if self.is_closed() {
+                return false;
+            }
+            match self.sender.try_send(finish) {
+                Ok(()) => break,
+                Err(TrySendError::Disconnected(_)) => {
+                    self.closed.store(true, Ordering::Release);
+                    return false;
+                }
+                Err(TrySendError::Full(returned)) => {
+                    finish = returned;
+                    if self.is_closed() {
+                        return false;
+                    }
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        self.closed.store(true, Ordering::Release);
+                        return false;
+                    }
+                    thread::sleep(remaining.min(MUX_SEND_RETRY_INTERVAL));
+                }
+            }
         }
-        ack_rx
-            .recv_timeout(WRITER_DRAIN_TIMEOUT)
-            .is_ok_and(|flushed| flushed)
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match ack_rx.recv_timeout(remaining) {
+            Ok(true) => true,
+            Ok(false) | Err(_) => {
+                self.closed.store(true, Ordering::Release);
+                false
+            }
+        }
     }
 }
 
@@ -306,6 +333,71 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() >= MUX_SEND_TIMEOUT);
+        assert!(sender.is_closed());
+    }
+
+    #[test]
+    fn finish_waits_for_full_queue_space_and_follows_terminal_frame() {
+        let (sender, receiver) = sender_with_queue();
+        let mut expected = Vec::with_capacity(MUX_QUEUE_FRAMES);
+        for index in 0..MUX_QUEUE_FRAMES {
+            let frame = if index + 1 == MUX_QUEUE_FRAMES {
+                b"terminal".to_vec()
+            } else {
+                format!("output-{index}").into_bytes()
+            };
+            expected.push(frame.clone());
+            sender.send_frame(frame).unwrap();
+        }
+
+        let (start_writer_tx, start_writer_rx) = mpsc::channel();
+        let writer_closed = Arc::clone(&sender.closed);
+        let writer = thread::spawn(move || {
+            start_writer_rx.recv().unwrap();
+            let mut frames = Vec::with_capacity(MUX_QUEUE_FRAMES);
+            for _ in 0..MUX_QUEUE_FRAMES {
+                match receiver.recv().unwrap() {
+                    WriterMessage::Frame(frame) => {
+                        frames.push(frame);
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    WriterMessage::Finish(_) => panic!("finish overtook a queued frame"),
+                }
+            }
+            match receiver.recv().unwrap() {
+                WriterMessage::Finish(ack) => {
+                    writer_closed.store(true, Ordering::Release);
+                    ack.send(true).unwrap();
+                    frames
+                }
+                WriterMessage::Frame(_) => panic!("unexpected frame after terminal output"),
+            }
+        });
+
+        let finish_sender = sender.clone();
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let finisher = thread::spawn(move || {
+            attempt_tx.send(()).unwrap();
+            finish_sender.finish()
+        });
+        attempt_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(10));
+        start_writer_tx.send(()).unwrap();
+
+        assert!(finisher.join().unwrap());
+        assert_eq!(writer.join().unwrap(), expected);
+    }
+
+    #[test]
+    fn finish_stalled_on_a_full_queue_fails_closed_at_its_deadline() {
+        let (sender, _receiver) = sender_with_queue();
+        for index in 0..MUX_QUEUE_FRAMES {
+            sender.send_frame(vec![index as u8]).unwrap();
+        }
+        let started = Instant::now();
+
+        assert!(!sender.finish());
+        assert!(started.elapsed() >= WRITER_DRAIN_TIMEOUT);
         assert!(sender.is_closed());
     }
 }
