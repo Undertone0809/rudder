@@ -8,10 +8,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MUX_QUEUE_FRAMES: usize = 32;
 const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
+const MUX_SEND_TIMEOUT: Duration = Duration::from_secs(2);
+const MUX_SEND_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 
 enum WriterMessage {
     Frame(Vec<u8>),
@@ -36,19 +38,35 @@ impl MuxSender {
     }
 
     fn send_frame(&self, frame: Vec<u8>) -> io::Result<()> {
-        if self.closed.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "stdio mux is closed",
-            ));
-        }
-        match self.sender.try_send(WriterMessage::Frame(frame)) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => {
-                self.fail(io::ErrorKind::WouldBlock, "stdio mux queue is full")
+        let deadline = Instant::now() + MUX_SEND_TIMEOUT;
+        let mut message = WriterMessage::Frame(frame);
+        loop {
+            if self.is_closed() {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "stdio mux is closed",
+                ));
             }
-            Err(TrySendError::Disconnected(_)) => {
-                self.fail(io::ErrorKind::BrokenPipe, "stdio mux writer is closed")
+            match self.sender.try_send(message) {
+                Ok(()) => return Ok(()),
+                Err(TrySendError::Disconnected(_)) => {
+                    return self.fail(io::ErrorKind::BrokenPipe, "stdio mux writer is closed");
+                }
+                Err(TrySendError::Full(returned)) => {
+                    message = returned;
+                    if self.is_closed() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "stdio mux is closed",
+                        ));
+                    }
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return self
+                            .fail(io::ErrorKind::TimedOut, "stdio mux queue deadline expired");
+                    }
+                    thread::sleep(remaining.min(MUX_SEND_RETRY_INTERVAL));
+                }
             }
         }
     }
@@ -203,6 +221,12 @@ pub(super) fn run() -> i32 {
 mod tests {
     use super::*;
 
+    fn sender_with_queue() -> (MuxSender, mpsc::Receiver<WriterMessage>) {
+        let (sender, receiver) = mpsc::sync_channel(MUX_QUEUE_FRAMES);
+        let closed = Arc::new(AtomicBool::new(false));
+        (MuxSender { sender, closed }, receiver)
+    }
+
     #[test]
     fn hex_encoding_preserves_bytes_in_lowercase() {
         assert_eq!(encode_hex(&[0x00, 0x09, 0xa0, 0xff]), "0009a0ff");
@@ -219,5 +243,69 @@ mod tests {
         }))
         .unwrap();
         assert!(frame.len() < MUX_MAX_FRAME_BYTES);
+    }
+
+    #[test]
+    fn sender_waits_for_a_slow_writer_and_keeps_frame_order() {
+        let (sender, receiver) = sender_with_queue();
+        let count = MUX_QUEUE_FRAMES * 3 + 7;
+        let writer = thread::spawn(move || {
+            let mut received = Vec::with_capacity(count);
+            for _ in 0..count {
+                match receiver.recv().unwrap() {
+                    WriterMessage::Frame(frame) => {
+                        received.push(u32::from_be_bytes(frame.try_into().unwrap()));
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    WriterMessage::Finish(_) => panic!("unexpected finish frame"),
+                }
+            }
+            received
+        });
+
+        for index in 0..count {
+            sender
+                .send_frame((index as u32).to_be_bytes().to_vec())
+                .unwrap();
+        }
+
+        let received = writer.join().unwrap();
+        assert_eq!(received, (0..count as u32).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn closing_mux_interrupts_a_producer_waiting_for_queue_space() {
+        let (sender, _receiver) = sender_with_queue();
+        for index in 0..MUX_QUEUE_FRAMES {
+            sender.send_frame(vec![index as u8]).unwrap();
+        }
+        let blocked_sender = sender.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let producer = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            blocked_sender.send_frame(vec![255])
+        });
+        started_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(10));
+        sender.closed.store(true, Ordering::Release);
+
+        assert_eq!(
+            producer.join().unwrap().unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    }
+
+    #[test]
+    fn stalled_mux_writer_expires_one_bounded_send_deadline() {
+        let (sender, _receiver) = sender_with_queue();
+        for index in 0..MUX_QUEUE_FRAMES {
+            sender.send_frame(vec![index as u8]).unwrap();
+        }
+        let started = Instant::now();
+        let error = sender.send_frame(vec![255]).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() >= MUX_SEND_TIMEOUT);
+        assert!(sender.is_closed());
     }
 }

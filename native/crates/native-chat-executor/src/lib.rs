@@ -296,6 +296,31 @@ impl fmt::Debug for ExecutionFailure {
 }
 
 impl ExecutionFailure {
+    /// Bounded diagnostic classification. Never expose provider payloads,
+    /// environment values, filesystem paths or durable owner capabilities.
+    pub fn diagnostic_code(&self) -> &'static str {
+        match &self.0.error {
+            Error::Transport(TransportError::OutputOverflow) => "codex_output_queue_full",
+            Error::Transport(TransportError::InvalidTurnReceipt) => "codex_invalid_turn_receipt",
+            Error::Transport(_) => "codex_transport",
+            Error::Persistence(runtime_bindings::Error::Http(409, _)) => "persistence_conflict",
+            Error::Persistence(_) => "persistence",
+            Error::WorkerInterrupted => "worker_interrupted",
+            Error::HermesTransport(_) => "hermes_transport",
+            Error::PiTransport(_) => "pi_transport",
+            Error::ClaudeTransport(_) => "claude_transport",
+            Error::CursorTransport(_) => "cursor_transport",
+            Error::OpenCodeExecution(_) => "opencode_execution",
+            Error::Deadline => "deadline",
+            Error::Cancelled => "cancelled",
+            Error::UnsupportedConfiguration => "unsupported_configuration",
+            Error::InvalidProviderObservation => "invalid_provider_observation",
+            Error::ApprovalRequired => "approval_required",
+            Error::ProviderRejected => "provider_rejected",
+            Error::ProcessExited => "process_exited",
+        }
+    }
+
     pub fn process_disposition(&self) -> ProcessDisposition {
         self.0.process
     }

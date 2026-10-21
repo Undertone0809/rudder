@@ -68,6 +68,15 @@ messages still require an explicit Retry. Reattachment must never allocate a new
 mutation after the original identity settles. Side Chat recovery UI is outside
 this screenshot correction's scope.
 
+Codex acceptance exposed a process-host output relay failure before a later Stop
+request reached the executor. The process-host mux and ownership transport keep
+their existing bounded queue capacities, but brief consumer backlogs must apply
+backpressure instead of immediately closing an otherwise valid stream. Queue
+waits remain cancellable and have a local deadline so a permanently stalled
+consumer cannot prevent owned-process cleanup. A relay error remains unresolved;
+it must never be converted into provider completion or release an ambiguous
+execution hold.
+
 Before merge, run the unchanged Agent core public regression suite plus external
 root no-traversal coverage. Freeze the candidate, then independently exercise
 real locally configured Codex and Hermes through Rust public ingress: fresh

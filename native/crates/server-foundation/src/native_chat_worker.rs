@@ -621,6 +621,12 @@ fn run(
             return finish_opencode_observation(handle, &pool, observation);
         }
         Err(failure) => {
+            tracing::warn!(
+                run_id = %key.run_id,
+                reason = failure.diagnostic_code(),
+                process_quiescent = failure.process_quiescent(),
+                "Native Chat execution did not produce a terminal receipt"
+            );
             let Some(execution_actor) = failure.execution_principal() else {
                 return Completion {
                     status: Status::Unresolved(UnresolvedReason::ExecutionUnresolved),

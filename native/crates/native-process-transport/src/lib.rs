@@ -26,6 +26,8 @@ use std::time::Duration;
 
 const EVENT_CAPACITY: usize = 128;
 const COMMAND_CAPACITY: usize = 16;
+const EVENT_SEND_TIMEOUT: Duration = Duration::from_secs(2);
+const EVENT_SEND_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum HostError {
@@ -68,20 +70,50 @@ struct EventQueue {
 
 impl EventQueue {
     fn emit(&self, event: InputEvent) -> io::Result<()> {
-        if !self.open.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "host consumer closed",
-            ));
-        }
-        self.sender.try_send(event).map_err(|error| {
-            if matches!(error, mpsc::TrySendError::Full(_)) {
-                self.overflow.store(true, Ordering::Release);
+        let deadline = std::time::Instant::now() + EVENT_SEND_TIMEOUT;
+        let mut event = event;
+        loop {
+            if !self.open.load(Ordering::Acquire) {
+                return Err(consumer_closed());
             }
-            self.open.store(false, Ordering::Release);
-            io::Error::new(io::ErrorKind::BrokenPipe, "host output queue unavailable")
-        })
+            match self.sender.try_send(event) {
+                Ok(()) => return Ok(()),
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    self.open.store(false, Ordering::Release);
+                    return Err(consumer_closed());
+                }
+                Err(mpsc::TrySendError::Full(returned)) => {
+                    event = returned;
+                    if !self.open.load(Ordering::Acquire) {
+                        return Err(consumer_closed());
+                    }
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        // Only the producer that closes an open queue owns the
+                        // deadline overflow classification. An owner close
+                        // that raced with the deadline remains ordinary close.
+                        if self
+                            .open
+                            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+                            .is_ok()
+                        {
+                            self.overflow.store(true, Ordering::Release);
+                            return Err(io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "host output queue deadline expired",
+                            ));
+                        }
+                        return Err(consumer_closed());
+                    }
+                    thread::sleep(remaining.min(EVENT_SEND_RETRY_INTERVAL));
+                }
+            }
+        }
     }
+}
+
+fn consumer_closed() -> io::Error {
+    io::Error::new(io::ErrorKind::BrokenPipe, "host consumer closed")
 }
 
 struct HostEvents(Arc<EventQueue>);
@@ -316,6 +348,82 @@ mod tests {
             attempt_id: "attempt-7".into(),
             owner_token: "owner-secret".into(),
         }
+    }
+
+    fn event_queue() -> (Arc<EventQueue>, mpsc::Receiver<InputEvent>) {
+        let (sender, receiver) = mpsc::sync_channel(EVENT_CAPACITY);
+        (
+            Arc::new(EventQueue {
+                sender,
+                open: AtomicBool::new(true),
+                overflow: AtomicBool::new(false),
+            }),
+            receiver,
+        )
+    }
+
+    fn numbered_event(index: usize) -> InputEvent {
+        InputEvent::Lifecycle(serde_json::json!({"index": index}))
+    }
+
+    #[test]
+    fn event_queue_waits_for_a_slow_consumer_and_preserves_burst_order() {
+        let (queue, receiver) = event_queue();
+        let count = EVENT_CAPACITY * 2 + 17;
+        let producer_queue = Arc::clone(&queue);
+        let producer = thread::spawn(move || {
+            for index in 0..count {
+                producer_queue.emit(numbered_event(index)).unwrap();
+            }
+        });
+
+        for expected in 0..count {
+            match receiver.recv_timeout(Duration::from_secs(2)).unwrap() {
+                InputEvent::Lifecycle(value) => assert_eq!(value["index"], expected),
+                _ => panic!("unexpected event in ordered burst"),
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        producer.join().unwrap();
+        assert!(!queue.overflow.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn event_queue_close_interrupts_a_blocked_producer_without_overflow() {
+        let (queue, _receiver) = event_queue();
+        for index in 0..EVENT_CAPACITY {
+            queue.emit(numbered_event(index)).unwrap();
+        }
+        let producer_queue = Arc::clone(&queue);
+        let (started_tx, started_rx) = mpsc::channel();
+        let producer = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            producer_queue.emit(numbered_event(EVENT_CAPACITY))
+        });
+        started_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(10));
+        queue.open.store(false, Ordering::Release);
+
+        assert_eq!(
+            producer.join().unwrap().unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(!queue.overflow.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn event_queue_stalled_consumer_expires_one_bounded_deadline() {
+        let (queue, _receiver) = event_queue();
+        for index in 0..EVENT_CAPACITY {
+            queue.emit(numbered_event(index)).unwrap();
+        }
+        let started = std::time::Instant::now();
+        let error = queue.emit(numbered_event(EVENT_CAPACITY)).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() >= EVENT_SEND_TIMEOUT);
+        assert!(queue.overflow.load(Ordering::Acquire));
+        assert!(!queue.open.load(Ordering::Acquire));
     }
 
     #[test]
