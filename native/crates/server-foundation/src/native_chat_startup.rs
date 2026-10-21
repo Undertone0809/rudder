@@ -56,6 +56,12 @@ pub(crate) fn configure(
     }
     let installation: Installation =
         serde_json::from_str(&raw).map_err(|_| invalid_at("invalid installation shape"))?;
+    // The transitional launcher also supplies its original workspace setting.
+    // Validate that fact before using its resolved path: path.resolve would
+    // otherwise erase a relative root or ParentDir before Rust can reject it.
+    let workspace_input = crate::optional_env("RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME")?;
+    validate_workspace_input(workspace_input.as_deref(), &installation.operator_home)?;
+    validate_workspace_shape(&installation.workspace_home)?;
     if installation.opencode_server_url.is_none() && installation.opencode_bearer_token.is_some() {
         return Err(invalid_at(
             "OpenCode bearer token requires an OpenCode Server URL",
@@ -279,26 +285,49 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     Ok(canonical)
 }
 
-fn workspace_directory(path: &Path) -> Result<PathBuf, ConfigError> {
+fn validate_workspace_shape(path: &Path) -> Result<(), ConfigError> {
     if !path.is_absolute()
         || path
             .components()
             .any(|component| component == std::path::Component::ParentDir)
     {
-        return Err(invalid_at("invalid native runtime installation"));
+        return Err(invalid_at(
+            "workspace root must be absolute without parent traversal",
+        ));
     }
+    Ok(())
+}
+
+fn validate_workspace_input(input: Option<&str>, operator_home: &Path) -> Result<(), ConfigError> {
+    let Some(input) = input.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    // Preserve the launcher's documented home-prefix expansion. Everything
+    // else must already be absolute; never resolve relative input against cwd.
+    let expanded = if input == "~" {
+        operator_home.to_owned()
+    } else if let Some(relative) = input.strip_prefix("~/") {
+        operator_home.join(relative)
+    } else {
+        PathBuf::from(input)
+    };
+    validate_workspace_shape(&expanded)
+}
+
+fn workspace_directory(path: &Path) -> Result<PathBuf, ConfigError> {
+    validate_workspace_shape(path)?;
+    let invalid_workspace = || invalid_at("workspace root must resolve to a directory");
     match std::fs::symlink_metadata(path) {
         // Keep existing configured aliases compatible. A dangling alias or a
         // file still fails canonical_directory without creating anything.
-        Ok(_) => canonical_directory(path),
+        Ok(_) => canonical_directory(path).map_err(|_| invalid_workspace()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             // This is a trusted launcher installation fact, never a request
             // path. Fresh instances have no organizations root until first use.
-            std::fs::create_dir_all(path)
-                .map_err(|_| invalid_at("invalid native runtime installation"))?;
-            canonical_directory(path)
+            std::fs::create_dir_all(path).map_err(|_| invalid_workspace())?;
+            canonical_directory(path).map_err(|_| invalid_workspace())
         }
-        Err(_) => Err(invalid_at("invalid native runtime installation")),
+        Err(_) => Err(invalid_workspace()),
     }
 }
 
@@ -329,6 +358,24 @@ fn loopback_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    #[test]
+    fn original_launcher_workspace_input_cannot_hide_invalid_path_shape() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        assert!(super::validate_workspace_input(None, &root).is_ok());
+        assert!(super::validate_workspace_input(Some("~/organizations"), &root).is_ok());
+        assert!(super::validate_workspace_input(Some("~"), &root).is_ok());
+        assert!(super::validate_workspace_input(Some(root.to_str().unwrap()), &root).is_ok());
+        for input in ["relative/organizations", "~/existing/../organizations"] {
+            let error = super::validate_workspace_input(Some(input), &root).unwrap_err();
+            assert!(error.to_string().contains("workspace root"));
+        }
+        let traversal = format!("{}/existing/../organizations", root.display());
+        std::fs::create_dir(root.join("existing")).unwrap();
+        std::fs::create_dir(root.join("organizations")).unwrap();
+        assert!(super::validate_workspace_input(Some(&traversal), &root).is_err());
+    }
 
     #[test]
     fn first_run_workspace_root_is_created_and_reused() {

@@ -3,7 +3,7 @@ import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { constants as fsConstants, createReadStream } from "node:fs";
 import { access, chmod, cp, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
@@ -1035,7 +1035,17 @@ async function createPackagedIdentitySmokeExecutable(scenarioRoot) {
     ? path.resolve(sourceExecutable, "..", "..", "..")
     : path.dirname(sourceExecutable);
   const copiedRoot = path.join(scenarioRoot, "packaged-identity-smoke");
-  await cp(sourceRoot, copiedRoot, { recursive: true, dereference: true });
+  // Node's clone flag does not use macOS clonefile. Reuse the update fixture's
+  // independently writable APFS clone copy instead of duplicating the app.
+  if (process.platform === "darwin") {
+    await clonePackagedAppForUpdateSmoke(sourceRoot, copiedRoot);
+  } else {
+    await cp(sourceRoot, copiedRoot, {
+      recursive: true,
+      dereference: true,
+      mode: fsConstants.COPYFILE_FICLONE,
+    });
+  }
   const resourcesDir = process.platform === "darwin"
     ? path.join(copiedRoot, "Contents", "Resources")
     : path.join(copiedRoot, "resources");
