@@ -33,6 +33,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { HttpError } from "../errors.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
+import { issueRoutes } from "../routes/issues.js";
 import { messengerRoutes } from "../routes/messenger.js";
 import { chatService } from "../services/chats.js";
 import { subscribeCompanyLiveEvents } from "../services/live-events.js";
@@ -138,6 +139,7 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
     app.use("/api", messengerRoutes(db, selectedBridge));
+    app.use("/api", issueRoutes(db, {} as any, selectedBridge));
     app.use(errorHandler);
     const result = app.listen(0, "127.0.0.1");
     await once(result, "listening");
@@ -806,30 +808,55 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     expect(await snapshot()).toEqual(baseline);
   });
 
-  it("owns Issue follow and unfollow mutations in Rust with activity/outbox parity", async () => {
-    const actor = { type: "board" as const, source: "session" as const, userId };
+  it("routes public Issue follow mutations through Rust with organization and repeat-effect parity", async () => {
     await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
-    await db.execute(sql`DELETE FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action IN ('issue.followed','issue.unfollowed')`);
+    await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${foreignOrgId}::uuid AND issue_id=${foreignIssueId}::uuid AND user_id=${userId}`);
     await db.execute(sql`DELETE FROM organization_mutation_outbox`);
+    await db.execute(sql`DELETE FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action IN ('issue.followed','issue.unfollowed')`);
+    await db.execute(sql`DELETE FROM activity_log WHERE org_id=${foreignOrgId}::uuid AND entity_id=${foreignIssueId} AND action IN ('issue.followed','issue.unfollowed')`);
 
-    const followed = await bridge!.messengerState!(actor, orgId, { operation: "issueFollow", issueId: followedIssueId });
-    expect(followed.status).toBe(201);
-    expect(JSON.parse(followed.body.toString())).toMatchObject({ orgId, issueId: followedIssueId, userId });
-    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(1);
-    expect((await db.execute(sql`SELECT action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.followed'`)).length).toBe(1);
+    const foreign = await http("post", `/api/issues/${foreignIssueId}/follow`);
+    expect(foreign.status).toBe(403);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${foreignOrgId}::uuid AND issue_id=${foreignIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${foreignOrgId}::uuid AND entity_id=${foreignIssueId} AND action IN ('issue.followed','issue.unfollowed')`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(0);
+
+    const firstFollow = await http("post", `/api/issues/${followedIssueId}/follow`);
+    expect(firstFollow.status).toBe(201);
+    expect(firstFollow.body).toMatchObject({ orgId, issueId: followedIssueId, userId });
+    const firstRelation = await db.execute(sql`SELECT id FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
+    expect(firstRelation).toHaveLength(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.followed'`))[0].count).toBe(1);
     expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(1);
 
-    const unfollowed = await bridge!.messengerState!(actor, orgId, { operation: "issueUnfollow", issueId: followedIssueId });
-    expect(unfollowed.status).toBe(200);
-    expect(JSON.parse(unfollowed.body.toString())).toEqual({ ok: true });
-    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
-    expect((await db.execute(sql`SELECT action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.unfollowed'`)).length).toBe(1);
+    const repeatedFollow = await http("post", `/api/issues/${followedIssueId}/follow`);
+    expect(repeatedFollow.status).toBe(201);
+    expect(repeatedFollow.body).toMatchObject({ orgId, issueId: followedIssueId, userId, id: firstFollow.body.id });
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.followed'`))[0].count).toBe(2);
     expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(2);
+
+    const unfollowed = await http("delete", `/api/issues/${followedIssueId}/follow`);
+    expect(unfollowed.status).toBe(200);
+    expect(unfollowed.body).toEqual({ ok: true });
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.unfollowed'`))[0].count).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(3);
+
+    const repeatedUnfollow = await http("delete", `/api/issues/${followedIssueId}/follow`);
+    expect(repeatedUnfollow.status).toBe(200);
+    expect(repeatedUnfollow.body).toEqual({ ok: true });
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.unfollowed'`))[0].count).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(3);
   }, 30_000);
 
   it("keeps Node healthy and fails every migrated endpoint when the actual native binary cannot start", async () => {
     const unavailable = createRustFoundationBridge({ databaseUrl: connectionString, binaryPath: path.join(home, "foundation-does-not-exist"), mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off" });
     const failingServer = await startApp(unavailable);
+    await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
+    await db.insert(issueFollows).values({ orgId, issueId: followedIssueId, userId, ...fixed });
+    const followBefore = await db.execute(sql`SELECT id FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
     const before = await snapshot();
     try {
       expect((await request(failingServer).get("/api/health")).body).toEqual({ status: "ok" });
@@ -838,11 +865,14 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
         ["patch", `/saved-views/${viewIds[0]}`, { title: "must not write" }], ["delete", `/saved-views/${viewIds[0]}`], ["patch", "/saved-views/reorder", { ids: [viewIds[0]] }],
         ["post", "/groups", { name: "must not write" }], ["patch", `/groups/${groupId}`, { name: "must not write" }], ["delete", `/groups/${groupId}`], ["post", `/groups/${groupId}/separate`],
         ["delete", `/groups/entries/${encodeURIComponent(`saved-view:${viewIds[0]}`)}`], ["post", "/threads/issues/user-state", { pinned: true }],
+        ["post", `/api/issues/${followedIssueId}/follow`], ["delete", `/api/issues/${followedIssueId}/follow`],
       ] as [Method, string, unknown?][]) {
         const response = await http(method, suffix, body, token, failingServer);
         expect(response.status, `${method} ${suffix}`).toBe(503);
       }
       expect(await snapshot()).toEqual(before);
+      expect(await db.execute(sql`SELECT id FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`)).toEqual(followBefore);
+      expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(0);
       expect((await request(failingServer).get("/api/health")).status).toBe(200);
     } finally { await closeServer(failingServer); await unavailable.close(); }
   });
