@@ -1054,6 +1054,63 @@ fn finish_opencode_observation(
     )
 }
 
+fn finalization_error_code(error: &rudder_d1_persistence::runtime_bindings::Error) -> &'static str {
+    use rudder_d1_persistence::runtime_bindings::Error;
+    match error {
+        Error::Http(401 | 403, _) => "native_finalize_authorization",
+        Error::Http(404, _) => "native_finalize_missing_scope",
+        Error::Http(409, message) => {
+            // Classify only into a closed vocabulary. Never persist the
+            // message, which may include private provider or owner details.
+            let message = message.to_ascii_lowercase();
+            if message.contains("lease") {
+                "native_finalize_lease_conflict"
+            } else if message.contains("segment") {
+                "native_finalize_segment_conflict"
+            } else if message.contains("binding") {
+                "native_finalize_binding_conflict"
+            } else if message.contains("checkpoint") {
+                "native_finalize_checkpoint_conflict"
+            } else if message.contains("cleanup") {
+                "native_finalize_cleanup_conflict"
+            } else if message.contains("provider") || message.contains("receipt") {
+                "native_finalize_provider_conflict"
+            } else if message.contains("owner") || message.contains("epoch") {
+                "native_finalize_owner_conflict"
+            } else {
+                "native_finalize_conflict"
+            }
+        }
+        Error::Http(_, _) => "native_finalize_rejected",
+        Error::Database(sqlx::Error::Database(error)) => match error.code().as_deref() {
+            Some("22P02") => "native_finalize_database_identity",
+            Some("23514") => "native_finalize_database_constraint",
+            Some("23503") => "native_finalize_database_reference",
+            Some("42501") => "native_finalize_database_permission",
+            Some("40001" | "40P01") => "native_finalize_database_contention",
+            _ => "native_finalize_database",
+        },
+        Error::Database(sqlx::Error::PoolTimedOut) => "native_finalize_database_timeout",
+        Error::Database(_) => "native_finalize_database",
+    }
+}
+
+async fn record_finalization_failure(
+    pool: &PgPool,
+    actor: &rudder_d1_persistence::native_chat::NativeChatExecutionPrincipal,
+    fence: &execution::ExecutionFence,
+    code: &'static str,
+) {
+    // The finalizer and this evidence write each reauthorize the same fence.
+    // A diagnostic must neither release an ambiguous input nor extend the
+    // finalization attempt indefinitely when its database is unavailable.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(1),
+        execution::record_execution_diagnostic(pool, actor, fence, code, true),
+    )
+    .await;
+}
+
 #[allow(clippy::too_many_arguments)]
 fn finalize_native_observation(
     handle: &tokio::runtime::Handle,
@@ -1101,7 +1158,26 @@ fn finalize_native_observation(
         .await
         {
             Ok(Ok(_)) => Status::FinalizationCommitted,
-            _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+            Ok(Err(error)) => {
+                record_finalization_failure(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    finalization_error_code(&error),
+                )
+                .await;
+                Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+            }
+            Err(_) => {
+                record_finalization_failure(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    "native_finalize_timeout",
+                )
+                .await;
+                Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+            }
         }
     });
     Completion {
@@ -1200,7 +1276,24 @@ fn finish_pi_observation(
     Completion {
         status: match result {
             Ok(Ok(_)) => Status::FinalizationCommitted,
-            _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+            Ok(Err(error)) => {
+                handle.block_on(record_finalization_failure(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    finalization_error_code(&error),
+                ));
+                Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+            }
+            Err(_) => {
+                handle.block_on(record_finalization_failure(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    "native_finalize_timeout",
+                ));
+                Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+            }
         },
         quiescent: true,
     }

@@ -37,5 +37,8 @@ mod claude_stop;
 #[path = "workflow/pi_stop.rs"]
 mod pi_stop;
 
+#[path = "workflow/cursor_resume.rs"]
+mod cursor_resume;
+
 #[path = "workflow/native_provider_stop.rs"]
 mod native_provider_stop;

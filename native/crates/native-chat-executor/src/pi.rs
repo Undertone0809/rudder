@@ -184,18 +184,18 @@ pub(super) fn run_claimed(
             ));
         }
     };
-    let mut execution = match PiExecution::launch(
+    let mut execution = match PiExecution::launch_with_cleanup(
         launch,
         permit,
         remaining_timeout(deadline, RPC_TIMEOUT).unwrap_or_default(),
     ) {
         Ok(execution) => execution,
-        Err(error) => {
+        Err(failure) => {
             return Err(ExecutionFailure::after_claim_pi(
-                Error::PiTransport(error),
+                Error::PiTransport(failure.error),
                 execution_principal,
                 fence,
-                None,
+                failure.cleanup_receipt,
             ));
         }
     };
@@ -1074,22 +1074,38 @@ pub enum PiAdapterError {
     InvalidSessionPath,
 }
 
+/// Launch failures can occur after the process host has already emitted its
+/// correlated terminal receipt. Keep that opaque cleanup evidence attached to
+/// the original launch error so the D1 worker can apply its normal fenced
+/// pre-submission Stop path without inferring provider input acceptance.
+struct PiLaunchFailure {
+    error: PiAdapterError,
+    cleanup_receipt: Option<PiCleanupReceipt>,
+}
+
+impl PiLaunchFailure {
+    fn new(error: PiAdapterError, cleanup_receipt: Option<PiCleanupReceipt>) -> Self {
+        Self {
+            error,
+            cleanup_receipt,
+        }
+    }
+}
+
+impl std::fmt::Debug for PiLaunchFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PiLaunchFailure")
+            .field("diagnostic_code", &self.error.diagnostic_code())
+            .field("has_cleanup_receipt", &self.cleanup_receipt.is_some())
+            .finish()
+    }
+}
+
 impl PiAdapterError {
     pub(crate) fn diagnostic_code(&self) -> &'static str {
         match self {
-            Self::Transport(error) => match error {
-                PiTransportError::InvalidLaunch => "pi_invalid_launch",
-                PiTransportError::Closed => "pi_transport_closed",
-                PiTransportError::Busy => "pi_transport_busy",
-                PiTransportError::MismatchedResponse => "pi_mismatched_response",
-                PiTransportError::Rejected => "pi_transport_rejected",
-                PiTransportError::InvalidMessage => "pi_invalid_message",
-                PiTransportError::UnsupportedOutput => "pi_unsupported_output",
-                PiTransportError::OutputOverflow => "pi_output_overflow",
-                PiTransportError::WriteIndeterminate => "pi_write_indeterminate",
-                PiTransportError::ProcessExited => "pi_process_exited",
-                PiTransportError::Timeout => "pi_transport_timeout",
-            },
+            Self::Transport(error) => error.diagnostic_code(),
             Self::SessionTree(_) => "pi_session_tree",
             Self::CommandRejected { .. } => "pi_command_rejected",
             Self::Deadline => "pi_deadline",
@@ -1123,9 +1139,23 @@ impl PiExecution {
         permit: ConnectionLaunchPermit,
         timeout: Duration,
     ) -> Result<Self, PiAdapterError> {
-        let session_dir = canonical_session_dir(&launch.session_dir)?;
-        let mut transport = PiRpcTransport::launch(launch, permit)?;
-        transport.wait_spawned(timeout)?;
+        Self::launch_with_cleanup(launch, permit, timeout).map_err(|failure| failure.error)
+    }
+
+    fn launch_with_cleanup(
+        launch: ProcessLaunch,
+        permit: ConnectionLaunchPermit,
+        timeout: Duration,
+    ) -> Result<Self, PiLaunchFailure> {
+        let session_dir = canonical_session_dir(&launch.session_dir)
+            .map_err(|error| PiLaunchFailure::new(error, None))?;
+        let mut transport = PiRpcTransport::launch(launch, permit)
+            .map_err(PiAdapterError::from)
+            .map_err(|error| PiLaunchFailure::new(error, None))?;
+        if let Err(error) = transport.wait_spawned(timeout) {
+            let cleanup_receipt = transport.take_cleanup_receipt();
+            return Err(PiLaunchFailure::new(error.into(), cleanup_receipt));
+        }
         Ok(Self {
             transport,
             session_dir,

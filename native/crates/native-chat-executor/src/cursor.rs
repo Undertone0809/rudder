@@ -12,7 +12,7 @@ use rudder_cursor_acp_adapter::{
     AuthenticateParams, CursorAcpCommand, CursorAcpHome, CursorAcpMessage, CursorAcpProcessLaunch,
     CursorAcpSession, CursorAcpTransport, CursorAcpTransportError, CursorManagedInstructionRule,
     InitializeParams, RequestId, SessionId, SessionLoadParams, SessionNewParams,
-    SessionPromptParams,
+    SessionPromptParams, SessionSetModeParams,
 };
 use rudder_d1_persistence::native_chat::{
     config::{CursorLocalConfig, ResolvedCodexConfig},
@@ -299,43 +299,43 @@ fn run_turn(
         remaining(deadline, Duration::from_secs(10)),
     )?;
 
-    let existing_session = authority.existing_session().map(str::to_owned);
-    let session_command = if let Some(value) = existing_session.as_deref() {
-        let session = SessionId::new(value).map_err(|_| CursorExecutionError::InvalidSession)?;
-        CursorAcpCommand::SessionLoad {
-            params: {
-                let mut params = SessionLoadParams::new(session, path_string(&config.cwd)?)
-                    .map_err(|_| CursorExecutionError::InvalidConfiguration)?;
-                params.mode = local.mode.clone();
-                params
-            },
-        }
-    } else {
-        CursorAcpCommand::SessionNew {
-            params: {
-                let mut params = SessionNewParams::new(path_string(&config.cwd)?)
-                    .map_err(|_| CursorExecutionError::InvalidConfiguration)?;
-                params.mode = local.mode.clone();
-                params
-            },
-        }
-    };
-    let session_response = if existing_session.is_some() {
-        request_and_wait(
+    let session = if let Some(value) = authority.existing_session() {
+        let expected = SessionId::new(value).map_err(|_| CursorExecutionError::InvalidSession)?;
+        let params = SessionLoadParams::new(expected.clone(), path_string(&config.cwd)?)
+            .map_err(|_| CursorExecutionError::InvalidConfiguration)?;
+        let load_response = request_and_wait(
             transport,
-            session_command,
+            CursorAcpCommand::SessionLoad { params },
             remaining(deadline, Duration::from_secs(10)),
-        )?
-    } else {
-        authority.start_session(|| {
+        )?;
+        // The installed Cursor ACP session/load result legitimately omits
+        // sessionId. In that case retain the exact session selected by D1;
+        // if the provider does return one, it must match exactly.
+        let loaded = session_from_load_response(&load_response, &expected)?;
+        if let Some(mode) = local.mode.as_deref() {
             request_and_wait(
                 transport,
-                session_command,
+                CursorAcpCommand::SessionSetMode {
+                    params: SessionSetModeParams::new(loaded.clone(), mode)
+                        .map_err(|_| CursorExecutionError::InvalidConfiguration)?,
+                },
+                remaining(deadline, Duration::from_secs(10)),
+            )?;
+        }
+        loaded
+    } else {
+        let mut params = SessionNewParams::new(path_string(&config.cwd)?)
+            .map_err(|_| CursorExecutionError::InvalidConfiguration)?;
+        params.mode = local.mode.clone();
+        let response = authority.start_session(|| {
+            request_and_wait(
+                transport,
+                CursorAcpCommand::SessionNew { params },
                 remaining(deadline, Duration::from_secs(10)),
             )
-        })??
+        })??;
+        session_from_response(&response)?
     };
-    let session = session_from_response(&session_response)?;
     authority.record_session(session.as_str())?;
     let reserved = transport.reserve_request()?;
     let request_id = reserved.as_string();
@@ -434,6 +434,31 @@ fn session_from_response(
         .and_then(Value::as_str)
         .ok_or(CursorExecutionError::InvalidSession)?;
     SessionId::new(value).map_err(|_| CursorExecutionError::InvalidSession)
+}
+
+fn session_from_load_response(
+    response: &rudder_cursor_acp_adapter::JsonRpcResponse,
+    expected: &SessionId,
+) -> Result<SessionId, CursorExecutionError> {
+    let result = response
+        .result
+        .as_ref()
+        .and_then(Value::as_object)
+        .ok_or(CursorExecutionError::InvalidSession)?;
+    let returned = result.get("sessionId").or_else(|| result.get("session_id"));
+    match returned {
+        None => Ok(expected.clone()),
+        Some(Value::String(value)) => {
+            let returned =
+                SessionId::new(value.clone()).map_err(|_| CursorExecutionError::InvalidSession)?;
+            if &returned == expected {
+                Ok(returned)
+            } else {
+                Err(CursorExecutionError::InvalidSession)
+            }
+        }
+        Some(_) => Err(CursorExecutionError::InvalidSession),
+    }
 }
 
 fn prompt_stop_reason(
@@ -561,6 +586,88 @@ mod tests {
                 Err(CursorExecutionError::Transport(
                     CursorAcpTransportError::InvalidMessage
                 ))
+            ));
+        }
+    }
+
+    #[test]
+    fn cursor_load_uses_the_selected_session_when_response_omits_it() {
+        let expected = SessionId::new("cursor-session-1").unwrap();
+        for result in [
+            serde_json::json!({"modes":{"available":[]}}),
+            serde_json::json!({"sessionId":"cursor-session-1"}),
+        ] {
+            let response: rudder_cursor_acp_adapter::JsonRpcResponse =
+                serde_json::from_value(serde_json::json!({
+                    "jsonrpc":"2.0",
+                    "id":1,
+                    "result":result
+                }))
+                .expect("typed session/load response");
+            assert_eq!(
+                session_from_load_response(&response, &expected).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_cursor_session_still_requires_the_provider_session_id() {
+        let response: rudder_cursor_acp_adapter::JsonRpcResponse =
+            serde_json::from_value(serde_json::json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "result":{"modes":{"available":[]}}
+            }))
+            .expect("typed session/new response");
+        assert!(matches!(
+            session_from_response(&response),
+            Err(CursorExecutionError::InvalidSession)
+        ));
+    }
+
+    #[test]
+    fn cursor_load_rejects_a_provider_session_different_from_the_selected_session() {
+        let expected = SessionId::new("cursor-session-1").unwrap();
+        for value in [
+            serde_json::json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "result":{"sessionId":"other-session"}
+            }),
+            serde_json::json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "result":{"sessionId":null}
+            }),
+        ] {
+            let response: rudder_cursor_acp_adapter::JsonRpcResponse =
+                serde_json::from_value(value).expect("typed session/load response");
+            assert!(matches!(
+                session_from_load_response(&response, &expected),
+                Err(CursorExecutionError::InvalidSession)
+            ));
+        }
+    }
+
+    #[test]
+    fn cursor_load_requires_an_object_result_before_another_input() {
+        let expected = SessionId::new("cursor-session-1").unwrap();
+        for result in [
+            serde_json::json!(null),
+            serde_json::json!([]),
+            serde_json::json!("unexpected"),
+            serde_json::json!(false),
+            serde_json::json!(42),
+        ] {
+            let response: rudder_cursor_acp_adapter::JsonRpcResponse =
+                serde_json::from_value(serde_json::json!({
+                    "jsonrpc":"2.0", "id":1, "result":result
+                }))
+                .expect("typed malformed load response");
+            assert!(matches!(
+                session_from_load_response(&response, &expected),
+                Err(CursorExecutionError::InvalidSession)
             ));
         }
     }

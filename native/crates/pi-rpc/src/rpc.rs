@@ -36,6 +36,13 @@ pub enum PiTransportError {
     Rejected,
     #[error("Pi RPC stream is malformed or contains an unknown event")]
     InvalidMessage,
+    #[error("Pi RPC message failed static validation")]
+    InvalidMessageAt(PiInvalidMessageStage),
+    /// The owned process host reported a launch/runtime failure. This does
+    /// not state whether a provider received an input; the caller still needs
+    /// the independent terminal and cleanup receipts for that conclusion.
+    #[error("Pi process host reported a failure")]
+    HostFailure,
     #[error("Pi completed output contains content this adapter cannot project")]
     UnsupportedOutput,
     #[error("Pi RPC event buffer exceeded its limit")]
@@ -48,9 +55,78 @@ pub enum PiTransportError {
     Timeout,
 }
 
+/// Payload-free location for a Pi transport validation failure.
+///
+/// These categories deliberately do not retain or format provider frames,
+/// event names, session identifiers, or host error details.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiInvalidMessageStage {
+    HostIdentity,
+    HostKind,
+    HostState,
+    HostFields,
+    StdoutFrame,
+    StdoutJson,
+    RpcShape,
+    RpcResponseFields,
+    RpcUnknownEvent,
+    RpcEventFields,
+    SessionBinding,
+    ControlState,
+    OutboundFrame,
+    TurnObservation,
+    TerminalShape,
+}
+
+impl PiInvalidMessageStage {
+    /// Stable lower-case diagnostic identifier suitable for bounded run
+    /// metadata. It contains no observed input.
+    pub const fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::HostIdentity => "pi_invalid_host_identity",
+            Self::HostKind => "pi_invalid_host_kind",
+            Self::HostState => "pi_invalid_host_state",
+            Self::HostFields => "pi_invalid_host_fields",
+            Self::StdoutFrame => "pi_invalid_stdout_frame",
+            Self::StdoutJson => "pi_invalid_stdout_json",
+            Self::RpcShape => "pi_invalid_rpc_shape",
+            Self::RpcResponseFields => "pi_invalid_rpc_response_fields",
+            Self::RpcUnknownEvent => "pi_invalid_rpc_unknown_event",
+            Self::RpcEventFields => "pi_invalid_rpc_event_fields",
+            Self::SessionBinding => "pi_invalid_session_binding",
+            Self::ControlState => "pi_invalid_control_state",
+            Self::OutboundFrame => "pi_invalid_outbound_frame",
+            Self::TurnObservation => "pi_invalid_turn_observation",
+            Self::TerminalShape => "pi_invalid_terminal_shape",
+        }
+    }
+}
+
+impl PiTransportError {
+    /// Stable diagnostic mapping. Detailed invalid-message categories are
+    /// static enum values; no observed data is included.
+    pub const fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::InvalidLaunch => "pi_invalid_launch",
+            Self::Closed => "pi_transport_closed",
+            Self::Busy => "pi_transport_busy",
+            Self::MismatchedResponse => "pi_mismatched_response",
+            Self::Rejected => "pi_transport_rejected",
+            Self::InvalidMessage => "pi_invalid_message",
+            Self::InvalidMessageAt(stage) => stage.diagnostic_code(),
+            Self::HostFailure => "pi_process_host_failure",
+            Self::UnsupportedOutput => "pi_unsupported_output",
+            Self::OutputOverflow => "pi_output_overflow",
+            Self::WriteIndeterminate => "pi_write_indeterminate",
+            Self::ProcessExited => "pi_process_exited",
+            Self::Timeout => "pi_transport_timeout",
+        }
+    }
+}
+
 impl From<rudder_native_protocol::lines::LineError> for PiTransportError {
     fn from(_: rudder_native_protocol::lines::LineError) -> Self {
-        Self::InvalidMessage
+        Self::InvalidMessageAt(PiInvalidMessageStage::StdoutFrame)
     }
 }
 
@@ -198,6 +274,7 @@ pub struct PiRpcTransport {
     spawned: bool,
     terminal: bool,
     host_failure: bool,
+    host_reported_failure: bool,
     cleanup_proof: Option<HostCleanupProof>,
     session_dir: PathBuf,
     active_session_id: Option<String>,
@@ -316,6 +393,7 @@ impl PiRpcTransport {
             spawned: false,
             terminal: false,
             host_failure: false,
+            host_reported_failure: false,
             cleanup_proof: None,
             session_dir,
             active_session_id: None,
@@ -369,16 +447,22 @@ impl PiRpcTransport {
                 .as_deref()
                 .is_some_and(|path| path != session_file)
         {
-            return Err(PiTransportError::InvalidMessage);
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::SessionBinding,
+            ));
         }
         let metadata = std::fs::symlink_metadata(session_file);
         if persisted {
-            let metadata = metadata.map_err(|_| PiTransportError::InvalidMessage)?;
+            let metadata = metadata.map_err(|_| {
+                PiTransportError::InvalidMessageAt(PiInvalidMessageStage::SessionBinding)
+            })?;
             if !metadata.is_file()
                 || metadata.file_type().is_symlink()
                 || session_file.canonicalize().ok().as_deref() != Some(session_file)
             {
-                return Err(PiTransportError::InvalidMessage);
+                return Err(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::SessionBinding,
+                ));
             }
         } else if self.prompt_requested
             || self.active_session_persisted
@@ -390,7 +474,9 @@ impl PiRpcTransport {
                     name.len() <= 512 && name.ends_with(&format!("_{session_id}.jsonl"))
                 })
         {
-            return Err(PiTransportError::InvalidMessage);
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::SessionBinding,
+            ));
         }
         self.active_session_id = Some(session_id.to_owned());
         self.active_session_file = Some(session_file.to_path_buf());
@@ -412,7 +498,7 @@ impl PiRpcTransport {
                 Ok(HostEvent::Lifecycle(value)) => {
                     self.observe_lifecycle(&value)?;
                     if self.terminal {
-                        return Err(PiTransportError::ProcessExited);
+                        return Err(self.terminal_error());
                     }
                 }
                 Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
@@ -439,16 +525,20 @@ impl PiRpcTransport {
         if matches!(&command, PiCommand::Abort)
             && (!self.prompt_accepted || self.abort_requested || self.prompt_agent_ended)
         {
-            return Err(PiTransportError::InvalidMessage);
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::ControlState,
+            ));
         }
         if !self.spawned || self.terminal || self.host_failure {
             return Err(PiTransportError::Closed);
         }
         let id = format!("rudder-pi-{}", self.next_request_id);
-        self.next_request_id = self
-            .next_request_id
-            .checked_add(1)
-            .ok_or(PiTransportError::InvalidMessage)?;
+        self.next_request_id =
+            self.next_request_id
+                .checked_add(1)
+                .ok_or(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::OutboundFrame,
+                ))?;
         let name = command.name();
         if name == "prompt" {
             self.prompt_requested = true;
@@ -464,14 +554,22 @@ impl PiRpcTransport {
         let mut value = command.fields();
         let object = value
             .as_object_mut()
-            .ok_or(PiTransportError::InvalidMessage)?;
+            .ok_or(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::OutboundFrame,
+            ))?;
         object.insert("type".into(), Value::String(name.into()));
         object.insert("id".into(), Value::String(id.clone()));
-        let bytes = serde_json::to_vec(&value).map_err(|_| PiTransportError::InvalidMessage)?;
+        let bytes = serde_json::to_vec(&value).map_err(|_| {
+            PiTransportError::InvalidMessageAt(PiInvalidMessageStage::OutboundFrame)
+        })?;
         if bytes.len() > MAX_PI_EVENT_JSON_BYTES {
-            return Err(PiTransportError::InvalidMessage);
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::OutboundFrame,
+            ));
         }
-        let mut frame = String::from_utf8(bytes).map_err(|_| PiTransportError::InvalidMessage)?;
+        let mut frame = String::from_utf8(bytes).map_err(|_| {
+            PiTransportError::InvalidMessageAt(PiInvalidMessageStage::OutboundFrame)
+        })?;
         frame.push('\n');
         self.pending = Some(PendingRequest {
             id: id.clone(),
@@ -500,7 +598,7 @@ impl PiRpcTransport {
                 Ok(HostEvent::Lifecycle(value)) => {
                     self.observe_lifecycle(&value)?;
                     if self.terminal {
-                        return Err(PiTransportError::ProcessExited);
+                        return Err(self.terminal_error());
                     }
                 }
                 Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
@@ -527,6 +625,14 @@ impl PiRpcTransport {
             .or_else(|| self.host.take_cleanup_proof())
     }
 
+    fn terminal_error(&self) -> PiTransportError {
+        if self.host_reported_failure {
+            PiTransportError::HostFailure
+        } else {
+            PiTransportError::ProcessExited
+        }
+    }
+
     /// Convert the exact persisted Pi tree into a terminal receipt only after
     /// this connection accepted one prompt and observed its agent_start/end
     /// pair. Session UUID/path and entry IDs must match this process and the
@@ -544,21 +650,27 @@ impl PiRpcTransport {
             || !self.prompt_agent_started
             || !self.prompt_agent_ended
         {
-            return Err(PiTransportError::InvalidMessage);
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::TurnObservation,
+            ));
         }
         let view = tree.view();
         if self.active_session_id.as_deref() != Some(view.session_id.as_str())
             || self.active_session_file.as_deref() != Some(view.session_file.as_path())
             || !view.session_file.starts_with(&self.session_dir)
         {
-            return Err(PiTransportError::InvalidMessage);
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::SessionBinding,
+            ));
         }
         let (input, assistant, status, final_text) =
             project_exact_turn(tree, prior_leaf_id, input_text)?;
         let leaf_id = view
             .leaf_id
             .clone()
-            .ok_or(PiTransportError::InvalidMessage)?;
+            .ok_or(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::TurnObservation,
+            ))?;
         let input_digest = Sha256::digest(input_text.as_bytes());
         let input_fingerprint = format!(
             "native-chat-v1:{}",
@@ -684,10 +796,12 @@ impl PiRpcTransport {
     }
 
     fn write_frame(&mut self, frame: &str) -> Result<(), PiTransportError> {
-        self.next_write_id = self
-            .next_write_id
-            .checked_add(1)
-            .ok_or(PiTransportError::InvalidMessage)?;
+        self.next_write_id =
+            self.next_write_id
+                .checked_add(1)
+                .ok_or(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::OutboundFrame,
+                ))?;
         let write_id = format!("pi-write-{}", self.next_write_id);
         self.host
             .send(Command::WriteStdin {
@@ -711,7 +825,9 @@ impl PiRpcTransport {
                         || value.get("ownerToken").and_then(Value::as_str)
                             != Some(&self.owner_token)
                     {
-                        return Err(PiTransportError::InvalidMessage);
+                        return Err(PiTransportError::InvalidMessageAt(
+                            PiInvalidMessageStage::HostIdentity,
+                        ));
                     }
                     if kind == "stdin-write-complete"
                         && value.get("writeId").and_then(Value::as_str) == Some(&write_id)
@@ -731,6 +847,9 @@ impl PiRpcTransport {
                         return Err(PiTransportError::WriteIndeterminate);
                     }
                     self.observe_lifecycle(&value)?;
+                    if self.terminal {
+                        return Err(self.terminal_error());
+                    }
                 }
                 Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
                 Ok(HostEvent::Failure) => return Err(PiTransportError::Closed),
@@ -744,43 +863,20 @@ impl PiRpcTransport {
     }
 
     fn observe_lifecycle(&mut self, value: &Value) -> Result<(), PiTransportError> {
-        let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
-        // The shared owned-host layer validates the one startup handshake
-        // (including its protocol version and capabilities) before exposing
-        // it. It is deliberately scoped to `bootstrap`, so it is not a Pi
-        // process lifecycle event and has no claim identity to compare here.
-        if kind == "handshake" {
-            return Ok(());
-        }
-        if value.get("requestId").and_then(Value::as_str) != Some(&self.request_id)
-            || value.get("ownerToken").and_then(Value::as_str) != Some(&self.owner_token)
-        {
-            return Err(PiTransportError::InvalidMessage);
-        }
-        match kind {
-            // The host announces acceptance before it spawns the child. Like
-            // Codex transport, keep this informational and wait for the
-            // separate `spawned` event before permitting RPC writes.
-            "accepted" if !self.spawned && !self.terminal => (),
-            "spawned" if !self.spawned && !self.terminal => self.spawned = true,
-            "stop-accepted" if self.spawned && !self.terminal => (),
-            "stopped" if self.spawned && !self.terminal => (),
-            // This reports the child process exit. The host still must emit
-            // its separate terminal receipt before cleanup can be proven.
-            "app-exit" if self.spawned && !self.terminal => (),
-            "terminal" if self.spawned && !self.terminal => self.terminal = true,
-            "stdin-write-complete" | "stdin-write-rejected" | "stdin-write-failed" => (),
-            _ => return Err(PiTransportError::InvalidMessage),
-        }
+        let mut state = PiLifecycleState {
+            spawned: self.spawned,
+            terminal: self.terminal,
+            reported_failure: self.host_reported_failure,
+        };
+        observe_lifecycle_value(value, &self.request_id, &self.owner_token, &mut state)?;
+        self.spawned = state.spawned;
+        self.terminal = state.terminal;
+        self.host_reported_failure = state.reported_failure;
         Ok(())
     }
 
     fn decode_stdout(&mut self, bytes: &[u8]) -> Result<(), PiTransportError> {
-        let parsed = self.decoder.push(bytes, |frame| {
-            let StrictValue(value) =
-                serde_json::from_slice(frame).map_err(|_| PiTransportError::InvalidMessage)?;
-            parse_message(value)
-        })?;
+        let parsed = self.decoder.push(bytes, parse_stdout_frame)?;
         if self.messages.len().saturating_add(parsed.len()) > MAX_PI_EVENT_QUEUE {
             return Err(PiTransportError::OutputOverflow);
         }
@@ -814,6 +910,117 @@ impl PiRpcTransport {
     }
 }
 
+fn parse_stdout_frame(frame: &[u8]) -> Result<PiRpcMessage, PiTransportError> {
+    let StrictValue(value) = serde_json::from_slice(frame)
+        .map_err(|_| PiTransportError::InvalidMessageAt(PiInvalidMessageStage::StdoutJson))?;
+    parse_message(value)
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PiLifecycleState {
+    spawned: bool,
+    terminal: bool,
+    reported_failure: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PiLifecycleAction {
+    Handshake,
+    Accepted,
+    Spawned,
+    ReportedFailure,
+    StopAccepted,
+    Stopped,
+    AppExit,
+    Terminal,
+    StdinWrite,
+}
+
+fn observe_lifecycle_value(
+    value: &Value,
+    request_id: &str,
+    owner_token: &str,
+    state: &mut PiLifecycleState,
+) -> Result<PiLifecycleAction, PiTransportError> {
+    let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
+    // The shared owned-host layer validates the one startup handshake
+    // (including its protocol version and capabilities) before exposing it.
+    if kind == "handshake" {
+        return Ok(PiLifecycleAction::Handshake);
+    }
+    if value.get("requestId").and_then(Value::as_str) != Some(request_id)
+        || value.get("ownerToken").and_then(Value::as_str) != Some(owner_token)
+    {
+        return Err(PiTransportError::InvalidMessageAt(
+            PiInvalidMessageStage::HostIdentity,
+        ));
+    }
+    let action = match kind {
+        // The host announces acceptance before it spawns the child. Keep this
+        // informational and wait for `spawned` before permitting RPC writes.
+        "accepted" if !state.spawned && !state.terminal => PiLifecycleAction::Accepted,
+        "spawned" if !state.spawned && !state.terminal => PiLifecycleAction::Spawned,
+        "stop-accepted" if state.spawned && !state.terminal => PiLifecycleAction::StopAccepted,
+        "stopped" if state.spawned && !state.terminal => PiLifecycleAction::Stopped,
+        "app-exit" if state.spawned && !state.terminal => PiLifecycleAction::AppExit,
+        // Process-host launch/preflight errors are followed by a terminal
+        // receipt. Retain only the fact that an error was reported so the
+        // caller can drain that receipt without exposing its details.
+        "error" if !state.terminal => {
+            let valid_code = value
+                .get("errorCode")
+                .and_then(Value::as_str)
+                .is_some_and(|code| !code.is_empty() && code.len() <= 64);
+            let valid_message = value
+                .get("message")
+                .and_then(Value::as_str)
+                .is_some_and(|message| !message.is_empty() && message.len() <= 256);
+            if !valid_code || !valid_message {
+                return Err(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::HostFields,
+                ));
+            }
+            PiLifecycleAction::ReportedFailure
+        }
+        // A failed launch can terminate before any child was spawned, but
+        // only after the host explicitly reported its failure.
+        "terminal" if !state.terminal && (state.spawned || state.reported_failure) => {
+            PiLifecycleAction::Terminal
+        }
+        "stdin-write-complete" | "stdin-write-rejected" | "stdin-write-failed"
+            if state.spawned && !state.terminal =>
+        {
+            PiLifecycleAction::StdinWrite
+        }
+        "accepted"
+        | "spawned"
+        | "stop-accepted"
+        | "stopped"
+        | "app-exit"
+        | "error"
+        | "terminal"
+        | "stdin-write-complete"
+        | "stdin-write-rejected"
+        | "stdin-write-failed" => {
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::HostState,
+            ));
+        }
+        _ => {
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::HostKind,
+            ));
+        }
+    };
+    match action {
+        PiLifecycleAction::Spawned => state.spawned = true,
+        PiLifecycleAction::ReportedFailure => state.reported_failure = true,
+        PiLifecycleAction::Terminal => state.terminal = true,
+        _ => (),
+    }
+    Ok(action)
+}
+
 fn project_terminal_output(
     assistant: &PiSessionEntry,
 ) -> Result<(PiTurnStatus, Option<String>), PiTransportError> {
@@ -822,7 +1029,11 @@ fn project_terminal_output(
         Some("aborted") => PiTurnStatus::Interrupted,
         Some("error") => PiTurnStatus::Failed,
         Some("toolUse") => return Err(PiTransportError::UnsupportedOutput),
-        _ => return Err(PiTransportError::InvalidMessage),
+        _ => {
+            return Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::TerminalShape,
+            ));
+        }
     };
     let final_text = if status == PiTurnStatus::Completed {
         let text = assistant
@@ -851,9 +1062,9 @@ fn project_exact_turn<'a>(
     ),
     PiTransportError,
 > {
-    let (input, assistant) = tree
-        .exact_completed_turn(prior_leaf_id, input_text)
-        .ok_or(PiTransportError::InvalidMessage)?;
+    let (input, assistant) = tree.exact_completed_turn(prior_leaf_id, input_text).ok_or(
+        PiTransportError::InvalidMessageAt(PiInvalidMessageStage::TurnObservation),
+    )?;
     if tree.has_tool_content_between(input, assistant) {
         return Err(PiTransportError::UnsupportedOutput);
     }
@@ -1005,23 +1216,28 @@ fn exact_instruction_file(expected: &Path, actual: &Path) -> bool {
 }
 
 fn parse_message(value: Value) -> Result<PiRpcMessage, PiTransportError> {
-    let object = value.as_object().ok_or(PiTransportError::InvalidMessage)?;
+    let object = value.as_object().ok_or(PiTransportError::InvalidMessageAt(
+        PiInvalidMessageStage::RpcShape,
+    ))?;
     match object.get("type").and_then(Value::as_str) {
         Some("response") => {
             let id = object
                 .get("id")
                 .and_then(Value::as_str)
                 .filter(|id| !id.is_empty() && id.len() <= 128)
-                .ok_or(PiTransportError::InvalidMessage)?;
+                .ok_or(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::RpcResponseFields,
+                ))?;
             let command = object
                 .get("command")
                 .and_then(Value::as_str)
                 .filter(|value| value.len() <= 64)
-                .ok_or(PiTransportError::InvalidMessage)?;
-            let success = object
-                .get("success")
-                .and_then(Value::as_bool)
-                .ok_or(PiTransportError::InvalidMessage)?;
+                .ok_or(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::RpcResponseFields,
+                ))?;
+            let success = object.get("success").and_then(Value::as_bool).ok_or(
+                PiTransportError::InvalidMessageAt(PiInvalidMessageStage::RpcResponseFields),
+            )?;
             Ok(PiRpcMessage::Response(PiResponse {
                 id: id.to_owned(),
                 command: command.to_owned(),
@@ -1031,17 +1247,26 @@ fn parse_message(value: Value) -> Result<PiRpcMessage, PiTransportError> {
         }
         Some(kind) if is_known_event(kind) => {
             if kind != "extension_ui_request" && object.contains_key("id") {
-                return Err(PiTransportError::InvalidMessage);
+                return Err(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::RpcEventFields,
+                ));
             }
             if object.len() > 64 {
-                return Err(PiTransportError::InvalidMessage);
+                return Err(PiTransportError::InvalidMessageAt(
+                    PiInvalidMessageStage::RpcEventFields,
+                ));
             }
             Ok(PiRpcMessage::Event(PiEvent {
                 kind: kind.to_owned(),
                 value,
             }))
         }
-        _ => Err(PiTransportError::InvalidMessage),
+        Some(_) => Err(PiTransportError::InvalidMessageAt(
+            PiInvalidMessageStage::RpcUnknownEvent,
+        )),
+        None => Err(PiTransportError::InvalidMessageAt(
+            PiInvalidMessageStage::RpcShape,
+        )),
     }
 }
 
@@ -1089,8 +1314,9 @@ fn _is_absolute(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PiCommand, PiRpcMessage, PiTransportError, parse_message, project_exact_turn,
-        project_terminal_output,
+        PiCommand, PiInvalidMessageStage, PiLifecycleAction, PiLifecycleState, PiRpcMessage,
+        PiTransportError, observe_lifecycle_value, parse_message, parse_stdout_frame,
+        project_exact_turn, project_terminal_output,
     };
     use crate::{PiSessionTree, PiSessionTreeError, PiTurnStatus};
     use serde_json::json;
@@ -1424,5 +1650,171 @@ mod tests {
         ] {
             assert!(parse_message(value).is_err());
         }
+    }
+
+    #[test]
+    fn rpc_failures_have_static_payload_free_diagnostic_stages() {
+        let cases = [
+            (json!(null), PiInvalidMessageStage::RpcShape),
+            (
+                json!({"type": "response", "id": "x"}),
+                PiInvalidMessageStage::RpcResponseFields,
+            ),
+            (
+                json!({"type": "future_event"}),
+                PiInvalidMessageStage::RpcUnknownEvent,
+            ),
+            (
+                json!({"type": "message_update", "id": "event-id"}),
+                PiInvalidMessageStage::RpcEventFields,
+            ),
+            (
+                json!({"type": "session", "id": "session-id"}),
+                PiInvalidMessageStage::RpcEventFields,
+            ),
+        ];
+        for (value, expected_stage) in cases {
+            assert!(matches!(
+                parse_message(value),
+                Err(PiTransportError::InvalidMessageAt(stage)) if stage == expected_stage
+            ));
+            let code = expected_stage.diagnostic_code();
+            assert!(code.len() <= 64);
+            assert!(
+                code.bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+            );
+        }
+        assert!(matches!(
+            parse_stdout_frame(b"{ malformed"),
+            Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::StdoutJson
+            ))
+        ));
+    }
+
+    #[test]
+    fn rpc_prompt_preflight_error_is_a_correlated_response_not_a_malformed_frame() {
+        let message = parse_message(json!({
+            "type": "response",
+            "id": "rudder-pi-4",
+            "command": "prompt",
+            "success": false,
+            "error": "preflight rejected"
+        }))
+        .unwrap();
+        match message {
+            PiRpcMessage::Response(response) => {
+                assert_eq!(response.id(), "rudder-pi-4");
+                assert_eq!(response.command(), "prompt");
+                assert!(!response.success());
+                assert!(response.data().is_none());
+            }
+            PiRpcMessage::Event(_) => panic!("preflight response classified as event"),
+        }
+    }
+
+    #[test]
+    fn extension_ui_request_is_stdout_event_but_response_is_not() {
+        assert!(matches!(
+            parse_message(json!({
+                "type": "extension_ui_request",
+                "id": "ui-request",
+                "method": "confirm",
+                "title": "Confirm",
+                "message": "Continue?"
+            }))
+            .unwrap(),
+            PiRpcMessage::Event(_)
+        ));
+        assert!(matches!(
+            parse_message(json!({
+                "type": "extension_ui_response",
+                "id": "ui-request",
+                "confirmed": true
+            })),
+            Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::RpcUnknownEvent
+            ))
+        ));
+    }
+
+    #[test]
+    fn process_host_error_then_terminal_is_typed_and_keeps_cleanup_path_open() {
+        let mut state = PiLifecycleState::default();
+        let error = json!({
+            "type": "error",
+            "requestId": "attempt",
+            "ownerToken": "owner",
+            "errorCode": "spawn_preflight_failed",
+            "message": "spawn_preflight_failed"
+        });
+        assert_eq!(
+            observe_lifecycle_value(&error, "attempt", "owner", &mut state),
+            Ok(PiLifecycleAction::ReportedFailure)
+        );
+        assert!(!state.spawned);
+        assert!(!state.terminal);
+        assert!(state.reported_failure);
+
+        let terminal = json!({
+            "type": "terminal",
+            "requestId": "attempt",
+            "ownerToken": "owner",
+            "status": "failed",
+            "cleanupProven": true
+        });
+        assert_eq!(
+            observe_lifecycle_value(&terminal, "attempt", "owner", &mut state),
+            Ok(PiLifecycleAction::Terminal)
+        );
+        assert!(state.terminal);
+        assert_eq!(
+            PiTransportError::HostFailure.diagnostic_code(),
+            "pi_process_host_failure"
+        );
+        assert!(
+            !PiTransportError::HostFailure
+                .diagnostic_code()
+                .contains("not_submitted")
+        );
+    }
+
+    #[test]
+    fn process_host_lifecycle_validation_distinguishes_identity_kind_and_state() {
+        let mut state = PiLifecycleState::default();
+        assert_eq!(
+            observe_lifecycle_value(
+                &json!({"type": "spawned", "requestId": "wrong", "ownerToken": "owner"}),
+                "attempt",
+                "owner",
+                &mut state,
+            ),
+            Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::HostIdentity
+            ))
+        );
+        assert_eq!(
+            observe_lifecycle_value(
+                &json!({"type": "future", "requestId": "attempt", "ownerToken": "owner"}),
+                "attempt",
+                "owner",
+                &mut state,
+            ),
+            Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::HostKind
+            ))
+        );
+        assert_eq!(
+            observe_lifecycle_value(
+                &json!({"type": "terminal", "requestId": "attempt", "ownerToken": "owner"}),
+                "attempt",
+                "owner",
+                &mut state,
+            ),
+            Err(PiTransportError::InvalidMessageAt(
+                PiInvalidMessageStage::HostState
+            ))
+        );
     }
 }

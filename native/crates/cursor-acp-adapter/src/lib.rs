@@ -35,6 +35,7 @@ pub const MAX_UPDATE_COUNT: usize = 100_000;
 
 const SESSION_NEW: &str = "session/new";
 const SESSION_LOAD: &str = "session/load";
+const SESSION_SET_MODE: &str = "session/set_mode";
 const SESSION_PROMPT: &str = "session/prompt";
 const SESSION_UPDATE: &str = "session/update";
 const SESSION_CANCEL: &str = "session/cancel";
@@ -308,8 +309,8 @@ impl SessionNewParams {
 pub struct SessionLoadParams {
     pub session_id: SessionId,
     pub cwd: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
+    #[serde(default)]
+    pub mcp_servers: Vec<Value>,
 }
 
 impl SessionLoadParams {
@@ -317,7 +318,25 @@ impl SessionLoadParams {
         Ok(Self {
             session_id,
             cwd: bounded(cwd, "cwd", MAX_ID_BYTES * 16)?,
-            mode: None,
+            mcp_servers: Vec::new(),
+        })
+    }
+}
+
+/// ACP's `session/load` does not accept a mode selector. Preserve a configured
+/// mode on resumed sessions through the protocol's explicit set-mode request.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSetModeParams {
+    pub session_id: SessionId,
+    pub mode_id: String,
+}
+
+impl SessionSetModeParams {
+    pub fn new(session_id: SessionId, mode_id: impl Into<String>) -> Result<Self, CursorAcpError> {
+        Ok(Self {
+            session_id,
+            mode_id: bounded(mode_id, "modeId", MAX_ID_BYTES)?,
         })
     }
 }
@@ -359,6 +378,7 @@ pub enum CursorAcpCommand {
     Authenticate { params: AuthenticateParams },
     SessionNew { params: SessionNewParams },
     SessionLoad { params: SessionLoadParams },
+    SessionSetMode { params: SessionSetModeParams },
     SessionPrompt { params: SessionPromptParams },
     SessionCancel { params: SessionCancelParams },
 }
@@ -370,6 +390,7 @@ impl CursorAcpCommand {
             Self::Authenticate { params } => (AUTHENTICATE, serde_json::to_value(params)),
             Self::SessionNew { params } => (SESSION_NEW, serde_json::to_value(params)),
             Self::SessionLoad { params } => (SESSION_LOAD, serde_json::to_value(params)),
+            Self::SessionSetMode { params } => (SESSION_SET_MODE, serde_json::to_value(params)),
             Self::SessionPrompt { params } => (SESSION_PROMPT, serde_json::to_value(params)),
             Self::SessionCancel { .. } => {
                 return Err(CursorAcpError::InvalidTransition(
@@ -1200,12 +1221,37 @@ mod tests {
         .request(RequestId::generated(1))
         .unwrap();
         assert_eq!(load.method, SESSION_LOAD);
-        assert_eq!(load.params["sessionId"], "cursor-session-1");
+        assert_eq!(
+            load.params,
+            json!({
+                "sessionId": "cursor-session-1",
+                "cwd": "/tmp/project",
+                "mcpServers": []
+            })
+        );
+
+        let load_without_mcp_servers: SessionLoadParams = serde_json::from_value(json!({
+            "sessionId": "cursor-session-1",
+            "cwd": "/tmp/project"
+        }))
+        .expect("missing ACP MCP server list defaults to empty");
+        assert!(load_without_mcp_servers.mcp_servers.is_empty());
+
+        let mode = CursorAcpCommand::SessionSetMode {
+            params: SessionSetModeParams::new(id.clone(), "plan").unwrap(),
+        }
+        .request(RequestId::generated(2))
+        .unwrap();
+        assert_eq!(mode.method, SESSION_SET_MODE);
+        assert_eq!(
+            mode.params,
+            json!({"sessionId":"cursor-session-1", "modeId":"plan"})
+        );
 
         let prompt = CursorAcpCommand::SessionPrompt {
             params: SessionPromptParams::new(id, "hello").unwrap(),
         }
-        .request(RequestId::generated(2))
+        .request(RequestId::generated(3))
         .unwrap();
         assert_eq!(prompt.method, SESSION_PROMPT);
         assert_eq!(prompt.params["prompt"][0]["type"], "text");

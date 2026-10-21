@@ -120,6 +120,24 @@ async fn database_and_pi_admission(
     String,
     PiFixture,
 ) {
+    database_and_pi_admission_with_node(
+        block_new_session,
+        required_path("RUDDER_TEST_NODE_EXECUTABLE"),
+    )
+    .await
+}
+
+async fn database_and_pi_admission_with_node(
+    block_new_session: bool,
+    node: PathBuf,
+) -> (
+    Database,
+    FixtureHost,
+    VerifiedActor,
+    String,
+    String,
+    PiFixture,
+) {
     let database = Database::start().await;
     let mut host = FixtureHost::new("pi-stop");
     let profiles = tempfile::tempdir().expect("create isolated Pi managed profile root");
@@ -129,7 +147,6 @@ async fn database_and_pi_admission(
     let session_dir = profile_home.join(".pi/paperclips");
     fs::create_dir_all(&agent_dir).expect("create Pi profile agent directory");
     fs::create_dir_all(&session_dir).expect("create Pi profile session directory");
-    let node = required_path("RUDDER_TEST_NODE_EXECUTABLE");
     let entry = entry_dir.path().join("fake-pi.js");
     fs::write(
         &entry,
@@ -397,5 +414,70 @@ async fn pi_stop_before_prompt_uses_no_submission_finalizer() {
     )
     .await
     .expect("finalize Stop only after proving no prompt was sent");
+    assert_cancelled_without_hold(&database, &run).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and a synthetic Pi process-host launch failure"]
+async fn pi_process_host_preflight_failure_retains_cleanup_for_a_fenced_preinput_stop() {
+    assert_ignored_external_dependencies();
+    let unlaunchable = tempfile::tempdir().expect("create disposable unlaunchable Node fixture");
+    let node = unlaunchable.path().join("node-not-executable");
+    fs::write(&node, "#!/bin/sh\nexit 0\n").expect("write Node fixture file");
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o600))
+        .expect("keep Node fixture non-executable");
+
+    let (database, host, actor, run, attempt, fixture) =
+        database_and_pi_admission_with_node(false, node).await;
+    let (result, _host) =
+        execute_native_on_worker(&database, host, actor.clone(), run.clone(), attempt).await;
+    let failure = match result {
+        Err(failure) => failure,
+        Ok(_) => panic!("the owned process host should report the spawn failure"),
+    };
+    assert_eq!(failure.diagnostic_code(), "pi_process_host_failure");
+    assert_eq!(
+        failure.process_disposition(),
+        rudder_native_chat_executor::ProcessDisposition::CleanupProven
+    );
+    assert!(failure.pi_cleanup_receipt().is_some());
+    assert!(!failure.is_definitive_failure());
+
+    let requests = fixture.session_dir.join("fixture-requests.txt");
+    assert!(
+        !requests.exists(),
+        "provider process must not receive any RPC request after launch preflight fails"
+    );
+
+    let stop = request_stop_for_run(
+        &database,
+        &actor,
+        &run,
+        "72000000-0000-4000-8000-000000000023",
+    )
+    .await;
+    assert_eq!(stop.outcome, StopOutcome::StopIntentRecorded);
+    let execution_actor = failure
+        .execution_principal()
+        .expect("post-claim failure retains its execution principal");
+    let fence = failure
+        .fence()
+        .expect("post-claim failure retains its execution fence");
+    let stop = execution::observe_stop(&database.pool, execution_actor, fence)
+        .await
+        .unwrap()
+        .expect("read the durable Stop on this exact claim");
+    execution::finalize_pi_stopped_before_submission(
+        &database.pool,
+        execution_actor,
+        fence,
+        failure
+            .pi_cleanup_receipt()
+            .expect("matching owned-host cleanup receipt survives launch failure"),
+        &stop,
+    )
+    .await
+    .expect("pre-submission Stop uses the exact process-host cleanup receipt");
     assert_cancelled_without_hold(&database, &run).await;
 }
