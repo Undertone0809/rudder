@@ -20,7 +20,7 @@ use rudder_native_protocol::{
 use serde_json::Value;
 use std::{
     collections::VecDeque,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -63,12 +63,35 @@ pub struct CursorAcpProcessLaunch {
     pub executable: PathBuf,
     pub process_host: PathBuf,
     pub runtime_root: PathBuf,
-    pub isolated_home: PathBuf,
+    /// Native Chat selects between the existing isolated runtime home and an
+    /// explicitly selected provider profile. This path is never supplied by
+    /// a request.
+    pub home: CursorAcpHome,
     pub cwd: PathBuf,
     pub run_id: String,
     pub attempt_id: String,
     pub owner_token: String,
     pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// A Cursor process runs in the per-run isolated HOME by default. The explicit
+/// operator-default mode opts into the selected operator profile in place.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CursorAcpHome {
+    IsolatedRuntime(PathBuf),
+    OperatorProfile(PathBuf),
+}
+
+impl CursorAcpHome {
+    fn path(&self) -> &Path {
+        match self {
+            Self::IsolatedRuntime(path) | Self::OperatorProfile(path) => path,
+        }
+    }
+
+    fn uses_provider_profile(&self) -> bool {
+        matches!(self, Self::OperatorProfile(_))
+    }
 }
 
 /// One owned Cursor ACP process and its bounded JSON-RPC line stream.
@@ -95,6 +118,7 @@ impl CursorAcpTransport {
         permit: ConnectionLaunchPermit,
     ) -> Result<Self, CursorAcpTransportError> {
         let launch = validate_launch(launch)?;
+        let env = cursor_process_environment(launch.env, launch.home.path())?;
         let request_id = launch.attempt_id.clone();
         let owner_token = launch.owner_token.clone();
         let host = OwnedHost::launch_external(
@@ -109,18 +133,6 @@ impl CursorAcpTransport {
         )
         .map_err(map_host_error)?;
 
-        let mut env = launch.env;
-        // Cursor's ACP process needs an isolated HOME for credentials and
-        // state. The trusted host decides the path; callers cannot override
-        // these protected variables through Agent config.
-        env.insert(
-            "HOME".into(),
-            launch.isolated_home.to_string_lossy().into_owned(),
-        );
-        env.insert(
-            "USERPROFILE".into(),
-            launch.isolated_home.to_string_lossy().into_owned(),
-        );
         let start = Command::StartProcess {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(request_id.clone()),
@@ -288,6 +300,19 @@ impl CursorAcpTransport {
     /// Request shutdown and wait for the exact host terminal lifecycle event.
     /// EOF, Drop or host loss never produce cleanup proof.
     pub fn stop(&mut self, timeout: Duration) -> Result<(), CursorAcpTransportError> {
+        self.stop_with_grace(Duration::from_millis(500), timeout)
+    }
+
+    /// Request shutdown with a configured process-host grace period, then
+    /// wait independently for its matching terminal lifecycle proof.
+    pub fn stop_with_grace(
+        &mut self,
+        grace: Duration,
+        timeout: Duration,
+    ) -> Result<(), CursorAcpTransportError> {
+        if grace.is_zero() || grace > Duration::from_secs(60) || timeout.is_zero() {
+            return Err(CursorAcpTransportError::InvalidLaunch);
+        }
         if self.terminal {
             self.cleanup_proof = self.host.take_cleanup_proof();
             return self
@@ -300,7 +325,7 @@ impl CursorAcpTransport {
             .send(Command::Stop {
                 protocol_version: Some(ProtocolVersion::default()),
                 request_id: Some(self.request_id.clone()),
-                grace_ms: Some(500),
+                grace_ms: Some(grace.as_millis() as u64),
             })
             .map_err(map_host_error)?;
         let deadline = Instant::now() + timeout;
@@ -485,17 +510,19 @@ fn validate_launch(
         &mut launch.executable,
         &mut launch.process_host,
         &mut launch.runtime_root,
-        &mut launch.isolated_home,
         &mut launch.cwd,
     ] {
         if !path.is_absolute() {
             return Err(CursorAcpTransportError::InvalidLaunch);
         }
     }
+    if !launch.home.path().is_absolute() {
+        return Err(CursorAcpTransportError::InvalidLaunch);
+    }
     if !launch.executable.is_file()
         || !launch.process_host.is_file()
         || !launch.runtime_root.is_dir()
-        || !launch.isolated_home.is_dir()
+        || !launch.home.path().is_dir()
         || !launch.cwd.is_dir()
         || launch.run_id.is_empty()
         || launch.attempt_id.is_empty()
@@ -509,7 +536,54 @@ fn validate_launch(
     {
         return Err(CursorAcpTransportError::InvalidLaunch);
     }
+    validate_home(&launch.home)?;
     Ok(launch)
+}
+
+fn validate_home(home: &CursorAcpHome) -> Result<(), CursorAcpTransportError> {
+    let path = home.path();
+    let home_metadata =
+        std::fs::symlink_metadata(path).map_err(|_| CursorAcpTransportError::InvalidLaunch)?;
+    if !home_metadata.is_dir() || home_metadata.file_type().is_symlink() {
+        return Err(CursorAcpTransportError::InvalidLaunch);
+    }
+    let canonical_home = path
+        .canonicalize()
+        .map_err(|_| CursorAcpTransportError::InvalidLaunch)?;
+    if canonical_home != path {
+        return Err(CursorAcpTransportError::InvalidLaunch);
+    }
+
+    if !home.uses_provider_profile() {
+        return Ok(());
+    }
+
+    let config_dir = path.join(".cursor");
+    let config_metadata = std::fs::symlink_metadata(&config_dir)
+        .map_err(|_| CursorAcpTransportError::InvalidLaunch)?;
+    if !config_metadata.is_dir() || config_metadata.file_type().is_symlink() {
+        return Err(CursorAcpTransportError::InvalidLaunch);
+    }
+    let canonical_config_dir = config_dir
+        .canonicalize()
+        .map_err(|_| CursorAcpTransportError::InvalidLaunch)?;
+    if canonical_config_dir != config_dir {
+        return Err(CursorAcpTransportError::InvalidLaunch);
+    }
+    Ok(())
+}
+
+fn cursor_process_environment(
+    mut env: std::collections::BTreeMap<String, String>,
+    profile_home: &Path,
+) -> Result<std::collections::BTreeMap<String, String>, CursorAcpTransportError> {
+    let home = profile_home
+        .to_str()
+        .ok_or(CursorAcpTransportError::InvalidLaunch)?
+        .to_owned();
+    env.insert("HOME".into(), home.clone());
+    env.insert("USERPROFILE".into(), home);
+    Ok(env)
 }
 
 fn map_host_error(error: HostError) -> CursorAcpTransportError {
@@ -530,14 +604,24 @@ mod tests {
     #[test]
     fn rejects_ambient_protected_environment_overrides() {
         let root = tempdir().unwrap();
+        let profile_home = root.path().join("operator-home");
+        std::fs::create_dir_all(profile_home.join(".cursor")).unwrap();
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("cwd");
+        std::fs::create_dir_all(&runtime_root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let executable = root.path().join("cursor-agent");
+        let process_host = root.path().join("process-host");
+        std::fs::write(&executable, b"fixture").unwrap();
+        std::fs::write(&process_host, b"fixture").unwrap();
         let mut env = BTreeMap::new();
         env.insert("HOME".into(), "/operator".into());
         let launch = CursorAcpProcessLaunch {
-            executable: root.path().join("cursor-agent"),
-            process_host: root.path().join("process-host"),
-            runtime_root: root.path().join("runtime"),
-            isolated_home: root.path().join("home"),
-            cwd: root.path().join("cwd"),
+            executable,
+            process_host,
+            runtime_root,
+            home: CursorAcpHome::OperatorProfile(profile_home),
+            cwd,
             run_id: "run".into(),
             attempt_id: "attempt".into(),
             owner_token: "owner".into(),
@@ -555,7 +639,7 @@ mod tests {
             executable: "cursor-agent".into(),
             process_host: "/tmp/process-host".into(),
             runtime_root: "/tmp/runtime".into(),
-            isolated_home: "/tmp/home".into(),
+            home: CursorAcpHome::OperatorProfile("/tmp/home".into()),
             cwd: "/tmp".into(),
             run_id: "run".into(),
             attempt_id: "attempt".into(),
@@ -566,6 +650,112 @@ mod tests {
             validate_launch(launch),
             Err(CursorAcpTransportError::InvalidLaunch)
         ));
+    }
+
+    #[test]
+    fn selected_profile_is_the_child_home_and_userprofile() {
+        let root = tempdir().unwrap();
+        let profile_home = root.path().join("selected-profile");
+        std::fs::create_dir_all(profile_home.join(".cursor")).unwrap();
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("cwd");
+        std::fs::create_dir_all(&runtime_root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let executable = root.path().join("cursor-agent");
+        let process_host = root.path().join("process-host");
+        std::fs::write(&executable, b"fixture").unwrap();
+        std::fs::write(&process_host, b"fixture").unwrap();
+        let launch = CursorAcpProcessLaunch {
+            executable,
+            process_host,
+            runtime_root,
+            home: CursorAcpHome::OperatorProfile(profile_home.canonicalize().unwrap()),
+            cwd,
+            run_id: "run".into(),
+            attempt_id: "attempt".into(),
+            owner_token: "owner".into(),
+            env: BTreeMap::from([("RUDDER_OPERATOR_HOME".into(), "/operator".into())]),
+        };
+        let launch = validate_launch(launch).unwrap();
+        let env = cursor_process_environment(launch.env, launch.home.path()).unwrap();
+        let expected_home = profile_home
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(env["HOME"], expected_home);
+        assert_eq!(env["USERPROFILE"], expected_home);
+        assert_eq!(env["RUDDER_OPERATOR_HOME"], "/operator");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_cursor_config_directory_before_launch() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let profile_home = root.path().join("selected-profile");
+        let redirected = root.path().join("redirected-cursor");
+        std::fs::create_dir(&profile_home).unwrap();
+        std::fs::create_dir(&redirected).unwrap();
+        symlink(&redirected, profile_home.join(".cursor")).unwrap();
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("cwd");
+        std::fs::create_dir_all(&runtime_root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let executable = root.path().join("cursor-agent");
+        let process_host = root.path().join("process-host");
+        std::fs::write(&executable, b"fixture").unwrap();
+        std::fs::write(&process_host, b"fixture").unwrap();
+        let launch = CursorAcpProcessLaunch {
+            executable,
+            process_host,
+            runtime_root,
+            home: CursorAcpHome::OperatorProfile(profile_home.canonicalize().unwrap()),
+            cwd,
+            run_id: "run".into(),
+            attempt_id: "attempt".into(),
+            owner_token: "owner".into(),
+            env: BTreeMap::new(),
+        };
+        assert!(matches!(
+            validate_launch(launch),
+            Err(CursorAcpTransportError::InvalidLaunch)
+        ));
+    }
+
+    #[test]
+    fn managed_runtime_keeps_existing_isolated_home_without_cursor_config() {
+        let root = tempdir().unwrap();
+        let isolated_home = root.path().join("isolated-home");
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("cwd");
+        std::fs::create_dir_all(&isolated_home).unwrap();
+        std::fs::create_dir_all(&runtime_root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let executable = root.path().join("cursor-agent");
+        let process_host = root.path().join("process-host");
+        std::fs::write(&executable, b"fixture").unwrap();
+        std::fs::write(&process_host, b"fixture").unwrap();
+        let launch = CursorAcpProcessLaunch {
+            executable,
+            process_host,
+            runtime_root,
+            home: CursorAcpHome::IsolatedRuntime(isolated_home.canonicalize().unwrap()),
+            cwd,
+            run_id: "run".into(),
+            attempt_id: "attempt".into(),
+            owner_token: "owner".into(),
+            env: BTreeMap::new(),
+        };
+        let launch = validate_launch(launch).unwrap();
+        let env = cursor_process_environment(launch.env, launch.home.path()).unwrap();
+        assert_eq!(
+            env["HOME"],
+            isolated_home.canonicalize().unwrap().to_str().unwrap()
+        );
+        assert!(!isolated_home.join(".cursor").exists());
     }
 
     #[test]

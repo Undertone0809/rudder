@@ -20,7 +20,9 @@ use uuid::Uuid;
 
 mod transport;
 
-pub use transport::{CursorAcpProcessLaunch, CursorAcpTransport, CursorAcpTransportError};
+pub use transport::{
+    CursorAcpHome, CursorAcpProcessLaunch, CursorAcpTransport, CursorAcpTransportError,
+};
 
 pub const ACP_PROTOCOL_VERSION: &str = "1.0";
 pub const MAX_ID_BYTES: usize = 256;

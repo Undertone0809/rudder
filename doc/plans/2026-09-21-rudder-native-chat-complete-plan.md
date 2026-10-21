@@ -1245,6 +1245,52 @@ the next fix must first make the current Rust worker admit and complete a real
 Codex turn, then repeat the same current-SHA first/continuation/restart matrix
 for Hermes before any additional merge claim.
 
+## October 22 Full-Plan Continuation After the Codex/Hermes Merge
+
+PR #352 merged at `b38b171364c1d83f4db5c495a7d0df8552ffcf3e`.
+Its delivered tree is identical to accepted source `c92caa299`; the independent
+real Codex/Hermes receipts were rebound through explicitly reviewed behavior
+equivalence. Exact-head CI passed 21 checks with one intended skip, including
+all native targets and the macOS ARM packaged smoke. This closes that milestone
+and supersedes the earlier current-main failure observations for its scope.
+It does not close W05's complete native-control/Fork requirements, W07's full
+Hermes product contract, or the complete plan.
+
+The full six-runtime, shared execution, Reader, storage, retention, product-flow,
+and independent acceptance objective remains active. Current source inspection
+found a concrete default-path blocker: `runtime_bindings/native_chat.rs` permits
+open/pending execution only for Codex and Hermes even though the Rust executor
+already has branches for all six runtimes. Restore the preserved provider-specific
+admission checks and Pi's exact terminal checkpoint selector from
+`codex/native-chat-all-runtime-preserved-20261021`, retaining all fixes now on
+main. Pi must preserve its session file, session ID and leaf rather than guessing
+a selector from a Session ID alone. Prove fresh admission, terminal persistence,
+next-turn continuity, and rejection of foreign or incomplete checkpoints through
+disposable PostgreSQL and public runtime workflows before claiming acceptance.
+
+The other active blockers remain distinct: the current transcript Reader reads
+`chat_generation_events` and legacy payload supplements; that is a bounded Rust
+projection, not complete provider-native history. Native interaction/Fork wiring,
+all non-Chat execution surfaces, Side Chat lifecycle/retention, remaining Reader
+consumers, native backup/GC, duplicate-writer retirement and measured resource
+comparisons still need implementation and evidence. Do not disable existing
+process/history copies until section 9.3's per-runtime persistence, complete-read,
+permission, cutoff and retention gates pass. The 97 scenarios in section 14
+remain the full acceptance contract; missing credentials or unavailable native
+capabilities must stay explicit instead of being marked passed.
+
+The first October 22 implementation checks passed 21 disposable-PostgreSQL
+admission cases and 15 span lifecycle cases. A real red case exposed queued
+Runs incorrectly qualifying for terminal no-op retries; retries now require an
+explicit terminal status. These are D1 checks, not provider acceptance. Installed
+Pi 0.76.0 also passed owned-host state and cleanup smoke with both managed and
+synthetic operator layouts, including an instruction entry outside HOME; no model
+was invoked. Explicit no-copy operator-profile launch wiring and ordinary UI
+builder settings for Claude/Cursor/Pi are being validated separately. Pi's exact
+persisted-branch range reader is a provider primitive only until authorization,
+host dispatch, pagination and public-consumer tests are connected. SQL history
+mirrors remain enabled.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.

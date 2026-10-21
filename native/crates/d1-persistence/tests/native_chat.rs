@@ -1303,5 +1303,11 @@ async fn migration_preserves_populated_legacy_chat_without_native_linkage() {
 #[path = "native_chat/continuity.rs"]
 mod continuity;
 
+#[path = "native_chat/provider_admission.rs"]
+mod provider_admission;
+
+#[path = "native_chat/operator_profiles.rs"]
+mod operator_profiles;
+
 #[path = "native_chat/legacy_queue.rs"]
 mod legacy_queue;

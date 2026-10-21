@@ -234,6 +234,95 @@ async fn open_and_locator_bind_are_fenced_concurrent_and_restart_readable() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn span_lifecycle_close_seal_reconcile_is_fenced_and_idempotent() {
+    let database = Database::start().await;
+    seed_access(&database.pool).await;
+    seed_chat(&database.pool, CHAT, "chat", USER).await;
+    let owner = actor(USER, ORG, "span-lifecycle");
+    let (binding_id, segment_id) = ensure_binding(&database.pool, &owner, CHAT).await;
+    seed_run_attempt(&database.pool, CHAT).await;
+
+    let opened = execute(
+        &database.pool,
+        &owner,
+        ORG,
+        &open_request(&binding_id, &segment_id),
+    )
+    .await
+    .expect("open span");
+    let span_id = opened["span"]["id"].as_str().expect("span id");
+
+    let seal: Request = serde_json::from_value(json!({
+        "operation":"seal_segment",
+        "spanId":span_id,
+        "runId":RUN,
+        "attemptId":ATTEMPT,
+        "attemptEpoch":7,
+        "ownerToken":"attempt-owner-token"
+    }))
+    .expect("seal request");
+    let sealed = execute(&database.pool, &owner, ORG, &seal)
+        .await
+        .expect("seal segment");
+    assert_eq!(sealed["segment"]["state"], "sealed");
+    assert!(sealed["segment"]["sealedAt"].is_string());
+
+    let close: Request = serde_json::from_value(json!({
+        "operation":"close",
+        "spanId":span_id,
+        "runId":RUN,
+        "attemptId":ATTEMPT,
+        "attemptEpoch":7,
+        "ownerToken":"attempt-owner-token",
+        "completeness":"complete"
+    }))
+    .expect("close request");
+    let closed = execute(&database.pool, &owner, ORG, &close)
+        .await
+        .expect("close span");
+    assert_eq!(closed["span"]["state"], "sealed");
+    assert_eq!(closed["span"]["completeness"], "complete");
+    assert!(closed["span"]["closedAt"].is_string());
+
+    let repeated = execute(&database.pool, &owner, ORG, &close)
+        .await
+        .expect("repeat close is idempotent");
+    assert_eq!(repeated, closed);
+
+    let reconcile: Request = serde_json::from_value(json!({
+        "operation":"reconcile_segment",
+        "spanId":span_id,
+        "runId":RUN,
+        "attemptId":ATTEMPT,
+        "attemptEpoch":7,
+        "ownerToken":"attempt-owner-token"
+    }))
+    .expect("reconcile request");
+    let reconciled = execute(&database.pool, &owner, ORG, &reconcile)
+        .await
+        .expect("reconcile sealed segment");
+    assert_eq!(reconciled["segment"]["state"], "sealed");
+
+    let stale: Request = serde_json::from_value(json!({
+        "operation":"close",
+        "spanId":span_id,
+        "runId":RUN,
+        "attemptId":ATTEMPT,
+        "attemptEpoch":7,
+        "ownerToken":"stale-owner-token",
+        "completeness":"complete"
+    }))
+    .expect("stale close request");
+    assert!(matches!(
+        execute(&database.pool, &owner, ORG, &stale).await,
+        Err(Error::Http(409, _))
+    ));
+}
+
+#[path = "runtime_spans/lifecycle.rs"]
+mod lifecycle;
+
 #[path = "runtime_spans/concurrency_and_side_chat.rs"]
 mod concurrency_and_side_chat;
 

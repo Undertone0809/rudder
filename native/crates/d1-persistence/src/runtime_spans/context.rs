@@ -33,6 +33,26 @@ pub(super) async fn lock_current_context(
     actor: &VerifiedActor,
     input: &CurrentContextInput<'_>,
 ) -> Result<LockedContext> {
+    lock_current_context_inner(tx, actor, input, false).await
+}
+
+/// Lock the same fenced Run/Attempt/Binding/Segment context for a terminal
+/// lifecycle operation. A segment that was already sealed is a valid target
+/// for an idempotent close/reconciliation retry.
+pub(super) async fn lock_current_context_allow_sealed_segment(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &VerifiedActor,
+    input: &CurrentContextInput<'_>,
+) -> Result<LockedContext> {
+    lock_current_context_inner(tx, actor, input, true).await
+}
+
+async fn lock_current_context_inner(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &VerifiedActor,
+    input: &CurrentContextInput<'_>,
+    allow_sealed_segment: bool,
+) -> Result<LockedContext> {
     let CurrentContextInput {
         organization_id,
         run_id,
@@ -107,7 +127,13 @@ pub(super) async fn lock_current_context(
     )
     .await?;
 
-    if run_status != "running" || run_owner.as_deref() != Some(owner_token) {
+    let terminal_retry = allow_sealed_segment
+        && matches!(
+            run_status.as_str(),
+            "succeeded" | "failed" | "cancelled" | "timed_out"
+        )
+        && run_owner.as_deref() == Some(owner_token);
+    if (run_status != "running" && !terminal_retry) || run_owner.as_deref() != Some(owner_token) {
         return Err(http(409, "Run execution owner or lease is stale"));
     }
 
@@ -147,7 +173,8 @@ pub(super) async fn lock_current_context(
     if attempt_agent_id != agent_id
         || stored_epoch != Some(attempt_epoch)
         || stored_owner.as_deref() != Some(owner_token)
-        || !matches!(attempt_status.as_str(), "started" | "waiting_for_network")
+        || (!terminal_retry
+            && !matches!(attempt_status.as_str(), "started" | "waiting_for_network"))
         || attempt_index < 0
     {
         return Err(http(409, "Run attempt owner or epoch is stale"));
@@ -217,11 +244,15 @@ pub(super) async fn lock_current_context(
         || runtime_type != agent_runtime_type
         || runtime_type != attempt_runtime_type
         || segment_runtime_type != runtime_type
-        || !matches!(segment_state.as_str(), "pending" | "open")
+        || (!allow_sealed_segment && !matches!(segment_state.as_str(), "pending" | "open"))
+        || (allow_sealed_segment
+            && !matches!(segment_state.as_str(), "pending" | "open" | "sealed"))
     {
         return Err(http(409, "Run, binding, and current segment do not match"));
     }
-    assert_current_lease_tx(tx, organization_id, &run_id, owner_token).await?;
+    if !terminal_retry {
+        assert_current_lease_tx(tx, organization_id, &run_id, owner_token).await?;
+    }
 
     Ok(LockedContext {
         run_id,

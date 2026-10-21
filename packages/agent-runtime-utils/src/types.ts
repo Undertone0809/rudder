@@ -618,6 +618,8 @@ export interface CreateConfigValues {
   codexProfileId?: string;
   /** Existing local Hermes profile; omitted selects its default profile. */
   hermesProfileId?: string;
+  /** Native local Claude/Cursor/Pi profile; existing operator settings stay in place. */
+  nativeProfileId?: string;
   cwd: string;
   instructionsFilePath?: string;
   promptTemplate: string;

@@ -52,6 +52,17 @@ impl From<rudder_native_protocol::lines::LineError> for PiTransportError {
 /// Trusted host-built process data. The child starts the installed Pi CLI
 /// through its absolute Node executable so the process-host can keep the
 /// provider environment isolated without depending on ambient PATH.
+pub enum PiProfileMode {
+    Managed,
+    /// The host supplies an instance-owned session root independently of the
+    /// operator HOME. Neither path is deserialized from a provider request.
+    OperatorNative {
+        session_root: PathBuf,
+        /// Exact instruction entry resolved and authorized by the Rust host.
+        instruction_file: Option<PathBuf>,
+    },
+}
+
 pub struct ProcessLaunch {
     pub node_executable: PathBuf,
     pub pi_cli_entry: PathBuf,
@@ -59,6 +70,7 @@ pub struct ProcessLaunch {
     pub runtime_root: PathBuf,
     pub isolated_home: PathBuf,
     pub session_dir: PathBuf,
+    pub profile_mode: PiProfileMode,
     /// Exact persisted Pi session file on resume. A new session leaves this
     /// absent and consumes the committed StartPiSession effect first.
     pub resume_session_file: Option<PathBuf>,
@@ -778,8 +790,43 @@ fn validate_launch(mut launch: ProcessLaunch) -> Result<ProcessLaunch, PiTranspo
             return Err(PiTransportError::InvalidLaunch);
         }
     }
-    if !launch.session_dir.starts_with(&launch.isolated_home) {
-        return Err(PiTransportError::InvalidLaunch);
+    match &mut launch.profile_mode {
+        PiProfileMode::Managed if !launch.session_dir.starts_with(&launch.isolated_home) => {
+            return Err(PiTransportError::InvalidLaunch);
+        }
+        PiProfileMode::OperatorNative { session_root, .. } => {
+            for directory in [
+                launch.isolated_home.join(".pi"),
+                launch.isolated_home.join(".pi/agent"),
+            ] {
+                let metadata = std::fs::symlink_metadata(&directory)
+                    .map_err(|_| PiTransportError::InvalidLaunch)?;
+                if !metadata.is_dir()
+                    || metadata.file_type().is_symlink()
+                    || !directory
+                        .canonicalize()
+                        .map_err(|_| PiTransportError::InvalidLaunch)?
+                        .starts_with(&launch.isolated_home)
+                {
+                    return Err(PiTransportError::InvalidLaunch);
+                }
+            }
+            let metadata = std::fs::symlink_metadata(&session_root)
+                .map_err(|_| PiTransportError::InvalidLaunch)?;
+            if !session_root.is_absolute()
+                || !metadata.is_dir()
+                || metadata.file_type().is_symlink()
+            {
+                return Err(PiTransportError::InvalidLaunch);
+            }
+            *session_root = session_root
+                .canonicalize()
+                .map_err(|_| PiTransportError::InvalidLaunch)?;
+            if launch.session_dir != *session_root {
+                return Err(PiTransportError::InvalidLaunch);
+            }
+        }
+        PiProfileMode::Managed => {}
     }
     if let Some(path) = &mut launch.resume_session_file {
         if !path.is_absolute() {
@@ -796,10 +843,26 @@ fn validate_launch(mut launch: ProcessLaunch) -> Result<ProcessLaunch, PiTranspo
         if !path.is_absolute() {
             return Err(PiTransportError::InvalidLaunch);
         }
+        let metadata =
+            std::fs::symlink_metadata(&path).map_err(|_| PiTransportError::InvalidLaunch)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(PiTransportError::InvalidLaunch);
+        }
         *path = path
             .canonicalize()
             .map_err(|_| PiTransportError::InvalidLaunch)?;
-        if !path.is_file() || !path.starts_with(&launch.isolated_home) {
+        let allowed = match &launch.profile_mode {
+            PiProfileMode::Managed => path.starts_with(&launch.isolated_home),
+            PiProfileMode::OperatorNative {
+                instruction_file: Some(expected),
+                ..
+            } => expected.is_absolute() && expected.canonicalize().ok().as_ref() == Some(path),
+            PiProfileMode::OperatorNative {
+                instruction_file: None,
+                ..
+            } => false,
+        };
+        if !path.is_file() || !allowed {
             return Err(PiTransportError::InvalidLaunch);
         }
     }
@@ -894,6 +957,97 @@ mod tests {
     };
     use crate::{PiSessionTree, PiSessionTreeError, PiTurnStatus};
     use serde_json::json;
+
+    fn profile_launch(root: &std::path::Path) -> super::ProcessLaunch {
+        for directory in [
+            "home/.pi/agent",
+            "home/.pi/sessions",
+            "runtime",
+            "workspace",
+            "owned-sessions",
+        ] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        let executable = std::env::current_exe().unwrap();
+        super::ProcessLaunch {
+            node_executable: executable.clone(),
+            pi_cli_entry: executable.clone(),
+            process_host: executable,
+            runtime_root: root.join("runtime"),
+            isolated_home: root.join("home"),
+            session_dir: root.join("home/.pi/sessions"),
+            profile_mode: super::PiProfileMode::Managed,
+            resume_session_file: None,
+            system_prompt_file: None,
+            cwd: root.join("workspace"),
+            provider: "test".into(),
+            model: "test".into(),
+            thinking: None,
+            run_id: "run".into(),
+            attempt_id: "attempt".into(),
+            owner_token: "owner".into(),
+            env: Default::default(),
+        }
+    }
+
+    #[test]
+    fn operator_launch_requires_exact_owned_session_and_host_resolved_instruction_paths() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let mut managed = profile_launch(&root);
+        managed.session_dir = root.join("owned-sessions");
+        assert!(matches!(
+            super::validate_launch(managed),
+            Err(PiTransportError::InvalidLaunch)
+        ));
+
+        let instruction = root.join("workspace/AGENTS.md");
+        let other = root.join("workspace/OTHER.md");
+        std::fs::write(&instruction, "Trusted entry").unwrap();
+        std::fs::write(&other, "Not selected").unwrap();
+        for (session_name, prompt, valid) in [
+            ("owned-sessions", instruction.clone(), true),
+            ("home/.pi/sessions", instruction.clone(), false),
+            ("owned-sessions", other, false),
+        ] {
+            let mut launch = profile_launch(&root);
+            launch.session_dir = root.join(session_name);
+            launch.system_prompt_file = Some(prompt);
+            launch.profile_mode = super::PiProfileMode::OperatorNative {
+                session_root: root.join("owned-sessions"),
+                instruction_file: Some(instruction.clone()),
+            };
+            assert_eq!(super::validate_launch(launch).is_ok(), valid);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operator_launch_rejects_symlinked_provider_session_and_instruction_paths() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        for target in ["home/.pi/agent", "owned-sessions", "workspace/AGENTS.md"] {
+            let mut launch = profile_launch(&root);
+            let instruction = root.join("workspace/AGENTS.md");
+            std::fs::write(&instruction, "Trusted entry").unwrap();
+            launch.session_dir = root.join("owned-sessions");
+            launch.system_prompt_file = Some(instruction.clone());
+            launch.profile_mode = super::PiProfileMode::OperatorNative {
+                session_root: launch.session_dir.clone(),
+                instruction_file: Some(instruction),
+            };
+            let target = root.join(target);
+            let moved = target.with_extension("original");
+            std::fs::rename(&target, &moved).unwrap();
+            std::os::unix::fs::symlink(&moved, &target).unwrap();
+            assert!(matches!(
+                super::validate_launch(launch),
+                Err(PiTransportError::InvalidLaunch)
+            ));
+            std::fs::remove_file(&target).unwrap();
+            std::fs::rename(&moved, &target).unwrap();
+        }
+    }
 
     fn fixture_session_header() -> String {
         json!({

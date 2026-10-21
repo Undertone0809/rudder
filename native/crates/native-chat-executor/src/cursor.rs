@@ -6,7 +6,7 @@
 
 use crate::HostPaths;
 use rudder_cursor_acp_adapter::{
-    AuthenticateParams, CursorAcpCommand, CursorAcpMessage, CursorAcpProcessLaunch,
+    AuthenticateParams, CursorAcpCommand, CursorAcpHome, CursorAcpMessage, CursorAcpProcessLaunch,
     CursorAcpSession, CursorAcpTransport, CursorAcpTransportError, InitializeParams, SessionId,
     SessionLoadParams, SessionNewParams, SessionPromptParams,
 };
@@ -21,6 +21,8 @@ use thiserror::Error;
 
 const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+const PROCESS_GRACE: Duration = Duration::from_millis(500);
+const CLEANUP_RECEIPT_ALLOWANCE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Error)]
 pub enum CursorExecutionError {
@@ -77,12 +79,21 @@ pub fn execute_turn(
         || !paths.process_host.is_file()
         || !paths.runtime_root.is_dir()
         || !paths.isolated_home.is_dir()
+        || local.timeout_sec.is_some_and(|seconds| seconds > 3600)
+        || local
+            .grace_sec
+            .is_some_and(|seconds| !(1..=60).contains(&seconds))
         || run_id.is_empty()
         || attempt_id.is_empty()
         || owner_token.is_empty()
     {
         return Err(CursorExecutionError::InvalidConfiguration);
     }
+    let timeout = local
+        .timeout_sec
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .map_or(timeout, |configured| timeout.min(configured));
     let mut env = BTreeMap::new();
     for (key, value) in &local.env {
         if matches!(key.as_str(), "HOME" | "USERPROFILE")
@@ -100,7 +111,14 @@ pub fn execute_turn(
             executable: config.executable.clone(),
             process_host: paths.process_host.clone(),
             runtime_root: paths.runtime_root.clone(),
-            isolated_home: paths.isolated_home.clone(),
+            home: if local.profile_id == "operator-default" {
+                CursorAcpHome::OperatorProfile(local.home.clone())
+            } else {
+                // Preserve the existing isolated Cursor process home for
+                // managed profiles. Only explicit operator-default opts into
+                // provider-owned state in place.
+                CursorAcpHome::IsolatedRuntime(paths.isolated_home.clone())
+            },
             cwd: config.cwd.clone(),
             run_id: run_id.to_owned(),
             attempt_id: attempt_id.to_owned(),
@@ -118,8 +136,17 @@ pub fn execute_turn(
         input,
         deadline,
     );
+    let process_grace = local
+        .grace_sec
+        .map(Duration::from_secs)
+        .unwrap_or(PROCESS_GRACE);
+    let cleanup_wait = if local.grace_sec.is_some() {
+        process_grace + CLEANUP_RECEIPT_ALLOWANCE
+    } else {
+        CLEANUP_TIMEOUT
+    };
     let cleanup = transport
-        .stop(CLEANUP_TIMEOUT)
+        .stop_with_grace(process_grace, cleanup_wait)
         .ok()
         .and_then(|_| transport.take_cleanup_proof());
     let (session, request_id, final_text, response, update_count) = result?;

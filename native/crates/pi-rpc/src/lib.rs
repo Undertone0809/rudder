@@ -10,7 +10,8 @@ mod strict_json;
 
 pub use receipts::{PiCleanupReceipt, PiTurnReceipt, PiTurnStatus};
 pub use rpc::{
-    PiCommand, PiEvent, PiResponse, PiRpcMessage, PiRpcTransport, PiTransportError, ProcessLaunch,
+    PiCommand, PiEvent, PiProfileMode, PiResponse, PiRpcMessage, PiRpcTransport, PiTransportError,
+    ProcessLaunch,
 };
 pub use session::{PiSessionEntry, PiSessionTree, PiSessionTreeError, PiSessionView};
 

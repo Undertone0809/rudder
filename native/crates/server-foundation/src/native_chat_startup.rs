@@ -185,6 +185,7 @@ pub(crate) fn configure(
             return Err(invalid_at("invalid installed Pi paths"));
         };
         let profiles = owned_directory(&native_root.join("pi-profiles"))?;
+        owned_directory(&profiles.join("operator-sessions"))?;
         host = host
             .with_pi_runtime(node, entry, profiles)
             .map_err(|_| invalid_at("invalid installed Pi paths"))?;

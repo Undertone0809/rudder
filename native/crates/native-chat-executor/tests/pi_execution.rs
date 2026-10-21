@@ -5,7 +5,7 @@
 //! SessionTree reading, settlement and cleanup all use the real Rust boundary.
 
 use rudder_native_chat_executor::{PiExecution, PiExecutionPhase, PiUnknownReason};
-use rudder_pi_rpc::{ConnectionLaunchPermit, ProcessLaunch};
+use rudder_pi_rpc::{ConnectionLaunchPermit, PiProfileMode, ProcessLaunch};
 use std::{
     collections::BTreeMap,
     fs,
@@ -102,6 +102,7 @@ fn synthetic_pi_execution_runs_state_input_settled_receipt_and_cleanup() {
             runtime_root: root.path().to_path_buf(),
             isolated_home: home,
             session_dir: sessions,
+            profile_mode: PiProfileMode::Managed,
             resume_session_file: None,
             system_prompt_file: None,
             cwd,

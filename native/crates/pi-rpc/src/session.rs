@@ -56,8 +56,20 @@ impl PiSessionEntry {
     pub fn role(&self) -> Option<&str> {
         self.role.as_deref()
     }
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
     pub fn text(&self) -> Option<&str> {
         self.text.as_deref()
+    }
+
+    /// A text projection cannot represent these native details completely.
+    pub fn has_unprojected_content(&self) -> bool {
+        !self.is_message()
+            || self.has_image
+            || self.has_thinking
+            || self.has_tool_call
+            || self.role() == Some("toolResult")
     }
 
     /// Safe public-text projection. Thinking blocks stay private, while images
@@ -238,6 +250,48 @@ impl PiSessionTree {
         self.by_id
             .get(id)
             .and_then(|index| self.entries.get(*index))
+    }
+
+    /// Resolve a persisted Run range at its own sealed leaf, independently of
+    /// the file's current leaf or subsequently appended turns and branches.
+    /// Authorization and the persisted selector belong to the caller. This
+    /// returns typed entries, not a claim of complete text projection.
+    pub fn read_span(
+        &self,
+        input_id: &str,
+        assistant_id: &str,
+        sealed_leaf_id: &str,
+    ) -> Result<Vec<&PiSessionEntry>, PiSessionTreeError> {
+        let input = self
+            .entry(input_id)
+            .ok_or(PiSessionTreeError::InvalidTree)?;
+        let assistant = self
+            .entry(assistant_id)
+            .ok_or(PiSessionTreeError::InvalidTree)?;
+        if input.role() != Some("user")
+            || assistant.role() != Some("assistant")
+            || !self.is_ancestor(input_id, assistant_id)
+            || !self.is_ancestor(assistant_id, sealed_leaf_id)
+        {
+            return Err(PiSessionTreeError::InvalidTree);
+        }
+        let mut entries = Vec::new();
+        let mut cursor = Some(sealed_leaf_id);
+        while let Some(id) = cursor {
+            let entry = self.entry(id).ok_or(PiSessionTreeError::InvalidTree)?;
+            if entries.len() >= self.entries.len()
+                || (entry.role() == Some("user") && entry.id() != input_id)
+            {
+                return Err(PiSessionTreeError::InvalidTree);
+            }
+            entries.push(entry);
+            if entry.id() == input_id {
+                entries.reverse();
+                return Ok(entries);
+            }
+            cursor = entry.parent_id();
+        }
+        Err(PiSessionTreeError::InvalidTree)
     }
 
     pub fn is_ancestor(&self, ancestor_id: &str, descendant_id: &str) -> bool {
@@ -456,6 +510,37 @@ mod tests {
     }
 
     #[test]
+    fn persisted_span_does_not_follow_later_turns_or_sibling_branches() {
+        let (dir, path) = session(&[
+            r#"{"type":"message","id":"aaaaaaaa","parentId":null,"message":{"role":"user","content":"first"}}"#,
+            r#"{"type":"message","id":"bbbbbbbb","parentId":"aaaaaaaa","message":{"role":"assistant","content":"first answer"}}"#,
+            r#"{"type":"message","id":"cccccccc","parentId":"bbbbbbbb","message":{"role":"user","content":"second"}}"#,
+            r#"{"type":"message","id":"dddddddd","parentId":"cccccccc","message":{"role":"assistant","content":"second answer"}}"#,
+            r#"{"type":"message","id":"eeeeeeee","parentId":"aaaaaaaa","message":{"role":"assistant","content":"sibling answer"}}"#,
+        ]);
+        let tree = PiSessionTree::read(&path, dir.path()).unwrap();
+        assert_eq!(tree.view().leaf_id.as_deref(), Some("eeeeeeee"));
+        let old = tree.read_span("aaaaaaaa", "bbbbbbbb", "bbbbbbbb").unwrap();
+        assert_eq!(
+            old.iter().map(|entry| entry.id()).collect::<Vec<_>>(),
+            ["aaaaaaaa", "bbbbbbbb"]
+        );
+        assert_eq!(old[1].text(), Some("first answer"));
+        let second = tree.read_span("cccccccc", "dddddddd", "dddddddd").unwrap();
+        assert_eq!(second[1].text(), Some("second answer"));
+        for (input, assistant, leaf) in [
+            ("aaaaaaaa", "bbbbbbbb", "eeeeeeee"),
+            ("aaaaaaaa", "bbbbbbbb", "dddddddd"),
+            ("aaaaaaaa", "dddddddd", "dddddddd"),
+            ("cccccccc", "eeeeeeee", "eeeeeeee"),
+            ("aaaaaaaa", "bbbbbbbb", "ffffffff"),
+            ("bbbbbbbb", "bbbbbbbb", "bbbbbbbb"),
+        ] {
+            assert!(tree.read_span(input, assistant, leaf).is_err());
+        }
+    }
+
+    #[test]
     fn exact_session_reader_rejects_duplicate_ids_or_non_tree_parent() {
         for lines in [
             vec![
@@ -510,6 +595,7 @@ mod tests {
         let tree = PiSessionTree::read(&path, dir.path()).unwrap();
         let assistant = tree.entry("cccccccc").unwrap();
         assert!(assistant.has_thinking);
+        assert!(assistant.has_unprojected_content());
         assert_eq!(assistant.final_text().unwrap(), "public answer");
         assert!(
             !assistant

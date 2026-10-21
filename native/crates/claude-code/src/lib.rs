@@ -138,7 +138,7 @@ impl ClaudeExecutable {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaudeRuntimeProfile {
     operator_home: PathBuf,
-    managed_home: PathBuf,
+    managed_home: Option<PathBuf>,
     config_dir: PathBuf,
 }
 
@@ -156,7 +156,25 @@ impl ClaudeRuntimeProfile {
         }
         Ok(Self {
             operator_home,
-            managed_home,
+            managed_home: Some(managed_home),
+            config_dir,
+        })
+    }
+
+    /// Select the operator's existing Claude profile in place. The operator
+    /// home supplies the normal CLI auth boundary and `.claude` remains the
+    /// selected config/state directory; no profile files are copied or
+    /// rewritten by this constructor.
+    pub fn operator_default(operator_home: PathBuf) -> Result<Self, ClaudeError> {
+        let operator_home = canonical_directory(&operator_home)?;
+        let config_dir = operator_home.join(".claude");
+        let canonical_config = canonical_directory(&config_dir)?;
+        if canonical_config != config_dir {
+            return Err(ClaudeError::InvalidLaunch);
+        }
+        Ok(Self {
+            operator_home,
+            managed_home: None,
             config_dir,
         })
     }
@@ -165,8 +183,8 @@ impl ClaudeRuntimeProfile {
         &self.operator_home
     }
 
-    pub fn managed_home(&self) -> &Path {
-        &self.managed_home
+    pub fn managed_home(&self) -> Option<&Path> {
+        self.managed_home.as_deref()
     }
 
     pub fn config_dir(&self) -> &Path {
@@ -178,13 +196,16 @@ impl ClaudeRuntimeProfile {
     /// ambient process environment wholesale.
     pub fn environment(&self) -> Result<BTreeMap<String, String>, ClaudeError> {
         let mut env = BTreeMap::new();
-        for (key, value) in [
+        let mut approved = vec![
             ("HOME", &self.operator_home),
             ("USERPROFILE", &self.operator_home),
             ("CLAUDE_CONFIG_DIR", &self.config_dir),
-            ("RUDDER_CLAUDE_HOME", &self.managed_home),
             ("RUDDER_OPERATOR_HOME", &self.operator_home),
-        ] {
+        ];
+        if let Some(managed_home) = self.managed_home.as_ref() {
+            approved.push(("RUDDER_CLAUDE_HOME", managed_home));
+        }
+        for (key, value) in approved {
             // Reject non-UTF-8 paths rather than silently losing an
             // environment boundary at process-host serialization time.
             let value = value.to_str().ok_or(ClaudeError::InvalidLaunch)?;
@@ -228,6 +249,7 @@ pub struct ClaudeInvocation {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permission_mode: Option<String>,
+    pub max_turns: Option<u32>,
     pub settings_path: Option<PathBuf>,
     pub mcp_config_path: Option<PathBuf>,
     pub append_system_prompt_file: Option<PathBuf>,
@@ -241,6 +263,7 @@ impl ClaudeInvocation {
             model: None,
             effort: None,
             permission_mode: None,
+            max_turns: None,
             settings_path: None,
             mcp_config_path: None,
             append_system_prompt_file: None,
@@ -301,6 +324,12 @@ impl ClaudeInvocation {
                 return Err(ClaudeError::InvalidLaunch);
             }
             push_value(&mut args, "--permission-mode", permission_mode)?;
+        }
+        if let Some(max_turns) = self.max_turns {
+            if !(1..=1000).contains(&max_turns) {
+                return Err(ClaudeError::InvalidLaunch);
+            }
+            args.extend(["--max-turns".into(), max_turns.to_string()]);
         }
         for (flag, path) in [
             ("--settings", self.settings_path.as_ref()),
@@ -1224,6 +1253,7 @@ mod tests {
             model: Some("sonnet".into()),
             effort: Some("high".into()),
             permission_mode: Some("auto".into()),
+            max_turns: Some(300),
             settings_path: None,
             mcp_config_path: None,
             append_system_prompt_file: None,
@@ -1247,6 +1277,11 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair == ["--resume", session().as_str()])
         );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--permission-mode", "auto"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--max-turns", "300"]));
         assert!(args.contains(&"--fork-session".to_owned()));
         assert!(!args.contains(&"--continue".to_owned()));
     }
@@ -1342,7 +1377,53 @@ mod tests {
             managed.join(".claude").to_str().unwrap()
         );
         assert_eq!(env["RUDDER_CLAUDE_HOME"], managed.to_str().unwrap());
+        assert_eq!(profile.managed_home(), Some(managed.as_path()));
         assert!(ClaudeRuntimeProfile::new(operator.clone(), operator).is_err());
+    }
+
+    #[test]
+    fn operator_profile_uses_existing_claude_dir_without_managed_home() {
+        let temp = tempfile::tempdir().unwrap();
+        let operator = temp.path().join("operator");
+        let config_dir = operator.join(".claude");
+        fs::create_dir_all(&config_dir).unwrap();
+        let marker = b"synthetic operator auth marker; not a credential";
+        fs::write(config_dir.join("operator-marker"), marker).unwrap();
+
+        let profile = ClaudeRuntimeProfile::operator_default(operator.clone()).unwrap();
+        let canonical_operator = operator.canonicalize().unwrap();
+        let env = profile.environment().unwrap();
+        assert_eq!(env["HOME"], canonical_operator.to_str().unwrap());
+        assert_eq!(env["USERPROFILE"], canonical_operator.to_str().unwrap());
+        assert_eq!(
+            env["CLAUDE_CONFIG_DIR"],
+            canonical_operator.join(".claude").to_str().unwrap()
+        );
+        assert_eq!(
+            env["RUDDER_OPERATOR_HOME"],
+            canonical_operator.to_str().unwrap()
+        );
+        assert!(!env.contains_key("RUDDER_CLAUDE_HOME"));
+        assert_eq!(profile.managed_home(), None);
+        assert_eq!(
+            fs::read(config_dir.join("operator-marker")).unwrap(),
+            marker,
+            "profile selection must not modify operator-owned files"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operator_profile_rejects_symlinked_claude_dir() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let operator = temp.path().join("operator");
+        let redirected = temp.path().join("redirected-claude");
+        fs::create_dir_all(&operator).unwrap();
+        fs::create_dir_all(&redirected).unwrap();
+        symlink(redirected, operator.join(".claude")).unwrap();
+        assert!(ClaudeRuntimeProfile::operator_default(operator).is_err());
     }
 
     #[test]

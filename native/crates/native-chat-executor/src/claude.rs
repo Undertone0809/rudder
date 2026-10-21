@@ -18,6 +18,7 @@ use tokio::runtime::Handle;
 
 const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
 const PROCESS_GRACE: Duration = Duration::from_secs(10);
+const CLEANUP_RECEIPT_ALLOWANCE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Error)]
 pub enum ClaudeExecutionError {
@@ -76,9 +77,27 @@ pub fn execute_turn(
     {
         return Err(ClaudeExecutionError::InvalidConfiguration);
     }
+    if local
+        .grace_sec
+        .is_some_and(|seconds| !(1..=60).contains(&seconds))
+        || local
+            .max_turns_per_run
+            .is_some_and(|turns| !(1..=1000).contains(&turns))
+    {
+        return Err(ClaudeExecutionError::InvalidConfiguration);
+    }
+    let timeout = local
+        .timeout_sec
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .map_or(timeout, |configured| timeout.min(configured));
 
-    let profile = ClaudeRuntimeProfile::new(config.operator_home.clone(), local.home.clone())
-        .map_err(|_| ClaudeExecutionError::InvalidConfiguration)?;
+    let profile = if local.profile_id == "operator-default" {
+        ClaudeRuntimeProfile::operator_default(config.operator_home.clone())
+    } else {
+        ClaudeRuntimeProfile::new(config.operator_home.clone(), local.home.clone())
+    }
+    .map_err(|_| ClaudeExecutionError::InvalidConfiguration)?;
     let mut env = profile
         .environment()
         .map_err(|_| ClaudeExecutionError::InvalidConfiguration)?;
@@ -104,7 +123,13 @@ pub fn execute_turn(
     let mut invocation = ClaudeInvocation::new(session);
     invocation.model = config.model.clone();
     invocation.effort = config.reasoning_effort.clone();
-    invocation.append_system_prompt_file = config.instruction_source_path.clone();
+    invocation.permission_mode = local.permission_mode.clone();
+    invocation.max_turns = local.max_turns_per_run;
+    invocation.append_system_prompt_file = claude_instruction_entry_path(
+        config.instruction_source_path.as_deref(),
+        &config.instruction_entry_file,
+        config.instruction_content.is_some(),
+    );
     let launch = ClaudeLaunch {
         executable: config.executable.clone(),
         cwd: config.cwd.clone(),
@@ -122,8 +147,17 @@ pub fn execute_turn(
 
     // A result is a provider receipt; the process remains owned until the
     // host emits its matching terminal cleanup lifecycle.
-    let _ = transport.stop(PROCESS_GRACE.as_millis() as u64);
-    let cleanup_deadline = Instant::now() + PROCESS_GRACE;
+    let process_grace = local
+        .grace_sec
+        .map(Duration::from_secs)
+        .unwrap_or(PROCESS_GRACE);
+    let _ = transport.stop(process_grace.as_millis() as u64);
+    let cleanup_wait = if local.grace_sec.is_some() {
+        process_grace + CLEANUP_RECEIPT_ALLOWANCE
+    } else {
+        PROCESS_GRACE
+    };
+    let cleanup_deadline = Instant::now() + cleanup_wait;
     while !cleanup_deadline
         .saturating_duration_since(Instant::now())
         .is_zero()
@@ -146,6 +180,17 @@ pub fn execute_turn(
         turn,
         cleanup,
     })
+}
+
+fn claude_instruction_entry_path(
+    source_root: Option<&std::path::Path>,
+    entry_file: &str,
+    has_content: bool,
+) -> Option<std::path::PathBuf> {
+    if !has_content {
+        return None;
+    }
+    source_root.map(|root| root.join(entry_file))
 }
 
 fn run_turn(
@@ -185,4 +230,32 @@ fn run_turn(
 
 fn remaining(deadline: Instant, cap: Duration) -> Duration {
     deadline.saturating_duration_since(Instant::now()).min(cap)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::claude_instruction_entry_path;
+    use std::path::Path;
+
+    #[test]
+    fn instruction_append_path_targets_entry_file_not_bundle_directory() {
+        let path = claude_instruction_entry_path(
+            Some(Path::new("/trusted/agent/instructions")),
+            "SOUL.md",
+            true,
+        );
+        assert_eq!(
+            path,
+            Some(Path::new("/trusted/agent/instructions/SOUL.md").into())
+        );
+        assert_eq!(
+            claude_instruction_entry_path(
+                Some(Path::new("/trusted/agent/instructions")),
+                "HEARTBEAT.md",
+                false,
+            ),
+            None,
+            "ignored heartbeat content is not passed as an instruction file"
+        );
+    }
 }

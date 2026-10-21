@@ -17,9 +17,9 @@ use rudder_d1_persistence::native_chat::{
     execution::{self, CheckpointSnapshot, CheckpointTransition, EffectDispatch, ExecutionFence},
 };
 use rudder_pi_rpc::{
-    ConnectionLaunchPermit, PiCleanupReceipt, PiCommand, PiEvent, PiResponse, PiRpcMessage,
-    PiRpcTransport, PiSessionTree, PiSessionTreeError, PiTransportError, PiTurnReceipt,
-    ProcessLaunch,
+    ConnectionLaunchPermit, PiCleanupReceipt, PiCommand, PiEvent, PiProfileMode, PiResponse,
+    PiRpcMessage, PiRpcTransport, PiSessionTree, PiSessionTreeError, PiTransportError,
+    PiTurnReceipt, ProcessLaunch,
 };
 use rudder_runtime_core::native_chat::{
     NativeChatProtocolPhase, NativeChatProvider, PiSessionSelector,
@@ -83,6 +83,16 @@ pub(super) fn run_claimed(
     deadline: Instant,
     paths: &HostPaths,
 ) -> std::result::Result<PiNativeExecutionObservation, ExecutionFailure> {
+    let deadline = config
+        .pi
+        .as_ref()
+        .and_then(|local| local.timeout)
+        .and_then(|timeout| Instant::now().checked_add(timeout))
+        .map_or(deadline, |configured| configured.min(deadline));
+    let cleanup_grace = config
+        .pi
+        .as_ref()
+        .map_or(CLEANUP_TIMEOUT, |local| local.cleanup_grace);
     let prepared = (|| -> ExecResult<_> {
         if cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
@@ -110,6 +120,18 @@ pub(super) fn run_claimed(
             .pi_session
             .as_ref()
             .map(|session| PathBuf::from(&session.session_file));
+        let system_prompt_file = config
+            .instruction_source_path
+            .as_ref()
+            .map(|root| root.join(&config.instruction_entry_file));
+        if config
+            .instruction_content
+            .as_ref()
+            .is_some_and(|text| !text.is_empty())
+            && system_prompt_file.is_none()
+        {
+            return Err(Error::UnsupportedConfiguration);
+        }
         let launch = ProcessLaunch {
             node_executable: local.node_executable.clone(),
             pi_cli_entry: local.pi_cli_entry.clone(),
@@ -117,8 +139,16 @@ pub(super) fn run_claimed(
             runtime_root: paths.runtime_root.clone(),
             isolated_home: local.home.clone(),
             session_dir: local.session_dir.clone(),
+            profile_mode: if local.profile_id == "operator-default" {
+                PiProfileMode::OperatorNative {
+                    session_root: local.session_dir.clone(),
+                    instruction_file: system_prompt_file.clone(),
+                }
+            } else {
+                PiProfileMode::Managed
+            },
             resume_session_file,
-            system_prompt_file: config.instruction_source_path.clone(),
+            system_prompt_file,
             cwd: config.cwd.clone(),
             provider: local.provider.clone(),
             model: local.model.clone(),
@@ -167,7 +197,7 @@ pub(super) fn run_claimed(
         deadline,
     );
     let _cleanup_phase =
-        execution.cleanup(remaining_timeout(deadline, CLEANUP_TIMEOUT).unwrap_or_default());
+        execution.cleanup(remaining_timeout(deadline, cleanup_grace).unwrap_or_default());
     let observation = execution.into_observation();
     if let Err(error) = result {
         return Err(ExecutionFailure::after_claim_pi(
