@@ -124,9 +124,15 @@ async fn exact_admitted_input_excludes_chat_history_and_persists_thread_turn_wit
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses disposable PostgreSQL and a synthetic local provider only"]
 async fn first_send_runs_through_owned_codex_workflow_with_one_exact_input() {
+    for mode in ["complete", "desktop-user-agent"] {
+        assert_first_send_runs_through_owned_codex_workflow(mode).await;
+    }
+}
+
+async fn assert_first_send_runs_through_owned_codex_workflow(mode: &str) {
     assert_ignored_external_dependencies();
     let (database, host, actor, _conversation_id, run_id, attempt_id) =
-        database_and_first_send_admission("complete").await;
+        database_and_first_send_admission(mode).await;
     let (result, host) = execute_on_worker(&database, host, actor, run_id, attempt_id).await;
     let observation = result.expect("synthetic first Chat Turn should be observed");
     assert_eq!(observation.turn_receipt.thread_id(), THREAD);

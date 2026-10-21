@@ -1386,10 +1386,14 @@ impl Driver<'_> {
             }
         }
         let initialized = self.rpc("initialize", json!({"clientInfo":{"name":"rudder-native-chat","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}}))?;
-        if !initialized["userAgent"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("rudder-native-chat/0.163.0-alpha.10.2 ("))
-            || initialized["codexHome"].as_str() != self.config.profile.home.to_str()
+        if !initialized["userAgent"].as_str().is_some_and(|value| {
+            // The selected profile may retain Codex Desktop's display
+            // name. Bind compatibility to the supported provider version,
+            // not that configurable name; CODEX_HOME is checked below.
+            value.split_once('/').is_some_and(|(client, version)| {
+                !client.trim().is_empty() && version.starts_with("0.163.0-alpha.10.2 (")
+            })
+        }) || initialized["codexHome"].as_str() != self.config.profile.home.to_str()
         {
             return Err(Error::UnsupportedConfiguration);
         }

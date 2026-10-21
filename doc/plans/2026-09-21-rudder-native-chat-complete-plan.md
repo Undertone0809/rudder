@@ -35,6 +35,12 @@ Invalid persisted workspace keys retain the existing generic 500 response and
 transaction rollback. The Claude project-path encoding repair remains only to
 clear the Windows baseline; it is not Claude runtime acceptance.
 
+Real operator-profile acceptance also exposed an initialization mismatch: Codex
+can retain the `Codex Desktop` display name in its user agent. Accept that display
+name while retaining the supported provider-version check, exact selected
+`CODEX_HOME`, and effective configuration/policy validation. Cover the desktop
+user agent in the owned first-send workflow and keep the wrong-version rejection.
+
 Before merge, run the unchanged Agent core public regression suite plus external
 root no-traversal coverage. Freeze the candidate, then independently exercise
 real locally configured Codex and Hermes through Rust public ingress: fresh

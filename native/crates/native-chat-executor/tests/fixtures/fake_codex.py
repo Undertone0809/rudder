@@ -248,6 +248,8 @@ for raw in sys.stdin:
         continue
     if method == "initialize":
         user_agent = "rudder-native-chat/0.163.0-alpha.10.2 (test)"
+        if mode == "desktop-user-agent":
+            user_agent = "Codex Desktop/0.163.0-alpha.10.2 (test) dumb (rudder-native-chat; 0.7.24)"
         if mode == "wrong-version":
             user_agent = "rudder-native-chat/0.163.0-alpha.11.0 (test)"
         emit({
