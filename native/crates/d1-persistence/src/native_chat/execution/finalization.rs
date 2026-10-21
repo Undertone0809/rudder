@@ -70,8 +70,7 @@ async fn validate_hermes_progress_for_terminal(
         return Err(http(409, "Hermes progress exceeds its event bound"));
     }
     let mut total_bytes = 0usize;
-    let mut expected_ordinal = 1u64;
-    for row in &rows {
+    for (expected_ordinal, row) in (1u64..).zip(rows.iter()) {
         // A progress commit can precede Stop while remaining ahead of the
         // client's rendered cutoff. Validate its ownership too; readers and
         // the frozen projection enforce visibility, not receipt finalization.
@@ -104,7 +103,6 @@ async fn validate_hermes_progress_for_terminal(
         if projection.ordinal != expected_ordinal {
             return Err(http(409, "Hermes progress ordinal is not contiguous"));
         }
-        expected_ordinal += 1;
     }
     if require_progress && rows.is_empty() {
         return Err(http(

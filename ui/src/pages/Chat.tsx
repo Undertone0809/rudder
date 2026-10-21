@@ -137,9 +137,9 @@ import {
   PendingChatSendAlreadyAcceptedError,
   capturePendingChatSendMutationIdentity,
   preparePendingChatSendMutation,
-  settlePendingChatSendMutationIdentity,
   type ChatSendMutationIdentity,
 } from "@/lib/chat-send-mutation-storage";
+import { settleNativeFirstSendResponse, settleStoppedChatInput } from "@/lib/chat-send-recovery-settlement";
 import {
   buildChatSkillOptions,
   buildChatSkillReferenceOptions,
@@ -182,7 +182,6 @@ import {
 import {
   nativeFirstSendDraftMatches,
   readNativeFirstSendIntent,
-  updateNativeFirstSendIntent,
 } from "@/lib/native-chat-first-send-storage";
 import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
@@ -261,38 +260,6 @@ export * from "./Chat.messages";
 export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
 
-async function settleStoppedChatInput(recovery: PendingChatStopRecovery): Promise<boolean> {
-  const identity = recovery.sendMutationIdentity;
-  if (!identity) return true;
-  if (identity.kind === "chat_send") {
-    return settlePendingChatSendMutationIdentity({
-      orgId: recovery.orgId,
-      conversationId: recovery.chatId,
-      identity: identity.mutation,
-    });
-  }
-
-  try {
-    const current = readNativeFirstSendIntent(recovery.orgId, identity.userId);
-    if (!current
-      || current.clientMutationId !== identity.clientMutationId
-      || current.conversationId !== recovery.chatId) {
-      return false;
-    }
-    if (current.status === "settled") return true;
-    if (current.status !== "accepted") return false;
-    await updateNativeFirstSendIntent(
-      recovery.orgId,
-      identity.userId,
-      identity.clientMutationId,
-      "settled",
-      recovery.chatId,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast, dismissToast } = useToast(); const { confirm, openNewProject } = useDialog();
@@ -1953,26 +1920,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (event.type === "error") {
               if (event.terminal === true && activeNativeFirstSend && conversation) {
                 firstTurnTerminalSeen = true;
-                if (activeNativeFirstSendMutationIdentity) {
-                  const settled = await settlePendingChatSendMutationIdentity({
-                    orgId: selectedOrganizationId,
-                    conversationId: conversation.id,
-                    identity: activeNativeFirstSendMutationIdentity,
-                  });
-                  if (!settled) {
-                    pushToast({
-                      title: "Response ended; chat send recovery still needs checking",
-                      body: "The accepted message identity could not be settled locally. Reopen the chat to reconcile it.",
-                      tone: "warn",
-                    });
-                  }
-                }
-                if (!activeNativeFirstSendMutationIdentity) {
-                  await nativeFirstSend.markSettled(
-                    activeNativeFirstSend.clientMutationId,
-                    conversation.id,
-                  ).catch(() => undefined);
-                }
+                await settleNativeFirstSendResponse({
+                  orgId: selectedOrganizationId, conversationId: conversation.id,
+                  firstSend: activeNativeFirstSend, identity: activeNativeFirstSendMutationIdentity,
+                  outcome: "ended", markSettled: nativeFirstSend.markSettled, pushToast,
+                });
               }
               throw new Error(event.error);
             }
@@ -1988,32 +1940,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (event.type === "final") {
               firstTurnTerminalSeen = true;
               if (activeNativeFirstSend) {
-                if (activeNativeFirstSendMutationIdentity) {
-                  const settled = await settlePendingChatSendMutationIdentity({
-                    orgId: selectedOrganizationId,
-                    conversationId: conversation.id,
-                    identity: activeNativeFirstSendMutationIdentity,
-                  });
-                  if (!settled) {
-                    pushToast({
-                      title: "Response finished; chat send recovery still needs checking",
-                      body: "The accepted message identity could not be settled locally. Reopen the chat to reconcile it.",
-                      tone: "warn",
-                    });
-                  }
-                }
-                if (!activeNativeFirstSendMutationIdentity) {
-                  await nativeFirstSend.markSettled(
-                    activeNativeFirstSend.clientMutationId,
-                    conversation.id,
-                  ).catch((error: unknown) => {
-                    pushToast({
-                      title: "Response finished; browser recovery still needs checking",
-                      body: error instanceof Error ? error.message : undefined,
-                      tone: "warn",
-                    });
-                  });
-                }
+                await settleNativeFirstSendResponse({
+                  orgId: selectedOrganizationId, conversationId: conversation.id,
+                  firstSend: activeNativeFirstSend, identity: activeNativeFirstSendMutationIdentity,
+                  outcome: "finished", markSettled: nativeFirstSend.markSettled, pushToast,
+                });
               }
               const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, conversation.id);
               if (stopRecoveryStreamKeysRef.current[conversation.id] === streamKey) {
