@@ -825,6 +825,35 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 expect(saved.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
                 if ("dangerouslyBypassSandbox" in config) expect(saved.dangerouslyBypassSandbox).toBe(false);
             }
+            // Keep the real public listener and Node preflight running, but fail
+            // the actual native-create process dependency after valid admission.
+            const beforeFailure = await db.execute(sql`SELECT
+                (SELECT count(*) FROM agents) AS agents,
+                (SELECT count(*) FROM agent_enabled_skills) AS skills,
+                (SELECT count(*) FROM organization_skills) AS catalog,
+                (SELECT count(*) FROM agent_config_revisions) AS revisions,
+                (SELECT count(*) FROM activity_log) AS activity,
+                (SELECT count(*) FROM organization_mutation_outbox) AS outbox`);
+            const directories = fs.existsSync(nativeOrganizationAgents) ? fs.readdirSync(nativeOrganizationAgents).sort() : null;
+            const unavailable = createRustFoundationBridge({ databaseUrl, binaryPath: path.join(root, "missing-create-foundation"), mode: "required", actorEnvelopeKey: "synthetic-unavailable-create-key-32bytes" });
+            const originalCreate = bridge!.agentCreate;
+            bridge!.agentCreate = unavailable.agentCreate;
+            try {
+                const failed = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, { name: `Unavailable native create ${randomUUID()}`, role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: { profileId: "operator-default" }, desiredSkills: [], seedOrganizationIntelligenceDefaults: false });
+                expect(failed.status, JSON.stringify(failed.body)).toBe(503);
+                expect(failed.body.code).toBe("rust_agent_create_cutover_request_failed");
+                expect(await db.execute(sql`SELECT
+                    (SELECT count(*) FROM agents) AS agents,
+                    (SELECT count(*) FROM agent_enabled_skills) AS skills,
+                    (SELECT count(*) FROM organization_skills) AS catalog,
+                    (SELECT count(*) FROM agent_config_revisions) AS revisions,
+                    (SELECT count(*) FROM activity_log) AS activity,
+                    (SELECT count(*) FROM organization_mutation_outbox) AS outbox`)).toEqual(beforeFailure);
+                expect(fs.existsSync(nativeOrganizationAgents) ? fs.readdirSync(nativeOrganizationAgents).sort() : null).toEqual(directories);
+            } finally {
+                bridge!.agentCreate = originalCreate;
+                await unavailable.close();
+            }
         } finally {
             gates.forEach((key, i) => previous[i] === undefined ? delete process.env[key] : process.env[key] = previous[i]);
             await bridge!.close();

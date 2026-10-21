@@ -1,0 +1,115 @@
+{
+  "schema": "rudder.native-chat-compatibility-review/v1",
+  "review_date": "2026-10-21",
+  "base_sha": "41ee7dacb92b33b2f15a348d9f607b346a61eba8",
+  "reviewer": "independent agent /root/review_convergence",
+  "verdict": "accept",
+  "level": "stage",
+  "scope": "Six exact modified Node/UI source boundaries; not final product acceptance or publication.",
+  "residual_authority": "Node agents:create authorization and secret/skill/avatar/instruction/intelligence preflight remain unmigrated. Rust owns gated persistence and its Codex bypass default.",
+  "remaining_final_gate": "Independent real Codex/Hermes verifier PASS and final reviewer accept remain separate; the native-dependency failure regression passed as author-run public HTTP evidence.",
+  "records": [
+    {
+      "path": "packages/agent-runtime-utils/src/types.ts",
+      "base_sha256": "39a0454746309067c4c60c891608a6097243f1a00202bf6df927ea25e421d35b",
+      "head_sha256": "60d5fc62ffd9f0fe33b19a0c4576bbf944dd37d5b92928c2e2af7c6f2b8b51ea",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/d1-persistence/src/agent_core/{validation.rs,writes.rs}: gated create persistence and Codex bypass defaults; not the remaining Node create authorization/preflight",
+      "compatibility_boundary": "UI form state only for selected Codex Profile and touched bypass toggle; no backend permission decision.",
+      "retirement_criterion": "Remove or relocate these UI-only fields if the creation form contract changes.",
+      "reviewer": "independent agent /root/review_convergence",
+      "review_reference": "doc/plans/artifacts/2026-10-21-native-chat-compatibility-boundary-review.json",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/agent-runtimes/codex-local/src/ui/build-config.ts",
+      "base_sha256": "b20f5cff5444987853b194c29e7c5314cdc8d006747b930c31e56ba6bbe102d0",
+      "head_sha256": "c85af6f7498775dcbb2a44b78c63205fd5edd257bd2905e6000bec55c3fda269",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/d1-persistence/src/agent_core/{validation.rs,writes.rs}: gated create persistence and Codex bypass defaults; not the remaining Node create authorization/preflight",
+      "compatibility_boundary": "Client serialization of explicit Profile/toggle choice only. Rust validates and persists the bypass default.",
+      "retirement_criterion": "Retire redundant untouched-value serialization once explicit toggle intent remains represented by the client contract.",
+      "reviewer": "independent agent /root/review_convergence",
+      "review_reference": "doc/plans/artifacts/2026-10-21-native-chat-compatibility-boundary-review.json",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/agents.management-routes.ts",
+      "base_sha256": "ed8fab120b5d49bc7f5dc7ea7cea56d7b099b4ad239cb741dbc86881cafab489",
+      "head_sha256": "ae71690e7266ff57764308c7436b0c8d9b31f0c05238ddc4f1814bcae0a39b93",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/d1-persistence/src/agent_core/{validation.rs,writes.rs}: gated create persistence and Codex bypass defaults; not the remaining Node create authorization/preflight",
+      "compatibility_boundary": "Existing Node agents:create authorization, secret/skill/avatar preflight, readiness and legacy branch remain unmigrated business debt. Enabled Rust create suppresses Node bypass default injection, dispatches once to Rust persistence, and returns; enabled-but-unready or failed Rust create cannot fall through to Node create.",
+      "retirement_criterion": "Retire Node create authorization/preflight/defaults/legacy branch only after equivalent Rust checks and input preparation are implemented and accepted.",
+      "reviewer": "independent agent /root/review_convergence",
+      "review_reference": "doc/plans/artifacts/2026-10-21-native-chat-compatibility-boundary-review.json",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/agents.ts",
+      "base_sha256": "ef5c429f0fb5091115515e0ea155cf764eebdab649203094d25ccd7128f0c13a",
+      "head_sha256": "20f3329206dddc81eb6734275ba8f2f81c772838ad851310fb2571a63b5da599",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/d1-persistence/src/agent_core/{validation.rs,writes.rs}: gated create persistence and Codex bypass defaults; not the remaining Node create authorization/preflight",
+      "compatibility_boundary": "Composition moves the existing default factory to the existing cutover module and passes it to management routes. Existing AgentCore mount expression and other legacy business authority remain unchanged.",
+      "retirement_criterion": "Remove this composition and remaining Node business handlers after the corresponding public Rust routes own their complete workflows.",
+      "reviewer": "independent agent /root/review_convergence",
+      "review_reference": "doc/plans/artifacts/2026-10-21-native-chat-compatibility-boundary-review.json",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/agent-create-rust-cutover.ts",
+      "base_sha256": "87819e4bad774bae2c98facb8a08ed1e85e6f4af3809e88bd1d738a6cf5154ea",
+      "head_sha256": "6a93426631297cfde31fad7e428cd4d2fec1cbf0f34b267d99f0398280247598",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/d1-persistence/src/agent_core/{validation.rs,writes.rs}: gated create persistence and Codex bypass defaults; not the remaining Node create authorization/preflight",
+      "compatibility_boundary": "Existing Rust command/response cutover plus verbatim moved legacy defaults factory. Node instructions/intelligence input preparation and legacy defaults remain business debt. Public Rust create opts out of legacy bypass defaulting; this is not a pure transport or fully migrated create claim.",
+      "retirement_criterion": "Move each remaining preflight/default to Rust, then retire the cutover/legacy branch after Rust is the default public create authority.",
+      "reviewer": "independent agent /root/review_convergence",
+      "review_reference": "doc/plans/artifacts/2026-10-21-native-chat-compatibility-boundary-review.json",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-foundation-bridge.ts",
+      "base_sha256": "61498f5d05531187384b2fe488d9b47c8fd9ed62176538605b9107b239b7a4f9",
+      "head_sha256": "ba533518d436fc7b9567dce3c8e6f4233e31a2ad18e5d5d6fd6145125bf82756",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/d1-persistence/src/agent_core/{validation.rs,writes.rs}: gated create persistence and Codex bypass defaults; not the remaining Node create authorization/preflight",
+      "compatibility_boundary": "Forwards only four named existing AgentCreate readiness subgates into the owned Rust process. No public-gate or arbitrary ambient environment forwarding and no Node create fallback is added.",
+      "retirement_criterion": "Retire the allowlist when Rust startup gates are replaced by typed configuration or removed.",
+      "reviewer": "independent agent /root/review_convergence",
+      "review_reference": "doc/plans/artifacts/2026-10-21-native-chat-compatibility-boundary-review.json",
+      "review_status": "reviewed"
+    }
+  ],
+  "native_dependency_failure_check": {
+    "command": "RUDDER_SERVER_FOUNDATION_PATH=<immutable c029 foundation> pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/agent-core-real-entry.test.ts -t \"persists Rust-owned Codex permission defaults\" --maxWorkers=1",
+    "environment": "Disposable PostgreSQL and production Node/public Rust listener; synthetic identity only, no installed provider use.",
+    "foundation_sha256": "893603ec2009a6d7b2cdc97794697e4ec2d0955e3de8ea826d17a6a0300fb050",
+    "failure": "The real AgentCreate bridge startup fails because its configured native executable is unavailable; binary resolution rejects it before OS spawn. No mock rejection replaces this dependency.",
+    "observed_http": 503,
+    "observed_code": "rust_agent_create_cutover_request_failed",
+    "unchanged_effect_counts": [
+      "agents",
+      "agent_enabled_skills",
+      "organization_skills",
+      "agent_config_revisions",
+      "activity_log",
+      "organization_mutation_outbox"
+    ],
+    "filesystem": "Organization Agent directory presence and entries unchanged.",
+    "result": "PASS",
+    "ownership": "Author-run automated real public HTTP regression, separate from independent installed Codex/Hermes acceptance.",
+    "evidence_review": {
+      "reviewer": "independent agent /root/review_convergence",
+      "verdict": "accept",
+      "scope": "Author-run public HTTP native-dependency failure and zero-effect evidence; not independent installed-provider acceptance."
+    }
+  }
+}

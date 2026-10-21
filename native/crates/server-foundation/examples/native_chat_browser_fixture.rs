@@ -57,7 +57,7 @@ impl FixtureConfig {
             return Err("an explicit loopback disposable PostgreSQL port is required".into());
         }
         // No path can escape to a real user's profile through a fixture symlink.
-        for relative in [
+        let mut relative_paths = vec![
             "instance",
             "workspaces",
             "previous-documents",
@@ -67,7 +67,21 @@ impl FixtureConfig {
             "runtime-root",
             "agent-cwd",
             "bin/provider",
-        ] {
+        ];
+        if self.runtime_type.as_deref() == Some("hermes_local") {
+            relative_paths.extend([
+                "hermes-install/venv/bin/hermes",
+                "hermes-install/venv/bin/python3",
+                "hermes-install/hermes_bootstrap.py",
+                "hermes-install/hermes_cli/__init__.py",
+                "hermes-install/hermes_cli/main.py",
+                "hermes-install/acp_adapter/entry.py",
+                "hermes-install/acp_adapter/session.py",
+                "hermes-install/agent/agent_init.py",
+                "hermes-install/agent/chat_completion_helpers.py",
+            ]);
+        }
+        for relative in relative_paths {
             let path = root.join(relative);
             if !path.canonicalize()?.starts_with(&root) {
                 return Err("fixture path escapes its disposable root".into());
@@ -98,8 +112,105 @@ impl FixtureConfig {
         {
             return Err("provider must match the compiled synthetic Codex fixture".into());
         }
-        Ok(format!("{:x}", Sha256::digest(&source)))
+        if self.runtime_type.as_deref() != Some("hermes_local") {
+            return Ok(format!("{:x}", Sha256::digest(&source)));
+        }
+
+        // The Hermes hash covers the exact synthetic installation wrapper and
+        // its pinned adapter source as well as the separately verified fake
+        // ACP process. This remains fixture evidence, never selected-profile
+        // acceptance for an installed Hermes runtime.
+        const WRAPPER: &str = "#!/bin/sh\n'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")\"/'python3' \"$0\" \"$@\"\n' '''\n# -*- coding: utf-8 -*-\nimport sys\nfrom hermes_cli.main import main\nif __name__ == \"__main__\":\n    sys.exit(main())\n";
+        let mut digest = Sha256::new();
+        digest.update(b"rudder-native-chat-hermes-browser-fixture-v1\0");
+        digest_fixture_bytes(&mut digest, "bin/provider", &source);
+        let install = self.fixture_root.join("hermes-install");
+        let expected_python_shim = format!(
+            "#!/bin/sh\nPYTHONPATH={} exec {} \"$@\"\n",
+            shell_quote(&install),
+            shell_quote(&interpreter),
+        );
+        let provider_path = self.fixture_root.join("bin/provider");
+        let provider_python_literal =
+            serde_json::to_string(&provider_path.to_string_lossy().to_string())?;
+        let expected_entry = format!(
+            "import runpy\n\ndef main(argv=None):\n    runpy.run_path({provider_python_literal}, run_name=\"__main__\")\n"
+        );
+        let expected_files = [
+            ("hermes-install/venv/bin/hermes", WRAPPER.to_owned()),
+            (
+                "hermes-install/venv/bin/python3",
+                expected_python_shim,
+            ),
+            (
+                "hermes-install/hermes_bootstrap.py",
+                "def harden_import_path(source_root):\n    return None\n".to_owned(),
+            ),
+            (
+                "hermes-install/hermes_cli/__init__.py",
+                "__version__ = \"0.21.0\"\n".to_owned(),
+            ),
+            (
+                "hermes-install/hermes_cli/main.py",
+                "from acp_adapter.entry import main\n".to_owned(),
+            ),
+            ("hermes-install/acp_adapter/entry.py", expected_entry),
+            (
+                "hermes-install/acp_adapter/session.py",
+                "class SessionManager:\n    def _make_agent(self, session_id, cwd, model, requested_provider, base_url, api_mode):\n        return type('Agent', (), {'ephemeral_system_prompt': None})()\n".to_owned(),
+            ),
+            (
+                "hermes-install/agent/agent_init.py",
+                "# synthetic Hermes 0.21 adapter fixture\n".to_owned(),
+            ),
+            (
+                "hermes-install/agent/chat_completion_helpers.py",
+                "# synthetic Hermes 0.21 adapter fixture\n".to_owned(),
+            ),
+        ];
+        for (relative, expected) in expected_files {
+            let bytes = read_fixture_file(&self.fixture_root, relative)?;
+            if bytes != expected.as_bytes() {
+                return Err(
+                    "synthetic Hermes installation does not match its pinned fixture".into(),
+                );
+            }
+            digest_fixture_bytes(&mut digest, relative, &bytes);
+        }
+        Ok(format!("{:x}", digest.finalize()))
     }
+}
+
+fn shell_quote(path: &std::path::Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
+fn read_fixture_file(
+    root: &std::path::Path,
+    relative: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let path = root.join(relative);
+    let metadata = std::fs::symlink_metadata(&path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err("synthetic Hermes fixture files must be regular files".into());
+    }
+    let canonical = path.canonicalize()?;
+    if !canonical.starts_with(root) {
+        return Err("synthetic Hermes fixture path escapes its root".into());
+    }
+    let bytes = std::fs::read(&canonical)?;
+    if bytes.len() as u64 != metadata.len() {
+        return Err("synthetic Hermes fixture changed while hashing".into());
+    }
+    Ok(bytes)
+}
+
+fn digest_fixture_bytes(digest: &mut Sha256, relative: &str, bytes: &[u8]) {
+    digest.update(relative.as_bytes());
+    digest.update([0]);
+    digest.update((bytes.len() as u64).to_be_bytes());
+    digest.update(bytes);
+    digest.update([0]);
 }
 
 #[actix_web::main]
@@ -140,11 +251,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.join("bin/provider"),
     )?;
     let host = if config.runtime_type.as_deref() == Some("hermes_local") {
+        let hermes_executable = root.join("hermes-install/venv/bin/hermes");
         host.with_executable_search_path("/usr/bin:/bin".into())?
-            .with_hermes_runtime(
-                root.join("bin/provider"),
-                root.join("operator-home/hermes-profile"),
-            )?
+            .with_hermes_runtime(hermes_executable, root.join("operator-home/hermes-profile"))?
     } else {
         host
     };
@@ -184,6 +293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "fixtureRoot": root,
         "syntheticProvider": true,
         "providerFixtureSha256": provider_fixture_sha256,
+        "providerFixtureHashIncludesHermesWrapper": config.runtime_type.as_deref() == Some("hermes_local"),
         "providerInterpreterEvidence": "caller-supplied absolute executable; behavior not attested",
         "selectedProfileAcceptance": false,
     });

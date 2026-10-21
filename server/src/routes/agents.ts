@@ -6,12 +6,6 @@
  * @see doc/product/domains/agents/instruction-loading.md - instruction bundle management
  * @see doc/engineering/CLI.md - agent-facing CLI and runtime surfaces
  */
-import {
-  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_SEARCH,
-  withCodexLocalModelDefaults,
-} from "@rudderhq/agent-runtime-codex-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-opencode-local/server";
 import { ensurePiModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-pi-local/server";
 import type { Db } from "@rudderhq/db";
@@ -39,7 +33,6 @@ import {
 } from "@rudderhq/shared";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
-import { generateKeyPairSync } from "node:crypto";
 import path from "node:path";
 import sharp from "sharp";
 import { findServerAdapter, listAgentRuntimeModels } from "../agent-runtimes/index.js";
@@ -86,6 +79,7 @@ import {
 import { feishuIntegrationUserBindingService } from "../services/integrations/feishu/user-bindings.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
+import { createApplyCreateDefaultsByAdapterType } from "./agent-create-rust-cutover.js";
 import { agentCoreRoutes } from "./agents.core.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -245,6 +239,8 @@ function buildFeishuIntegrationSetupUrl(input: {
 }
 
 export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBridge?: RustFoundationBridge, nativeAgentCorePaths = false) {
+  const applyCreateDefaultsByAdapterType = createApplyCreateDefaultsByAdapterType();
+
   function stripPersistedSkillSyncConfig(config: Record<string, unknown>) {
     const next = { ...config };
     delete next.rudderSkillSync;
@@ -786,67 +782,6 @@ export function agentRoutes(db: Db, storage?: StorageService, rustFoundationBrid
       }
     }
     return merged;
-  }
-
-  function parseBooleanLike(value: unknown): boolean | null {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "number") {
-      if (value === 1) return true;
-      if (value === 0) return false;
-      return null;
-    }
-    if (typeof value !== "string") return null;
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
-      return true;
-    }
-    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
-      return false;
-    }
-    return null;
-  }
-
-  function generateEd25519PrivateKeyPem(): string {
-    const { privateKey } = generateKeyPairSync("ed25519");
-    return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
-  }
-
-  function ensureGatewayDeviceKey(
-    agentRuntimeType: string | null | undefined,
-    agentRuntimeConfig: Record<string, unknown>,
-  ): Record<string, unknown> {
-    if (agentRuntimeType !== "openclaw_gateway") return agentRuntimeConfig;
-    const disableDeviceAuth = parseBooleanLike(agentRuntimeConfig.disableDeviceAuth) === true;
-    if (disableDeviceAuth) return agentRuntimeConfig;
-    if (asNonEmptyString(agentRuntimeConfig.devicePrivateKeyPem)) return agentRuntimeConfig;
-    return { ...agentRuntimeConfig, devicePrivateKeyPem: generateEd25519PrivateKeyPem() };
-  }
-
-  function applyCreateDefaultsByAdapterType(
-    agentRuntimeType: string | null | undefined,
-    agentRuntimeConfig: Record<string, unknown>,
-    includeLegacyBypassDefault = true,
-  ): Record<string, unknown> {
-    const next = agentRuntimeType === "codex_local"
-      ? withCodexLocalModelDefaults(agentRuntimeConfig)
-      : { ...agentRuntimeConfig };
-    if (agentRuntimeType === "codex_local") {
-      const hasBypassFlag =
-        typeof next.dangerouslyBypassApprovalsAndSandbox === "boolean" ||
-        typeof next.dangerouslyBypassSandbox === "boolean";
-      if (includeLegacyBypassDefault && !hasBypassFlag) {
-        next.dangerouslyBypassApprovalsAndSandbox = DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
-      }
-      if (typeof next.search !== "boolean") {
-        next.search = DEFAULT_CODEX_LOCAL_SEARCH;
-      }
-      return ensureGatewayDeviceKey(agentRuntimeType, next);
-    }
-    // OpenCode requires explicit model selection — no default
-    if (agentRuntimeType === "cursor" && !asNonEmptyString(next.model)) {
-      next.model = DEFAULT_CURSOR_LOCAL_MODEL;
-    }
-    return ensureGatewayDeviceKey(agentRuntimeType, next);
   }
 
   async function assertAdapterConfigConstraints(
