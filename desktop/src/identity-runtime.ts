@@ -138,7 +138,14 @@ export function createDesktopIdentityRuntime(options: {
     ),
   });
   const packagedSmokeBypassRequested = packagedSmokePolicy.packagedSmokeBypassRequested;
-  process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH = packagedSmokePolicy.packagedSmokeLocalImplicitAuthRequested ? "1" : "0";
+  const accountRequired = !desktopAccountBypassAllowed({
+    isPackaged: app.isPackaged,
+    bypassRequested: booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS),
+    packagedSmokeBypassRequested,
+  });
+  // Explicit development bypass and marked packaged smoke must give the native
+  // listener the same identity policy as the Desktop account gate.
+  process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH = accountRequired ? "0" : "1";
   process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE ??= "required";
   const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,
@@ -213,11 +220,6 @@ export function createDesktopIdentityRuntime(options: {
     },
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:ready");
-  const accountRequired = !desktopAccountBypassAllowed({
-    isPackaged: app.isPackaged,
-    bypassRequested: booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS),
-    packagedSmokeBypassRequested,
-  });
   const sessionSecret = randomBytes(32).toString("base64url");
   const telemetryStatePromise = loadOrCreateDesktopTelemetryState(app.getPath("userData"));
 

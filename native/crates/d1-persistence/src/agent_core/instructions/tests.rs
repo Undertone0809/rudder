@@ -295,7 +295,11 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
+        // System temporary paths can contain aliases such as macOS /tmp.
+        // Owned-root fixtures use canonical paths; the symlink cases below
+        // explicitly introduce the untrusted aliases they need to reject.
+        let temporary_root = std::env::temp_dir().canonicalize().unwrap();
+        let root = tempfile::tempdir_in(temporary_root).unwrap();
         let instance = root.path().join("instances/default");
         let host = Host {
             workspace_home: instance.join("organizations").to_string_lossy().into(),

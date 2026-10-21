@@ -146,7 +146,7 @@ pub(crate) fn configure(
         return Ok(config);
     };
     let instance = canonical_directory(&installation.instance_root)?;
-    let workspace = canonical_directory(&installation.workspace_home)?;
+    let workspace = workspace_directory(&installation.workspace_home)?;
     let operator_home = canonical_directory(&installation.operator_home)?;
     let native_root = instance.join("native-chat");
     let profiles = owned_directory(&native_root.join("profiles"))?;
@@ -279,6 +279,29 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     Ok(canonical)
 }
 
+fn workspace_directory(path: &Path) -> Result<PathBuf, ConfigError> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
+    {
+        return Err(invalid_at("invalid native runtime installation"));
+    }
+    match std::fs::symlink_metadata(path) {
+        // Keep existing configured aliases compatible. A dangling alias or a
+        // file still fails canonical_directory without creating anything.
+        Ok(_) => canonical_directory(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // This is a trusted launcher installation fact, never a request
+            // path. Fresh instances have no organizations root until first use.
+            std::fs::create_dir_all(path)
+                .map_err(|_| invalid_at("invalid native runtime installation"))?;
+            canonical_directory(path)
+        }
+        Err(_) => Err(invalid_at("invalid native runtime installation")),
+    }
+}
+
 fn owned_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     // Refuse a symlink at the managed subtree before creating runtime files.
     for ancestor in path.ancestors().take(3) {
@@ -306,6 +329,71 @@ fn loopback_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    #[test]
+    fn first_run_workspace_root_is_created_and_reused() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let workspace = root.join("new-instance/organizations");
+        assert!(!workspace.exists());
+        assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
+        std::fs::write(workspace.join("existing.txt"), b"keep").unwrap();
+        assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
+        assert_eq!(
+            std::fs::read(workspace.join("existing.txt")).unwrap(),
+            b"keep"
+        );
+    }
+
+    #[test]
+    fn invalid_workspace_roots_do_not_create_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let relative = PathBuf::from(format!("rudder-relative-{}", uuid::Uuid::new_v4()));
+        assert!(super::workspace_directory(&relative).is_err());
+        assert!(!relative.exists());
+        let file = root.join("file");
+        std::fs::write(&file, b"keep").unwrap();
+        assert!(super::workspace_directory(&file).is_err());
+        assert!(super::workspace_directory(&file.join("organizations")).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"keep");
+        assert!(super::workspace_directory(&root.join("new/../organizations")).is_err());
+        assert!(!root.join("new").exists());
+        assert!(!root.join("organizations").exists());
+        std::fs::create_dir(root.join("existing")).unwrap();
+        std::fs::create_dir(root.join("organizations")).unwrap();
+        assert!(super::workspace_directory(&root.join("existing/../organizations")).is_err());
+        assert!(root.join("existing").is_dir());
+        assert!(root.join("organizations").is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_workspace_aliases_remain_compatible_but_dangling_aliases_fail() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let target = root.join("target");
+        std::fs::create_dir(&target).unwrap();
+        let alias = root.join("alias");
+        symlink(&target, &alias).unwrap();
+        assert_eq!(super::workspace_directory(&alias).unwrap(), target);
+        assert_eq!(
+            super::workspace_directory(&alias.join("organizations")).unwrap(),
+            target.join("organizations")
+        );
+        assert!(
+            std::fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let missing = root.join("missing");
+        let dangling = root.join("dangling");
+        symlink(&missing, &dangling).unwrap();
+        assert!(super::workspace_directory(&dangling).is_err());
+        assert!(!missing.exists());
+    }
 
     #[test]
     fn implicit_local_board_never_trusts_a_remote_origin() {

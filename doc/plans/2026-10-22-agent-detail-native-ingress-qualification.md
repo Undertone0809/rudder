@@ -1,5 +1,5 @@
 ---
-title: Qualify Agent detail and move its public ingress to Rust
+title: Qualify native Agent detail ingress and Desktop startup
 date: 2026-10-22
 kind: fix-plan
 status: in_progress
@@ -16,6 +16,9 @@ related_code:
   - native/crates/server-foundation/src/public_ingress/agent_core.rs
   - native/crates/d1-persistence/src/agent_core/instructions/mod.rs
   - server/src/routes/agents.core.ts
+  - desktop/src/identity-runtime.ts
+  - desktop/scripts/smoke.mjs
+  - native/crates/server-foundation/src/native_chat_startup.rs
 commit_refs: []
 updated_at: 2026-10-22
 ---
@@ -46,61 +49,85 @@ history repair is already on the new base and has no diff in this candidate.
 Compatibility deployments without the native public listener remain registered
 debt. This slice does not complete authentication or backend retirement.
 
-## Acceptance and exact candidate
+## Desktop and qualification repairs
 
-The original API-only candidate `8873539ba` contained eight source/test files and
-three documents. Its independent v3.1 acceptance returned PASS for 21
-observations against source fingerprint
-`1bca411f1f68dfec26940e8c197b3cbf0a15d4cf07b8f953055bb893cb1741ab`
-and frozen foundation SHA
-`c52e17449ffff8e22756f0d006ce495ec8934c60e755b5fea7aecbdca84a6ad3`.
-The issuer subsequently verified exact content equivalence for that commit;
-final review accepted draft publication only.
+The complete Desktop macro exposed two startup mismatches and an update fixture
+error. Reuse the previously preserved startup implementation instead of repeating
+the diagnosis: create the missing absolute workspace root supplied by the trusted
+launcher; retain existing configured aliases and files; reject relative paths,
+parent traversal, file roots and dangling aliases. This path is an installation
+fact, not an API request parameter.
 
-Before publication, main advanced to `b38b171364` through #352. The work branch
-was pushed, but no PR was created. The rebase preserves upstream public-create
-Profile-default coverage and its external-root regression alongside the native
-credential lock-race and managed-recovery changes. Claude is already identical
-on main, leaving seven changed source/test paths and three documents. The
-remaining credential/recovery implementation matches the original source;
-upstream Native Chat/create code and the combined test fixture have changed.
+Resolve the Desktop account requirement before configuring native ingress. An
+explicit development bypass and a legitimately marked packaged smoke fixture
+must supply the same identity policy to both layers. Ordinary packaged apps and
+spoofed name/marker combinations remain account-required. The public auto-update
+fixture must pass the environment returned by its external-runtime preparation.
+Full-only update completion leaves the app closed; manual reopen is separate.
 
-Old API PASS receipts remain historical. Rebuild the combined native artifact
-and qualify affected public entry on the rebased source before final review.
-Do not call the old binary a build of the new base. Desktop identity, first-run
-startup and smoke fixture changes are preserved on a separate local WIP ref;
-their QUESTION/FAIL receipts are not acceptance of this API candidate.
+macOS CI also exposed two test assumptions. Canonicalize only the owned temporary
+instruction fixture root so `/tmp` and `/private/tmp` aliases do not accidentally
+exercise the production ownership guard. Keep all malicious symlink cases and
+the guard itself unchanged. Synchronize the process-host finish test at the
+actual full-queue branch, preserving terminal-frame order and the production
+queue, drain deadline and close behavior. These are qualification repairs, not
+additional backend authority retirement.
 
-The rebased source fingerprint is
+## Current candidate and evidence boundary
+
+Draft PR #353 has remote source `6e0e3836f` on main base `b38b171364`. Its API-only
+v5 source fingerprint is
 `31ee9f5d638ed951fcfacbf72ee3bbb97357dd4e9cc7ba3d01ed1b1f2daffcd6`.
-The rebuilt foundation SHA is
-`5d5c2ebca0ad9937995544462abf592606dccff1cbba05973c3f4872662f51a5`;
-its process-host sibling is
-`440fd409fb6ecd2eb9f63e010400275ebf41aa54132700411098576a09f97363`.
-Author public-entry checks pass 44/44 with no skips in 101.713 seconds; full
-repository typecheck passes in 43.491 seconds. Rust format and scoped all-target
-clippy pass. Current full lint reports 22 unchanged files; neither modified
-TypeScript file is among them. The current machine-readable v5 packet records
-remaining targeted instruction, independent runtime and final-review gates;
-old receipts are not substituted for those gates.
+Independent scoped API acceptance passed. The original complete run remained
+FAIL after a stale bridge prevented the create supplement; a separate fresh
+runtime passed the six create observations. These are distinct runtime/data
+identities. Preserve both results and the earlier FAIL/QUESTION history.
 
-## Author checks and delivery gates
+The expanded v6r1 source candidate has twelve scoped source/test paths, fingerprint
+`71aa79c222850b6d10f8c829de758715cf099cad5537d2916e40e981197fdbbc`.
+Before the reviewer traversal correction, the staged foundation SHA was
+`7d277a2abea42568c4ec7312edef45c9e1ad8aa17c205a815883cf704bd0ea39`;
+the staged process-host SHA is
+`06c98571db643761898052c87afa7c8b50c63a1469ba3b1dcb5f4aecc8c5e77e`.
+The existing Desktop app/ZIP predates the restored startup source and is not a
+current packaged candidate. Prior v5 binary acceptance cannot certify these
+combined artifacts.
 
-Before the rebase, native workspace checks passed 1110 tests with 79 ignored,
-plus the added no-identity test. Public Agent coverage passed 42 cases; the
-frozen v3 critical replay passed 3/3. Full typecheck/build passed. Repository
-test coverage was composite: all 316 server files, eight package projects,
-UI/CLI/Desktop/scripts passed after corrected runner-environment replays, not
-one green full-test invocation. These are historical checks, not a claim that
-the combined new base has been revalidated. Changed-file lint passed; full lint
-retained 25 pre-existing import-order failures. Runtime packaging passed 18/18.
+Author checks on the added changes passed: 16 Desktop identity-policy cases,
+Desktop typecheck, six native startup units, 25 instruction units under
+`TMPDIR=/tmp`, eight process-host units, native staging, and a real development
+startup-recovery scenario. The old instruction binary first reproduced the
+macOS alias failure. The process-host Cargo suite passed, while its outer zsh
+wrapper failed on a read-only variable; retain both statuses without replaying
+passing tests merely to repair metadata.
 
-The rebased authority inventory check and ratchet against `b38b171364` pass.
-Full Desktop verification remains failed; excluded Desktop supplement remains
-QUESTION. Complete packaged validation, protected PR CI, Windows native CI and
-final review continue to block merge and corresponding platform/product claims.
-No merge, release, deployment, real-provider acceptance or whole-backend
-completion is claimed.
+The API-only rebased author baseline passed 44 public-entry tests, full repository
+typecheck, Rust format and scoped clippy. Full lint had 22 unchanged failures.
+PR #353's old head currently has 18 successful checks, one skipped check and
+three failures (both macOS native jobs and the aggregate qualification job).
+Those CI failures remain historical until the repaired exact head is qualified
+and published. Windows CI passed for the old head; new-head CI is still needed.
+
+## Remaining gates
+
+1. Independent stage review accepted v6r1 after the existing-target traversal
+   correction. All six startup units passed in 78.716 seconds; the earlier
+   rejected candidate and stale staged artifacts remain recorded.
+2. Run the complete `pnpm desktop:verify` without scenario skips. Require at
+   least 8 GiB free before starting; monitor an ongoing 2.5 GiB floor and bound
+   the owned process group to 1,200 seconds. A resource stop is a failure, not a
+   waived gate. Preserve the previous full-macro startup failure.
+3. Freeze the actual current packaged app and native artifacts. Independently
+   accept the changed startup/account-gate/update paths and affected public API
+   against that exact source/build/data identity. Normal application storage
+   initialization is allowed; an OS authentication prompt remains QUESTION.
+   A synthetic marked smoke profile does not prove real-account/provider use.
+4. Obtain final review, update the existing draft PR with an exact remote-head
+   lease, and require current protected cross-platform CI before merging.
+
+No current complete Desktop, no-Node, real-provider, merge, release, deployment
+or whole-backend completion is claimed. The original detailed receipts remain
+in the versioned task evidence; they are not replaced by this concise record.
 
 Use one shared-baseline integration candidate. Bound long commands with owned
 process groups and timeouts, isolate fixture paths, and reuse evidence only

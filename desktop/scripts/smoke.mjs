@@ -3582,7 +3582,7 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   const shellAssetName = `Rudder-${candidateVersion}-macos-arm64-shell.zip`;
   const fullAssetPath = path.join(scenarioRoot, "release", fullAssetName);
   const shellAssetPath = path.join(scenarioRoot, "release", shellAssetName);
-  await preparePackagedExternalRuntimeFixture(scenarioRoot, {
+  const packagedRuntime = await preparePackagedExternalRuntimeFixture(scenarioRoot, {
     authBypass: true,
     runtimeVersion: candidateVersion,
     verifyProcessHost: false,
@@ -3715,6 +3715,7 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   const lifecyclePath = path.join(scenarioRoot, "lifecycle.jsonl");
   const extraEnv = {
     ...resolveMacPackagedSmokeHomeEnv(),
+    ...packagedRuntime.env,
     RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
     RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
     RUDDER_DESKTOP_SMOKE_POLICY_PUBLIC_KEY: publicKeyDer,
