@@ -137,7 +137,8 @@ import {
   PendingChatSendAlreadyAcceptedError,
   capturePendingChatSendMutationIdentity,
   preparePendingChatSendMutation,
-  settlePendingChatSendMutationIdentity
+  settlePendingChatSendMutationIdentity,
+  type ChatSendMutationIdentity,
 } from "@/lib/chat-send-mutation-storage";
 import {
   buildChatSkillOptions,
@@ -435,7 +436,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       label,
     });
   }, [openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]);
-  useEffect(() => { activeDraftScopeRef.current = draftStorageScopeKey; }, [draftStorageScopeKey]); const closeComposerContextMenus = useCallback(() => { setProjectMenuOpen(false); setAgentMenuOpen(false); setSkillMenuOpen(false); setSkillSearchQuery(""); }, []); const openComposerContextMenu = useCallback((kind: "project" | "agent" | "skill") => { const anchor = composerSurfaceRef.current;
+  useLayoutEffect(() => { activeDraftScopeRef.current = draftStorageScopeKey; }, [draftStorageScopeKey]); const closeComposerContextMenus = useCallback(() => { setProjectMenuOpen(false); setAgentMenuOpen(false); setSkillMenuOpen(false); setSkillSearchQuery(""); }, []); const openComposerContextMenu = useCallback((kind: "project" | "agent" | "skill") => { const anchor = composerSurfaceRef.current;
     if (anchor) {
       setComposerMenuPosition(composerMenuPositionForAnchor(anchor)); } setProjectMenuOpen(kind === "project"); setAgentMenuOpen(kind === "agent"); setSkillMenuOpen(kind === "skill");
     if (kind !== "skill") {
@@ -450,7 +451,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         }); } }, [pushToast, setPendingFilesForCurrentScope], ); const removePendingFile = useCallback((targetKey: string) => { setPendingFilesForCurrentScope((current) => current.filter((file) => pendingAttachmentKey(file) !== targetKey)); }, [setPendingFilesForCurrentScope]);
   const handlePendingAttachmentPasteCapture = useChatComposerPasteAttachments(appendPendingFiles);
   const { active: composerFileDragActive, targetProps: composerFileDropTargetProps } = useChatComposerFileDrop(appendPendingFiles);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (draftState.scopeKey === draftStorageScopeKey) return;
     responseAnnotationStateByScopeRef.current[draftState.scopeKey] = responseAnnotationState;
     const storedDraft = readChatComposerDraft(
@@ -1434,22 +1435,24 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             const firstSend = currentUserId
               ? readNativeFirstSendIntent(orgId, currentUserId)
               : null;
-            if (firstSend
+            const mutation = await capturePendingChatSendMutationIdentity({
+              orgId,
+              conversationId: chatId,
+              body: streamDraft.userBody,
+            });
+            if (mutation) {
+              sendMutationIdentity = { kind: "chat_send", mutation };
+            } else if (streamDraft.userMessageId && firstSend
               && firstSend.status !== "settled"
               && firstSend.conversationId === chatId
               && firstSend.draft.body === streamDraft.userBody) {
+              // Compatibility for first-send attempts accepted before the
+              // conversation-scoped ledger handoff existed.
               sendMutationIdentity = {
                 kind: "native_first_send",
                 clientMutationId: firstSend.clientMutationId,
                 userId: firstSend.userId,
               };
-            } else if (streamDraft.userMessageId) {
-              const mutation = await capturePendingChatSendMutationIdentity({
-                orgId,
-                conversationId: chatId,
-                body: streamDraft.userBody,
-              });
-              if (mutation) sendMutationIdentity = { kind: "chat_send", mutation };
             }
           }
           if (control.runtimeTerminal) {
@@ -1725,6 +1728,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     let firstTurnTerminalSeen = false;
     let firstTurnNeedsRecovery = false;
     let activeNativeFirstSend: NativeFirstSendInput | null = options?.nativeFirstSendInput ?? null;
+    let activeNativeFirstSendMutationIdentity: ChatSendMutationIdentity | null = null;
     try {
       if (!conversation && conversationId) { conversation = await chatsApi.get(conversationId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
@@ -1825,8 +1829,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               if (!event.conversation) {
                 throw new Error("First chat acknowledgement did not include the accepted conversation");
               }
+              if (activeNativeFirstSend && event.userMessage.body !== activeNativeFirstSend.body) {
+                throw new Error("Native Chat acknowledged a different first-message body. Recovery is paused to protect the original send identity.");
+              }
+              // Once the matching ack is received, later local-storage errors
+              // must not downgrade this known-accepted send to unknown.
               userMessageAcknowledged = true;
-              const ownsFirstTurn = firstTurnStore.owns(firstTurnOwner, streamKey);
+              let ownsFirstTurn = firstTurnStore.owns(firstTurnOwner, streamKey)
+                && latestLocationKeyRef.current === location.key;
               conversation = event.conversation;
               acceptedConversation.current = event.conversation;
               activeChatId = conversation.id;
@@ -1847,17 +1857,26 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               });
               upsertMessages(conversation.id, [event.userMessage]);
               if (activeNativeFirstSend) {
-                await nativeFirstSend.markAccepted(
-                  activeNativeFirstSend.clientMutationId,
-                  conversation.id,
-                ).catch((error: unknown) => {
+                try {
+                  activeNativeFirstSendMutationIdentity = await nativeFirstSend.markAccepted(
+                    activeNativeFirstSend.clientMutationId,
+                    conversation.id,
+                  );
+                  // The hook first stores this exact accepted ID and payload
+                  // in the conversation ledger. Only then can the global
+                  // first-send slot be released for a separate New Chat.
+                  await nativeFirstSend.markSettled(activeNativeFirstSend.clientMutationId, conversation.id);
+                } catch (error: unknown) {
                   pushToast({
                     title: "First message accepted; browser recovery could not be updated",
                     body: error instanceof Error ? error.message : undefined,
                     tone: "warn",
                   });
-                });
+                }
               }
+              ownsFirstTurn = firstTurnStore.owns(firstTurnOwner, streamKey)
+                && latestLocationKeyRef.current === location.key
+                && activeDraftScopeRef.current === draftStorageScopeKey;
               rememberChatAgentId(selectedOrganizationId, selectedDraftAgentId);
               rememberChatProjectIdForAgent(
                 selectedOrganizationId,
@@ -1865,21 +1884,23 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
               );
               const liveDraftStillMatches = !activeNativeFirstSend
-                || nativeFirstSendDraftMatches(activeNativeFirstSend, nativeFirstSendDraftRef.current ?? {
+                || nativeFirstSendDraftMatches(nativeFirstSendDraftRef.current ?? {
                   body: "",
                   preferredAgentId: null,
                   title: null,
                   issueCreationMode: "manual_approval",
                   modelOverride: null,
                   effortOverride: null,
-                });
+                }, activeNativeFirstSend);
               if (usesComposerState && ownsFirstTurn && liveDraftStillMatches) {
                 setBranchPreview(null);
                 setDraft("");
                 setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
-                if (draftStorageConversationId?.startsWith("local-app-recovery:") || draftStorageConversationId?.startsWith("first-turn-recovery:")) {
-                  clearChatDraft(draftStorageOrgId, draftStorageConversationId);
-                }
+                // Route navigation can happen before the draft persistence
+                // effect records the empty value. Clear only this submitted
+                // scope while this turn still owns it, so reload cannot
+                // resurrect the accepted prompt or erase a later draft.
+                clearChatDraft(draftStorageOrgId, draftStorageConversationId);
                 clearPendingFilesForCurrentScope();
                 dispatchResponseAnnotation({ type: "clear" });
                 setResponseAnnotationsExpanded(false);
@@ -1932,10 +1953,26 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (event.type === "error") {
               if (event.terminal === true && activeNativeFirstSend && conversation) {
                 firstTurnTerminalSeen = true;
-                await nativeFirstSend.markSettled(
-                  activeNativeFirstSend.clientMutationId,
-                  conversation.id,
-                ).catch(() => undefined);
+                if (activeNativeFirstSendMutationIdentity) {
+                  const settled = await settlePendingChatSendMutationIdentity({
+                    orgId: selectedOrganizationId,
+                    conversationId: conversation.id,
+                    identity: activeNativeFirstSendMutationIdentity,
+                  });
+                  if (!settled) {
+                    pushToast({
+                      title: "Response ended; chat send recovery still needs checking",
+                      body: "The accepted message identity could not be settled locally. Reopen the chat to reconcile it.",
+                      tone: "warn",
+                    });
+                  }
+                }
+                if (!activeNativeFirstSendMutationIdentity) {
+                  await nativeFirstSend.markSettled(
+                    activeNativeFirstSend.clientMutationId,
+                    conversation.id,
+                  ).catch(() => undefined);
+                }
               }
               throw new Error(event.error);
             }
@@ -1951,16 +1988,32 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (event.type === "final") {
               firstTurnTerminalSeen = true;
               if (activeNativeFirstSend) {
-                await nativeFirstSend.markSettled(
-                  activeNativeFirstSend.clientMutationId,
-                  conversation.id,
-                ).catch((error: unknown) => {
-                  pushToast({
-                    title: "Response finished; browser recovery still needs checking",
-                    body: error instanceof Error ? error.message : undefined,
-                    tone: "warn",
+                if (activeNativeFirstSendMutationIdentity) {
+                  const settled = await settlePendingChatSendMutationIdentity({
+                    orgId: selectedOrganizationId,
+                    conversationId: conversation.id,
+                    identity: activeNativeFirstSendMutationIdentity,
                   });
-                });
+                  if (!settled) {
+                    pushToast({
+                      title: "Response finished; chat send recovery still needs checking",
+                      body: "The accepted message identity could not be settled locally. Reopen the chat to reconcile it.",
+                      tone: "warn",
+                    });
+                  }
+                }
+                if (!activeNativeFirstSendMutationIdentity) {
+                  await nativeFirstSend.markSettled(
+                    activeNativeFirstSend.clientMutationId,
+                    conversation.id,
+                  ).catch((error: unknown) => {
+                    pushToast({
+                      title: "Response finished; browser recovery still needs checking",
+                      body: error instanceof Error ? error.message : undefined,
+                      tone: "warn",
+                    });
+                  });
+                }
               }
               const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, conversation.id);
               if (stopRecoveryStreamKeysRef.current[conversation.id] === streamKey) {
@@ -3466,7 +3519,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   }, []);
   const openEmptyStatePromptGroup = useCallback((group: EmptyStatePromptGroup) => { lockEmptyStatePromptSuggestions(); const nextDraft = applyChatPromptToDraft(readComposerDraft(), group.trigger); setDraft(nextDraft); setEmptyStateActiveSuggestionIndex(0); setDismissedEmptyStatePromptQuery(null);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, [lockEmptyStatePromptSuggestions, readComposerDraft]); const applyEmptyStatePrompt = useCallback((prompt: string) => { const nextDraft = applyChatPromptToDraft(readComposerDraft(), prompt); setDraft(nextDraft); setEmptyStateActiveSuggestionIndex(0); setDismissedEmptyStatePromptQuery(chatPromptQueryKey(nextDraft));
-    requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, [readComposerDraft]); const selectEmptyStatePromptSuggestion = useCallback((suggestion: EmptyStatePromptSuggestion) => { if (emptyStatePromptSuggestionsLocked) return; applyEmptyStatePrompt(suggestion.prompt); }, [applyEmptyStatePrompt, emptyStatePromptSuggestionsLocked]); const handleComposerDraftChange = useCallback((nextDraft: string) => { setDraft(nextDraft); setEmptyStateActiveSuggestionIndex(0); const nextQuery = chatPromptQueryKey(nextDraft); setDismissedEmptyStatePromptQuery((current) => current === nextQuery ? current : null); }, []); const turnBranchControlsForTurn = useCallback(
+    requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, [readComposerDraft]); const selectEmptyStatePromptSuggestion = useCallback((suggestion: EmptyStatePromptSuggestion) => { if (emptyStatePromptSuggestionsLocked) return; applyEmptyStatePrompt(suggestion.prompt); }, [applyEmptyStatePrompt, emptyStatePromptSuggestionsLocked]); const handleComposerDraftChange = useCallback((nextDraft: string) => {
+    const scopeKey = draftStorageScopeKey;
+    if (activeDraftScopeRef.current !== scopeKey) return;
+    setDraftState((current) => current.scopeKey === scopeKey ? { ...current, value: nextDraft } : current);
+    setEmptyStateActiveSuggestionIndex(0);
+    const nextQuery = chatPromptQueryKey(nextDraft);
+    setDismissedEmptyStatePromptQuery((current) => current === nextQuery ? current : null);
+  }, [draftStorageScopeKey]); const turnBranchControlsForTurn = useCallback(
     (chatTurnId: string | null, activeTurnVariant?: number | null): ChatTurnBranchControls | null => { if (!chatTurnId) return null; const userRows = rawMessages.filter( (m) => m.role === "user" && m.kind === "message" && m.chatTurnId === chatTurnId, ); const variants = [...new Set([...userRows.map((m) => m.turnVariant), ...(activeTurnVariant === null || activeTurnVariant === undefined ? [] : [activeTurnVariant])])].sort((a, b) => a - b); if (variants.length < 2) return null; const activeRows = userRows.filter((m) => !m.supersededAt);
       const activeVariant = activeTurnVariant ?? (activeRows.length > 0 ? Math.max(...activeRows.map((m) => m.turnVariant)) : variants[variants.length - 1]!);
       const selected = branchPreview?.chatTurnId === chatTurnId ? branchPreview.turnVariant : activeVariant; let idx = variants.indexOf(selected); if (idx < 0) idx = variants.length - 1;
@@ -4144,6 +4204,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 <PendingAttachmentPreview file={file} onRemove={() => removePendingFile(fileKey)} /> </div> );
           })} </div> ) : null}
       <ChatComposerEditor
+          key={draftStorageScopeKey}
           ref={composerEditorRef}
           scrollRef={composerEditorScrollRef}
           value={draft}

@@ -724,6 +724,103 @@ export async function settlePendingChatSendMutationIdentity(input: {
   }
 }
 
+/**
+ * Transfer an acknowledged Native first-send identity into the ordinary
+ * conversation-scoped ledger. This does not allocate a new mutation ID and
+ * refuses to overwrite any other unresolved send in the destination chat.
+ */
+export async function seedAcceptedChatSendMutation(input: {
+  orgId: string;
+  conversationId: string;
+  clientMutationId: string;
+  body: string;
+  modelOverride?: string | null;
+  effortOverride?: string | null;
+}): Promise<ChatSendMutationIdentity> {
+  if (!input.orgId || !input.conversationId
+    || !input.clientMutationId || input.clientMutationId.length > 120
+    || !input.body.trim() || new TextEncoder().encode(input.body).byteLength > 256 * 1024) {
+    throw new Error("The accepted first-message identity is invalid. Keep its recovery record and retry.");
+  }
+  requiredStorage();
+  requiredLocks();
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi?.randomUUID) {
+    throw new Error("Secure send identity is unavailable. Retry after refreshing Rudder.");
+  }
+  const scopeKey = mutationScopeKey(input.orgId, input.conversationId);
+  const currentPageId = pageInstanceId(cryptoApi);
+  const fingerprint = JSON.stringify({
+    body: input.body,
+    editUserMessageId: null,
+    files: [],
+    inlineAnnotations: [],
+    modelOverride: input.modelOverride ?? null,
+    effortOverride: input.effortOverride ?? null,
+  });
+
+  return withScopeLock(scopeKey, () => {
+    const document = readScopeDocument(scopeKey);
+    const blocked = readBlockedScope(scopeKey);
+    const existing = document.mutations[input.clientMutationId];
+    if (existing) {
+      const identity = {
+        clientMutationId: existing.id,
+        fingerprint: existing.fingerprint,
+        ordinal: existing.ordinal ?? 0,
+      };
+      if (existing.fingerprint !== fingerprint || !Number.isSafeInteger(identity.ordinal) || identity.ordinal < 1) {
+        throw new Error("A different send already uses this identity in the accepted chat. Recovery is paused.");
+      }
+      if (blocked && !sameMutationIdentity(blocked, identity)) {
+        throw new Error("A different send is still awaiting reconciliation in the accepted chat.");
+      }
+      if (existing.status !== "settled" && existing.status !== "accepted") {
+        document.mutations[input.clientMutationId] = {
+          ...existing,
+          pageInstanceId: currentPageId,
+          status: "accepted",
+        };
+        writeScopeDocument(scopeKey, document);
+      }
+      return {
+        clientMutationId: input.clientMutationId,
+        fingerprint,
+        ordinal: identity.ordinal,
+        editUserMessageId: null,
+      };
+    }
+
+    if (blocked || Object.values(document.mutations).some((mutation) => mutation.status !== "settled")) {
+      throw new Error("Another send is unresolved in the accepted chat. Its recovery identity was preserved.");
+    }
+    for (const [id, mutation] of Object.entries(document.mutations)) {
+      if (mutation.status === "settled") delete document.mutations[id];
+    }
+    if (Object.keys(document.mutations).length >= MAX_PENDING_MUTATIONS_PER_SCOPE
+      || !Number.isSafeInteger(document.nextOrdinal)
+      || document.nextOrdinal >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("The accepted chat cannot safely store this send identity. Recovery is paused.");
+    }
+    const ordinal = document.nextOrdinal;
+    document.nextOrdinal += 1;
+    document.mutations[input.clientMutationId] = {
+      id: input.clientMutationId,
+      fingerprint,
+      ordinal,
+      pageInstanceId: currentPageId,
+      status: "accepted",
+    };
+    writeScopeDocument(scopeKey, document);
+    return {
+      clientMutationId: input.clientMutationId,
+      fingerprint,
+      ordinal,
+      editUserMessageId: null,
+    };
+  });
+}
+
 export type DiscoveredChatSendRecovery = {
   status: "resume_required" | "retry_required" | "recovered";
   clientMutationId: string;

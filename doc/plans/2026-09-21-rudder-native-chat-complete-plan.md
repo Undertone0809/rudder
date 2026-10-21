@@ -68,6 +68,17 @@ messages still require an explicit Retry. Reattachment must never allocate a new
 mutation after the original identity settles. Side Chat recovery UI is outside
 this screenshot correction's scope.
 
+First-send admission and response recovery have separate lifetimes. After a
+validated acknowledgement opens a saved chat, transfer the exact mutation ID
+and payload identity to that chat's durable send-recovery record before
+settling the browser-wide creation intent. New Chat must then be usable without
+resurrecting the admitted prompt, while the original active response retains
+its exact reconnect and Stop identity. A lost acknowledgement or failed durable
+handoff remains guarded; neither navigation nor an accepted receipt alone
+proves runtime completion. Verify active acknowledgement, New Chat, draft
+reload, return to the original chat, terminal Stop and a distinct second Send
+through the browser, with one provider start per admitted input.
+
 Codex acceptance exposed a process-host output relay failure before a later Stop
 request reached the executor. The process-host mux and ownership transport keep
 their existing bounded queue capacities, but brief consumer backlogs must apply
