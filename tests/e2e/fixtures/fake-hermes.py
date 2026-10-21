@@ -58,7 +58,10 @@ def progress_prompt(prompt_id, text):
             continue
         record(incoming['method'], incoming.get('params', {}))
         update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'LATE_HERMES_PROGRESS_AFTER_STOP_MUST_NOT_APPEAR'}})
-        out({'jsonrpc': '2.0', 'id': prompt_id, 'result': {'stopReason': 'cancelled'}})
+        if text.endswith('with a prompt error.'):
+            out({'jsonrpc': '2.0', 'id': prompt_id, 'error': {'code': -32603, 'message': 'PRIVATE_HERMES_PROMPT_ERROR_MUST_NOT_PROJECT', 'data': {'private': 'PRIVATE_HERMES_PROMPT_ERROR_DATA'}}})
+        else:
+            out({'jsonrpc': '2.0', 'id': prompt_id, 'result': {'stopReason': 'cancelled'}})
         return
 
 for line in sys.stdin:

@@ -8,7 +8,7 @@ import { startNativeChatFixture } from "./support/native-chat-fixture";
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const HERMES_HOME = "operator-home/hermes-profile";
 const RELOAD_PROMPT = "Show live Hermes progress after reload.";
-const STOP_PROMPT = "Stop after Hermes emits public progress.";
+const STOP_PROMPT = "Stop after Hermes emits public progress with a prompt error.";
 const PUBLIC_THOUGHT = "PUBLIC HERMES THOUGHT";
 const TOOL_TITLE = "Inspect workspace snapshot";
 const PRIVATE_ARGUMENTS = "PRIVATE_HERMES_TOOL_ARGUMENTS_MUST_NOT_PROJECT";
@@ -125,7 +125,9 @@ async function executionState(databaseUrl: string, orgId: string, chatId: string
          (SELECT count(*)::int FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid
            AND role='assistant') AS "assistantMessageCount",
          (SELECT body FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid
-           AND role='assistant' ORDER BY created_at DESC LIMIT 1) AS "assistantBody"`,
+           AND role='assistant' ORDER BY created_at DESC LIMIT 1) AS "assistantBody",
+         (SELECT result_json->'nativeChatFinalization'->'result' FROM heartbeat_runs WHERE org_id=$1::uuid AND chat_conversation_id=$2::uuid
+           AND execution_authority='native_rust' ORDER BY created_at DESC LIMIT 1) AS "nativeOutcome"`,
       [orgId, chatId, prompt],
     );
     return (rows as unknown as Array<Record<string, unknown>>)[0];
@@ -228,7 +230,7 @@ test("recovers public Hermes progress after reload and finalizes the same turn",
   } finally { await f.stop({ preserveRoot: !passed }); }
 });
 
-test("stops after Hermes public progress and ignores late provider output", async ({ page }, testInfo) => {
+test("stops after a correlated Hermes prompt error and ignores late provider output", async ({ page }, testInfo) => {
   const f = await fixture();
   let passed = false;
   try {
@@ -264,6 +266,10 @@ test("stops after Hermes public progress and ignores late provider output", asyn
     const stopped = await executionState(f.databaseUrl, f.orgId, f.chatId, STOP_PROMPT);
     expect(stopped).toMatchObject({ runStatus: "cancelled", generationStatus: "stopped", runHold: false,
       generationHold: false, userMessageCount: 1 });
+    expect(stopped.nativeOutcome).toMatchObject({ providerStatus: "error_response", providerErrorCode: -32603,
+      cancelSent: true, providerCancelAcknowledged: false, usageAvailable: false });
+    expect(JSON.stringify(stopped.nativeOutcome)).not.toContain("PRIVATE_HERMES_PROMPT_ERROR");
+    await expect(page.locator("body")).not.toContainText("PRIVATE_HERMES_PROMPT_ERROR");
     expect(Number(stopped.assistantMessageCount)).toBeLessThanOrEqual(1);
     expect(stopped.assistantBody == null || stopped.assistantBody === "").toBe(true);
     const observed = await events(f.providerEventsPath);

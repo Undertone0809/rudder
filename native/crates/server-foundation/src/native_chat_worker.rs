@@ -651,6 +651,19 @@ fn run(
                                 &connection,
                             )
                             .await?;
+                            if let Some(error) = failure.hermes_prompt_error_after_cancel_receipt()
+                            {
+                                return execution::finalize_hermes_prompt_error_stopped(
+                                    &pool,
+                                    execution_actor,
+                                    fence,
+                                    error,
+                                    cleanup,
+                                    &stop,
+                                )
+                                .await
+                                .map(Some);
+                            }
                             execution::finalize_hermes_stopped_before_submission(
                                 &pool,
                                 execution_actor,

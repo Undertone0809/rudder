@@ -547,3 +547,152 @@ async fn wait_for_first_progress(pool: &sqlx::PgPool, run_id: &str) -> (String, 
     }
     panic!("first typed Hermes progress was not durably recorded");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses disposable PostgreSQL and a synthetic local provider only"]
+async fn correlated_prompt_error_after_stop_terminalizes_without_claiming_provider_cancel_ack() {
+    assert_ignored_external_dependencies();
+    let (database, host, actor, run_id, attempt_id) =
+        database_and_hermes_admission("hermes-stop-prompt-error").await;
+    let pending = host.probe_path("progress-pending");
+    let worker =
+        spawn_native_executor_worker(&database, host, actor.clone(), run_id.clone(), attempt_id);
+    wait_for_path(&pending).await;
+    let (generation_id, assistant_id) = wait_for_first_progress(&database.pool, &run_id).await;
+    let stop_receipt = request_stop(
+        &database.pool,
+        &actor,
+        &StopRequest {
+            conversation_id: CHAT.into(),
+            generation_id: generation_id.clone(),
+            control_action_id: "73000000-0000-4000-8000-000000000002".into(),
+            expected_attempt_epoch: 1,
+            expected_control_version: 0,
+            requested_render_seq: 0,
+            requested_body_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                .into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(stop_receipt.outcome, StopOutcome::StopIntentRecorded);
+    let (result, _host) = worker.await.unwrap();
+    let failure = match result {
+        Err(failure) => failure,
+        Ok(_) => {
+            panic!("RPC error must remain distinct from a successful or cancelled Hermes turn")
+        }
+    };
+    let error = failure
+        .hermes_prompt_error_after_cancel_receipt()
+        .expect("correlated post-cancel error receipt");
+    assert_eq!(error.error_code(), -32603);
+    let cleanup = failure
+        .hermes_cleanup_receipt()
+        .expect("same owned process cleanup");
+    assert!(cleanup.proves_quiescence_for_prompt_error(error));
+    let principal = failure.execution_principal().unwrap();
+    let fence = failure.fence().unwrap();
+    let stop = rudder_d1_persistence::native_chat::execution::observe_stop(
+        &database.pool,
+        principal,
+        fence,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let connection = cleanup.connection_receipt();
+    rudder_d1_persistence::native_chat::execution::bind_stopping_connection(
+        &database.pool,
+        principal,
+        fence,
+        &stop,
+        &connection,
+    )
+    .await
+    .unwrap();
+    let (seq, original):(i32, Value) = sqlx::query_as("SELECT generation_seq,payload FROM chat_generation_events WHERE run_id=$1::uuid AND event_kind='transcript' ORDER BY generation_seq LIMIT 1").bind(&run_id).fetch_one(&database.pool).await.unwrap();
+    let mut corrupt = original.clone();
+    corrupt["nativeSource"]["requestId"] = serde_json::json!(error.request_id() + 1);
+    rewrite_progress_payload(&database.pool, &run_id, &generation_id, seq, &corrupt).await;
+    let rejected =
+        rudder_d1_persistence::native_chat::execution::finalize_hermes_prompt_error_stopped(
+            &database.pool,
+            principal,
+            fence,
+            error,
+            cleanup,
+            &stop,
+        )
+        .await;
+    assert!(
+        matches!(
+            rejected,
+            Err(rudder_d1_persistence::runtime_spans::Error::Http(409, _))
+        ),
+        "even hidden progress must match the exact error receipt"
+    );
+    let held: bool =
+        sqlx::query_scalar("SELECT native_admission_hold FROM heartbeat_runs WHERE id=$1::uuid")
+            .bind(&run_id)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert!(held);
+    rewrite_progress_payload(&database.pool, &run_id, &generation_id, seq, &original).await;
+    let result =
+        rudder_d1_persistence::native_chat::execution::finalize_hermes_prompt_error_stopped(
+            &database.pool,
+            principal,
+            fence,
+            error,
+            cleanup,
+            &stop,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["status"], "cancelled");
+    assert_eq!(result["generationStatus"], "stopped");
+    assert_eq!(result["providerStatus"], "error_response");
+    assert_eq!(result["providerErrorCode"], -32603);
+    assert_eq!(result["cancelSent"], true);
+    assert_eq!(result["providerCancelAcknowledged"], false);
+    assert_eq!(result["usageAvailable"], false);
+    assert!(
+        result.get("inputDisposition").is_none(),
+        "dispatched input is never labelled not submitted"
+    );
+    let terminal:(bool,bool,bool) = sqlx::query_as("SELECT r.native_admission_hold,g.native_admission_hold,g.runtime_terminal_at IS NOT NULL FROM heartbeat_runs r JOIN chat_generations g ON g.id=r.chat_generation_id WHERE r.id=$1::uuid").bind(&run_id).fetch_one(&database.pool).await.unwrap();
+    assert_eq!(terminal, (false, false, true));
+    let transcript = read_runtime_span(
+        &database.pool,
+        &actor,
+        ORG,
+        &RuntimeSpanRequest::ReadMessageTranscript {
+            conversation_id: CHAT.into(),
+            message_id: assistant_id,
+            after_seq: 0,
+            limit: 100,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        transcript["transcript"].as_array().unwrap().len(),
+        0,
+        "frozen cutoff hides the committed tail and late output"
+    );
+    let resolution:Value=sqlx::query_scalar("SELECT provider_evidence FROM chat_control_actions WHERE id='73000000-0000-4000-8000-000000000002'::uuid").fetch_one(&database.pool).await.unwrap();
+    assert_eq!(
+        resolution["stopResolution"]["actualProviderStatus"],
+        "error_response"
+    );
+    assert_eq!(
+        resolution["stopResolution"]["providerCancelAcknowledged"],
+        false
+    );
+    let persisted = serde_json::to_string(&resolution).unwrap();
+    assert!(!persisted.contains("private error sentinel"));
+    assert!(!persisted.contains("private error data sentinel"));
+    assert!(!persisted.contains("late ignored text"));
+}

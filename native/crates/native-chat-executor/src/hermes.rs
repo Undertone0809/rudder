@@ -156,6 +156,21 @@ pub(super) fn run_claimed(
         poll_error: None,
     };
     let result = driver.execute();
+    let prompt_error_after_cancel_receipt = if matches!(
+        &result,
+        Err(Error::HermesTransport(HermesTransportError::Rejected))
+    ) && driver.stop.is_some()
+        && driver.poll_error.is_none()
+        && !driver.cancelled.load(Ordering::Acquire)
+    {
+        // `execute` gives a recorded progress-write error precedence over
+        // a provider rejection, so this exact result also excludes that
+        // failure path. Requiring the observed Stop here keeps an
+        // unsolicited provider error from acquiring Stop evidence.
+        driver.transport.take_prompt_error_after_cancel_receipt()
+    } else {
+        None
+    };
     let cleanup_receipt = driver.stop_and_observe_cleanup();
     let fence = driver.fence.clone();
     let stop = driver.stop.take();
@@ -178,12 +193,15 @@ pub(super) fn run_claimed(
                 stop,
             })
         }
-        Err(error) => Err(ExecutionFailure::after_claim_hermes(
-            error,
-            execution_principal,
-            fence,
-            cleanup_receipt,
-        )),
+        Err(error) => Err(
+            ExecutionFailure::after_claim_hermes_prompt_error_after_cancel(
+                error,
+                execution_principal,
+                fence,
+                cleanup_receipt,
+                prompt_error_after_cancel_receipt,
+            ),
+        ),
     }
 }
 

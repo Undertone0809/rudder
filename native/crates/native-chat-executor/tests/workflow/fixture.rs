@@ -225,7 +225,14 @@ def main(argv=None):
             out({{"jsonrpc":"2.0","id":message["id"],"result":{{}}}})
         elif method == "session/prompt":
             user_id = message["params"]["messageId"]
-            if mode == "hermes-stop-pending":
+            if mode == "hermes-stop-prompt-error":
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"tool_call","toolCallId":"fixture-tool","title":"Running read-only fixture","rawInput":{{"private":"raw input sentinel"}}}}}}}})
+                home.joinpath("progress-pending").write_text("pending", encoding="utf-8")
+                cancel = json.loads(sys.stdin.readline())
+                assert cancel.get("method") == "session/cancel"
+                out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"late ignored text"}}}}}}}})
+                out({{"jsonrpc":"2.0","id":message["id"],"error":{{"code":-32603,"message":"private error sentinel","data":{{"private":"private error data sentinel"}}}}}})
+            elif mode == "hermes-stop-pending":
                 out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_thought_chunk","content":{{"type":"text","text":"unflushed thought"}}}}}}}})
                 home.joinpath("progress-pending").write_text("pending", encoding="utf-8")
                 cancel = json.loads(sys.stdin.readline())

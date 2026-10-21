@@ -881,3 +881,58 @@ pub(super) async fn resolve_action_hermes(
     auth::authorize_execution_org(tx, actor, fence).await?;
     Ok(())
 }
+
+/// The prompt completed with an explicit RPC error after cancel was written.
+/// Keep that provider failure distinct from a provider cancellation ack.
+pub(super) async fn resolve_action_hermes_prompt_error(
+    tx: &mut auth::Tx<'_>,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    stop: &StopIntent,
+    error: &rudder_hermes_acp::HermesPromptErrorAfterCancel,
+    cleanup: &HermesCleanupReceipt,
+    result: &Value,
+) -> Result<()> {
+    if !fence.matches_hermes_cleanup_receipt(cleanup)
+        || !error.matches_connection_claim(
+            &fence.run_id,
+            &fence.attempt_id,
+            fence.run_execution_owner_token(),
+            fence.identity().connection_epoch,
+            &fence.connection_claim_id,
+        )
+        || !cleanup.proves_quiescence_for_prompt_error(error)
+    {
+        return Err(http(
+            409,
+            "Hermes prompt error belongs to another execution",
+        ));
+    }
+    // The caller locked/revalidated this exact Stop immediately before its
+    // atomic terminal writes. The committed checkpoint now differs from the
+    // pre-terminal pin; retain the same connection evidence here.
+    let mut evidence: Value = sqlx::query_scalar(
+        "SELECT provider_evidence FROM chat_control_actions WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&fence.organization_id)
+    .bind(&stop.action_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let connection = pin::digest(
+        "stop_connection_v1",
+        &json!(cleanup.connection_receipt_id()),
+    );
+    if evidence["stoppingConnectionProof"].as_str() != Some(connection.as_str())
+        || evidence["stoppingConnectionEpoch"].as_i64() != Some(i64::from(fence.connection_epoch))
+        || evidence.get("stoppingObservations").is_some()
+    {
+        return Err(http(409, "Hermes prompt error cleanup connection changed"));
+    }
+    evidence["stopResolution"] = json!({"result":result, "actualProviderStatus":"error_response",
+        "errorCode":error.error_code(), "cancelSent":true, "providerCancelAcknowledged":false,
+        "usageAvailable":false, "connectionProof":connection});
+    sqlx::query("UPDATE chat_control_actions SET local_disposition='stopped',provider_disposition='unverified',resolved_at=clock_timestamp(),updated_at=clock_timestamp(),provider_evidence=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(&fence.organization_id).bind(&stop.action_id).bind(evidence).execute(&mut **tx).await?;
+    auth::authorize_execution_org(tx, actor, fence).await?;
+    Ok(())
+}

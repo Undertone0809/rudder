@@ -84,6 +84,18 @@ finalizer closes the Run. A stopping-checkpoint read is limited to the same
 unsubmitted execution and grants no effect permit; unrelated configuration,
 permission, database, or ownership failures retain their original behavior.
 
+Installed Hermes can end an active tool prompt with a correlated JSON-RPC
+internal error after receiving `session/cancel`. Preserve that error as a
+separate typed prompt-error receipt, never as a cancelled provider turn. Only
+an exact durable operator Stop, the precommitted session/request/source/input
+identity, and matching owned-process cleanup can use this receipt to close the
+Run and release its admission hold. Record `providerStatus=error_response`, the
+numeric error code, `cancelSent=true`, `providerCancelAcknowledged=false`, and
+unknown usage; retain the frozen projection cutoff and validate the entire
+committed progress ledger. Generic errors without an exact Stop, transport
+loss, timeout, malformed responses, and mismatched identities remain held and
+must not replay input. Do not modify the installed Hermes profile or sources.
+
 The composer has one primary response control. An active response with no
 queueable draft shows Stop; a queueable draft shows Send, using the existing
 queue callback. Clearing the draft restores Stop. A pending Stop shows one
