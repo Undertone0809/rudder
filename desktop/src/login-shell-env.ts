@@ -31,7 +31,11 @@ function uniqueNonEmptyPaths(values: Iterable<string>, delimiter: string): strin
   for (const rawValue of values) {
     for (const entry of rawValue.split(delimiter)) {
       const trimmed = entry.trim();
-      if (!trimmed) continue;
+      // Rust Native Chat treats the host search path as trusted input and
+      // requires every component to be absolute. Relative entries also make
+      // command lookup depend on the current working directory, so never carry
+      // them from either the inherited or login-shell PATH.
+      if (!trimmed || !path.isAbsolute(trimmed)) continue;
       const key = pathKey(trimmed);
       if (seen.has(key)) continue;
       seen.add(key);

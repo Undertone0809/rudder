@@ -37,6 +37,7 @@ await prepareDevSmokeDependencyResolution();
 const smokeAgentJwtSecret = randomBytes(32).toString("base64url");
 const smokeAgentJwtIssuer = "rudder-desktop-smoke";
 const smokeAgentJwtAudience = "rudder-api";
+const startupStderrByApp = new WeakMap();
 const browserSmokeCookieName = "rudder_browser_smoke";
 const browserSmokeCookieValue = "shared-profile";
 const browserSmokeCookieUrl = "http://127.0.0.1/";
@@ -2669,6 +2670,93 @@ async function assertFreshDesktopWindowSize(electronApp, context, tolerance = 64
   }
 }
 
+function summarizeSmokeStartupFailure(output, sensitiveValues = [], homeDirectory = "") {
+  const marker = "[rudder-desktop] managed local server startup failed";
+  const lines = String(output ?? "").split(/\r?\n/u);
+  let markerIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].includes(marker)) {
+      markerIndex = index;
+      break;
+    }
+  }
+  if (markerIndex < 0) return null;
+
+  let detail = lines[markerIndex].slice(lines[markerIndex].indexOf(marker) + marker.length).trim();
+  if (!detail) {
+    detail = lines.slice(markerIndex + 1).find((line) => line.trim() && !/^\s+at\s/u.test(line))?.trim() ?? "";
+  }
+  if (!detail) return "startup exception was logged without a message";
+
+  let safe = detail;
+  for (const sensitive of sensitiveValues) {
+    if (typeof sensitive === "string" && sensitive.length >= 4) {
+      safe = safe.split(sensitive).join("[redacted]");
+    }
+  }
+  if (homeDirectory) safe = safe.split(homeDirectory).join("<home>");
+  safe = safe
+    .replace(/\bBearer\s+[^\s,;]+/giu, "Bearer [redacted]")
+    .replace(/((?:authorization|cookie|password|secret|token|credential|api[_-]?key|private[_-]?key)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu, "$1[redacted]")
+    .replace(/([?&](?:access_token|token|key|secret|signature|password|code)=)[^&#\s]*/giu, "$1[redacted]")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 800);
+  return safe || "startup error message was redacted";
+}
+
+function appendBoundedStartupOutput(current, chunk) {
+  const limit = 64 * 1024;
+  const combined = current + String(chunk);
+  return combined.length > limit ? combined.slice(-limit) : combined;
+}
+
+function readSmokeStartupFailureDetail(electronApp) {
+  const captured = startupStderrByApp.get(electronApp);
+  return captured
+    ? summarizeSmokeStartupFailure(captured.output, captured.sensitiveValues, os.homedir())
+    : null;
+}
+
+async function readExecutableSearchPathShape(electronApp) {
+  try {
+    return await electronApp.evaluate(() => {
+      const value = process.env.PATH ?? "";
+      const delimiter = process.platform === "win32" ? ";" : ":";
+      const entries = value.split(delimiter);
+      const isAbsolute = (entry) => process.platform === "win32"
+        ? /^[a-z]:[\\/]/iu.test(entry) || entry.startsWith("\\\\")
+        : entry.startsWith("/");
+      return {
+        present: value.length > 0,
+        length: value.length,
+        componentCount: entries.length,
+        emptyIndexes: entries.flatMap((entry, index) => entry.length === 0 ? [index] : []),
+        relativeIndexes: entries.flatMap((entry, index) => (
+          entry.length > 0 && !isAbsolute(entry) ? [index] : []
+        )),
+        overLimit: value.length > 16_384,
+        containsNul: value.includes("\0"),
+      };
+    });
+  } catch {
+    return null;
+  }
+}
+
+function formatExecutableSearchPathShape(shape) {
+  if (!shape) return "executable search path shape unavailable";
+  return [
+    `present=${shape.present}`,
+    `length=${shape.length}`,
+    `components=${shape.componentCount}`,
+    `emptyIndexes=${JSON.stringify(shape.emptyIndexes)}`,
+    `relativeIndexes=${JSON.stringify(shape.relativeIndexes)}`,
+    `overLimit=${shape.overLimit}`,
+    `containsNul=${shape.containsNul}`,
+  ].join(" ");
+}
+
 function resolveMacPackagedSmokeHomeEnv() {
   return process.platform === "darwin" && process.env.HOME
     ? { HOME: process.env.HOME }
@@ -2767,17 +2855,23 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
     runtimeDescriptorPath: paths.runtimeDescriptorPath,
   });
   const appProcess = typeof electronApp.process === "function" ? electronApp.process() : null;
-  let startupStdout = "";
-  let startupStderr = "";
-  appProcess?.stdout?.on("data", (chunk) => { startupStdout += String(chunk); });
-  appProcess?.stderr?.on("data", (chunk) => { startupStderr += String(chunk); });
+  const capturedStderr = { output: "", sensitiveValues: [] };
+  capturedStderr.sensitiveValues = Object.entries({ ...process.env, ...extraEnv })
+    .filter(([name, value]) => /(?:secret|token|password|credential|cookie|authorization|api[_-]?key|private[_-]?key|database_url)/iu.test(name)
+      && typeof value === "string")
+    .map(([, value]) => value)
+    .concat(smokeAgentJwtSecret, browserSmokeCookieValue);
+  startupStderrByApp.set(electronApp, capturedStderr);
+  appProcess?.stderr?.on("data", (chunk) => {
+    capturedStderr.output = appendBoundedStartupOutput(capturedStderr.output, chunk);
+  });
   let page;
   try {
     page = await electronApp.firstWindow();
   } catch (error) {
-    const diagnostics = [startupStdout.trim(), startupStderr.trim()].filter(Boolean).join("\n");
+    const diagnostics = readSmokeStartupFailureDetail(electronApp);
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}${diagnostics ? `\nPackaged Desktop startup output:\n${diagnostics}` : ""}`,
+      `${error instanceof Error ? error.message : String(error)}${diagnostics ? `\nPackaged Desktop startup detail: ${diagnostics}` : ""}`,
       { cause: error },
     );
   }
@@ -4304,7 +4398,14 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
         continue;
       }
       if (bootState.stage === "error" || bootState.view === "failed") {
-        throw new Error(`desktop boot failed: ${bootState.failure?.summary || bootState.stage}`);
+        const failure = bootState.failure;
+        const category = failure?.category ? ` category=${failure.category}` : "";
+        const stage = failure?.stage ? ` stage=${failure.stage}` : "";
+        const diagnostic = readSmokeStartupFailureDetail(electronApp);
+        const pathShape = await readExecutableSearchPathShape(electronApp);
+        throw new Error(
+          `desktop boot failed: ${failure?.summary || bootState.stage}${category}${stage}${diagnostic ? `; startup cause: ${diagnostic}` : ""}; executable search path shape: ${formatExecutableSearchPathShape(pathShape)}`,
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

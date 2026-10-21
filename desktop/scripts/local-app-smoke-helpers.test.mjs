@@ -46,6 +46,24 @@ function loadWebviewWaiter() {
     waitForLocalAppWebview`, { Date, setTimeout, clearTimeout });
 }
 
+function loadStartupFailureSummarizer() {
+  const source = readFileSync(new URL("./smoke.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("function summarizeSmokeStartupFailure");
+  const end = source.indexOf("\nfunction appendBoundedStartupOutput", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return runInNewContext(`${source.slice(start, end)} summarizeSmokeStartupFailure`, {});
+}
+
+function loadExecutableSearchPathShapeFormatter() {
+  const source = readFileSync(new URL("./smoke.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("function formatExecutableSearchPathShape");
+  const end = source.indexOf("\nfunction resolveMacPackagedSmokeHomeEnv", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return runInNewContext(`${source.slice(start, end)} formatExecutableSearchPathShape`, {});
+}
+
 function asyncProbePage(check) {
   return {
     evaluate: vi.fn(check),
@@ -56,6 +74,44 @@ function asyncProbePage(check) {
 }
 
 describe("Local App smoke helpers", () => {
+  it("extracts only the startup exception and redacts credentials and URL query values", () => {
+    const summarize = loadStartupFailureSummarizer();
+    const output = [
+      "[rudder-desktop] unrelated startup log",
+      "[rudder-desktop] managed local server startup failed Error: ENOENT: /Users/test/.config/runtime; Authorization: Bearer bearer-secret; https://example.test/start?token=url-secret",
+      "    at startLocalRudder (/private/tmp/app/main.js:1:2)",
+      "RUDDER_AGENT_JWT_SECRET=jwt-secret",
+    ].join("\n");
+
+    const detail = summarize(output, ["bearer-secret", "jwt-secret"], "/Users/test");
+
+    expect(detail).toContain("Error: ENOENT");
+    expect(detail).toContain("<home>/.config/runtime");
+    expect(detail).not.toContain("bearer-secret");
+    expect(detail).not.toContain("jwt-secret");
+    expect(detail).not.toContain("url-secret");
+    expect(detail).not.toContain("/private/tmp/app");
+    expect(summarize("no classified startup exception", ["jwt-secret"], "/Users/test")).toBeNull();
+  });
+
+  it("reports executable search path shape without including path values", () => {
+    const format = loadExecutableSearchPathShapeFormatter();
+    const detail = format({
+      present: true,
+      length: 48,
+      componentCount: 4,
+      emptyIndexes: [2],
+      relativeIndexes: [3],
+      overLimit: false,
+      containsNul: false,
+    });
+
+    expect(detail).toContain("components=4");
+    expect(detail).toContain("emptyIndexes=[2]");
+    expect(detail).toContain("relativeIndexes=[3]");
+    expect(detail).not.toContain("/Users/");
+  });
+
   it("retries asynchronously false webview evidence until ready", async () => {
     vi.useFakeTimers();
     try {
