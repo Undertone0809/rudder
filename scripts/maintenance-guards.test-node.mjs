@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { runForbiddenTokenCheck } from "./check-forbidden-tokens.mjs";
-import { runProject, runProjects } from "./run-vitest-projects.mjs";
+import { listTestFiles, runProject, runProjects } from "./run-vitest-projects.mjs";
 
 function fixture(t, content = "ordinary tracked content\n") {
   const root = mkdtempSync(join(tmpdir(), "rudder-maintenance-"));
@@ -127,6 +128,25 @@ test("the runner does not add the no-tests success escape hatch", async () => {
   assert.equal(result.code, 0);
   assert.ok(!argv.includes("--passWithNoTests"));
   assert.ok(argv.includes("--passWithNoTests=false"));
+});
+
+test("Node-native suites are explicitly dispatched outside Vitest", async () => {
+  const serverRoot = new URL("../server/", import.meta.url);
+  const serverFiles = await listTestFiles(fileURLToPath(serverRoot));
+  assert.ok(!serverFiles.includes("scripts/stage-native.test.mjs"));
+
+  const packageManifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(
+    packageManifest.scripts["test:node-suites"],
+    "node --test scripts/release-candidate-manifest.test.mjs server/scripts/stage-native.test.mjs",
+  );
+  assert.ok(packageManifest.scripts["test:run"].includes("pnpm test:node-suites"));
+
+  const scriptsVitestConfig = readFileSync(new URL("./vitest.config.ts", import.meta.url), "utf8");
+  assert.match(
+    scriptsVitestConfig,
+    /exclude:\s*\[\.\.\.configDefaults\.exclude,\s*"release-candidate-manifest\.test\.mjs"\]/u,
+  );
 });
 
 test("ordinary failure aggregation and later projects are preserved", async () => {

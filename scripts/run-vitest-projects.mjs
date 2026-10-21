@@ -99,12 +99,14 @@ export function runProject(project, testFiles = [], { spawnChild = spawn } = {})
   });
 }
 
-async function listTestFiles(directory, relativeDirectory = "") {
+export async function listTestFiles(directory, relativeDirectory = "") {
   const entries = await readdir(resolve(directory, relativeDirectory), { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
     if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".packaged") continue;
     const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+    // This suite uses Node's built-in test runner and is invoked by test:node-suites.
+    if (relativePath === "scripts/stage-native.test.mjs") continue;
     if (relativePath.startsWith("resources/bundled-skills/app-builder/assets/scaffold/")) continue;
     if (entry.isDirectory()) {
       files.push(...await listTestFiles(directory, relativePath));
