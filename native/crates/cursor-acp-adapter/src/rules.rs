@@ -5,10 +5,15 @@
 //! writes one deterministic, namespaced file in the per-Agent managed cwd;
 //! it never writes into the operator profile or an arbitrary project.
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use uuid::Uuid;
 
+pub const MANAGED_INSTRUCTION_RULES_SUPPORTED: bool =
+    cfg!(any(target_os = "linux", target_os = "macos"));
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const RULE_PREFIX: &str = "rudder-agent-";
 const MAX_RULE_BYTES: usize = 256 * 1024;
 
@@ -39,10 +44,12 @@ impl CursorManagedInstructionRule {
         Ok(())
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn file_name(&self) -> String {
         format!("{RULE_PREFIX}{}.mdc", self.agent_id)
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn rendered(&self, content: &str) -> Vec<u8> {
         let source_digest = digest(self.revision.as_bytes());
         let body = if content.ends_with('\n') {
@@ -58,6 +65,7 @@ impl CursorManagedInstructionRule {
         .into_bytes()
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn owns(&self, bytes: &[u8]) -> bool {
         let Ok(text) = std::str::from_utf8(bytes) else {
             return false;
@@ -98,10 +106,12 @@ pub enum RuleError {
     Invalid,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn valid_digest(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn digest(bytes: &[u8]) -> String {
     let value = Sha256::digest(bytes);
     value.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -115,22 +125,18 @@ pub(crate) fn materialize(
     rule: &CursorManagedInstructionRule,
 ) -> Result<(), RuleError> {
     rule.validate()?;
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         unix::materialize(cwd, rule)
     }
-    #[cfg(windows)]
-    {
-        windows::materialize(cwd, rule)
-    }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = cwd;
         Err(RuleError::Invalid)
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod unix {
     use super::{CursorManagedInstructionRule, RuleError};
     use std::{
@@ -500,128 +506,7 @@ mod unix {
     }
 }
 
-#[cfg(windows)]
-mod windows {
-    use super::{CursorManagedInstructionRule, RuleError};
-    use std::{
-        fs::{self, OpenOptions},
-        io::{Read, Write},
-        os::windows::fs::{MetadataExt, OpenOptionsExt},
-        path::{Component, Path},
-    };
-    use uuid::Uuid;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
-    };
-
-    pub(super) fn materialize(
-        cwd: &Path,
-        rule: &CursorManagedInstructionRule,
-    ) -> Result<(), RuleError> {
-        if !cwd.is_absolute()
-            || cwd
-                .components()
-                .any(|part| matches!(part, Component::ParentDir))
-            || fs::canonicalize(cwd).ok().as_deref() != Some(cwd)
-        {
-            return Err(RuleError::Invalid);
-        }
-        let rules = cwd.join(".cursor").join("rules");
-        let has_content = rule
-            .content
-            .as_deref()
-            .is_some_and(|value| !value.is_empty());
-        if has_content {
-            ensure_directory_chain(cwd, &rules)?;
-        } else if !rules.exists() {
-            return Ok(());
-        } else {
-            ensure_directory_chain(cwd, &rules)?;
-        }
-        let target = rules.join(rule.file_name());
-        let existing = read_regular(&target)?;
-        if existing.as_deref().is_some_and(|value| !rule.owns(value)) {
-            return Err(RuleError::Invalid);
-        }
-        if let Some(content) = rule.content.as_deref().filter(|value| !value.is_empty()) {
-            let temporary = rules.join(format!(".rudder-{}.tmp", Uuid::new_v4()));
-            let mut options = OpenOptions::new();
-            options
-                .write(true)
-                .create_new(true)
-                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-            let mut file = options.open(&temporary).map_err(|_| RuleError::Invalid)?;
-            file.write_all(&rule.rendered(content))
-                .map_err(|_| RuleError::Invalid)?;
-            file.sync_all().map_err(|_| RuleError::Invalid)?;
-            if existing.is_some() {
-                fs::remove_file(&target).map_err(|_| RuleError::Invalid)?;
-            }
-            if let Err(_) = fs::rename(&temporary, &target) {
-                let _ = fs::remove_file(&temporary);
-                return Err(RuleError::Invalid);
-            }
-        } else if existing.is_some() {
-            fs::remove_file(&target).map_err(|_| RuleError::Invalid)?;
-        }
-        Ok(())
-    }
-
-    fn ensure_directory_chain(root: &Path, target: &Path) -> Result<(), RuleError> {
-        let mut current = root.to_path_buf();
-        let relative = target.strip_prefix(root).map_err(|_| RuleError::Invalid)?;
-        for component in relative.components() {
-            let Component::Normal(name) = component else {
-                return Err(RuleError::Invalid);
-            };
-            current.push(name);
-            match fs::symlink_metadata(&current) {
-                Ok(metadata)
-                    if metadata.is_dir()
-                        && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0 => {}
-                Ok(_) => return Err(RuleError::Invalid),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    fs::create_dir(&current).map_err(|_| RuleError::Invalid)?;
-                    let metadata =
-                        fs::symlink_metadata(&current).map_err(|_| RuleError::Invalid)?;
-                    if !metadata.is_dir()
-                        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-                    {
-                        return Err(RuleError::Invalid);
-                    }
-                }
-                Err(_) => return Err(RuleError::Invalid),
-            }
-        }
-        Ok(())
-    }
-
-    fn read_regular(path: &Path) -> Result<Option<Vec<u8>>, RuleError> {
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-        match options.open(path) {
-            Ok(mut file) => {
-                let metadata = file.metadata().map_err(|_| RuleError::Invalid)?;
-                if !metadata.is_file()
-                    || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-                    || metadata.len() > super::MAX_RULE_BYTES as u64
-                {
-                    return Err(RuleError::Invalid);
-                }
-                let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes)
-                    .map_err(|_| RuleError::Invalid)?;
-                Ok(Some(bytes))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(_) => Err(RuleError::Invalid),
-        }
-    }
-}
-
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
     use tempfile::tempdir;
@@ -729,5 +614,20 @@ mod tests {
             Err(RuleError::Invalid)
         );
         assert_eq!(std::fs::read(target).unwrap(), b"outside");
+    }
+}
+
+#[cfg(all(test, not(any(target_os = "linux", target_os = "macos"))))]
+mod unsupported_platform_tests {
+    #[test]
+    fn instruction_materialization_fails_before_creating_any_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let rule = super::CursorManagedInstructionRule {
+            agent_id: uuid::Uuid::new_v4().to_string(),
+            revision: format!("sha256:{}", "a".repeat(64)),
+            content: Some("managed instructions".into()),
+        };
+        assert!(super::materialize(directory.path(), &rule).is_err());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 }

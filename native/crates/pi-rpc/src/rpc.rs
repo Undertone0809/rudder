@@ -191,6 +191,7 @@ pub struct PiRpcTransport {
     session_dir: PathBuf,
     active_session_id: Option<String>,
     active_session_file: Option<PathBuf>,
+    active_session_persisted: bool,
     prompt_requested: bool,
     prompt_accepted: bool,
     prompt_agent_started: bool,
@@ -307,6 +308,7 @@ impl PiRpcTransport {
             session_dir,
             active_session_id: None,
             active_session_file: None,
+            active_session_persisted: false,
             prompt_requested: false,
             prompt_accepted: false,
             prompt_agent_started: false,
@@ -317,6 +319,63 @@ impl PiRpcTransport {
 
     pub fn connection_identity(&self) -> ConnectionIdentity {
         self.host.connection_identity()
+    }
+
+    /// Bind a validated response from this owned RPC connection. A newly
+    /// allocated native path is not persistence proof; only a later strict
+    /// observation of the same file can authorize a terminal receipt.
+    pub fn bind_session_state(
+        &mut self,
+        session_id: &str,
+        session_file: &Path,
+        persisted: bool,
+    ) -> Result<(), PiTransportError> {
+        if !self.spawned
+            || self.terminal
+            || self.host_failure
+            || session_id.is_empty()
+            || session_id.len() > 256
+            || session_id.chars().any(char::is_control)
+            || session_file.parent() != Some(self.session_dir.as_path())
+            || session_file
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+            || self
+                .active_session_id
+                .as_deref()
+                .is_some_and(|id| id != session_id)
+            || self
+                .active_session_file
+                .as_deref()
+                .is_some_and(|path| path != session_file)
+        {
+            return Err(PiTransportError::InvalidMessage);
+        }
+        let metadata = std::fs::symlink_metadata(session_file);
+        if persisted {
+            let metadata = metadata.map_err(|_| PiTransportError::InvalidMessage)?;
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || session_file.canonicalize().ok().as_deref() != Some(session_file)
+            {
+                return Err(PiTransportError::InvalidMessage);
+            }
+        } else if self.prompt_requested
+            || self.active_session_persisted
+            || !metadata.is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            || !session_file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.len() <= 512 && name.ends_with(&format!("_{session_id}.jsonl"))
+                })
+        {
+            return Err(PiTransportError::InvalidMessage);
+        }
+        self.active_session_id = Some(session_id.to_owned());
+        self.active_session_file = Some(session_file.to_path_buf());
+        self.active_session_persisted = persisted;
+        Ok(())
     }
 
     pub fn wait_spawned(&mut self, timeout: Duration) -> Result<(), PiTransportError> {
@@ -449,6 +508,7 @@ impl PiRpcTransport {
         input_text: &str,
     ) -> Result<PiTurnReceipt, PiTransportError> {
         if self.turn_receipt_taken
+            || !self.active_session_persisted
             || !self.prompt_requested
             || !self.prompt_accepted
             || !self.prompt_agent_started
@@ -670,25 +730,6 @@ impl PiRpcTransport {
                 }
                 if response.command == "prompt" {
                     self.prompt_accepted = response.success;
-                }
-                if response.command == "get_state"
-                    && response.success
-                    && let Some(data) = response
-                        .data
-                        .as_ref()
-                        .and_then(serde_json::Value::as_object)
-                {
-                    let session_id = data.get("sessionId").and_then(serde_json::Value::as_str);
-                    let session_file = data.get("sessionFile").and_then(serde_json::Value::as_str);
-                    if let (Some(session_id), Some(session_file)) = (session_id, session_file) {
-                        let path = PathBuf::from(session_file);
-                        if let Ok(path) = path.canonicalize()
-                            && path.starts_with(&self.session_dir)
-                        {
-                            self.active_session_id = Some(session_id.to_owned());
-                            self.active_session_file = Some(path);
-                        }
-                    }
                 }
                 self.pending = None;
             }

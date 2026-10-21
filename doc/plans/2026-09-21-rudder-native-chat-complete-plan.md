@@ -1293,13 +1293,33 @@ mirrors remain enabled.
 
 The follow-up profile review found and fixed Cursor's accepted-but-unused model
 selection: the admitted model and effort now form a validated CLI selector.
-Nonempty Rudder instructions remain explicitly unsupported for Cursor ACP and
-are rejected before admission effects until a supported channel is proven.
+An installed Cursor ACP experiment confirmed native always-apply project rules.
+Rust now materializes one namespaced, owned rule only in the canonical managed
+Agent fallback workspace on macOS/Linux. External/issue workspaces and other
+platforms reject nonempty Rudder instructions before admission; Windows rule
+writes remain unsupported until handle-relative ownership and atomic replacement
+are verified. Rules are revision-bound and update/remove in place while that fallback workspace is
+active. A retired fallback rule after migration to an external/issue workspace
+remains a reference-aware retention task; this slice does not delete it.
 Pi now applies the configured process interrupt grace separately from the
 cleanup-receipt wait, including after an execution timeout. These changes do
 not establish installed-profile model acceptance or full native history parity.
 Pi interrupt grace is now bounded to the host protocol's 1–60 seconds; persisted
 values outside that range fail admission rather than being silently clamped.
+
+Real Pi acceptance exposed native lazy persistence: `new_session` returns its
+native ID and anticipated path before any session file exists. Only that empty,
+idle new-session state may remain unflushed; strict resume and terminal receipts
+still require the same native file to have been written by Pi. Installed state-only
+and synthetic first-assistant-flush/missing-file checks cover that distinction.
+OpenCode now carries resolved instructions through the native `prompt_async.system`
+field, separately from user input. Its UI exposes an explicit operator Profile,
+including native settings/plugins, and configured timeout/grace/variant reach the
+Rust executor. Legacy local configs without a selector retain operator use;
+explicit managed mode requires an existing stable profile and unknown modes fail
+before admission. Custom config/XDG overrides remain unsupported rather than being
+silently ignored. These implementation checks still require exact-candidate real
+first-turn, continuation and restart acceptance; they do not close the full plan.
 
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 

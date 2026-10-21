@@ -1305,6 +1305,10 @@ impl PromptQuery {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Prompt {
+    /// The calibrated Server accepts native Agent instructions separately
+    /// from the submitted user-message parts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "messageID")]
     pub message_id: Option<String>,
@@ -1556,6 +1560,7 @@ mod tests {
     #[test]
     fn prompt_parts_keep_native_media_shape() {
         let prompt = Prompt {
+            system: Some("Saved Agent instructions\nUse the selected workspace.".into()),
             parts: vec![PromptPart::File {
                 id: None,
                 mime: "image/png".into(),
@@ -1568,6 +1573,16 @@ mod tests {
         assert_eq!(value["parts"][0]["type"], "file");
         assert_eq!(value["parts"][0]["mime"], "image/png");
         assert_eq!(value["parts"][0]["url"], "data:image/png;base64,AA==");
+        assert_eq!(
+            value["system"],
+            "Saved Agent instructions\nUse the selected workspace."
+        );
+        assert!(
+            serde_json::to_value(Prompt::default())
+                .unwrap()
+                .get("system")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1622,6 +1637,9 @@ mod tests {
                         "ses_native",
                         &PromptRequest {
                             prompt: Prompt {
+                                system: Some(
+                                    "Native instructions\nKeep user input separate.".into(),
+                                ),
                                 message_id: Some("msg_input".into()),
                                 parts: vec![PromptPart::Text {
                                     id: None,
@@ -1647,6 +1665,14 @@ mod tests {
                     request.starts_with("POST /session/ses_native/prompt_async HTTP/1.1"),
                     "unexpected request: {request}"
                 );
+                let body: serde_json::Value =
+                    serde_json::from_str(request.split_once("\r\n\r\n").expect("HTTP body").1)
+                        .unwrap();
+                assert_eq!(
+                    body["system"],
+                    "Native instructions\nKeep user input separate."
+                );
+                assert_eq!(body["parts"][0]["text"], "hello");
                 server.join().expect("server thread");
             })
             .await;

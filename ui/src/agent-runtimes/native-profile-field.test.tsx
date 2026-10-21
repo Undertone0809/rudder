@@ -4,8 +4,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createValuesForRuntime } from "../components/AgentConfigForm.helpers";
 import { TooltipProvider } from "../components/ui/tooltip";
-import { getUIAdapter } from "./registry";
 import { NativeProfileField } from "./native-profile-field";
+import { getUIAdapter } from "./registry";
 import type { CreateConfigValues } from "./types";
 
 vi.mock("./local-workspace-runtime-fields", () => ({ LocalWorkspaceRuntimeFields: () => null }));
@@ -28,7 +28,7 @@ describe("native local Profile selection", () => {
     expect(mark).toHaveBeenCalledWith("agentRuntimeConfig", "profileId", "operator-default");
   });
 
-  for (const runtime of ["claude_local", "cursor", "pi_local"]) {
+  for (const runtime of ["claude_local", "cursor", "pi_local", "opencode_local"]) {
     it(`persists the selected ${runtime} Profile even when instruction fields are hidden`, () => {
       const adapter = getUIAdapter(runtime);
       let current: CreateConfigValues;

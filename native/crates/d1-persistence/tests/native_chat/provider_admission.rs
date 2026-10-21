@@ -47,7 +47,7 @@ impl Provider {
         match self {
             Self::Claude => format!("claude-local:{agent}:{PROFILE}"),
             Self::Cursor => format!("cursor-local:{agent}:{PROFILE}"),
-            Self::OpenCode => format!("managed-opencode:{agent}:{PROFILE}"),
+            Self::OpenCode => format!("managed-opencode:{agent}:default"),
             Self::Pi => format!("managed-pi:{agent}:{PROFILE}"),
         }
     }
@@ -66,7 +66,7 @@ impl Provider {
             Self::Claude => json!({"profileId":PROFILE,"model":"fixture-model"}),
             Self::Cursor => json!({"profileId":PROFILE,"model":"fixture-model"}),
             Self::OpenCode => json!({
-                "profileId":PROFILE,
+                "profileId":"default",
                 "model":"fixture-provider/fixture-model"
             }),
             Self::Pi => json!({"profileId":PROFILE,"model":"fixture-provider/fixture-model"}),
@@ -604,6 +604,93 @@ fn assert_conflict<T>(result: Result<T, Error>) {
         matches!(result, Err(Error::Http(409, _))),
         "expected a conflict for a non-exact Pi session checkpoint"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn opencode_operator_profile_requires_an_owned_calibrated_host_and_accepts_managed_instructions()
+ {
+    let database = Database::start().await;
+    prepare(&database).await;
+    let mut host = ProviderHost::new();
+    let actor = verified_actor(USER, "opencode-operator-profile");
+    configure_agent(
+        &database.pool,
+        CEO,
+        Provider::OpenCode,
+        "provider-admission-ceo",
+    )
+    .await;
+    let chat = unique_id("opencode-operator-profile");
+    seed_chat(&database.pool, &chat).await;
+    let instructions = host
+        ._root
+        .path()
+        .join("workspaces")
+        .join(compact_org_key(ORG))
+        .join("workspaces/agents/provider-admission-ceo/instructions");
+    fs::create_dir_all(&instructions).unwrap();
+    fs::write(
+        instructions.join("SOUL.md"),
+        "Use the saved native system instructions.\n",
+    )
+    .unwrap();
+    let mut config = json!({"profileId":"unknown-profile", "model":"fixture-provider/fixture-model",
+        "command":"opencode", "timeoutSec":0, "graceSec":20,
+        "instructionsBundleMode":"managed", "instructionsRootPath":instructions,
+        "instructionsEntryFile":"SOUL.md", "instructionsFilePath":instructions.join("SOUL.md")});
+    for (label, profile) in [
+        ("unknown", "unknown-profile"),
+        ("external-server", "operator-default"),
+    ] {
+        config["profileId"] = json!(profile);
+        sqlx::query("UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid")
+            .bind(config.to_string()).bind(ORG).bind(CEO).execute(&database.pool).await.unwrap();
+        let before = row_counts(&database.pool, &chat).await;
+        assert_conflict(admit(&database.pool, &actor, &host, &chat, label).await);
+        assert_eq!(row_counts(&database.pool, &chat).await, before);
+    }
+    let executable = host.context.codex_executable().to_path_buf();
+    host.context = host
+        .context
+        .with_opencode_executable(executable)
+        .unwrap()
+        .with_opencode_operator_profile_supported(false);
+    let before = row_counts(&database.pool, &chat).await;
+    assert_conflict(admit(&database.pool, &actor, &host, &chat, "custom-xdg").await);
+    assert_eq!(row_counts(&database.pool, &chat).await, before);
+    host.context = host.context.with_opencode_operator_profile_supported(true);
+    for (field, value, label) in [
+        ("command", json!("/untrusted/opencode"), "custom-command"),
+        ("timeoutSec", json!(3601), "unbounded-timeout"),
+        ("graceSec", json!(0), "zero-grace"),
+        ("profileId", json!("default"), "unprovisioned-managed"),
+    ] {
+        let mut invalid_config = config.clone();
+        invalid_config[field] = value;
+        sqlx::query("UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid")
+            .bind(invalid_config.to_string()).bind(ORG).bind(CEO).execute(&database.pool).await.unwrap();
+        let before = row_counts(&database.pool, &chat).await;
+        assert_conflict(admit(&database.pool, &actor, &host, &chat, label).await);
+        assert_eq!(row_counts(&database.pool, &chat).await, before);
+    }
+    // Old local configurations without a selector retain native operator use.
+    config.as_object_mut().unwrap().remove("profileId");
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_config=$1::jsonb WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(config.to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let admitted = admit(&database.pool, &actor, &host, &chat, "supported-operator")
+        .await
+        .unwrap();
+    assert!(admitted.is_object());
+    let profile: String = sqlx::query_scalar("SELECT profile_id FROM runtime_bindings WHERE org_id=$1::uuid AND conversation_id=$2::uuid")
+        .bind(ORG).bind(&chat).fetch_one(&database.pool).await.unwrap();
+    assert_eq!(profile, format!("operator-opencode:{CEO}:operator-default"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

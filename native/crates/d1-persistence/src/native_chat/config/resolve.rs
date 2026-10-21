@@ -385,7 +385,7 @@ fn codex_profile_config_revision(home: &Path) -> Result<String> {
 /// Read only a bounded regular config file without following a symlink or
 /// blocking on a FIFO. The content stays in this function's caller and only a
 /// one-way digest is retained by the resolver.
-fn read_codex_config_nofollow(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+pub(super) fn read_codex_config_nofollow(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]

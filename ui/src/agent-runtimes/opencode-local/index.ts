@@ -7,5 +7,5 @@ export const openCodeLocalUIAdapter: UIAgentRuntimeModule = {
   label: "OpenCode (local)",
   parseStdoutLine: parseOpenCodeStdoutLine,
   ConfigFields: OpenCodeLocalConfigFields,
-  buildAdapterConfig: buildOpenCodeLocalConfig,
+  buildAdapterConfig: (values) => ({ ...buildOpenCodeLocalConfig(values), profileId: values.nativeProfileId ?? "operator-default" }),
 };

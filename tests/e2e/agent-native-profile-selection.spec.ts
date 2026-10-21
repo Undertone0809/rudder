@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-for (const runtime of ["claude_local", "cursor", "pi_local"]) {
+for (const runtime of ["claude_local", "cursor", "pi_local", "opencode_local"]) {
   test(`creates and edits the native Profile for ${runtime} without changing other settings`, async ({ page }) => {
     const organizationResponse = await page.request.post("/api/orgs", {
       data: { name: `Native-Profile-${runtime}-${Date.now()}` },

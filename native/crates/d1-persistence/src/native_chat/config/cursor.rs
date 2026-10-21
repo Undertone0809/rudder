@@ -245,10 +245,12 @@ pub(crate) async fn resolve_cursor_config(
             "resolved Agent instructions exceed the supported Cursor ACP bound",
         ));
     }
-    let managed_instruction_workspace = issue_id.is_none()
-        && workspace.is_none()
-        && configured_cwd.is_none()
-        && cwd == fallback_cwd;
+    let managed_instruction_workspace =
+        rudder_cursor_acp_adapter::MANAGED_INSTRUCTION_RULES_SUPPORTED
+            && issue_id.is_none()
+            && workspace.is_none()
+            && configured_cwd.is_none()
+            && cwd == fallback_cwd;
     if instructions
         .entry_content
         .as_ref()

@@ -87,7 +87,16 @@ pub fn execute_turn(
     // Validate the provider selection before launching any child. A malformed
     // model must never create an owned Server that can only be cleaned up via
     // an unproven Drop path.
-    let model = config.model.as_deref().map(parse_model).transpose()?;
+    let timeout = config
+        .timeout_sec
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .map_or(timeout, |configured| timeout.min(configured));
+    let deadline = Instant::now() + timeout;
+    let mut model = config.model.as_deref().map(parse_model).transpose()?;
+    if let Some(model) = model.as_mut() {
+        model.variant = config.variant.clone();
+    }
     // The persisted provider-native session locator is also validated before
     // launch. This keeps corrupt durable state from starting a Server that
     // cannot produce a terminal turn receipt.
@@ -156,6 +165,7 @@ pub fn execute_turn(
                     directory: configured_directory(config),
                     workspace: config.workspace.clone(),
                     prompt: Prompt {
+                        system: config.system_instructions().map(str::to_owned),
                         model: model
                             .as_ref()
                             .map(|model| rudder_opencode_native::ModelSelection {
@@ -188,16 +198,11 @@ pub fn execute_turn(
             .map(String::as_str)
             .collect::<Vec<_>>();
         let turn = client
-            .wait_for_completed_assistant(
-                session.as_str(),
-                &known_refs,
-                Instant::now() + timeout,
-                POLL_INTERVAL,
-            )
+            .wait_for_completed_assistant(session.as_str(), &known_refs, deadline, POLL_INTERVAL)
             .await?;
         Ok::<_, OpenCodeExecutionError>((session, turn))
     });
-    let cleanup = server.stop(Duration::from_secs(10))?;
+    let cleanup = server.stop(config.cleanup_grace)?;
     let (session, turn) = result?;
     Ok(OpenCodeExecutionObservation {
         session,
@@ -272,14 +277,12 @@ impl OpenCodeServerHost {
         )?;
         let runtime_root = paths.runtime_root.to_string_lossy().into_owned();
         let cwd = config.cwd.to_string_lossy().into_owned();
+        let home = config.profile_home().unwrap_or(&paths.isolated_home);
         let mut env = BTreeMap::new();
-        env.insert(
-            "HOME".to_owned(),
-            paths.isolated_home.to_string_lossy().into_owned(),
-        );
+        env.insert("HOME".to_owned(), home.to_string_lossy().into_owned());
         env.insert(
             "USERPROFILE".to_owned(),
-            paths.isolated_home.to_string_lossy().into_owned(),
+            home.to_string_lossy().into_owned(),
         );
         env.insert("PATH".to_owned(), config.executable_search_path.clone());
         let command = Command::Start {

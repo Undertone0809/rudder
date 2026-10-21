@@ -469,9 +469,8 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
         );
     }
 
-    // Cursor ACP has no proven Rudder instruction transfer mechanism. Do not
-    // silently admit a nonempty Agent instruction bundle that execution would
-    // ignore; rejection must happen before the user message or run is stored.
+    // Managed Cursor instructions use an owned native project rule on calibrated
+    // platforms. Other platforms reject before storing any execution effects.
     fs::write(
         host.instructions.join("SOUL.md"),
         "synthetic cursor instruction\n",
@@ -492,14 +491,19 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
         "cursor-nonempty-instructions",
     )
     .await;
-    assert!(matches!(
-        instruction_result,
-        Err(Error::Http(409, message)) if message.contains("instructions cannot be applied")
-    ));
-    assert_eq!(
-        effect_counts(&database.pool, CHAT_CURSOR_INSTRUCTIONS).await,
-        (0, 0, 0, 0, 0)
-    );
+    if rudder_cursor_acp_adapter::MANAGED_INSTRUCTION_RULES_SUPPORTED {
+        assert!(instruction_result.is_ok());
+        assert_eq!(
+            effect_counts(&database.pool, CHAT_CURSOR_INSTRUCTIONS).await,
+            (1, 1, 1, 1, 1)
+        );
+    } else {
+        assert!(matches!(instruction_result, Err(Error::Http(409, _))));
+        assert_eq!(
+            effect_counts(&database.pool, CHAT_CURSOR_INSTRUCTIONS).await,
+            (0, 0, 0, 0, 0)
+        );
+    }
 
     let mut malformed_model = Provider::Cursor.runtime_config(OPERATOR_PROFILE);
     malformed_model["model"] = json!("gpt-5.3-codex[");

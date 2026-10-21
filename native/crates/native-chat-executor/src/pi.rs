@@ -451,7 +451,8 @@ fn remaining_timeout(deadline: Instant, max: Duration) -> ExecResult<Duration> {
 pub enum PiExecutionPhase {
     /// The owned process exists and passed the process-host spawn barrier.
     Spawned,
-    /// A native Pi session and its exact managed session file were observed.
+    /// Pi reported a native identity and exact managed file location. A new
+    /// session may remain unflushed until its first assistant message.
     SessionReady,
     /// Pi accepted one input RPC. This is not a provider terminal result.
     InputAccepted,
@@ -496,6 +497,7 @@ pub enum PiUnknownReason {
 pub struct PiStateSnapshot {
     session_id: String,
     session_file: PathBuf,
+    session_file_persisted: bool,
     is_streaming: Option<bool>,
     is_compacting: Option<bool>,
     pending_message_count: Option<u64>,
@@ -509,6 +511,10 @@ impl PiStateSnapshot {
 
     pub fn session_file(&self) -> &Path {
         &self.session_file
+    }
+
+    pub fn session_file_persisted(&self) -> bool {
+        self.session_file_persisted
     }
 
     pub fn is_streaming(&self) -> Option<bool> {
@@ -528,7 +534,8 @@ impl PiStateSnapshot {
     }
 
     fn proves_idle_queue(&self) -> bool {
-        self.is_streaming == Some(false)
+        self.session_file_persisted
+            && self.is_streaming == Some(false)
             && self.is_compacting == Some(false)
             && self.pending_message_count == Some(0)
     }
@@ -638,18 +645,35 @@ impl PiExecution {
     /// Read and validate the exact native state. A rejected command is an
     /// explicit Unknown observation instead of a fabricated empty Session.
     pub fn get_state(&mut self, timeout: Duration) -> Result<PiExecutionPhase, PiAdapterError> {
+        self.read_state(timeout, false)
+    }
+
+    fn read_state(
+        &mut self,
+        timeout: Duration,
+        newly_created: bool,
+    ) -> Result<PiExecutionPhase, PiAdapterError> {
         let response = self.command_response(PiCommand::GetState, timeout)?;
         if !response.success() {
             self.mark_unknown(PiUnknownReason::CommandRejected);
             return Ok(self.phase);
         }
-        let state = match parse_state(response.data(), &self.session_dir) {
+        let state = match if newly_created {
+            parse_new_session_state(response.data(), &self.session_dir)
+        } else {
+            parse_state(response.data(), &self.session_dir)
+        } {
             Ok(state) => state,
             Err(reason) => {
                 self.mark_unknown(reason);
                 return Ok(self.phase);
             }
         };
+        self.transport.bind_session_state(
+            state.session_id(),
+            state.session_file(),
+            state.session_file_persisted(),
+        )?;
         self.state = Some(state);
         if !matches!(
             self.phase,
@@ -692,7 +716,7 @@ impl PiExecution {
             self.mark_unknown(PiUnknownReason::CommandRejected);
             return Ok(self.phase);
         }
-        self.get_state(timeout)
+        self.read_state(timeout, true)
     }
 
     /// Submit exactly one input. The returned request id only correlates the
@@ -739,10 +763,18 @@ impl PiExecution {
                     self.mark_unknown(PiUnknownReason::AgentSettledBeforeAgentEnd);
                     return Ok(self.phase);
                 }
-                if self.state.is_none() {
-                    self.get_state(remaining(deadline))?;
+                // The pre-prompt state may name an unflushed session. Require
+                // a new strict observation after terminal events, which also
+                // binds the same native file as persisted in the transport.
+                if self.get_state(remaining(deadline))? == PiExecutionPhase::Unknown {
+                    return Ok(self.phase);
                 }
-                if self.state.is_some() {
+                if self
+                    .state
+                    .as_ref()
+                    .is_some_and(PiStateSnapshot::proves_idle_queue)
+                    && self.phase != PiExecutionPhase::Unknown
+                {
                     self.phase = PiExecutionPhase::Settled;
                     return Ok(self.phase);
                 }
@@ -927,6 +959,21 @@ fn parse_state(
     data: Option<&Value>,
     session_dir: &Path,
 ) -> Result<PiStateSnapshot, PiUnknownReason> {
+    parse_state_with_new_file(data, session_dir, false)
+}
+
+fn parse_new_session_state(
+    data: Option<&Value>,
+    session_dir: &Path,
+) -> Result<PiStateSnapshot, PiUnknownReason> {
+    parse_state_with_new_file(data, session_dir, true)
+}
+
+fn parse_state_with_new_file(
+    data: Option<&Value>,
+    session_dir: &Path,
+    newly_created: bool,
+) -> Result<PiStateSnapshot, PiUnknownReason> {
     let object = data
         .and_then(Value::as_object)
         .ok_or(PiUnknownReason::MalformedState)?;
@@ -945,12 +992,44 @@ fn parse_state(
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .ok_or(PiUnknownReason::SessionPathUnavailable)?;
-    let session_file = session_file
-        .canonicalize()
-        .map_err(|_| PiUnknownReason::SessionPathUnavailable)?;
-    if !session_file.is_file() || session_file.parent() != Some(session_dir) {
-        return Err(PiUnknownReason::SessionPathUnavailable);
-    }
+    let session_file_persisted = match std::fs::symlink_metadata(&session_file) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => true,
+        Err(error)
+            if newly_created
+                && error.kind() == std::io::ErrorKind::NotFound
+                && session_file.is_absolute()
+                && session_file.parent() == Some(session_dir)
+                && !session_file
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+                && session_file
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.len() <= 512 && name.ends_with(&format!("_{session_id}.jsonl"))
+                    })
+                && object.get("isStreaming").and_then(Value::as_bool) == Some(false)
+                && object.get("isCompacting").and_then(Value::as_bool) == Some(false)
+                && object.get("pendingMessageCount").and_then(Value::as_u64) == Some(0)
+                && object.get("messageCount").and_then(Value::as_u64) == Some(0) =>
+        {
+            false
+        }
+        _ => return Err(PiUnknownReason::SessionPathUnavailable),
+    };
+    let session_file = if session_file_persisted {
+        let canonical = session_file
+            .canonicalize()
+            .map_err(|_| PiUnknownReason::SessionPathUnavailable)?;
+        if canonical.parent() != Some(session_dir) {
+            return Err(PiUnknownReason::SessionPathUnavailable);
+        }
+        canonical
+    } else {
+        // Pi allocated this path and identity; Rudder must not synthesize a
+        // native header or treat it as resumable/persisted before Pi flushes.
+        session_file
+    };
     let optional_bool = |name: &str| {
         object
             .get(name)
@@ -966,6 +1045,7 @@ fn parse_state(
     Ok(PiStateSnapshot {
         session_id,
         session_file,
+        session_file_persisted,
         is_streaming: optional_bool("isStreaming")?,
         is_compacting: optional_bool("isCompacting")?,
         pending_message_count: optional_u64("pendingMessageCount")?,
@@ -975,7 +1055,7 @@ fn parse_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{PiExecutionPhase, PiUnknownReason, parse_state};
+    use super::{PiExecutionPhase, PiUnknownReason, parse_new_session_state, parse_state};
     use serde_json::json;
     use std::fs;
 
@@ -1010,6 +1090,72 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, PiUnknownReason::SessionPathUnavailable);
+    }
+
+    #[test]
+    fn only_new_empty_native_session_can_reference_an_unflushed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let managed = dir.path().canonicalize().unwrap();
+        let path = managed.join("2026-10-22T00-00-00-000Z_native-session.jsonl");
+        let data = json!({"sessionId":"native-session", "sessionFile":path,
+            "isStreaming":false, "isCompacting":false,
+            "pendingMessageCount":0, "messageCount":0});
+        assert_eq!(
+            parse_state(Some(&data), &managed).unwrap_err(),
+            PiUnknownReason::SessionPathUnavailable
+        );
+        let state = parse_new_session_state(Some(&data), &managed).unwrap();
+        assert_eq!(state.session_file(), path);
+        assert!(!state.session_file_persisted());
+        assert!(
+            !state.proves_idle_queue(),
+            "an unflushed session cannot prove settlement"
+        );
+        assert!(
+            !path.exists(),
+            "reading native identity must not fabricate a session file"
+        );
+        for (key, value) in [
+            ("sessionId", json!("different-session")),
+            (
+                "sessionFile",
+                json!(managed.join("foreign/session_native-session.jsonl")),
+            ),
+            (
+                "sessionFile",
+                json!(managed.join("../outside_native-session.jsonl")),
+            ),
+            ("isStreaming", json!(true)),
+            ("isCompacting", json!(true)),
+            ("pendingMessageCount", json!(1)),
+            ("messageCount", json!(1)),
+        ] {
+            let mut invalid = data.clone();
+            invalid[key] = value;
+            assert!(parse_new_session_state(Some(&invalid), &managed).is_err());
+        }
+        fs::write(&path, "{}\n").unwrap();
+        assert!(
+            parse_state(Some(&data), &managed)
+                .unwrap()
+                .session_file_persisted()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_session_cannot_use_a_dangling_or_existing_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let managed = dir.path().canonicalize().unwrap();
+        let path = managed.join("timestamp_native-session.jsonl");
+        let target = managed.join("target.jsonl");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let data = json!({"sessionId":"native-session", "sessionFile":path,
+            "isStreaming":false, "isCompacting":false,
+            "pendingMessageCount":0, "messageCount":0});
+        assert!(parse_new_session_state(Some(&data), &managed).is_err());
+        fs::write(target, "{}\n").unwrap();
+        assert!(parse_new_session_state(Some(&data), &managed).is_err());
     }
 
     #[test]

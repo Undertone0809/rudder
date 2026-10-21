@@ -21,7 +21,7 @@ use uuid::Uuid;
 mod rules;
 mod transport;
 
-pub use rules::CursorManagedInstructionRule;
+pub use rules::{CursorManagedInstructionRule, MANAGED_INSTRUCTION_RULES_SUPPORTED};
 pub use transport::{
     CursorAcpHome, CursorAcpProcessLaunch, CursorAcpTransport, CursorAcpTransportError,
 };

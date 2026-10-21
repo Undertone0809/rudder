@@ -3,6 +3,7 @@ import {
   Field,
 } from "../../components/agent-config-primitives";
 import { ChoosePathButton } from "../../components/PathInstructionsModal";
+import { NativeProfileField } from "../native-profile-field";
 import type { AgentRuntimeConfigFieldsProps } from "../types";
 
 const inputClass =
@@ -10,19 +11,22 @@ const inputClass =
 const instructionsFileHint =
   "Absolute path to a markdown file (e.g. SOUL.md) that defines this agent's role and persona. Rudder injects its shared operating contract separately.";
 
-export function OpenCodeLocalConfigFields({
-  isCreate,
-  values,
-  set,
-  config,
-  eff,
-  mark,
-  hideInstructionsFile,
-}: AgentRuntimeConfigFieldsProps) {
-  if (hideInstructionsFile) return null;
+export function OpenCodeLocalConfigFields(props: AgentRuntimeConfigFieldsProps) {
+  const {
+    isCreate,
+    values,
+    set,
+    config,
+    eff,
+    mark,
+    hideInstructionsFile,
+  } = props;
   return (
-    <Field label="Agent instructions file" hint={instructionsFileHint}>
-      <div className="flex items-center gap-2">
+    <>
+      <NativeProfileField {...props} />
+      {!hideInstructionsFile && (
+        <Field label="Agent instructions file" hint={instructionsFileHint}>
+          <div className="flex items-center gap-2">
         <DraftInput
           value={
             isCreate
@@ -50,7 +54,9 @@ export function OpenCodeLocalConfigFields({
               : mark("agentRuntimeConfig", "instructionsFilePath", path)
           }
         />
-      </div>
-    </Field>
+          </div>
+        </Field>
+      )}
+    </>
   );
 }

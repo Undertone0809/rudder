@@ -146,8 +146,10 @@ pub(crate) fn configure(
         return Ok(config);
     };
     let instance = canonical_directory(&installation.instance_root)?;
-    let workspace = canonical_directory(&installation.workspace_home)?;
+    let workspace = workspace_directory(&installation.workspace_home)?;
     let operator_home = canonical_directory(&installation.operator_home)?;
+    let opencode_operator_profile_supported =
+        standard_opencode_profile_environment(&operator_home, |name| std::env::var_os(name));
     let native_root = instance.join("native-chat");
     let profiles = owned_directory(&native_root.join("profiles"))?;
     let runtime_root = owned_directory(&native_root.join("runtime"))?;
@@ -169,6 +171,7 @@ pub(crate) fn configure(
     .map_err(|_| invalid_at("invalid native host paths or identity"))?
     .with_executable_search_path(installation.executable_search_path.clone())
     .map_err(|_| invalid_at("invalid executable search path"))?;
+    host = host.with_opencode_operator_profile_supported(opencode_operator_profile_supported);
     if codex.is_some() {
         host = host.with_native_codex_profile();
         let operator_codex_home = installation
@@ -280,6 +283,53 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     Ok(canonical)
 }
 
+// An empty instance has no organizations for legacy reconciliation to visit.
+// Initialize only its configured container before HTTP setup; missing parents
+// are installation errors, not permission to create an arbitrary tree.
+fn workspace_directory(path: &Path) -> Result<PathBuf, ConfigError> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if !path.is_absolute()
+                || path
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+            {
+                return Err(invalid_at("invalid native runtime installation"));
+            }
+            let parent = canonical_directory(
+                path.parent()
+                    .ok_or_else(|| invalid_at("invalid native runtime installation"))?,
+            )?;
+            owned_directory(
+                &parent.join(
+                    path.file_name()
+                        .ok_or_else(|| invalid_at("invalid native runtime installation"))?,
+                ),
+            )
+        }
+        _ => canonical_directory(path),
+    }
+}
+
+fn standard_opencode_profile_environment(
+    home: &Path,
+    read: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> bool {
+    [
+        ("XDG_CONFIG_HOME", home.join(".config")),
+        ("XDG_DATA_HOME", home.join(".local/share")),
+    ]
+    .into_iter()
+    .all(|(name, standard)| read(name).is_none_or(|value| value == standard))
+        && [
+            "OPENCODE_CONFIG",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG_CONTENT",
+        ]
+        .into_iter()
+        .all(|name| read(name).is_none())
+}
+
 fn owned_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     // Refuse a symlink at the managed subtree before creating runtime files.
     for ancestor in path.ancestors().take(3) {
@@ -307,6 +357,59 @@ fn loopback_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    #[test]
+    fn fresh_workspace_container_is_created_without_guessing_missing_parents() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().canonicalize().unwrap();
+        let workspace = parent.join("organizations");
+        assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
+        assert_eq!(std::fs::read_dir(&workspace).unwrap().count(), 0);
+        assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
+        assert!(super::workspace_directory(&parent.join("missing/organizations")).is_err());
+        assert!(!parent.join("missing").exists());
+        assert!(super::workspace_directory(&parent.join("../escaped")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_workspace_container_does_not_follow_a_dangling_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().canonicalize().unwrap();
+        let workspace = parent.join("organizations");
+        let outside = parent.join("not-created");
+        std::os::unix::fs::symlink(&outside, &workspace).unwrap();
+        assert!(super::workspace_directory(&workspace).is_err());
+        assert!(!outside.exists());
+    }
+
+    #[test]
+    fn standard_opencode_profile_does_not_ignore_custom_host_config_roots() {
+        let home = PathBuf::from("/operator");
+        assert!(super::standard_opencode_profile_environment(&home, |_| {
+            None
+        }));
+        assert!(super::standard_opencode_profile_environment(
+            &home,
+            |name| match name {
+                "XDG_CONFIG_HOME" => Some(home.join(".config").into_os_string()),
+                "XDG_DATA_HOME" => Some(home.join(".local/share").into_os_string()),
+                _ => None,
+            }
+        ));
+        for key in [
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "OPENCODE_CONFIG",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG_CONTENT",
+        ] {
+            assert!(!super::standard_opencode_profile_environment(
+                &home,
+                |name| (name == key).then(|| "/custom-root".into())
+            ));
+        }
+    }
 
     #[test]
     fn implicit_local_board_never_trusts_a_remote_origin() {
