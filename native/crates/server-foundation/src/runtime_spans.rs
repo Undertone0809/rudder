@@ -269,11 +269,15 @@ fn codex_reader_launch(
             request_id: plan.attempt_id().to_owned(),
             run_id: plan.run_id().to_owned(),
             attempt_id: plan.attempt_id().to_owned(),
-            owner_token: format!("codex-reader:{}:{}", plan.attempt_id(), Uuid::new_v4()),
+            owner_token: codex_reader_owner_token(plan.attempt_id()),
             runtime_root: text(&paths.runtime_root)?,
         },
         profile_home,
     ))
+}
+
+fn codex_reader_owner_token(attempt_id: &str) -> String {
+    format!("codex-reader-{attempt_id}-{}", Uuid::new_v4())
 }
 
 fn unavailable() -> HttpResponse {
