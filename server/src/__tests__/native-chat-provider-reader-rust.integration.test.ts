@@ -123,6 +123,8 @@ describe("Codex exact-turn transcript through public Rust-backed HTTP", () => {
   const agentId = randomUUID();
   const switchedAgentId = randomUUID();
   const chatId = randomUUID();
+  const foreignChatId = randomUUID();
+  const foreignAssistantMessageId = randomUUID();
   const sourceMessageId = randomUUID();
   const assistantMessageId = randomUUID();
   const generationId = randomUUID();
@@ -361,8 +363,16 @@ describe("Codex exact-turn transcript through public Rust-backed HTTP", () => {
       { id: agentId, orgId, name: "Historical Codex Agent", role: "general", status: "idle", agentRuntimeType: "codex_local" },
       { id: switchedAgentId, orgId, name: "Current Codex Agent", role: "general", status: "idle", agentRuntimeType: "codex_local" },
     ]);
-    await db.insert(chatConversations).values({
-      id: chatId, orgId, title: "Exact-turn transcript", preferredAgentId: agentId, createdByUserId: owner,
+    await db.insert(chatConversations).values([
+      { id: chatId, orgId, title: "Exact-turn transcript", preferredAgentId: agentId, createdByUserId: owner },
+      { id: foreignChatId, orgId, title: "Other transcript conversation", preferredAgentId: agentId, createdByUserId: owner },
+    ]);
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('rudder.native_chat_write','native_chat:reader_association_fixture',true)`);
+      await tx.execute(sql`INSERT INTO chat_messages
+        (id,org_id,conversation_id,role,kind,status,body,turn_variant)
+        VALUES (${foreignAssistantMessageId}::uuid,${orgId}::uuid,${foreignChatId}::uuid,
+          'assistant','message','completed','Other conversation answer',0)`);
     });
 
     const app = express();
@@ -478,6 +488,17 @@ describe("Codex exact-turn transcript through public Rust-backed HTTP", () => {
     });
     expect(rpcLog()).toEqual([]);
 
+    // Node accepts the requested chat, but the real Rust authority rejects
+    // an existing assistant message whose conversation association is forged.
+    const rustCallsBeforeAssociation = rustTranscriptCalls;
+    const forged = await request(server!)
+      .get(`/api/chats/${chatId}/messages/${foreignAssistantMessageId}/transcript`)
+      .set("authorization", `Bearer ${token}`);
+    expect(forged.status).toBe(404);
+    expect(rustTranscriptCalls).toBe(rustCallsBeforeAssociation + 1);
+    expect(readRequests()).toHaveLength(0);
+    expect(forged.body.transcript).toBeUndefined();
+
     const exact = await transcript();
     expect(exact.status).toBe(200);
     expect(exact.body.reader).toMatchObject({ source: "codex_exact_turn", availability: "complete", completeness: "terminal_only" });
@@ -539,6 +560,37 @@ describe("Codex exact-turn transcript through public Rust-backed HTTP", () => {
     expect(readRequests()).toHaveLength(readsBeforeMalformedWire + 1);
     expect(fs.readFileSync(readerPidFile, "utf8")).not.toBe(previousReaderPid);
     expectReaderExited();
+
+    // Revocation after provider dispatch must win the fresh Rust postflight
+    // authorization transaction without returning any observed native output.
+    fs.rmSync(readStartedFile, { force: true });
+    fs.rmSync(releaseReadFile, { force: true });
+    fs.writeFileSync(modeFile, "block");
+    const countsBeforeRevocation = await businessCounts();
+    const rowsBeforeRevocation = await businessRows();
+    const readsBeforeRevocation = readRequests().length;
+    const callsBeforeRevocation = rustTranscriptCalls;
+    const revocationRead = transcript();
+    await waitForFile(readStartedFile);
+    let revoked: TranscriptResult;
+    try {
+      await db.execute(sql`UPDATE organization_memberships SET status='revoked'
+        WHERE org_id=${orgId}::uuid AND principal_type='user' AND principal_id=${owner}`);
+      fs.writeFileSync(releaseReadFile, "release");
+      revoked = await revocationRead;
+    } finally {
+      fs.writeFileSync(releaseReadFile, "release");
+      await db.execute(sql`UPDATE organization_memberships SET status='active'
+        WHERE org_id=${orgId}::uuid AND principal_type='user' AND principal_id=${owner}`);
+    }
+    expect(revoked.status).toBe(403);
+    expect(revoked.body.transcript).toBeUndefined();
+    expect(JSON.stringify(revoked.body)).not.toContain("Old exact Codex answer");
+    expect(rustTranscriptCalls).toBe(callsBeforeRevocation + 1);
+    expect(readRequests()).toHaveLength(readsBeforeRevocation + 1);
+    expectReaderExited();
+    expect(await businessCounts()).toEqual(countsBeforeRevocation);
+    expect(await businessRows()).toEqual(rowsBeforeRevocation);
 
     // Stop is legal through the real public control route while an exact
     // historical read is in flight, but a completed generation returns the
