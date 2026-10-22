@@ -1791,3 +1791,28 @@ profile and provisioning behavior. Rebuild and verify the integrated candidate;
 reuse unaffected provider observations only with explicit source equivalence.
 Full Readers, Fork/permissions, storage/retention, resource comparison and the
 complete-plan delivery gates remain open.
+
+### October 22 provider Reader source contracts (preparatory only)
+
+The next Reader slice has two deliberately bounded Rust source primitives.
+Codex can issue `thread/read` with `includeTurns: true` and select only one
+exact persisted thread/turn identity from a bounded, strictly decoded response.
+A missing turn, unsupported method, malformed response and provider rejection
+remain distinct outcomes. The installed protocol deprecates full hydration for
+paginated threads; preserve `itemsView=summary/notLoaded` as incomplete rather
+than claiming complete history or inventing a provider cursor.
+
+Hermes can capture normalized public `session/update` replay notifications only
+until the exact `session/load` response. The result is explicitly session-only
+and provider completeness is unspecified: replay notifications contain no
+prompt request or source user-message identity. Never select a Run from the
+latest replay text, expose raw tool arguments/outputs, or treat a bounded
+session snapshot as paginated or complete history. Existing continuation
+`load_session` keeps its discard behavior until the Reader is separately wired.
+
+These primitives do not grant a historical process-launch permit, implement a
+public Reader route, replace SQL mirrors, or establish exact Hermes Run/span
+correlation. The next accepted product slice still needs Rust authorization and
+read-only launch capability, exact durable selectors, Stop-cutoff projection,
+missing-source fallback and real public-ingress acceptance. Keep the full
+Reader/storage/Fork/retention gates open.
