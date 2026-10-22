@@ -169,6 +169,15 @@ pub(super) struct OperationEvidence {
     owner_kind: &'static str,
 }
 
+/// Durable receipt for an owned StartProcess request that is proven not to
+/// have created a child. It deliberately contains no PID or process-group
+/// identity; this evidence must never be used to clean up an unrelated process.
+pub(super) struct PreSpawnOperationEvidence {
+    terminal_path: PathBuf,
+    request_id: String,
+    owner_token: String,
+}
+
 #[derive(Debug)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 enum ListenerOwnership {
@@ -283,6 +292,76 @@ impl OperationEvidence {
     }
 }
 
+impl PreSpawnOperationEvidence {
+    pub(super) fn create(
+        runtime_root: &Path,
+        request_id: String,
+        owner_token: String,
+    ) -> Result<Self, &'static str> {
+        let root = fs::canonicalize(runtime_root).map_err(|_| "runtime_root_unavailable")?;
+        if !root.is_dir() {
+            return Err("runtime_root_unavailable");
+        }
+        let operation_root = root.join(&owner_token);
+        fs::create_dir(&operation_root).map_err(|_| "operation_root_unavailable")?;
+        write_pre_spawn_owner_descriptor(&operation_root, &request_id, &owner_token)?;
+        Ok(Self {
+            terminal_path: operation_root.join("terminal-receipt.json"),
+            request_id,
+            owner_token,
+        })
+    }
+
+    pub(super) fn write_terminal(&self, terminal: &mut Value) -> bool {
+        if terminal["type"] != "terminal" || terminal["cleanupProven"] != true {
+            return false;
+        }
+        terminal["receiptWritten"] = Value::Bool(true);
+        let written = atomic_json(
+            &self.terminal_path,
+            &json!({
+                "protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},
+                "requestId":self.request_id,
+                "opaqueOwnerToken":self.owner_token,
+                "childPid":null,
+                "processGroup":null,
+                "platformOwnerIdentity":null,
+                "launchDisposition":"not_started",
+                "terminal":terminal
+            }),
+        )
+        .is_ok();
+        if !written {
+            terminal["receiptWritten"] = Value::Bool(false);
+        }
+        written
+    }
+}
+
+fn write_pre_spawn_owner_descriptor(
+    operation_root: &Path,
+    request_id: &str,
+    owner_token: &str,
+) -> Result<(), &'static str> {
+    atomic_json(
+        &operation_root.join("owner-descriptor.json"),
+        &json!({
+            "protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},
+            "ownerKind":"agent_run_attempt",
+            "requestId":request_id,
+            "opaqueOwnerToken":owner_token,
+            "hostPid":std::process::id(),
+            "childPid":null,
+            "processGroup":null,
+            "platformOwnerIdentity":null,
+            "port":null,
+            "outputIndexPath":null,
+            "terminalReceiptPath":"terminal-receipt.json",
+            "launchDisposition":"not_started"
+        }),
+    )
+}
+
 fn atomic_json(path: &Path, value: &Value) -> Result<(), &'static str> {
     let tmp = path.with_file_name(format!(
         ".{}.{}.tmp",
@@ -328,13 +407,21 @@ impl TerminalStartError {
 pub(super) struct SpawnChildError {
     pub(super) code: &'static str,
     pub(super) cleanup_proven: bool,
+    pub(super) spawn_disposition: SpawnDisposition,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SpawnDisposition {
+    NotStarted,
+    ChildCreated,
 }
 
 impl SpawnChildError {
-    fn before_spawn(code: &'static str) -> Self {
+    pub(super) fn before_spawn(code: &'static str) -> Self {
         Self {
             code,
             cleanup_proven: true,
+            spawn_disposition: SpawnDisposition::NotStarted,
         }
     }
 
@@ -342,6 +429,7 @@ impl SpawnChildError {
         Self {
             code,
             cleanup_proven: cleanup.proven,
+            spawn_disposition: SpawnDisposition::ChildCreated,
         }
     }
 }
@@ -1268,5 +1356,86 @@ fn signal_name(status: &ExitStatus) -> Option<&'static str> {
     {
         let _ = status;
         None
+    }
+}
+
+#[cfg(test)]
+mod pre_spawn_operation_evidence_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn test_root(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "rudder-prespawn-{name}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).expect("create isolated receipt test root");
+        path
+    }
+
+    #[test]
+    fn pre_spawn_descriptor_contains_only_exact_owner_and_no_child_identity() {
+        let root = test_root("descriptor");
+        let operation = root.join("owner-opaque-1");
+        fs::create_dir(&operation).unwrap();
+
+        write_pre_spawn_owner_descriptor(&operation, "request-exact-1", "owner-opaque-1")
+            .expect("write pre-spawn descriptor");
+        let descriptor: Value =
+            serde_json::from_slice(&fs::read(operation.join("owner-descriptor.json")).unwrap())
+                .unwrap();
+        assert_eq!(descriptor["requestId"], "request-exact-1");
+        assert_eq!(descriptor["opaqueOwnerToken"], "owner-opaque-1");
+        assert_eq!(descriptor["launchDisposition"], "not_started");
+        assert!(descriptor["childPid"].is_null());
+        assert!(descriptor["processGroup"].is_null());
+        assert!(descriptor["platformOwnerIdentity"].is_null());
+        assert!(descriptor.get("executable").is_none());
+        assert!(descriptor.get("argv").is_none());
+        assert!(descriptor.get("providerData").is_none());
+        assert!(!operation.join("output-index.jsonl").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pre_spawn_descriptor_write_failure_leaves_no_valid_descriptor_or_terminal() {
+        let root = test_root("descriptor-failure");
+        let operation = root.join("owner-opaque-2");
+        fs::create_dir(&operation).unwrap();
+        // A directory at the destination forces atomic rename to fail after
+        // the temporary descriptor has been written.
+        fs::create_dir(operation.join("owner-descriptor.json")).unwrap();
+
+        assert_eq!(
+            write_pre_spawn_owner_descriptor(&operation, "request-exact-2", "owner-opaque-2"),
+            Err("receipt_write_failed")
+        );
+        assert!(operation.join("owner-descriptor.json").is_dir());
+        assert!(!operation.join("terminal-receipt.json").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pre_spawn_terminal_write_failure_resets_receipt_written() {
+        let root = test_root("terminal-failure");
+        let evidence = PreSpawnOperationEvidence::create(
+            &root,
+            "request-exact-3".into(),
+            "owner-opaque-3".into(),
+        )
+        .expect("create descriptor before terminal failure");
+        fs::create_dir(root.join("owner-opaque-3/terminal-receipt.json")).unwrap();
+        let mut terminal = json!({"type":"terminal","status":"failed","cleanupProven":true});
+
+        assert!(!evidence.write_terminal(&mut terminal));
+        assert_eq!(terminal["receiptWritten"], false);
+        assert!(root.join("owner-opaque-3/terminal-receipt.json").is_dir());
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

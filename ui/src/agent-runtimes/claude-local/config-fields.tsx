@@ -7,6 +7,7 @@ import {
 } from "../../components/agent-config-primitives";
 import { ChoosePathButton } from "../../components/PathInstructionsModal";
 import { LocalWorkspaceRuntimeFields } from "../local-workspace-runtime-fields";
+import { NativeProfileField } from "../native-profile-field";
 import type { AgentRuntimeConfigFieldsProps } from "../types";
 
 const inputClass =
@@ -26,9 +27,11 @@ export function ClaudeLocalConfigFields({
   mark,
   models,
   hideInstructionsFile,
+  disabled,
 }: AgentRuntimeConfigFieldsProps) {
   return (
     <>
+      <NativeProfileField {...{ mode, isCreate, agentRuntimeType, values, set, config, eff, mark, models, disabled }} />
       {!hideInstructionsFile && (
         <Field label="Agent instructions file" hint={instructionsFileHint}>
           <div className="flex items-center gap-2">

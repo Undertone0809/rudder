@@ -29,6 +29,7 @@ import { createDesktopIdentitySessionStore } from "./identity-session-store.js";
 import {
   desktopAccountBypassAllowed,
   desktopIdentityProcessMemoryFallbackAllowed,
+  desktopLocalImplicitAuthAllowed,
   resolveDesktopPackagedSmokeIdentityPolicy,
 } from "./identity-startup-policy.js";
 import { loadOrCreateDesktopTelemetryState } from "./product-analytics-telemetry.js";
@@ -138,14 +139,17 @@ export function createDesktopIdentityRuntime(options: {
     ),
   });
   const packagedSmokeBypassRequested = packagedSmokePolicy.packagedSmokeBypassRequested;
+  const developmentAuthBypassRequested = booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS);
   const accountRequired = !desktopAccountBypassAllowed({
     isPackaged: app.isPackaged,
-    bypassRequested: booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS),
+    bypassRequested: developmentAuthBypassRequested,
     packagedSmokeBypassRequested,
   });
-  // Explicit development bypass and marked packaged smoke must give the native
-  // listener the same identity policy as the Desktop account gate.
-  process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH = accountRequired ? "0" : "1";
+  process.env.RUDDER_DESKTOP_SMOKE_LOCAL_IMPLICIT_AUTH = desktopLocalImplicitAuthAllowed({
+    isPackaged: app.isPackaged,
+    developmentAuthBypassRequested,
+    packagedSmokeLocalImplicitAuthRequested: packagedSmokePolicy.packagedSmokeLocalImplicitAuthRequested,
+  }) ? "1" : "0";
   process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE ??= "required";
   const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,

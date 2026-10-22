@@ -327,6 +327,14 @@ describe("rust foundation bridge lifecycle", () => {
     expect(body.operation).toBe("create");
     expect(body.orgId).toBe("org-1");
     expect(body.input.nodeOwned.avatarIcon).toContain("oreo:");
+    expect(body.homeDirectory).toBe(homedir());
+    expect(body.processWorkingDirectory).toBe(process.cwd());
+    expect(body.instructionsHost).toMatchObject({
+      instanceRoot: expect.any(String),
+      workspaceHome: expect.any(String),
+      previousDocumentsRoot: expect.any(String),
+      hostname: hostname(),
+    });
     expectEnvelopeSignedWith(captured, {
       actor,
       organizationId: "agent-core",

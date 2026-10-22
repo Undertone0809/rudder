@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   extractMarkedPath,
@@ -24,6 +25,18 @@ describe("login shell PATH sync", () => {
     expect(
       mergePathValues("/usr/bin:/bin", "/Users/test/.nvm/bin:/usr/bin:/bin"),
     ).toBe("/usr/bin:/bin:/Users/test/.nvm/bin");
+  });
+
+  it("drops empty and relative components before producing a trusted executable path", () => {
+    const delimiter = path.delimiter;
+    const firstAbsolute = path.join(process.cwd(), "rudder-test-bin-a");
+    const secondAbsolute = path.join(process.cwd(), "rudder-test-bin-b");
+    const merged = mergePathValues(
+      [path.join("relative", "bin"), firstAbsolute, "", "../tools", firstAbsolute].join(delimiter),
+      [firstAbsolute, secondAbsolute, "~/.local/bin"].join(delimiter),
+    );
+
+    expect(merged).toBe([firstAbsolute, secondAbsolute].join(delimiter));
   });
 
   it("prefers an absolute SHELL and falls back to common login shells", () => {

@@ -13,6 +13,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 /// Trusted Pi paths and provider/model selection. The environment map exists
@@ -27,6 +28,8 @@ pub struct PiLocalConfig {
     pub provider: String,
     pub model: String,
     pub thinking: Option<String>,
+    pub timeout: Option<Duration>,
+    pub cleanup_grace: Duration,
     pub env: BTreeMap<String, String>,
     pub profile_config_revision: String,
     pub env_revision: String,
@@ -108,6 +111,7 @@ pub(crate) async fn resolve_pi_config(
         .as_object()
         .ok_or_else(|| invalid("Pi Agent runtime configuration must be an object"))?;
     const ALLOWED: &[&str] = &[
+        "profileId",
         "cwd",
         "command",
         "model",
@@ -132,6 +136,14 @@ pub(crate) async fn resolve_pi_config(
     if object.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
         return Err(unsupported("an unrecognized Pi runtime setting is present"));
     }
+    if let Some(command) = bounded_string(object.get("command"), "command")?
+        && command != "pi"
+        && Path::new(&command).canonicalize().ok().as_deref() != Some(pi_cli_entry)
+    {
+        return Err(unsupported(
+            "configured Pi command does not match the trusted installation",
+        ));
+    }
     if object
         .get("modelFallbacks")
         .is_some_and(|value| !value.as_array().is_some_and(Vec::is_empty))
@@ -150,7 +162,7 @@ pub(crate) async fn resolve_pi_config(
     if row.try_get::<bool, _>("plan_mode")? {
         return Err(unsupported("Pi has no verified Chat plan-mode mapping"));
     }
-    validate_numeric_policy(object)?;
+    let (timeout, cleanup_grace) = numeric_policy(object)?;
     validate_disabled_capabilities(object)?;
 
     let model_override: Option<String> = row.try_get("model_override")?;
@@ -242,14 +254,13 @@ pub(crate) async fn resolve_pi_config(
     let profile_id = bounded_string(object.get("profileId"), "profileId")?
         .unwrap_or_else(|| "default".to_owned());
     validate_profile_id(&profile_id)?;
-    let profile_home = super::resolve::managed_profile_home(
+    let (profile_home, agent_dir, session_dir) = resolve_profile_paths(
         pi_profiles_root,
+        host.operator_home(),
         &organization_id,
         &agent_id,
         &profile_id,
     )?;
-    let agent_dir = profile_home.join(".pi").join("agent");
-    let session_dir = profile_home.join(".pi").join("paperclips");
     let profile_config_revision = pi_profile_revision(&agent_dir)?;
     let workspace_binding_id = issue_workspace_binding(&workspace);
     let mut revision = json!({
@@ -257,6 +268,8 @@ pub(crate) async fn resolve_pi_config(
         "provider":provider, "model":model_id, "thinking":thinking,
         "workspaceBindingId":workspace_binding_id,
         "effectiveCwd":cwd.to_string_lossy(), "env":env_facts,
+        "timeoutSec":timeout.map(|value| value.as_secs_f64()),
+        "graceSec":cleanup_grace.as_secs_f64(),
         "instructionsRevision":instructions.revision,
         "profileConfigRevision":profile_config_revision,
     });
@@ -264,7 +277,12 @@ pub(crate) async fn resolve_pi_config(
         host.executable_search_path().as_bytes()
     ));
     let capability_revision = fingerprint::json_revision(&revision);
-    let profile_ref = format!("managed-pi:{}:{}", agent_id, profile_id);
+    let profile_kind = if profile_id == "operator-default" {
+        "operator-pi"
+    } else {
+        "managed-pi"
+    };
+    let profile_ref = format!("{profile_kind}:{agent_id}:{profile_id}");
     let env_revision = fingerprint::json_revision(&json!(env_facts));
 
     let pi = PiLocalConfig {
@@ -277,6 +295,8 @@ pub(crate) async fn resolve_pi_config(
         provider,
         model: model_id,
         thinking: thinking.clone(),
+        timeout,
+        cleanup_grace,
         env,
         profile_config_revision,
         env_revision,
@@ -302,7 +322,7 @@ pub(crate) async fn resolve_pi_config(
         bypass_approvals_and_sandbox: false,
         count_subscription_usage_as_cost: false,
         profile: super::ManagedCodexProfile {
-            id: format!("managed-pi:{}", pi.profile_id),
+            id: format!("{profile_kind}:{}", pi.profile_id),
             home: pi.home.clone(),
             native_managed: true,
         },
@@ -319,24 +339,30 @@ pub(crate) async fn resolve_pi_config(
     })
 }
 
-fn validate_numeric_policy(object: &serde_json::Map<String, Value>) -> Result<()> {
-    if let Some(timeout) = object.get("timeoutSec") {
-        let seconds = timeout
+fn numeric_policy(object: &serde_json::Map<String, Value>) -> Result<(Option<Duration>, Duration)> {
+    let mut timeout = None;
+    let mut grace = Duration::from_secs(20);
+    if let Some(value) = object.get("timeoutSec") {
+        let seconds = value
             .as_f64()
             .ok_or_else(|| invalid("Pi Chat timeout must be numeric"))?;
         if !(0.0..=3600.0).contains(&seconds) {
             return Err(invalid("Pi Chat timeout is invalid"));
         }
-    }
-    if let Some(grace) = object.get("graceSec") {
-        let seconds = grace
-            .as_f64()
-            .ok_or_else(|| invalid("Pi process grace period is invalid"))?;
-        if !(0.0..=3600.0).contains(&seconds) {
-            return Err(invalid("Pi process grace period is invalid"));
+        if seconds > 0.0 {
+            timeout = Some(Duration::from_secs_f64(seconds));
         }
     }
-    Ok(())
+    if let Some(value) = object.get("graceSec") {
+        let seconds = value
+            .as_f64()
+            .ok_or_else(|| invalid("Pi process grace period is invalid"))?;
+        if !(1.0..=60.0).contains(&seconds) {
+            return Err(invalid("Pi process grace period is invalid"));
+        }
+        grace = Duration::from_secs_f64(seconds);
+    }
+    Ok((timeout, grace))
 }
 
 fn validate_disabled_capabilities(object: &serde_json::Map<String, Value>) -> Result<()> {
@@ -420,6 +446,45 @@ fn validate_profile_id(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// An explicit operator selection reuses provider configuration in place.
+/// Session files stay under the instance-owned root, separate from credentials.
+/// Resolution is read-only; startup provisions the owned session directory.
+fn resolve_profile_paths(
+    root: &Path,
+    operator_home: &Path,
+    organization_id: &str,
+    agent_id: &str,
+    profile_id: &str,
+) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    if profile_id != "operator-default" {
+        let home =
+            super::resolve::managed_profile_home(root, organization_id, agent_id, profile_id)?;
+        return Ok((
+            home.clone(),
+            home.join(".pi/agent"),
+            home.join(".pi/paperclips"),
+        ));
+    }
+    let home = checked_profile_directory(operator_home)?;
+    let pi_dir = checked_profile_directory(&home.join(".pi"))?;
+    let agent_dir = checked_profile_directory(&pi_dir.join("agent"))?;
+    let session_dir = checked_profile_directory(&root.join("operator-sessions"))?;
+    if !agent_dir.starts_with(&home) || !session_dir.starts_with(root) {
+        return Err(invalid("selected Pi profile escaped its trusted root"));
+    }
+    Ok((home, agent_dir, session_dir))
+}
+
+fn checked_profile_directory(path: &Path) -> Result<PathBuf> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| invalid("selected Pi profile directory is unavailable"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(invalid("selected Pi profile directory is invalid"));
+    }
+    path.canonicalize()
+        .map_err(|_| invalid("selected Pi profile directory is unavailable"))
+}
+
 /// Hash only non-secret Pi configuration files. `auth.json` is deliberately
 /// excluded; provider credentials remain in the operator/provider profile.
 fn pi_profile_revision(agent_dir: &Path) -> Result<String> {
@@ -456,7 +521,10 @@ fn digest(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{split_provider_model, validate_profile_id, validate_thinking};
+    use super::{
+        numeric_policy, resolve_profile_paths, split_provider_model, validate_profile_id,
+        validate_thinking,
+    };
 
     #[test]
     fn pi_requires_provider_model_identity() {
@@ -480,5 +548,89 @@ mod tests {
         assert!(validate_thinking("turbo").is_err());
         assert!(validate_profile_id("default").is_ok());
         assert!(validate_profile_id("../escape").is_err());
+    }
+
+    #[test]
+    fn timing_policy_preserves_defaults_and_bounds_explicit_values() {
+        let policy = |value: serde_json::Value| numeric_policy(value.as_object().unwrap());
+        assert_eq!(
+            policy(serde_json::json!({})).unwrap(),
+            (None, std::time::Duration::from_secs(20))
+        );
+        assert_eq!(
+            policy(serde_json::json!({"timeoutSec":0,"graceSec":20})).unwrap(),
+            (None, std::time::Duration::from_secs(20))
+        );
+        assert_eq!(
+            policy(serde_json::json!({"timeoutSec":1.25,"graceSec":2.5})).unwrap(),
+            (
+                Some(std::time::Duration::from_millis(1250)),
+                std::time::Duration::from_millis(2500)
+            )
+        );
+        for value in [
+            serde_json::json!({"timeoutSec":-1}),
+            serde_json::json!({"graceSec":3601}),
+            serde_json::json!({"timeoutSec":"10"}),
+            serde_json::json!({"graceSec":null}),
+            serde_json::json!({"graceSec":0}),
+        ] {
+            assert!(policy(value).is_err());
+        }
+    }
+
+    #[test]
+    fn operator_profile_reuses_config_and_keeps_sessions_under_the_owned_root() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let profiles = root.join("profiles");
+        let operator = root.join("operator");
+        std::fs::create_dir_all(operator.join(".pi/agent")).unwrap();
+        std::fs::create_dir_all(profiles.join("operator-sessions")).unwrap();
+        let paths = resolve_profile_paths(&profiles, &operator, "org", "agent", "operator-default")
+            .unwrap();
+        assert_eq!(
+            paths,
+            (
+                operator.clone(),
+                operator.join(".pi/agent"),
+                profiles.join("operator-sessions")
+            )
+        );
+        let managed =
+            resolve_profile_paths(&profiles, &operator, "org", "agent", "default").unwrap();
+        assert_eq!(managed.0, profiles.join("org/agent/default"));
+        std::fs::remove_dir(profiles.join("operator-sessions")).unwrap();
+        assert!(
+            resolve_profile_paths(&profiles, &operator, "org", "agent", "operator-default")
+                .is_err()
+        );
+        assert!(!profiles.join("operator-sessions").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operator_profile_rejects_symlinked_configuration_or_session_directories() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let profiles = root.join("profiles");
+        let operator = root.join("operator");
+        let foreign = root.join("foreign");
+        std::fs::create_dir_all(operator.join(".pi")).unwrap();
+        std::fs::create_dir_all(&foreign).unwrap();
+        std::fs::create_dir_all(profiles.join("operator-sessions")).unwrap();
+        std::os::unix::fs::symlink(&foreign, operator.join(".pi/agent")).unwrap();
+        assert!(
+            resolve_profile_paths(&profiles, &operator, "org", "agent", "operator-default")
+                .is_err()
+        );
+        std::fs::remove_file(operator.join(".pi/agent")).unwrap();
+        std::fs::create_dir(operator.join(".pi/agent")).unwrap();
+        std::fs::remove_dir(profiles.join("operator-sessions")).unwrap();
+        std::os::unix::fs::symlink(&foreign, profiles.join("operator-sessions")).unwrap();
+        assert!(
+            resolve_profile_paths(&profiles, &operator, "org", "agent", "operator-default")
+                .is_err()
+        );
     }
 }

@@ -6,10 +6,12 @@
 mod checkpoint;
 mod claim;
 mod context;
+mod diagnostic;
 mod effect;
 mod finalization;
 pub(crate) mod hermes_progress;
 mod lease;
+mod native_stopping;
 mod output;
 mod stopping;
 mod submission;
@@ -20,15 +22,21 @@ pub use checkpoint::{
     current_checkpoint, current_stopping_checkpoint,
 };
 pub use claim::{ClaimedExecution, claim, claim_with_preflight};
-pub use effect::{AuthorizedEffect, EffectDispatch, authorize_effect};
+pub use diagnostic::record_execution_diagnostic;
+pub use effect::{
+    AuthorizedEffect, EffectDispatch, authorize_effect, prepare_claude_combined_input,
+};
 pub use finalization::{
     NativeProviderKind, NativeProviderStatus, NativeProviderTurnReceipt, finalize, finalize_failed,
     finalize_hermes, finalize_hermes_failed, finalize_hermes_prompt_error_stopped,
     finalize_hermes_stopped, finalize_hermes_stopped_before_submission, finalize_native,
-    finalize_pi, finalize_stopped, finalize_stopped_before_submission,
+    finalize_native_stopped, finalize_native_stopped_before_submission, finalize_pi,
+    finalize_pi_stopped, finalize_pi_stopped_before_submission, finalize_stopped,
+    finalize_stopped_before_submission,
 };
 pub use hermes_progress::{HermesProgressCommit, record_hermes_progress};
 pub use lease::{LeaseReceipt, renew_lease};
+pub use native_stopping::{NativeInterruptPermit, NativeInterruptTarget, reserve_native_interrupt};
 pub use output::{OutputCommit, record_visible_output};
 pub use stopping::{
     InterruptPermit, StopIntent, advance_stopping_checkpoint, advance_stopping_hermes_session,

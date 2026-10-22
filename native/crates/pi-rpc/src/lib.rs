@@ -10,10 +10,11 @@ mod strict_json;
 
 pub use receipts::{PiCleanupReceipt, PiTurnReceipt, PiTurnStatus};
 pub use rpc::{
-    PiCommand, PiEvent, PiResponse, PiRpcMessage, PiRpcTransport, PiTransportError, ProcessLaunch,
+    PiCommand, PiEvent, PiInvalidMessageStage, PiProfileMode, PiResponse, PiRpcMessage,
+    PiRpcTransport, PiTransportError, ProcessLaunch,
 };
 pub use session::{PiSessionEntry, PiSessionTree, PiSessionTreeError, PiSessionView};
 
 pub use rudder_native_process_transport::{
-    ConnectionIdentity, ConnectionLaunchPermit, HostCleanupProof,
+    ConnectionIdentity, ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof,
 };

@@ -237,6 +237,7 @@ async fn submit_effect_dispatch_contains_exact_thread_message_and_admitted_body(
                 panic!("Submit permit produced provider session start")
             }
             EffectDispatch::SubmitClaudeInput { .. }
+            | EffectDispatch::SubmitClaudeCombinedInput { .. }
             | EffectDispatch::SubmitOpenCodeInput { .. }
             | EffectDispatch::SubmitCursorInput { .. } => {
                 panic!("Submit permit produced provider input")

@@ -1,6 +1,6 @@
 //! Opaque, owned-connection Pi turn and cleanup evidence.
 
-use rudder_native_process_transport::{ConnectionIdentity, HostCleanupProof};
+use rudder_native_process_transport::{ConnectionIdentity, ConnectionReceipt, HostCleanupProof};
 use std::fmt;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -178,6 +178,12 @@ impl PiCleanupReceipt {
 
     pub fn connection_receipt_id(&self) -> &str {
         self.proof.connection_receipt_id()
+    }
+
+    /// Return the opaque connection identity proven by this owned cleanup.
+    /// D1 uses it to bind a stopped finalization to the same provider host.
+    pub fn connection_receipt(&self) -> ConnectionReceipt {
+        self.proof.connection_receipt()
     }
 
     pub fn evidence_fingerprint(&self) -> String {

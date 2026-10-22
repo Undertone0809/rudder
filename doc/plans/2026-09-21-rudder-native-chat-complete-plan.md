@@ -1245,6 +1245,113 @@ the next fix must first make the current Rust worker admit and complete a real
 Codex turn, then repeat the same current-SHA first/continuation/restart matrix
 for Hermes before any additional merge claim.
 
+## October 22 Full-Plan Continuation After the Codex/Hermes Merge
+
+PR #352 merged at `b38b171364c1d83f4db5c495a7d0df8552ffcf3e`.
+Its delivered tree is identical to accepted source `c92caa299`; the independent
+real Codex/Hermes receipts were rebound through explicitly reviewed behavior
+equivalence. Exact-head CI passed 21 checks with one intended skip, including
+all native targets and the macOS ARM packaged smoke. This closes that milestone
+and supersedes the earlier current-main failure observations for its scope.
+It does not close W05's complete native-control/Fork requirements, W07's full
+Hermes product contract, or the complete plan.
+
+The full six-runtime, shared execution, Reader, storage, retention, product-flow,
+and independent acceptance objective remains active. Current source inspection
+found a concrete default-path blocker: `runtime_bindings/native_chat.rs` permits
+open/pending execution only for Codex and Hermes even though the Rust executor
+already has branches for all six runtimes. Restore the preserved provider-specific
+admission checks and Pi's exact terminal checkpoint selector from
+`codex/native-chat-all-runtime-preserved-20261021`, retaining all fixes now on
+main. Pi must preserve its session file, session ID and leaf rather than guessing
+a selector from a Session ID alone. Prove fresh admission, terminal persistence,
+next-turn continuity, and rejection of foreign or incomplete checkpoints through
+disposable PostgreSQL and public runtime workflows before claiming acceptance.
+
+The other active blockers remain distinct: the current transcript Reader reads
+`chat_generation_events` and legacy payload supplements; that is a bounded Rust
+projection, not complete provider-native history. Native interaction/Fork wiring,
+all non-Chat execution surfaces, Side Chat lifecycle/retention, remaining Reader
+consumers, native backup/GC, duplicate-writer retirement and measured resource
+comparisons still need implementation and evidence. Do not disable existing
+process/history copies until section 9.3's per-runtime persistence, complete-read,
+permission, cutoff and retention gates pass. The 97 scenarios in section 14
+remain the full acceptance contract; missing credentials or unavailable native
+capabilities must stay explicit instead of being marked passed.
+
+The first October 22 implementation checks passed 21 disposable-PostgreSQL
+admission cases and 15 span lifecycle cases. A real red case exposed queued
+Runs incorrectly qualifying for terminal no-op retries; retries now require an
+explicit terminal status. These are D1 checks, not provider acceptance. Installed
+Pi 0.76.0 also passed owned-host state and cleanup smoke with both managed and
+synthetic operator layouts, including an instruction entry outside HOME; no model
+was invoked. Explicit no-copy operator-profile launch wiring and ordinary UI
+builder settings for Claude/Cursor/Pi are being validated separately. Pi's exact
+persisted-branch range reader is a provider primitive only until authorization,
+host dispatch, pagination and public-consumer tests are connected. SQL history
+mirrors remain enabled.
+
+The follow-up profile review found and fixed Cursor's accepted-but-unused model
+selection: the admitted model and effort now form a validated CLI selector.
+An installed Cursor ACP experiment confirmed native always-apply project rules.
+Rust now materializes one namespaced, owned rule only in the canonical managed
+Agent fallback workspace on macOS/Linux. External/issue workspaces and other
+platforms reject nonempty Rudder instructions before admission; Windows rule
+writes remain unsupported until handle-relative ownership and atomic replacement
+are verified. Rules are revision-bound and update/remove in place while that fallback workspace is
+active. A retired fallback rule after migration to an external/issue workspace
+remains a reference-aware retention task; this slice does not delete it.
+Pi now applies the configured process interrupt grace separately from the
+cleanup-receipt wait, including after an execution timeout. These changes do
+not establish installed-profile model acceptance or full native history parity.
+Pi interrupt grace is now bounded to the host protocol's 1–60 seconds; persisted
+values outside that range fail admission rather than being silently clamped.
+
+Real Pi acceptance exposed native lazy persistence: `new_session` returns its
+native ID and anticipated path before any session file exists. Only that empty,
+idle new-session state may remain unflushed; strict resume and terminal receipts
+still require the same native file to have been written by Pi. Installed state-only
+and synthetic first-assistant-flush/missing-file checks cover that distinction.
+OpenCode now carries resolved instructions through the native `prompt_async.system`
+field, separately from user input. Its UI exposes an explicit operator Profile,
+including native settings/plugins, and configured timeout/grace/variant reach the
+Rust executor. Legacy local configs without a selector retain operator use;
+explicit managed mode requires an existing stable profile and unknown modes fail
+before admission. Custom config/XDG overrides remain unsupported rather than being
+silently ignored.
+Rust Agent creation now awaits the existing authorized workspace projection after
+committing the Agent and durable instruction outbox. It uses the same ordered
+Agent locks and bundle recovery as detail reads. A projection failure retains
+201 for the committed Agent, records repair/log evidence and remains retryable
+through authorized detail reconciliation; Native Chat does not create execution
+effects before its read-only workspace prerequisites pass. This is the public
+default-managed create path. Explicit external-instruction create remains rejected
+by the existing public cutover and is not newly enabled.
+These implementation checks still require exact-candidate real
+first-turn, continuation and restart acceptance; they do not close the full plan.
+
+The `259fec332` real acceptance failed for Claude, Cursor, Pi and OpenCode;
+Codex/Hermes fresh and same-session continuation passed. The first three
+combined adapters attempted `load_submission` while still at `NoThreadRequest`,
+which correctly rejects prompt reads. Cursor/OpenCode now persist their real
+session-create response before `PrepareInput` and consume a fresh single-use
+submission permit. Cursor reserves its native JSON-RPC request ID before the
+write; OpenCode supplies a native client message ID and accepts only an assistant
+whose parent matches it. Claude stream-json creates its session with the first
+input, so its separate combined-effect marker commits the exact admitted source
+before that one write. It never stores a generated ID as an observed provider
+session. Restored pending checkpoints cannot mint another permit, and Stop
+winning between session response and persistence prevents prompt dispatch.
+
+Pi preserves prompt lifecycle events arriving before the preflight response and
+polls strict native state after `agent_end` until idle, rather than requiring a
+later event that the installed version does not promise. Synthetic owned-process
+regressions cover both orderings; a fresh real acceptance is still required.
+Unresolved execution audits contain only bounded static classifications under
+the exact live owner fence. Cleanup alone never proves provider completion or
+releases an ambiguous input. These fixes do not complete the four additional
+providers' governed Stop, interaction, Fork, full Reader or storage gates.
+
 ## 11. Implementation Order: Progress Through Verifiable Feature Slices
 
 Each work item includes implementation, call-path wiring, relevant tests, and fixes; adding interfaces or completing the plan is not completion. Make staged commits under current repository conventions and protect unrelated work. Never push directly to `main` or bypass branch protection; merge through a protected PR only after the same candidate passes independent review, real acceptance, and required CI. Deployment is not authorized by this plan. Do not add progress templates, status JSON, empty report directories, or a suite of management scripts; real tests, commits, PRs, and necessary plan updates are sufficient evidence.
@@ -1590,3 +1697,142 @@ The following are prior code baselines and official protocol references. They ar
 ---
 
 **Delivery principle: Completion requires all five: continuity and complete interaction in native Chat; unified execution and precise attribution through Agent Run; no regression in Side Chat product behavior; real integrations for all six Runtimes; and verifiable storage optimization.**
+
+
+### 2026-10-22 governed Stop convergence checkpoint
+
+The first-input ordering candidate `b619a5368` is frozen separately for configured-provider first-turn, same-chat and restart acceptance. Its full Rust baseline passed 1,175 tests across 91 suites with zero failures (97 ignored); the standalone Foundation/process-host build passed. Current native Stop implementation is a separate source candidate and cannot inherit that acceptance automatically.
+
+The remaining four adapters use the same Rust-owned Stop contract as the delivered Codex/Hermes slice: one durable Stop intent, one exact live connection, one provider-specific cancel authorization, then actual provider terminal evidence and matching host cleanup. Cursor sends `session/cancel` as a notification without replacing the pending prompt request. Claude uses a correlated interrupt control request but waits for an actual result. OpenCode records abort acknowledgement separately and accepts only a terminal assistant whose parent is the exact submitted input. Pi waits for exact session-tree input/assistant evidence and settled state after Abort. A cancel acknowledgement never releases admission.
+
+A Stop that wins against natural completion freezes the projection at its accepted cutoff while retaining the actual provider status in evidence. Pre-input Stop requires an empty frozen prefix and a durable phase proving input was not dispatched; combined Claude input and all input-indeterminate phases remain excluded. Cleanup can release process capacity without claiming a provider terminal or authorizing input replay. Lease renewal remains fenced during both normal and stopping waits.
+
+Ownership for this tranche: root owns D1 authorization/finalization, runtime checkpoint validation, executor result wiring, Foundation worker and shared workflow fixtures; adapter contributors own Claude, Cursor/OpenCode and Pi protocol loops and their focused process/PG workflows. All new authority is Rust. Acceptance requires primary public Stop journeys, pre-input and natural-completion races, acknowledgement without terminal evidence, exact-session/connection correlation, and preservation of historical unresolved inputs. Full packaged verification and the full Reader/retention/Fork/consumer goals remain open until independently observed for the final candidate.
+
+Cleanup authority calls must leave a bounded terminal-receive window. No adapter may start a synchronous lease refresh in the final window reserved for receiving the process-host terminal lifecycle; an already-produced same-connection cleanup proof must survive a slow or timed-out refresh. A final nonblocking drain is bounded by event count, and cleanup reads must not flush queued provider input or interrupts. Pi's accepted event vocabulary also includes the installed 0.76 `session_info_changed` and `thinking_level_changed` notifications without weakening response correlation. These fixes need focused process-host regressions before the next immutable real-provider candidate; they do not turn previous failed real inputs into successful runs.
+
+Real candidate `bc0eef67d` passed Codex/Hermes first-turn and same-session recall, and Cursor first-turn. Its independent overall verdict remained FAIL: Cursor load requests omitted required `mcpServers`, and successful native load responses need not repeat `sessionId`; Pi rejected an as-yet-unclassified transport shape; OpenCode did not commit terminal finalization. Preserve those accepted inputs. Follow-up repairs add the installed Cursor load contract and bounded, closed diagnostic stages for Pi and native finalization so subsequent fresh calls can localize failures without retaining raw provider frames or owner capabilities. A separate fresh Claude CLI probe reproduced the same upstream HTTP 403 (`/v1/messages` dispatch is disallowed for its configured group); record that external readiness limit separately from Rust adapter behavior, without changing global credentials or provider configuration.
+
+A separate pre-spawn failure regression exposed missing process-host cleanup evidence: an error before child creation emitted no durable receipt. The follow-up records an exact request/owner-bound `not_started` descriptor and terminal receipt with null process identities only for proven before-spawn failures. Receipt write failures, collisions and all after-spawn ambiguity remain fail-closed; no cleanup proof is fabricated. Pi retains the matching opaque receipt through launch failure so an exact fenced pre-input Stop can finalize without dispatching a provider RPC. This regression repair does not explain or resolve the earlier real Pi RPC-shape failure; the next fresh diagnostic input must still localize it. Synchronize main `26f149a58` before the next candidate and rerun the Host mux regressions, since that maintenance change also refactors the drain-loop test hook.
+
+Candidate `3809b9bbc` was rebased onto that main and independently passed real Codex/Hermes first input, same-chat recall, service restart, and post-restart recall. Cursor's corrected native load also passed same-chat and post-restart recall under a newly recorded operator configuration boundary. Its real Stop request remained held without a provider terminal, so the independent slice verdict is FAIL; the successful continuity observations do not make Stop pass. A deterministic large-stream regression separately reproduced the old Cursor transport's update-queue overflow during stdin-write acknowledgement. Incremental, session-validated reduction now covers the original prompt write, response wait, and cancel write without increasing the update/text bounds. That synthetic repair still requires a fresh configured-provider Stop and post-Stop continuation.
+
+A fresh Pi diagnostic on `3809b9bbc` reached `pi_invalid_turn_observation` after clean process shutdown. Its exact native file contains `model_change -> thinking_level_change -> admitted user input -> completed assistant`, while Rudder has no committed assistant projection. The parser incorrectly required the initial user's parent to be null. Permit only the known setup metadata chain from the trusted initial/prior leaf, retain unique exact-input and terminal-ancestry checks, and reject a divergent resumed leaf before dispatch. The unresolved prior input must remain preserved, not replayed or retroactively marked successful. Closed execution diagnostics must also reauthorize the exact Stop action when cancellation has advanced the control version, while leaving status, holds, leases, checkpoints, and frozen output unchanged.
+
+The new OpenCode diagnostic is before its native session-start checkpoint, distinct from the earlier terminal-finalization failure. Author-only capture of the frozen Foundation's private stderr proved that HTTP client construction panicked because its local tasks used the listener's `LocalRuntime` handle from a blocking thread. Own a current-thread HTTP runtime and one persistent entered LocalSet for the client lifetime, while retaining the separate D1 authority handle. Match that listener/blocking-thread boundary in the workflow regression; a multi-thread test alone missed it. Register the owned connection before readiness, observe Stop and renew the lease during startup, and retain an already-observed cleanup proof on startup failure. A clean process-host receipt proves shutdown, not a successful turn; keep both prior inputs held without replay. This instrumentation is author-only and cannot inherit independent acceptance for the frozen candidate. Reader completeness, interaction/Fork coverage, reference retention, all Shared Run consumers, resource comparison, packaged verification, and final Git delivery remain separate open gates.
+
+### October 22 installed OpenCode wire-schema repair
+
+Independent candidate `2800118cf` acceptance returned FAIL. Codex, Hermes, and
+Pi passed first input, same-session recall, service restart, and post-restart
+recall. Pi also reached a separately observed interrupted provider terminal after
+one Stop, released admission, preserved its frozen empty prefix, and continued
+on the same native session afterward. The public response omitted an explicit
+input-disposition field; preserve that observation limit. Cursor's first reply
+succeeded, but its operator `privacyCache` field changed and the prior receipt
+has no nested mode hashes. Keep that lease's Cursor result QUESTION; a future
+fresh lease may allow only a timestamp refresh after proving that both effective
+privacy modes, key/type shape, and every other selected field remain unchanged.
+Do not restore or change global provider settings to pass acceptance.
+
+OpenCode reached `thread_start_indeterminate` / `opencode_transport` and remained
+held without a terminal reply. Its exact input was preserved without retry or
+repair. A reviewed, quiescent restart left all 18 protected holds unchanged,
+including their messages, attempts, events, states, and retained fence digests.
+Expired owner and lease fields remain historical data; their presence is not
+live execution authority and is not a reason to clear them.
+
+A separate no-model-input probe of installed OpenCode 1.15.11, using temporary
+HOME/XDG directories, reproduced HTTP 400 for the current serialized session
+body and HTTP 200 after omitting unset fields. Its `/doc` declares optional
+session fields as non-nullable. It also declares a prompt model selector with
+exactly `providerID` and `modelID`; prompt `variant` belongs at the top level.
+Omit absent session fields and `SessionModel.variant`, remove the unsupported
+nested prompt-model variant, and pass the configured variant at prompt level.
+The synthetic owned-process workflow must enforce those native key/type
+constraints for the complete request instead of returning success for an
+invalid body. Closed diagnostics distinguish bad-request, access-denied,
+other HTTP, and decode errors without storing response text. These repairs need
+a new immutable candidate and fresh public OpenCode acceptance; they do not
+recover the unrecorded HTTP subtype or change the earlier held input.
+
+### October 22 native profile database compatibility checkpoint
+
+Candidate `3748b480c` independently passed Cursor first input, same-chat recall,
+and restart recall with an immutable nested configuration chain. Its Stop was
+not sent: the verifier observer incorrectly excluded the legitimate `starting`
+generation state while the exact native input and live fences were present.
+The separate long input timed out and remains held. Correct the observer in a
+new tooling version, preserve the original verdict, and test Stop on a new
+explicitly leased input; do not relabel this as a failed cancellation request.
+
+OpenCode accepted one Rudder input but produced no native message. The exact
+owned native log reports `SQLITE_CONSTRAINT_NOTNULL`; the existing operator
+database has a required `session_message.seq` column without a default, absent
+from a fresh installed 1.15.11 database. A disposable no-reply storage probe
+made zero model calls: the fresh schema saved one message, while adding only
+that required column reproduced HTTP 500 and zero saved messages. This is an
+operator database/CLI compatibility failure, not evidence of model unavailability.
+
+Rust now checks the selected profile's native writer schema read-only during
+configuration resolution, before admission writes and again before dispatch.
+Missing databases remain uncreated for normal native initialization; malformed,
+unreadable, missing-column or incompatible required-column layouts fail closed.
+The check neither migrates nor redirects the operator database, changes global
+configuration, substitutes another profile, nor authorizes a Node fallback.
+PG admission coverage must prove no new user message, Run, Attempt, binding or
+event on rejection and byte-identical native database content. Real OpenCode
+success on this operator profile remains externally blocked; the old input is
+not retried or retroactively finalized. All 20 protected holds remain intact.
+
+Main `7441bf0ad` was integrated in checkpoint `5b833f1db`, preserving its Agent
+credential revalidation and workspace hardening alongside this branch's native
+profile and provisioning behavior. Rebuild and verify the integrated candidate;
+reuse unaffected provider observations only with explicit source equivalence.
+Full Readers, Fork/permissions, storage/retention, resource comparison and the
+complete-plan delivery gates remain open.
+
+### October 22 bounded native runtime hardening acceptance
+
+The installed local runtime candidate `500f81ad4` was frozen with a tracked-clean
+source tree, separate Rust Foundation/Host binaries and 213 matching UI assets.
+All acceptance used the ordinary public ingress on a disposable local instance;
+existing user instances and effective provider configuration were preserved.
+Only Cursor's monotonic privacy-cache timestamp refreshed, under the reviewed
+field-level comparison; effective privacy modes and every other field stayed fixed.
+
+| Boundary | Evidence and result | Remaining limitation |
+| --- | --- | --- |
+| Cursor first turn | Real operator Profile; one admitted user row; successful Rust finalization and exact native session/binding | No full provider-history completeness claim |
+| Cursor Stop | One Stop on the current submitted-input attempt; asynchronous `stopping` acknowledgement, then actual provider `interrupted`, matching owned-connection cleanup proof, stopped/cancelled Rust terminal and stable empty cutoff | The earlier v6 packet incorrectly required immediate `stopped=true`; its FAIL stays preserved rather than being relabeled |
+| Cursor post-Stop continuity | A separate reviewed one-shot recall uses the same session/binding and returns the first marker in its persisted final assistant message; no stopped output reappears | Stream-only marker flags are not final-message content checks when the provider emits only `ack` and `final` |
+| OpenCode incompatible operator database | Exact static HTTP409 before admission; chats/messages/generations/events/Runs/attempts/bindings/activity counts and selected Profile bytes unchanged | This is readiness rejection, not successful OpenCode conversation acceptance; no migration or substitute Profile was used |
+| Historical accepted inputs | All 21 held rows retain the same persisted fields, message hashes, attempt/event counts and owner/expiry digests; no live combined fences or provider descendants at handoff | Historical unresolved inputs remain unresolved and were never retried or repaired |
+| Repository checks | 1,234 Rust tests and 10,455 Node tests passed, zero failures; workspace typecheck, build and full packaged Desktop verification passed | 113 Rust tests ignored, 34 Node tests skipped; local lint retains 23 reconciled baseline import-order findings |
+| Native Profile UI | Four automated create/edit workflows and five rendered desktop/constrained cases passed; current served assets are byte-identical to that evidence | This reuses unchanged rendered evidence, not a claim of a new browser session |
+
+Earlier Codex/Hermes/Pi first/continuation/restart observations remain supporting
+evidence only at their recorded source/configuration boundaries; path-specific
+content equivalence is recorded separately. Codex/Hermes and the requested
+Messenger changes were already merged in PR #352. Neither this hardening tranche
+nor the preparatory Reader primitives close the full six-runtime, Reader,
+permission/Fork, Side Chat, retention/GC or resource-comparison plan.
+
+### October 22 final-review correction: Cursor load replay boundary
+
+The initial v8 marker-presence PASS was insufficient for continuation projection:
+its 92-character assistant body was the 46-character first marker twice. Final
+review rejected candidate `d4ba797ee`; retain that verdict and the raw v8 PASS
+without promoting it to a correct final-answer claim. A deterministic owned
+fixture reproduces the defect: same-session assistant chunks received during
+`session/load` were deferred and later consumed by the new prompt reducer.
+
+Consume load-time session updates with a separate exact-session observer before
+creating the prompt reducer. Its independent budget is 8,192 updates and 8 MiB;
+it retains no historical text and does not answer interactive requests. The
+load response remains correlated, mismatched sessions fail closed, and no
+history is sent back as a prompt. Cover both one replay chunk and 160 chunks
+(larger than the transport queue), asserting the resumed answer exactly once
+and a current-prompt update count of one. Keep the existing cleanup/Stop gates.
+Fresh real Stop/recall acceptance must verify exact final content, not only
+marker inclusion, before the repaired candidate can be published.

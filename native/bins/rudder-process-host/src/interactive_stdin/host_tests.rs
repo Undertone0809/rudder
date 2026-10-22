@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 
 static SPAWN_LOCK: Mutex<()> = Mutex::new(());
 
@@ -757,6 +758,133 @@ fn raw_output_writer_panic_stops_and_reaps_real_child() {
     assert_eq!(unsafe { libc::kill(-(pgid as i32), 0) }, -1);
     assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
     drop(input_tx);
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn pre_spawn_test_root(label: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "rudder-host-pre-spawn-{label}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&root).unwrap();
+    root.canonicalize().unwrap()
+}
+
+fn run_pre_spawn_failure(root: &Path, request_id: &str, owner_token: &str) -> (Value, i32) {
+    let root_string = root.to_string_lossy().into_owned();
+    let (input_tx, input_rx) = mpsc::sync_channel(4);
+    let (lifecycle, events) = lifecycle_channel(32);
+    let host = thread::spawn(move || {
+        run_host(
+            input_rx,
+            lifecycle,
+            Box::new(Vec::<u8>::new()),
+            Box::new(Vec::<u8>::new()),
+        )
+    });
+    input_tx
+        .send(HostInput::Command(Command::StartProcess {
+            protocol_version: command_version(),
+            request_id: Some(request_id.into()),
+            // A directory exists and passes the host's path preflight but
+            // cannot be executed, so this is a real spawn failure before a
+            // child exists on Unix.
+            executable: root_string.clone(),
+            argv: Vec::new(),
+            cwd: root_string.clone(),
+            env: BTreeMap::new(),
+            owner_token: Some(owner_token.into()),
+            runtime_root: Some(root_string),
+            stdin: None,
+            interactive_stdin: false,
+            grace_ms: Some(50),
+        }))
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let terminal = loop {
+        let value = events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("host should emit a terminal for the failed spawn");
+        let value = value.into_value();
+        if value["type"] == "terminal" {
+            break value;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for terminal");
+    };
+    drop(input_tx);
+    let exit_code = host.join().unwrap();
+    (terminal, exit_code)
+}
+
+#[test]
+fn pre_spawn_failure_writes_exact_no_child_owner_and_terminal_receipts() {
+    let root = pre_spawn_test_root("receipt");
+    let request_id = "request-exact-pre-spawn";
+    let owner_token = "opaque-owner-pre-spawn";
+    let (terminal, exit_code) = run_pre_spawn_failure(&root, request_id, owner_token);
+
+    assert_eq!(exit_code, 1);
+    assert_eq!(terminal["status"], "failed");
+    assert_eq!(terminal["errorCode"], "spawn_failed");
+    assert_eq!(terminal["requestId"], request_id);
+    assert_eq!(terminal["ownerToken"], owner_token);
+    assert_eq!(terminal["cleanupProven"], true);
+    assert_eq!(terminal["receiptWritten"], true);
+
+    let operation = root.join(owner_token);
+    let descriptor: Value =
+        serde_json::from_slice(&fs::read(operation.join("owner-descriptor.json")).unwrap())
+            .unwrap();
+    assert_eq!(descriptor["requestId"], request_id);
+    assert_eq!(descriptor["opaqueOwnerToken"], owner_token);
+    assert_eq!(descriptor["launchDisposition"], "not_started");
+    assert!(descriptor["childPid"].is_null());
+    assert!(descriptor["processGroup"].is_null());
+    assert!(descriptor["platformOwnerIdentity"].is_null());
+    assert!(descriptor.get("executable").is_none());
+    assert!(descriptor.get("argv").is_none());
+    assert!(descriptor.get("providerData").is_none());
+    assert!(!operation.join("output-index.jsonl").exists());
+
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(operation.join("terminal-receipt.json")).unwrap())
+            .unwrap();
+    assert_eq!(receipt["requestId"], request_id);
+    assert_eq!(receipt["opaqueOwnerToken"], owner_token);
+    assert_eq!(receipt["launchDisposition"], "not_started");
+    assert!(receipt["childPid"].is_null());
+    assert!(receipt["processGroup"].is_null());
+    assert!(receipt["platformOwnerIdentity"].is_null());
+    assert_eq!(receipt["terminal"]["receiptWritten"], true);
+    assert_eq!(receipt["terminal"]["cleanupProven"], true);
+    assert!(!operation.join("output-index.jsonl").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pre_spawn_owner_directory_collision_does_not_mint_receipt() {
+    let root = pre_spawn_test_root("collision");
+    let request_id = "request-collision";
+    let owner_token = "opaque-owner-collision";
+    let operation = root.join(owner_token);
+    fs::create_dir(&operation).unwrap();
+
+    let (terminal, exit_code) = run_pre_spawn_failure(&root, request_id, owner_token);
+
+    assert_eq!(exit_code, 1);
+    assert_eq!(terminal["status"], "failed");
+    assert_eq!(terminal["errorCode"], "spawn_failed");
+    assert_eq!(terminal["requestId"], request_id);
+    assert_eq!(terminal["ownerToken"], owner_token);
+    assert_eq!(terminal["cleanupProven"], true);
+    assert_eq!(terminal["receiptWritten"], false);
+    assert!(!operation.join("owner-descriptor.json").exists());
+    assert!(!operation.join("terminal-receipt.json").exists());
+
     fs::remove_dir_all(root).unwrap();
 }
 

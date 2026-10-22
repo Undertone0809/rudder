@@ -2169,3 +2169,43 @@ pub(super) async fn replay_after_commit(
     tx.commit().await?;
     Ok(())
 }
+
+/// Provision a newly committed Agent's managed workspace before returning a
+/// successful create response. This deliberately reuses the same authorized,
+/// locked recovery path as detail reads; callers must treat an error as a
+/// retryable provisioning condition because the Agent transaction has already
+/// committed. The create row and its optional bundle outbox remain the durable
+/// source of truth, and later authorized detail reads can replay them.
+pub(super) async fn provision_created_agent_after_commit(
+    pool: &sqlx::PgPool,
+    actor: &rudder_auth_core::VerifiedActor,
+    request: &super::AgentCoreRequest,
+    org: &str,
+    agent_id: &str,
+    native_auth: Option<&dyn super::NativeAgentAuthorizer>,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    // Match the AgentCore/detail lock order before library_path locks the
+    // durable bundle row and later takes the selected Agent row FOR UPDATE.
+    sqlx::query("SELECT id FROM agents WHERE org_id=$1::uuid ORDER BY id FOR UPDATE")
+        .bind(org)
+        .execute(&mut *tx)
+        .await?;
+    let admin = actor.actor().kind == "user" && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(&actor.actor().id).fetch_one(&mut *tx).await?;
+    let ctx = Context {
+        org,
+        actor,
+        request,
+        admin,
+    };
+    let row = super::stored(&mut tx, agent_id)
+        .await?
+        .ok_or_else(|| http(404, "Agent not found"))?;
+    super::authorize_org(&mut tx, &ctx).await?;
+    // A null path can be a valid external mode; do not interpret it as a
+    // provisioning failure. Filesystem failures for pending managed bundles
+    // are recorded as repair state by library_path itself.
+    let _ = library_path(&mut tx, &ctx, &row, native_auth).await?;
+    tx.commit().await?;
+    Ok(())
+}

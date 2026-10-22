@@ -59,6 +59,7 @@ function normalizeMode(value: string): "plan" | "ask" | null {
 
 export function buildCursorLocalConfig(v: CreateConfigValues): Record<string, unknown> {
   const ac: Record<string, unknown> = {};
+  ac.profileId = v.nativeProfileId ?? "operator-default";
   if (v.cwd) ac.cwd = v.cwd;
   if (v.instructionsFilePath) ac.instructionsFilePath = v.instructionsFilePath;
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;

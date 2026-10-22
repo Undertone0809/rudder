@@ -173,8 +173,31 @@ pub struct OpenCodeTurnReceipt {
     pub cost: Option<f64>,
 }
 
+/// Exact assistant terminal for one client-assigned input. Provider errors
+/// carry only native identity, never the provider's arbitrary error payload.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OpenCodeInputTerminal {
+    Completed(OpenCodeTurnReceipt),
+    Failed(OpenCodeProviderErrorTerminal),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenCodeProviderErrorTerminal {
+    pub session_id: String,
+    pub user_message_id: String,
+    pub assistant_message_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum OpenCodeInputProgress {
+    Pending,
+    Terminal(OpenCodeInputTerminal),
+}
+
 #[derive(Debug, Error)]
 pub enum OpenCodeWaitError {
+    #[error("OpenCode input message identifier is invalid")]
+    InvalidInputMessageId,
     #[error("OpenCode wait deadline expired before an assistant terminal message")]
     Deadline,
     #[error("OpenCode assistant message reported a provider error: {0}")]
@@ -508,70 +531,139 @@ impl OpenCodeClient {
         deadline: Instant,
         poll_interval: Duration,
     ) -> Result<OpenCodeTurnReceipt, OpenCodeWaitError> {
-        let mut first_error = None;
+        self.wait_for_completed_assistant_inner(
+            session_id,
+            known_assistant_ids,
+            None,
+            deadline,
+            poll_interval,
+        )
+        .await
+    }
+
+    /// Wait for a terminal assistant message whose `parentID` names the exact
+    /// client-assigned user message submitted for this turn. Unlike the legacy
+    /// compatibility reader above, this method never falls back to whichever
+    /// user message happens to be newest in the Session.
+    pub async fn wait_for_completed_assistant_for_input(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        input_message_id: &str,
+        deadline: Instant,
+        poll_interval: Duration,
+    ) -> Result<OpenCodeTurnReceipt, OpenCodeWaitError> {
+        if validate_identifier(input_message_id, "msg").is_err() {
+            return Err(OpenCodeWaitError::InvalidInputMessageId);
+        }
+        self.wait_for_completed_assistant_inner(
+            session_id,
+            known_assistant_ids,
+            Some(input_message_id),
+            deadline,
+            poll_interval,
+        )
+        .await
+    }
+
+    /// Inspect one bounded message-history page for the exact terminal
+    /// assistant message correlated to a client-assigned input. Returning
+    /// `None` means the prompt is still pending; an HTTP prompt acceptance or
+    /// abort acknowledgment is never substituted for a terminal message.
+    pub async fn poll_completed_assistant_for_input(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        input_message_id: &str,
+    ) -> Result<Option<OpenCodeTurnReceipt>, OpenCodeWaitError> {
+        if validate_identifier(input_message_id, "msg").is_err() {
+            return Err(OpenCodeWaitError::InvalidInputMessageId);
+        }
+        self.poll_completed_assistant_inner(session_id, known_assistant_ids, Some(input_message_id))
+            .await
+    }
+
+    /// Poll one bounded history page for the exact input's terminal status.
+    /// An error is terminal only when it is on an assistant message for this
+    /// Session, its `parentID` is the client-assigned input ID, and the native
+    /// message carries a completion marker. No provider error text is copied
+    /// into the typed receipt.
+    pub async fn poll_input_terminal(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        input_message_id: &str,
+    ) -> Result<OpenCodeInputProgress, OpenCodeWaitError> {
+        if validate_identifier(input_message_id, "msg").is_err() {
+            return Err(OpenCodeWaitError::InvalidInputMessageId);
+        }
+        let messages = self
+            .get_messages(
+                session_id,
+                MessageListQuery {
+                    directory: None,
+                    workspace: None,
+                    limit: Some(256),
+                    before: None,
+                },
+            )
+            .await
+            .map_err(|error| OpenCodeWaitError::Provider(error.to_string()))?;
+        Ok(poll_input_terminal_from_messages(
+            &messages,
+            session_id,
+            known_assistant_ids,
+            input_message_id,
+        ))
+    }
+
+    async fn poll_completed_assistant_inner(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        expected_input_message_id: Option<&str>,
+    ) -> Result<Option<OpenCodeTurnReceipt>, OpenCodeWaitError> {
+        let messages = self
+            .get_messages(
+                session_id,
+                MessageListQuery {
+                    directory: None,
+                    workspace: None,
+                    limit: Some(256),
+                    before: None,
+                },
+            )
+            .await
+            .map_err(|error| OpenCodeWaitError::Provider(error.to_string()))?;
+        completed_assistant_from_messages(
+            &messages,
+            session_id,
+            known_assistant_ids,
+            expected_input_message_id,
+        )
+    }
+
+    async fn wait_for_completed_assistant_inner(
+        &self,
+        session_id: &str,
+        known_assistant_ids: &[&str],
+        expected_input_message_id: Option<&str>,
+        deadline: Instant,
+        poll_interval: Duration,
+    ) -> Result<OpenCodeTurnReceipt, OpenCodeWaitError> {
         loop {
             if Instant::now() >= deadline {
                 return Err(OpenCodeWaitError::Deadline);
             }
-            let messages = self
-                .get_messages(
+            if let Some(receipt) = self
+                .poll_completed_assistant_inner(
                     session_id,
-                    MessageListQuery {
-                        directory: None,
-                        workspace: None,
-                        limit: Some(256),
-                        before: None,
-                    },
+                    known_assistant_ids,
+                    expected_input_message_id,
                 )
-                .await
-                .map_err(|error| OpenCodeWaitError::Provider(error.to_string()))?;
-            let mut latest: Option<(AssistantMessage, Option<String>)> = None;
-            for message in &messages {
-                let MessageInfo::Assistant(assistant) = &message.info else {
-                    continue;
-                };
-                if known_assistant_ids
-                    .iter()
-                    .any(|known| *known == assistant.id)
-                {
-                    continue;
-                }
-                if let Some(error) = assistant.error.as_ref() {
-                    first_error.get_or_insert_with(|| error.to_string());
-                    continue;
-                }
-                let terminal = assistant
-                    .time
-                    .as_ref()
-                    .and_then(|time| time.completed)
-                    .is_some()
-                    || assistant.finish.is_some();
-                if !terminal {
-                    continue;
-                }
-                let user_id = assistant
-                    .parent_id
-                    .clone()
-                    .or_else(|| latest_user_message_id(&messages));
-                if latest.as_ref().is_none_or(|(current, _)| {
-                    message_sort_key(assistant) >= message_sort_key(current)
-                }) {
-                    latest = Some((assistant.as_ref().clone(), user_id));
-                }
-            }
-            if let Some((assistant, user_message_id)) = latest {
-                let assistant_message_id = assistant.id.clone();
-                return Ok(OpenCodeTurnReceipt {
-                    session_id: session_id.to_owned(),
-                    user_message_id,
-                    assistant_message_id: assistant_message_id.clone(),
-                    final_text: assistant_text(&messages, &assistant_message_id),
-                    tokens: assistant.tokens,
-                    cost: assistant.cost,
-                });
-            }
-            if let Some(error) = first_error.take() {
-                return Err(OpenCodeWaitError::Provider(error));
+                .await?
+            {
+                return Ok(receipt);
             }
             tokio::time::sleep(
                 poll_interval.min(deadline.saturating_duration_since(Instant::now())),
@@ -659,6 +751,138 @@ fn message_sort_key(message: &AssistantMessage) -> u64 {
         .as_ref()
         .map(|time| time.completed.unwrap_or(time.created))
         .unwrap_or_default()
+}
+
+fn completed_assistant_from_messages(
+    messages: &[MessageEnvelope],
+    session_id: &str,
+    known_assistant_ids: &[&str],
+    expected_input_message_id: Option<&str>,
+) -> Result<Option<OpenCodeTurnReceipt>, OpenCodeWaitError> {
+    let mut first_error = None;
+    let mut latest: Option<(&AssistantMessage, Option<String>)> = None;
+    for message in messages {
+        let MessageInfo::Assistant(assistant) = &message.info else {
+            continue;
+        };
+        if known_assistant_ids
+            .iter()
+            .any(|known| *known == assistant.id)
+            || expected_input_message_id.is_some_and(|expected| {
+                assistant.session_id.as_deref() != Some(session_id)
+                    || assistant.parent_id.as_deref() != Some(expected)
+            })
+        {
+            continue;
+        }
+        if let Some(error) = assistant.error.as_ref() {
+            first_error.get_or_insert_with(|| error.to_string());
+            continue;
+        }
+        let terminal = assistant
+            .time
+            .as_ref()
+            .and_then(|time| time.completed)
+            .is_some()
+            || assistant.finish.is_some();
+        if !terminal {
+            continue;
+        }
+        let user_id = match expected_input_message_id {
+            Some(expected) => Some(expected.to_owned()),
+            None => assistant
+                .parent_id
+                .clone()
+                .or_else(|| latest_user_message_id(messages)),
+        };
+        if latest
+            .as_ref()
+            .is_none_or(|(current, _)| message_sort_key(assistant) >= message_sort_key(current))
+        {
+            latest = Some((assistant.as_ref(), user_id));
+        }
+    }
+    if let Some((assistant, user_message_id)) = latest {
+        let assistant_message_id = assistant.id.clone();
+        return Ok(Some(OpenCodeTurnReceipt {
+            session_id: session_id.to_owned(),
+            user_message_id,
+            assistant_message_id: assistant_message_id.clone(),
+            final_text: assistant_text(messages, &assistant_message_id),
+            tokens: assistant.tokens.clone(),
+            cost: assistant.cost,
+        }));
+    }
+    if let Some(error) = first_error {
+        return Err(OpenCodeWaitError::Provider(error));
+    }
+    Ok(None)
+}
+
+fn poll_input_terminal_from_messages(
+    messages: &[MessageEnvelope],
+    session_id: &str,
+    known_assistant_ids: &[&str],
+    input_message_id: &str,
+) -> OpenCodeInputProgress {
+    let mut latest: Option<(&AssistantMessage, bool)> = None;
+    for message in messages {
+        let MessageInfo::Assistant(assistant) = &message.info else {
+            continue;
+        };
+        if known_assistant_ids
+            .iter()
+            .any(|known| *known == assistant.id)
+            || assistant.session_id.as_deref() != Some(session_id)
+            || assistant.parent_id.as_deref() != Some(input_message_id)
+            || validate_identifier(&assistant.id, "msg").is_err()
+        {
+            continue;
+        }
+        let is_error = assistant.error.is_some();
+        // OpenCode stores one assistant message per model step. The native
+        // session loop treats `tool-calls` and `unknown` as nonterminal; keep
+        // that distinction when resolving this exact input's final outcome.
+        let terminal = assistant
+            .time
+            .as_ref()
+            .and_then(|time| time.completed)
+            .is_some()
+            && assistant
+                .finish
+                .as_deref()
+                .is_some_and(|finish| !matches!(finish, "tool-calls" | "unknown"));
+        if !terminal {
+            continue;
+        }
+        if latest
+            .as_ref()
+            .is_none_or(|(current, _)| message_sort_key(assistant) >= message_sort_key(current))
+        {
+            latest = Some((assistant.as_ref(), is_error));
+        }
+    }
+    match latest {
+        Some((assistant, true)) => OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Failed(
+            OpenCodeProviderErrorTerminal {
+                session_id: session_id.to_owned(),
+                user_message_id: input_message_id.to_owned(),
+                assistant_message_id: assistant.id.clone(),
+            },
+        )),
+        Some((assistant, false)) => {
+            let assistant_message_id = assistant.id.clone();
+            OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Completed(OpenCodeTurnReceipt {
+                session_id: session_id.to_owned(),
+                user_message_id: Some(input_message_id.to_owned()),
+                assistant_message_id: assistant_message_id.clone(),
+                final_text: assistant_text(messages, &assistant_message_id),
+                tokens: assistant.tokens.clone(),
+                cost: assistant.cost,
+            }))
+        }
+        None => OpenCodeInputProgress::Pending,
+    }
 }
 
 fn latest_user_message_id(messages: &[MessageEnvelope]) -> Option<String> {
@@ -822,7 +1046,7 @@ pub struct SessionModel {
     pub id: String,
     #[serde(rename = "providerID")]
     pub provider_id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
 }
 
@@ -950,8 +1174,6 @@ pub struct ModelSelection {
     pub provider_id: String,
     #[serde(rename = "modelID")]
     pub model_id: String,
-    #[serde(default)]
-    pub variant: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -1190,18 +1412,18 @@ pub struct CommandBody {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionBody {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "parentID")]
     pub parent_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<SessionModel>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "workspaceID")]
     pub workspace_id: Option<String>,
 }
@@ -1305,6 +1527,10 @@ impl PromptQuery {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Prompt {
+    /// The calibrated Server accepts native Agent instructions separately
+    /// from the submitted user-message parts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "messageID")]
     pub message_id: Option<String>,
@@ -1524,6 +1750,181 @@ mod tests {
         assert!(!outcome.is_terminal());
     }
 
+    fn assistant_message(
+        id: &str,
+        session_id: &str,
+        parent_id: &str,
+        completed: Option<u64>,
+        finish: Option<&str>,
+        error: Option<Value>,
+        text: Option<&str>,
+    ) -> MessageEnvelope {
+        serde_json::from_value(serde_json::json!({
+            "info": {
+                "id": id,
+                "sessionID": session_id,
+                "role": "assistant",
+                "time": {"created": 20, "completed": completed},
+                "parentID": parent_id,
+                "modelID": "synthetic-model",
+                "providerID": "synthetic-provider",
+                "finish": finish,
+                "error": error
+            },
+            "parts": text.map(|text| vec![serde_json::json!({
+                "id": "prt_terminal",
+                "sessionID": session_id,
+                "messageID": id,
+                "type": "text",
+                "text": text
+            })]).unwrap_or_default()
+        }))
+        .expect("typed assistant fixture")
+    }
+
+    #[test]
+    fn stop_terminal_error_requires_exact_session_parent_and_completion_marker() {
+        let messages = vec![
+            assistant_message(
+                "msg_wrong_parent",
+                "ses_native",
+                "msg_other_input",
+                Some(21),
+                Some("error"),
+                Some(serde_json::json!({"message": "private provider error"})),
+                None,
+            ),
+            assistant_message(
+                "msg_wrong_session",
+                "ses_other",
+                "msg_exact_input",
+                Some(22),
+                Some("error"),
+                Some(serde_json::json!({"message": "private provider error"})),
+                None,
+            ),
+            assistant_message(
+                "msg_exact_error",
+                "ses_native",
+                "msg_exact_input",
+                Some(23),
+                Some("error"),
+                Some(serde_json::json!({"message": "private provider error"})),
+                None,
+            ),
+        ];
+
+        let OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Failed(receipt)) =
+            poll_input_terminal_from_messages(&messages, "ses_native", &[], "msg_exact_input")
+        else {
+            panic!("exact completed provider error is a typed terminal");
+        };
+        assert_eq!(receipt.session_id, "ses_native");
+        assert_eq!(receipt.user_message_id, "msg_exact_input");
+        assert_eq!(receipt.assistant_message_id, "msg_exact_error");
+        assert!(!format!("{receipt:?}").contains("private provider error"));
+    }
+
+    #[test]
+    fn stop_terminal_error_without_completion_marker_remains_pending() {
+        let messages = vec![assistant_message(
+            "msg_incomplete_error",
+            "ses_native",
+            "msg_exact_input",
+            None,
+            None,
+            Some(serde_json::json!({"message": "private provider error"})),
+            None,
+        )];
+
+        assert_eq!(
+            poll_input_terminal_from_messages(&messages, "ses_native", &[], "msg_exact_input",),
+            OpenCodeInputProgress::Pending,
+            "an error payload alone does not prove provider terminal"
+        );
+    }
+
+    #[test]
+    fn stop_terminal_completed_response_is_correlated_to_exact_input() {
+        let messages = vec![assistant_message(
+            "msg_exact_done",
+            "ses_native",
+            "msg_exact_input",
+            Some(24),
+            Some("stop"),
+            None,
+            Some("completed response"),
+        )];
+
+        let OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Completed(receipt)) =
+            poll_input_terminal_from_messages(&messages, "ses_native", &[], "msg_exact_input")
+        else {
+            panic!("exact completed assistant is a typed terminal");
+        };
+        assert_eq!(receipt.session_id, "ses_native");
+        assert_eq!(receipt.user_message_id.as_deref(), Some("msg_exact_input"));
+        assert_eq!(receipt.assistant_message_id, "msg_exact_done");
+        assert_eq!(receipt.final_text, "completed response");
+    }
+
+    #[test]
+    fn completed_tool_call_step_stays_pending_until_later_final_response() {
+        let mut tool_step = assistant_message(
+            "msg_tool_step",
+            "ses_native",
+            "msg_exact_input",
+            Some(21),
+            Some("tool-calls"),
+            None,
+            None,
+        );
+        tool_step.parts.push(Part::Tool(ToolPart {
+            id: "prt_tool".to_owned(),
+            session_id: Some("ses_native".to_owned()),
+            message_id: Some("msg_tool_step".to_owned()),
+            call_id: "call_1".to_owned(),
+            tool: "read".to_owned(),
+            state: serde_json::json!({
+                "status": "completed",
+                "input": {"filePath": "README.md"},
+                "output": "contents",
+                "title": "read README",
+                "metadata": {},
+                "time": {"start": 20, "end": 21}
+            }),
+            metadata: None,
+        }));
+
+        assert_eq!(
+            poll_input_terminal_from_messages(
+                std::slice::from_ref(&tool_step),
+                "ses_native",
+                &[],
+                "msg_exact_input",
+            ),
+            OpenCodeInputProgress::Pending,
+            "a completed tool-call step is not the input's turn terminal"
+        );
+
+        let final_response = assistant_message(
+            "msg_final",
+            "ses_native",
+            "msg_exact_input",
+            Some(22),
+            Some("stop"),
+            None,
+            Some("finished after the tool call"),
+        );
+        let messages = [tool_step, final_response];
+        let OpenCodeInputProgress::Terminal(OpenCodeInputTerminal::Completed(receipt)) =
+            poll_input_terminal_from_messages(&messages, "ses_native", &[], "msg_exact_input")
+        else {
+            panic!("the later exact-input final response is terminal");
+        };
+        assert_eq!(receipt.assistant_message_id, "msg_final");
+        assert_eq!(receipt.final_text, "finished after the tool call");
+    }
+
     #[test]
     fn message_and_parts_are_typed_without_flattening_text() {
         let envelope: MessageEnvelope = serde_json::from_value(serde_json::json!({
@@ -1556,6 +1957,7 @@ mod tests {
     #[test]
     fn prompt_parts_keep_native_media_shape() {
         let prompt = Prompt {
+            system: Some("Saved Agent instructions\nUse the selected workspace.".into()),
             parts: vec![PromptPart::File {
                 id: None,
                 mime: "image/png".into(),
@@ -1568,6 +1970,16 @@ mod tests {
         assert_eq!(value["parts"][0]["type"], "file");
         assert_eq!(value["parts"][0]["mime"], "image/png");
         assert_eq!(value["parts"][0]["url"], "data:image/png;base64,AA==");
+        assert_eq!(
+            value["system"],
+            "Saved Agent instructions\nUse the selected workspace."
+        );
+        assert!(
+            serde_json::to_value(Prompt::default())
+                .unwrap()
+                .get("system")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1604,6 +2016,57 @@ mod tests {
     }
 
     #[test]
+    fn session_create_omits_unset_nonnullable_fields() {
+        // Installed OpenCode 1.15.11 /doc permits absent fields, not nulls.
+        assert_eq!(
+            serde_json::to_value(CreateSessionBody::default()).unwrap(),
+            serde_json::json!({})
+        );
+        for variant in [None, Some("fast".to_owned())] {
+            let body = serde_json::to_value(CreateSessionBody {
+                model: Some(SessionModel {
+                    id: "native-model".into(),
+                    provider_id: "native-provider".into(),
+                    variant: variant.clone(),
+                }),
+                ..CreateSessionBody::default()
+            })
+            .unwrap();
+            let mut expected = serde_json::json!({
+                "model": {"id":"native-model", "providerID":"native-provider"}
+            });
+            if let Some(variant) = variant {
+                expected["model"]["variant"] = serde_json::json!(variant);
+            }
+            assert_eq!(body, expected);
+        }
+    }
+
+    #[test]
+    fn prompt_variant_is_separate_from_the_exact_model_selector() {
+        let body = serde_json::to_value(Prompt {
+            model: Some(ModelSelection {
+                provider_id: "native-provider".into(),
+                model_id: "native-model".into(),
+            }),
+            variant: Some("fast".into()),
+            parts: vec![PromptPart::Text {
+                id: None,
+                text: "new input".into(),
+            }],
+            ..Prompt::default()
+        })
+        .unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "model":{"providerID":"native-provider","modelID":"native-model"},
+                "variant":"fast", "parts":[{"type":"text","text":"new input"}]
+            })
+        );
+    }
+
+    #[test]
     fn identifiers_are_path_safe() {
         assert!(validate_identifier("ses_123", "ses").is_ok());
         assert!(validate_identifier("msg-123", "msg").is_ok());
@@ -1622,6 +2085,9 @@ mod tests {
                         "ses_native",
                         &PromptRequest {
                             prompt: Prompt {
+                                system: Some(
+                                    "Native instructions\nKeep user input separate.".into(),
+                                ),
                                 message_id: Some("msg_input".into()),
                                 parts: vec![PromptPart::Text {
                                     id: None,
@@ -1647,6 +2113,15 @@ mod tests {
                     request.starts_with("POST /session/ses_native/prompt_async HTTP/1.1"),
                     "unexpected request: {request}"
                 );
+                let body: serde_json::Value =
+                    serde_json::from_str(request.split_once("\r\n\r\n").expect("HTTP body").1)
+                        .unwrap();
+                assert_eq!(
+                    body["system"],
+                    "Native instructions\nKeep user input separate."
+                );
+                assert_eq!(body["messageID"], "msg_input");
+                assert_eq!(body["parts"][0]["text"], "hello");
                 server.join().expect("server thread");
             })
             .await;
@@ -1721,6 +2196,91 @@ mod tests {
                 server.join().expect("server thread");
             })
             .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn correlated_wait_ignores_other_terminal_messages_in_the_session() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let messages = serde_json::json!([
+                    {
+                        "info": {
+                            "id": "msg_other_assistant",
+                            "sessionID": "ses_native",
+                            "role": "assistant",
+                            "time": {"created": 100, "completed": 101},
+                            "parentID": "msg_other_input",
+                            "modelID": "model",
+                            "providerID": "provider",
+                            "finish": "stop"
+                        },
+                        "parts": [{
+                            "id": "part_other",
+                            "sessionID": "ses_native",
+                            "messageID": "msg_other_assistant",
+                            "type": "text",
+                            "text": "unrelated newer turn"
+                        }]
+                    },
+                    {
+                        "info": {
+                            "id": "msg_expected_assistant",
+                            "sessionID": "ses_native",
+                            "role": "assistant",
+                            "time": {"created": 10, "completed": 11},
+                            "parentID": "msg_expected_input",
+                            "modelID": "model",
+                            "providerID": "provider",
+                            "finish": "stop"
+                        },
+                        "parts": [{
+                            "id": "part_expected",
+                            "sessionID": "ses_native",
+                            "messageID": "msg_expected_assistant",
+                            "type": "text",
+                            "text": "the submitted turn"
+                        }]
+                    }
+                ])
+                .to_string();
+                let (url, server) = sequence_server(&[&messages]);
+                let client = OpenCodeClient::new(url, None).expect("client");
+                let receipt = client
+                    .wait_for_completed_assistant_for_input(
+                        "ses_native",
+                        &["msg_known_assistant"],
+                        "msg_expected_input",
+                        Instant::now() + Duration::from_secs(1),
+                        Duration::from_millis(1),
+                    )
+                    .await
+                    .expect("assistant correlated to exact input");
+                assert_eq!(
+                    receipt.user_message_id.as_deref(),
+                    Some("msg_expected_input")
+                );
+                assert_eq!(receipt.assistant_message_id, "msg_expected_assistant");
+                assert_eq!(receipt.final_text, "the submitted turn");
+                server.join().expect("server thread");
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn correlated_wait_rejects_an_invalid_input_id_before_polling() {
+        let client =
+            OpenCodeClient::new(Url::parse("http://127.0.0.1:1/").unwrap(), None).expect("client");
+        let error = client
+            .wait_for_completed_assistant_for_input(
+                "ses_native",
+                &[],
+                "not-a-message-id",
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_millis(1),
+            )
+            .await
+            .expect_err("invalid input ID rejected before network I/O");
+        assert!(matches!(error, OpenCodeWaitError::InvalidInputMessageId));
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -633,6 +633,65 @@ fn run(
                     quiescent: failure.process_quiescent(),
                 };
             };
+            if let Some(fence) = failure.fence() {
+                // Transport stderr is private and may be unavailable after
+                // cleanup. Persist only the closed classification through the
+                // same Rust execution fence; never release an ambiguous input.
+                let _ = handle.block_on(tokio::time::timeout(
+                    Duration::from_secs(5),
+                    execution::record_execution_diagnostic(
+                        &pool,
+                        execution_actor,
+                        fence,
+                        failure.diagnostic_code(),
+                        failure.process_quiescent(),
+                    ),
+                ));
+            }
+            if failure.process_disposition()
+                == rudder_native_chat_executor::ProcessDisposition::CleanupProven
+                && let Some(fence) = failure.fence()
+                && (failure.host_cleanup_proof().is_some()
+                    || failure.pi_cleanup_receipt().is_some())
+            {
+                let result = handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
+                    let Some(stop) = execution::observe_stop(&pool, execution_actor, fence).await?
+                    else {
+                        return Ok::<_, rudder_d1_persistence::runtime_bindings::Error>(None);
+                    };
+                    if let Some(cleanup) = failure.host_cleanup_proof() {
+                        execution::finalize_native_stopped_before_submission(
+                            &pool,
+                            execution_actor,
+                            fence,
+                            cleanup,
+                            &stop,
+                        )
+                        .await
+                        .map(Some)
+                    } else if let Some(cleanup) = failure.pi_cleanup_receipt() {
+                        execution::finalize_pi_stopped_before_submission(
+                            &pool,
+                            execution_actor,
+                            fence,
+                            cleanup,
+                            &stop,
+                        )
+                        .await
+                        .map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                }));
+                return Completion {
+                    status: match result {
+                        Ok(Ok(Some(_))) => Status::FinalizationCommitted,
+                        Ok(Ok(None)) => Status::Unresolved(UnresolvedReason::ExecutionUnresolved),
+                        _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+                    },
+                    quiescent: true,
+                };
+            }
             if failure.process_disposition()
                 == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) =
@@ -826,7 +885,9 @@ fn finish_claude_observation(
             quiescent: false,
         };
     };
-    if !fence.matches_host_cleanup_proof(cleanup) {
+    if !fence.matches_host_cleanup_proof(cleanup)
+        || provider.connection.connection_receipt_id() != cleanup.connection_receipt_id()
+    {
         return Completion {
             status: Status::Unresolved(UnresolvedReason::ProviderCleanupUnknown),
             quiescent: false,
@@ -860,7 +921,15 @@ fn finish_claude_observation(
             "isError": provider.turn.is_error(),
         }),
     };
-    finalize_native_observation(handle, pool, execution_principal, fence, turn, cleanup)
+    finalize_native_observation(
+        handle,
+        pool,
+        execution_principal,
+        fence,
+        turn,
+        cleanup,
+        provider.stop.as_ref(),
+    )
 }
 
 fn finish_cursor_observation(
@@ -873,13 +942,10 @@ fn finish_cursor_observation(
         fence,
         observation: provider,
     } = observation;
-    let Some(cleanup) = provider.cleanup.as_ref() else {
-        return Completion {
-            status: Status::Unresolved(UnresolvedReason::MissingCleanupProof),
-            quiescent: false,
-        };
-    };
-    if !fence.matches_host_cleanup_proof(cleanup) {
+    let cleanup = &provider.cleanup;
+    if !fence.matches_host_cleanup_proof(cleanup)
+        || provider.connection.connection_receipt_id() != cleanup.connection_receipt_id()
+    {
         return Completion {
             status: Status::Unresolved(UnresolvedReason::ProviderCleanupUnknown),
             quiescent: false,
@@ -905,7 +971,11 @@ fn finish_cursor_observation(
         session_id: provider.session.as_str().to_owned(),
         request_id: provider.request_id.clone(),
         final_text,
-        status: rudder_d1_persistence::native_chat::execution::NativeProviderStatus::Completed,
+        status: if provider.stop_reason == "cancelled" {
+            execution::NativeProviderStatus::Interrupted
+        } else {
+            execution::NativeProviderStatus::Completed
+        },
         usage: None,
         evidence: serde_json::json!({
             "provider": "cursor_local",
@@ -915,7 +985,15 @@ fn finish_cursor_observation(
             "response": provider.response,
         }),
     };
-    finalize_native_observation(handle, pool, execution_principal, fence, turn, cleanup)
+    finalize_native_observation(
+        handle,
+        pool,
+        execution_principal,
+        fence,
+        turn,
+        cleanup,
+        provider.stop.as_ref(),
+    )
 }
 
 fn finish_opencode_observation(
@@ -928,32 +1006,42 @@ fn finish_opencode_observation(
         fence,
         observation: provider,
     } = observation;
-    if !fence.matches_host_cleanup_proof(&provider.cleanup) {
+    if !fence.matches_host_cleanup_proof(&provider.cleanup)
+        || provider.connection.connection_receipt_id() != provider.cleanup.connection_receipt_id()
+    {
         return Completion {
             status: Status::Unresolved(UnresolvedReason::ProviderCleanupUnknown),
             quiescent: false,
         };
     }
-    let usage = provider
-        .turn
-        .tokens
-        .as_ref()
-        .and_then(|tokens| serde_json::to_value(tokens).ok());
-    let turn = rudder_d1_persistence::native_chat::execution::NativeProviderTurnReceipt {
-        provider: rudder_d1_persistence::native_chat::execution::NativeProviderKind::OpenCode,
-        session_id: provider.turn.session_id.clone(),
-        request_id: provider.turn.assistant_message_id.clone(),
-        final_text: (!provider.turn.final_text.trim().is_empty())
-            .then_some(provider.turn.final_text.clone()),
-        status: rudder_d1_persistence::native_chat::execution::NativeProviderStatus::Completed,
-        usage,
-        evidence: serde_json::json!({
-            "provider": "opencode_local",
-            "sessionId": provider.turn.session_id,
-            "userMessageId": provider.turn.user_message_id,
-            "assistantMessageId": provider.turn.assistant_message_id,
-            "cost": provider.turn.cost,
-        }),
+    use rudder_opencode_native::OpenCodeInputTerminal;
+    let turn = match &provider.terminal {
+        OpenCodeInputTerminal::Completed(receipt) => execution::NativeProviderTurnReceipt {
+            provider: execution::NativeProviderKind::OpenCode,
+            session_id: receipt.session_id.clone(),
+            request_id: provider.request_id.clone(),
+            final_text: (!receipt.final_text.trim().is_empty())
+                .then_some(receipt.final_text.clone()),
+            status: execution::NativeProviderStatus::Completed,
+            usage: receipt
+                .tokens
+                .as_ref()
+                .and_then(|tokens| serde_json::to_value(tokens).ok()),
+            evidence: serde_json::json!({"provider":"opencode_local","sessionId":receipt.session_id,
+                "userMessageId":receipt.user_message_id,"assistantMessageId":receipt.assistant_message_id,
+                "cost":receipt.cost,"cancelAcknowledged":provider.cancel_acknowledged}),
+        },
+        OpenCodeInputTerminal::Failed(receipt) => execution::NativeProviderTurnReceipt {
+            provider: execution::NativeProviderKind::OpenCode,
+            session_id: receipt.session_id.clone(),
+            request_id: provider.request_id.clone(),
+            final_text: None,
+            status: execution::NativeProviderStatus::Failed,
+            usage: None,
+            evidence: serde_json::json!({"provider":"opencode_local","sessionId":receipt.session_id,
+                "userMessageId":receipt.user_message_id,"assistantMessageId":receipt.assistant_message_id,
+                "providerErrorObserved":true,"cancelAcknowledged":provider.cancel_acknowledged}),
+        },
     };
     finalize_native_observation(
         handle,
@@ -962,32 +1050,134 @@ fn finish_opencode_observation(
         fence,
         turn,
         &provider.cleanup,
+        provider.stop.as_ref(),
     )
 }
 
+fn finalization_error_code(error: &rudder_d1_persistence::runtime_bindings::Error) -> &'static str {
+    use rudder_d1_persistence::runtime_bindings::Error;
+    match error {
+        Error::Http(401 | 403, _) => "native_finalize_authorization",
+        Error::Http(404, _) => "native_finalize_missing_scope",
+        Error::Http(409, message) => {
+            // Classify only into a closed vocabulary. Never persist the
+            // message, which may include private provider or owner details.
+            let message = message.to_ascii_lowercase();
+            if message.contains("lease") {
+                "native_finalize_lease_conflict"
+            } else if message.contains("segment") {
+                "native_finalize_segment_conflict"
+            } else if message.contains("binding") {
+                "native_finalize_binding_conflict"
+            } else if message.contains("checkpoint") {
+                "native_finalize_checkpoint_conflict"
+            } else if message.contains("cleanup") {
+                "native_finalize_cleanup_conflict"
+            } else if message.contains("provider") || message.contains("receipt") {
+                "native_finalize_provider_conflict"
+            } else if message.contains("owner") || message.contains("epoch") {
+                "native_finalize_owner_conflict"
+            } else {
+                "native_finalize_conflict"
+            }
+        }
+        Error::Http(_, _) => "native_finalize_rejected",
+        Error::Database(sqlx::Error::Database(error)) => match error.code().as_deref() {
+            Some("22P02") => "native_finalize_database_identity",
+            Some("23514") => "native_finalize_database_constraint",
+            Some("23503") => "native_finalize_database_reference",
+            Some("42501") => "native_finalize_database_permission",
+            Some("40001" | "40P01") => "native_finalize_database_contention",
+            _ => "native_finalize_database",
+        },
+        Error::Database(sqlx::Error::PoolTimedOut) => "native_finalize_database_timeout",
+        Error::Database(_) => "native_finalize_database",
+    }
+}
+
+async fn record_finalization_failure(
+    pool: &PgPool,
+    actor: &rudder_d1_persistence::native_chat::NativeChatExecutionPrincipal,
+    fence: &execution::ExecutionFence,
+    code: &'static str,
+) {
+    // The finalizer and this evidence write each reauthorize the same fence.
+    // A diagnostic must neither release an ambiguous input nor extend the
+    // finalization attempt indefinitely when its database is unavailable.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(1),
+        execution::record_execution_diagnostic(pool, actor, fence, code, true),
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
 fn finalize_native_observation(
     handle: &tokio::runtime::Handle,
     pool: &PgPool,
     execution_principal: rudder_d1_persistence::native_chat::NativeChatExecutionPrincipal,
-    fence: rudder_d1_persistence::native_chat::execution::ExecutionFence,
-    turn: rudder_d1_persistence::native_chat::execution::NativeProviderTurnReceipt,
+    fence: execution::ExecutionFence,
+    turn: execution::NativeProviderTurnReceipt,
     cleanup: &rudder_native_process_transport::HostCleanupProof,
+    stop: Option<&execution::StopIntent>,
 ) -> Completion {
     let status = handle.block_on(async {
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            rudder_d1_persistence::native_chat::execution::finalize_native(
-                pool,
-                &execution_principal,
-                &fence,
-                &turn,
-                cleanup,
-            ),
-        )
+        match tokio::time::timeout(Duration::from_secs(5), async {
+            if let Some(stop) = stop {
+                return execution::finalize_native_stopped(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    &turn,
+                    cleanup,
+                    stop,
+                )
+                .await;
+            }
+            let result =
+                execution::finalize_native(pool, &execution_principal, &fence, &turn, cleanup)
+                    .await;
+            if matches!(
+                &result,
+                Err(rudder_d1_persistence::runtime_bindings::Error::Http(409, _))
+            ) && let Some(stop) =
+                execution::observe_stop(pool, &execution_principal, &fence).await?
+            {
+                return execution::finalize_native_stopped(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    &turn,
+                    cleanup,
+                    &stop,
+                )
+                .await;
+            }
+            result
+        })
         .await
         {
             Ok(Ok(_)) => Status::FinalizationCommitted,
-            _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+            Ok(Err(error)) => {
+                record_finalization_failure(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    finalization_error_code(&error),
+                )
+                .await;
+                Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+            }
+            Err(_) => {
+                record_finalization_failure(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    "native_finalize_timeout",
+                )
+                .await;
+                Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+            }
         }
     });
     Completion {
@@ -1009,51 +1199,107 @@ fn finish_pi_observation(
         execution_principal,
         fence,
         observation: provider,
+        stop,
     } = observation;
-    let Some(turn) = provider.turn_receipt.as_ref() else {
-        return Completion {
-            status: Status::Unresolved(classify_pi_observation(
-                provider.phase.is_provider_terminal(),
-                false,
-                false,
-            )),
-            quiescent: false,
-        };
-    };
-    let Some(cleanup) = provider.cleanup_receipt.as_ref() else {
+    let Some(cleanup) = provider
+        .cleanup_receipt
+        .as_ref()
+        .filter(|cleanup| fence.matches_pi_cleanup_receipt(cleanup))
+    else {
         return Completion {
             status: Status::Unresolved(UnresolvedReason::MissingCleanupProof),
             quiescent: false,
         };
     };
-    let cleanup_proven = cleanup.proves_quiescence_for(turn)
-        && matches!(
-            provider.phase,
-            rudder_native_chat_executor::PiExecutionPhase::Cleaned
-        );
-    if !cleanup_proven {
-        return Completion {
-            status: Status::Unresolved(UnresolvedReason::ProviderCleanupUnknown),
-            quiescent: false,
+    let result = handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
+        let stop = match stop {
+            Some(stop) => Some(stop),
+            None => execution::observe_stop(pool, &execution_principal, &fence).await?,
         };
-    }
-    let status = handle.block_on(async {
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            execution::finalize_pi(pool, &execution_principal, &fence, turn, cleanup),
-        )
-        .await
+        let Some(turn) = provider.turn_receipt.as_ref() else {
+            if let Some(stop) = stop {
+                return execution::finalize_pi_stopped_before_submission(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    cleanup,
+                    &stop,
+                )
+                .await;
+            }
+            return Err(rudder_d1_persistence::runtime_bindings::Error::Http(
+                409,
+                "Pi terminal receipt is missing".into(),
+            ));
+        };
+        if !cleanup.proves_quiescence_for(turn)
+            || !matches!(
+                provider.phase,
+                rudder_native_chat_executor::PiExecutionPhase::Cleaned
+            )
         {
-            Ok(Ok(_)) => Status::FinalizationCommitted,
-            _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+            return Err(rudder_d1_persistence::runtime_bindings::Error::Http(
+                409,
+                "Pi terminal cleanup is not proven".into(),
+            ));
         }
-    });
+        if let Some(stop) = stop {
+            return execution::finalize_pi_stopped(
+                pool,
+                &execution_principal,
+                &fence,
+                turn,
+                cleanup,
+                &stop,
+            )
+            .await;
+        }
+        let result =
+            execution::finalize_pi(pool, &execution_principal, &fence, turn, cleanup).await;
+        if matches!(
+            &result,
+            Err(rudder_d1_persistence::runtime_bindings::Error::Http(409, _))
+        ) && let Some(stop) = execution::observe_stop(pool, &execution_principal, &fence).await?
+        {
+            return execution::finalize_pi_stopped(
+                pool,
+                &execution_principal,
+                &fence,
+                turn,
+                cleanup,
+                &stop,
+            )
+            .await;
+        }
+        result
+    }));
     Completion {
-        status,
+        status: match result {
+            Ok(Ok(_)) => Status::FinalizationCommitted,
+            Ok(Err(error)) => {
+                handle.block_on(record_finalization_failure(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    finalization_error_code(&error),
+                ));
+                Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+            }
+            Err(_) => {
+                handle.block_on(record_finalization_failure(
+                    pool,
+                    &execution_principal,
+                    &fence,
+                    "native_finalize_timeout",
+                ));
+                Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+            }
+        },
         quiescent: true,
     }
 }
 
+#[cfg(test)]
 fn classify_pi_observation(
     provider_terminal: bool,
     turn_receipt: bool,

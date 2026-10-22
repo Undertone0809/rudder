@@ -31,6 +31,7 @@ pub struct LocalHostContext {
     opencode_executable: Option<PathBuf>,
     opencode_server_url: Option<Url>,
     opencode_bearer_token: Option<String>,
+    opencode_operator_profile_supported: bool,
 }
 
 impl LocalHostContext {
@@ -84,6 +85,7 @@ impl LocalHostContext {
             opencode_executable: None,
             opencode_server_url: None,
             opencode_bearer_token: None,
+            opencode_operator_profile_supported: true,
         })
     }
 
@@ -104,6 +106,17 @@ impl LocalHostContext {
 
     pub(super) fn operator_codex_home(&self) -> Option<&Path> {
         self.operator_codex_home.as_deref()
+    }
+
+    /// Trusted launcher calibration. The standard operator mode does not
+    /// silently discard custom XDG/config roots from the user's environment.
+    pub fn with_opencode_operator_profile_supported(mut self, supported: bool) -> Self {
+        self.opencode_operator_profile_supported = supported;
+        self
+    }
+
+    pub(super) fn opencode_operator_profile_supported(&self) -> bool {
+        self.opencode_operator_profile_supported
     }
 
     /// Bind the trusted executable search path supplied by the Rust host.

@@ -5,13 +5,15 @@ mod process;
 
 use interactive_stdin::InteractiveStdin;
 use process::{
-    CleanupResult, OperationEvidence, spawn_child, spawn_path_preflight, spawn_terminal,
+    CleanupResult, OperationEvidence, PreSpawnOperationEvidence, SpawnChildError, SpawnDisposition,
+    spawn_child, spawn_path_preflight, spawn_terminal,
 };
 use rudder_native_protocol::{
     CAPABILITIES, Command, MAX_INTERACTIVE_STDIN_WRITE_IDS, PROTOCOL_MAJOR, PROTOCOL_MINOR,
 };
 use serde_json::{Value, json};
 use std::io::{self, BufWriter, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -657,10 +659,27 @@ pub fn run_host(
                 set_owner_token(&lifecycle, owner_token.clone());
                 let grace = Duration::from_millis(grace_ms.unwrap_or(2_000).clamp(1, 60_000));
                 if let Err(code) = spawn_path_preflight(&executable, &cwd) {
-                    send_error(&lifecycle, code);
-                    let mut terminal =
-                        terminal_message("failed", Some(code), true, started_at, &counters);
-                    terminal["receiptWritten"] = Value::Bool(false);
+                    let error = SpawnChildError::before_spawn(code);
+                    send_error(&lifecycle, error.code);
+                    let mut terminal = terminal_message(
+                        "failed",
+                        Some(error.code),
+                        error.cleanup_proven,
+                        started_at,
+                        &counters,
+                    );
+                    if error.spawn_disposition == SpawnDisposition::NotStarted
+                        && error.cleanup_proven
+                    {
+                        persist_pre_spawn_terminal(
+                            &runtime_root,
+                            &operation_id,
+                            &owner_token,
+                            &mut terminal,
+                        );
+                    } else {
+                        terminal["receiptWritten"] = Value::Bool(false);
+                    }
                     send(&lifecycle, terminal);
                     process_exit_code = 1;
                     terminal_sent = true;
@@ -685,9 +704,9 @@ pub fn run_host(
                     stderr.clone(),
                     lifecycle.clone(),
                     counters.clone(),
-                    runtime_root,
+                    runtime_root.clone(),
                     owner_token.clone(),
-                    operation_id,
+                    operation_id.clone(),
                     None,
                     "agent_run_attempt",
                     grace,
@@ -722,7 +741,18 @@ pub fn run_host(
                             started_at,
                             &counters,
                         );
-                        terminal["receiptWritten"] = Value::Bool(false);
+                        if error.spawn_disposition == SpawnDisposition::NotStarted
+                            && error.cleanup_proven
+                        {
+                            persist_pre_spawn_terminal(
+                                &runtime_root,
+                                &operation_id,
+                                &owner_token,
+                                &mut terminal,
+                            );
+                        } else {
+                            terminal["receiptWritten"] = Value::Bool(false);
+                        }
                         send(&lifecycle, terminal);
                         process_exit_code = 1;
                         terminal_sent = true;
@@ -1133,6 +1163,27 @@ fn persist_terminal(child: Option<&ActiveChild>, terminal: &mut Value) -> bool {
         terminal["receiptWritten"] = Value::Bool(false);
     }
     written
+}
+
+/// Persist an exact owner/request receipt when StartProcess is proven not to
+/// have created a child. The receipt contains no invented process identity.
+/// If the runtime root cannot be durably written, keep receiptWritten false so
+/// OwnedHost will not mint cleanup proof from the lifecycle terminal alone.
+fn persist_pre_spawn_terminal(
+    runtime_root: &str,
+    request_id: &str,
+    owner_token: &str,
+    terminal: &mut Value,
+) -> bool {
+    terminal["receiptWritten"] = Value::Bool(false);
+    let Ok(evidence) = PreSpawnOperationEvidence::create(
+        Path::new(runtime_root),
+        request_id.to_owned(),
+        owner_token.to_owned(),
+    ) else {
+        return false;
+    };
+    evidence.write_terminal(terminal)
 }
 
 #[cfg(all(test, unix))]

@@ -302,6 +302,11 @@ pub struct NativeChatProtocolCheckpoint {
     claude_session: Option<ClaudeSessionSelector>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     claude_prompt_request_id: Option<String>,
+    /// The installed stream-json CLI creates/continues a session with its
+    /// first input write. This marker records that single combined effect;
+    /// it contains no invented provider session or result identity.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    claude_combined_input: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opencode_session: Option<OpenCodeSessionSelector>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -344,6 +349,7 @@ impl NativeChatProtocolCheckpoint {
             hermes_prompt_request_id: None,
             claude_session: None,
             claude_prompt_request_id: None,
+            claude_combined_input: false,
             opencode_session: None,
             opencode_prompt_request_id: None,
             cursor_session: None,
@@ -503,6 +509,40 @@ impl NativeChatProtocolCheckpoint {
         self.claude_prompt_request_id.as_deref()
     }
 
+    pub fn claude_combined_input(&self) -> bool {
+        self.claude_combined_input
+    }
+
+    pub fn prepare_claude_combined_input(
+        &self,
+        expected_revision: u64,
+    ) -> Result<Self, RuntimeError> {
+        self.validate()?;
+        if self.provider != Some(NativeChatProvider::ClaudeLocal)
+            || self.revision != expected_revision
+            || self.claude_combined_input
+            || !matches!(
+                self.phase,
+                NativeChatProtocolPhase::NoThreadRequest | NativeChatProtocolPhase::ThreadKnown
+            )
+        {
+            return Err(RuntimeError::fence("Claude combined input is not fresh"));
+        }
+        let mut next = self.clone();
+        next.phase = if self.claude_session.is_some() {
+            NativeChatProtocolPhase::InputIndeterminate
+        } else {
+            NativeChatProtocolPhase::ThreadStartIndeterminate
+        };
+        next.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::invalid("checkpoint revision exhausted"))?;
+        next.claude_combined_input = true;
+        next.validate()?;
+        Ok(next)
+    }
+
     pub fn opencode_session(&self) -> Option<&OpenCodeSessionSelector> {
         self.opencode_session.as_ref()
     }
@@ -520,6 +560,11 @@ impl NativeChatProtocolCheckpoint {
     }
 
     pub fn validate(&self) -> Result<(), RuntimeError> {
+        if self.claude_combined_input && self.provider != Some(NativeChatProvider::ClaudeLocal) {
+            return Err(RuntimeError::invalid(
+                "Claude combined input belongs to another provider",
+            ));
+        }
         for value in [&self.thread_id, &self.turn_id, &self.pi_turn_entry_id]
             .into_iter()
             .flatten()
@@ -594,6 +639,10 @@ impl NativeChatProtocolCheckpoint {
             return Ok(());
         }
         if self.provider == Some(NativeChatProvider::PiLocal) {
+            // A fenced pre-input Stop may finish without a Pi session or
+            // turn. D1 requires the exact Stop and owned cleanup; a request
+            // identity, when present, must still have its native session.
+            let terminal = self.phase == ExecutionTerminalCommitted;
             if self.thread_id.is_some()
                 || self.turn_id.is_some()
                 || self.hermes_session.is_some()
@@ -605,8 +654,10 @@ impl NativeChatProtocolCheckpoint {
                 || self.cursor_session.is_some()
                 || self.cursor_prompt_request_id.is_some()
                 || self.observation_only
-                || matches!(self.phase, NoThreadRequest | ThreadStartIndeterminate)
-                    != self.pi_session.is_none()
+                || (!terminal
+                    && matches!(self.phase, NoThreadRequest | ThreadStartIndeterminate)
+                        != self.pi_session.is_none())
+                || (self.pi_turn_entry_id.is_some() && self.pi_session.is_none())
             {
                 return Err(RuntimeError::invalid(
                     "Pi protocol checkpoint contains Codex or incomplete session identity",
@@ -616,7 +667,7 @@ impl NativeChatProtocolCheckpoint {
                 self.phase,
                 TurnKnown | ProviderTerminalObserved | ExecutionTerminalCommitted
             );
-            if self.pi_turn_entry_id.is_some() != pi_turn_required {
+            if !terminal && self.pi_turn_entry_id.is_some() != pi_turn_required {
                 return Err(RuntimeError::invalid(
                     "Pi protocol phase and session-tree turn identity disagree",
                 ));
@@ -674,15 +725,27 @@ impl NativeChatProtocolCheckpoint {
                 }
                 _ => false,
             };
+            let combined_pending = self.claude_combined_input
+                && matches!(self.phase, ThreadStartIndeterminate | InputIndeterminate);
+            if combined_pending
+                && (self.claude_prompt_request_id.is_some()
+                    || (self.phase == ThreadStartIndeterminate && self.claude_session.is_some())
+                    || (self.phase == InputIndeterminate && self.claude_session.is_none()))
+            {
+                return Err(RuntimeError::invalid(
+                    "Claude combined input checkpoint is invalid",
+                ));
+            }
             let session_required =
                 !matches!(self.phase, NoThreadRequest | ThreadStartIndeterminate);
-            let request_required = matches!(
-                self.phase,
-                InputIndeterminate
-                    | TurnKnown
-                    | ProviderTerminalObserved
-                    | ExecutionTerminalCommitted
-            );
+            let request_required = !combined_pending
+                && matches!(
+                    self.phase,
+                    InputIndeterminate
+                        | TurnKnown
+                        | ProviderTerminalObserved
+                        | ExecutionTerminalCommitted
+                );
             if self.thread_id.is_some()
                 || self.turn_id.is_some()
                 || self.pi_session.is_some()
@@ -691,8 +754,9 @@ impl NativeChatProtocolCheckpoint {
                 || self.hermes_prompt_request_id.is_some()
                 || self.observation_only
                 || has_foreign_native_identity
-                || session != session_required
-                || request != request_required
+                || (self.phase != ExecutionTerminalCommitted && session != session_required)
+                || (self.phase != ExecutionTerminalCommitted && request != request_required)
+                || (request && !session)
             {
                 return Err(RuntimeError::invalid(
                     "native provider checkpoint contains a mismatched session identity",
@@ -1376,6 +1440,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn claude_combined_write_has_no_fabricated_session_and_cannot_be_prepared_twice() {
+        let initial = NativeChatProtocolCheckpoint::new_claude_fresh_session().unwrap();
+        let pending = initial.prepare_claude_combined_input(0).unwrap();
+        assert_eq!(
+            pending.phase(),
+            NativeChatProtocolPhase::ThreadStartIndeterminate
+        );
+        assert!(pending.claude_combined_input());
+        assert!(pending.claude_session().is_none());
+        assert!(pending.claude_prompt_request_id().is_none());
+        assert!(pending.prepare_claude_combined_input(1).is_err());
+        let encoded = serde_json::to_value(&pending).unwrap();
+        let restored: NativeChatProtocolCheckpoint =
+            serde_json::from_value(encoded.clone()).unwrap();
+        restored.validate().unwrap();
+        assert!(restored.prepare_claude_combined_input(1).is_err());
+        let mut foreign = encoded;
+        foreign["provider"] = serde_json::json!("cursor_local");
+        let foreign: NativeChatProtocolCheckpoint = serde_json::from_value(foreign).unwrap();
+        assert!(foreign.validate().is_err());
+    }
+
+    #[test]
     fn native_provider_checkpoint_keeps_session_and_request_identity_separate() {
         macro_rules! check {
             ($provider:expr, $session:expr, $record:ident, $mark:ident, $turn:ident, $terminal:ident) => {{
@@ -1463,5 +1550,38 @@ mod tests {
             NativeChatProtocolCheckpoint::new_hermes_fresh_session().unwrap();
         nonterminal_without_session.phase = NativeChatProtocolPhase::ThreadKnown;
         assert!(nonterminal_without_session.validate().is_err());
+    }
+    #[test]
+    fn native_terminal_checkpoint_preserves_only_observed_pre_input_ids() {
+        for provider in [
+            NativeChatProvider::PiLocal,
+            NativeChatProvider::ClaudeLocal,
+            NativeChatProvider::CursorLocal,
+            NativeChatProvider::OpenCodeLocal,
+        ] {
+            let mut fresh = NativeChatProtocolCheckpoint::new_native_fresh(provider).unwrap();
+            fresh.provider = Some(provider);
+            fresh.phase = NativeChatProtocolPhase::ExecutionTerminalCommitted;
+            fresh.validate().unwrap();
+            let mut invalid = fresh.clone();
+            match provider {
+                NativeChatProvider::PiLocal => {
+                    invalid.pi_turn_entry_id = Some("native-entry".into())
+                }
+                NativeChatProvider::ClaudeLocal => {
+                    invalid.claude_prompt_request_id = Some("native-request".into())
+                }
+                NativeChatProvider::CursorLocal => {
+                    invalid.cursor_prompt_request_id = Some("native-request".into())
+                }
+                NativeChatProvider::OpenCodeLocal => {
+                    invalid.opencode_prompt_request_id = Some("native-request".into())
+                }
+                _ => unreachable!(),
+            }
+            assert!(invalid.validate().is_err());
+            fresh.phase = NativeChatProtocolPhase::ThreadKnown;
+            assert!(fresh.validate().is_err());
+        }
     }
 }

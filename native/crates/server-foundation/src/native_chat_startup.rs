@@ -97,8 +97,8 @@ pub(crate) fn configure(
     );
 
     // Reading already accepted Native work does not require an installed CLI.
-    // New admission is advertised when at least one supported native provider
-    // has an owned executable or an explicitly owned OpenCode Server endpoint.
+    // New admission is advertised only when a supported native provider has
+    // an owned executable; an OpenCode URL alone cannot prove process cleanup.
     // Hermes must not be gated on Codex being present.
     let current =
         std::env::current_exe().map_err(|_| invalid_at("invalid native runtime installation"))?;
@@ -126,7 +126,7 @@ pub(crate) fn configure(
                 .as_ref()
                 .and_then(|_| url::Url::parse("http://127.0.0.1:0/").ok())
         });
-    let has_opencode = opencode.is_some() || opencode_url.is_some();
+    let has_opencode = opencode.is_some();
     let has_pi = pi_node.is_some() && pi_cli_entry.is_some();
     let Some(host_executable) = preferred_native_executable(
         codex.clone(),
@@ -154,6 +154,8 @@ pub(crate) fn configure(
     let instance = canonical_directory(&installation.instance_root)?;
     let workspace = workspace_directory(&installation.workspace_home)?;
     let operator_home = canonical_directory(&installation.operator_home)?;
+    let opencode_operator_profile_supported =
+        standard_opencode_profile_environment(&operator_home, |name| std::env::var_os(name));
     let native_root = instance.join("native-chat");
     let profiles = owned_directory(&native_root.join("profiles"))?;
     let runtime_root = owned_directory(&native_root.join("runtime"))?;
@@ -175,6 +177,7 @@ pub(crate) fn configure(
     .map_err(|_| invalid_at("invalid native host paths or identity"))?
     .with_executable_search_path(installation.executable_search_path.clone())
     .map_err(|_| invalid_at("invalid executable search path"))?;
+    host = host.with_opencode_operator_profile_supported(opencode_operator_profile_supported);
     if codex.is_some() {
         host = host.with_native_codex_profile();
         let operator_codex_home = installation
@@ -191,6 +194,7 @@ pub(crate) fn configure(
             return Err(invalid_at("invalid installed Pi paths"));
         };
         let profiles = owned_directory(&native_root.join("pi-profiles"))?;
+        owned_directory(&profiles.join("operator-sessions"))?;
         host = host
             .with_pi_runtime(node, entry, profiles)
             .map_err(|_| invalid_at("invalid installed Pi paths"))?;
@@ -352,6 +356,25 @@ fn workspace_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     }
 }
 
+fn standard_opencode_profile_environment(
+    home: &Path,
+    read: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> bool {
+    [
+        ("XDG_CONFIG_HOME", home.join(".config")),
+        ("XDG_DATA_HOME", home.join(".local/share")),
+    ]
+    .into_iter()
+    .all(|(name, standard)| read(name).is_none_or(|value| value == standard))
+        && [
+            "OPENCODE_CONFIG",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG_CONTENT",
+        ]
+        .into_iter()
+        .all(|name| read(name).is_none())
+}
+
 fn owned_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     // Refuse a symlink at the managed subtree before creating runtime files.
     for ancestor in path.ancestors().take(3) {
@@ -490,6 +513,60 @@ mod tests {
         symlink(&missing, &dangling).unwrap();
         assert!(super::workspace_directory(&dangling).is_err());
         assert!(!missing.exists());
+    }
+
+    #[test]
+    fn fresh_workspace_container_creates_valid_nested_launcher_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().canonicalize().unwrap();
+        let workspace = parent.join("organizations");
+        assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
+        assert_eq!(std::fs::read_dir(&workspace).unwrap().count(), 0);
+        assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
+        let nested = parent.join("missing/organizations");
+        assert_eq!(super::workspace_directory(&nested).unwrap(), nested);
+        assert!(parent.join("missing").is_dir());
+        assert!(super::workspace_directory(&raw_child(&parent, "../escaped")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_workspace_container_does_not_follow_a_dangling_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().canonicalize().unwrap();
+        let workspace = parent.join("organizations");
+        let outside = parent.join("not-created");
+        std::os::unix::fs::symlink(&outside, &workspace).unwrap();
+        assert!(super::workspace_directory(&workspace).is_err());
+        assert!(!outside.exists());
+    }
+
+    #[test]
+    fn standard_opencode_profile_does_not_ignore_custom_host_config_roots() {
+        let home = PathBuf::from("/operator");
+        assert!(super::standard_opencode_profile_environment(&home, |_| {
+            None
+        }));
+        assert!(super::standard_opencode_profile_environment(
+            &home,
+            |name| match name {
+                "XDG_CONFIG_HOME" => Some(home.join(".config").into_os_string()),
+                "XDG_DATA_HOME" => Some(home.join(".local/share").into_os_string()),
+                _ => None,
+            }
+        ));
+        for key in [
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "OPENCODE_CONFIG",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG_CONTENT",
+        ] {
+            assert!(!super::standard_opencode_profile_environment(
+                &home,
+                |name| (name == key).then(|| "/custom-root".into())
+            ));
+        }
     }
 
     #[test]

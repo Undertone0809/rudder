@@ -15,7 +15,8 @@
 //! intentionally not exposed here.
 
 use rudder_native_process_transport::{
-    ConnectionLaunchPermit, HostCleanupProof, HostConnection, HostError, HostEvent, OwnedHost,
+    ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof, HostConnection, HostError,
+    HostEvent, OwnedHost,
 };
 use rudder_native_protocol::{Command, ProtocolVersion, lines::LineDecoder};
 use serde_json::{Map, Value, json};
@@ -138,7 +139,7 @@ impl ClaudeExecutable {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaudeRuntimeProfile {
     operator_home: PathBuf,
-    managed_home: PathBuf,
+    managed_home: Option<PathBuf>,
     config_dir: PathBuf,
 }
 
@@ -156,7 +157,25 @@ impl ClaudeRuntimeProfile {
         }
         Ok(Self {
             operator_home,
-            managed_home,
+            managed_home: Some(managed_home),
+            config_dir,
+        })
+    }
+
+    /// Select the operator's existing Claude profile in place. The operator
+    /// home supplies the normal CLI auth boundary and `.claude` remains the
+    /// selected config/state directory; no profile files are copied or
+    /// rewritten by this constructor.
+    pub fn operator_default(operator_home: PathBuf) -> Result<Self, ClaudeError> {
+        let operator_home = canonical_directory(&operator_home)?;
+        let config_dir = operator_home.join(".claude");
+        let canonical_config = canonical_directory(&config_dir)?;
+        if canonical_config != config_dir {
+            return Err(ClaudeError::InvalidLaunch);
+        }
+        Ok(Self {
+            operator_home,
+            managed_home: None,
             config_dir,
         })
     }
@@ -165,8 +184,8 @@ impl ClaudeRuntimeProfile {
         &self.operator_home
     }
 
-    pub fn managed_home(&self) -> &Path {
-        &self.managed_home
+    pub fn managed_home(&self) -> Option<&Path> {
+        self.managed_home.as_deref()
     }
 
     pub fn config_dir(&self) -> &Path {
@@ -178,13 +197,16 @@ impl ClaudeRuntimeProfile {
     /// ambient process environment wholesale.
     pub fn environment(&self) -> Result<BTreeMap<String, String>, ClaudeError> {
         let mut env = BTreeMap::new();
-        for (key, value) in [
+        let mut approved = vec![
             ("HOME", &self.operator_home),
             ("USERPROFILE", &self.operator_home),
             ("CLAUDE_CONFIG_DIR", &self.config_dir),
-            ("RUDDER_CLAUDE_HOME", &self.managed_home),
             ("RUDDER_OPERATOR_HOME", &self.operator_home),
-        ] {
+        ];
+        if let Some(managed_home) = self.managed_home.as_ref() {
+            approved.push(("RUDDER_CLAUDE_HOME", managed_home));
+        }
+        for (key, value) in approved {
             // Reject non-UTF-8 paths rather than silently losing an
             // environment boundary at process-host serialization time.
             let value = value.to_str().ok_or(ClaudeError::InvalidLaunch)?;
@@ -228,6 +250,7 @@ pub struct ClaudeInvocation {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permission_mode: Option<String>,
+    pub max_turns: Option<u32>,
     pub settings_path: Option<PathBuf>,
     pub mcp_config_path: Option<PathBuf>,
     pub append_system_prompt_file: Option<PathBuf>,
@@ -241,6 +264,7 @@ impl ClaudeInvocation {
             model: None,
             effort: None,
             permission_mode: None,
+            max_turns: None,
             settings_path: None,
             mcp_config_path: None,
             append_system_prompt_file: None,
@@ -301,6 +325,12 @@ impl ClaudeInvocation {
                 return Err(ClaudeError::InvalidLaunch);
             }
             push_value(&mut args, "--permission-mode", permission_mode)?;
+        }
+        if let Some(max_turns) = self.max_turns {
+            if !(1..=1000).contains(&max_turns) {
+                return Err(ClaudeError::InvalidLaunch);
+            }
+            args.extend(["--max-turns".into(), max_turns.to_string()]);
         }
         for (flag, path) in [
             ("--settings", self.settings_path.as_ref()),
@@ -422,6 +452,7 @@ pub enum ClaudeEvent {
         raw: Value,
     },
     ControlRequest(ClaudeControlRequest),
+    ControlResponse(ClaudeControlResponse),
     UserEcho {
         session_id: Option<ClaudeSessionSelector>,
         message: Value,
@@ -437,6 +468,44 @@ pub struct ClaudeControlRequest {
     request_id: String,
     subtype: String,
     request: Value,
+}
+
+/// Opaque id for the one interrupt request sent over a Claude stream-json
+/// connection. A request receipt is not evidence that Claude stopped; callers
+/// still need the matching terminal `result` and process-host cleanup proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaudeInterruptRequest {
+    request_id: String,
+}
+
+impl ClaudeInterruptRequest {
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClaudeControlResponseStatus {
+    Success,
+    Rejected,
+}
+
+/// The correlated acknowledgement for a client-originated control request.
+/// The provider response body and error text are intentionally discarded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaudeControlResponse {
+    request_id: String,
+    status: ClaudeControlResponseStatus,
+}
+
+impl ClaudeControlResponse {
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub fn status(&self) -> ClaudeControlResponseStatus {
+        self.status
+    }
 }
 
 /// Encode the installed Claude stream-json user envelope. The returned value
@@ -475,6 +544,23 @@ pub fn encode_control_response(
                 "request_id": request.request_id,
                 "response": response,
             },
+        }),
+        MAX_CONTROL_RESPONSE_BYTES,
+    )
+}
+
+/// Encode one client-originated interrupt request. The caller chooses a
+/// unique id and the transport records it before attempting the write, so an
+/// indeterminate host write cannot be retried as a second interrupt.
+pub fn encode_interrupt_request(request_id: &str) -> Result<String, ClaudeError> {
+    if request_id.is_empty() || request_id.len() > 256 || request_id.contains('\0') {
+        return Err(ClaudeError::InvalidControlResponse);
+    }
+    encode_json_line(
+        &json!({
+            "type": "control_request",
+            "request_id": request_id,
+            "request": {"subtype": "interrupt"},
         }),
         MAX_CONTROL_RESPONSE_BYTES,
     )
@@ -609,6 +695,40 @@ fn parse_event(value: Value) -> Result<ClaudeEvent, ClaudeError> {
                 request_id,
                 subtype,
                 request,
+            }))
+        }
+        "control_response" => {
+            let response = object
+                .get("response")
+                .and_then(Value::as_object)
+                .ok_or(ClaudeError::InvalidControlResponse)?;
+            let request_id = response
+                .get("request_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 256 && !value.contains('\0'))
+                .ok_or(ClaudeError::InvalidControlResponse)?
+                .to_owned();
+            let status = match response.get("subtype").and_then(Value::as_str) {
+                Some("success") => {
+                    if response
+                        .get("response")
+                        .is_some_and(|value| !value.is_object())
+                    {
+                        return Err(ClaudeError::InvalidControlResponse);
+                    }
+                    ClaudeControlResponseStatus::Success
+                }
+                Some("error") => {
+                    if response.get("error").and_then(Value::as_str).is_none() {
+                        return Err(ClaudeError::InvalidControlResponse);
+                    }
+                    ClaudeControlResponseStatus::Rejected
+                }
+                _ => return Err(ClaudeError::InvalidControlResponse),
+            };
+            Ok(ClaudeEvent::ControlResponse(ClaudeControlResponse {
+                request_id,
+                status,
             }))
         }
         "user" => Ok(ClaudeEvent::UserEcho {
@@ -754,6 +874,9 @@ pub struct ClaudeTransport {
     owner_token: String,
     session_id: Option<ClaudeSessionSelector>,
     control_lease: ClaudeControlLease,
+    user_input_sent: bool,
+    interrupt_request: Option<ClaudeInterruptRequest>,
+    interrupt_response_seen: bool,
     terminal: Option<ClaudeTurnReceipt>,
     terminal_received: bool,
 }
@@ -830,6 +953,9 @@ impl ClaudeTransport {
             owner_token,
             session_id: None,
             control_lease: ClaudeControlLease::default(),
+            user_input_sent: false,
+            interrupt_request: None,
+            interrupt_response_seen: false,
             terminal: None,
             terminal_received: false,
         })
@@ -838,7 +964,7 @@ impl ClaudeTransport {
     pub fn wait_spawned(&mut self, timeout: Duration) -> Result<(), ClaudeError> {
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            let event = self.receive_one(remaining(deadline))?;
+            let event = self.receive_one(remaining(deadline), true)?;
             match event {
                 ClaudeTransportEvent::Lifecycle(value)
                     if value.get("type").and_then(Value::as_str) == Some("spawned") =>
@@ -859,9 +985,37 @@ impl ClaudeTransport {
         self.session_id.as_ref()
     }
 
+    pub fn connection_receipt(&self) -> ConnectionReceipt {
+        self.host.connection_identity().connection_receipt()
+    }
+
     pub fn send_user_message(&mut self, input: &str) -> Result<(), ClaudeError> {
+        if self.user_input_sent || self.terminal.is_some() || self.terminal_received {
+            return Err(ClaudeError::Busy);
+        }
         let frame = encode_user_message(input)?;
+        self.user_input_sent = true;
         self.write_frame(frame)
+    }
+
+    /// Send at most one Claude-native interrupt for the submitted user input.
+    /// A successful return means the process host accepted the framed write;
+    /// it is not a provider acknowledgement or a terminal observation.
+    pub fn send_interrupt(&mut self) -> Result<ClaudeInterruptRequest, ClaudeError> {
+        if !self.user_input_sent
+            || self.interrupt_request.is_some()
+            || self.terminal.is_some()
+            || self.terminal_received
+        {
+            return Err(ClaudeError::Busy);
+        }
+        let request = ClaudeInterruptRequest {
+            request_id: format!("req_stop_{}", Uuid::new_v4().simple()),
+        };
+        let frame = encode_interrupt_request(request.request_id())?;
+        self.interrupt_request = Some(request.clone());
+        self.write_frame(frame)?;
+        Ok(request)
     }
 
     /// Respond to a live Claude control request. The request id is copied from
@@ -900,7 +1054,21 @@ impl ClaudeTransport {
     }
 
     pub fn poll(&mut self, timeout: Duration) -> Result<Option<ClaudeTransportEvent>, ClaudeError> {
-        match self.receive_one(timeout) {
+        match self.receive_one(timeout, true) {
+            Ok(value) => Ok(Some(value)),
+            Err(ClaudeError::Timeout) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Receive already-produced output while the owned host is shutting down.
+    /// Unlike `poll`, this path never flushes a queued provider write, so
+    /// cleanup cannot replay or create a provider effect.
+    pub fn poll_cleanup(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<ClaudeTransportEvent>, ClaudeError> {
+        match self.receive_one(timeout, false) {
             Ok(value) => Ok(Some(value)),
             Err(ClaudeError::Timeout) => Ok(None),
             Err(error) => Err(error),
@@ -908,7 +1076,7 @@ impl ClaudeTransport {
     }
 
     pub fn receive(&mut self, timeout: Duration) -> Result<ClaudeTransportEvent, ClaudeError> {
-        self.receive_one(timeout)
+        self.receive_one(timeout, true)
     }
 
     pub fn take_event(&mut self) -> Option<ClaudeEvent> {
@@ -927,14 +1095,20 @@ impl ClaudeTransport {
         }
     }
 
-    fn receive_one(&mut self, timeout: Duration) -> Result<ClaudeTransportEvent, ClaudeError> {
+    fn receive_one(
+        &mut self,
+        timeout: Duration,
+        flush_pending: bool,
+    ) -> Result<ClaudeTransportEvent, ClaudeError> {
         if self.terminal_received {
             return Err(ClaudeError::Closed);
         }
         if let Some(event) = self.events.pop_front() {
             return Ok(ClaudeTransportEvent::Provider(event));
         }
-        self.flush_pending()?;
+        if flush_pending {
+            self.flush_pending()?;
+        }
         match self.host.receive(timeout).map_err(map_host_error)? {
             HostEvent::Failure => Err(ClaudeError::Closed),
             HostEvent::Lifecycle(value) => {
@@ -946,7 +1120,13 @@ impl ClaudeTransport {
             HostEvent::Stdout(bytes) => {
                 let mut parsed = self.decoder.push(&bytes, ClaudeEvent::parse)?;
                 if parsed.is_empty() {
-                    return self.receive_one(timeout);
+                    if !flush_pending {
+                        // A cleanup receive is always nonblocking or bounded;
+                        // let its caller continue the bounded drain instead
+                        // of recursively consuming an unbounded stdout stream.
+                        return Err(ClaudeError::Timeout);
+                    }
+                    return self.receive_one(timeout, flush_pending);
                 }
                 for event in parsed.drain(..) {
                     self.observe(event)?;
@@ -996,6 +1176,14 @@ impl ClaudeTransport {
                 self.terminal = Some(receipt_from_result(event.clone())?);
             }
             ClaudeEvent::ControlRequest(request) => self.control_lease.observe(request)?,
+            ClaudeEvent::ControlResponse(response) => {
+                validate_interrupt_response(
+                    self.interrupt_request.as_ref(),
+                    self.interrupt_response_seen,
+                    response,
+                )?;
+                self.interrupt_response_seen = true;
+            }
             ClaudeEvent::Unknown { .. } => {}
         }
         if self.events.len() >= MAX_EVENT_QUEUE {
@@ -1043,6 +1231,19 @@ impl ClaudeTransport {
         }
         Ok(())
     }
+}
+
+fn validate_interrupt_response(
+    request: Option<&ClaudeInterruptRequest>,
+    response_seen: bool,
+    response: &ClaudeControlResponse,
+) -> Result<(), ClaudeError> {
+    if request.map(ClaudeInterruptRequest::request_id) != Some(response.request_id())
+        || response_seen
+    {
+        return Err(ClaudeError::InvalidControlResponse);
+    }
+    Ok(())
 }
 
 fn encode_json_line(value: &Value, max_bytes: usize) -> Result<String, ClaudeError> {
@@ -1224,6 +1425,7 @@ mod tests {
             model: Some("sonnet".into()),
             effort: Some("high".into()),
             permission_mode: Some("auto".into()),
+            max_turns: Some(300),
             settings_path: None,
             mcp_config_path: None,
             append_system_prompt_file: None,
@@ -1247,6 +1449,11 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair == ["--resume", session().as_str()])
         );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--permission-mode", "auto"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--max-turns", "300"]));
         assert!(args.contains(&"--fork-session".to_owned()));
         assert!(!args.contains(&"--continue".to_owned()));
     }
@@ -1264,6 +1471,94 @@ mod tests {
         assert_eq!(receipt.status(), ClaudeTurnStatus::Completed);
         assert_eq!(receipt.summary(), Some("done"));
         assert_eq!(receipt.total_cost_usd_micros(), Some(1_000));
+    }
+
+    #[test]
+    fn interrupt_wire_shape_and_ack_are_correlated_and_nonterminal() {
+        let frame = encode_interrupt_request("req_stop_42").unwrap();
+        assert_eq!(frame.bytes().filter(|byte| *byte == b'\n').count(), 1);
+        let wire: Value = serde_json::from_str(frame.trim_end()).unwrap();
+        assert_eq!(wire["type"], "control_request");
+        assert_eq!(wire["request_id"], "req_stop_42");
+        assert_eq!(wire["request"], json!({"subtype":"interrupt"}));
+
+        let parsed = ClaudeEvent::parse(
+            br#"{"type":"control_response","response":{"subtype":"success","request_id":"req_stop_42","response":{"still_queued":[]}}}"#,
+        )
+        .unwrap();
+        let ClaudeEvent::ControlResponse(response) = parsed else {
+            panic!("an interrupt ACK must remain a control-response event");
+        };
+        assert_eq!(response.request_id(), "req_stop_42");
+        assert_eq!(response.status(), ClaudeControlResponseStatus::Success);
+        assert!(receipt_from_result(ClaudeEvent::ControlResponse(response.clone())).is_err());
+        assert!(
+            validate_interrupt_response(
+                Some(&ClaudeInterruptRequest {
+                    request_id: "req_stop_42".into(),
+                }),
+                false,
+                &response,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_interrupt_response(
+                Some(&ClaudeInterruptRequest {
+                    request_id: "req_other".into(),
+                }),
+                false,
+                &response,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_interrupt_response(
+                Some(&ClaudeInterruptRequest {
+                    request_id: "req_stop_42".into(),
+                }),
+                true,
+                &response,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rejected_interrupt_ack_is_typed_without_retaining_provider_text() {
+        let event = ClaudeEvent::parse(
+            br#"{"type":"control_response","response":{"subtype":"error","request_id":"req_stop_42","error":"private provider detail"}}"#,
+        )
+        .unwrap();
+        let ClaudeEvent::ControlResponse(response) = event else {
+            panic!("expected correlated control response");
+        };
+        assert_eq!(response.status(), ClaudeControlResponseStatus::Rejected);
+        assert_eq!(response.request_id(), "req_stop_42");
+        assert!(!format!("{response:?}").contains("private provider detail"));
+
+        for invalid in [
+            br#"{"type":"control_response","response":{"subtype":"success"}}"#.as_slice(),
+            br#"{"type":"control_response","response":{"subtype":"other","request_id":"req_stop_42"}}"#.as_slice(),
+            br#"{"type":"control_response","response":{"subtype":"success","request_id":"req_stop_42","response":[]}}"#.as_slice(),
+            br#"{"type":"control_response","response":{"subtype":"error","request_id":"req_stop_42"}}"#.as_slice(),
+        ] {
+            assert!(ClaudeEvent::parse(invalid).is_err());
+        }
+        assert!(encode_interrupt_request("").is_err());
+        assert!(encode_interrupt_request(&"x".repeat(257)).is_err());
+    }
+
+    #[test]
+    fn interrupted_execution_records_actual_terminal_result_not_ack_as_success() {
+        let terminal = ClaudeEvent::parse(
+            br#"{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"05a82e73-f42d-4a40-9323-e58356868e6b"}"#,
+        )
+        .unwrap();
+        let receipt = receipt_from_result(terminal).unwrap();
+        assert_eq!(receipt.status(), ClaudeTurnStatus::Failed);
+        assert_eq!(receipt.summary(), None);
+        assert_eq!(receipt.session_id().as_str(), session().as_str());
     }
 
     #[test]
@@ -1342,7 +1637,53 @@ mod tests {
             managed.join(".claude").to_str().unwrap()
         );
         assert_eq!(env["RUDDER_CLAUDE_HOME"], managed.to_str().unwrap());
+        assert_eq!(profile.managed_home(), Some(managed.as_path()));
         assert!(ClaudeRuntimeProfile::new(operator.clone(), operator).is_err());
+    }
+
+    #[test]
+    fn operator_profile_uses_existing_claude_dir_without_managed_home() {
+        let temp = tempfile::tempdir().unwrap();
+        let operator = temp.path().join("operator");
+        let config_dir = operator.join(".claude");
+        fs::create_dir_all(&config_dir).unwrap();
+        let marker = b"synthetic operator auth marker; not a credential";
+        fs::write(config_dir.join("operator-marker"), marker).unwrap();
+
+        let profile = ClaudeRuntimeProfile::operator_default(operator.clone()).unwrap();
+        let canonical_operator = operator.canonicalize().unwrap();
+        let env = profile.environment().unwrap();
+        assert_eq!(env["HOME"], canonical_operator.to_str().unwrap());
+        assert_eq!(env["USERPROFILE"], canonical_operator.to_str().unwrap());
+        assert_eq!(
+            env["CLAUDE_CONFIG_DIR"],
+            canonical_operator.join(".claude").to_str().unwrap()
+        );
+        assert_eq!(
+            env["RUDDER_OPERATOR_HOME"],
+            canonical_operator.to_str().unwrap()
+        );
+        assert!(!env.contains_key("RUDDER_CLAUDE_HOME"));
+        assert_eq!(profile.managed_home(), None);
+        assert_eq!(
+            fs::read(config_dir.join("operator-marker")).unwrap(),
+            marker,
+            "profile selection must not modify operator-owned files"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operator_profile_rejects_symlinked_claude_dir() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let operator = temp.path().join("operator");
+        let redirected = temp.path().join("redirected-claude");
+        fs::create_dir_all(&operator).unwrap();
+        fs::create_dir_all(&redirected).unwrap();
+        symlink(redirected, operator.join(".claude")).unwrap();
+        assert!(ClaudeRuntimeProfile::operator_default(operator).is_err());
     }
 
     #[test]
@@ -1393,5 +1734,95 @@ mod tests {
         let other = root.path().join("other");
         fs::create_dir(&other).unwrap();
         assert!(reader.path_for_cwd(&projects, &other).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires RUDDER_TEST_PROCESS_HOST and a synthetic local child only"]
+    fn cleanup_poll_recovers_terminal_queued_during_slow_authority_tick() {
+        use std::{
+            os::unix::fs::PermissionsExt,
+            path::PathBuf,
+            time::{Duration, Instant},
+        };
+
+        let process_host = std::env::var_os("RUDDER_TEST_PROCESS_HOST")
+            .expect("set RUDDER_TEST_PROCESS_HOST to the Rust process-host binary");
+        let process_host = PathBuf::from(process_host)
+            .canonicalize()
+            .expect("canonical process host");
+        let root = tempfile::tempdir().unwrap();
+        let runtime_root = root.path().join("runtime");
+        let cwd = root.path().join("cwd");
+        fs::create_dir_all(&runtime_root).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        let executable = root.path().join("synthetic-claude");
+        fs::write(
+            &executable,
+            b"#!/bin/sh\ntrap '' TERM\nwhile :; do /bin/sleep 1; done\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let run_id = "slow-claude-cleanup-run".to_owned();
+        let attempt_id = "slow-claude-cleanup-attempt".to_owned();
+        let owner_token = "slow-claude-cleanup-owner".to_owned();
+        let launch = ClaudeLaunch {
+            executable,
+            cwd: cwd.canonicalize().unwrap(),
+            env: BTreeMap::new(),
+            process_host,
+            runtime_root,
+            run_id: run_id.clone(),
+            attempt_id: attempt_id.clone(),
+            owner_token: owner_token.clone(),
+            invocation: ClaudeInvocation::new(ClaudeSessionMode::New {
+                session_id: Some(ClaudeSessionSelector::new()),
+            }),
+        };
+        let mut transport = ClaudeTransport::launch_for_execution(
+            launch,
+            ConnectionLaunchPermit::from_claim(
+                run_id.clone(),
+                attempt_id.clone(),
+                owner_token.clone(),
+                1,
+                "slow-claude-cleanup-claim".into(),
+            ),
+        )
+        .expect("launch synthetic CLI through owned process host");
+        transport
+            .wait_spawned(Duration::from_secs(5))
+            .expect("owned process reaches spawned lifecycle");
+        transport.stop(100).expect("send bounded host stop");
+
+        let started = Instant::now();
+        // Model a synchronous D1 cleanup tick that outlives the remaining
+        // host receive window. The terminal must still be collectable after
+        // the hook returns, without flushing a provider write.
+        std::thread::sleep(Duration::from_millis(700));
+        assert!(started.elapsed() >= Duration::from_millis(700));
+        let mut terminal_seen = false;
+        for _ in 0..128 {
+            match transport.poll_cleanup(Duration::ZERO) {
+                Ok(Some(ClaudeTransportEvent::Lifecycle(value)))
+                    if value.get("type").and_then(Value::as_str) == Some("terminal") =>
+                {
+                    terminal_seen = true;
+                    break;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(ClaudeError::Closed | ClaudeError::Timeout) => break,
+                Err(error) => panic!("cleanup receive failed: {error}"),
+            }
+        }
+        assert!(
+            terminal_seen,
+            "terminal emitted during tick must be observed"
+        );
+        let proof = transport
+            .take_cleanup_proof()
+            .expect("matching terminal yields the exact host cleanup proof");
+        assert!(proof.matches_execution(&run_id, &attempt_id, &owner_token));
     }
 }

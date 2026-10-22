@@ -3,7 +3,7 @@
 //! returned through this carrier.
 
 use super::resolve::{issue_workspace_binding, resolve_issue_workspace, validate_managed_cwd};
-use super::{LocalHostContext, Result, fingerprint, invalid, unsupported};
+use super::{LocalHostContext, Result, fingerprint, invalid, runtime, unsupported};
 use crate::agent_core::instructions;
 use crate::native_chat::config::resolve_agent_env;
 use rudder_claude_code::MAX_USER_INPUT_BYTES;
@@ -24,6 +24,10 @@ pub struct ClaudeLocalConfig {
     pub executable_search_path: String,
     pub env: BTreeMap<String, String>,
     pub profile_config_revision: String,
+    pub timeout_sec: Option<u64>,
+    pub grace_sec: Option<u64>,
+    pub permission_mode: Option<String>,
+    pub max_turns_per_run: Option<u32>,
 }
 
 pub(crate) async fn resolve_claude_config(
@@ -93,10 +97,19 @@ pub(crate) async fn resolve_claude_config(
         .ok_or_else(|| invalid("Claude Agent configuration must be an object"))?;
     const ALLOWED: &[&str] = &[
         "profileId",
+        "command",
         "model",
         "effort",
         "reasoningEffort",
         "permissionMode",
+        "dangerouslySkipPermissions",
+        "maxTurnsPerRun",
+        "timeoutSec",
+        "graceSec",
+        "instructionsBundleMode",
+        "instructionsRootPath",
+        "instructionsEntryFile",
+        "instructionsFilePath",
         "env",
         "heartbeat",
     ];
@@ -105,9 +118,23 @@ pub(crate) async fn resolve_claude_config(
             "an unrecognized Claude Agent runtime setting is present",
         ));
     }
+    runtime::validate_instruction_settings(object)?;
     let profile_id = bounded_string(object.get("profileId"), "profileId")?
         .unwrap_or_else(|| "default".to_owned());
     validate_profile_id(&profile_id)?;
+    validate_command(object.get("command"), "claude")?;
+    let timeout_sec = optional_bounded_seconds(object.get("timeoutSec"), "timeoutSec", 3600)?;
+    let grace_sec = optional_bounded_nonzero_seconds(object.get("graceSec"), "graceSec", 60)?;
+    let max_turns_per_run = optional_bounded_turns(object.get("maxTurnsPerRun"))?;
+    let dangerously_skip_permissions = match object.get("dangerouslySkipPermissions") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => {
+            return Err(unsupported(
+                "Claude dangerous permission bypass is not supported",
+            ));
+        }
+        Some(_) => return Err(invalid("Claude dangerouslySkipPermissions must be false")),
+    };
     let model_override: Option<String> = row.try_get("model_override")?;
     let model = model_override
         .filter(|value| !value.trim().is_empty())
@@ -216,15 +243,24 @@ pub(crate) async fn resolve_claude_config(
     }
 
     let (executable, profiles_root) = host.claude_runtime().expect("checked above");
-    let home = resolve_profile_home(profiles_root, &profile_id)?;
+    let home = if profile_id == "operator-default" {
+        resolve_operator_profile_home(host.operator_home())?
+    } else {
+        resolve_profile_home(profiles_root, &profile_id)?
+    };
     let profile_config_revision = claude_profile_revision(&home)?;
     let workspace_binding_id = issue_workspace_binding(&workspace);
     let revision = json!({
         "runtimeType":"claude_local",
         "profileId":profile_id,
+        "command":"claude",
         "model":model,
         "effort":effort,
         "permissionMode":permission_mode,
+        "dangerouslySkipPermissions":dangerously_skip_permissions,
+        "maxTurnsPerRun":max_turns_per_run,
+        "timeoutSec":timeout_sec,
+        "graceSec":grace_sec,
         "workspaceBindingId":workspace_binding_id,
         "effectiveCwd":cwd.to_string_lossy(),
         "env":env_facts,
@@ -269,6 +305,10 @@ pub(crate) async fn resolve_claude_config(
             executable_search_path: host.executable_search_path().to_owned(),
             env,
             profile_config_revision,
+            timeout_sec,
+            grace_sec,
+            permission_mode,
+            max_turns_per_run,
         }),
         cursor: None,
     })
@@ -346,6 +386,62 @@ fn validate_profile_id(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_command(value: Option<&Value>, expected: &str) -> Result<()> {
+    match value {
+        None => Ok(()),
+        Some(Value::String(value)) if value == expected => Ok(()),
+        Some(Value::String(_)) => Err(unsupported(
+            "Claude command must use the host-selected Claude executable",
+        )),
+        Some(_) => Err(invalid("Claude command is invalid")),
+    }
+}
+
+fn optional_bounded_seconds(
+    value: Option<&Value>,
+    label: &'static str,
+    max: u64,
+) -> Result<Option<u64>> {
+    match value {
+        None => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .filter(|value| *value <= max)
+            .map(Some)
+            .ok_or_else(|| {
+                invalid(match label {
+                    "timeoutSec" => "Claude timeoutSec is invalid",
+                    _ => "Claude runtime setting is invalid",
+                })
+            }),
+        Some(_) => Err(invalid("Claude runtime setting is invalid")),
+    }
+}
+
+fn optional_bounded_nonzero_seconds(
+    value: Option<&Value>,
+    label: &'static str,
+    max: u64,
+) -> Result<Option<u64>> {
+    let seconds = optional_bounded_seconds(value, label, max)?;
+    if seconds.is_some_and(|value| value == 0) {
+        return Err(invalid("Claude graceSec must be between 1 and 60"));
+    }
+    Ok(seconds)
+}
+
+fn optional_bounded_turns(value: Option<&Value>) -> Result<Option<u32>> {
+    match value {
+        None => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .filter(|value| (1..=1000).contains(value))
+            .map(|value| Some(value as u32))
+            .ok_or_else(|| invalid("Claude maxTurnsPerRun must be between 1 and 1000")),
+        Some(_) => Err(invalid("Claude maxTurnsPerRun must be an integer")),
+    }
+}
+
 fn resolve_profile_home(root: &Path, profile_id: &str) -> Result<PathBuf> {
     let expected = if profile_id == "default" {
         root.to_path_buf()
@@ -373,6 +469,25 @@ fn resolve_profile_home(root: &Path, profile_id: &str) -> Result<PathBuf> {
         return Err(invalid("selected Claude profile .claude path is invalid"));
     }
     Ok(canonical)
+}
+
+fn resolve_operator_profile_home(operator_home: &Path) -> Result<PathBuf> {
+    let canonical_home = operator_home
+        .canonicalize()
+        .map_err(|_| invalid("operator Claude profile home is unavailable"))?;
+    let expected_config_dir = canonical_home.join(".claude");
+    let config_meta = fs::symlink_metadata(&expected_config_dir)
+        .map_err(|_| invalid("operator Claude profile has no .claude directory"))?;
+    if !config_meta.is_dir() || config_meta.file_type().is_symlink() {
+        return Err(invalid("operator Claude profile .claude path is invalid"));
+    }
+    let canonical_config_dir = expected_config_dir
+        .canonicalize()
+        .map_err(|_| invalid("operator Claude profile .claude path is invalid"))?;
+    if canonical_config_dir != expected_config_dir {
+        return Err(invalid("operator Claude profile .claude path is invalid"));
+    }
+    Ok(canonical_home)
 }
 
 fn claude_profile_revision(home: &Path) -> Result<String> {
@@ -405,7 +520,14 @@ fn claude_profile_revision(home: &Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_effort, validate_permission_mode, validate_profile_id};
+    use super::{
+        claude_profile_revision, optional_bounded_nonzero_seconds, optional_bounded_seconds,
+        optional_bounded_turns, resolve_operator_profile_home, validate_command, validate_effort,
+        validate_permission_mode, validate_profile_id,
+    };
+    use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn claude_runtime_values_are_bounded() {
@@ -415,5 +537,59 @@ mod tests {
         assert!(validate_effort("turbo").is_err());
         assert!(validate_permission_mode("auto").is_ok());
         assert!(validate_permission_mode("plan").is_err());
+    }
+
+    #[test]
+    fn operator_profile_requires_real_claude_dir_and_hashes_its_settings() {
+        let root = tempdir().unwrap();
+        let operator_home = root.path().join("operator-home");
+        fs::create_dir_all(operator_home.join(".claude")).unwrap();
+        let profile_home = resolve_operator_profile_home(&operator_home).unwrap();
+        assert_eq!(profile_home, operator_home.canonicalize().unwrap());
+
+        let settings = profile_home.join(".claude/settings.json");
+        fs::write(&settings, r#"{"theme":"dark"}"#).unwrap();
+        let revision = claude_profile_revision(&profile_home).unwrap();
+        fs::write(&settings, r#"{"theme":"light"}"#).unwrap();
+        assert_ne!(
+            revision,
+            claude_profile_revision(&profile_home).unwrap(),
+            "operator Claude settings must contribute to the selected profile revision"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operator_profile_rejects_symlinked_claude_dir() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let operator_home = root.path().join("operator-home");
+        let redirected = root.path().join("redirected-claude");
+        fs::create_dir_all(&operator_home).unwrap();
+        fs::create_dir_all(&redirected).unwrap();
+        symlink(&redirected, operator_home.join(".claude")).unwrap();
+        assert!(resolve_operator_profile_home(&operator_home).is_err());
+    }
+
+    #[test]
+    fn claude_ui_defaults_have_typed_bounded_mappings() {
+        assert!(validate_command(Some(&json!("claude")), "claude").is_ok());
+        assert!(validate_command(Some(&json!("/tmp/claude")), "claude").is_err());
+        assert!(matches!(
+            optional_bounded_seconds(Some(&json!(0)), "timeoutSec", 3600),
+            Ok(Some(0))
+        ));
+        assert!(matches!(
+            optional_bounded_nonzero_seconds(Some(&json!(15)), "graceSec", 60),
+            Ok(Some(15))
+        ));
+        assert!(matches!(
+            optional_bounded_turns(Some(&json!(300))),
+            Ok(Some(300))
+        ));
+        assert!(optional_bounded_seconds(Some(&json!(3601)), "timeoutSec", 3600).is_err());
+        assert!(optional_bounded_nonzero_seconds(Some(&json!(0)), "graceSec", 60).is_err());
+        assert!(optional_bounded_turns(Some(&json!(0))).is_err());
     }
 }

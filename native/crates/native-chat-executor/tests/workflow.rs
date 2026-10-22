@@ -26,6 +26,21 @@ mod live_stop;
 
 #[path = "workflow/hermes_progress.rs"]
 mod hermes_progress;
+#[path = "workflow/opencode_split.rs"]
+mod opencode_split;
 
 #[path = "workflow/browser_principal.rs"]
 mod browser_principal;
+
+#[path = "workflow/claude_stop.rs"]
+mod claude_stop;
+#[path = "workflow/pi_resume_guard.rs"]
+mod pi_resume_guard;
+#[path = "workflow/pi_stop.rs"]
+mod pi_stop;
+
+#[path = "workflow/cursor_resume.rs"]
+mod cursor_resume;
+
+#[path = "workflow/native_provider_stop.rs"]
+mod native_provider_stop;

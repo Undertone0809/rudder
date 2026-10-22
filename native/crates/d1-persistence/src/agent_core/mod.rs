@@ -353,7 +353,35 @@ async fn execute_agent_inner(
             let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth).await?;
             sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(&org).execute(&mut *tx).await?;
             tx.commit().await?;
-            if matches!(op,"instructions-bundle-patch"|"instructions-file-put"|"instructions-file-delete") {
+            if op == "create" {
+                // The Agent row and bundle outbox are committed already. A
+                // projection failure here must not become an ambiguous create
+                // error that invites duplicate Agent creation. The durable row
+                // remains available to the authorized detail-read reconciler;
+                // first-send resolution continues to fail closed until then.
+                if let (Some(agent_id), Some(_host)) =
+                    (body["id"].as_str(), r.instructions_host.as_ref())
+                    && instructions::provision_created_agent_after_commit(
+                        pool,
+                        actor,
+                        r,
+                        &org,
+                        agent_id,
+                        native_auth,
+                    )
+                    .await
+                    .is_err()
+                    {
+                    // The create is already committed, so returning an
+                    // error could cause a duplicate retry. Pending bundle
+                    // filesystem failures are durably marked `repair` by
+                    // library_path; transient authority/database failures
+                    // leave the outbox available to an authorized detail
+                    // read. Keep the failure observable without logging
+                    // host paths or instruction contents.
+                    tracing::warn!("created Agent workspace provisioning did not complete; durable recovery remains available");
+                }
+            } else if matches!(op,"instructions-bundle-patch"|"instructions-file-put"|"instructions-file-delete") {
                 instructions::replay_after_commit(pool, actor, r, &org, id.as_deref().unwrap_or_default(), native_auth).await?;
             }
             return Ok((if matches!(op,"create"|"key-create"){201}else{200},body.to_string()));

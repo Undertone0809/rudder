@@ -22,6 +22,38 @@ fn complete() -> Completion {
 }
 
 #[test]
+fn finalization_diagnostics_never_return_error_payloads() {
+    use rudder_d1_persistence::runtime_bindings::Error;
+    let private = "synthetic-private-provider-and-owner-details";
+    for (status, context) in [
+        (403, "authorization"),
+        (404, "scope"),
+        (409, "lease"),
+        (409, "Segment"),
+        (409, "binding"),
+        (409, "checkpoint"),
+        (409, "cleanup"),
+        (409, "provider receipt"),
+        (409, "owner epoch"),
+        (409, "other"),
+        (500, "other"),
+    ] {
+        let code = finalization_error_code(&Error::Http(status, format!("{context}: {private}")));
+        assert!(code.starts_with("native_finalize_"));
+        assert!(code.len() <= 64);
+        assert!(
+            code.bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        );
+        assert!(!code.contains(private));
+    }
+    assert_eq!(
+        finalization_error_code(&Error::Database(sqlx::Error::PoolTimedOut)),
+        "native_finalize_database_timeout"
+    );
+}
+
+#[test]
 fn pi_missing_receipt_is_classified_without_codex_projection() {
     assert_eq!(
         classify_pi_observation(true, false, false),

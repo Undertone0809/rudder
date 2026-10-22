@@ -22,6 +22,7 @@ pub enum CheckpointTransition {
     PrepareHermesSessionStart,
     PreparePiSessionStart,
     PrepareClaudeSessionStart,
+    PrepareClaudeCombinedInput,
     PrepareOpenCodeSessionStart,
     PrepareCursorSessionStart,
     RecordThread {
@@ -155,6 +156,9 @@ impl CheckpointTransition {
     ) -> Result<NativeChatProtocolCheckpoint> {
         let proposed = match self {
             Self::PrepareThreadStart => checkpoint.prepare_thread_start(expected_revision),
+            Self::PrepareClaudeCombinedInput => {
+                checkpoint.prepare_claude_combined_input(expected_revision)
+            }
             Self::PrepareHermesSessionStart => checkpoint.prepare_thread_start(expected_revision),
             Self::PreparePiSessionStart => checkpoint.prepare_thread_start(expected_revision),
             Self::PrepareClaudeSessionStart
@@ -267,6 +271,7 @@ impl CheckpointTransition {
     fn effect_kind(&self) -> Option<EffectKind> {
         match self {
             Self::PrepareThreadStart => Some(EffectKind::StartThread),
+            Self::PrepareClaudeCombinedInput => Some(EffectKind::SubmitClaudeCombinedInput),
             Self::PrepareHermesSessionStart => Some(EffectKind::StartHermesSession),
             Self::PreparePiSessionStart => Some(EffectKind::StartPiSession),
             Self::PrepareClaudeSessionStart => Some(EffectKind::StartClaudeSession),
@@ -325,6 +330,7 @@ pub enum EffectKind {
     SubmitPiInput,
     StartClaudeSession,
     SubmitClaudeInput,
+    SubmitClaudeCombinedInput,
     StartOpenCodeSession,
     SubmitOpenCodeInput,
     StartCursorSession,
@@ -404,6 +410,9 @@ pub(super) async fn advance(
     let new_session_id = match &transition {
         CheckpointTransition::RecordThread { thread_id } => Some(thread_id.as_str()),
         CheckpointTransition::RecordHermesSession { session_id } => Some(session_id.as_str()),
+        CheckpointTransition::RecordClaudeSession { session_id }
+        | CheckpointTransition::RecordCursorSession { session_id }
+        | CheckpointTransition::RecordOpenCodeSession { session_id } => Some(session_id.as_str()),
         CheckpointTransition::RecordPiSession { selector } => Some(selector.session_id.as_str()),
         _ => None,
     };
@@ -413,6 +422,9 @@ pub(super) async fn advance(
             || locked.checkpoint.thread_id().is_some()
             || locked.checkpoint.hermes_session().is_some()
             || locked.checkpoint.pi_session().is_some()
+            || locked.checkpoint.claude_session().is_some()
+            || locked.checkpoint.cursor_session().is_some()
+            || locked.checkpoint.opencode_session().is_some()
         {
             return Err(super::http(
                 409,
@@ -648,6 +660,14 @@ pub(super) async fn advance(
                     .map(|session| session.session_id.clone()),
             ),
             EffectKind::SubmitClaudeInput => (
+                locked.admitted_message_id.clone(),
+                locked.admitted_input_fingerprint.clone(),
+                snapshot
+                    .claude_session
+                    .as_ref()
+                    .map(|s| s.as_str().to_owned()),
+            ),
+            EffectKind::SubmitClaudeCombinedInput => (
                 locked.admitted_message_id.clone(),
                 locked.admitted_input_fingerprint.clone(),
                 snapshot

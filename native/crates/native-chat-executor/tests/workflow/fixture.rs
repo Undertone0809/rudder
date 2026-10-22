@@ -277,6 +277,56 @@ def main(argv=None):
         );
     }
 
+    pub(crate) fn enable_claude_runtime(&mut self, executable: PathBuf, profiles: PathBuf) {
+        let context = self.context.take().expect("fixture context");
+        self.context = Some(
+            context
+                .with_executable_search_path("/usr/bin:/bin".into())
+                .expect("fixture trusted PATH")
+                .with_claude_runtime(executable, profiles)
+                .expect("attach Claude fixture runtime"),
+        );
+    }
+
+    pub(crate) fn enable_cursor_runtime(&mut self, executable: PathBuf, profiles: PathBuf) {
+        let context = self.context.take().expect("fixture context");
+        self.context = Some(
+            context
+                .with_executable_search_path("/usr/bin:/bin".into())
+                .expect("fixture trusted PATH")
+                .with_cursor_runtime(executable, profiles)
+                .expect("attach Cursor fixture runtime"),
+        );
+    }
+
+    pub(crate) fn enable_pi_runtime(&mut self, node: PathBuf, entry: PathBuf, profiles: PathBuf) {
+        let context = self.context.take().expect("fixture context");
+        self.context = Some(
+            context
+                .with_executable_search_path("/usr/bin:/bin".into())
+                .expect("fixture trusted PATH")
+                .with_pi_runtime(node, entry, profiles)
+                .expect("attach Pi fixture runtime"),
+        );
+    }
+
+    pub(crate) fn enable_opencode_runtime(&mut self, executable: PathBuf) {
+        let context = self
+            .context
+            .take()
+            .expect("fixture host context is present");
+        self.context = Some(
+            context
+                .with_opencode_runtime(
+                    url::Url::parse("http://127.0.0.1:4090/").expect("fixture URL"),
+                    None,
+                )
+                .expect("attach fixture OpenCode endpoint")
+                .with_opencode_executable(executable)
+                .expect("attach synthetic OpenCode server executable"),
+        );
+    }
+
     pub(crate) fn context(&self) -> &LocalHostContext {
         self.context
             .as_ref()
@@ -426,7 +476,7 @@ pub(crate) async fn admitted_hermes_with_input(
     .await
 }
 
-async fn admitted_with_runtime(
+pub(crate) async fn admitted_with_runtime(
     database: &Database,
     host: &FixtureHost,
     runtime_type: &str,

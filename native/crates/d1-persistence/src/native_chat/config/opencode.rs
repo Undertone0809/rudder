@@ -7,13 +7,18 @@
 //! an HTTP request.
 
 use super::resolve::{issue_workspace_binding, resolve_issue_workspace, validate_managed_cwd};
-use super::{LocalHostContext, Result, fingerprint, invalid, unsupported};
+use super::{LocalHostContext, Result, fingerprint, invalid, runtime, unsupported};
 use crate::agent_core::instructions;
 use rudder_opencode_native::OpenCodeClient;
 use serde_json::{Value, json};
 use sqlx::{Postgres, Row, Transaction};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use url::Url;
+
+mod compatibility;
 
 /// Trusted OpenCode Server configuration. The bearer token is intentionally
 /// exposed only through a narrow accessor and the type does not implement
@@ -22,10 +27,15 @@ pub struct OpenCodeLocalConfig {
     server_url: Url,
     bearer_token: Option<String>,
     executable: Option<PathBuf>,
+    system_instructions: Option<String>,
+    profile_home: Option<PathBuf>,
     pub executable_search_path: String,
     pub profile_id: String,
     pub cwd: PathBuf,
     pub model: Option<String>,
+    pub variant: Option<String>,
+    pub timeout_sec: Option<u64>,
+    pub cleanup_grace: Duration,
     pub agent: Option<String>,
     pub workspace: Option<String>,
     pub profile_config_revision: String,
@@ -44,12 +54,20 @@ impl OpenCodeLocalConfig {
         self.executable.as_deref()
     }
 
+    pub fn system_instructions(&self) -> Option<&str> {
+        self.system_instructions.as_deref()
+    }
+
+    pub fn profile_home(&self) -> Option<&Path> {
+        self.profile_home.as_deref()
+    }
+
     /// Recheck the endpoint shape before provider effects. The host owns the
     /// endpoint; this method only protects against an accidentally malformed
     /// in-memory value after resolution.
     pub fn endpoint_is_valid(&self) -> bool {
-        matches!(self.server_url.scheme(), "http" | "https")
-            && self.server_url.host_str().is_some()
+        self.executable.is_some()
+            && owned_endpoint_is_valid(&self.server_url)
             && OpenCodeClient::new(self.server_url.clone(), self.bearer_token.clone()).is_ok()
     }
 }
@@ -69,6 +87,11 @@ pub(crate) async fn resolve_opencode_config(
         unsupported("the trusted local OpenCode Server installation is unavailable")
     })?;
     let executable = host.opencode_executable().map(Path::to_path_buf);
+    if executable.is_none() || !owned_endpoint_is_valid(server_url) {
+        return Err(unsupported(
+            "OpenCode native Chat requires an owned local Server executable and endpoint",
+        ));
+    }
     let row = sqlx::query(
         "/* native_chat_config_agent_lock */
          SELECT c.status AS conversation_status, c.conversation_kind,
@@ -125,6 +148,11 @@ pub(crate) async fn resolve_opencode_config(
         .ok_or_else(|| invalid("OpenCode Agent configuration must be an object"))?;
     const ALLOWED: &[&str] = &[
         "profileId",
+        "command",
+        "timeoutSec",
+        "graceSec",
+        "cwd",
+        "variant",
         "model",
         "agent",
         "workspace",
@@ -147,9 +175,69 @@ pub(crate) async fn resolve_opencode_config(
         return Err(invalid("OpenCode heartbeat settings must be an object"));
     }
 
-    let profile_id = bounded_string(object.get("profileId"), "profileId")?
-        .unwrap_or_else(|| "default".to_owned());
+    runtime::validate_instruction_settings(object)?;
+    match object.get("command") {
+        None => {}
+        Some(Value::String(command)) if command == "opencode" => {}
+        _ => {
+            return Err(unsupported(
+                "OpenCode command must use the host-selected executable",
+            ));
+        }
+    }
+    let timeout_sec = bounded_seconds(object.get("timeoutSec"), 0, 3600)?;
+    let cleanup_grace = cleanup_grace(object.get("graceSec"))?;
+    // Legacy local OpenCode used the operator's native config/auth in place.
+    // Preserve that choice when no selector was stored; explicit managed mode
+    // must point at a provisioned, stable profile rather than a per-Run HOME.
+    let profile_id = bounded_string(object.get("profileId"), "profileId")?.unwrap_or_else(|| {
+        if executable.is_some() {
+            "operator-default"
+        } else {
+            "default"
+        }
+        .to_owned()
+    });
     validate_profile_id(&profile_id)?;
+    let profile_home = match profile_id.as_str() {
+        "default" if executable.is_some() => {
+            let home = host
+                .managed_profiles_root()
+                .join("opencode")
+                .join(&organization_id)
+                .join(&agent_id)
+                .join("default");
+            if !home.is_dir() {
+                return Err(unsupported(
+                    "the selected managed OpenCode Profile is not provisioned",
+                ));
+            }
+            Some(super::resolve::validate_managed_cwd(
+                &home,
+                host.managed_profiles_root(),
+            )?)
+        }
+        "default" => None,
+        "operator-default" if !host.opencode_operator_profile_supported() => {
+            return Err(unsupported(
+                "custom OpenCode config or XDG roots are not calibrated for native operator Profile",
+            ));
+        }
+        "operator-default" if executable.is_some() => Some(host.operator_home().to_path_buf()),
+        "operator-default" => {
+            return Err(unsupported(
+                "operator OpenCode Profile requires an owned local Server",
+            ));
+        }
+        _ => return Err(unsupported("the selected OpenCode Profile is unavailable")),
+    };
+    if let Some(home) = profile_home.as_deref() {
+        compatibility::validate_profile_database(home)?;
+    }
+    let profile_revision = profile_home
+        .as_deref()
+        .map(operator_profile_revision)
+        .transpose()?;
     let model_override: Option<String> = row.try_get("model_override")?;
     let model = model_override
         .filter(|value| !value.trim().is_empty())
@@ -157,9 +245,23 @@ pub(crate) async fn resolve_opencode_config(
     if let Some(model) = model.as_deref() {
         validate_model(model)?;
     }
+    let variant = row
+        .try_get::<Option<String>, _>("effort_override")?
+        .filter(|value| !value.trim().is_empty())
+        .or(bounded_string(object.get("variant"), "variant")?);
+    if let Some(variant) = &variant {
+        validate_provider_id(variant, "OpenCode variant")?;
+    }
     let agent = bounded_string(object.get("agent"), "agent")?;
     let workspace = bounded_string(object.get("workspace"), "workspace")?;
-    let configured_directory = bounded_string(object.get("directory"), "directory")?;
+    let directory = bounded_string(object.get("directory"), "directory")?;
+    let configured_cwd = bounded_string(object.get("cwd"), "cwd")?;
+    if directory.is_some() && configured_cwd.is_some() && directory != configured_cwd {
+        return Err(invalid(
+            "OpenCode directory and cwd must identify the same workspace",
+        ));
+    }
+    let configured_directory = directory.or(configured_cwd);
     if let Some(workspace) = workspace.as_deref() {
         validate_provider_id(workspace, "OpenCode workspace")?;
     }
@@ -226,16 +328,6 @@ pub(crate) async fn resolve_opencode_config(
         &cwd,
     )
     .map_err(|_| invalid("Agent instruction bundle cannot be resolved safely"))?;
-    if instructions
-        .entry_content
-        .as_ref()
-        .is_some_and(|text| !text.trim().is_empty())
-    {
-        return Err(unsupported(
-            "OpenCode native Server has no verified system-instruction mapping yet",
-        ));
-    }
-
     let workspace_binding_id = issue_workspace_binding(&workspace_binding);
     let mut revision_input = json!({
         "runtimeType": "opencode_local",
@@ -249,18 +341,36 @@ pub(crate) async fn resolve_opencode_config(
         "effectiveCwd": cwd.to_string_lossy(),
         "instructionsRevision": instructions.revision,
         "calibratedVersion": rudder_opencode_native::OPENCODE_CALIBRATED_VERSION,
+        "profileConfigRevision": profile_revision,
+        "timeoutSec": timeout_sec,
+        "graceSec": cleanup_grace.as_secs(),
+        "variant": variant,
     });
     revision_input["serverAuthConfigured"] = json!(bearer_token.is_some());
     let capability_revision = fingerprint::json_revision(&revision_input);
-    let profile_ref = format!("managed-opencode:{}:{}", agent_id, profile_id);
+    let profile_kind = if profile_id == "operator-default" {
+        "operator-opencode"
+    } else {
+        "managed-opencode"
+    };
+    let profile_ref = format!("{profile_kind}:{agent_id}:{profile_id}");
+    let selected_home = profile_home
+        .as_deref()
+        .unwrap_or(host.operator_home())
+        .to_path_buf();
     let opencode = OpenCodeLocalConfig {
         server_url: server_url.clone(),
         bearer_token: bearer_token.map(str::to_owned),
         executable,
+        system_instructions: instructions.entry_content.clone(),
+        profile_home,
         executable_search_path: host.executable_search_path().to_owned(),
         profile_id: profile_id.clone(),
         cwd: cwd.clone(),
         model: model.clone(),
+        variant: variant.clone(),
+        timeout_sec,
+        cleanup_grace,
         agent,
         workspace,
         profile_config_revision: capability_revision.clone(),
@@ -280,14 +390,14 @@ pub(crate) async fn resolve_opencode_config(
         executable: host.codex_executable().to_path_buf(),
         cwd,
         model,
-        reasoning_effort: None,
+        reasoning_effort: variant,
         plan_mode: false,
         search_enabled: false,
         bypass_approvals_and_sandbox: false,
         count_subscription_usage_as_cost: false,
         profile: super::ManagedCodexProfile {
             id: profile_ref,
-            home: host.operator_home().to_path_buf(),
+            home: selected_home,
             native_managed: true,
         },
         operator_home: host.operator_home().to_path_buf(),
@@ -336,6 +446,69 @@ fn validate_profile_id(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn owned_endpoint_is_valid(url: &Url) -> bool {
+    url.scheme() == "http"
+        && matches!(url.path(), "" | "/")
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && match url.host() {
+            Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(host)) => host == std::net::Ipv4Addr::LOCALHOST,
+            Some(url::Host::Ipv6(_)) => false,
+            None => false,
+        }
+}
+
+fn cleanup_grace(value: Option<&Value>) -> Result<Duration> {
+    Ok(Duration::from_secs(
+        bounded_seconds(value, 1, 60)?.unwrap_or(20),
+    ))
+}
+
+fn bounded_seconds(value: Option<&Value>, min: u64, max: u64) -> Result<Option<u64>> {
+    match value {
+        None => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|seconds| (min..=max).contains(seconds))
+            .map(Some)
+            .ok_or_else(|| invalid("OpenCode timeout or cleanup grace is invalid")),
+    }
+}
+
+fn operator_profile_revision(home: &Path) -> Result<String> {
+    const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+    let mut facts = Vec::new();
+    for name in ["opencode.json", "opencode.jsonc", "config.json"] {
+        let path = home.join(".config/opencode").join(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                if !metadata.is_file()
+                    || metadata.file_type().is_symlink()
+                    || metadata.len() > MAX_CONFIG_BYTES
+                    || !path
+                        .canonicalize()
+                        .map_err(|_| invalid("OpenCode profile is unavailable"))?
+                        .starts_with(home)
+                {
+                    return Err(invalid("OpenCode profile configuration is invalid"));
+                }
+                let bytes =
+                    super::resolve::read_codex_config_nofollow(&path, MAX_CONFIG_BYTES as usize)
+                        .map_err(|_| invalid("OpenCode profile is unavailable"))?;
+                facts.push(json!({"file":name,"sha256":fingerprint::digest(&bytes)}));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                facts.push(json!({"file":name,"missing":true}))
+            }
+            Err(_) => return Err(invalid("OpenCode profile is unavailable")),
+        }
+    }
+    Ok(fingerprint::json_revision(&json!(facts)))
+}
+
 fn validate_model(value: &str) -> Result<()> {
     validate_provider_id(value, "OpenCode model")?;
     if !value.contains('/') {
@@ -354,4 +527,42 @@ fn validate_provider_id(value: &str, label: &'static str) -> Result<()> {
         return Err(invalid(label));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    #[test]
+    fn owned_server_endpoint_matches_the_process_host_transport() {
+        for value in ["http://127.0.0.1:0/", "http://localhost/"] {
+            assert!(owned_endpoint_is_valid(&Url::parse(value).unwrap()));
+        }
+        for value in [
+            "https://127.0.0.1/",
+            "http://[::1]/",
+            "http://127.0.0.2/",
+            "http://example.com/",
+            "http://127.0.0.1/api",
+            "http://127.0.0.1/?x=y",
+            "http://name:secret@127.0.0.1/",
+        ] {
+            assert!(!owned_endpoint_is_valid(&Url::parse(value).unwrap()));
+        }
+    }
+
+    #[test]
+    fn cleanup_grace_preserves_native_default_and_rejects_invalid_values() {
+        assert_eq!(cleanup_grace(None).unwrap(), Duration::from_secs(20));
+        assert_eq!(
+            cleanup_grace(Some(&json!(1))).unwrap(),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            cleanup_grace(Some(&json!(60))).unwrap(),
+            Duration::from_secs(60)
+        );
+        for value in [json!(0), json!(61), json!(1.5), json!("20")] {
+            assert!(cleanup_grace(Some(&value)).is_err());
+        }
+    }
 }

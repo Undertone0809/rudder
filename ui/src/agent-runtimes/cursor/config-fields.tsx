@@ -3,6 +3,7 @@ import {
   Field,
 } from "../../components/agent-config-primitives";
 import { ChoosePathButton } from "../../components/PathInstructionsModal";
+import { NativeProfileField } from "../native-profile-field";
 import type { AgentRuntimeConfigFieldsProps } from "../types";
 
 const inputClass =
@@ -10,47 +11,52 @@ const inputClass =
 const instructionsFileHint =
   "Absolute path to a markdown file (e.g. SOUL.md) that defines this agent's role and persona. Rudder injects its shared operating contract separately.";
 
-export function CursorLocalConfigFields({
-  isCreate,
-  values,
-  set,
-  config,
-  eff,
-  mark,
-  hideInstructionsFile,
-}: AgentRuntimeConfigFieldsProps) {
-  if (hideInstructionsFile) return null;
+export function CursorLocalConfigFields(props: AgentRuntimeConfigFieldsProps) {
+  const {
+    isCreate,
+    values,
+    set,
+    config,
+    eff,
+    mark,
+    hideInstructionsFile,
+  } = props;
   return (
-    <Field label="Agent instructions file" hint={instructionsFileHint}>
-      <div className="flex items-center gap-2">
-        <DraftInput
-          value={
-            isCreate
-              ? values!.instructionsFilePath ?? ""
-              : eff(
-                  "agentRuntimeConfig",
-                  "instructionsFilePath",
-                  String(config.instructionsFilePath ?? ""),
-                )
-          }
-          onCommit={(v) =>
-            isCreate
-              ? set!({ instructionsFilePath: v })
-              : mark("agentRuntimeConfig", "instructionsFilePath", v || undefined)
-          }
-          immediate
-          className={inputClass}
-          placeholder="/absolute/path/to/SOUL.md"
-        />
-        <ChoosePathButton
-          selectionType="file"
-          onPathSelected={(path) =>
-            isCreate
-              ? set!({ instructionsFilePath: path })
-              : mark("agentRuntimeConfig", "instructionsFilePath", path)
-          }
-        />
-      </div>
-    </Field>
+    <>
+      <NativeProfileField {...props} />
+      {!hideInstructionsFile && (
+        <Field label="Agent instructions file" hint={instructionsFileHint}>
+          <div className="flex items-center gap-2">
+            <DraftInput
+              value={
+                isCreate
+                  ? values!.instructionsFilePath ?? ""
+                  : eff(
+                      "agentRuntimeConfig",
+                      "instructionsFilePath",
+                      String(config.instructionsFilePath ?? ""),
+                    )
+              }
+              onCommit={(v) =>
+                isCreate
+                  ? set!({ instructionsFilePath: v })
+                  : mark("agentRuntimeConfig", "instructionsFilePath", v || undefined)
+              }
+              immediate
+              className={inputClass}
+              placeholder="/absolute/path/to/SOUL.md"
+            />
+            <ChoosePathButton
+              selectionType="file"
+              onPathSelected={(path) =>
+                isCreate
+                  ? set!({ instructionsFilePath: path })
+                  : mark("agentRuntimeConfig", "instructionsFilePath", path)
+              }
+            />
+          </div>
+        </Field>
+      )}
+    </>
   );
 }

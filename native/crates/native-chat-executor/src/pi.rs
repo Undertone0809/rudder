@@ -14,12 +14,16 @@ use super::{Error, ExecutionFailure, HostPaths, PiNativeExecutionObservation, db
 use rudder_d1_persistence::native_chat::{
     NativeChatExecutionPrincipal,
     config::{LocalHostContext, ResolvedCodexConfig},
-    execution::{self, CheckpointSnapshot, CheckpointTransition, EffectDispatch, ExecutionFence},
+    execution::{
+        self, CheckpointSnapshot, CheckpointTransition, EffectDispatch, ExecutionFence,
+        NativeInterruptTarget, StopIntent,
+    },
 };
+use rudder_d1_persistence::runtime_bindings;
 use rudder_pi_rpc::{
-    ConnectionLaunchPermit, PiCleanupReceipt, PiCommand, PiEvent, PiResponse, PiRpcMessage,
-    PiRpcTransport, PiSessionTree, PiSessionTreeError, PiTransportError, PiTurnReceipt,
-    ProcessLaunch,
+    ConnectionLaunchPermit, ConnectionReceipt, PiCleanupReceipt, PiCommand, PiEvent, PiProfileMode,
+    PiResponse, PiRpcMessage, PiRpcTransport, PiSessionTree, PiSessionTreeError, PiTransportError,
+    PiTurnReceipt, ProcessLaunch,
 };
 use rudder_runtime_core::native_chat::{
     NativeChatProtocolPhase, NativeChatProvider, PiSessionSelector,
@@ -36,6 +40,12 @@ use tokio::runtime::Handle;
 const MAX_SESSION_ID_BYTES: usize = 256;
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
+const SETTLEMENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const STOP_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const LEASE_RENEW_INTERVAL: Duration = Duration::from_secs(5);
+const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(2);
+const CLEANUP_AUTHORITY_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const CLEANUP_AUTHORITY_TIMEOUT: Duration = Duration::from_secs(1);
 type ExecResult<T> = std::result::Result<T, Error>;
 
 pub(super) fn validate_config(
@@ -83,6 +93,16 @@ pub(super) fn run_claimed(
     deadline: Instant,
     paths: &HostPaths,
 ) -> std::result::Result<PiNativeExecutionObservation, ExecutionFailure> {
+    let deadline = config
+        .pi
+        .as_ref()
+        .and_then(|local| local.timeout)
+        .and_then(|timeout| Instant::now().checked_add(timeout))
+        .map_or(deadline, |configured| configured.min(deadline));
+    let cleanup_grace = config
+        .pi
+        .as_ref()
+        .map_or(CLEANUP_TIMEOUT, |local| local.cleanup_grace);
     let prepared = (|| -> ExecResult<_> {
         if cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
@@ -110,6 +130,18 @@ pub(super) fn run_claimed(
             .pi_session
             .as_ref()
             .map(|session| PathBuf::from(&session.session_file));
+        let system_prompt_file = config
+            .instruction_source_path
+            .as_ref()
+            .map(|root| root.join(&config.instruction_entry_file));
+        if config
+            .instruction_content
+            .as_ref()
+            .is_some_and(|text| !text.is_empty())
+            && system_prompt_file.is_none()
+        {
+            return Err(Error::UnsupportedConfiguration);
+        }
         let launch = ProcessLaunch {
             node_executable: local.node_executable.clone(),
             pi_cli_entry: local.pi_cli_entry.clone(),
@@ -117,8 +149,20 @@ pub(super) fn run_claimed(
             runtime_root: paths.runtime_root.clone(),
             isolated_home: local.home.clone(),
             session_dir: local.session_dir.clone(),
+            profile_mode: if local.profile_id == "operator-default" {
+                PiProfileMode::OperatorNative {
+                    session_root: local.session_dir.clone(),
+                    instruction_file: system_prompt_file.clone(),
+                }
+            } else if let Some(instruction_file) = system_prompt_file.as_ref() {
+                PiProfileMode::ManagedWithInstructions {
+                    instruction_file: instruction_file.clone(),
+                }
+            } else {
+                PiProfileMode::Managed
+            },
             resume_session_file,
-            system_prompt_file: config.instruction_source_path.clone(),
+            system_prompt_file,
             cwd: config.cwd.clone(),
             provider: local.provider.clone(),
             model: local.model.clone(),
@@ -140,18 +184,18 @@ pub(super) fn run_claimed(
             ));
         }
     };
-    let mut execution = match PiExecution::launch(
+    let mut execution = match PiExecution::launch_with_cleanup(
         launch,
         permit,
         remaining_timeout(deadline, RPC_TIMEOUT).unwrap_or_default(),
     ) {
         Ok(execution) => execution,
-        Err(error) => {
+        Err(failure) => {
             return Err(ExecutionFailure::after_claim_pi(
-                Error::PiTransport(error),
+                Error::PiTransport(failure.error),
                 execution_principal,
                 fence,
-                None,
+                failure.cleanup_receipt,
             ));
         }
     };
@@ -166,18 +210,47 @@ pub(super) fn run_claimed(
         cancelled,
         deadline,
     );
-    let _cleanup_phase =
-        execution.cleanup(remaining_timeout(deadline, CLEANUP_TIMEOUT).unwrap_or_default());
-    let observation = execution.into_observation();
-    if let Err(error) = result {
-        return Err(ExecutionFailure::after_claim_pi(
-            error,
-            execution_principal,
-            fence,
-            observation.cleanup_receipt,
-        ));
+    // Host cleanup has its own bounded deadline. Continue observing Stop and
+    // renewing the exact run/generation leases while waiting, even when the
+    // provider execution deadline has elapsed. The cleanup hook never sends a
+    // provider interrupt; all provider terminal evidence is already fixed.
+    let mut cleanup_authority = PiStopPoll::new_for_cleanup(
+        handle,
+        pool,
+        &execution_principal,
+        &fence,
+        execution.connection_receipt(),
+    );
+    if let Ok(Some(stop)) = &result {
+        // A Stop returned by execute_pi_turn has already been durably observed
+        // and bound to this exact connection.
+        cleanup_authority.seed_bound_stop(stop.clone());
     }
-    if observation.turn_receipt.is_none() || observation.cleanup_receipt.is_none() {
+    let mut cleanup_tick = || cleanup_authority.cleanup_tick(false);
+    let _cleanup_phase = execution.cleanup_with_grace_and_hook(
+        cleanup_grace,
+        cleanup_grace.saturating_add(Duration::from_secs(2)),
+        &mut cleanup_tick,
+    );
+    // Cover the narrow race where Stop is committed immediately as the host
+    // emits its terminal cleanup event and the wait loop exits.
+    cleanup_authority.cleanup_tick(true);
+    let cleanup_stop = cleanup_authority.stop().cloned();
+    let observation = execution.into_observation();
+    let stop = match result {
+        Ok(stop) => stop.or(cleanup_stop),
+        Err(error) => {
+            return Err(ExecutionFailure::after_claim_pi(
+                error,
+                execution_principal,
+                fence,
+                observation.cleanup_receipt,
+            ));
+        }
+    };
+    if (observation.turn_receipt.is_none() && stop.is_none())
+        || observation.cleanup_receipt.is_none()
+    {
         return Err(ExecutionFailure::after_claim_pi(
             Error::InvalidProviderObservation,
             execution_principal,
@@ -189,6 +262,7 @@ pub(super) fn run_claimed(
         execution_principal,
         fence,
         observation,
+        stop,
     })
 }
 
@@ -203,9 +277,20 @@ fn execute_pi_turn(
     mut snapshot: CheckpointSnapshot,
     cancelled: &AtomicBool,
     deadline: Instant,
-) -> ExecResult<()> {
+) -> ExecResult<Option<StopIntent>> {
+    let connection = execution.connection_receipt();
+    let mut stop_poll = PiStopPoll::new(handle, pool, actor, fence, connection);
+
+    // A Stop observed before any input is dispatched remains a no-submit
+    // finalization. The worker validates the empty frozen prefix and exact
+    // cleanup receipt; this adapter does not fabricate a provider turn.
+    let preflight_stopped = stop_poll.poll(deadline, true);
+    stop_poll.take_poll_error()?;
+    if preflight_stopped {
+        return Ok(stop_poll.stop().cloned());
+    }
     if snapshot.phase == NativeChatProtocolPhase::NoThreadRequest {
-        let mut prepared = db(
+        let prepared = db(
             handle,
             deadline,
             execution::advance_checkpoint(
@@ -216,7 +301,11 @@ fn execute_pi_turn(
                 snapshot.revision,
                 CheckpointTransition::PreparePiSessionStart,
             ),
-        )?;
+        );
+        let Some(mut prepared) = resolve_preinput_stop_race(prepared, &mut stop_poll, deadline)?
+        else {
+            return Ok(stop_poll.stop().cloned());
+        };
         snapshot = prepared.snapshot().clone();
         let effect = db(
             handle,
@@ -229,17 +318,28 @@ fn execute_pi_turn(
                     .ok_or(Error::InvalidProviderObservation)?,
                 None,
             ),
-        )?;
+        );
+        let Some(effect) = resolve_preinput_stop_race(effect, &mut stop_poll, deadline)? else {
+            return Ok(stop_poll.stop().cloned());
+        };
         let timeout = remaining_timeout(deadline, RPC_TIMEOUT)?;
         effect
             .dispatch(|payload| match payload {
                 EffectDispatch::StartPiSession => execution
-                    .new_session(timeout)
+                    .new_session_with_hook(timeout, &mut || stop_poll.poll(deadline, false))
                     .map(|_| ())
                     .map_err(Error::PiTransport),
                 _ => Err(Error::InvalidProviderObservation),
             })
             .map_err(Error::Persistence)??;
+        stop_poll.take_poll_error()?;
+        // The session-start RPC may take long enough for Stop to arrive. It
+        // has no user input, so retain the exact no-submit checkpoint and let
+        // the stopped finalizer close the owned process without advancing it.
+        if stop_poll.poll(deadline, true) {
+            stop_poll.take_poll_error()?;
+            return Ok(stop_poll.stop().cloned());
+        }
         let state = execution.state().ok_or(Error::InvalidProviderObservation)?;
         let selector = PiSessionSelector {
             session_id: state.session_id().to_owned(),
@@ -257,25 +357,53 @@ fn execute_pi_turn(
                 snapshot.revision,
                 CheckpointTransition::RecordPiSession { selector },
             ),
-        )?;
+        );
+        let Some(recorded) = resolve_preinput_stop_race(recorded, &mut stop_poll, deadline)? else {
+            return Ok(stop_poll.stop().cloned());
+        };
         snapshot = recorded.snapshot().clone();
     } else {
         let stored = snapshot
             .pi_session
             .as_ref()
             .ok_or(Error::InvalidProviderObservation)?;
+        // Verify the persisted native file against D1's last trusted leaf
+        // before asking Pi to load the session or preparing/marking input.
+        // Pi writes model/thinking setup records during initialization, so
+        // allow only a linear setup-metadata suffix from that exact anchor.
+        // A missing/unpersisted file is an observation failure here; a fresh
+        // session is created only by the NoThreadRequest branch above.
+        let tree = PiSessionTree::read(Path::new(&stored.session_file), &execution.session_dir)
+            .map_err(|_| Error::InvalidProviderObservation)?;
+        if tree.view().session_id != stored.session_id
+            || tree.view().session_file.to_string_lossy() != stored.session_file
+            || !tree.active_leaf_continues_with_setup_metadata(stored.leaf_id.as_deref())
+        {
+            return Err(Error::InvalidProviderObservation);
+        }
         execution
-            .resume_session(
+            .resume_session_with_hook(
                 Path::new(&stored.session_file),
                 remaining_timeout(deadline, RPC_TIMEOUT)?,
+                &mut || stop_poll.poll(deadline, false),
             )
             .map_err(Error::PiTransport)?;
+        stop_poll.take_poll_error()?;
+        if stop_poll.poll(deadline, true) {
+            stop_poll.take_poll_error()?;
+            return Ok(stop_poll.stop().cloned());
+        }
         let state = execution.state().ok_or(Error::InvalidProviderObservation)?;
         if state.session_id() != stored.session_id
             || state.session_file().to_string_lossy() != stored.session_file
         {
             return Err(Error::InvalidProviderObservation);
         }
+    }
+    let pre_input_stopped = stop_poll.poll(deadline, true);
+    stop_poll.take_poll_error()?;
+    if pre_input_stopped {
+        return Ok(stop_poll.stop().cloned());
     }
     if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
         return Err(if cancelled.load(Ordering::Acquire) {
@@ -295,15 +423,21 @@ fn execute_pi_turn(
             snapshot.revision,
             CheckpointTransition::PrepareInput,
         ),
-    )?;
+    );
+    let Some(prepared) = resolve_preinput_stop_race(prepared, &mut stop_poll, deadline)? else {
+        return Ok(stop_poll.stop().cloned());
+    };
     snapshot = prepared.snapshot().clone();
     let input = db(
         handle,
         deadline,
         execution::load_submission(pool, actor, fence),
-    )?;
+    );
+    let Some(input) = resolve_preinput_stop_race(input, &mut stop_poll, deadline)? else {
+        return Ok(stop_poll.stop().cloned());
+    };
     let input_body = input.body().to_owned();
-    let mut marked = db(
+    let marked = db(
         handle,
         deadline,
         execution::advance_checkpoint(
@@ -314,7 +448,10 @@ fn execute_pi_turn(
             snapshot.revision,
             CheckpointTransition::MarkPiInputIndeterminate,
         ),
-    )?;
+    );
+    let Some(mut marked) = resolve_preinput_stop_race(marked, &mut stop_poll, deadline)? else {
+        return Ok(stop_poll.stop().cloned());
+    };
     snapshot = marked.snapshot().clone();
     let effect = db(
         handle,
@@ -327,7 +464,10 @@ fn execute_pi_turn(
                 .ok_or(Error::InvalidProviderObservation)?,
             Some(input),
         ),
-    )?;
+    );
+    let Some(effect) = resolve_preinput_stop_race(effect, &mut stop_poll, deadline)? else {
+        return Ok(stop_poll.stop().cloned());
+    };
     let session_id = snapshot
         .pi_session
         .as_ref()
@@ -339,26 +479,91 @@ fn execute_pi_turn(
         .as_ref()
         .and_then(|session| session.leaf_id.clone());
     let timeout = remaining_timeout(deadline, RPC_TIMEOUT)?;
-    effect
-        .dispatch(|payload| match payload {
-            EffectDispatch::SubmitPiInput {
-                session_id: expected,
-                body,
-                ..
-            } if expected == session_id => execution
-                .submit_input(body, timeout)
-                .map(|_| ())
-                .map_err(Error::PiTransport),
-            _ => Err(Error::InvalidProviderObservation),
-        })
-        .map_err(Error::Persistence)??;
-    if !execution
-        .wait_until_settled(remaining_timeout(deadline, Duration::from_secs(3600))?)
-        .map_err(Error::PiTransport)?
-        .is_provider_terminal()
     {
-        return Err(Error::InvalidProviderObservation);
+        let mut poll_hook = || stop_poll.poll(deadline, false);
+        effect
+            .dispatch(|payload| match payload {
+                EffectDispatch::SubmitPiInput {
+                    session_id: expected,
+                    body,
+                    ..
+                } if expected == session_id => execution
+                    .submit_input_with_hook(body, timeout, &mut poll_hook)
+                    .map(|_| ())
+                    .map_err(Error::PiTransport),
+                _ => Err(Error::InvalidProviderObservation),
+            })
+            .map_err(Error::Persistence)??;
     }
+    stop_poll.take_poll_error()?;
+
+    let target = NativeInterruptTarget::Pi {
+        session_id: session_id.clone(),
+    };
+    let mut abort_reserved = false;
+    loop {
+        let (phase, _stop_observed) = {
+            let mut poll_hook = || stop_poll.poll(deadline, false) && !abort_reserved;
+            execution
+                .wait_until_settled_with_hook(
+                    remaining_timeout(deadline, Duration::from_secs(3600))?,
+                    &mut poll_hook,
+                )
+                .map_err(Error::PiTransport)?
+        };
+        stop_poll.take_poll_error()?;
+        if stop_poll.stop().is_some() && !abort_reserved && !execution.agent_ended() {
+            let stop = stop_poll.stop().ok_or(Error::InvalidProviderObservation)?;
+            let permit = db(
+                handle,
+                deadline,
+                execution::reserve_native_interrupt(
+                    pool,
+                    actor,
+                    fence,
+                    stop,
+                    &stop_poll.connection,
+                    &target,
+                ),
+            )?;
+            abort_reserved = true;
+            if let Some(permit) = permit {
+                let timeout = remaining_timeout(deadline, INTERRUPT_TIMEOUT)?;
+                let abort = permit
+                    .dispatch(&stop_poll.connection, &target, || execution.abort(timeout))
+                    .map_err(Error::Persistence)?;
+                match abort {
+                    Ok(()) => (),
+                    // Pi may have crossed its terminal edge after Stop was
+                    // observed but before Abort reached the RPC loop. That is
+                    // not an acknowledgment; continue waiting for the exact
+                    // terminal tree and idle proof instead of retrying Abort.
+                    Err(PiAdapterError::InvalidPhase)
+                    | Err(PiAdapterError::Transport(PiTransportError::InvalidMessage)) => (),
+                    // A negative provider response is likewise not terminal.
+                    // Do not retry; the normal receive loop may still observe
+                    // a naturally completed exact turn before its deadline.
+                    Err(PiAdapterError::CommandRejected { command }) if command == "abort" => (),
+                    Err(error) => return Err(Error::PiTransport(error)),
+                }
+            }
+            continue;
+        }
+        if phase.is_provider_terminal() {
+            break;
+        }
+        let reason = execution
+            .unknown_reason()
+            .ok_or(Error::InvalidProviderObservation)?;
+        return Err(Error::PiTransport(PiAdapterError::UnknownObservation(
+            reason,
+        )));
+    }
+    // Re-read Stop before changing any normal checkpoint. A Stop owns its
+    // stopping checkpoint and the Pi finalizer commits the terminal result.
+    let _ = stop_poll.poll(deadline, true);
+    stop_poll.take_poll_error()?;
+    let stop = stop_poll.stop().cloned();
     execution
         .take_turn_receipt(prior_leaf_id.as_deref(), &input_body)
         .map_err(Error::PiTransport)?;
@@ -367,6 +572,9 @@ fn execute_pi_turn(
         .ok_or(Error::InvalidProviderObservation)?;
     if receipt.session_id() != session_id || receipt.input_fingerprint().is_empty() {
         return Err(Error::InvalidProviderObservation);
+    }
+    if stop.is_some() {
+        return Ok(stop);
     }
     let recorded = db(
         handle,
@@ -382,9 +590,12 @@ fn execute_pi_turn(
                 entry_id: receipt.input_entry_id().to_owned(),
             },
         ),
-    )?;
+    );
+    let Some(recorded) = resolve_terminal_stop_race(recorded, &mut stop_poll, deadline)? else {
+        return Ok(stop_poll.stop().cloned());
+    };
     snapshot = recorded.snapshot().clone();
-    db(
+    let terminal = db(
         handle,
         deadline,
         execution::advance_checkpoint(
@@ -399,8 +610,317 @@ fn execute_pi_turn(
                 next_leaf_id: receipt.leaf_id().to_owned(),
             },
         ),
-    )?;
-    Ok(())
+    );
+    let Some(_) = resolve_terminal_stop_race(terminal, &mut stop_poll, deadline)? else {
+        return Ok(stop_poll.stop().cloned());
+    };
+    Ok(None)
+}
+
+/// A 409 during a pre-input transition can mean the operator committed Stop
+/// between the previous poll and this database write. Resolve that race by
+/// reading and binding the durable Stop; never infer it from an HTTP status
+/// alone.
+fn resolve_preinput_stop_race<T>(
+    result: ExecResult<T>,
+    stop_poll: &mut PiStopPoll<'_>,
+    deadline: Instant,
+) -> ExecResult<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_conflict(&error) => {
+            if stop_poll.poll(deadline, true) {
+                stop_poll.take_poll_error()?;
+                if stop_poll.stop().is_some() {
+                    return Ok(None);
+                }
+            }
+            Err(error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Resolve Stop that races with a normal Pi terminal checkpoint. The exact
+/// provider receipt already exists, so a proven Stop routes it through the Pi
+/// stopped finalizer and skips any further normal checkpoint writes.
+fn resolve_terminal_stop_race<T>(
+    result: ExecResult<T>,
+    stop_poll: &mut PiStopPoll<'_>,
+    deadline: Instant,
+) -> ExecResult<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_conflict(&error) => {
+            if stop_poll.poll(deadline, true) {
+                stop_poll.take_poll_error()?;
+                if stop_poll.stop().is_some() {
+                    return Ok(None);
+                }
+            }
+            Err(error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn is_conflict(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Persistence(runtime_bindings::Error::Http(409, _))
+    )
+}
+
+struct PiStopPoll<'a> {
+    handle: &'a Handle,
+    pool: &'a PgPool,
+    actor: &'a NativeChatExecutionPrincipal,
+    fence: &'a ExecutionFence,
+    connection: ConnectionReceipt,
+    stop: Option<StopIntent>,
+    stop_checked: Option<Instant>,
+    lease_renewed: Instant,
+    poll_error: Option<Error>,
+}
+
+impl<'a> PiStopPoll<'a> {
+    fn new(
+        handle: &'a Handle,
+        pool: &'a PgPool,
+        actor: &'a NativeChatExecutionPrincipal,
+        fence: &'a ExecutionFence,
+        connection: ConnectionReceipt,
+    ) -> Self {
+        Self {
+            handle,
+            pool,
+            actor,
+            fence,
+            connection,
+            stop: None,
+            stop_checked: None,
+            lease_renewed: Instant::now(),
+            poll_error: None,
+        }
+    }
+
+    fn new_for_cleanup(
+        handle: &'a Handle,
+        pool: &'a PgPool,
+        actor: &'a NativeChatExecutionPrincipal,
+        fence: &'a ExecutionFence,
+        connection: ConnectionReceipt,
+    ) -> Self {
+        let mut poll = Self::new(handle, pool, actor, fence, connection);
+        // Cleanup starts with a renewal due immediately: the provider turn may
+        // have consumed most of either lease before host shutdown begins.
+        poll.lease_renewed = Instant::now()
+            .checked_sub(LEASE_RENEW_INTERVAL)
+            .unwrap_or_else(Instant::now);
+        poll
+    }
+
+    fn seed_bound_stop(&mut self, stop: StopIntent) {
+        self.stop = Some(stop);
+    }
+
+    /// Maintain D1 authority during the process host's bounded cleanup wait.
+    /// This path intentionally only observes/binds Stop and renews leases; it
+    /// never dispatches Abort after provider-terminal evidence exists.
+    fn cleanup_tick(&mut self, force: bool) {
+        let operation_deadline = cleanup_operation_deadline();
+        let now = Instant::now();
+        let should_observe = force
+            || self.stop_checked.is_none_or(|last| {
+                now.saturating_duration_since(last) >= CLEANUP_AUTHORITY_POLL_INTERVAL
+            });
+        if should_observe && self.stop.is_none() {
+            self.observe_cleanup_stop(operation_deadline);
+        }
+
+        let now = Instant::now();
+        if force || now.saturating_duration_since(self.lease_renewed) >= LEASE_RENEW_INTERVAL {
+            // Throttle failed lease renewals to the cleanup polling interval;
+            // do not let a transient D1 error turn this into a request loop.
+            let result = if let Some(stop) = &self.stop {
+                db(
+                    self.handle,
+                    operation_deadline,
+                    execution::renew_stopping_lease(self.pool, self.actor, self.fence, stop),
+                )
+            } else {
+                db(
+                    self.handle,
+                    operation_deadline,
+                    execution::renew_lease(self.pool, self.actor, self.fence),
+                )
+            };
+            match result {
+                Ok(_) => self.lease_renewed = Instant::now(),
+                Err(error) if self.stop.is_none() && is_conflict(&error) => {
+                    self.observe_cleanup_stop(operation_deadline);
+                    if let Some(stop) = &self.stop {
+                        match db(
+                            self.handle,
+                            operation_deadline,
+                            execution::renew_stopping_lease(
+                                self.pool, self.actor, self.fence, stop,
+                            ),
+                        ) {
+                            Ok(_) => self.lease_renewed = Instant::now(),
+                            Err(error) => {
+                                self.remember_cleanup_error(error);
+                                self.retry_cleanup_renewal_soon();
+                            }
+                        }
+                    } else {
+                        self.remember_cleanup_error(error);
+                        self.retry_cleanup_renewal_soon();
+                    }
+                }
+                Err(error) => {
+                    self.remember_cleanup_error(error);
+                    self.retry_cleanup_renewal_soon();
+                }
+            }
+        }
+    }
+
+    fn observe_cleanup_stop(&mut self, deadline: Instant) {
+        self.stop_checked = Some(Instant::now());
+        match db(
+            self.handle,
+            deadline,
+            execution::observe_stop(self.pool, self.actor, self.fence),
+        ) {
+            Ok(Some(stop)) => self.register_stop(stop, deadline),
+            Ok(None) => (),
+            Err(error) => self.remember_cleanup_error(error),
+        }
+    }
+
+    fn remember_cleanup_error(&mut self, error: Error) {
+        if self.poll_error.is_none() {
+            self.poll_error = Some(error);
+        }
+    }
+
+    fn retry_cleanup_renewal_soon(&mut self) {
+        let backdate = LEASE_RENEW_INTERVAL.saturating_sub(CLEANUP_AUTHORITY_POLL_INTERVAL);
+        self.lease_renewed = Instant::now()
+            .checked_sub(backdate)
+            .unwrap_or_else(Instant::now);
+    }
+
+    /// Called from the bounded Pi receive loop. `true` asks the provider wait
+    /// to return control so the caller can reserve the one-use Abort permit.
+    /// It is also true after a persistence error, which is surfaced once the
+    /// in-flight RPC has been reconciled.
+    fn poll(&mut self, deadline: Instant, force: bool) -> bool {
+        if self.poll_error.is_some() {
+            return true;
+        }
+        let now = Instant::now();
+        if force
+            || self
+                .stop_checked
+                .is_none_or(|last| now.saturating_duration_since(last) >= STOP_POLL_INTERVAL)
+        {
+            if self.stop.is_none() {
+                match db(
+                    self.handle,
+                    deadline,
+                    execution::observe_stop(self.pool, self.actor, self.fence),
+                ) {
+                    Ok(Some(stop)) => self.register_stop(stop, deadline),
+                    Ok(None) => (),
+                    Err(error) => self.poll_error = Some(error),
+                }
+            }
+            self.stop_checked = Some(now);
+        }
+        if self.poll_error.is_none()
+            && Instant::now().saturating_duration_since(self.lease_renewed) >= LEASE_RENEW_INTERVAL
+        {
+            let renewal = if let Some(stop) = &self.stop {
+                db(
+                    self.handle,
+                    deadline,
+                    execution::renew_stopping_lease(self.pool, self.actor, self.fence, stop),
+                )
+            } else {
+                db(
+                    self.handle,
+                    deadline,
+                    execution::renew_lease(self.pool, self.actor, self.fence),
+                )
+            };
+            match renewal {
+                Ok(_) => self.lease_renewed = Instant::now(),
+                Err(error)
+                    if self.stop.is_none()
+                        && matches!(
+                            &error,
+                            Error::Persistence(runtime_bindings::Error::Http(409, _))
+                        ) =>
+                {
+                    match db(
+                        self.handle,
+                        deadline,
+                        execution::observe_stop(self.pool, self.actor, self.fence),
+                    ) {
+                        Ok(Some(stop)) => {
+                            self.register_stop(stop, deadline);
+                            if let Some(stop) = &self.stop {
+                                match db(
+                                    self.handle,
+                                    deadline,
+                                    execution::renew_stopping_lease(
+                                        self.pool, self.actor, self.fence, stop,
+                                    ),
+                                ) {
+                                    Ok(_) => self.lease_renewed = Instant::now(),
+                                    Err(error) => self.poll_error = Some(error),
+                                }
+                            }
+                        }
+                        Ok(None) => self.poll_error = Some(error),
+                        Err(observe_error) => self.poll_error = Some(observe_error),
+                    }
+                }
+                Err(error) => self.poll_error = Some(error),
+            }
+        }
+        self.stop.is_some() || self.poll_error.is_some()
+    }
+
+    fn register_stop(&mut self, stop: StopIntent, deadline: Instant) {
+        match db(
+            self.handle,
+            deadline,
+            execution::bind_stopping_connection(
+                self.pool,
+                self.actor,
+                self.fence,
+                &stop,
+                &self.connection,
+            ),
+        ) {
+            Ok(()) => self.stop = Some(stop),
+            Err(error) => self.remember_cleanup_error(error),
+        }
+    }
+
+    fn stop(&self) -> Option<&StopIntent> {
+        self.stop.as_ref()
+    }
+
+    fn take_poll_error(&mut self) -> ExecResult<()> {
+        match self.poll_error.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
 }
 
 fn remaining_timeout(deadline: Instant, max: Duration) -> ExecResult<Duration> {
@@ -412,12 +932,17 @@ fn remaining_timeout(deadline: Instant, max: Duration) -> ExecResult<Duration> {
     }
 }
 
+fn cleanup_operation_deadline() -> Instant {
+    Instant::now() + CLEANUP_AUTHORITY_TIMEOUT
+}
+
 /// Provider state that can be safely handed to the shared Native worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PiExecutionPhase {
     /// The owned process exists and passed the process-host spawn barrier.
     Spawned,
-    /// A native Pi session and its exact managed session file were observed.
+    /// Pi reported a native identity and exact managed file location. A new
+    /// session may remain unflushed until its first assistant message.
     SessionReady,
     /// Pi accepted one input RPC. This is not a provider terminal result.
     InputAccepted,
@@ -457,11 +982,27 @@ pub enum PiUnknownReason {
     CleanupNotProven,
 }
 
+impl PiUnknownReason {
+    /// Bounded, payload-free classification for diagnostics.
+    pub const fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::CommandRejected => "pi_command_rejected",
+            Self::MalformedState => "pi_malformed_state",
+            Self::SessionPathUnavailable => "pi_session_path_unavailable",
+            Self::AgentSettledBeforeAgentEnd => "pi_agent_settled_before_agent_end",
+            Self::AgentEndedWithoutSettlement => "pi_agent_ended_without_settlement",
+            Self::ExtensionError => "pi_extension_error",
+            Self::CleanupNotProven => "pi_cleanup_not_proven",
+        }
+    }
+}
+
 /// Bounded `get_state` data. The raw response is intentionally not retained.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PiStateSnapshot {
     session_id: String,
     session_file: PathBuf,
+    session_file_persisted: bool,
     is_streaming: Option<bool>,
     is_compacting: Option<bool>,
     pending_message_count: Option<u64>,
@@ -475,6 +1016,10 @@ impl PiStateSnapshot {
 
     pub fn session_file(&self) -> &Path {
         &self.session_file
+    }
+
+    pub fn session_file_persisted(&self) -> bool {
+        self.session_file_persisted
     }
 
     pub fn is_streaming(&self) -> Option<bool> {
@@ -494,7 +1039,8 @@ impl PiStateSnapshot {
     }
 
     fn proves_idle_queue(&self) -> bool {
-        self.is_streaming == Some(false)
+        self.session_file_persisted
+            && self.is_streaming == Some(false)
             && self.is_compacting == Some(false)
             && self.pending_message_count == Some(0)
     }
@@ -534,10 +1080,54 @@ pub enum PiAdapterError {
     CommandRejected { command: String },
     #[error("Pi adapter operation deadline expired")]
     Deadline,
+    #[error("Pi provider observation was inconclusive")]
+    UnknownObservation(PiUnknownReason),
     #[error("Pi adapter is not ready for this operation")]
     InvalidPhase,
     #[error("Pi session path is outside the managed session directory")]
     InvalidSessionPath,
+}
+
+/// Launch failures can occur after the process host has already emitted its
+/// correlated terminal receipt. Keep that opaque cleanup evidence attached to
+/// the original launch error so the D1 worker can apply its normal fenced
+/// pre-submission Stop path without inferring provider input acceptance.
+struct PiLaunchFailure {
+    error: PiAdapterError,
+    cleanup_receipt: Option<PiCleanupReceipt>,
+}
+
+impl PiLaunchFailure {
+    fn new(error: PiAdapterError, cleanup_receipt: Option<PiCleanupReceipt>) -> Box<Self> {
+        Box::new(Self {
+            error,
+            cleanup_receipt,
+        })
+    }
+}
+
+impl std::fmt::Debug for PiLaunchFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PiLaunchFailure")
+            .field("diagnostic_code", &self.error.diagnostic_code())
+            .field("has_cleanup_receipt", &self.cleanup_receipt.is_some())
+            .finish()
+    }
+}
+
+impl PiAdapterError {
+    pub(crate) fn diagnostic_code(&self) -> &'static str {
+        match self {
+            Self::Transport(error) => error.diagnostic_code(),
+            Self::SessionTree(_) => "pi_session_tree",
+            Self::CommandRejected { .. } => "pi_command_rejected",
+            Self::Deadline => "pi_deadline",
+            Self::UnknownObservation(reason) => reason.diagnostic_code(),
+            Self::InvalidPhase => "pi_invalid_phase",
+            Self::InvalidSessionPath => "pi_invalid_session_path",
+        }
+    }
 }
 
 /// One owned Pi process and its provider-specific lifecycle reducer.
@@ -563,9 +1153,23 @@ impl PiExecution {
         permit: ConnectionLaunchPermit,
         timeout: Duration,
     ) -> Result<Self, PiAdapterError> {
-        let session_dir = canonical_session_dir(&launch.session_dir)?;
-        let mut transport = PiRpcTransport::launch(launch, permit)?;
-        transport.wait_spawned(timeout)?;
+        Self::launch_with_cleanup(launch, permit, timeout).map_err(|failure| failure.error)
+    }
+
+    fn launch_with_cleanup(
+        launch: ProcessLaunch,
+        permit: ConnectionLaunchPermit,
+        timeout: Duration,
+    ) -> Result<Self, Box<PiLaunchFailure>> {
+        let session_dir = canonical_session_dir(&launch.session_dir)
+            .map_err(|error| PiLaunchFailure::new(error, None))?;
+        let mut transport = PiRpcTransport::launch(launch, permit)
+            .map_err(PiAdapterError::from)
+            .map_err(|error| PiLaunchFailure::new(error, None))?;
+        if let Err(error) = transport.wait_spawned(timeout) {
+            let cleanup_receipt = transport.take_cleanup_receipt();
+            return Err(PiLaunchFailure::new(error.into(), cleanup_receipt));
+        }
         Ok(Self {
             transport,
             session_dir,
@@ -601,21 +1205,61 @@ impl PiExecution {
         self.turn_receipt.as_ref()
     }
 
+    fn connection_receipt(&self) -> ConnectionReceipt {
+        self.transport.connection_receipt()
+    }
+
     /// Read and validate the exact native state. A rejected command is an
     /// explicit Unknown observation instead of a fabricated empty Session.
     pub fn get_state(&mut self, timeout: Duration) -> Result<PiExecutionPhase, PiAdapterError> {
-        let response = self.command_response(PiCommand::GetState, timeout)?;
+        self.read_state(timeout, false)
+    }
+
+    fn get_state_with_hook(
+        &mut self,
+        timeout: Duration,
+        hook: &mut impl FnMut() -> bool,
+    ) -> Result<(PiExecutionPhase, bool), PiAdapterError> {
+        self.read_state_with_hook(timeout, false, hook)
+    }
+
+    fn read_state(
+        &mut self,
+        timeout: Duration,
+        newly_created: bool,
+    ) -> Result<PiExecutionPhase, PiAdapterError> {
+        self.read_state_with_hook(timeout, newly_created, &mut || false)
+            .map(|(phase, _)| phase)
+    }
+
+    fn read_state_with_hook(
+        &mut self,
+        timeout: Duration,
+        newly_created: bool,
+        hook: &mut impl FnMut() -> bool,
+    ) -> Result<(PiExecutionPhase, bool), PiAdapterError> {
+        let (response, stop_observed) =
+            self.command_response_with_hook(PiCommand::GetState, timeout, hook)?;
         if !response.success() {
             self.mark_unknown(PiUnknownReason::CommandRejected);
-            return Ok(self.phase);
+            return Ok((self.phase, stop_observed));
         }
-        let state = match parse_state(response.data(), &self.session_dir) {
+        let state = match if newly_created {
+            parse_new_session_state(response.data(), &self.session_dir)
+        } else {
+            parse_state(response.data(), &self.session_dir)
+        } {
             Ok(state) => state,
             Err(reason) => {
                 self.mark_unknown(reason);
-                return Ok(self.phase);
+                return Ok((self.phase, stop_observed));
             }
         };
+        self.transport.bind_session_state(
+            state.session_id(),
+            state.session_file(),
+            state.session_file_persisted(),
+        )?;
         self.state = Some(state);
         if !matches!(
             self.phase,
@@ -627,7 +1271,7 @@ impl PiExecution {
         ) {
             self.phase = PiExecutionPhase::SessionReady;
         }
-        Ok(self.phase)
+        Ok((self.phase, stop_observed))
     }
 
     /// Switch to the exact persisted session file, then re-read state. The
@@ -637,28 +1281,51 @@ impl PiExecution {
         session_file: &Path,
         timeout: Duration,
     ) -> Result<PiExecutionPhase, PiAdapterError> {
+        self.resume_session_with_hook(session_file, timeout, &mut || false)
+            .map(|(phase, _)| phase)
+    }
+
+    fn resume_session_with_hook(
+        &mut self,
+        session_file: &Path,
+        timeout: Duration,
+        hook: &mut impl FnMut() -> bool,
+    ) -> Result<(PiExecutionPhase, bool), PiAdapterError> {
         let session_file = validate_session_file(session_file, &self.session_dir)?;
-        let response = self.command_response(
+        let (response, stop_observed) = self.command_response_with_hook(
             PiCommand::SwitchSession(&session_file.to_string_lossy()),
             timeout,
+            hook,
         )?;
         if !response.success() {
             self.mark_unknown(PiUnknownReason::CommandRejected);
-            return Ok(self.phase);
+            return Ok((self.phase, stop_observed));
         }
-        self.get_state(timeout)
+        let (phase, state_stop_observed) = self.get_state_with_hook(timeout, hook)?;
+        Ok((phase, stop_observed || state_stop_observed))
     }
 
     /// Ask Pi to create a native Session and re-read its identity. This is
     /// intentionally separate from `launch`: a process may already have a
     /// provider-created Session that must be resumed instead.
     pub fn new_session(&mut self, timeout: Duration) -> Result<PiExecutionPhase, PiAdapterError> {
-        let response = self.command_response(PiCommand::NewSession, timeout)?;
+        self.new_session_with_hook(timeout, &mut || false)
+            .map(|(phase, _)| phase)
+    }
+
+    fn new_session_with_hook(
+        &mut self,
+        timeout: Duration,
+        hook: &mut impl FnMut() -> bool,
+    ) -> Result<(PiExecutionPhase, bool), PiAdapterError> {
+        let (response, stop_observed) =
+            self.command_response_with_hook(PiCommand::NewSession, timeout, hook)?;
         if !response.success() {
             self.mark_unknown(PiUnknownReason::CommandRejected);
-            return Ok(self.phase);
+            return Ok((self.phase, stop_observed));
         }
-        self.get_state(timeout)
+        let (phase, state_stop_observed) = self.read_state_with_hook(timeout, true, hook)?;
+        Ok((phase, stop_observed || state_stop_observed))
     }
 
     /// Submit exactly one input. The returned request id only correlates the
@@ -668,20 +1335,64 @@ impl PiExecution {
         input: &str,
         timeout: Duration,
     ) -> Result<PiExecutionPhase, PiAdapterError> {
+        self.submit_input_with_hook(input, timeout, &mut || false)
+            .map(|(phase, _)| phase)
+    }
+
+    fn submit_input_with_hook(
+        &mut self,
+        input: &str,
+        timeout: Duration,
+        hook: &mut impl FnMut() -> bool,
+    ) -> Result<(PiExecutionPhase, bool), PiAdapterError> {
         if input.is_empty() || !matches!(self.phase, PiExecutionPhase::SessionReady) {
             return Err(PiAdapterError::InvalidPhase);
         }
-        let request_id = self.command_response(PiCommand::Prompt(input), timeout)?;
-        if !request_id.success() {
-            self.mark_unknown(PiUnknownReason::CommandRejected);
-            return Ok(self.phase);
-        }
-        self.input_request_id = Some(request_id.id().to_owned());
+        // Bind lifecycle observations to the one prompt before waiting for its
+        // preflight response. Pi may emit run events while that response is
+        // pending; command_response consumes those events from the same RPC
+        // stream, so initializing after it returns would lose valid evidence.
+        let request_id = self.transport.request(PiCommand::Prompt(input))?;
+        self.input_request_id = Some(request_id.clone());
         self.agent_started = false;
         self.agent_ended = false;
         self.agent_settled = false;
         self.phase = PiExecutionPhase::InputAccepted;
-        Ok(self.phase)
+
+        let (response, stop_observed) =
+            self.response_for_request_with_hook(&request_id, timeout, hook)?;
+        if !response.success() {
+            self.mark_unknown(PiUnknownReason::CommandRejected);
+            return Ok((self.phase, stop_observed));
+        }
+        Ok((self.phase, stop_observed))
+    }
+
+    /// Send a single native abort for this accepted prompt. The transport
+    /// consumes its attempt marker before writing, so ambiguous delivery is
+    /// never retried on the same provider connection. The response is only an
+    /// acknowledgement; callers must still wait for Pi's exact terminal tree.
+    fn abort(&mut self, timeout: Duration) -> Result<(), PiAdapterError> {
+        if self.input_request_id.is_none()
+            || self.agent_ended
+            || !matches!(
+                self.phase,
+                PiExecutionPhase::InputAccepted | PiExecutionPhase::AgentRunning
+            )
+        {
+            return Err(PiAdapterError::InvalidPhase);
+        }
+        let response = self.command_response(PiCommand::Abort, timeout)?;
+        if !response.success() {
+            return Err(PiAdapterError::CommandRejected {
+                command: "abort".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    fn agent_ended(&self) -> bool {
+        self.agent_ended
     }
 
     /// Wait for provider settlement, preserving the distinction between
@@ -690,6 +1401,15 @@ impl PiExecution {
         &mut self,
         timeout: Duration,
     ) -> Result<PiExecutionPhase, PiAdapterError> {
+        self.wait_until_settled_with_hook(timeout, &mut || false)
+            .map(|(phase, _)| phase)
+    }
+
+    fn wait_until_settled_with_hook(
+        &mut self,
+        timeout: Duration,
+        hook: &mut impl FnMut() -> bool,
+    ) -> Result<(PiExecutionPhase, bool), PiAdapterError> {
         if !matches!(
             self.phase,
             PiExecutionPhase::InputAccepted
@@ -699,24 +1419,95 @@ impl PiExecution {
             return Err(PiAdapterError::InvalidPhase);
         }
         let deadline = Instant::now() + timeout;
+        let mut stop_observed = false;
+        let mut next_hook = Instant::now();
         while Instant::now() < deadline {
+            if Instant::now() >= next_hook {
+                stop_observed |= hook();
+                next_hook = Instant::now() + STOP_POLL_INTERVAL;
+            }
+            if stop_observed {
+                // The prompt response may have been parsed in the same host
+                // frame as lifecycle events. Reconcile the bounded in-memory
+                // queue before deciding that the provider is still active;
+                // otherwise a queued agent_end could trigger a needless Abort.
+                self.drain_available_events()?;
+            }
+            if stop_observed && !self.agent_ended {
+                // The caller owns the D1 permit and will issue one Abort on
+                // this same connection. The Stop signal itself is not a
+                // provider terminal observation.
+                return Ok((self.phase, true));
+            }
             if self.agent_settled {
                 if !self.agent_ended {
                     self.mark_unknown(PiUnknownReason::AgentSettledBeforeAgentEnd);
-                    return Ok(self.phase);
+                    return Ok((self.phase, stop_observed));
                 }
-                if self.state.is_none() {
-                    self.get_state(remaining(deadline))?;
+                // The pre-prompt state may name an unflushed session. Require
+                // a new strict observation after terminal events, which also
+                // binds the same native file as persisted in the transport.
+                let (state_phase, state_stop) =
+                    self.get_state_with_hook(remaining(deadline), hook)?;
+                stop_observed |= state_stop;
+                if state_phase == PiExecutionPhase::Unknown {
+                    return Ok((self.phase, stop_observed));
                 }
-                if self.state.is_some() {
+                if self
+                    .state
+                    .as_ref()
+                    .is_some_and(PiStateSnapshot::proves_idle_queue)
+                    && self.phase != PiExecutionPhase::Unknown
+                {
                     self.phase = PiExecutionPhase::Settled;
-                    return Ok(self.phase);
+                    return Ok((self.phase, stop_observed));
                 }
                 self.mark_unknown(PiUnknownReason::MalformedState);
-                return Ok(self.phase);
+                return Ok((self.phase, stop_observed));
             }
-            let message = match self.transport.receive(remaining(deadline)) {
+            if self.agent_ended {
+                // Pi 0.76 emits agent_end before its awaited lifecycle
+                // listeners have settled, and documents agent_end as the last
+                // event for a run. A single active get_state followed by a
+                // wait for another event can therefore lose the wakeup. Poll
+                // only the read-only state command until idle proof or the
+                // existing execution deadline; never resubmit the prompt.
+                let (state_phase, state_stop) =
+                    self.get_state_with_hook(remaining(deadline).min(RPC_TIMEOUT), hook)?;
+                stop_observed |= state_stop;
+                if state_phase == PiExecutionPhase::Unknown {
+                    return Ok((state_phase, stop_observed));
+                }
+                if self
+                    .state
+                    .as_ref()
+                    .is_some_and(PiStateSnapshot::proves_idle_queue)
+                {
+                    self.phase = PiExecutionPhase::Settled;
+                    return Ok((self.phase, stop_observed));
+                }
+                if self.agent_settled
+                    || !self.state.as_ref().is_some_and(|state| {
+                        state.is_streaming.is_some()
+                            && state.is_compacting.is_some()
+                            && state.pending_message_count.is_some()
+                    })
+                {
+                    self.mark_unknown(PiUnknownReason::MalformedState);
+                    return Ok((self.phase, stop_observed));
+                }
+                let pause = remaining(deadline).min(SETTLEMENT_POLL_INTERVAL);
+                if pause.is_zero() {
+                    break;
+                }
+                std::thread::sleep(pause);
+                continue;
+            }
+            let until_hook = next_hook.saturating_duration_since(Instant::now());
+            let receive_timeout = remaining(deadline).min(until_hook);
+            let message = match self.transport.receive(receive_timeout) {
                 Ok(message) => message,
+                Err(PiTransportError::Timeout) if Instant::now() < deadline => continue,
                 Err(PiTransportError::Timeout) => break,
                 Err(error) => return Err(error.into()),
             };
@@ -731,39 +1522,28 @@ impl PiExecution {
                 }
                 PiRpcMessage::Event(event) => self.observe_event(&event),
             }
-            if self.phase == PiExecutionPhase::AgentEnded && !self.agent_settled {
-                // Older Pi versions have no agent_settled event. Their state
-                // endpoint must prove that streaming, compaction and queued
-                // follow-up input are all idle before we promote completion.
-                let state_phase = self.get_state(remaining(deadline))?;
-                if state_phase == PiExecutionPhase::Unknown {
-                    return Ok(state_phase);
-                }
-                if state_phase == PiExecutionPhase::AgentEnded {
-                    if self
-                        .state
-                        .as_ref()
-                        .is_some_and(PiStateSnapshot::proves_idle_queue)
-                    {
-                        self.phase = PiExecutionPhase::Settled;
-                        return Ok(self.phase);
-                    }
-                    if self.state.as_ref().is_some_and(|state| {
-                        state.is_streaming.is_some()
-                            && state.is_compacting.is_some()
-                            && state.pending_message_count.is_some()
-                    }) {
-                        // A valid but still active state can continue to emit
-                        // retries/compaction events. Keep waiting.
-                        continue;
-                    }
-                    self.mark_unknown(PiUnknownReason::AgentEndedWithoutSettlement);
-                    return Ok(self.phase);
-                }
-            }
         }
         self.mark_unknown(PiUnknownReason::AgentEndedWithoutSettlement);
-        Ok(self.phase)
+        Ok((self.phase, stop_observed))
+    }
+
+    fn drain_available_events(&mut self) -> Result<(), PiAdapterError> {
+        for _ in 0..128 {
+            match self.transport.receive(Duration::ZERO) {
+                Ok(PiRpcMessage::Event(event)) => self.observe_event(&event),
+                Ok(PiRpcMessage::Response(_)) => {
+                    return Err(PiAdapterError::Transport(
+                        PiTransportError::MismatchedResponse,
+                    ));
+                }
+                Err(PiTransportError::Timeout) => return Ok(()),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        match self.transport.receive(Duration::ZERO) {
+            Err(PiTransportError::Timeout) => Ok(()),
+            Ok(_) | Err(_) => Err(PiAdapterError::Transport(PiTransportError::OutputOverflow)),
+        }
     }
 
     /// Read the exact persisted Session tree and mint the provider-native
@@ -788,13 +1568,33 @@ impl PiExecution {
     /// Stop the exact owned process and retain cleanup only when the host
     /// emitted its matching terminal receipt.
     pub fn cleanup(&mut self, timeout: Duration) -> Result<PiExecutionPhase, PiAdapterError> {
-        self.transport.stop(timeout)?;
-        let Some(receipt) = self.transport.take_cleanup_receipt() else {
-            self.mark_unknown(PiUnknownReason::CleanupNotProven);
+        self.cleanup_with_grace(Duration::from_millis(500), timeout)
+    }
+
+    pub fn cleanup_with_grace(
+        &mut self,
+        grace: Duration,
+        timeout: Duration,
+    ) -> Result<PiExecutionPhase, PiAdapterError> {
+        self.cleanup_with_grace_and_hook(grace, timeout, &mut || {})
+    }
+
+    pub fn cleanup_with_grace_and_hook(
+        &mut self,
+        grace: Duration,
+        timeout: Duration,
+        hook: &mut impl FnMut(),
+    ) -> Result<PiExecutionPhase, PiAdapterError> {
+        let stop_result = self
+            .transport
+            .stop_with_grace_and_hook(grace, timeout, hook);
+        if let Some(receipt) = self.transport.take_cleanup_receipt() {
+            self.cleanup_receipt = Some(receipt);
+            self.phase = PiExecutionPhase::Cleaned;
             return Ok(self.phase);
-        };
-        self.cleanup_receipt = Some(receipt);
-        self.phase = PiExecutionPhase::Cleaned;
+        }
+        self.mark_unknown(PiUnknownReason::CleanupNotProven);
+        stop_result?;
         Ok(self.phase)
     }
 
@@ -814,13 +1614,44 @@ impl PiExecution {
         command: PiCommand<'_>,
         timeout: Duration,
     ) -> Result<PiResponse, PiAdapterError> {
+        self.command_response_with_hook(command, timeout, &mut || false)
+            .map(|(response, _)| response)
+    }
+
+    fn command_response_with_hook(
+        &mut self,
+        command: PiCommand<'_>,
+        timeout: Duration,
+        hook: &mut impl FnMut() -> bool,
+    ) -> Result<(PiResponse, bool), PiAdapterError> {
         let request_id = self.transport.request(command)?;
+        self.response_for_request_with_hook(&request_id, timeout, hook)
+    }
+
+    fn response_for_request_with_hook(
+        &mut self,
+        request_id: &str,
+        timeout: Duration,
+        hook: &mut impl FnMut() -> bool,
+    ) -> Result<(PiResponse, bool), PiAdapterError> {
         let deadline = Instant::now() + timeout;
+        let mut stop_observed = false;
+        let mut next_hook = Instant::now();
         loop {
-            let message = self.transport.receive(remaining(deadline))?;
+            if Instant::now() >= next_hook {
+                stop_observed |= hook();
+                next_hook = Instant::now() + STOP_POLL_INTERVAL;
+            }
+            let receive_timeout =
+                remaining(deadline).min(next_hook.saturating_duration_since(Instant::now()));
+            let message = match self.transport.receive(receive_timeout) {
+                Ok(message) => message,
+                Err(PiTransportError::Timeout) if Instant::now() < deadline => continue,
+                Err(error) => return Err(error.into()),
+            };
             match message {
                 PiRpcMessage::Response(response) if response.id() == request_id => {
-                    return Ok(response);
+                    return Ok((response, stop_observed));
                 }
                 PiRpcMessage::Response(_) => {
                     return Err(PiAdapterError::Transport(
@@ -885,6 +1716,21 @@ fn parse_state(
     data: Option<&Value>,
     session_dir: &Path,
 ) -> Result<PiStateSnapshot, PiUnknownReason> {
+    parse_state_with_new_file(data, session_dir, false)
+}
+
+fn parse_new_session_state(
+    data: Option<&Value>,
+    session_dir: &Path,
+) -> Result<PiStateSnapshot, PiUnknownReason> {
+    parse_state_with_new_file(data, session_dir, true)
+}
+
+fn parse_state_with_new_file(
+    data: Option<&Value>,
+    session_dir: &Path,
+    newly_created: bool,
+) -> Result<PiStateSnapshot, PiUnknownReason> {
     let object = data
         .and_then(Value::as_object)
         .ok_or(PiUnknownReason::MalformedState)?;
@@ -903,12 +1749,44 @@ fn parse_state(
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .ok_or(PiUnknownReason::SessionPathUnavailable)?;
-    let session_file = session_file
-        .canonicalize()
-        .map_err(|_| PiUnknownReason::SessionPathUnavailable)?;
-    if !session_file.is_file() || session_file.parent() != Some(session_dir) {
-        return Err(PiUnknownReason::SessionPathUnavailable);
-    }
+    let session_file_persisted = match std::fs::symlink_metadata(&session_file) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => true,
+        Err(error)
+            if newly_created
+                && error.kind() == std::io::ErrorKind::NotFound
+                && session_file.is_absolute()
+                && session_file.parent() == Some(session_dir)
+                && !session_file
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+                && session_file
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.len() <= 512 && name.ends_with(&format!("_{session_id}.jsonl"))
+                    })
+                && object.get("isStreaming").and_then(Value::as_bool) == Some(false)
+                && object.get("isCompacting").and_then(Value::as_bool) == Some(false)
+                && object.get("pendingMessageCount").and_then(Value::as_u64) == Some(0)
+                && object.get("messageCount").and_then(Value::as_u64) == Some(0) =>
+        {
+            false
+        }
+        _ => return Err(PiUnknownReason::SessionPathUnavailable),
+    };
+    let session_file = if session_file_persisted {
+        let canonical = session_file
+            .canonicalize()
+            .map_err(|_| PiUnknownReason::SessionPathUnavailable)?;
+        if canonical.parent() != Some(session_dir) {
+            return Err(PiUnknownReason::SessionPathUnavailable);
+        }
+        canonical
+    } else {
+        // Pi allocated this path and identity; Rudder must not synthesize a
+        // native header or treat it as resumable/persisted before Pi flushes.
+        session_file
+    };
     let optional_bool = |name: &str| {
         object
             .get(name)
@@ -924,6 +1802,7 @@ fn parse_state(
     Ok(PiStateSnapshot {
         session_id,
         session_file,
+        session_file_persisted,
         is_streaming: optional_bool("isStreaming")?,
         is_compacting: optional_bool("isCompacting")?,
         pending_message_count: optional_u64("pendingMessageCount")?,
@@ -933,9 +1812,22 @@ fn parse_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{PiExecutionPhase, PiUnknownReason, parse_state};
+    use super::{
+        PiAdapterError, PiExecutionPhase, PiUnknownReason, parse_new_session_state, parse_state,
+    };
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn inconclusive_provider_diagnostics_preserve_only_safe_reason_code() {
+        let error =
+            PiAdapterError::UnknownObservation(PiUnknownReason::AgentEndedWithoutSettlement);
+        assert_eq!(error.diagnostic_code(), "pi_agent_ended_without_settlement");
+        assert_eq!(
+            error.to_string(),
+            "Pi provider observation was inconclusive"
+        );
+    }
 
     #[test]
     fn state_parser_requires_an_exact_managed_session_file() {
@@ -968,6 +1860,72 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, PiUnknownReason::SessionPathUnavailable);
+    }
+
+    #[test]
+    fn only_new_empty_native_session_can_reference_an_unflushed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let managed = dir.path().canonicalize().unwrap();
+        let path = managed.join("2026-10-22T00-00-00-000Z_native-session.jsonl");
+        let data = json!({"sessionId":"native-session", "sessionFile":path,
+            "isStreaming":false, "isCompacting":false,
+            "pendingMessageCount":0, "messageCount":0});
+        assert_eq!(
+            parse_state(Some(&data), &managed).unwrap_err(),
+            PiUnknownReason::SessionPathUnavailable
+        );
+        let state = parse_new_session_state(Some(&data), &managed).unwrap();
+        assert_eq!(state.session_file(), path);
+        assert!(!state.session_file_persisted());
+        assert!(
+            !state.proves_idle_queue(),
+            "an unflushed session cannot prove settlement"
+        );
+        assert!(
+            !path.exists(),
+            "reading native identity must not fabricate a session file"
+        );
+        for (key, value) in [
+            ("sessionId", json!("different-session")),
+            (
+                "sessionFile",
+                json!(managed.join("foreign/session_native-session.jsonl")),
+            ),
+            (
+                "sessionFile",
+                json!(managed.join("../outside_native-session.jsonl")),
+            ),
+            ("isStreaming", json!(true)),
+            ("isCompacting", json!(true)),
+            ("pendingMessageCount", json!(1)),
+            ("messageCount", json!(1)),
+        ] {
+            let mut invalid = data.clone();
+            invalid[key] = value;
+            assert!(parse_new_session_state(Some(&invalid), &managed).is_err());
+        }
+        fs::write(&path, "{}\n").unwrap();
+        assert!(
+            parse_state(Some(&data), &managed)
+                .unwrap()
+                .session_file_persisted()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_session_cannot_use_a_dangling_or_existing_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let managed = dir.path().canonicalize().unwrap();
+        let path = managed.join("timestamp_native-session.jsonl");
+        let target = managed.join("target.jsonl");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let data = json!({"sessionId":"native-session", "sessionFile":path,
+            "isStreaming":false, "isCompacting":false,
+            "pendingMessageCount":0, "messageCount":0});
+        assert!(parse_new_session_state(Some(&data), &managed).is_err());
+        fs::write(target, "{}\n").unwrap();
+        assert!(parse_new_session_state(Some(&data), &managed).is_err());
     }
 
     #[test]

@@ -1,3 +1,6 @@
+import { hostname } from "node:os";
+import { resolveOrganizationWorkspaceHomeDir, resolvePreviousDocumentsOrganizationWorkspaceRoot, resolveRudderInstanceRoot } from "../home-paths.js";
+
 /**
  * Typed private boundary for public Agent create preparation.
  *
@@ -48,6 +51,17 @@ export type RustAgentCreateCommand = {
   orgId: string;
   input: RustAgentCreateInput;
 };
+
+/** Collect trusted local installation facts; Rust validates and applies them. */
+export function resolveRustAgentInstructionsHost(orgId: string) {
+  return {
+    instanceRoot: resolveRudderInstanceRoot(),
+    workspaceHome: resolveOrganizationWorkspaceHomeDir(),
+    previousDocumentsRoot: resolvePreviousDocumentsOrganizationWorkspaceRoot(orgId),
+    friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
+    hostname: hostname(),
+  };
+}
 
 /** Build a private AgentCore command from server-owned preparation facts. */
 export function buildRustAgentCreateCommand(

@@ -391,7 +391,7 @@ fn is_disabled(value: &Value) -> bool {
     }
 }
 
-fn validate_instruction_settings(object: &Map<String, Value>) -> Result<()> {
+pub(super) fn validate_instruction_settings(object: &Map<String, Value>) -> Result<()> {
     if let Some(value) = object.get("instructionsBundleMode") {
         match value {
             Value::Null => (),
