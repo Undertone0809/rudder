@@ -10,7 +10,6 @@ mod strict_json;
 pub use rpc::{
     HermesAcpTransport, HermesCancellation, HermesCleanupReceipt, HermesInstructionBootstrap,
     HermesLaunch, HermesProgressKind, HermesProgressReceipt, HermesPromptErrorAfterCancel,
-    HermesSessionReplay, HermesSessionReplayCompleteness, HermesSessionReplayCorrelation,
     HermesSessionSelector, HermesSessionStartReceipt, HermesStopReason, HermesTransportError,
     HermesTurnReceipt, HermesUsage, HermesUsageScope, MAX_EPHEMERAL_INSTRUCTION_BYTES,
     resolve_instruction_bootstrap,

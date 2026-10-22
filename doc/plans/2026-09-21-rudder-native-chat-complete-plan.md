@@ -1839,7 +1839,9 @@ marker inclusion, before the repaired candidate can be published.
 
 ### October 22 provider Reader source contracts (preparatory only)
 
-The next Reader slice has two deliberately bounded Rust source primitives.
+The preparatory checkpoint `714fa422c` has two deliberately bounded Rust source
+primitives. The public Codex-only candidate excludes the unused Hermes replay
+primitive; its source remains in that private checkpoint.
 Codex can issue `thread/read` with `includeTurns: true` and select only one
 exact persisted thread/turn identity from a bounded, strictly decoded response.
 A missing turn, unsupported method, malformed response and provider rejection

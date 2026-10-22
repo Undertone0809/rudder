@@ -24,9 +24,6 @@ const MAX_PROMPT_BYTES: usize = 256 * 1024;
 const MAX_FINAL_BYTES: usize = 256 * 1024;
 const MAX_PROGRESS_EVENTS: usize = 512;
 const MAX_PROGRESS_TEXT_BYTES: usize = 256 * 1024;
-const MAX_SESSION_REPLAY_NOTIFICATIONS: usize = 512;
-const MAX_SESSION_REPLAY_INPUT_BYTES: usize = 1024 * 1024;
-const MAX_SESSION_REPLAY_PUBLIC_BYTES: usize = 256 * 1024;
 const PROGRESS_BATCH_BYTES: usize = 4 * 1024;
 const PROGRESS_BATCH_INTERVAL: Duration = Duration::from_millis(200);
 pub const MAX_EPHEMERAL_INSTRUCTION_BYTES: usize = 64 * 1024;
@@ -337,122 +334,6 @@ pub enum HermesProgressKind {
         status: String,
     },
     Truncated,
-}
-
-/// Correlation available for a bounded `session/load` replay.
-///
-/// ACP replay updates identify their session, but do not identify the prompt,
-/// request, Run, or source message that produced them. Consumers must not use
-/// this capability as an exact Run transcript.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HermesSessionReplayCorrelation {
-    SessionOnly,
-}
-
-/// Completeness available for a bounded `session/load` replay.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HermesSessionReplayCompleteness {
-    /// The replay ends at the exact `session/load` response, but ACP provides
-    /// no completeness marker or stable continuation cursor.
-    ProviderUnspecified,
-}
-
-/// Public, bounded notifications observed before the exact `session/load`
-/// response. Only normalized public progress is retained; raw ACP updates,
-/// tool inputs, and tool outputs are discarded.
-pub struct HermesSessionReplay {
-    session: HermesSessionSelector,
-    updates: Vec<HermesProgressKind>,
-    notification_count: usize,
-    omitted_update_count: usize,
-}
-
-impl HermesSessionReplay {
-    pub fn session(&self) -> &HermesSessionSelector {
-        &self.session
-    }
-
-    pub fn updates(&self) -> &[HermesProgressKind] {
-        &self.updates
-    }
-
-    pub fn notification_count(&self) -> usize {
-        self.notification_count
-    }
-
-    /// Updates that the public normalizer intentionally did not project.
-    /// This includes empty chunks and valid ACP update kinds that are outside
-    /// the current public Reader contract.
-    pub fn omitted_update_count(&self) -> usize {
-        self.omitted_update_count
-    }
-
-    pub fn correlation(&self) -> HermesSessionReplayCorrelation {
-        HermesSessionReplayCorrelation::SessionOnly
-    }
-
-    pub fn completeness(&self) -> HermesSessionReplayCompleteness {
-        HermesSessionReplayCompleteness::ProviderUnspecified
-    }
-}
-
-impl fmt::Debug for HermesSessionReplay {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HermesSessionReplay")
-            .field("has_session", &true)
-            .field("update_count", &self.updates.len())
-            .field("notification_count", &self.notification_count)
-            .field("omitted_update_count", &self.omitted_update_count)
-            .field("correlation", &self.correlation())
-            .field("completeness", &self.completeness())
-            .finish()
-    }
-}
-
-#[derive(Default)]
-struct SessionReplayCapture {
-    updates: Vec<HermesProgressKind>,
-    notification_count: usize,
-    omitted_update_count: usize,
-    input_bytes: usize,
-    public_bytes: usize,
-}
-
-impl SessionReplayCapture {
-    fn push(&mut self, params: &Value) -> Result<(), HermesTransportError> {
-        self.notification_count = self.notification_count.saturating_add(1);
-        if self.notification_count > MAX_SESSION_REPLAY_NOTIFICATIONS {
-            return Err(HermesTransportError::OutputOverflow);
-        }
-
-        let input_bytes = serde_json::to_vec(params)
-            .map_err(|_| HermesTransportError::InvalidMessage)?
-            .len();
-        self.input_bytes = self.input_bytes.saturating_add(input_bytes);
-        if self.input_bytes > MAX_SESSION_REPLAY_INPUT_BYTES {
-            return Err(HermesTransportError::OutputOverflow);
-        }
-
-        let update = params
-            .get("update")
-            .filter(|update| update.is_object())
-            .ok_or(HermesTransportError::InvalidMessage)?;
-        match normalize_progress_update(update)? {
-            Some(kind) => {
-                self.public_bytes = self
-                    .public_bytes
-                    .saturating_add(session_replay_public_bytes(&kind));
-                if self.public_bytes > MAX_SESSION_REPLAY_PUBLIC_BYTES {
-                    return Err(HermesTransportError::OutputOverflow);
-                }
-                self.updates.push(kind);
-            }
-            None => {
-                self.omitted_update_count = self.omitted_update_count.saturating_add(1);
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Opaque evidence for one normalized update from the exact prompt on the
@@ -973,38 +854,6 @@ impl HermesAcpTransport {
         Ok(())
     }
 
-    /// Load the exact durable session and return only the bounded public ACP
-    /// updates observed before its correlated response. This source is
-    /// session-scoped: ACP does not provide the request/source-message identity
-    /// needed to select an exact Run, nor a completeness marker or cursor.
-    pub fn load_session_with_replay(
-        &mut self,
-        session: &HermesSessionSelector,
-        cwd: &Path,
-        timeout: Duration,
-    ) -> Result<HermesSessionReplay, HermesTransportError> {
-        if !self.initialized || self.active_session.is_some() || !cwd.is_absolute() || !cwd.is_dir()
-        {
-            return Err(HermesTransportError::InvalidLaunch);
-        }
-        let (result, capture) = self.request_with_replay(
-            "session/load",
-            json!({"cwd":cwd.to_string_lossy(),"sessionId":session.as_str(),"mcpServers":[]}),
-            session.as_str(),
-            Instant::now() + timeout,
-        )?;
-        if result.is_null() {
-            return Err(HermesTransportError::SessionNotFound);
-        }
-        self.active_session = Some(HermesSessionSelector(session.0.clone()));
-        Ok(HermesSessionReplay {
-            session: session.clone(),
-            updates: capture.updates,
-            notification_count: capture.notification_count,
-            omitted_update_count: capture.omitted_update_count,
-        })
-    }
-
     /// Apply the exact configured model to the loaded/new session. The ACP
     /// receipt must echo that model so a silent provider fallback is rejected.
     pub fn set_model(
@@ -1481,33 +1330,7 @@ impl HermesAcpTransport {
         session: Option<&str>,
         deadline: Instant,
     ) -> Result<Value, HermesTransportError> {
-        self.request_internal(method, params, session, deadline, false)
-            .map(|(result, _)| result)
-    }
-
-    fn request_with_replay(
-        &mut self,
-        method: &str,
-        params: Value,
-        session: &str,
-        deadline: Instant,
-    ) -> Result<(Value, SessionReplayCapture), HermesTransportError> {
-        self.request_internal(method, params, Some(session), deadline, true)
-    }
-
-    fn request_internal(
-        &mut self,
-        method: &str,
-        params: Value,
-        session: Option<&str>,
-        deadline: Instant,
-        collect_replay: bool,
-    ) -> Result<(Value, SessionReplayCapture), HermesTransportError> {
-        if collect_replay && (method != "session/load" || session.is_none()) {
-            return Err(HermesTransportError::InvalidMessage);
-        }
         let id = self.send_request(method, params, deadline)?;
-        let mut replay = SessionReplayCapture::default();
         loop {
             let Some(message) = self.receive_message(deadline, false)? else {
                 // A host lifecycle event or a partial stdout frame may not
@@ -1522,7 +1345,7 @@ impl HermesAcpTransport {
                     result: Some(result),
                     error: None,
                 } if response_id == id => {
-                    return Ok((result, replay));
+                    return Ok(result);
                 }
                 Message::Response {
                     id: response_id,
@@ -1535,12 +1358,9 @@ impl HermesAcpTransport {
                     {
                         return Err(HermesTransportError::InvalidMessage);
                     }
-                    if collect_replay {
-                        replay.push(&params)?;
-                    }
-                    // The exact load response remains the authority. Replay
-                    // updates are source observations, never prompt output or
-                    // a new durable write.
+                    // Exact load/new response is the authority; ACP history
+                    // replay notifications are bounded but are not treated as
+                    // a new prompt or persisted output here.
                 }
                 Message::Notification { method, .. } if is_benign_acp_notification(&method) => {}
                 Message::Request { id, .. } => {
@@ -2025,20 +1845,6 @@ fn progress_kind_text_bytes(kind: &HermesProgressKind) -> usize {
         HermesProgressKind::ToolCall { title, .. } => title.len(),
         HermesProgressKind::ToolCallUpdate { status, .. } => status.len(),
         HermesProgressKind::Truncated => 0,
-    }
-}
-
-fn session_replay_public_bytes(kind: &HermesProgressKind) -> usize {
-    match kind {
-        HermesProgressKind::ToolCall {
-            tool_call_id,
-            title,
-        } => tool_call_id.len().saturating_add(title.len()),
-        HermesProgressKind::ToolCallUpdate {
-            tool_call_id,
-            status,
-        } => tool_call_id.len().saturating_add(status.len()),
-        _ => progress_kind_text_bytes(kind),
     }
 }
 
@@ -2757,212 +2563,6 @@ for line in sys.stdin:
         assert_eq!(cancelled.stop_reason(), HermesStopReason::Cancelled);
         let cleanup = second.stop(Duration::from_secs(5)).unwrap();
         assert!(cleanup.proves_quiescence_for(&cancelled));
-    }
-
-    /// Exercises bounded `session/load` replay collection against an owned
-    /// synthetic ACP peer. It proves the source remains session-only and does
-    /// not issue `session/new` or `session/prompt`.
-    #[cfg(unix)]
-    #[test]
-    #[ignore = "requires the built rudder-process-host executable"]
-    fn owned_session_load_replay_is_bounded_redacted_and_session_only() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let process_host = PathBuf::from(std::env::var("RUDDER_PROCESS_HOST").unwrap());
-        let temp = tempfile::tempdir().unwrap();
-        let hermes = temp.path().join("session-replay-hermes.py");
-        let method_log = temp.path().join("methods.log");
-        fs::write(
-            &hermes,
-            r##"#!/usr/bin/python3
-import json, os, sys, time
-session = "550e8400-e29b-41d4-a716-446655440000"
-mode = os.environ["REPLAY_MODE"]
-method_log = os.environ["REPLAY_METHOD_LOG"]
-def out(value, fragment=None):
-  data = (json.dumps(value, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
-  if fragment is None:
-    sys.stdout.buffer.write(data)
-    sys.stdout.buffer.flush()
-    return
-  needle = fragment.encode("utf-8")
-  start = data.index(needle)
-  end = start + len(needle)
-  cuts = sorted(set([start + 1, end - 1]))
-  previous = 0
-  for cut in cuts:
-    sys.stdout.buffer.write(data[previous:cut])
-    sys.stdout.buffer.flush()
-    time.sleep(0.01)
-    previous = cut
-  sys.stdout.buffer.write(data[previous:])
-  sys.stdout.buffer.flush()
-for line in sys.stdin:
-  message = json.loads(line)
-  method = message.get("method")
-  with open(method_log, "a", encoding="utf-8") as log:
-    log.write(method + "\n")
-  if method == "initialized":
-    continue
-  if method == "initialize":
-    out({"jsonrpc":"2.0","id":message["id"],"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":True}}})
-  elif method == "session/new" or method == "session/prompt":
-    out({"jsonrpc":"2.0","id":message["id"],"error":{"code":-32601,"message":"forbidden in read test"}})
-    sys.exit(9)
-  elif method == "session/load":
-    if mode == "null":
-      out({"jsonrpc":"2.0","id":message["id"],"result":None})
-      continue
-    if mode == "mismatch":
-      out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"550e8400-e29b-41d4-a716-446655440001","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"wrong session"}}}})
-    elif mode == "malformed":
-      out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{}}})
-    elif mode == "overbound":
-      text = "x" * (256 * 1024 + 1)
-      out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}}})
-    else:
-      events = [
-        ({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"older thought"}}, None),
-        ({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"你"}}, "你"),
-        ({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"好🙂"}}, "🙂"),
-        ({"sessionUpdate":"tool_call","toolCallId":"fixture-call","title":"Inspect file","rawInput":{"command":"private-input-sentinel"}}, None),
-        ({"sessionUpdate":"tool_call_update","toolCallId":"fixture-call","status":"completed","rawOutput":{"stdout":"private-output-sentinel"}}, None),
-        ({"sessionUpdate":"current_mode_update","private":"unprojected-sentinel"}, None),
-      ]
-      for update, fragment in events:
-        out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":update}}, fragment)
-      out({"jsonrpc":"2.0","id":message["id"],"result":{}})
-      out({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"after-response"}}}})
-      continue
-    out({"jsonrpc":"2.0","id":message["id"],"result":{}})
-"##,
-        )
-        .unwrap();
-        fs::set_permissions(&hermes, fs::Permissions::from_mode(0o755)).unwrap();
-        let home = temp.path().join("home");
-        fs::create_dir(&home).unwrap();
-        let session =
-            HermesSessionSelector::from_persisted("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        let run_id = "00000000-0000-4000-8000-000000000071";
-
-        for (attempt, mode, expected_error) in [
-            ("success", "success", None),
-            (
-                "mismatch",
-                "mismatch",
-                Some(HermesTransportError::InvalidMessage),
-            ),
-            (
-                "malformed",
-                "malformed",
-                Some(HermesTransportError::InvalidMessage),
-            ),
-            ("null", "null", Some(HermesTransportError::SessionNotFound)),
-            (
-                "overbound",
-                "overbound",
-                Some(HermesTransportError::OutputOverflow),
-            ),
-        ] {
-            let _ = fs::remove_file(&method_log);
-            let owner = format!("owner-{attempt}");
-            let claim = format!("claim-{attempt}");
-            let launch = HermesLaunch {
-                hermes_executable: hermes.clone(),
-                python_executable: None,
-                python_source_root: None,
-                ephemeral_system_prompt: None,
-                process_host: process_host.clone(),
-                runtime_root: temp.path().to_path_buf(),
-                operator_home: home.clone(),
-                hermes_home: home.clone(),
-                cwd: temp.path().to_path_buf(),
-                run_id: run_id.into(),
-                attempt_id: attempt.into(),
-                owner_token: owner.clone(),
-                executable_search_path: fixture_search_path(),
-                env: [
-                    ("REPLAY_MODE".into(), mode.into()),
-                    (
-                        "REPLAY_METHOD_LOG".into(),
-                        method_log.to_string_lossy().into_owned(),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            };
-            let permit =
-                ConnectionLaunchPermit::from_claim(run_id.into(), attempt.into(), owner, 1, claim);
-            let mut transport = HermesAcpTransport::launch(launch, permit).unwrap();
-            transport.wait_spawned(Duration::from_secs(5)).unwrap();
-            transport.initialize(Duration::from_secs(5)).unwrap();
-
-            let result =
-                transport.load_session_with_replay(&session, temp.path(), Duration::from_secs(5));
-            if let Some(expected) = expected_error {
-                assert!(
-                    matches!(result, Err(error) if error == expected),
-                    "{mode}: {result:?}"
-                );
-                assert!(
-                    transport.active_session.is_none(),
-                    "failed loads stay inactive"
-                );
-            } else {
-                let replay = result.expect("synthetic replay should load the exact session");
-                assert_eq!(replay.session().as_str(), session.as_str());
-                assert_eq!(
-                    replay.correlation(),
-                    HermesSessionReplayCorrelation::SessionOnly
-                );
-                assert_eq!(
-                    replay.completeness(),
-                    HermesSessionReplayCompleteness::ProviderUnspecified
-                );
-                assert_eq!(replay.notification_count(), 6);
-                assert_eq!(replay.omitted_update_count(), 1);
-                assert_eq!(replay.updates().len(), 5);
-                assert!(matches!(
-                    &replay.updates()[0],
-                    HermesProgressKind::ThinkingChunk(text) if text == "older thought"
-                ));
-                assert!(matches!(
-                    &replay.updates()[1],
-                    HermesProgressKind::AssistantChunk(text) if text == "你"
-                ));
-                assert!(matches!(
-                    &replay.updates()[2],
-                    HermesProgressKind::AssistantChunk(text) if text == "好🙂"
-                ));
-                assert!(matches!(
-                    &replay.updates()[3],
-                    HermesProgressKind::ToolCall { tool_call_id, title }
-                        if tool_call_id == "fixture-call" && title == "Inspect file"
-                ));
-                assert!(matches!(
-                    &replay.updates()[4],
-                    HermesProgressKind::ToolCallUpdate { tool_call_id, status }
-                        if tool_call_id == "fixture-call" && status == "completed"
-                ));
-                let debug = format!("{replay:?}");
-                for private in [
-                    "older thought",
-                    "private-input-sentinel",
-                    "private-output-sentinel",
-                    "unprojected-sentinel",
-                    "after-response",
-                ] {
-                    assert!(!debug.contains(private), "debug leaked {private}");
-                }
-                assert!(transport.active_session.is_some());
-            }
-
-            transport.stop(Duration::from_secs(5)).unwrap();
-            let methods = fs::read_to_string(&method_log).unwrap();
-            assert!(methods.lines().any(|method| method == "session/load"));
-            assert!(!methods.lines().any(|method| method == "session/new"));
-            assert!(!methods.lines().any(|method| method == "session/prompt"));
-        }
     }
 
     /// A host can deliver one ACP response over several stdout events. The
