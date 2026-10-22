@@ -11,6 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { resolveOrganizationWorkspaceHomeDir, resolvePreviousDocumentsOrganizationWorkspaceRoot, resolveRudderInstanceRoot } from "../home-paths.js";
 import { type RustAgentCreateCommand } from "./agent-create-bridge.js";
+import { requestIssueCheckout } from "./issue-checkout-rust-bridge.js";
 import { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 export { buildRustAgentCreateCommand, type RustAgentCreateCommand, type RustAgentCreateInput, type RustAgentCreateInstructionsBundle, type RustAgentCreateIntelligenceDefaults, type RustAgentCreateNodeOwned } from "./agent-create-bridge.js";
@@ -95,6 +96,11 @@ export interface RustFoundationBridge {
   calendar?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   secret?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   messengerState?(actor: RustFoundationActor, orgId: string, input: MessengerStateInput): Promise<RustFoundationResponse>;
+  issueCheckout?(actor: RustFoundationActor, orgId: string, input: {
+    issueId: string;
+    agentId: string;
+    expectedStatuses: string[];
+  }): Promise<RustFoundationResponse>;
   runRead?(actor: RustFoundationActor, orgId: string, input: RunReadInput): Promise<RustFoundationResponse>;
   liveRunRead?(
     actor: RustFoundationActor,
@@ -1163,6 +1169,9 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       } catch (error) {
         throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
       }
+    },
+    async issueCheckout(actor, orgId, input) {
+      return requestIssueCheckout({ ensureStarted, getBaseUrl: () => baseUrl, actorEnvelopeKey }, actor, orgId, input);
     },
     async projectCreate(actor, orgId, data, idempotencyKey, activityDetails, roots) {
       if (projectGoalSetMode !== "required") {

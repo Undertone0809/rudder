@@ -46,7 +46,7 @@
         "server/src",
         "identity/src"
       ],
-      "source_files": 387,
+      "source_files": 388,
       "structural_surfaces": 90
     },
     {
@@ -4985,7 +4985,7 @@
     },
     {
       "path": "server/src/routes/issues.mutations.ts",
-      "sha256": "7149cd1a2f23acc5e9776473921f3101fdd037b22ce7ca12ead1631cfd04d78d",
+      "sha256": "f2af7eeaba697d6f67ddb12df3a0f0535394e5aa3934b4271548178349dd8678",
       "families": [
         "database_queries_and_writers",
         "identity_and_sessions",
@@ -4996,7 +4996,7 @@
     },
     {
       "path": "server/src/routes/issues.ts",
-      "sha256": "6a9dd870699471e89036245250ecd07f190a7e96a8810052b386bb6230257a3a",
+      "sha256": "1ea808009b110d91cb9fcdb8c7201da15e9005a1566d2dda42ce16aa33d97127",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -6057,6 +6057,13 @@
       ]
     },
     {
+      "path": "server/src/services/issue-checkout-rust-bridge.ts",
+      "sha256": "245417954ca91eb130fe4c86f3f808fd8808c521b3da56ff4168b8cbee213e8b",
+      "families": [
+        "server_lifecycle_and_workers"
+      ]
+    },
+    {
       "path": "server/src/services/issue-metadata-read-bridge.ts",
       "sha256": "790c21cb1de85bb4153e238b16e18bd1e0a87d2eabe5f689f7ac59a871a8e45c",
       "families": [
@@ -6918,7 +6925,7 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "72163e1b5697ba25c0ef1dca238c8df1bcb44397113643d6bf337cb4a10c3fb3",
+      "sha256": "92e963e628c9f4797d4487e9c1de485aee2963a0664acb03afb84195d33849bc",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -19463,7 +19470,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 875,
+      "line": 885,
       "signature": "server/src/routes/issues.mutations.ts|db-call|db|select|{ completionRevision: productAnalyticsWorkCycles.completionRevision }",
       "receiver": "db",
       "method": "select",
@@ -19474,7 +19481,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 570,
+      "line": 580,
       "signature": "server/src/routes/issues.mutations.ts|db-call|db|transaction|async (tx) => { const transactionalIssueSvc = issueService(tx as unknown as Db); const audit = awai… [sha256:ee83545ee720cf49a25ece6fac14e4e9fb890335248c267c81d8358a18ec5e78]",
       "receiver": "db",
       "method": "transaction",
@@ -19485,7 +19492,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 639,
+      "line": 649,
       "signature": "server/src/routes/issues.mutations.ts|db-call|db|transaction|async (tx) => { const transactionalIssueSvc = issueService(tx as unknown as Db); const updatedIssue… [sha256:a5f6eb11bbc6412f9e9cb0634685097855c3f3f3cf575755820a300aa423fa4d]",
       "receiver": "db",
       "method": "transaction",
@@ -19496,7 +19503,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 1062,
+      "line": 1072,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|DELETE|/issues/:id",
       "receiver": "router",
       "method": "DELETE",
@@ -19506,7 +19513,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 451,
+      "line": 461,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|PATCH|/issues/:id",
       "receiver": "router",
       "method": "PATCH",
@@ -19516,7 +19523,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 1101,
+      "line": 1111,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|POST|/issues/:id/checkout",
       "receiver": "router",
       "method": "POST",
@@ -19526,7 +19533,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 1170,
+      "line": 1201,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|POST|/issues/:id/commit",
       "receiver": "router",
       "method": "POST",
@@ -19536,7 +19543,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 224,
+      "line": 234,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|POST|/orgs/:orgId/agent-runs/:runId/debug-issue",
       "receiver": "router",
       "method": "POST",
@@ -19546,7 +19553,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 330,
+      "line": 340,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|POST|/orgs/:orgId/issues",
       "receiver": "router",
       "method": "POST",
@@ -57105,7 +57112,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 450,
+      "line": 456,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => finish(false)",
       "receiver": null,
       "method": "setTimeout",
@@ -57115,7 +57122,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1273,
+      "line": 1282,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -59099,7 +59106,7 @@
   "completion_gate": {
     "blocked": true,
     "blocking_unknown_count": 10,
-    "remaining_backend_node_source_files": 798,
+    "remaining_backend_node_source_files": 799,
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
@@ -59199,11 +59206,11 @@
       "path": "server/src/services/rust-foundation-bridge.ts",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "base_sha256": "ba533518d436fc7b9567dce3c8e6f4233e31a2ad18e5d5d6fd6145125bf82756",
-      "head_sha256": "72163e1b5697ba25c0ef1dca238c8df1bcb44397113643d6bf337cb4a10c3fb3",
+      "base_sha256": "3d2562684e351285971f9928cc337b7ba67149fb6fe4aa60c730d22b6537d552",
+      "head_sha256": "92e963e628c9f4797d4487e9c1de485aee2963a0664acb03afb84195d33849bc",
       "compatibility_boundary": "Transport collects trusted installation placement (instance/workspace roots and hostname) from the local host, never public create JSON, and forwards it with AgentCore. Rust validates placement and owns Agent mutation, durable instructions projection, filesystem operations and recovery; this adapter adds no business write or fallback.",
       "reviewer": "independent agent /root/review_native_handoff_final",
-      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_reference": "PR #354 AgentCore installation-facts transport reviewed at 664dfb483639a2831f411134f0ca506b48de7f06; latest-main issueCheckout transport retained; combined base/head hashes require integration addendum review before publication",
       "review_status": "reviewed",
       "rust_authority": "native/crates/d1-persistence/src/agent_core/instructions/mod.rs; native/crates/d1-persistence/src/agent_core/instructions/fs.rs",
       "retirement_criterion": "Remove this installation-facts transport when Rust startup owns the installed host context and AgentCore public ingress directly in every supported deployment."

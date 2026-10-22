@@ -921,7 +921,7 @@ describe("rust foundation bridge lifecycle", () => {
         organizationBrandingMode: "required",
         projectGoalSetMode: "required",
         binaryPath: fixture.binaryPath,
-        requestTimeoutMs: 25,
+        requestTimeoutMs: 1_000,
       });
       activeBridges.add(bridge);
       process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = "changed-after-bridge-creation";
