@@ -1720,3 +1720,38 @@ Candidate `3809b9bbc` was rebased onto that main and independently passed real C
 A fresh Pi diagnostic on `3809b9bbc` reached `pi_invalid_turn_observation` after clean process shutdown. Its exact native file contains `model_change -> thinking_level_change -> admitted user input -> completed assistant`, while Rudder has no committed assistant projection. The parser incorrectly required the initial user's parent to be null. Permit only the known setup metadata chain from the trusted initial/prior leaf, retain unique exact-input and terminal-ancestry checks, and reject a divergent resumed leaf before dispatch. The unresolved prior input must remain preserved, not replayed or retroactively marked successful. Closed execution diagnostics must also reauthorize the exact Stop action when cancellation has advanced the control version, while leaving status, holds, leases, checkpoints, and frozen output unchanged.
 
 The new OpenCode diagnostic is before its native session-start checkpoint, distinct from the earlier terminal-finalization failure. Author-only capture of the frozen Foundation's private stderr proved that HTTP client construction panicked because its local tasks used the listener's `LocalRuntime` handle from a blocking thread. Own a current-thread HTTP runtime and one persistent entered LocalSet for the client lifetime, while retaining the separate D1 authority handle. Match that listener/blocking-thread boundary in the workflow regression; a multi-thread test alone missed it. Register the owned connection before readiness, observe Stop and renew the lease during startup, and retain an already-observed cleanup proof on startup failure. A clean process-host receipt proves shutdown, not a successful turn; keep both prior inputs held without replay. This instrumentation is author-only and cannot inherit independent acceptance for the frozen candidate. Reader completeness, interaction/Fork coverage, reference retention, all Shared Run consumers, resource comparison, packaged verification, and final Git delivery remain separate open gates.
+
+### October 22 installed OpenCode wire-schema repair
+
+Independent candidate `2800118cf` acceptance returned FAIL. Codex, Hermes, and
+Pi passed first input, same-session recall, service restart, and post-restart
+recall. Pi also reached a separately observed interrupted provider terminal after
+one Stop, released admission, preserved its frozen empty prefix, and continued
+on the same native session afterward. The public response omitted an explicit
+input-disposition field; preserve that observation limit. Cursor's first reply
+succeeded, but its operator `privacyCache` field changed and the prior receipt
+has no nested mode hashes. Keep that lease's Cursor result QUESTION; a future
+fresh lease may allow only a timestamp refresh after proving that both effective
+privacy modes, key/type shape, and every other selected field remain unchanged.
+Do not restore or change global provider settings to pass acceptance.
+
+OpenCode reached `thread_start_indeterminate` / `opencode_transport` and remained
+held without a terminal reply. Its exact input was preserved without retry or
+repair. A reviewed, quiescent restart left all 18 protected holds unchanged,
+including their messages, attempts, events, states, and retained fence digests.
+Expired owner and lease fields remain historical data; their presence is not
+live execution authority and is not a reason to clear them.
+
+A separate no-model-input probe of installed OpenCode 1.15.11, using temporary
+HOME/XDG directories, reproduced HTTP 400 for the current serialized session
+body and HTTP 200 after omitting unset fields. Its `/doc` declares optional
+session fields as non-nullable. It also declares a prompt model selector with
+exactly `providerID` and `modelID`; prompt `variant` belongs at the top level.
+Omit absent session fields and `SessionModel.variant`, remove the unsupported
+nested prompt-model variant, and pass the configured variant at prompt level.
+The synthetic owned-process workflow must enforce those native key/type
+constraints for the complete request instead of returning success for an
+invalid body. Closed diagnostics distinguish bad-request, access-denied,
+other HTTP, and decode errors without storing response text. These repairs need
+a new immutable candidate and fresh public OpenCode acceptance; they do not
+recover the unrecorded HTTP subtype or change the earlier held input.

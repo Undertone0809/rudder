@@ -1046,7 +1046,7 @@ pub struct SessionModel {
     pub id: String,
     #[serde(rename = "providerID")]
     pub provider_id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
 }
 
@@ -1174,8 +1174,6 @@ pub struct ModelSelection {
     pub provider_id: String,
     #[serde(rename = "modelID")]
     pub model_id: String,
-    #[serde(default)]
-    pub variant: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -1414,18 +1412,18 @@ pub struct CommandBody {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionBody {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "parentID")]
     pub parent_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<SessionModel>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "workspaceID")]
     pub workspace_id: Option<String>,
 }
@@ -2015,6 +2013,57 @@ mod tests {
             ForkBoundary::AtMessage(_) => unreachable!(),
         };
         assert_eq!(error, OpenCodeUnsupported::ForkAtAssistantBoundary);
+    }
+
+    #[test]
+    fn session_create_omits_unset_nonnullable_fields() {
+        // Installed OpenCode 1.15.11 /doc permits absent fields, not nulls.
+        assert_eq!(
+            serde_json::to_value(CreateSessionBody::default()).unwrap(),
+            serde_json::json!({})
+        );
+        for variant in [None, Some("fast".to_owned())] {
+            let body = serde_json::to_value(CreateSessionBody {
+                model: Some(SessionModel {
+                    id: "native-model".into(),
+                    provider_id: "native-provider".into(),
+                    variant: variant.clone(),
+                }),
+                ..CreateSessionBody::default()
+            })
+            .unwrap();
+            let mut expected = serde_json::json!({
+                "model": {"id":"native-model", "providerID":"native-provider"}
+            });
+            if let Some(variant) = variant {
+                expected["model"]["variant"] = serde_json::json!(variant);
+            }
+            assert_eq!(body, expected);
+        }
+    }
+
+    #[test]
+    fn prompt_variant_is_separate_from_the_exact_model_selector() {
+        let body = serde_json::to_value(Prompt {
+            model: Some(ModelSelection {
+                provider_id: "native-provider".into(),
+                model_id: "native-model".into(),
+            }),
+            variant: Some("fast".into()),
+            parts: vec![PromptPart::Text {
+                id: None,
+                text: "new input".into(),
+            }],
+            ..Prompt::default()
+        })
+        .unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "model":{"providerID":"native-provider","modelID":"native-model"},
+                "variant":"fast", "parts":[{"type":"text","text":"new input"}]
+            })
+        );
     }
 
     #[test]

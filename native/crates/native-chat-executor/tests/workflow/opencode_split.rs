@@ -27,6 +27,36 @@ prompt_release = os.path.join(root, 'opencode-prompt-release')
 if os.path.exists(os.path.join(root, 'opencode-exit-before-ready')):
     sys.exit(0)
 
+# Key/type constraints from installed OpenCode 1.15.11 /doc. In particular,
+# optional fields are not nullable, and prompt model selectors have no variant.
+def strings_if_present(body, names):
+    return all(name not in body or isinstance(body[name], str) for name in names)
+
+def valid_model(model, required, optional=()):
+    return (isinstance(model, dict) and set(required) <= set(model)
+            and set(model) <= set(required + optional)
+            and all(isinstance(value, str) for value in model.values()))
+
+def valid_session_create(body):
+    return (isinstance(body, dict)
+            and set(body) <= {'parentID', 'title', 'agent', 'model', 'permission', 'workspaceID'}
+            and strings_if_present(body, ('parentID', 'title', 'agent', 'workspaceID'))
+            and ('permission' not in body or isinstance(body['permission'], list))
+            and ('model' not in body or valid_model(body['model'], ('id', 'providerID'), ('variant',))))
+
+def valid_prompt(body):
+    return (isinstance(body, dict)
+            and set(body) <= {'messageID', 'model', 'agent', 'noReply', 'tools', 'system', 'variant', 'parts'}
+            and strings_if_present(body, ('messageID', 'agent', 'system', 'variant'))
+            and ('noReply' not in body or isinstance(body['noReply'], bool))
+            and ('model' not in body or valid_model(body['model'], ('providerID', 'modelID')))
+            and ('tools' not in body or (isinstance(body['tools'], dict)
+                 and all(isinstance(value, bool) for value in body['tools'].values())))
+            and isinstance(body.get('parts'), list)
+            and all(isinstance(part, dict) and set(part) <= {'type', 'text', 'id'}
+                    and part.get('type') == 'text' and isinstance(part.get('text'), str)
+                    and strings_if_present(part, ('id',)) for part in body['parts']))
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -75,6 +105,8 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(raw) if raw else {}
         path = urlparse(self.path).path
         if path == '/session':
+            if not valid_session_create(body):
+                return self.respond(400, {'_tag': 'SchemaError'})
             self.record('session_create', body)
             return self.respond(200, {
                 'id': 'ses_split', 'slug': 'native-split', 'projectID': 'project-split',
@@ -82,6 +114,8 @@ class Handler(BaseHTTPRequestHandler):
                 'time': {'created': 1, 'updated': 1}
             })
         if path == '/session/ses_split/prompt_async':
+            if not valid_prompt(body):
+                return self.respond(400, {'_tag': 'SchemaError'})
             self.record('prompt_async', body)
             with open(prompt_path, 'w', encoding='utf-8') as output:
                 json.dump(body, output, separators=(',', ':'))
@@ -129,6 +163,7 @@ async fn opencode_records_fresh_session_workflow() {
         "command": "opencode",
         "cwd": cwd.to_string_lossy(),
         "model": "synthetic-provider/synthetic-model",
+        "variant": "synthetic-effort",
         "graceSec": 1,
     });
     let (actor, run_id, attempt_id) =
@@ -196,12 +231,25 @@ async fn opencode_records_fresh_session_workflow() {
         .iter()
         .find(|request| request["method"] == "prompt_async")
         .expect("one prompt dispatch");
+    assert_eq!(
+        requests
+            .iter()
+            .find(|request| request["method"] == "session_create")
+            .expect("one session create")["body"]["model"],
+        json!({"id":"synthetic-model","providerID":"synthetic-provider","variant":"synthetic-effort"})
+    );
     let prompt_id = prompt["body"]["messageID"]
         .as_str()
         .expect("client-assigned native input ID");
     assert!(prompt_id.starts_with("msg_"));
     assert_eq!(prompt_id, observation.observation.request_id);
     assert_eq!(prompt["body"]["parts"][0]["text"], BODY);
+    assert_eq!(prompt["body"]["variant"], "synthetic-effort");
+    assert_eq!(
+        prompt["body"]["model"],
+        json!({"providerID":"synthetic-provider","modelID":"synthetic-model"})
+    );
+    assert!(prompt["body"]["model"].get("variant").is_none());
     assert_eq!(
         requests
             .iter()

@@ -75,6 +75,12 @@ impl OpenCodeExecutionError {
         match self {
             Self::InvalidConfiguration => "opencode_invalid_configuration",
             Self::InvalidSession => "opencode_invalid_session",
+            Self::Transport(OpenCodeError::Http { status: 400, .. }) => "opencode_http_bad_request",
+            Self::Transport(OpenCodeError::Http {
+                status: 401 | 403, ..
+            }) => "opencode_http_access_denied",
+            Self::Transport(OpenCodeError::Http { .. }) => "opencode_http_response",
+            Self::Transport(OpenCodeError::Decode(_)) => "opencode_response_decode",
             Self::Transport(_) => "opencode_transport",
             Self::Wait(_) => "opencode_terminal_wait",
             Self::Persistence(_) => "opencode_persistence_conflict",
@@ -271,10 +277,10 @@ pub(crate) fn execute_turn(
                                     rudder_opencode_native::ModelSelection {
                                         provider_id: model.provider_id.clone(),
                                         model_id: model.id.clone(),
-                                        variant: model.variant.clone(),
                                     }
                                 }),
                                 agent: config.agent.clone(),
+                                variant: config.variant.clone(),
                                 parts: vec![PromptPart::Text {
                                     id: None,
                                     text: body.to_owned(),
@@ -765,6 +771,22 @@ mod tests {
         assert!(parse_model("openai/gpt-5").is_ok());
         assert!(parse_model("gpt-5").is_err());
         assert!(parse_model("/gpt-5").is_err());
+    }
+
+    #[test]
+    fn http_diagnostics_classify_status_without_retaining_response_text() {
+        for (status, expected) in [
+            (400, "opencode_http_bad_request"),
+            (401, "opencode_http_access_denied"),
+            (403, "opencode_http_access_denied"),
+            (500, "opencode_http_response"),
+        ] {
+            let error = OpenCodeExecutionError::Transport(OpenCodeError::Http {
+                status,
+                body: "private provider response".into(),
+            });
+            assert_eq!(error.diagnostic_code(), expected);
+        }
     }
 
     #[cfg(unix)]
