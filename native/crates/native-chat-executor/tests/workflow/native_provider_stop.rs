@@ -52,6 +52,14 @@ while True:
         emit({'jsonrpc':'2.0','id':request['id'],'result':{'sessionId':session}})
     elif method == 'session/prompt':
         pending.write_text('pending', encoding='utf-8')
+        stream_many = home / 'cursor-stream-many-updates'
+        if stream_many.exists():
+            for index in range(300):
+                emit({'jsonrpc':'2.0','method':'session/update',
+                      'params':{'sessionId':session,'update':{
+                          'sessionUpdate':'agent_message_chunk',
+                          'content':{'type':'text','text':'x'}}}})
+            (home / 'cursor-stream-many-ready').write_text('ready', encoding='utf-8')
         while True:
             ready, _, _ = select.select([sys.stdin], [], [], 0.02)
             if release.exists():
@@ -64,6 +72,11 @@ while True:
                 assert cancel.get('method') == 'session/cancel'
                 assert 'id' not in cancel
                 assert cancel.get('params', {}).get('sessionId') == session
+                if stream_many.exists():
+                    emit({'jsonrpc':'2.0','method':'session/update',
+                          'params':{'sessionId':session,'update':{
+                              'sessionUpdate':'agent_message_chunk',
+                              'content':{'type':'text','text':'tail'}}}})
                 emit({'jsonrpc':'2.0','id':request['id'],
                       'result':{'stopReason':'cancelled'}})
                 break
@@ -159,6 +172,16 @@ server.serve_forever()
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and a synthetic local Cursor ACP provider"]
 async fn cursor_stop_sends_one_notification_and_waits_for_the_original_prompt_terminal() {
+    cursor_stop_workflow(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and a synthetic local Cursor ACP provider"]
+async fn cursor_stop_reduces_more_than_256_pending_updates_across_cancel_write_ack() {
+    cursor_stop_workflow(true).await;
+}
+
+async fn cursor_stop_workflow(stream_many_updates: bool) {
     assert_ignored_external_dependencies();
     let database = Database::start().await;
     let mut host = FixtureHost::new("cursor-governed-stop");
@@ -166,6 +189,13 @@ async fn cursor_stop_sends_one_notification_and_waits_for_the_original_prompt_te
     let executable = install_executable(provider.path(), "cursor-agent", FAKE_CURSOR);
     let profiles = host.probe_path(".");
     fs::create_dir_all(profiles.join(".cursor")).expect("create stable managed Cursor profile");
+    if stream_many_updates {
+        fs::write(
+            profiles.join("cursor-stream-many-updates"),
+            "exercise bounded prompt reduction",
+        )
+        .expect("enable the deterministic large-update fixture mode");
+    }
     let cwd = provider.path().join("cwd");
     fs::create_dir_all(&cwd).expect("create synthetic workspace");
     host.enable_cursor_runtime(executable, profiles);
@@ -182,6 +212,7 @@ async fn cursor_stop_sends_one_notification_and_waits_for_the_original_prompt_te
     .await;
 
     let pending = host.probe_path("cursor-prompt-pending");
+    let stream_ready = host.probe_path("cursor-stream-many-ready");
     let release = HostFileRelease(host.probe_path("cursor-prompt-release"));
     let worker = spawn_native_executor_worker(
         &database,
@@ -193,6 +224,10 @@ async fn cursor_stop_sends_one_notification_and_waits_for_the_original_prompt_te
     if !wait_for_file(&pending, Duration::from_secs(15)).await {
         let _ = worker.await;
         panic!("Cursor fixture did not receive the admitted prompt");
+    }
+    if stream_many_updates && !wait_for_file(&stream_ready, Duration::from_secs(15)).await {
+        let _ = worker.await;
+        panic!("Cursor fixture did not flush the large update sequence");
     }
     wait_phase(&database.pool, &attempt_id, "input_indeterminate").await;
     let stop = request_stop_for_run(
@@ -212,6 +247,14 @@ async fn cursor_stop_sends_one_notification_and_waits_for_the_original_prompt_te
     let provider = observed.observation;
     assert_eq!(provider.stop_reason, "cancelled");
     assert_eq!(provider.session.as_str(), "cursor-stop-session");
+    assert_eq!(
+        provider.update_count,
+        if stream_many_updates { 301 } else { 0 }
+    );
+    if stream_many_updates {
+        let expected_text = format!("{}tail", "x".repeat(300));
+        assert_eq!(provider.final_text.as_deref(), Some(expected_text.as_str()));
+    }
     assert!(
         !release.0.exists(),
         "the matching cancellation response released the prompt"

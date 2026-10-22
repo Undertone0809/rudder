@@ -113,6 +113,9 @@ pub struct CursorAcpTransport {
     host: OwnedHost,
     decoder: LineDecoder,
     messages: VecDeque<CursorAcpMessage>,
+    /// Raw tail of one bounded host stdout chunk, retained if the shared
+    /// deferred+queued+in-flight event budget is exhausted mid-batch.
+    pending_stdout: VecDeque<u8>,
     pending: Option<RequestId>,
     reserved: Option<RequestId>,
     next_write_id: u64,
@@ -175,6 +178,7 @@ impl CursorAcpTransport {
             host,
             decoder: LineDecoder::default(),
             messages: VecDeque::new(),
+            pending_stdout: VecDeque::new(),
             pending: None,
             reserved: None,
             next_write_id: 0,
@@ -243,6 +247,17 @@ impl CursorAcpTransport {
         &mut self,
         command: CursorAcpCommand,
     ) -> Result<RequestId, CursorAcpTransportError> {
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+        self.request_reserved_with_observer(command, &mut observe_nothing)
+    }
+
+    /// Consume the reserved request while reducing notifications that may be
+    /// emitted before the process host acknowledges the prompt write.
+    pub fn request_reserved_with_observer(
+        &mut self,
+        command: CursorAcpCommand,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+    ) -> Result<RequestId, CursorAcpTransportError> {
         self.ensure_writable()?;
         if self.pending.is_some() {
             return Err(CursorAcpTransportError::Busy);
@@ -257,7 +272,7 @@ impl CursorAcpTransport {
         let bytes =
             serde_json::to_vec(&request).map_err(|_| CursorAcpTransportError::InvalidMessage)?;
         self.pending = Some(id.clone());
-        if let Err(error) = self.write_frame(&bytes) {
+        if let Err(error) = self.write_frame_with_observer(&bytes, observe) {
             self.pending = None;
             return Err(error);
         }
@@ -272,6 +287,20 @@ impl CursorAcpTransport {
         &mut self,
         session_id: SessionId,
         prompt_request_id: &RequestId,
+    ) -> Result<bool, CursorAcpTransportError> {
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+        self.cancel_prompt_with_observer(session_id, prompt_request_id, &mut observe_nothing)
+    }
+
+    /// Send ACP's session-cancel notification while reducing prompt messages
+    /// that arrive both before and during the stdin-write acknowledgement.
+    /// The caller owns the bounded per-prompt reducer; responses remain queued
+    /// for the original request-id waiter.
+    pub fn cancel_prompt_with_observer(
+        &mut self,
+        session_id: SessionId,
+        prompt_request_id: &RequestId,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
     ) -> Result<bool, CursorAcpTransportError> {
         self.ensure_spawned()?;
         if self.pending.as_ref() != Some(prompt_request_id) {
@@ -290,7 +319,7 @@ impl CursorAcpTransport {
         .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
         let bytes = serde_json::to_vec(&notification)
             .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
-        self.write_frame(&bytes)?;
+        self.write_frame_with_observer(&bytes, observe)?;
         Ok(true)
     }
 
@@ -308,23 +337,8 @@ impl CursorAcpTransport {
         &mut self,
         timeout: Duration,
     ) -> Result<CursorAcpMessage, CursorAcpTransportError> {
-        if let Some(message) = self.messages.pop_front() {
-            return Ok(message);
-        }
-        if self.host_failure || self.terminal {
-            return Err(CursorAcpTransportError::Closed);
-        }
-        let deadline = Instant::now() + timeout;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(CursorAcpTransportError::Timeout);
-            }
-            self.receive_host(remaining)?;
-            if let Some(message) = self.messages.pop_front() {
-                return Ok(message);
-            }
-        }
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+        self.receive_with_observer(timeout, &mut observe_nothing, 0)
     }
 
     /// Wait for a specific response while preserving notifications and
@@ -335,6 +349,20 @@ impl CursorAcpTransport {
         request_id: &RequestId,
         timeout: Duration,
     ) -> Result<JsonRpcResponse, CursorAcpTransportError> {
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+        self.wait_response_with(request_id, timeout, &mut observe_nothing)
+    }
+
+    /// Wait for the exact response while letting the active prompt reducer
+    /// consume interleaved notifications immediately. Unhandled messages are
+    /// still preserved under the ordinary bounded queue and response
+    /// correlation rules.
+    pub fn wait_response_with(
+        &mut self,
+        request_id: &RequestId,
+        timeout: Duration,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+    ) -> Result<JsonRpcResponse, CursorAcpTransportError> {
         let mut deferred = VecDeque::new();
         let deadline = Instant::now() + timeout;
         loop {
@@ -343,7 +371,7 @@ impl CursorAcpTransport {
                 self.requeue_front(deferred);
                 return Err(CursorAcpTransportError::Timeout);
             }
-            let message = match self.receive(remaining) {
+            let message = match self.receive_with_observer(remaining, observe, deferred.len()) {
                 Ok(message) => message,
                 Err(error) => {
                     self.requeue_front(deferred);
@@ -429,7 +457,7 @@ impl CursorAcpTransport {
             if remaining.is_zero() {
                 break;
             }
-            match self.receive_host(remaining.min(HOST_RECEIVE_QUANTUM)) {
+            match self.receive_cleanup_host(remaining.min(HOST_RECEIVE_QUANTUM)) {
                 Ok(()) => {}
                 Err(CursorAcpTransportError::Timeout) => {}
                 Err(error) => return Err(error),
@@ -445,7 +473,7 @@ impl CursorAcpTransport {
             if self.terminal {
                 break;
             }
-            match self.receive_host(Duration::ZERO) {
+            match self.receive_cleanup_host(Duration::ZERO) {
                 Ok(()) => {}
                 Err(CursorAcpTransportError::Timeout) => break,
                 Err(error) => return Err(error),
@@ -486,6 +514,8 @@ impl CursorAcpTransport {
     }
 
     fn receive_host(&mut self, timeout: Duration) -> Result<(), CursorAcpTransportError> {
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+        self.drain_pending_stdout_with_observer(&mut observe_nothing, 0)?;
         match self.host.receive(timeout) {
             Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value),
             Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes),
@@ -502,32 +532,176 @@ impl CursorAcpTransport {
         }
     }
 
-    fn decode_stdout(&mut self, bytes: &[u8]) -> Result<(), CursorAcpTransportError> {
-        let parsed = self
-            .decoder
-            .push(bytes, |frame| {
-                if frame.len() > MAX_EVENT_JSON_BYTES {
-                    return Err(CursorAcpTransportError::InvalidMessage);
+    /// Cleanup waits on the owned process host's lifecycle channel only.
+    /// Provider stdout is intentionally discarded here: queue saturation or
+    /// a retained ACP tail must not prevent observing the host terminal proof,
+    /// and cleanup must not project or answer more provider messages.
+    fn receive_cleanup_host(&mut self, timeout: Duration) -> Result<(), CursorAcpTransportError> {
+        match self.host.receive(timeout) {
+            Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value),
+            Ok(HostEvent::Stdout(_)) => Ok(()),
+            Ok(HostEvent::Failure) => {
+                self.host_failure = true;
+                Err(CursorAcpTransportError::Closed)
+            }
+            Err(HostError::Timeout) => Err(CursorAcpTransportError::Timeout),
+            Err(HostError::OutputOverflow) => Err(CursorAcpTransportError::OutputOverflow),
+            Err(HostError::Closed | HostError::InvalidLaunch) => {
+                self.host_failure = true;
+                Err(CursorAcpTransportError::Closed)
+            }
+        }
+    }
+
+    fn receive_with_observer(
+        &mut self,
+        timeout: Duration,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+        retained_outside: usize,
+    ) -> Result<CursorAcpMessage, CursorAcpTransportError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if retained_outside.saturating_add(self.messages.len()) > MAX_EVENT_QUEUE {
+                return Err(CursorAcpTransportError::OutputOverflow);
+            }
+            while let Some(message) = self.messages.pop_front() {
+                if self.observe_nonresponse(&message, observe)? {
+                    continue;
                 }
-                parse_message(frame).map_err(|_| CursorAcpTransportError::InvalidMessage)
-            })
-            .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
-        if self.messages.len().saturating_add(parsed.len()) > MAX_EVENT_QUEUE {
+                return Ok(message);
+            }
+            if !self.pending_stdout.is_empty() {
+                self.drain_pending_stdout_with_observer(observe, retained_outside)?;
+                continue;
+            }
+            if self.host_failure || self.terminal {
+                return Err(CursorAcpTransportError::Closed);
+            }
+            if retained_outside >= MAX_EVENT_QUEUE {
+                return Err(CursorAcpTransportError::OutputOverflow);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(CursorAcpTransportError::Timeout);
+            }
+            self.receive_host_with_observer(remaining, observe, retained_outside)?;
+        }
+    }
+
+    fn receive_host_with_observer(
+        &mut self,
+        timeout: Duration,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+        retained_outside: usize,
+    ) -> Result<(), CursorAcpTransportError> {
+        match self.host.receive(timeout) {
+            Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value),
+            Ok(HostEvent::Stdout(bytes)) => {
+                self.decode_stdout_with_observer(&bytes, observe, retained_outside)
+            }
+            Ok(HostEvent::Failure) => {
+                self.host_failure = true;
+                Err(CursorAcpTransportError::Closed)
+            }
+            Err(HostError::Timeout) => Err(CursorAcpTransportError::Timeout),
+            Err(HostError::OutputOverflow) => Err(CursorAcpTransportError::OutputOverflow),
+            Err(HostError::Closed | HostError::InvalidLaunch) => {
+                self.host_failure = true;
+                Err(CursorAcpTransportError::Closed)
+            }
+        }
+    }
+
+    fn observe_nonresponse(
+        &mut self,
+        message: &CursorAcpMessage,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+    ) -> Result<bool, CursorAcpTransportError> {
+        if matches!(message, CursorAcpMessage::Response(_)) {
+            return Ok(false);
+        }
+        observe(message)
+    }
+
+    fn decode_stdout(&mut self, bytes: &[u8]) -> Result<(), CursorAcpTransportError> {
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+        self.decode_stdout_with_observer(bytes, &mut observe_nothing, 0)
+    }
+
+    fn decode_stdout_with_observer(
+        &mut self,
+        bytes: &[u8],
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+        retained_outside: usize,
+    ) -> Result<(), CursorAcpTransportError> {
+        if !self.pending_stdout.is_empty() {
             return Err(CursorAcpTransportError::OutputOverflow);
         }
-        for message in parsed {
-            if let CursorAcpMessage::Response(response) = &message {
-                let Some(pending) = self.pending.as_ref() else {
-                    return Err(CursorAcpTransportError::MismatchedResponse);
-                };
-                if &response.id != pending {
-                    return Err(CursorAcpTransportError::MismatchedResponse);
-                }
-                self.pending = None;
-            }
-            self.messages.push_back(message);
+        if bytes.len() > rudder_native_protocol::lines::MAX_NATIVE_CHUNK_BYTES {
+            return Err(CursorAcpTransportError::InvalidMessage);
         }
-        Ok(())
+        self.pending_stdout.extend(bytes);
+        self.drain_pending_stdout_with_observer(observe, retained_outside)
+    }
+
+    fn drain_pending_stdout_with_observer(
+        &mut self,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+        retained_outside: usize,
+    ) -> Result<(), CursorAcpTransportError> {
+        loop {
+            let Some(line_end) = self.pending_stdout.iter().position(|byte| *byte == b'\n') else {
+                let partial = self.pending_stdout.drain(..).collect::<Vec<_>>();
+                self.decoder
+                    .push(&partial, |frame| {
+                        if frame.len() > MAX_EVENT_JSON_BYTES {
+                            return Err(CursorAcpTransportError::InvalidMessage);
+                        }
+                        parse_message(frame).map_err(|_| CursorAcpTransportError::InvalidMessage)
+                    })
+                    .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+                return Ok(());
+            };
+
+            let is_empty_line = line_end == 0 || (line_end == 1 && self.pending_stdout[0] == b'\r');
+            if !is_empty_line
+                && retained_outside.saturating_add(self.messages.len()) >= MAX_EVENT_QUEUE
+            {
+                // Leave this complete, unparsed frame and the remaining bytes
+                // in the bounded current host chunk so overflow never drops
+                // the event that exhausted the shared budget.
+                return Err(CursorAcpTransportError::OutputOverflow);
+            }
+
+            let line = self.pending_stdout.drain(..=line_end).collect::<Vec<_>>();
+            let parsed = self
+                .decoder
+                .push(&line, |frame| {
+                    if frame.len() > MAX_EVENT_JSON_BYTES {
+                        return Err(CursorAcpTransportError::InvalidMessage);
+                    }
+                    parse_message(frame).map_err(|_| CursorAcpTransportError::InvalidMessage)
+                })
+                .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+            for message in parsed {
+                if let CursorAcpMessage::Response(response) = &message {
+                    let Some(pending) = self.pending.as_ref() else {
+                        return Err(CursorAcpTransportError::MismatchedResponse);
+                    };
+                    if &response.id != pending {
+                        return Err(CursorAcpTransportError::MismatchedResponse);
+                    }
+                    self.pending = None;
+                }
+                if self.observe_nonresponse(&message, observe)? {
+                    continue;
+                }
+                if retained_outside.saturating_add(self.messages.len()) >= MAX_EVENT_QUEUE {
+                    return Err(CursorAcpTransportError::OutputOverflow);
+                }
+                self.messages.push_back(message);
+            }
+        }
     }
 
     fn observe_lifecycle(&mut self, value: &Value) -> Result<(), CursorAcpTransportError> {
@@ -555,9 +729,20 @@ impl CursorAcpTransport {
     }
 
     fn write_frame(&mut self, bytes: &[u8]) -> Result<(), CursorAcpTransportError> {
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+        self.write_frame_with_observer(bytes, &mut observe_nothing)
+    }
+
+    fn write_frame_with_observer(
+        &mut self,
+        bytes: &[u8],
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+    ) -> Result<(), CursorAcpTransportError> {
         if bytes.len() > MAX_EVENT_JSON_BYTES {
             return Err(CursorAcpTransportError::InvalidMessage);
         }
+        self.drain_pending_stdout_with_observer(observe, 0)?;
+        self.consume_queued_with_observer(observe)?;
         let mut frame = bytes.to_vec();
         frame.push(b'\n');
         self.next_write_id = self
@@ -582,35 +767,11 @@ impl CursorAcpTransport {
                 return Err(CursorAcpTransportError::WriteIndeterminate);
             }
             match self.host.receive(remaining) {
-                Ok(HostEvent::Lifecycle(value)) => {
-                    let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
-                    if value.get("requestId").and_then(Value::as_str) != Some(&self.request_id)
-                        || value.get("ownerToken").and_then(Value::as_str)
-                            != Some(&self.owner_token)
-                    {
-                        return Err(CursorAcpTransportError::InvalidMessage);
-                    }
-                    if kind == "stdin-write-complete"
-                        && value.get("writeId").and_then(Value::as_str) == Some(&write_id)
-                        && value.get("bytesWritten").and_then(Value::as_u64)
-                            == Some(frame.len() as u64)
-                    {
+                Ok(event) => {
+                    if self.observe_write_ack_event(event, &write_id, frame.len(), observe)? {
                         return Ok(());
                     }
-                    if kind == "stdin-write-rejected"
-                        && value.get("writeId").and_then(Value::as_str) == Some(&write_id)
-                    {
-                        return Err(CursorAcpTransportError::Rejected);
-                    }
-                    if kind == "stdin-write-failed"
-                        && value.get("writeId").and_then(Value::as_str) == Some(&write_id)
-                    {
-                        return Err(CursorAcpTransportError::WriteIndeterminate);
-                    }
-                    self.observe_lifecycle(&value)?;
                 }
-                Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
-                Ok(HostEvent::Failure) => return Err(CursorAcpTransportError::Closed),
                 Err(HostError::Timeout) => return Err(CursorAcpTransportError::WriteIndeterminate),
                 Err(HostError::OutputOverflow) => {
                     return Err(CursorAcpTransportError::OutputOverflow);
@@ -620,6 +781,66 @@ impl CursorAcpTransport {
                 }
             }
         }
+    }
+
+    /// Process one event while awaiting the host's stdin-write receipt. Kept
+    /// separate so tests can deterministically put stdout ahead of the ACK.
+    fn observe_write_ack_event(
+        &mut self,
+        event: HostEvent,
+        write_id: &str,
+        expected_bytes: usize,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+    ) -> Result<bool, CursorAcpTransportError> {
+        match event {
+            HostEvent::Lifecycle(value) => {
+                let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
+                if value.get("requestId").and_then(Value::as_str) != Some(&self.request_id)
+                    || value.get("ownerToken").and_then(Value::as_str) != Some(&self.owner_token)
+                {
+                    return Err(CursorAcpTransportError::InvalidMessage);
+                }
+                if kind == "stdin-write-complete"
+                    && value.get("writeId").and_then(Value::as_str) == Some(write_id)
+                    && value.get("bytesWritten").and_then(Value::as_u64)
+                        == Some(expected_bytes as u64)
+                {
+                    return Ok(true);
+                }
+                if kind == "stdin-write-rejected"
+                    && value.get("writeId").and_then(Value::as_str) == Some(write_id)
+                {
+                    return Err(CursorAcpTransportError::Rejected);
+                }
+                if kind == "stdin-write-failed"
+                    && value.get("writeId").and_then(Value::as_str) == Some(write_id)
+                {
+                    return Err(CursorAcpTransportError::WriteIndeterminate);
+                }
+                self.observe_lifecycle(&value)?;
+                Ok(false)
+            }
+            HostEvent::Stdout(bytes) => {
+                self.consume_queued_with_observer(observe)?;
+                self.decode_stdout_with_observer(&bytes, observe, 0)?;
+                Ok(false)
+            }
+            HostEvent::Failure => Err(CursorAcpTransportError::Closed),
+        }
+    }
+
+    fn consume_queued_with_observer(
+        &mut self,
+        observe: &mut impl FnMut(&CursorAcpMessage) -> Result<bool, CursorAcpTransportError>,
+    ) -> Result<(), CursorAcpTransportError> {
+        let mut retained = VecDeque::new();
+        while let Some(message) = self.messages.pop_front() {
+            if !self.observe_nonresponse(&message, observe)? {
+                retained.push_back(message);
+            }
+        }
+        self.messages = retained;
+        Ok(())
     }
 }
 
@@ -738,6 +959,225 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
+
+    fn transport_for_queued_message_test() -> CursorAcpTransport {
+        let connection = HostConnection {
+            request_id: "attempt".into(),
+            run_id: "run".into(),
+            attempt_id: "attempt".into(),
+            owner_token: "owner".into(),
+        };
+        let host = OwnedHost::launch_embedded(
+            connection,
+            Some(ConnectionLaunchPermit::from_claim(
+                "run".into(),
+                "attempt".into(),
+                "owner".into(),
+                1,
+                "claim".into(),
+            )),
+            8 * 1024,
+        )
+        .expect("start an in-process host for the deterministic queue test");
+        CursorAcpTransport {
+            host,
+            decoder: LineDecoder::default(),
+            messages: VecDeque::new(),
+            pending_stdout: VecDeque::new(),
+            pending: None,
+            reserved: None,
+            next_write_id: 0,
+            request_id: "attempt".into(),
+            owner_token: "owner".into(),
+            spawned: false,
+            terminal: false,
+            host_failure: false,
+            cleanup_proof: None,
+            session: CursorAcpSession::new(),
+        }
+    }
+
+    fn private_extension_request_frame(id: &str) -> Vec<u8> {
+        let mut frame = serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":id,
+            "method":"cursor/private_extension",
+            "params":{"x":1}
+        })
+        .to_string()
+        .into_bytes();
+        frame.push(b'\n');
+        frame
+    }
+
+    #[test]
+    fn shared_event_budget_preserves_triggering_frame_across_queued_and_deferred_requests() {
+        let mut transport = transport_for_queued_message_test();
+        let already_queued = private_extension_request_frame("already-queued");
+        transport.messages.push_back(
+            parse_message(&already_queued[..already_queued.len() - 1])
+                .expect("valid unhandled request already in the transport queue"),
+        );
+
+        let first = private_extension_request_frame("first-in-batch");
+        let triggering = private_extension_request_frame("triggering-in-batch");
+        let mut stdout = first;
+        stdout.extend_from_slice(&triggering);
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+
+        assert_eq!(
+            transport.decode_stdout_with_observer(
+                &stdout,
+                &mut observe_nothing,
+                MAX_EVENT_QUEUE - 2,
+            ),
+            Err(CursorAcpTransportError::OutputOverflow)
+        );
+        assert_eq!(
+            MAX_EVENT_QUEUE - 2 + transport.messages.len(),
+            MAX_EVENT_QUEUE,
+            "deferred and queued events share the same retained-message budget"
+        );
+        assert_eq!(transport.messages.len(), 2);
+        assert_eq!(
+            transport.pending_stdout.iter().copied().collect::<Vec<_>>(),
+            triggering,
+            "the triggering frame remains available after the overflow result"
+        );
+    }
+
+    #[test]
+    fn full_deferred_request_budget_fails_before_read_without_dropping_events() {
+        let mut transport = transport_for_queued_message_test();
+        for index in 0..MAX_EVENT_QUEUE {
+            let frame = private_extension_request_frame(&format!("queued-{index}"));
+            transport.messages.push_back(
+                parse_message(&frame[..frame.len() - 1])
+                    .expect("valid queued private-extension request"),
+            );
+        }
+        let request_id = RequestId::new_string("pending-response").unwrap();
+        let mut observe_nothing = |_: &CursorAcpMessage| Ok(false);
+
+        assert_eq!(
+            transport.wait_response_with(
+                &request_id,
+                Duration::from_millis(50),
+                &mut observe_nothing,
+            ),
+            Err(CursorAcpTransportError::OutputOverflow)
+        );
+        assert_eq!(
+            transport.messages.len(),
+            MAX_EVENT_QUEUE,
+            "all deferred requests are restored after the pre-read limit"
+        );
+        assert!(transport.pending_stdout.is_empty());
+    }
+
+    #[test]
+    fn pending_prompt_updates_over_256_survive_stdout_before_cancel_write_ack() {
+        let mut transport = transport_for_queued_message_test();
+        let request_id = RequestId::new_string("prompt-1").unwrap();
+        transport.pending = Some(request_id.clone());
+        let mut stdout = Vec::new();
+        for index in 0..(MAX_EVENT_QUEUE + 1) {
+            let mut frame = serde_json::json!({
+                "jsonrpc":"2.0",
+                "method":"session/update",
+                "params":{
+                    "sessionId":"session-1",
+                    "update":{
+                        "sessionUpdate":"agent_message_chunk",
+                        "content":{"type":"text","text":index.to_string()}
+                    }
+                }
+            })
+            .to_string()
+            .into_bytes();
+            frame.push(b'\n');
+            stdout.extend_from_slice(&frame);
+        }
+        let mut response = serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":"prompt-1",
+            "result":{"stopReason":"cancelled"}
+        })
+        .to_string()
+        .into_bytes();
+        response.push(b'\n');
+        stdout.extend_from_slice(&response);
+        let observed_updates = std::cell::Cell::new(0usize);
+        let mut observe_prompt_message = |message: &CursorAcpMessage| {
+            if matches!(
+                message,
+                CursorAcpMessage::Notification(crate::CursorAcpNotification::SessionUpdate(_))
+            ) {
+                observed_updates.set(observed_updates.get() + 1);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        };
+        transport
+            .decode_stdout_with_observer(&stdout, &mut observe_prompt_message, 0)
+            .expect("prompt notifications are reduced before queueing the matching response");
+        assert_eq!(transport.messages.len(), 1);
+        assert_eq!(observed_updates.get(), MAX_EVENT_QUEUE + 1);
+        let response = transport
+            .wait_response_with(
+                &request_id,
+                Duration::from_millis(50),
+                &mut observe_prompt_message,
+            )
+            .unwrap();
+        assert_eq!(response.id, request_id);
+        assert_eq!(response.result.unwrap()["stopReason"], "cancelled");
+        assert_eq!(observed_updates.get(), MAX_EVENT_QUEUE + 1);
+
+        let mut stdout = serde_json::json!({
+            "jsonrpc":"2.0",
+            "method":"session/update",
+            "params":{
+                "sessionId":"session-1",
+                "update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"tail"}}
+            }
+        })
+        .to_string()
+        .into_bytes();
+        stdout.push(b'\n');
+        assert!(
+            !transport
+                .observe_write_ack_event(
+                    HostEvent::Stdout(stdout),
+                    "cancel-write-1",
+                    10,
+                    &mut observe_prompt_message,
+                )
+                .expect("stdout before cancel write ACK is reduced incrementally")
+        );
+        assert_eq!(observed_updates.get(), MAX_EVENT_QUEUE + 2);
+        assert!(
+            transport.messages.is_empty(),
+            "prompt updates are reduced rather than requeued behind the write ACK"
+        );
+        assert!(
+            transport
+                .observe_write_ack_event(
+                    HostEvent::Lifecycle(serde_json::json!({
+                        "type":"stdin-write-complete",
+                        "requestId":"attempt",
+                        "ownerToken":"owner",
+                        "writeId":"cancel-write-1",
+                        "bytesWritten":10
+                    })),
+                    "cancel-write-1",
+                    10,
+                    &mut observe_prompt_message,
+                )
+                .expect("matching cancel write ACK remains correlated")
+        );
+    }
 
     #[test]
     fn rejects_ambient_protected_environment_overrides() {
@@ -909,7 +1349,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     #[ignore = "requires RUDDER_TEST_PROCESS_HOST and a synthetic local child only"]
-    fn final_drain_collects_terminal_emitted_during_slow_cleanup_hook() {
+    fn cleanup_drain_collects_owned_terminal_with_full_queue_and_pending_tail() {
         use std::os::unix::fs::PermissionsExt;
         use std::time::Instant;
 
@@ -964,6 +1404,31 @@ mod tests {
             .wait_spawned(Duration::from_secs(5))
             .expect("owned process reaches spawned lifecycle");
 
+        for index in 0..MAX_EVENT_QUEUE {
+            let frame = private_extension_request_frame(&format!("queued-{index}"));
+            transport.messages.push_back(
+                parse_message(&frame[..frame.len() - 1])
+                    .expect("valid unhandled extension request in the full queue"),
+            );
+        }
+        let mut pending_tail = serde_json::json!({
+            "jsonrpc":"2.0",
+            "method":"session/update",
+            "params":{
+                "sessionId":"session-1",
+                "update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"late"}}
+            }
+        })
+        .to_string()
+        .into_bytes();
+        pending_tail.push(b'\n');
+        transport.pending_stdout.extend(pending_tail.clone());
+        assert_eq!(
+            transport.receive_host(Duration::ZERO),
+            Err(CursorAcpTransportError::OutputOverflow),
+            "normal ACP receive is correctly blocked by the full queue and retained tail"
+        );
+
         let started = Instant::now();
         let mut hook_called = false;
         transport
@@ -985,6 +1450,12 @@ mod tests {
 
         assert!(hook_called);
         assert!(started.elapsed() >= Duration::from_millis(700));
+        assert_eq!(transport.messages.len(), MAX_EVENT_QUEUE);
+        assert_eq!(
+            transport.pending_stdout.iter().copied().collect::<Vec<_>>(),
+            pending_tail,
+            "cleanup does not project or discard ACP output retained before terminal"
+        );
         let proof = transport
             .take_cleanup_proof()
             .expect("matching terminal lifecycle mints cleanup proof");

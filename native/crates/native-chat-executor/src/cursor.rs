@@ -104,6 +104,62 @@ pub struct CursorExecutionObservation {
     pub stop: Option<StopIntent>,
 }
 
+/// Bounded state retained while a single Cursor prompt is pending. ACP update
+/// notifications are reduced as they arrive so transport buffering cannot
+/// grow with the provider's stream length.
+struct CursorPromptUpdates {
+    session: CursorAcpSession,
+    count: u64,
+    final_text: String,
+}
+
+impl CursorPromptUpdates {
+    fn new(session_id: SessionId) -> Result<Self, CursorExecutionError> {
+        let mut session = CursorAcpSession::new();
+        session
+            .observe_session_load(session_id)
+            .map_err(|_| CursorExecutionError::InvalidSession)?;
+        Ok(Self {
+            session,
+            count: 0,
+            final_text: String::new(),
+        })
+    }
+
+    fn observe(&mut self, message: &CursorAcpMessage) -> Result<bool, CursorAcpTransportError> {
+        let CursorAcpMessage::Notification(notification) = message else {
+            return Ok(false);
+        };
+        let rudder_cursor_acp_adapter::CursorAcpNotification::SessionUpdate(update) = notification
+        else {
+            // The pre-reducer drain ignored non-session notifications. Consume
+            // them here as well instead of retaining an unbounded event log.
+            return Ok(true);
+        };
+        self.count = self
+            .session
+            .observe_update(update)
+            .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+        if matches!(
+            update.kind,
+            rudder_cursor_acp_adapter::SessionUpdateKind::AgentMessageChunk
+        ) && let Some(text) = update
+            .raw
+            .get("content")
+            .and_then(|content| content.get("text"))
+            .and_then(Value::as_str)
+            .or_else(|| update.raw.get("text").and_then(Value::as_str))
+            .or_else(|| update.raw.get("delta").and_then(Value::as_str))
+        {
+            if self.final_text.len().saturating_add(text.len()) > 256 * 1024 {
+                return Err(CursorAcpTransportError::InvalidMessage);
+            }
+            self.final_text.push_str(text);
+        }
+        Ok(true)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_turn(
     config: &ResolvedCodexConfig,
@@ -337,6 +393,7 @@ fn run_turn(
         session_from_response(&response)?
     };
     authority.record_session(session.as_str())?;
+    let mut prompt_updates = CursorPromptUpdates::new(session.clone())?;
     let reserved = transport.reserve_request()?;
     let request_id = reserved.as_string();
     let sent = authority.submit(&request_id, |input| {
@@ -344,21 +401,29 @@ fn run_turn(
             params: SessionPromptParams::new(session.clone(), input)
                 .map_err(|_| CursorExecutionError::InvalidConfiguration)?,
         };
+        let mut observe = |message: &CursorAcpMessage| prompt_updates.observe(message);
         transport
-            .request_reserved(prompt)
+            .request_reserved_with_observer(prompt, &mut observe)
             .map_err(CursorExecutionError::from)
     })??;
     if sent != reserved {
         return Err(CursorExecutionError::InvalidSession);
     }
-    let response = wait_prompt_response(transport, authority, &session, &reserved, deadline)?;
+    let response = wait_prompt_response(
+        transport,
+        authority,
+        &session,
+        &reserved,
+        &mut prompt_updates,
+        deadline,
+    )?;
     if response.error.is_some() {
         return Err(CursorExecutionError::Transport(
             CursorAcpTransportError::Rejected,
         ));
     }
     let stop_reason = prompt_stop_reason(&response)?;
-    let (updates, final_text) = drain_updates(transport, &session)?;
+    let (updates, final_text) = drain_updates(transport, &mut prompt_updates)?;
     authority.terminal(session.as_str(), &request_id)?;
     Ok((
         session,
@@ -375,6 +440,7 @@ fn wait_prompt_response(
     authority: &mut NativeTurnAuthority<'_>,
     session: &SessionId,
     request_id: &RequestId,
+    prompt_updates: &mut CursorPromptUpdates,
     deadline: Instant,
 ) -> Result<rudder_cursor_acp_adapter::JsonRpcResponse, CursorExecutionError> {
     loop {
@@ -383,7 +449,8 @@ fn wait_prompt_response(
             return Err(CursorExecutionError::Timeout);
         }
         let slice = remaining.min(Duration::from_millis(100));
-        match transport.wait_response(request_id, slice) {
+        let mut observe = |message: &CursorAcpMessage| prompt_updates.observe(message);
+        match transport.wait_response_with(request_id, slice, &mut observe) {
             Ok(response) => return Ok(response),
             Err(CursorAcpTransportError::Timeout) => {}
             Err(error) => return Err(error.into()),
@@ -399,7 +466,8 @@ fn wait_prompt_response(
             request_id: request_id.as_string(),
         };
         permit.dispatch(connection, &target, || {
-            transport.cancel_prompt(session.clone(), request_id)
+            let mut observe = |message: &CursorAcpMessage| prompt_updates.observe(message);
+            transport.cancel_prompt_with_observer(session.clone(), request_id, &mut observe)
         })??;
         // ACP cancellation is a notification only. Keep waiting on the one
         // original prompt request and accept only its typed stopReason.
@@ -483,49 +551,36 @@ fn prompt_stop_reason(
 
 fn drain_updates(
     transport: &mut CursorAcpTransport,
-    session: &SessionId,
+    prompt_updates: &mut CursorPromptUpdates,
 ) -> Result<(u64, Option<String>), CursorExecutionError> {
-    let mut reducer = CursorAcpSession::new();
-    reducer
-        .observe_session_load(session.clone())
-        .map_err(|_| CursorExecutionError::InvalidSession)?;
-    let mut count: u64 = 0;
-    let mut final_text = String::new();
     loop {
         match transport.receive(Duration::ZERO) {
-            Ok(CursorAcpMessage::Notification(
-                rudder_cursor_acp_adapter::CursorAcpNotification::SessionUpdate(update),
-            )) => {
-                reducer
-                    .observe_update(&update)
-                    .map_err(|_| CursorExecutionError::InvalidSession)?;
-                count = count.saturating_add(1);
-                if matches!(
-                    update.kind,
-                    rudder_cursor_acp_adapter::SessionUpdateKind::AgentMessageChunk
-                ) && let Some(text) = update
-                    .raw
-                    .get("content")
-                    .and_then(|content| content.get("text"))
-                    .and_then(Value::as_str)
-                    .or_else(|| update.raw.get("text").and_then(Value::as_str))
-                    .or_else(|| update.raw.get("delta").and_then(Value::as_str))
-                {
-                    if final_text.len().saturating_add(text.len()) > 256 * 1024 {
+            Ok(message) => {
+                if prompt_updates.observe(&message)? {
+                    continue;
+                }
+                match message {
+                    CursorAcpMessage::Request(_) => {
+                        return Err(CursorExecutionError::ControlRequest);
+                    }
+                    CursorAcpMessage::Response(_) => {
                         return Err(CursorExecutionError::InvalidSession);
                     }
-                    final_text.push_str(text);
+                    CursorAcpMessage::Notification(_) => {
+                        unreachable!("the prompt reducer consumes all provider notifications")
+                    }
                 }
             }
-            Ok(CursorAcpMessage::Request(_)) => return Err(CursorExecutionError::ControlRequest),
-            Ok(CursorAcpMessage::Notification(_)) => {}
-            Ok(CursorAcpMessage::Response(_)) => return Err(CursorExecutionError::InvalidSession),
             Err(CursorAcpTransportError::Timeout) => break,
             Err(CursorAcpTransportError::Closed) => break,
             Err(error) => return Err(error.into()),
         }
     }
-    Ok((count, (!final_text.is_empty()).then_some(final_text)))
+    Ok((
+        prompt_updates.count,
+        (!prompt_updates.final_text.is_empty())
+            .then(|| std::mem::take(&mut prompt_updates.final_text)),
+    ))
 }
 
 fn path_string(path: &std::path::Path) -> Result<String, CursorExecutionError> {
@@ -670,5 +725,19 @@ mod tests {
                 Err(CursorExecutionError::InvalidSession)
             ));
         }
+    }
+
+    #[test]
+    fn prompt_update_reducer_rejects_notifications_for_another_session() {
+        let mut updates =
+            CursorPromptUpdates::new(SessionId::new("selected-session").unwrap()).unwrap();
+        let message = rudder_cursor_acp_adapter::parse_message(
+            br#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"other-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"x"}}}}"#,
+        )
+        .expect("well-formed update for a different session");
+        assert_eq!(
+            updates.observe(&message),
+            Err(CursorAcpTransportError::InvalidMessage)
+        );
     }
 }

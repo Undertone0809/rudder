@@ -1101,7 +1101,6 @@ where
                     .as_ref()
                     .expect("claim validated OpenCode config");
                 let result = opencode::execute_turn(
-                    handle,
                     local,
                     paths,
                     connection_launch_permit,

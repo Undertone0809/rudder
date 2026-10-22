@@ -24,6 +24,9 @@ prompt_path = os.path.join(root, 'opencode-prompt.json')
 prompt_pending = os.path.join(root, 'opencode-prompt-pending')
 prompt_release = os.path.join(root, 'opencode-prompt-release')
 
+if os.path.exists(os.path.join(root, 'opencode-exit-before-ready')):
+    sys.exit(0)
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -96,9 +99,20 @@ signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 server.serve_forever()
 "#;
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses disposable PostgreSQL and a synthetic local OpenCode Server only"]
-async fn opencode_records_fresh_session_before_one_exact_input_dispatch() {
+fn opencode_records_fresh_session_before_one_exact_input_dispatch() {
+    // Match Foundation's local listener runtime and its blocking executor.
+    // A multi-thread test alone misses HTTP client construction using a
+    // LocalRuntime handle from a different thread.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build_local(tokio::runtime::LocalOptions::default())
+        .expect("listener-shaped local runtime");
+    runtime.block_on(opencode_records_fresh_session_workflow());
+}
+
+async fn opencode_records_fresh_session_workflow() {
     assert_ignored_external_dependencies();
     let database = Database::start().await;
     let mut host = FixtureHost::new("opencode-split");
@@ -245,6 +259,51 @@ async fn opencode_records_fresh_session_before_one_exact_input_dispatch() {
     .await
     .expect("same exact terminal receipt is idempotent");
     assert_eq!(retry, finalized);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses disposable PostgreSQL and a synthetic local OpenCode child only"]
+async fn opencode_startup_exit_preserves_cleanup_without_submitting_input() {
+    assert_ignored_external_dependencies();
+    let database = Database::start().await;
+    let mut host = FixtureHost::new("opencode-startup-exit");
+    let provider = tempfile::tempdir().expect("create synthetic OpenCode install");
+    let cwd = provider.path().canonicalize().unwrap();
+    fs::write(cwd.join("opencode-exit-before-ready"), "exit").unwrap();
+    host.enable_opencode_runtime(install_fake_opencode(provider.path()));
+    let (actor, run, attempt) = admitted_with_runtime(
+        &database,
+        &host,
+        "opencode_local",
+        json!({"profileId":"operator-default","command":"opencode",
+            "cwd":cwd.to_string_lossy(),"model":"synthetic-provider/synthetic-model",
+            "graceSec":1}),
+    )
+    .await;
+    let (result, _) =
+        spawn_native_executor_worker(&database, host, actor, run.clone(), attempt.clone())
+            .await
+            .expect("blocking worker must not panic while constructing its HTTP client");
+    let failure = match result {
+        Ok(_) => panic!("startup exit cannot produce a provider turn receipt"),
+        Err(failure) => failure,
+    };
+    assert_eq!(failure.diagnostic_code(), "opencode_server_not_ready");
+    assert!(failure.process_quiescent());
+    assert!(failure.host_cleanup_proof().is_some());
+    assert!(!cwd.join("opencode-requests.jsonl").exists());
+    let state: (String, bool, bool) = sqlx::query_as(
+        "SELECT a.protocol_phase,r.native_admission_hold,g.native_admission_hold
+         FROM heartbeat_run_attempts a JOIN heartbeat_runs r ON r.id=a.run_id
+         JOIN chat_generations g ON g.id=r.chat_generation_id
+         WHERE a.org_id=$1::uuid AND a.id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(attempt)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(state, ("no_thread_request".into(), true, true));
 }
 
 fn install_fake_opencode(directory: &Path) -> PathBuf {

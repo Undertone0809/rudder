@@ -1546,6 +1546,28 @@ mod tests {
     }
 
     #[test]
+    fn exact_turn_projection_accepts_runtime_setup_metadata_ancestry() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        let mut fixture = fixture_session_header();
+        fixture.push('\n');
+        fixture.push_str(concat!(
+            "{\"type\":\"model_change\",\"id\":\"964a1d3c\",\"parentId\":null,\"provider\":\"p\",\"modelId\":\"m\"}\n",
+            "{\"type\":\"thinking_level_change\",\"id\":\"a11d32cc\",\"parentId\":\"964a1d3c\",\"thinkingLevel\":\"medium\"}\n",
+            "{\"type\":\"message\",\"id\":\"2464a586\",\"parentId\":\"a11d32cc\",\"message\":{\"role\":\"user\",\"content\":\"exact input 雪\"}}\n",
+            "{\"type\":\"message\",\"id\":\"52c6fa1d\",\"parentId\":\"2464a586\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"answer\"}],\"stopReason\":\"stop\"}}\n",
+        ));
+        std::fs::write(&path, fixture).unwrap();
+        let tree = PiSessionTree::read(&path, directory.path()).unwrap();
+
+        assert_eq!(
+            project_exact_turn(&tree, None, "exact input 雪")
+                .map(|(_, _, status, text)| (status, text)),
+            Ok((PiTurnStatus::Completed, Some("answer".into())))
+        );
+    }
+
+    #[test]
     fn tool_call_and_tool_result_on_the_submitted_turn_cannot_be_flattened_to_text() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.jsonl");

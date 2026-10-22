@@ -35,7 +35,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tokio::runtime::Handle;
+use tokio::runtime::Runtime;
 use tokio::task::LocalSet;
 use uuid::Uuid;
 
@@ -66,6 +66,8 @@ pub enum OpenCodeExecutionError {
     ServerNotReady,
     #[error("OpenCode Server cleanup proof was not observed")]
     CleanupUnavailable,
+    #[error("OpenCode HTTP worker runtime is unavailable")]
+    HttpRuntimeUnavailable,
 }
 
 impl OpenCodeExecutionError {
@@ -80,6 +82,7 @@ impl OpenCodeExecutionError {
             Self::Host(_) => "opencode_host",
             Self::ServerNotReady => "opencode_server_not_ready",
             Self::CleanupUnavailable => "opencode_cleanup_unavailable",
+            Self::HttpRuntimeUnavailable => "opencode_http_runtime_unavailable",
         }
     }
 }
@@ -103,7 +106,6 @@ pub struct OpenCodeExecutionObservation {
 /// blocking executor as Codex/Hermes/Pi while using Tokio for HTTP polling.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_turn(
-    handle: &Handle,
     config: &OpenCodeLocalConfig,
     paths: &HostPaths,
     permit: ConnectionLaunchPermit,
@@ -146,17 +148,22 @@ pub(crate) fn execute_turn(
         OpenCodeSessionSelector::from_persisted(value)
             .map_err(|_| OpenCodeExecutionError::InvalidSession)?;
     }
-    let mut server = OpenCodeServerHost::start(
-        handle,
-        config,
-        paths,
-        permit,
-        run_id,
-        attempt_id,
-        owner_token,
-        timeout,
-    )
-    .map_err(HostExecutionFailure::from)?;
+    // Foundation may use a LocalRuntime owned by its listener thread. Its
+    // runtime cannot spawn local HTTP tasks on this blocking worker, even with
+    // a LocalSet entered. Own a current-thread runtime here and keep its one
+    // LocalSet alive during client construction, polling and drop. D1 authority
+    // retains its separate caller runtime.
+    let http_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| OpenCodeExecutionError::HttpRuntimeUnavailable)?;
+    let runtime = &http_runtime;
+    let local = LocalSet::new();
+    let _runtime_guard = runtime.enter();
+    let _local_guard = local.enter();
+    let mut server =
+        OpenCodeServerHost::launch(config, paths, permit, run_id, attempt_id, owner_token)
+            .map_err(HostExecutionFailure::from)?;
     let connection = server.host.connection_identity().connection_receipt();
     let connection_id = connection.connection_receipt_id().to_owned();
     if let Err(error) = authority.register_connection(connection) {
@@ -179,6 +186,7 @@ pub(crate) fn execute_turn(
     }
 
     let result = (|| {
+        server.wait_ready(runtime, &local, config, authority, deadline)?;
         let client = OpenCodeClient::new(
             server.url().clone(),
             config.bearer_token().map(str::to_owned),
@@ -190,7 +198,7 @@ pub(crate) fn execute_turn(
         } else {
             ensure_not_stopped(authority)?;
             let created = authority.start_session(|| {
-                block_on_local(handle, async {
+                block_on_local(runtime, &local, async {
                     client
                         .create_session(&CreateSessionRequest {
                             query: rudder_opencode_native::SessionCreateQuery {
@@ -221,7 +229,8 @@ pub(crate) fn execute_turn(
         ensure_not_stopped(authority)?;
         let directory = configured_directory(config);
         let known_assistant_ids = block_on_local(
-            handle,
+            runtime,
+            &local,
             client
                 .clone()
                 .with_timeout(timeout.min(Duration::from_secs(2)))
@@ -248,7 +257,7 @@ pub(crate) fn execute_turn(
         // remains bound to this exact ID and is cancelled after acceptance.
         ensure_not_stopped(authority)?;
         let outcome = authority.submit(&request_id, |body| {
-            block_on_local(handle, async {
+            block_on_local(runtime, &local, async {
                 client
                     .prompt_async(
                         session.as_str(),
@@ -292,7 +301,8 @@ pub(crate) fn execute_turn(
             .map(String::as_str)
             .collect::<Vec<_>>();
         let (terminal, cancel_acknowledged) = wait_for_input_terminal(
-            handle,
+            runtime,
+            &local,
             &client,
             authority,
             &session,
@@ -384,8 +394,10 @@ fn ensure_not_stopped(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wait_for_input_terminal(
-    handle: &Handle,
+    runtime: &Runtime,
+    local: &LocalSet,
     client: &OpenCodeClient,
     authority: &mut NativeTurnAuthority<'_>,
     session: &OpenCodeSessionSelector,
@@ -406,7 +418,8 @@ fn wait_for_input_terminal(
         // Read terminal state before reserving an interrupt. A provider
         // completion that wins this race is authoritative and needs no abort.
         let progress = block_on_local(
-            handle,
+            runtime,
+            local,
             client
                 .clone()
                 .with_timeout(remaining.min(Duration::from_secs(2)))
@@ -431,7 +444,8 @@ fn wait_for_input_terminal(
                 permit
                     .dispatch(connection, &target, || {
                         block_on_local(
-                            handle,
+                            runtime,
+                            local,
                             client
                                 .clone()
                                 .with_timeout(remaining.min(Duration::from_secs(2)))
@@ -484,15 +498,13 @@ struct OpenCodeServerHost {
 
 impl OpenCodeServerHost {
     #[allow(clippy::too_many_arguments)]
-    fn start(
-        handle: &Handle,
+    fn launch(
         config: &OpenCodeLocalConfig,
         paths: &HostPaths,
         permit: ConnectionLaunchPermit,
         run_id: &str,
         attempt_id: &str,
         owner_token: &str,
-        timeout: Duration,
     ) -> Result<Self, OpenCodeExecutionError> {
         let executable = config
             .executable()
@@ -525,7 +537,7 @@ impl OpenCodeServerHost {
         url.set_path("/");
 
         let request_id = attempt_id.to_owned();
-        let mut host = OwnedHost::launch_external(
+        let host = OwnedHost::launch_external(
             HostConnection {
                 request_id: request_id.clone(),
                 run_id: run_id.to_owned(),
@@ -565,15 +577,34 @@ impl OpenCodeServerHost {
             runtime_root: Some(runtime_root),
         };
         host.send(command)?;
-        let deadline = Instant::now() + timeout.min(Duration::from_secs(30));
+        Ok(Self {
+            host,
+            url,
+            request_id,
+        })
+    }
+
+    fn wait_ready(
+        &mut self,
+        runtime: &Runtime,
+        local: &LocalSet,
+        config: &OpenCodeLocalConfig,
+        authority: &mut NativeTurnAuthority<'_>,
+        turn_deadline: Instant,
+    ) -> Result<(), OpenCodeExecutionError> {
+        let deadline = turn_deadline.min(Instant::now() + Duration::from_secs(30));
         let mut spawned = false;
         while Instant::now() < deadline {
-            match host.receive(Duration::from_millis(100)) {
+            ensure_not_stopped(authority)?;
+            match self.host.receive(Duration::from_millis(100)) {
                 Ok(HostEvent::Lifecycle(value)) => {
                     match value.get("type").and_then(Value::as_str) {
                         Some("spawned") => spawned = true,
                         Some("listener-verified")
-                            if value.get("port") == Some(&Value::from(port)) =>
+                            if value.get("port")
+                                == Some(&Value::from(
+                                    self.url.port_or_known_default().unwrap_or(0),
+                                )) =>
                         {
                             spawned = true;
                         }
@@ -591,9 +622,10 @@ impl OpenCodeServerHost {
             if !spawned {
                 continue;
             }
-            let client = OpenCodeClient::new(url.clone(), config.bearer_token().map(str::to_owned))
-                .map_err(OpenCodeExecutionError::Transport)?;
-            let ready = block_on_local(handle, async {
+            let client =
+                OpenCodeClient::new(self.url.clone(), config.bearer_token().map(str::to_owned))
+                    .map_err(OpenCodeExecutionError::Transport)?;
+            let ready = block_on_local(runtime, local, async {
                 tokio::time::timeout(Duration::from_millis(250), client.probe())
                     .await
                     .ok()
@@ -601,11 +633,7 @@ impl OpenCodeServerHost {
                     .is_some()
             });
             if ready {
-                return Ok(Self {
-                    host,
-                    url,
-                    request_id,
-                });
+                return Ok(());
             }
         }
         Err(OpenCodeExecutionError::ServerNotReady)
@@ -620,6 +648,11 @@ impl OpenCodeServerHost {
         timeout: Duration,
         mut cleanup_tick: impl FnMut(Duration),
     ) -> Result<HostCleanupProof, OpenCodeExecutionError> {
+        // Readiness may already have observed the exact terminal receipt.
+        // Preserve that opaque proof instead of sending to a closed host.
+        if let Some(proof) = self.host.take_cleanup_proof() {
+            return Ok(proof);
+        }
         self.host.send(Command::Stop {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(self.request_id.clone()),
@@ -679,9 +712,8 @@ fn reserve_port() -> Option<u16> {
         .map(|address| address.port())
 }
 
-fn block_on_local<T>(handle: &Handle, future: impl Future<Output = T>) -> T {
-    let local = LocalSet::new();
-    handle.block_on(local.run_until(future))
+fn block_on_local<T>(runtime: &Runtime, local: &LocalSet, future: impl Future<Output = T>) -> T {
+    runtime.block_on(local.run_until(future))
 }
 
 fn configured_directory(config: &OpenCodeLocalConfig) -> String {

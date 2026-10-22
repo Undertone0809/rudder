@@ -87,6 +87,10 @@ impl PiSessionEntry {
         self.kind == "message"
     }
 
+    fn is_setup_metadata(&self) -> bool {
+        matches!(self.kind.as_str(), "model_change" | "thinking_level_change")
+    }
+
     pub(crate) fn stop_reason(&self) -> Option<&str> {
         self.stop_reason.as_deref()
     }
@@ -252,6 +256,32 @@ impl PiSessionTree {
             .and_then(|index| self.entries.get(*index))
     }
 
+    /// Check that the active native leaf has not advanced beyond the
+    /// checkpoint except for Pi's model/thinking setup metadata. The suffix
+    /// must be one linear chain from the trusted anchor; a user turn, tool
+    /// result, unknown record, or branch means the resumed prompt would attach
+    /// to uncheckpointed native state.
+    pub fn active_leaf_continues_with_setup_metadata(&self, anchor_id: Option<&str>) -> bool {
+        let (suffix_start, mut expected_parent) = match anchor_id {
+            Some(anchor_id) => {
+                let Some(index) = self.by_id.get(anchor_id).copied() else {
+                    return false;
+                };
+                (index + 1, Some(anchor_id))
+            }
+            None => (0, None),
+        };
+
+        for entry in self.entries.iter().skip(suffix_start) {
+            if !entry.is_setup_metadata() || entry.parent_id() != expected_parent {
+                return false;
+            }
+            expected_parent = Some(entry.id());
+        }
+
+        self.view.leaf_id.as_deref() == expected_parent
+    }
+
     /// Resolve a persisted Run range at its own sealed leaf, independently of
     /// the file's current leaf or subsequently appended turns and branches.
     /// Authorization and the persisted selector belong to the caller. This
@@ -324,15 +354,56 @@ impl PiSessionTree {
         matches.next().is_none().then_some(first)
     }
 
+    fn exact_user_after_setup_metadata(
+        &self,
+        parent_id: Option<&str>,
+        body: &str,
+    ) -> Option<&PiSessionEntry> {
+        if parent_id.is_some_and(|id| self.entry(id).is_none()) {
+            return None;
+        }
+        let mut setup_ancestors = BTreeSet::new();
+        if let Some(parent_id) = parent_id {
+            setup_ancestors.insert(parent_id.to_owned());
+        }
+        let mut matched = None;
+        for entry in &self.entries {
+            let parent_is_anchored = match entry.parent_id() {
+                Some(parent_id) => setup_ancestors.contains(parent_id),
+                None => parent_id.is_none(),
+            };
+            if !parent_is_anchored {
+                continue;
+            }
+            if entry.is_message()
+                && entry.role() == Some("user")
+                && !entry.has_image
+                && !entry.has_thinking
+                && !entry.has_tool_call
+                && entry.text() == Some(body)
+            {
+                if matched.is_some() {
+                    return None;
+                }
+                matched = Some(entry);
+            } else if entry.is_setup_metadata() {
+                setup_ancestors.insert(entry.id.clone());
+            }
+        }
+        matched
+    }
+
     /// Resolve one exact user input and its terminal assistant message from
-    /// this session's persisted tree. The latest assistant message must be a
-    /// descendant of the unique input and an ancestor of the current leaf.
+    /// this session's persisted tree. The input may follow only the provider's
+    /// model/thinking setup metadata after the prior leaf. The latest assistant
+    /// message must be a descendant of the unique input and an ancestor of the
+    /// current leaf.
     pub(crate) fn exact_completed_turn(
         &self,
         parent_id: Option<&str>,
         body: &str,
     ) -> Option<(&PiSessionEntry, &PiSessionEntry)> {
-        let input = self.exact_user_child(parent_id, body)?;
+        let input = self.exact_user_after_setup_metadata(parent_id, body)?;
         let leaf_id = self.view.leaf_id.as_deref()?;
         let mut assistant = None;
         for entry in &self.entries {
@@ -507,6 +578,144 @@ mod tests {
         );
         assert!(tree.is_ancestor("bbbbbbbb", "cccccccc"));
         assert!(tree.exact_user_child(Some("aaaaaaaa"), "other").is_none());
+    }
+
+    #[test]
+    fn completed_turn_follows_pi_setup_metadata_before_the_exact_input() {
+        let (dir, path) = session(&[
+            r#"{"type":"model_change","id":"964a1d3c","parentId":null,"provider":"p","modelId":"m"}"#,
+            r#"{"type":"thinking_level_change","id":"a11d32cc","parentId":"964a1d3c","thinkingLevel":"medium"}"#,
+            r#"{"type":"message","id":"2464a586","parentId":"a11d32cc","message":{"role":"user","content":"exact input 雪"}}"#,
+            r#"{"type":"message","id":"52c6fa1d","parentId":"2464a586","message":{"role":"assistant","content":[{"type":"text","text":"answer"}],"stopReason":"stop"}}"#,
+        ]);
+        let tree = PiSessionTree::read(&path, dir.path()).unwrap();
+        let (input, assistant) = tree.exact_completed_turn(None, "exact input 雪").unwrap();
+        assert_eq!(input.id(), "2464a586");
+        assert_eq!(input.parent_id(), Some("a11d32cc"));
+        assert_eq!(assistant.id(), "52c6fa1d");
+        assert_eq!(assistant.parent_id(), Some(input.id()));
+        assert_eq!(assistant.stop_reason(), Some("stop"));
+    }
+
+    #[test]
+    fn completed_turn_follows_setup_metadata_from_the_prior_leaf() {
+        let (dir, path) = session(&[
+            r#"{"type":"message","id":"aaaaaaaa","parentId":null,"message":{"role":"user","content":"first"}}"#,
+            r#"{"type":"message","id":"bbbbbbbb","parentId":"aaaaaaaa","message":{"role":"assistant","content":"first answer","stopReason":"stop"}}"#,
+            r#"{"type":"model_change","id":"cccccccc","parentId":"bbbbbbbb"}"#,
+            r#"{"type":"thinking_level_change","id":"dddddddd","parentId":"cccccccc"}"#,
+            r#"{"type":"message","id":"eeeeeeee","parentId":"dddddddd","message":{"role":"user","content":"second"}}"#,
+            r#"{"type":"message","id":"ffffffff","parentId":"eeeeeeee","message":{"role":"assistant","content":"second answer","stopReason":"stop"}}"#,
+        ]);
+        let tree = PiSessionTree::read(&path, dir.path()).unwrap();
+        let (input, assistant) = tree
+            .exact_completed_turn(Some("bbbbbbbb"), "second")
+            .unwrap();
+        assert_eq!(input.id(), "eeeeeeee");
+        assert_eq!(assistant.id(), "ffffffff");
+    }
+
+    #[test]
+    fn active_leaf_allows_only_a_linear_setup_metadata_suffix() {
+        let (dir, path) = session(&[
+            r#"{"type":"message","id":"aaaaaaaa","parentId":null,"message":{"role":"user","content":"first"}}"#,
+            r#"{"type":"message","id":"bbbbbbbb","parentId":"aaaaaaaa","message":{"role":"assistant","content":"first answer","stopReason":"stop"}}"#,
+            r#"{"type":"model_change","id":"cccccccc","parentId":"bbbbbbbb"}"#,
+            r#"{"type":"thinking_level_change","id":"dddddddd","parentId":"cccccccc"}"#,
+        ]);
+        let tree = PiSessionTree::read(&path, dir.path()).unwrap();
+        assert!(tree.active_leaf_continues_with_setup_metadata(Some("bbbbbbbb")));
+        assert!(!tree.active_leaf_continues_with_setup_metadata(Some("aaaaaaaa")));
+        assert!(!tree.active_leaf_continues_with_setup_metadata(None));
+    }
+
+    #[test]
+    fn active_leaf_accepts_a_fresh_or_metadata_only_session() {
+        let (empty_dir, empty_path) = session(&[]);
+        let empty = PiSessionTree::read(&empty_path, empty_dir.path()).unwrap();
+        assert!(empty.active_leaf_continues_with_setup_metadata(None));
+
+        let (metadata_dir, metadata_path) = session(&[
+            r#"{"type":"model_change","id":"aaaaaaaa","parentId":null}"#,
+            r#"{"type":"thinking_level_change","id":"bbbbbbbb","parentId":"aaaaaaaa"}"#,
+        ]);
+        let metadata = PiSessionTree::read(&metadata_path, metadata_dir.path()).unwrap();
+        assert!(metadata.active_leaf_continues_with_setup_metadata(None));
+        assert!(!metadata.active_leaf_continues_with_setup_metadata(Some("cccccccc")));
+    }
+
+    #[test]
+    fn active_leaf_rejects_uncheckpointed_messages_tools_unknown_records_and_branches() {
+        for suffix in [
+            r#"{"type":"message","id":"cccccccc","parentId":"bbbbbbbb","message":{"role":"user","content":"external user"}}"#,
+            r#"{"type":"message","id":"cccccccc","parentId":"bbbbbbbb","message":{"role":"toolResult","content":"tool output"}}"#,
+            r#"{"type":"extension_state","id":"cccccccc","parentId":"bbbbbbbb"}"#,
+            r#"{"type":"model_change","id":"cccccccc","parentId":"aaaaaaaa"}"#,
+        ] {
+            let (dir, path) = session(&[
+                r#"{"type":"message","id":"aaaaaaaa","parentId":null,"message":{"role":"user","content":"first"}}"#,
+                r#"{"type":"message","id":"bbbbbbbb","parentId":"aaaaaaaa","message":{"role":"assistant","content":"first answer","stopReason":"stop"}}"#,
+                suffix,
+            ]);
+            let tree = PiSessionTree::read(&path, dir.path()).unwrap();
+            assert!(
+                !tree.active_leaf_continues_with_setup_metadata(Some("bbbbbbbb")),
+                "must reject uncheckpointed active suffix {suffix}"
+            );
+        }
+    }
+
+    #[test]
+    fn completed_turn_rejects_duplicate_inputs_across_setup_branches() {
+        let (dir, path) = session(&[
+            r#"{"type":"model_change","id":"aaaaaaaa","parentId":null}"#,
+            r#"{"type":"thinking_level_change","id":"bbbbbbbb","parentId":"aaaaaaaa"}"#,
+            r#"{"type":"message","id":"cccccccc","parentId":"bbbbbbbb","message":{"role":"user","content":"same input"}}"#,
+            r#"{"type":"message","id":"dddddddd","parentId":"cccccccc","message":{"role":"assistant","content":"first answer","stopReason":"stop"}}"#,
+            r#"{"type":"thinking_level_change","id":"eeeeeeee","parentId":"aaaaaaaa"}"#,
+            r#"{"type":"message","id":"ffffffff","parentId":"eeeeeeee","message":{"role":"user","content":"same input"}}"#,
+            r#"{"type":"message","id":"11111111","parentId":"ffffffff","message":{"role":"assistant","content":"second answer","stopReason":"stop"}}"#,
+        ]);
+        let tree = PiSessionTree::read(&path, dir.path()).unwrap();
+        assert!(tree.exact_completed_turn(None, "same input").is_none());
+    }
+
+    #[test]
+    fn completed_turn_rejects_unrelated_leaf_branch() {
+        let (dir, path) = session(&[
+            r#"{"type":"model_change","id":"aaaaaaaa","parentId":null}"#,
+            r#"{"type":"thinking_level_change","id":"bbbbbbbb","parentId":"aaaaaaaa"}"#,
+            r#"{"type":"message","id":"cccccccc","parentId":"bbbbbbbb","message":{"role":"user","content":"target input"}}"#,
+            r#"{"type":"message","id":"dddddddd","parentId":"cccccccc","message":{"role":"assistant","content":"target answer","stopReason":"stop"}}"#,
+            r#"{"type":"thinking_level_change","id":"eeeeeeee","parentId":"aaaaaaaa"}"#,
+            r#"{"type":"message","id":"ffffffff","parentId":"eeeeeeee","message":{"role":"user","content":"other input"}}"#,
+            r#"{"type":"message","id":"11111111","parentId":"ffffffff","message":{"role":"assistant","content":"other answer","stopReason":"stop"}}"#,
+        ]);
+        let tree = PiSessionTree::read(&path, dir.path()).unwrap();
+        assert!(tree.exact_completed_turn(None, "target input").is_none());
+    }
+
+    #[test]
+    fn completed_turn_rejects_tool_or_unknown_nodes_before_the_input() {
+        let cases = [
+            [
+                r#"{"type":"model_change","id":"aaaaaaaa","parentId":null}"#,
+                r#"{"type":"branch_summary","id":"bbbbbbbb","parentId":"aaaaaaaa"}"#,
+                r#"{"type":"message","id":"cccccccc","parentId":"bbbbbbbb","message":{"role":"user","content":"x"}}"#,
+                r#"{"type":"message","id":"dddddddd","parentId":"cccccccc","message":{"role":"assistant","content":"answer","stopReason":"stop"}}"#,
+            ],
+            [
+                r#"{"type":"model_change","id":"aaaaaaaa","parentId":null}"#,
+                r#"{"type":"message","id":"bbbbbbbb","parentId":"aaaaaaaa","message":{"role":"toolResult","content":"result"}}"#,
+                r#"{"type":"message","id":"cccccccc","parentId":"bbbbbbbb","message":{"role":"user","content":"x"}}"#,
+                r#"{"type":"message","id":"dddddddd","parentId":"cccccccc","message":{"role":"assistant","content":"answer","stopReason":"stop"}}"#,
+            ],
+        ];
+        for lines in cases {
+            let (dir, path) = session(&lines);
+            let tree = PiSessionTree::read(&path, dir.path()).unwrap();
+            assert!(tree.exact_completed_turn(None, "x").is_none());
+        }
     }
 
     #[test]

@@ -1,4 +1,8 @@
-use super::{ExecutionFence, Result, context::lock_current_execution, http};
+use super::{
+    ExecutionFence, Result,
+    context::{lock_current_execution, lock_stopping_execution},
+    http, observe_stop,
+};
 use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activity_options};
 use crate::native_chat::NativeChatExecutionActor;
 use serde_json::json;
@@ -22,8 +26,17 @@ pub async fn record_execution_diagnostic(
     {
         return Err(http(400, "Invalid Native Chat diagnostic classification"));
     }
+    // Stop advances the control version, so the ordinary execution lock must
+    // reject that state. Observe and reauthorize its exact action instead;
+    // otherwise the failures that matter most during cancellation disappear.
+    // A concurrent change still fails closed at either lock below.
+    let stop = observe_stop(pool, actor, fence).await?;
     let mut tx = pool.begin().await?;
-    let locked = lock_current_execution(&mut tx, actor, fence).await?;
+    let locked = if let Some(stop) = stop.as_ref() {
+        lock_stopping_execution(&mut tx, actor, fence, stop).await?
+    } else {
+        lock_current_execution(&mut tx, actor, fence).await?
+    };
     let details = json!({
         "conversationId": fence.conversation_id,
         "generationId": fence.generation_id,
@@ -60,7 +73,11 @@ pub async fn record_execution_diagnostic(
     .await?;
     // The audit may block. Reauthorize both owners and their leases before
     // committing rather than letting an expired owner append evidence later.
-    lock_current_execution(&mut tx, actor, fence).await?;
+    if let Some(stop) = stop.as_ref() {
+        lock_stopping_execution(&mut tx, actor, fence, stop).await?;
+    } else {
+        lock_current_execution(&mut tx, actor, fence).await?;
+    }
     tx.commit().await?;
     Ok(())
 }

@@ -34,6 +34,8 @@ mod browser_principal;
 
 #[path = "workflow/claude_stop.rs"]
 mod claude_stop;
+#[path = "workflow/pi_resume_guard.rs"]
+mod pi_resume_guard;
 #[path = "workflow/pi_stop.rs"]
 mod pi_stop;
 

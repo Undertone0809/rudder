@@ -367,6 +367,20 @@ fn execute_pi_turn(
             .pi_session
             .as_ref()
             .ok_or(Error::InvalidProviderObservation)?;
+        // Verify the persisted native file against D1's last trusted leaf
+        // before asking Pi to load the session or preparing/marking input.
+        // Pi writes model/thinking setup records during initialization, so
+        // allow only a linear setup-metadata suffix from that exact anchor.
+        // A missing/unpersisted file is an observation failure here; a fresh
+        // session is created only by the NoThreadRequest branch above.
+        let tree = PiSessionTree::read(Path::new(&stored.session_file), &execution.session_dir)
+            .map_err(|_| Error::InvalidProviderObservation)?;
+        if tree.view().session_id != stored.session_id
+            || tree.view().session_file.to_string_lossy() != stored.session_file
+            || !tree.active_leaf_continues_with_setup_metadata(stored.leaf_id.as_deref())
+        {
+            return Err(Error::InvalidProviderObservation);
+        }
         execution
             .resume_session_with_hook(
                 Path::new(&stored.session_file),
