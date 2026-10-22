@@ -46,6 +46,13 @@ while True:
         assert sorted(params.keys()) == ['cwd', 'mcpServers', 'sessionId']
         assert params['sessionId'] == session
         assert params['mcpServers'] == []
+        # Public ACP load replay is history, not this prompt's answer. More
+        # chunks than the transport retention queue must still be consumed.
+        for _ in range(160):
+            emit({'jsonrpc':'2.0','method':'session/update',
+                  'params':{'sessionId':session,'update':{
+                      'sessionUpdate':'agent_message_chunk',
+                      'content':{'type':'text','text':'OLD_CURSOR_HISTORY_雪🧭'}}}})
         # Cursor's load result intentionally omits sessionId.
         emit({'jsonrpc':'2.0','id':request['id'],
               'result':{'modes':{'available':[{'id':'plan','name':'Plan'}]}}})
@@ -68,11 +75,24 @@ while True:
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and a synthetic local Cursor ACP provider"]
 async fn cursor_resume_sends_required_empty_mcp_servers_and_keeps_selected_session_without_response_id()
  {
+    verify_cursor_resume_replay(1).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and a synthetic local Cursor ACP provider"]
+async fn cursor_resume_consumes_history_larger_than_the_transport_queue_without_repeating_it() {
+    verify_cursor_resume_replay(160).await;
+}
+
+async fn verify_cursor_resume_replay(replay_chunks: usize) {
     assert_ignored_external_dependencies();
     let database = Database::start().await;
     let mut host = FixtureHost::new("cursor-resume");
     let provider = tempfile::tempdir().expect("create isolated Cursor fixture");
-    let executable = install_cursor(provider.path(), FAKE_CURSOR);
+    let executable = install_cursor(
+        provider.path(),
+        &FAKE_CURSOR.replace("range(160)", &format!("range({replay_chunks})")),
+    );
     let profiles = host.probe_path(".");
     fs::create_dir_all(profiles.join(".cursor")).expect("create stable managed Cursor profile");
     host.enable_cursor_runtime(executable, profiles);
@@ -94,6 +114,10 @@ async fn cursor_resume_sends_required_empty_mcp_servers_and_keeps_selected_sessi
     };
     assert_eq!(first.observation.session.as_str(), CURSOR_SESSION);
     assert_eq!(first.observation.stop_reason, "end_turn");
+    assert_eq!(
+        first.observation.final_text.as_deref(),
+        Some("Cursor fixture reply")
+    );
     let first_receipt = NativeProviderTurnReceipt {
         provider: NativeProviderKind::Cursor,
         session_id: first.observation.session.as_str().to_owned(),
@@ -143,6 +167,14 @@ async fn cursor_resume_sends_required_empty_mcp_servers_and_keeps_selected_sessi
     };
     assert_eq!(second.observation.session.as_str(), CURSOR_SESSION);
     assert_eq!(second.observation.stop_reason, "end_turn");
+    assert_eq!(
+        second.observation.final_text.as_deref(),
+        Some("Cursor fixture reply")
+    );
+    assert_eq!(
+        second.observation.update_count, 1,
+        "load replay does not count as current prompt updates"
+    );
     assert_eq!(
         second.observation.connection.connection_receipt_id(),
         second.observation.cleanup.connection_receipt_id()

@@ -29,6 +29,8 @@ use std::{
 use thiserror::Error;
 
 const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
+const MAX_LOAD_UPDATES: u64 = 8192;
+const MAX_LOAD_UPDATE_BYTES: usize = 8 * 1024 * 1024;
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const PROCESS_GRACE: Duration = Duration::from_millis(500);
 const CLEANUP_RECEIPT_ALLOWANCE: Duration = Duration::from_secs(2);
@@ -102,6 +104,46 @@ pub struct CursorExecutionObservation {
     pub connection: ConnectionReceipt,
     pub cleanup: HostCleanupProof,
     pub stop: Option<StopIntent>,
+}
+
+/// Session/load replays belong to history, never to the next prompt. Consume
+/// them under the selected session and a separate budget without retaining text.
+struct CursorLoadUpdates {
+    session: CursorAcpSession,
+    bytes: usize,
+}
+
+impl CursorLoadUpdates {
+    fn new(session_id: SessionId) -> Result<Self, CursorExecutionError> {
+        let mut session = CursorAcpSession::new();
+        session
+            .observe_session_load(session_id)
+            .map_err(|_| CursorExecutionError::InvalidSession)?;
+        Ok(Self { session, bytes: 0 })
+    }
+
+    fn observe(&mut self, message: &CursorAcpMessage) -> Result<bool, CursorAcpTransportError> {
+        let CursorAcpMessage::Notification(
+            rudder_cursor_acp_adapter::CursorAcpNotification::SessionUpdate(update),
+        ) = message
+        else {
+            // Preserve responses and interactive requests for normal correlation;
+            // loading history grants no permission or execution decision.
+            return Ok(false);
+        };
+        let count = self
+            .session
+            .observe_update(update)
+            .map_err(|_| CursorAcpTransportError::InvalidMessage)?;
+        let bytes = serde_json::to_vec(&update.raw)
+            .map_err(|_| CursorAcpTransportError::InvalidMessage)?
+            .len();
+        self.bytes = self.bytes.saturating_add(bytes);
+        if count > MAX_LOAD_UPDATES || self.bytes > MAX_LOAD_UPDATE_BYTES {
+            return Err(CursorAcpTransportError::InvalidMessage);
+        }
+        Ok(true)
+    }
 }
 
 /// Bounded state retained while a single Cursor prompt is pending. ACP update
@@ -359,9 +401,9 @@ fn run_turn(
         let expected = SessionId::new(value).map_err(|_| CursorExecutionError::InvalidSession)?;
         let params = SessionLoadParams::new(expected.clone(), path_string(&config.cwd)?)
             .map_err(|_| CursorExecutionError::InvalidConfiguration)?;
-        let load_response = request_and_wait(
+        let load_response = load_session_and_wait(
             transport,
-            CursorAcpCommand::SessionLoad { params },
+            params,
             remaining(deadline, Duration::from_secs(10)),
         )?;
         // The installed Cursor ACP session/load result legitimately omits
@@ -472,6 +514,22 @@ fn wait_prompt_response(
         // ACP cancellation is a notification only. Keep waiting on the one
         // original prompt request and accept only its typed stopReason.
     }
+}
+
+fn load_session_and_wait(
+    transport: &mut CursorAcpTransport,
+    params: SessionLoadParams,
+    timeout: Duration,
+) -> Result<rudder_cursor_acp_adapter::JsonRpcResponse, CursorExecutionError> {
+    let mut history = CursorLoadUpdates::new(params.session_id.clone())?;
+    let mut observe = |message: &CursorAcpMessage| history.observe(message);
+    transport.reserve_request()?;
+    let id = transport
+        .request_reserved_with_observer(CursorAcpCommand::SessionLoad { params }, &mut observe)?;
+    // Observe replay even when it arrives before the owned stdin-write ACK.
+    // The response is the load-history boundary; the prompt reducer is created
+    // only afterward, so historical chunks cannot become its final answer.
+    Ok(transport.wait_response_with(&id, timeout, &mut observe)?)
 }
 
 fn request_and_wait(
@@ -725,6 +783,62 @@ mod tests {
                 Err(CursorExecutionError::InvalidSession)
             ));
         }
+    }
+
+    fn load_update(session: &str, text: &str) -> CursorAcpMessage {
+        rudder_cursor_acp_adapter::parse_message(
+            &serde_json::to_vec(&serde_json::json!({
+                "jsonrpc":"2.0", "method":"session/update",
+                "params":{"sessionId":session,"update":{
+                    "sessionUpdate":"agent_message_chunk",
+                    "content":{"type":"text","text":text}
+                }}
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn load_history_is_consumed_without_retaining_text_or_other_session_updates() {
+        let mut history =
+            CursorLoadUpdates::new(SessionId::new("selected-session").unwrap()).unwrap();
+        assert_eq!(
+            history.observe(&load_update("selected-session", "old answer 雪🧭")),
+            Ok(true)
+        );
+        assert_eq!(
+            history.observe(&load_update("other-session", "wrong history")),
+            Err(CursorAcpTransportError::InvalidMessage)
+        );
+        let response =
+            rudder_cursor_acp_adapter::parse_message(br#"{"jsonrpc":"2.0","id":1,"result":{}}"#)
+                .unwrap();
+        assert_eq!(history.observe(&response), Ok(false));
+    }
+
+    #[test]
+    fn load_history_has_separate_count_and_byte_budgets() {
+        let update = load_update("selected-session", "old");
+        let mut history =
+            CursorLoadUpdates::new(SessionId::new("selected-session").unwrap()).unwrap();
+        for _ in 0..MAX_LOAD_UPDATES {
+            assert_eq!(history.observe(&update), Ok(true));
+        }
+        assert_eq!(
+            history.observe(&update),
+            Err(CursorAcpTransportError::InvalidMessage)
+        );
+        let update = load_update("selected-session", &"x".repeat(128 * 1024));
+        let mut history =
+            CursorLoadUpdates::new(SessionId::new("selected-session").unwrap()).unwrap();
+        for _ in 0..64 {
+            if history.observe(&update).is_err() {
+                assert!(history.bytes > MAX_LOAD_UPDATE_BYTES);
+                return;
+            }
+        }
+        panic!("replay byte bound must reject before 64 large chunks");
     }
 
     #[test]

@@ -1817,3 +1817,22 @@ content equivalence is recorded separately. Codex/Hermes and the requested
 Messenger changes were already merged in PR #352. Neither this hardening tranche
 nor the preparatory Reader primitives close the full six-runtime, Reader,
 permission/Fork, Side Chat, retention/GC or resource-comparison plan.
+
+### October 22 final-review correction: Cursor load replay boundary
+
+The initial v8 marker-presence PASS was insufficient for continuation projection:
+its 92-character assistant body was the 46-character first marker twice. Final
+review rejected candidate `d4ba797ee`; retain that verdict and the raw v8 PASS
+without promoting it to a correct final-answer claim. A deterministic owned
+fixture reproduces the defect: same-session assistant chunks received during
+`session/load` were deferred and later consumed by the new prompt reducer.
+
+Consume load-time session updates with a separate exact-session observer before
+creating the prompt reducer. Its independent budget is 8,192 updates and 8 MiB;
+it retains no historical text and does not answer interactive requests. The
+load response remains correlated, mismatched sessions fail closed, and no
+history is sent back as a prompt. Cover both one replay chunk and 160 chunks
+(larger than the transport queue), asserting the resumed answer exactly once
+and a current-prompt update count of one. Keep the existing cleanup/Stop gates.
+Fresh real Stop/recall acceptance must verify exact final content, not only
+marker inclusion, before the repaired candidate can be published.
