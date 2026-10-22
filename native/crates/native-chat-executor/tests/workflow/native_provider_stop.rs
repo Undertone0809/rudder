@@ -88,7 +88,8 @@ while True:
 "#;
 
 const FAKE_OPENCODE: &str = r#"
-import json, os, signal, sys
+import json, os, platform, signal, socket, sys
+import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -97,6 +98,46 @@ prompt_path = os.path.join(root, 'opencode-stop-prompt.json')
 prompt_pending = os.path.join(root, 'opencode-stop-prompt-pending')
 abort_path = os.path.join(root, 'opencode-stop-abort')
 events = os.path.join(root, 'opencode-stop-events.jsonl')
+diagnostics = os.path.join(root, 'opencode-server-diagnostics.txt')
+diagnostic_stages = set()
+
+def mark_stage(stage):
+    if stage in diagnostic_stages:
+        return
+    diagnostic_stages.add(stage)
+    with open(diagnostics, 'a', encoding='utf-8') as output:
+        output.write(stage + '\n')
+
+mark_stage('python-started-' + '.'.join(map(str, sys.version_info[:3])) + '-' + platform.machine())
+try:
+    port_argument = sys.argv.index('--port')
+    valid_launch_args = (sys.argv[1] == 'serve'
+                         and sys.argv[port_argument - 1] == '127.0.0.1'
+                         and int(sys.argv[port_argument + 1]) > 0)
+except (IndexError, ValueError):
+    valid_launch_args = False
+mark_stage('launch-args-valid' if valid_launch_args else 'launch-args-unexpected')
+original_getfqdn = socket.getfqdn
+def diagnosed_getfqdn(host=''):
+    mark_stage('fqdn-lookup-started')
+    name = original_getfqdn(host)
+    mark_stage('fqdn-lookup-completed')
+    return name
+socket.getfqdn = diagnosed_getfqdn
+
+def bind_loopback_without_dns(server):
+    mark_stage('loopback-bind-started')
+    socketserver.TCPServer.server_bind(server)
+    host, port = server.server_address[:2]
+    if host != '127.0.0.1':
+        raise RuntimeError('synthetic OpenCode must bind IPv4 loopback')
+    server.server_name = host
+    server.server_port = port
+    mark_stage('loopback-bind-completed')
+
+class LoopbackThreadingHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        bind_loopback_without_dns(self)
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
@@ -115,7 +156,15 @@ class Handler(BaseHTTPRequestHandler):
             output.write(json.dumps({'method':method,'body':body}, separators=(',', ':')) + '\n')
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == '/doc': return self.respond(200, {'info':{'title':'synthetic OpenCode'}})
+        if path == '/doc':
+            mark_stage('get-doc-received')
+            connection = self.headers.get('Connection', '').lower()
+            mark_stage('get-doc-connection-' + (connection if connection in ('close', 'keep-alive') else 'other'))
+            mark_stage('get-doc-http-1-1' if self.request_version == 'HTTP/1.1' else 'get-doc-other-http-version')
+            self.respond(200, {'info':{'title':'synthetic OpenCode'}})
+            mark_stage('get-doc-response-written')
+            return
+        mark_stage('get-unexpected-path')
         if path == '/session/ses_stop/message':
             if not os.path.exists(abort_path): return self.respond(200, [])
             prompt = json.load(open(prompt_path, encoding='utf-8'))
@@ -158,7 +207,13 @@ class Handler(BaseHTTPRequestHandler):
         return self.respond(404, {'error':'not found'})
 
 port = int(sys.argv[sys.argv.index('--port') + 1])
-server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+mark_stage('http-server-bind-started')
+try:
+    server = LoopbackThreadingHTTPServer(('127.0.0.1', port), Handler)
+except Exception as error:
+    mark_stage('http-bind-error-' + type(error).__name__)
+    raise
+mark_stage('http-listener-bound')
 def handle_term(*_):
     if os.path.exists(os.path.join(root, 'ignore-sigterm')):
         with open(os.path.join(root, 'cleanup-started'), 'w', encoding='utf-8') as output:
@@ -397,6 +452,7 @@ async fn opencode_stop_workflow(grace_seconds: u64, hold_cleanup: bool) {
             opencode_prompt_gate_failure(finished, &cwd.join("opencode-stop-events.jsonl"))
         );
     }
+    assert_opencode_fixture_ready(&cwd);
     wait_phase(&database.pool, &attempt_id, "input_indeterminate").await;
     if hold_cleanup {
         // Complete the provider before Stop, then wait until its host is
@@ -612,10 +668,55 @@ pub(super) fn opencode_prompt_gate_failure(
         Ok((Ok(_), _)) => "worker returned an observation before the prompt gate".to_owned(),
         Err(error) => format!("worker task ended unexpectedly ({error})"),
     };
+    let diagnostics_path = request_log.with_file_name("opencode-server-diagnostics.txt");
+    let stages = fs::read_to_string(diagnostics_path)
+        .ok()
+        .map(|contents| contents.lines().take(12).collect::<Vec<_>>().join(","))
+        .filter(|stages| !stages.is_empty())
+        .unwrap_or_else(|| "none".to_owned());
     format!(
-        "{worker}; OpenCode request methods=[{}]",
+        "{worker}; OpenCode fixture stages=[{stages}]; request methods=[{}]",
         opencode_request_methods(request_log)
     )
+}
+
+pub(super) fn assert_opencode_fixture_ready(cwd: &Path) {
+    let diagnostics = fs::read_to_string(cwd.join("opencode-server-diagnostics.txt"))
+        .expect("synthetic OpenCode server wrote startup diagnostics");
+    if std::env::var_os("RUDDER_TEST_OPENCODE_DIAGNOSTICS").is_some() {
+        eprintln!(
+            "synthetic OpenCode startup stages=[{}]",
+            diagnostics.lines().take(12).collect::<Vec<_>>().join(",")
+        );
+    }
+    for expected in [
+        "launch-args-valid",
+        "loopback-bind-completed",
+        "http-listener-bound",
+        "get-doc-received",
+        "get-doc-http-1-1",
+        "get-doc-response-written",
+    ] {
+        assert!(
+            diagnostics.lines().any(|stage| stage == expected),
+            "synthetic OpenCode server did not report {expected}; stages=[{}]",
+            diagnostics.lines().take(12).collect::<Vec<_>>().join(",")
+        );
+    }
+    assert!(
+        diagnostics
+            .lines()
+            .any(|stage| stage.starts_with("get-doc-connection-")),
+        "synthetic OpenCode probe did not report its connection mode; stages=[{}]",
+        diagnostics.lines().take(8).collect::<Vec<_>>().join(",")
+    );
+    assert!(
+        !diagnostics
+            .lines()
+            .any(|stage| stage == "fqdn-lookup-started"),
+        "synthetic OpenCode loopback bind must not perform a reverse-DNS lookup; stages=[{}]",
+        diagnostics.lines().take(12).collect::<Vec<_>>().join(",")
+    );
 }
 
 fn opencode_request_methods(path: &Path) -> String {
