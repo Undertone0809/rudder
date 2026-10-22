@@ -467,7 +467,12 @@ impl ProviderHost {
             codex,
         )
         .expect("construct trusted synthetic host")
-        .with_executable_search_path("/usr/bin:/bin".into())
+        .with_executable_search_path(
+            std::env::join_paths([&binaries])
+                .expect("encode fixture executable search path")
+                .into_string()
+                .expect("fixture executable search path is UTF-8"),
+        )
         .expect("bind trusted executable search path")
         .with_claude_runtime(claude, claude_profiles)
         .expect("attach inert Claude installation")

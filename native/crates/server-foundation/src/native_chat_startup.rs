@@ -526,7 +526,7 @@ mod tests {
         let nested = parent.join("missing/organizations");
         assert_eq!(super::workspace_directory(&nested).unwrap(), nested);
         assert!(parent.join("missing").is_dir());
-        assert!(super::workspace_directory(&parent.join("../escaped")).is_err());
+        assert!(super::workspace_directory(&raw_child(&parent, "../escaped")).is_err());
     }
 
     #[cfg(unix)]
