@@ -1,5 +1,6 @@
-use super::store::*;
+use super::{audit, store::*};
 use serde_json::json;
+use sqlx::Row;
 
 pub(super) async fn pin(
     tx: &mut Tx<'_>,
@@ -56,4 +57,105 @@ pub(super) async fn pin(
             .bind(s.org).bind(s.user).bind(key).bind(pinned).execute(&mut **tx).await?;
     }
     encode(&json!({"threadKey":key,"pinned":pinned}))
+}
+
+pub(super) async fn follow_issue(tx: &mut Tx<'_>, s: &Scope<'_>, issue_id: &str) -> Result<String> {
+    let issue = sqlx::query(
+        "SELECT id::text, identifier, title
+         FROM issues
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(s.org)
+    .bind(issue_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| Error::Http(404, "Issue not found"))?;
+    let row = sqlx::query(
+        "INSERT INTO issue_follows (org_id, issue_id, user_id, created_at)
+         VALUES ($1::uuid, $2::uuid, $3, current_setting('rudder.messenger_now')::timestamptz)
+         ON CONFLICT (org_id, issue_id, user_id)
+         DO UPDATE SET created_at=EXCLUDED.created_at
+         RETURNING id::text, org_id::text, issue_id::text, user_id,
+                   to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS created_at",
+    )
+    .bind(s.org)
+    .bind(issue_id)
+    .bind(s.user)
+    .fetch_one(&mut **tx)
+    .await?;
+    let id: String = row.try_get("id")?;
+    let details = json!({
+        "issueId": issue_id,
+        "identifier": issue.try_get::<Option<String>, _>("identifier")?,
+        "title": issue.try_get::<Option<String>, _>("title")?,
+    });
+    audit::activity(
+        tx,
+        s,
+        audit::Activity {
+            action: "issue.followed",
+            entity_type: "issue",
+            entity_id: issue_id,
+            details,
+            idempotency_key: None,
+            event: true,
+        },
+    )
+    .await?;
+    encode(&json!({
+        "id": id,
+        "orgId": row.try_get::<String, _>("org_id")?,
+        "issueId": row.try_get::<String, _>("issue_id")?,
+        "userId": row.try_get::<String, _>("user_id")?,
+        "createdAt": row.try_get::<String, _>("created_at")?,
+    }))
+}
+
+pub(super) async fn unfollow_issue(
+    tx: &mut Tx<'_>,
+    s: &Scope<'_>,
+    issue_id: &str,
+) -> Result<String> {
+    let issue = sqlx::query(
+        "SELECT identifier, title
+         FROM issues
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(s.org)
+    .bind(issue_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| Error::Http(404, "Issue not found"))?;
+    let removed = sqlx::query(
+        "DELETE FROM issue_follows
+         WHERE org_id=$1::uuid AND issue_id=$2::uuid AND user_id=$3",
+    )
+    .bind(s.org)
+    .bind(issue_id)
+    .bind(s.user)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected()
+        > 0;
+    if removed {
+        let details = json!({
+            "issueId": issue_id,
+            "identifier": issue.try_get::<Option<String>, _>("identifier")?,
+            "title": issue.try_get::<Option<String>, _>("title")?,
+        });
+        audit::activity(
+            tx,
+            s,
+            audit::Activity {
+                action: "issue.unfollowed",
+                entity_type: "issue",
+                entity_id: issue_id,
+                details,
+                idempotency_key: None,
+                event: true,
+            },
+        )
+        .await?;
+    }
+    encode(&json!({"ok": true}))
 }

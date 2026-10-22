@@ -128,3 +128,23 @@ fn nullable_patch_fields_do_not_collapse_into_omission() {
     assert!(p.subtitle.value().is_none());
     assert!(!p.favicon.present());
 }
+
+#[test]
+fn issue_follow_commands_validate_uuid_and_reject_injected_fields() {
+    for operation in ["issueFollow", "issueUnfollow"] {
+        let valid = body(&format!(
+            r#"{{"operation":"{operation}","issueId":"30000000-0000-4000-8000-000000000001"}}"#
+        ));
+        let request: protocol::Request = serde_json::from_str(&valid).unwrap();
+        assert!(request.validate());
+    }
+    let invalid_uuid: protocol::Request = serde_json::from_str(&body(
+        r#"{"operation":"issueFollow","issueId":"not-a-uuid"}"#,
+    ))
+    .unwrap();
+    assert!(!invalid_uuid.validate());
+    assert!(serde_json::from_str::<protocol::Request>(&body(
+        r#"{"operation":"issueUnfollow","issueId":"30000000-0000-4000-8000-000000000001","userId":"other"}"#,
+    ))
+    .is_err());
+}
