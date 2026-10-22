@@ -9,8 +9,7 @@ import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { resolveOrganizationWorkspaceHomeDir, resolvePreviousDocumentsOrganizationWorkspaceRoot, resolveRudderInstanceRoot } from "../home-paths.js";
-import { type RustAgentCreateCommand } from "./agent-create-bridge.js";
+import { resolveRustAgentInstructionsHost, type RustAgentCreateCommand } from "./agent-create-bridge.js";
 import { requestIssueCheckout } from "./issue-checkout-rust-bridge.js";
 import { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
@@ -868,13 +867,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     },
     async agentInstructions(actor, input) {
       const orgId = typeof input.orgId === "string" ? input.orgId : "";
-      const host = {
-        instanceRoot: resolveRudderInstanceRoot(),
-        workspaceHome: resolveOrganizationWorkspaceHomeDir(),
-        previousDocumentsRoot: resolvePreviousDocumentsOrganizationWorkspaceRoot(orgId),
-        friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
-        hostname: hostname(),
-      };
+      const host = resolveRustAgentInstructionsHost(orgId);
       return requestAgentCore(actor, {
         operation: input.operation,
         orgId,
@@ -904,13 +897,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         // Installation placement is selected by the local bridge, never by
         // public create JSON. AgentCore uses it only after committing the
         // Agent row to materialize the durable managed-workspace projection.
-        instructionsHost: {
-          instanceRoot: resolveRudderInstanceRoot(),
-          workspaceHome: resolveOrganizationWorkspaceHomeDir(),
-          previousDocumentsRoot: resolvePreviousDocumentsOrganizationWorkspaceRoot(command.orgId),
-          friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
-          hostname: hostname(),
-        },
+        instructionsHost: resolveRustAgentInstructionsHost(command.orgId),
       });
     },
     async goalRead(actor, orgId, input) {

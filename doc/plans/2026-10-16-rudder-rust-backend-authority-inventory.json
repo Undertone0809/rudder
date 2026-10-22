@@ -5319,7 +5319,7 @@
     },
     {
       "path": "server/src/services/agent-create-bridge.ts",
-      "sha256": "518c6aed7b41d69df362059b27084f1d89fb1f78e0a580e433d034073f0dc31b",
+      "sha256": "2ab394154d2450213d6bf03e6ee66bdd63a7760de7c78a5a2b1e4f915969e59c",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -6925,7 +6925,7 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "92e963e628c9f4797d4487e9c1de485aee2963a0664acb03afb84195d33849bc",
+      "sha256": "c99b3512f2ff3dd62ac6fa21eff14bd2385f14d52c716188ec08e8c558449257",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -57112,7 +57112,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 456,
+      "line": 455,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => finish(false)",
       "receiver": null,
       "method": "setTimeout",
@@ -57122,7 +57122,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1282,
+      "line": 1269,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -59203,14 +59203,27 @@
       "retirement_criterion": "Retire this legacy adapter-package frontend serializer when native frontend/shared configuration contracts replace that package; Rust remains the only profile-resolution authority."
     },
     {
+      "path": "server/src/services/agent-create-bridge.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "518c6aed7b41d69df362059b27084f1d89fb1f78e0a580e433d034073f0dc31b",
+      "head_sha256": "2ab394154d2450213d6bf03e6ee66bdd63a7760de7c78a5a2b1e4f915969e59c",
+      "compatibility_boundary": "Only the shared resolver of existing trusted installation facts is added: instance/workspace roots, previous-documents root, friendly-workspace flag and hostname. The existing create-command builder is unchanged legacy preparation. The helper does not accept public placement fields, access credentials, write files/data, authorize requests or choose state; Rust validates and applies the forwarded facts.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 deduplicated AgentCore installation-facts transport; exact-source addendum review required before publication",
+      "review_status": "reviewed",
+      "rust_authority": "native/crates/d1-persistence/src/agent_core/instructions/mod.rs; native/crates/d1-persistence/src/agent_core/instructions/fs.rs",
+      "retirement_criterion": "Remove host-facts transport once Rust startup supplies trusted installed host context directly to AgentCore in every supported deployment."
+    },
+    {
       "path": "server/src/services/rust-foundation-bridge.ts",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "base_sha256": "3d2562684e351285971f9928cc337b7ba67149fb6fe4aa60c730d22b6537d552",
-      "head_sha256": "92e963e628c9f4797d4487e9c1de485aee2963a0664acb03afb84195d33849bc",
-      "compatibility_boundary": "Transport collects trusted installation placement (instance/workspace roots and hostname) from the local host, never public create JSON, and forwards it with AgentCore. Rust validates placement and owns Agent mutation, durable instructions projection, filesystem operations and recovery; this adapter adds no business write or fallback.",
+      "head_sha256": "c99b3512f2ff3dd62ac6fa21eff14bd2385f14d52c716188ec08e8c558449257",
+      "compatibility_boundary": "Transport obtains the same trusted installation placement through resolveRustAgentInstructionsHost for Agent create and instructions requests, never from public create JSON. Rust validates placement and owns Agent mutation, durable instruction projection, filesystem operations and recovery; this deduplication adds no business write or fallback.",
       "reviewer": "independent agent /root/review_native_handoff_final",
-      "review_reference": "PR #354 AgentCore installation-facts transport reviewed at 664dfb483639a2831f411134f0ca506b48de7f06; latest-main issueCheckout transport retained; combined base/head hashes require integration addendum review before publication",
+      "review_reference": "PR #354 accepted AgentCore installation-facts boundary and main-integration addendum; deduplicated host resolver requires exact-source addendum review before publication",
       "review_status": "reviewed",
       "rust_authority": "native/crates/d1-persistence/src/agent_core/instructions/mod.rs; native/crates/d1-persistence/src/agent_core/instructions/fs.rs",
       "retirement_criterion": "Remove this installation-facts transport when Rust startup owns the installed host context and AgentCore public ingress directly in every supported deployment."
