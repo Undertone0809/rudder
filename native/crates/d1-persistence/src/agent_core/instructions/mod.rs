@@ -736,6 +736,7 @@ fn bundle_location(
     let mut entry = string(config, "instructionsEntryFile")
         .and_then(|value| relative(value).ok())
         .unwrap_or_else(|| "SOUL.md".into());
+    #[cfg(not(windows))]
     let legacy_path = string(config, "instructionsFilePath").and_then(|value| {
         if Path::new(value).is_absolute() {
             Some(PathBuf::from(value))
@@ -745,6 +746,16 @@ fn bundle_location(
                 .map(|cwd| path(value, Path::new(cwd)))
         }
     });
+    #[cfg(windows)]
+    let legacy_path = match string(config, "instructionsFilePath") {
+        Some(value) => windows::legacy_instruction_path(
+            value,
+            string(config, "cwd")
+                .map(Path::new)
+                .filter(|cwd| cwd.is_absolute()),
+        )?,
+        None => None,
+    };
     if configured.is_none()
         && let Some(legacy) = &legacy_path
     {

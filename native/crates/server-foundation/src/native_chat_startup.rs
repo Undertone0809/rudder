@@ -285,12 +285,27 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     Ok(canonical)
 }
 
-fn validate_workspace_shape(path: &Path) -> Result<(), ConfigError> {
-    if !path.is_absolute()
-        || path
-            .components()
-            .any(|component| component == std::path::Component::ParentDir)
+fn contains_parent_component(path: &Path) -> bool {
+    #[cfg(windows)]
     {
+        use std::os::windows::ffi::OsStrExt;
+        // Verbatim Windows paths do not parse forward slashes as separators.
+        // Installation input still uses the launcher's two-separator syntax.
+        path.as_os_str()
+            .encode_wide()
+            .collect::<Vec<_>>()
+            .split(|character| matches!(*character, 47 | 92))
+            .any(|component| component == [46, 46])
+    }
+    #[cfg(not(windows))]
+    {
+        path.components()
+            .any(|component| component == std::path::Component::ParentDir)
+    }
+}
+
+fn validate_workspace_shape(path: &Path) -> Result<(), ConfigError> {
+    if !path.is_absolute() || contains_parent_component(path) {
         return Err(invalid_at(
             "workspace root must be absolute without parent traversal",
         ));
@@ -302,6 +317,12 @@ fn validate_workspace_input(input: Option<&str>, operator_home: &Path) -> Result
     let Some(input) = input.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(());
     };
+    // Joining onto a verbatim Windows home would otherwise remove `..`.
+    if contains_parent_component(Path::new(input)) {
+        return Err(invalid_at(
+            "workspace root must be absolute without parent traversal",
+        ));
+    }
     // Preserve the launcher's documented home-prefix expansion. Everything
     // else must already be absolute; never resolve relative input against cwd.
     let expanded = if input == "~" {
@@ -357,7 +378,16 @@ fn loopback_origin(origin: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    fn raw_child(root: &Path, tail: &str) -> PathBuf {
+        // Path::join normalizes `..` on verbatim Windows roots. Preserve the
+        // original installation input so this fixture exercises the guard.
+        let mut raw = root.as_os_str().to_os_string();
+        raw.push(std::path::MAIN_SEPARATOR_STR);
+        raw.push(tail);
+        PathBuf::from(raw)
+    }
 
     #[test]
     fn original_launcher_workspace_input_cannot_hide_invalid_path_shape() {
@@ -404,14 +434,34 @@ mod tests {
         assert!(super::workspace_directory(&file).is_err());
         assert!(super::workspace_directory(&file.join("organizations")).is_err());
         assert_eq!(std::fs::read(&file).unwrap(), b"keep");
-        assert!(super::workspace_directory(&root.join("new/../organizations")).is_err());
+        assert!(super::workspace_directory(&raw_child(&root, "new/../organizations")).is_err());
         assert!(!root.join("new").exists());
         assert!(!root.join("organizations").exists());
         std::fs::create_dir(root.join("existing")).unwrap();
         std::fs::create_dir(root.join("organizations")).unwrap();
-        assert!(super::workspace_directory(&root.join("existing/../organizations")).is_err());
+        assert!(
+            super::workspace_directory(&raw_child(&root, "existing/../organizations")).is_err()
+        );
         assert!(root.join("existing").is_dir());
         assert!(root.join("organizations").is_dir());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_workspace_input_rejects_both_separators_before_writes() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        for tail in [
+            r"new\..\organizations",
+            r"new/..\organizations",
+            r"new\../organizations",
+        ] {
+            let candidate = raw_child(&root, tail);
+            assert!(super::workspace_directory(&candidate).is_err());
+            assert!(super::validate_workspace_input(candidate.to_str(), &root).is_err());
+        }
+        assert!(!root.join("new").exists());
+        assert!(!root.join("organizations").exists());
     }
 
     #[cfg(unix)]

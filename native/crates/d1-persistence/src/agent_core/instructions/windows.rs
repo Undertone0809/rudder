@@ -2,13 +2,69 @@
 //! symbolic-link privilege. All paths were selected and bounded by native policy.
 use std::{
     fs, io,
-    os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle},
-    path::Path,
+    os::windows::{
+        ffi::OsStrExt,
+        fs::{MetadataExt, OpenOptionsExt},
+        io::AsRawHandle,
+    },
+    path::{Component, Path, PathBuf},
 };
 use windows_sys::Win32::{
-    Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT},
+    Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    },
     System::IO::DeviceIoControl,
 };
+
+/// Check parents erased by Node-compatible lexical normalization. Retained
+/// parents still go through the normal owned-root/compatibility-alias preflight.
+/// Both separators occur in persisted paths, including verbatim temp roots.
+pub(super) fn legacy_instruction_path(
+    value: &str,
+    cwd: Option<&Path>,
+) -> io::Result<Option<PathBuf>> {
+    let value = value.replace('/', "\\");
+    let raw = if Path::new(&value).is_absolute() {
+        PathBuf::from(&value)
+    } else if let Some(cwd) = cwd {
+        // Path::join removes `..` on a verbatim Windows base. Append without
+        // resolving so a junction/file in `folder/..` cannot disappear first.
+        let mut raw = cwd.as_os_str().to_os_string();
+        raw.push("\\");
+        raw.push(&value);
+        PathBuf::from(raw)
+    } else {
+        return Ok(None);
+    };
+    let mut cursor = PathBuf::new();
+    if let Some(parent) = raw.parent() {
+        for component in parent.components() {
+            match component {
+                Component::Prefix(_) | Component::RootDir => cursor.push(component.as_os_str()),
+                Component::CurDir => (),
+                Component::ParentDir => {
+                    // Inspect before popping: otherwise `junction/..` or
+                    // `file/..` could hide an invalid traversed component.
+                    if let Some(metadata) = super::fs::lstat(&cursor)?
+                        && (!metadata.is_dir()
+                            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+                    {
+                        return Err(super::fs::invalid(
+                            "Instruction file parent is not an owned directory",
+                        ));
+                    }
+                    cursor.pop();
+                }
+                Component::Normal(part) => cursor.push(part),
+            }
+        }
+    }
+    Ok(Some(super::fs::path(
+        &raw.to_string_lossy(),
+        Path::new("/"),
+    )))
+}
+
 pub(super) fn junction(source: &Path, target: &Path) -> io::Result<()> {
     let absolute = fs::canonicalize(target)?;
     let printable = absolute.as_os_str().encode_wide().collect::<Vec<_>>();
