@@ -149,8 +149,8 @@ describe.skipIf(shouldSkipRealEntrySuite)("Agent self-checkout through the publi
       port,
       persistent: true,
       initdbFlags: ["--encoding=UTF8", "--locale=C"],
-      onLog: () => {},
-      onError: () => {},
+      onLog: (message) => console.error("[issue-checkout PostgreSQL]", message),
+      onError: (message) => console.error("[issue-checkout PostgreSQL]", message),
     });
     ownedPostgres = instance;
     await instance.initialise();

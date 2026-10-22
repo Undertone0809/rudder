@@ -131,6 +131,8 @@ jobs:
           TEMP: /tmp
         run: |
           set -o pipefail
+          test "$RUDDER_ISSUE_CHECKOUT_TEST_DISPOSABLE" = "1"
+          test -x "$RUDDER_SERVER_FOUNDATION_PATH"
           pnpm exec vitest run --root server --config vitest.config.ts \
             src/__tests__/issue-checkout-rust-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
