@@ -3,16 +3,21 @@ import {
   agents,
   applyPendingMigrations,
   createDb,
+  createLocalPostgresInstance,
   ensurePostgresDatabase,
   heartbeatRuns,
   issues,
   organizationMutationOutbox,
   organizations,
   projects,
+  type LocalPostgresInstance,
 } from "@rudderhq/db";
 import { eq, sql } from "drizzle-orm";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { createServer } from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
@@ -31,10 +36,41 @@ const foundationBinaryCandidates = process.env.RUDDER_SERVER_FOUNDATION_PATH?.tr
     ];
 const foundationBinaryAvailable = foundationBinaryCandidates.some((candidate) => fs.existsSync(candidate));
 const configuredDatabaseUrl = process.env.RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL?.trim();
+const disposableDatabaseRequested = process.env.RUDDER_ISSUE_CHECKOUT_TEST_DISPOSABLE === "1";
 
-describe.skipIf(!foundationBinaryAvailable || !configuredDatabaseUrl)("Agent self-checkout through the public Node transport and Rust authority", () => {
+if (disposableDatabaseRequested && configuredDatabaseUrl) {
+  throw new Error("Set either RUDDER_ISSUE_CHECKOUT_TEST_DISPOSABLE=1 or RUDDER_ISSUE_CHECKOUT_TEST_DATABASE_URL, not both");
+}
+
+function availablePostgresPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Could not reserve a local PostgreSQL test port"));
+        return;
+      }
+      server.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
+}
+
+const shouldSkipRealEntrySuite = !disposableDatabaseRequested
+  && (!foundationBinaryAvailable || !configuredDatabaseUrl);
+
+describe.skipIf(shouldSkipRealEntrySuite)("Agent self-checkout through the public Node transport and Rust authority", () => {
   let db: ReturnType<typeof createDb> | undefined;
   let bridge: RustFoundationBridge | undefined;
+  let ownedPostgres: LocalPostgresInstance | undefined;
+  let ownedPostgresStarted = false;
+  let ownedTempRoot: string | undefined;
+  const isolatedHomeVariable = process.platform === "win32" ? "USERPROFILE" : "HOME";
+  let previousHome: string | undefined;
+  let isolatedHomeSet = false;
   const orgId = "11111111-1111-4111-8111-111111111111";
   const agentId = "22222222-2222-4222-8222-222222222222";
   const projectId = "33333333-3333-4333-8333-333333333333";
@@ -97,146 +133,237 @@ describe.skipIf(!foundationBinaryAvailable || !configuredDatabaseUrl)("Agent sel
       .where(sql`${organizationMutationOutbox.payload}->>'entityId' = ${targetIssueId}`);
   }
 
-  beforeAll(async () => {
-    const external = configuredDatabaseUrl!;
-    const parsed = new URL(external);
-    const databaseName = parsed.pathname.replace(/^\//, "");
-    parsed.pathname = "/postgres";
-    await ensurePostgresDatabase(parsed.toString(), databaseName);
-    await applyPendingMigrations(external);
-    const connectionString = external;
-    db = createDb(connectionString);
-    await db.insert(organizations).values({
-      id: orgId,
-      name: "Rust issue checkout acceptance",
-      urlKey: "rust-issue-checkout-acceptance",
-      issuePrefix: "RUSTCHK",
-      requireBoardApprovalForNewAgents: false,
-    });
-    await db.insert(organizations).values({
-      id: foreignOrgId,
-      name: "Foreign Rust issue checkout acceptance",
-      urlKey: "rust-issue-checkout-foreign",
-      issuePrefix: "RUSTXCHK",
-      requireBoardApprovalForNewAgents: false,
-    });
-    await db.insert(agents).values({
-      id: agentId,
-      orgId,
-      name: "Checkout Agent",
-      role: "engineer",
-      status: "active",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {},
-      runtimeConfig: {},
-      permissions: {},
-    });
-    await db.insert(projects).values({ id: projectId, orgId, name: "Checkout Project", status: "in_progress" });
-    await db.insert(heartbeatRuns).values({
-      id: runId,
-      orgId,
-      agentId,
-      invocationSource: "on_demand",
-      status: "running",
-      contextSnapshot: { issueId },
-    });
-    await db.insert(heartbeatRuns).values({
-      id: pendingRunId,
-      orgId,
-      agentId,
-      invocationSource: "on_demand",
-      status: "failed",
-      terminalEffectsPending: true,
-      contextSnapshot: { issueId: pendingIssueId },
-    });
-    await db.insert(heartbeatRuns).values({
-      id: concurrentRunId,
-      orgId,
-      agentId,
-      invocationSource: "on_demand",
-      status: "running",
-      contextSnapshot: { issueId: concurrentIssueId },
-    });
-    await db.insert(issues).values({
-      id: issueId,
-      orgId,
-      projectId,
-      title: "Rust checkout acceptance",
-      status: "todo",
-      priority: "medium",
-    });
-    await db.insert(issues).values({
-      id: pendingIssueId,
-      orgId,
-      projectId,
-      title: "Pending terminal effects must not be adopted",
-      status: "in_progress",
-      priority: "medium",
-      assigneeAgentId: agentId,
-      checkoutRunId: pendingRunId,
-      executionRunId: pendingRunId,
-    });
-    await db.insert(issues).values([
-      {
-        id: concurrentIssueId,
-        orgId,
-        projectId,
-        title: "Concurrent Rust checkout acceptance",
-        status: "todo",
-        priority: "medium",
-      },
-      {
-        id: tamperedIssueId,
-        orgId,
-        projectId,
-        title: "Tampered Rust checkout acceptance",
-        status: "todo",
-        priority: "medium",
-      },
-      {
-        id: rollbackIssueId,
-        orgId,
-        projectId,
-        title: "Rollback Rust checkout acceptance",
-        status: "todo",
-        priority: "medium",
-      },
-    ]);
-    await db.insert(projects).values({
-      id: foreignProjectId,
-      orgId: foreignOrgId,
-      name: "Foreign Checkout Project",
-      status: "in_progress",
-    });
-    await db.insert(issues).values({
-      id: foreignIssueId,
-      orgId: foreignOrgId,
-      projectId: foreignProjectId,
-      title: "Foreign organization checkout must be denied",
-      status: "todo",
-      priority: "medium",
-    });
+  async function startOwnedDisposableDatabase(): Promise<string> {
+    ownedTempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-issue-checkout-"));
+    const isolatedHome = path.join(ownedTempRoot, "home");
+    fs.mkdirSync(isolatedHome, { recursive: true, mode: 0o700 });
+    previousHome = process.env[isolatedHomeVariable];
+    process.env[isolatedHomeVariable] = isolatedHome;
+    isolatedHomeSet = true;
 
-    const binary = foundationBinaryCandidates.find((candidate) => fs.existsSync(candidate)) ?? foundationBinaryCandidates[0]!;
-    if (!fs.existsSync(binary)) {
-      throw new Error(`missing Rust foundation binary: ${binary}`);
-    }
-    bridge = createRustFoundationBridge({
-      databaseUrl: connectionString,
-      binaryPath: binary,
-      actorEnvelopeKey: "issue-checkout-acceptance-envelope-key",
-      mode: "off",
-      organizationBrandingMode: "off",
-      projectGoalSetMode: "off",
-      requestTimeoutMs: 10_000,
+    const port = await availablePostgresPort();
+    const { instance } = await createLocalPostgresInstance({
+      databaseDir: path.join(ownedTempRoot, "pgdata"),
+      user: "rudder",
+      password: "rudder",
+      port,
+      persistent: true,
+      initdbFlags: ["--encoding=UTF8", "--locale=C"],
+      onLog: () => {},
+      onError: () => {},
     });
-    await bridge.start();
+    ownedPostgres = instance;
+    await instance.initialise();
+    ownedPostgresStarted = true;
+    await instance.start();
+
+    const databaseName = `rudder_issue_checkout_${randomUUID().replaceAll("-", "")}`;
+    const adminUrl = `postgres://rudder:rudder@127.0.0.1:${port}/postgres`;
+    await ensurePostgresDatabase(adminUrl, databaseName);
+    return `postgres://rudder:rudder@127.0.0.1:${port}/${databaseName}`;
+  }
+
+  async function cleanupOwnedResources(): Promise<void> {
+    const failures: unknown[] = [];
+    try {
+      await bridge?.close();
+      bridge = undefined;
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await db?.$client.end({ timeout: 5 });
+      db = undefined;
+    } catch (error) {
+      failures.push(error);
+    }
+    let tempRootCanBeRemoved = !ownedPostgresStarted && !bridge && !db;
+    if (ownedPostgres && ownedPostgresStarted && !bridge && !db) {
+      try {
+        await ownedPostgres.stop();
+        ownedPostgresStarted = false;
+        tempRootCanBeRemoved = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (isolatedHomeSet) {
+      if (previousHome === undefined) delete process.env[isolatedHomeVariable];
+      else process.env[isolatedHomeVariable] = previousHome;
+      isolatedHomeSet = false;
+    }
+    if (tempRootCanBeRemoved) ownedPostgres = undefined;
+    if (ownedTempRoot && tempRootCanBeRemoved) {
+      try {
+        fs.rmSync(ownedTempRoot, { recursive: true, force: true });
+        ownedTempRoot = undefined;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Issue checkout real-entry cleanup failed for an owned resource");
+    }
+  }
+
+  beforeAll(async () => {
+    try {
+      if (disposableDatabaseRequested && !foundationBinaryAvailable) {
+        throw new Error(`RUDDER_ISSUE_CHECKOUT_TEST_DISPOSABLE=1 requires a Rust foundation binary; checked: ${foundationBinaryCandidates.join(", ")}`);
+      }
+
+      let connectionString: string;
+      if (disposableDatabaseRequested) {
+        connectionString = await startOwnedDisposableDatabase();
+      } else {
+        const external = configuredDatabaseUrl;
+        if (!external) throw new Error("Issue checkout real-entry suite requires its explicit disposable mode or database URL");
+        const parsed = new URL(external);
+        const databaseName = parsed.pathname.replace(/^\//, "");
+        parsed.pathname = "/postgres";
+        await ensurePostgresDatabase(parsed.toString(), databaseName);
+        connectionString = external;
+      }
+      await applyPendingMigrations(connectionString);
+      db = createDb(connectionString);
+      await db.insert(organizations).values({
+        id: orgId,
+        name: "Rust issue checkout acceptance",
+        urlKey: "rust-issue-checkout-acceptance",
+        issuePrefix: "RUSTCHK",
+        requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(organizations).values({
+        id: foreignOrgId,
+        name: "Foreign Rust issue checkout acceptance",
+        urlKey: "rust-issue-checkout-foreign",
+        issuePrefix: "RUSTXCHK",
+        requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(agents).values({
+        id: agentId,
+        orgId,
+        name: "Checkout Agent",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      });
+      await db.insert(projects).values({ id: projectId, orgId, name: "Checkout Project", status: "in_progress" });
+      await db.insert(heartbeatRuns).values({
+        id: runId,
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        status: "running",
+        contextSnapshot: { issueId },
+      });
+      await db.insert(heartbeatRuns).values({
+        id: pendingRunId,
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        status: "failed",
+        terminalEffectsPending: true,
+        contextSnapshot: { issueId: pendingIssueId },
+      });
+      await db.insert(heartbeatRuns).values({
+        id: concurrentRunId,
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        status: "running",
+        contextSnapshot: { issueId: concurrentIssueId },
+      });
+      await db.insert(issues).values({
+        id: issueId,
+        orgId,
+        projectId,
+        title: "Rust checkout acceptance",
+        status: "todo",
+        priority: "medium",
+      });
+      await db.insert(issues).values({
+        id: pendingIssueId,
+        orgId,
+        projectId,
+        title: "Pending terminal effects must not be adopted",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        checkoutRunId: pendingRunId,
+        executionRunId: pendingRunId,
+      });
+      await db.insert(issues).values([
+        {
+          id: concurrentIssueId,
+          orgId,
+          projectId,
+          title: "Concurrent Rust checkout acceptance",
+          status: "todo",
+          priority: "medium",
+        },
+        {
+          id: tamperedIssueId,
+          orgId,
+          projectId,
+          title: "Tampered Rust checkout acceptance",
+          status: "todo",
+          priority: "medium",
+        },
+        {
+          id: rollbackIssueId,
+          orgId,
+          projectId,
+          title: "Rollback Rust checkout acceptance",
+          status: "todo",
+          priority: "medium",
+        },
+      ]);
+      await db.insert(projects).values({
+        id: foreignProjectId,
+        orgId: foreignOrgId,
+        name: "Foreign Checkout Project",
+        status: "in_progress",
+      });
+      await db.insert(issues).values({
+        id: foreignIssueId,
+        orgId: foreignOrgId,
+        projectId: foreignProjectId,
+        title: "Foreign organization checkout must be denied",
+        status: "todo",
+        priority: "medium",
+      });
+
+      const binary = foundationBinaryCandidates.find((candidate) => fs.existsSync(candidate)) ?? foundationBinaryCandidates[0]!;
+      if (!fs.existsSync(binary)) {
+        throw new Error(`missing Rust foundation binary: ${binary}`);
+      }
+      bridge = createRustFoundationBridge({
+        databaseUrl: connectionString,
+        binaryPath: binary,
+        actorEnvelopeKey: "issue-checkout-acceptance-envelope-key",
+        mode: "off",
+        organizationBrandingMode: "off",
+        projectGoalSetMode: "off",
+        requestTimeoutMs: 10_000,
+      });
+      await bridge.start();
+    } catch (error) {
+      try {
+        await cleanupOwnedResources();
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "Issue checkout real-entry setup and cleanup both failed");
+      }
+      throw error;
+    }
   }, 60_000);
 
   afterAll(async () => {
-    await bridge?.close();
-    await db?.$client.end({ timeout: 5 });
-  }, 20_000);
+    await cleanupOwnedResources();
+  }, 60_000);
 
   it("persists checkout, full labels projection, and activity through Rust", async () => {
     const app = createApp(runId);

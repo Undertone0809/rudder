@@ -122,6 +122,19 @@ jobs:
             src/__tests__/issue-metadata-read-real-entry.test.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+      - name: Verify Rust issue checkout real-entry through Node transport and Rust authority
+        env:
+          RUDDER_ISSUE_CHECKOUT_TEST_DISPOSABLE: "1"
+          RUDDER_SERVER_FOUNDATION_PATH: ${{ github.workspace }}/native/target/debug/rudder-server-foundation
+          TMPDIR: /tmp
+          TMP: /tmp
+          TEMP: /tmp
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --root server --config vitest.config.ts \
+            src/__tests__/issue-checkout-rust-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Verify Rust Automation and Activity link reads
         run: |
           set -o pipefail
