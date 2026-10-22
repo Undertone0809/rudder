@@ -5,13 +5,11 @@ use tempfile::TempDir;
 
 const CHAT_CLAUDE_MANAGED: &str = "21000000-0000-4000-8000-000000000201";
 const CHAT_CLAUDE_MISSING: &str = "21000000-0000-4000-8000-000000000202";
-const CHAT_CLAUDE_SYMLINK: &str = "21000000-0000-4000-8000-000000000203";
 const CHAT_CLAUDE_OPERATOR_DARK: &str = "21000000-0000-4000-8000-000000000204";
 const CHAT_CLAUDE_OPERATOR_LIGHT: &str = "21000000-0000-4000-8000-000000000205";
 const CHAT_CLAUDE_BYPASS: &str = "21000000-0000-4000-8000-000000000211";
 const CHAT_CURSOR_MANAGED: &str = "21000000-0000-4000-8000-000000000206";
 const CHAT_CURSOR_MISSING: &str = "21000000-0000-4000-8000-000000000207";
-const CHAT_CURSOR_SYMLINK: &str = "21000000-0000-4000-8000-000000000208";
 const CHAT_CURSOR_OPERATOR_DARK: &str = "21000000-0000-4000-8000-000000000209";
 const CHAT_CURSOR_OPERATOR_LIGHT: &str = "21000000-0000-4000-8000-000000000210";
 const CHAT_CURSOR_COMMAND: &str = "21000000-0000-4000-8000-000000000212";
@@ -388,6 +386,8 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
         #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
+            const CHAT_CLAUDE_SYMLINK: &str = "21000000-0000-4000-8000-000000000203";
+            const CHAT_CURSOR_SYMLINK: &str = "21000000-0000-4000-8000-000000000208";
             let config_dir = host.operator_config_dir(provider);
             let redirected = host
                 ._root
