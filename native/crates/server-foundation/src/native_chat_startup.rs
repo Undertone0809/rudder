@@ -516,15 +516,16 @@ mod tests {
     }
 
     #[test]
-    fn fresh_workspace_container_is_created_without_guessing_missing_parents() {
+    fn fresh_workspace_container_creates_valid_nested_launcher_roots() {
         let root = tempfile::tempdir().unwrap();
         let parent = root.path().canonicalize().unwrap();
         let workspace = parent.join("organizations");
         assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
         assert_eq!(std::fs::read_dir(&workspace).unwrap().count(), 0);
         assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
-        assert!(super::workspace_directory(&parent.join("missing/organizations")).is_err());
-        assert!(!parent.join("missing").exists());
+        let nested = parent.join("missing/organizations");
+        assert_eq!(super::workspace_directory(&nested).unwrap(), nested);
+        assert!(parent.join("missing").is_dir());
         assert!(super::workspace_directory(&parent.join("../escaped")).is_err());
     }
 
