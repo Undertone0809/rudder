@@ -1432,7 +1432,7 @@
     },
     {
       "path": "desktop/src/identity-runtime.ts",
-      "sha256": "90ceaf8a125bfad8c5e685ce6e72b91af0e3be3bb0127119a56b8d7be3b78afa",
+      "sha256": "2cbb12fb20963403817c8f1c9c78d2e112894d48be852f031cee1659265b016d",
       "families": [
         "electron_process_graph"
       ]
@@ -1453,7 +1453,7 @@
     },
     {
       "path": "desktop/src/identity-startup-policy.ts",
-      "sha256": "4d913833cb824871d78b3513a403a795c55c9e745969a3ecef32e349f7d0d1b2",
+      "sha256": "30deddeb3ffa70b9b09e1d786b12017399f720d04deca227177af4312a908daf",
       "families": [
         "electron_process_graph"
       ]
@@ -1586,7 +1586,7 @@
     },
     {
       "path": "desktop/src/login-shell-env.ts",
-      "sha256": "8ecc24aa0179dc0f6a2ec685e3e3e2719b18038e571ca46fa80a8a5bd3da9dbf",
+      "sha256": "03e39446367750a5f75a86a03b0c4e56374bfd674f4d9ad389e1147b3462dfc4",
       "families": [
         "electron_process_graph"
       ]
@@ -2156,7 +2156,7 @@
     },
     {
       "path": "packages/agent-runtime-utils/src/types.ts",
-      "sha256": "60d5fc62ffd9f0fe33b19a0c4576bbf944dd37d5b92928c2e2af7c6f2b8b51ea",
+      "sha256": "2bf0055fbe90f1587f68d925e078b36083481688e80d1885ae0893c24c07c577",
       "families": [
         "rudder_owned_runtime_adapters"
       ]
@@ -2247,7 +2247,7 @@
     },
     {
       "path": "packages/agent-runtimes/claude-local/src/ui/build-config.ts",
-      "sha256": "6d312938e8025f1ed0963b8e633a3d459a2791b4faa031fed4eab897f5e5808f",
+      "sha256": "f3008b872e02ef428a3345dc551236d8800cdd936e53b7c40fffb0ab3b953651",
       "families": [
         "rudder_owned_runtime_adapters"
       ]
@@ -2506,7 +2506,7 @@
     },
     {
       "path": "packages/agent-runtimes/cursor-local/src/ui/build-config.ts",
-      "sha256": "dbdcc8b09d2c1071200fcc92d1d5993ea19336d0c02b73bc2419e6a0988c0e8a",
+      "sha256": "699d0b907bd5a7e61368cb74b92a8614d2caf5f45664d8a9f395cb47d458c1fc",
       "families": [
         "rudder_owned_runtime_adapters"
       ]
@@ -2821,7 +2821,7 @@
     },
     {
       "path": "packages/agent-runtimes/pi-local/src/ui/build-config.ts",
-      "sha256": "207ffef1ba5fef77f65e55d6c429e8773f9d8a4b0b605a7ed6c674b150cefe3d",
+      "sha256": "578b18c3c6428af18d768657597908127a0e58f71956487e10e4e97c3a547f03",
       "families": [
         "rudder_owned_runtime_adapters"
       ]
@@ -6918,7 +6918,7 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "ba533518d436fc7b9567dce3c8e6f4233e31a2ad18e5d5d6fd6145125bf82756",
+      "sha256": "72163e1b5697ba25c0ef1dca238c8df1bcb44397113643d6bf337cb4a10c3fb3",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -57115,7 +57115,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1263,
+      "line": 1273,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -59105,30 +59105,108 @@
   },
   "reviewed_node_changes": [
     {
-      "path": "server/src/routes/issues.ts",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "base_sha256": "13d2f67357281f0964872f1ae9f2d3e0e5343b11f273b9e85796f15009492a8a",
-      "head_sha256": "6a9dd870699471e89036245250ecd07f190a7e96a8810052b386bb6230257a3a",
-      "rust_authority": "native/crates/server-foundation/src/messenger_state/threads.rs::follow_issue/unfollow_issue",
-      "compatibility_boundary": "Express keeps public issue path, board/org checks, and issue identity lookup; Rust Messenger state owns follow/unfollow writes, activity, and outbox with no Node fallback.",
-      "retirement_criterion": "Remove this Express adapter when Rust public HTTP owns the issue follow/unfollow paths and the general issue router no longer provides the endpoint.",
-      "reviewer": "independent agent /root/side_chat_pr346_stage_review",
-      "review_reference": "PR #347 exact-candidate stage review at 370efdbb0",
-      "review_status": "reviewed"
+      "path": "desktop/src/identity-runtime.ts",
+      "change_kind": "modified_retained_client",
+      "node_role": "retained_client",
+      "base_sha256": "90ceaf8a125bfad8c5e685ce6e72b91af0e3be3bb0127119a56b8d7be3b78afa",
+      "head_sha256": "2cbb12fb20963403817c8f1c9c78d2e112894d48be852f031cee1659265b016d",
+      "compatibility_boundary": "Electron forwards its explicit development/marked packaged-smoke identity policy to the native listener. It does not resolve public credentials, authorize API requests, create a second backend actor, or relax normal packaged account requirements.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_status": "reviewed",
+      "client_responsibility": "Retained Electron account-gate client and subprocess environment setup; distinguish packaged smoke local-implicit policy from the separate UI account bypass.",
+      "associated_backend_authority": "native/crates/server-foundation/src/native_chat_startup.rs; native/crates/server-foundation/src/native_session_auth.rs"
     },
     {
-      "path": "server/src/services/messenger-state-bridge.ts",
+      "path": "desktop/src/identity-startup-policy.ts",
+      "change_kind": "modified_retained_client",
+      "node_role": "retained_client",
+      "base_sha256": "4d913833cb824871d78b3513a403a795c55c9e745969a3ecef32e349f7d0d1b2",
+      "head_sha256": "30deddeb3ffa70b9b09e1d786b12017399f720d04deca227177af4312a908daf",
+      "compatibility_boundary": "Pure retained-client selection of development versus explicitly marked packaged-smoke flags. Native public authentication and permission decisions stay in Rust; this helper grants no board or Agent authority.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_status": "reviewed",
+      "client_responsibility": "Retained Electron startup/account presentation policy shared with Desktop smoke; explicit packaged-smoke input selects local implicit-auth forwarding.",
+      "associated_backend_authority": "native/crates/server-foundation/src/native_chat_startup.rs"
+    },
+    {
+      "path": "desktop/src/login-shell-env.ts",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "base_sha256": "73a97f3771c7fdd716667818bdfb3815990b623303c54c321d6b4284ce6f4bd5",
-      "head_sha256": "cf44058af397799d0a03fd8d72d889d625609a571e1751cacb4b7a3b3afca183",
-      "rust_authority": "native/crates/server-foundation/src/messenger_state/mod.rs::messenger_state",
-      "compatibility_boundary": "Bridge only signs and transports issueFollow/issueUnfollow commands; it does not perform database writes or activity logging.",
-      "retirement_criterion": "Remove the bridge when the public Rust HTTP server accepts issue follow/unfollow directly.",
-      "reviewer": "independent agent /root/side_chat_pr346_stage_review",
-      "review_reference": "PR #347 exact-candidate stage review at 370efdbb0",
-      "review_status": "reviewed"
+      "base_sha256": "8ecc24aa0179dc0f6a2ec685e3e3e2719b18038e571ca46fa80a8a5bd3da9dbf",
+      "head_sha256": "03e39446367750a5f75a86a03b0c4e56374bfd674f4d9ad389e1147b3462dfc4",
+      "compatibility_boundary": "Existing Desktop host-environment adapter drops empty/relative PATH components before forwarding the selected login-shell PATH. It does not select a provider profile, admit a generation, dispatch work or authorize a request.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_status": "reviewed",
+      "rust_authority": "native/crates/d1-persistence/src/native_chat/config/host.rs; native/crates/server-foundation/src/native_chat_startup.rs",
+      "retirement_criterion": "Remove this legacy host-environment adaptation when the installed Rust startup path owns login-shell discovery and native command resolution in every supported Desktop workflow."
+    },
+    {
+      "path": "packages/agent-runtime-utils/src/types.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "60d5fc62ffd9f0fe33b19a0c4576bbf944dd37d5b92928c2e2af7c6f2b8b51ea",
+      "head_sha256": "2bf0055fbe90f1587f68d925e078b36083481688e80d1885ae0893c24c07c577",
+      "compatibility_boundary": "Type-only optional nativeProfileId form/wire property; it performs no configuration resolution, credential access, state transition or persistence. Rust resolves and validates the selected native profile.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_status": "reviewed",
+      "rust_authority": "native/crates/d1-persistence/src/native_chat/config/resolve.rs",
+      "retirement_criterion": "Move this presentation-only property into shared frontend wire contracts when the legacy runtime-adapter package is retired; it must never acquire backend profile authority."
+    },
+    {
+      "path": "packages/agent-runtimes/claude-local/src/ui/build-config.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "6d312938e8025f1ed0963b8e633a3d459a2791b4faa031fed4eab897f5e5808f",
+      "head_sha256": "f3008b872e02ef428a3345dc551236d8800cdd936e53b7c40fffb0ab3b953651",
+      "compatibility_boundary": "Frontend configuration encoding only: copy the operator selection into profileId, defaulting the omitted form choice to operator-default. No credentials, provider discovery, filesystem checks, admission or execution decisions occur here.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_status": "reviewed",
+      "rust_authority": "native/crates/d1-persistence/src/native_chat/config/claude.rs; native/crates/d1-persistence/src/native_chat/config/resolve.rs",
+      "retirement_criterion": "Retire this legacy adapter-package frontend serializer when native frontend/shared configuration contracts replace that package; Rust remains the only profile-resolution authority."
+    },
+    {
+      "path": "packages/agent-runtimes/cursor-local/src/ui/build-config.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "dbdcc8b09d2c1071200fcc92d1d5993ea19336d0c02b73bc2419e6a0988c0e8a",
+      "head_sha256": "699d0b907bd5a7e61368cb74b92a8614d2caf5f45664d8a9f395cb47d458c1fc",
+      "compatibility_boundary": "Frontend configuration encoding only: copy the operator selection into profileId, defaulting the omitted form choice to operator-default. No credentials, provider discovery, filesystem checks, admission or execution decisions occur here.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_status": "reviewed",
+      "rust_authority": "native/crates/d1-persistence/src/native_chat/config/cursor.rs; native/crates/d1-persistence/src/native_chat/config/resolve.rs",
+      "retirement_criterion": "Retire this legacy adapter-package frontend serializer when native frontend/shared configuration contracts replace that package; Rust remains the only profile-resolution authority."
+    },
+    {
+      "path": "packages/agent-runtimes/pi-local/src/ui/build-config.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "207ffef1ba5fef77f65e55d6c429e8773f9d8a4b0b605a7ed6c674b150cefe3d",
+      "head_sha256": "578b18c3c6428af18d768657597908127a0e58f71956487e10e4e97c3a547f03",
+      "compatibility_boundary": "Frontend configuration encoding only: copy the operator selection into profileId, defaulting the omitted form choice to operator-default. No credentials, provider discovery, filesystem checks, admission or execution decisions occur here.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_status": "reviewed",
+      "rust_authority": "native/crates/d1-persistence/src/native_chat/config/pi.rs; native/crates/d1-persistence/src/native_chat/config/resolve.rs",
+      "retirement_criterion": "Retire this legacy adapter-package frontend serializer when native frontend/shared configuration contracts replace that package; Rust remains the only profile-resolution authority."
+    },
+    {
+      "path": "server/src/services/rust-foundation-bridge.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "ba533518d436fc7b9567dce3c8e6f4233e31a2ad18e5d5d6fd6145125bf82756",
+      "head_sha256": "72163e1b5697ba25c0ef1dca238c8df1bcb44397113643d6bf337cb4a10c3fb3",
+      "compatibility_boundary": "Transport collects trusted installation placement (instance/workspace roots and hostname) from the local host, never public create JSON, and forwards it with AgentCore. Rust validates placement and owns Agent mutation, durable instructions projection, filesystem operations and recovery; this adapter adds no business write or fallback.",
+      "reviewer": "independent agent /root/review_native_handoff_final",
+      "review_reference": "PR #354 source candidate 664dfb483639a2831f411134f0ca506b48de7f06 final handoff review; generated boundary-record addendum requires the same reviewer before publication",
+      "review_status": "reviewed",
+      "rust_authority": "native/crates/d1-persistence/src/agent_core/instructions/mod.rs; native/crates/d1-persistence/src/agent_core/instructions/fs.rs",
+      "retirement_criterion": "Remove this installation-facts transport when Rust startup owns the installed host context and AgentCore public ingress directly in every supported deployment."
     }
   ],
   "reviewed_legacy_fence_changes": [],
