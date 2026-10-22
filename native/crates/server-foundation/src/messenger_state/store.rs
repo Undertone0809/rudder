@@ -117,6 +117,10 @@ pub(super) async fn mutate(pool: &PgPool, s: &Scope<'_>, input: &Command) -> Res
         Command::ThreadUserState { thread_key, pinned } => {
             threads::pin(&mut tx, s, thread_key, *pinned).await?
         }
+        Command::IssueFollow { issue_id } => threads::follow_issue(&mut tx, s, issue_id).await?,
+        Command::IssueUnfollow { issue_id } => {
+            threads::unfollow_issue(&mut tx, s, issue_id).await?
+        }
         _ => return Err(Error::Http(422, "Invalid Messenger mutation")),
     };
     // Response serialization must succeed before committing; persistence and

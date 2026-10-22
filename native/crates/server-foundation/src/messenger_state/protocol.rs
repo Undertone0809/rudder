@@ -63,6 +63,14 @@ pub(super) enum Command {
         thread_key: String,
         pinned: Option<bool>,
     },
+    IssueFollow {
+        #[serde(rename = "issueId")]
+        issue_id: String,
+    },
+    IssueUnfollow {
+        #[serde(rename = "issueId")]
+        issue_id: String,
+    },
 }
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -373,6 +381,9 @@ impl Request {
             Command::GroupDelete { .. } | Command::GroupSeparate { .. } => true,
             Command::GroupEntryRemove { .. } => true,
             Command::ThreadUserState { .. } => true,
+            Command::IssueFollow { issue_id } | Command::IssueUnfollow { issue_id } => {
+                uuid(issue_id)
+            }
         }
     }
 }

@@ -43,6 +43,7 @@ import {
   type IssueSortField,
 } from "../services/index.js";
 import { issueMetadataReadIdentity, sendIssueMetadataRead } from "../services/issue-metadata-read-bridge.js";
+import { sendMessengerState } from "../services/messenger-state-bridge.js";
 import { resolveIssueReference } from "../services/issue-references.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
@@ -945,25 +946,10 @@ export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridg
       return;
     }
 
-    const followed = await svc.followIssue(issue.orgId, issue.id, userId);
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: issue.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "issue.followed",
-      entityType: "issue",
-      entityId: issue.id,
-      details: {
-        issueId: issue.id,
-        identifier: issue.identifier,
-        title: issue.title,
-      },
+    await sendMessengerState(res, rustFoundationBridge, req.actor, issue.orgId, {
+      operation: "issueFollow",
+      issueId: issue.id,
     });
-
-    res.status(201).json(followed);
   });
 
   router.delete("/issues/:id/follow", async (req, res) => {
@@ -984,27 +970,10 @@ export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridg
       return;
     }
 
-    const removed = await svc.unfollowIssue(issue.orgId, issue.id, userId);
-    if (removed) {
-      const actor = getActorInfo(req);
-      await logActivity(db, {
-        orgId: issue.orgId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        agentId: actor.agentId,
-        runId: actor.runId,
-        action: "issue.unfollowed",
-        entityType: "issue",
-        entityId: issue.id,
-        details: {
-          issueId: issue.id,
-          identifier: issue.identifier,
-          title: issue.title,
-        },
-      });
-    }
-
-    res.json({ ok: true });
+    await sendMessengerState(res, rustFoundationBridge, req.actor, issue.orgId, {
+      operation: "issueUnfollow",
+      issueId: issue.id,
+    });
   });
 
   router.get("/issues/:id/approvals", async (req, res) => {

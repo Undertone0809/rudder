@@ -58,7 +58,9 @@ impl AppState {
         };
         let status = if matches!(
             input.input,
-            Command::SavedViewKeep { .. } | Command::GroupCreate { .. }
+            Command::SavedViewKeep { .. }
+                | Command::GroupCreate { .. }
+                | Command::IssueFollow { .. }
         ) {
             201
         } else {

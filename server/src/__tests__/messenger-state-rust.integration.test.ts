@@ -33,6 +33,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { HttpError } from "../errors.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
+import { issueRoutes } from "../routes/issues.js";
 import { messengerRoutes } from "../routes/messenger.js";
 import { chatService } from "../services/chats.js";
 import { subscribeCompanyLiveEvents } from "../services/live-events.js";
@@ -138,6 +139,7 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
     app.use("/api", messengerRoutes(db, selectedBridge));
+    app.use("/api", issueRoutes(db, {} as any, selectedBridge));
     app.use(errorHandler);
     const result = app.listen(0, "127.0.0.1");
     await once(result, "listening");
@@ -287,6 +289,7 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     database = new EmbeddedPostgres({ databaseDir: dataDir, user: "rudder", password: "rudder", port: databasePort, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], postgresFlags: ["-k", ""], onLog: () => {}, onError: () => {} });
     await database.initialise();
     await database.start();
+    process.stdout.write(`[messenger-state-test-db] ${JSON.stringify({ database: "rudder", host: "127.0.0.1", port: databasePort, dataDir, home, nativeBinary })}\n`);
     await ensurePostgresDatabase(`postgres://rudder:rudder@127.0.0.1:${databasePort}/postgres`, "rudder");
     connectionString = `postgres://rudder:rudder@127.0.0.1:${databasePort}/rudder`;
     await applyPendingMigrations(connectionString);
@@ -806,9 +809,99 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
     expect(await snapshot()).toEqual(baseline);
   });
 
+  it("routes public Issue follow mutations through Rust with organization and repeat-effect parity", async () => {
+    await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
+    await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${foreignOrgId}::uuid AND issue_id=${foreignIssueId}::uuid AND user_id=${userId}`);
+    await db.execute(sql`DELETE FROM organization_mutation_outbox`);
+    await db.execute(sql`DELETE FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action IN ('issue.followed','issue.unfollowed')`);
+    await db.execute(sql`DELETE FROM activity_log WHERE org_id=${foreignOrgId}::uuid AND entity_id=${foreignIssueId} AND action IN ('issue.followed','issue.unfollowed')`);
+
+    const foreign = await http("post", `/api/issues/${foreignIssueId}/follow`);
+    expect(foreign.status).toBe(403);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${foreignOrgId}::uuid AND issue_id=${foreignIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${foreignOrgId}::uuid AND entity_id=${foreignIssueId} AND action IN ('issue.followed','issue.unfollowed')`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(0);
+
+    const firstFollow = await http("post", `/api/issues/${followedIssueId}/follow`);
+    expect(firstFollow.status).toBe(201);
+    expect(firstFollow.body).toMatchObject({ orgId, issueId: followedIssueId, userId });
+    const firstRelation = await db.execute(sql`SELECT id FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
+    expect(firstRelation).toHaveLength(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.followed'`))[0].count).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(1);
+
+    const repeatedFollow = await http("post", `/api/issues/${followedIssueId}/follow`);
+    expect(repeatedFollow.status).toBe(201);
+    expect(repeatedFollow.body).toMatchObject({ orgId, issueId: followedIssueId, userId, id: firstFollow.body.id });
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.followed'`))[0].count).toBe(2);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(2);
+
+    const unfollowed = await http("delete", `/api/issues/${followedIssueId}/follow`);
+    expect(unfollowed.status).toBe(200);
+    expect(unfollowed.body).toEqual({ ok: true });
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.unfollowed'`))[0].count).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(3);
+
+    const repeatedUnfollow = await http("delete", `/api/issues/${followedIssueId}/follow`);
+    expect(repeatedUnfollow.status).toBe(200);
+    expect(repeatedUnfollow.body).toEqual({ ok: true });
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`))[0].count).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${followedIssueId} AND action='issue.unfollowed'`))[0].count).toBe(1);
+    expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(3);
+  }, 30_000);
+
+  it.each(["follow", "unfollow"] as const)("rolls back public Issue %s when durable event insertion fails, then retries once", async (operation) => {
+    const targetIssueId = operation === "follow" ? issueId : privateIssueId;
+    const action = operation === "follow" ? "issue.followed" : "issue.unfollowed";
+    const method: Method = operation === "follow" ? "post" : "delete";
+    await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${targetIssueId}::uuid AND user_id=${userId}`);
+    if (operation === "unfollow") await db.insert(issueFollows).values({ orgId, issueId: targetIssueId, userId, ...fixed });
+    await db.execute(sql`DELETE FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${targetIssueId} AND action IN ('issue.followed','issue.unfollowed')`);
+    await db.execute(sql`DELETE FROM organization_mutation_outbox`);
+
+    const effects = async () => ({
+      relations: await db.execute(sql`SELECT id::text FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${targetIssueId}::uuid AND user_id=${userId} ORDER BY id`),
+      activity: await db.execute(sql`SELECT id::text, action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_id=${targetIssueId} AND action IN ('issue.followed','issue.unfollowed') ORDER BY id`),
+      outbox: await db.execute(sql`SELECT id::text, activity_id::text, event_type, payload FROM organization_mutation_outbox WHERE payload->>'entityId'=${targetIssueId} ORDER BY id`),
+    });
+    const before = await effects();
+
+    try {
+      await db.execute(sql`CREATE FUNCTION messenger_test_fail_issue_outbox() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test issue outbox failure'; END $$`);
+      await db.execute(sql.raw(`CREATE TRIGGER messenger_test_fail_issue_outbox BEFORE INSERT ON organization_mutation_outbox FOR EACH ROW WHEN (NEW.payload->>'action' = '${action}' AND NEW.payload->>'entityId' = '${targetIssueId}') EXECUTE FUNCTION messenger_test_fail_issue_outbox()`));
+      const failed = await http(method, `/api/issues/${targetIssueId}/follow`);
+      expect(failed.status).toBe(500);
+      expect(await effects()).toEqual(before);
+    } finally {
+      await db.execute(sql`DROP TRIGGER IF EXISTS messenger_test_fail_issue_outbox ON organization_mutation_outbox`);
+      await db.execute(sql`DROP FUNCTION IF EXISTS messenger_test_fail_issue_outbox()`);
+    }
+
+    const retried = await http(method, `/api/issues/${targetIssueId}/follow`);
+    if (operation === "follow") {
+      expect(retried.status).toBe(201);
+      expect(retried.body).toMatchObject({ orgId, issueId: targetIssueId, userId });
+      expect((await effects()).relations).toHaveLength(1);
+    } else {
+      expect(retried.status).toBe(200);
+      expect(retried.body).toEqual({ ok: true });
+      expect((await effects()).relations).toHaveLength(0);
+    }
+    const afterRetry = await effects();
+    expect(afterRetry.activity).toHaveLength(1);
+    expect(afterRetry.activity[0]).toMatchObject({ action });
+    expect(afterRetry.outbox).toHaveLength(1);
+    expect(afterRetry.outbox[0]?.payload).toMatchObject({ action, entityType: "issue", entityId: targetIssueId });
+  }, 20_000);
+
   it("keeps Node healthy and fails every migrated endpoint when the actual native binary cannot start", async () => {
     const unavailable = createRustFoundationBridge({ databaseUrl: connectionString, binaryPath: path.join(home, "foundation-does-not-exist"), mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off" });
     const failingServer = await startApp(unavailable);
+    await db.execute(sql`DELETE FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
+    await db.insert(issueFollows).values({ orgId, issueId: followedIssueId, userId, ...fixed });
+    const followBefore = await db.execute(sql`SELECT id FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`);
     const before = await snapshot();
     try {
       expect((await request(failingServer).get("/api/health")).body).toEqual({ status: "ok" });
@@ -817,11 +910,14 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
         ["patch", `/saved-views/${viewIds[0]}`, { title: "must not write" }], ["delete", `/saved-views/${viewIds[0]}`], ["patch", "/saved-views/reorder", { ids: [viewIds[0]] }],
         ["post", "/groups", { name: "must not write" }], ["patch", `/groups/${groupId}`, { name: "must not write" }], ["delete", `/groups/${groupId}`], ["post", `/groups/${groupId}/separate`],
         ["delete", `/groups/entries/${encodeURIComponent(`saved-view:${viewIds[0]}`)}`], ["post", "/threads/issues/user-state", { pinned: true }],
+        ["post", `/api/issues/${followedIssueId}/follow`], ["delete", `/api/issues/${followedIssueId}/follow`],
       ] as [Method, string, unknown?][]) {
         const response = await http(method, suffix, body, token, failingServer);
         expect(response.status, `${method} ${suffix}`).toBe(503);
       }
       expect(await snapshot()).toEqual(before);
+      expect(await db.execute(sql`SELECT id FROM issue_follows WHERE org_id=${orgId}::uuid AND issue_id=${followedIssueId}::uuid AND user_id=${userId}`)).toEqual(followBefore);
+      expect((await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox`))[0].count).toBe(0);
       expect((await request(failingServer).get("/api/health")).status).toBe(200);
     } finally { await closeServer(failingServer); await unavailable.close(); }
   });
