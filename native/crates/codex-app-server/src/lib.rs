@@ -11,6 +11,7 @@ mod framing;
 mod message;
 mod receipts;
 mod session;
+mod thread_read;
 mod transport;
 mod value;
 
@@ -24,6 +25,7 @@ pub use receipts::{
 pub use session::{
     MAX_PENDING_REQUESTS, PreparedRequest, RpcSession, SessionError, SessionObservation,
 };
+pub use thread_read::{ThreadReadError, ThreadReadSelection, select_thread_read_turn};
 pub use transport::{OwnedTransport, ProcessLaunch, TransportError, TransportEvent};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]

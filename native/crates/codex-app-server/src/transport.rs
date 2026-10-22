@@ -36,6 +36,8 @@ pub enum TransportError {
     Busy,
     #[error("Codex transport event deadline expired")]
     Timeout,
+    #[error("Codex thread/read target is invalid")]
+    InvalidThreadReadTarget,
     #[error("Codex transport exceeded its bounded output queue")]
     OutputOverflow,
     #[error("Codex stdin outcome is indeterminate; input must not be retried")]
@@ -212,6 +214,18 @@ impl OwnedTransport {
         let id = prepared.id().clone();
         self.start_frame(prepared.into_bytes(), Some(id.clone()))?;
         Ok(id)
+    }
+
+    /// Read persisted turns for this exact provider thread. This is a read-only
+    /// operation; it does not resume the thread or start a turn.
+    pub fn request_thread_read(&mut self, thread_id: &str) -> Result<RequestId, TransportError> {
+        if !crate::thread_read::valid_durable_id(thread_id) {
+            return Err(TransportError::InvalidThreadReadTarget);
+        }
+        self.request(
+            "thread/read",
+            serde_json::json!({"threadId": thread_id, "includeTurns": true}),
+        )
     }
 
     /// Opt in to bounded successful-response proof for a single effect RPC.
